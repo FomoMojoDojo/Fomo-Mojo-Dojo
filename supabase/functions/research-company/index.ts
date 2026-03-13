@@ -67,6 +67,28 @@ async function releaseCompanyRunLock(supabase: ReturnType<typeof createClient>, 
   }
 }
 
+function startCompanyRunLockHeartbeat(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  ttlMinutes: number;
+  intervalMs?: number;
+}) {
+  const intervalMs = args.intervalMs ?? 5 * 60_000;
+
+  const timer = setInterval(async () => {
+    const { error } = await args.supabase
+      .from("company_run_locks")
+      .update({ expires_at: addMinutesIso(args.ttlMinutes) })
+      .eq("company_id", args.companyId);
+
+    if (error) {
+      console.log("[research-company] lock heartbeat error", error.message);
+    }
+  }, intervalMs);
+
+  return () => clearInterval(timer);
+}
+
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -116,6 +138,18 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     }>;
     top_hypotheses?: string[];
     open_questions?: string[];
+    message_alignment?: {
+      alignment_status?: string;
+      alignment_summary?: string;
+      outside_voice_posture?: string;
+    };
+    outside_voice_signals?: Array<{
+      perspective?: string;
+      sentiment?: string;
+      alignment?: string;
+      signal?: string;
+      confidence?: number;
+    }>;
   } | null;
 
   if (!baseline) return "No public baseline available.";
@@ -130,6 +164,10 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
   const openQuestions = Array.isArray(baseline.open_questions)
     ? baseline.open_questions.slice(0, 3)
     : [];
+  const alignment = baseline.message_alignment ?? {};
+  const outsideSignals = Array.isArray(baseline.outside_voice_signals)
+    ? baseline.outside_voice_signals.slice(0, 3)
+    : [];
 
   return [
     `Category archetype: ${baseline.category_archetype || "unknown"}`,
@@ -140,6 +178,8 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     `Value chain: ${lens.value_chain || "unknown"}`,
     `Risk surface: ${lens.risk_surface || "unknown"}`,
     `Economic engine: ${lens.economic_engine || "unknown"}`,
+    `Message alignment: ${alignment.alignment_status || "unknown"}${alignment.alignment_summary ? ` — ${alignment.alignment_summary}` : ""}`,
+    `Outside voice posture: ${alignment.outside_voice_posture || "unknown"}`,
     evidence.length
       ? `Evidence:\n${evidence
           .map(
@@ -148,6 +188,14 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
           )
           .join("\n")}`
       : "Evidence: none",
+    outsideSignals.length
+      ? `Outside voice signals:\n${outsideSignals
+          .map(
+            (item, index) =>
+              `${index + 1}. [${item.perspective || "outside voice"} | ${item.sentiment || "unknown"} | ${item.alignment || "unknown"} | conf ${item.confidence ?? "?"}] ${item.signal || "No signal"}`
+          )
+          .join("\n")}`
+      : "Outside voice signals: none",
     hypotheses.length ? `Top hypotheses:\n- ${hypotheses.join("\n- ")}` : "Top hypotheses: none",
     openQuestions.length ? `Open questions:\n- ${openQuestions.join("\n- ")}` : "Open questions: none",
   ].join("\n");
@@ -418,6 +466,35 @@ async function persistResearchReviewRun(args: {
 
   if (error) {
     console.log("[research-company] review run persist error", error.message);
+  }
+}
+
+async function persistResearchArtifactRun(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  baselineRunId?: number | null;
+  status: string;
+  mojoScore?: number | null;
+  evidenceStatus?: string | null;
+  summaryJson: Record<string, unknown>;
+  artifactsJson: Record<string, unknown>;
+}) {
+  const { error } = await args.supabase
+    .from("research_artifact_runs")
+    .insert({
+      company_id: args.companyId,
+      user_id: args.userId,
+      baseline_run_id: args.baselineRunId ?? null,
+      status: args.status,
+      mojo_score: args.mojoScore ?? null,
+      evidence_status: args.evidenceStatus ?? null,
+      summary_json: args.summaryJson,
+      artifacts_json: args.artifactsJson,
+    });
+
+  if (error) {
+    console.log("[research-company] artifact run persist error", error.message);
   }
 }
 
@@ -1451,12 +1528,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
     }
 
+    const lockTtlMinutes = 45;
     const lockResult = await acquireCompanyRunLock({
       supabase,
       companyId: company_id,
       userId: user.id,
       operation: "research",
-      ttlMinutes: 45,
+      ttlMinutes: lockTtlMinutes,
     });
 
     if (lockResult) {
@@ -1468,6 +1546,12 @@ Deno.serve(async (req) => {
         expires_at: lockResult.existing?.expires_at ?? null,
       }, 409);
     }
+
+    const stopLockHeartbeat = startCompanyRunLockHeartbeat({
+      supabase,
+      companyId: company_id,
+      ttlMinutes: lockTtlMinutes,
+    });
 
     try {
     // ✅ Option A: fetch latest public baseline once, reuse later
@@ -2673,6 +2757,63 @@ Deno.serve(async (req) => {
       });
     }
 
+    await persistResearchArtifactRun({
+      supabase,
+      companyId: company_id,
+      userId: user.id,
+      baselineRunId: run?.id ?? null,
+      status: actionableReviews.length > 0 ? "saved_after_review" : "saved",
+      mojoScore: scored.mojo_score,
+      evidenceStatus: scored.evidence_status,
+      summaryJson: {
+        positioning: {
+          market_category: String(positioningCanvasResult?.market_category || ""),
+          proposed_tagline: String(positioningCanvasResult?.proposed_tagline || ""),
+        },
+        strategy: {
+          winning_aspiration: String(strategyCascadeResult?.winning_aspiration || ""),
+          where_to_play: String(strategyCascadeResult?.where_to_play || ""),
+        },
+        counts: {
+          inputs: inputs.length,
+          journeys: journeys.length,
+          opportunities: opportunities.length,
+          routes: routes.length,
+        },
+      },
+      artifactsJson: {
+        inputs: inputs.map((input: any) => ({
+          input_key: String(input?.input_key || ""),
+          input_label: String(input?.input_label || ""),
+          sub_group: String(input?.sub_group || ""),
+        })),
+        journeys: journeys.map((journey: any) => ({
+          journey_key: String(journey?.journey_key || ""),
+          journey_title: String(journey?.journey_title || ""),
+          steps: Array.isArray(journey?.steps)
+            ? journey.steps.map((step: any) => ({
+                step_number: Number(step?.step_number) || 0,
+                step_label: String(step?.step_label || ""),
+                has_gap: Boolean(step?.has_gap),
+              }))
+            : [],
+        })),
+        opportunities: opportunities.slice(0, 8).map((opp: any) => ({
+          outcome: String(opp?.outcome || ""),
+          journey_key: String(opp?.journey_key || ""),
+          priority_tier: String(opp?.priority_tier || ""),
+          opportunity_score: Number(opp?.opportunity_score) || 0,
+        })),
+        routes: routes.slice(0, 8).map((route: any) => ({
+          category: String(route?.category || ""),
+          title: String(route?.title || ""),
+          pts_value: Number(route?.pts_value) || 0,
+        })),
+        positioning: positioningCanvasResult,
+        strategy: strategyCascadeResult,
+      },
+    });
+
     return jsonResponse({
       message: "Research complete",
       inputs_inserted: inputsInserted,
@@ -2686,6 +2827,7 @@ Deno.serve(async (req) => {
       evidence_status: scored.evidence_status,
     });
     } finally {
+      stopLockHeartbeat();
       await releaseCompanyRunLock(supabase, company_id);
     }
   } catch (err) {

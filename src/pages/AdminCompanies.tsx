@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { FunctionsHttpError } from "@supabase/supabase-js";
@@ -13,9 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { PublicBaselinePanel } from "@/components/PublicBaselinePanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
-import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePanel";
 import {
   Building2,
   Plus,
@@ -52,6 +50,7 @@ type ResearchReviewRun = {
   reviews_json: ReviewEntry[];
   finalizer_applied: boolean;
   created_at: string;
+  user_id: string;
 };
 
 type CompanyRunLock = {
@@ -59,7 +58,44 @@ type CompanyRunLock = {
   operation: string;
   started_at: string;
   expires_at: string;
+  started_by: string;
 };
+
+type ArtifactRunSummary = {
+  positioning?: {
+    market_category?: string;
+    proposed_tagline?: string;
+  };
+  strategy?: {
+    winning_aspiration?: string;
+    where_to_play?: string;
+  };
+  counts?: {
+    inputs?: number;
+    journeys?: number;
+    opportunities?: number;
+    routes?: number;
+  };
+};
+
+type ArtifactRunPayload = {
+  routes?: Array<{ category?: string; title?: string; pts_value?: number }>;
+};
+
+type ResearchArtifactRun = {
+  id: string;
+  status: string;
+  mojo_score: number | null;
+  evidence_status: string | null;
+  summary_json: ArtifactRunSummary;
+  artifacts_json: ArtifactRunPayload;
+  created_at: string;
+  user_id: string;
+};
+
+const COMPANIES_REFRESH_MS = 15000;
+const REVIEW_REFRESH_MS = 12000;
+const LOCKS_REFRESH_MS = 8000;
 
 const c = {
   bg: "#faf7f6",
@@ -211,6 +247,8 @@ export default function AdminCompanies() {
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
   const [creating, setCreating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name_asc" | "name_desc" | "score_desc" | "score_asc">("newest");
 
   const [researchingId, setResearchingId] = useState<string | null>(null);
   const [baselineId, setBaselineId] = useState<string | null>(null);
@@ -226,7 +264,10 @@ export default function AdminCompanies() {
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
   const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
   const [selectedReviewRunId, setSelectedReviewRunId] = useState<string | null>(null);
+  const [artifactRuns, setArtifactRuns] = useState<ResearchArtifactRun[]>([]);
+  const [selectedArtifactRunId, setSelectedArtifactRunId] = useState<string | null>(null);
   const [runLocksByCompany, setRunLocksByCompany] = useState<Record<string, CompanyRunLock>>({});
+  const [userNamesById, setUserNamesById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -269,6 +310,8 @@ export default function AdminCompanies() {
     if (!companyId) {
       setReviewRuns([]);
       setSelectedReviewRunId(null);
+      setArtifactRuns([]);
+      setSelectedArtifactRunId(null);
       return;
     }
 
@@ -277,27 +320,37 @@ export default function AdminCompanies() {
     const loadLatestReviewRun = async () => {
       setReviewLoading(true);
 
-      const { data, error } = await supabase
-        .from("research_review_runs")
-        .select("id, status, review_summary, reviews_json, finalizer_applied, created_at")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(5);
+      const [{ data: reviewData, error: reviewError }, { data: artifactData, error: artifactError }] =
+        await Promise.all([
+          supabase
+            .from("research_review_runs")
+            .select("id, status, review_summary, reviews_json, finalizer_applied, created_at, user_id")
+            .eq("company_id", companyId)
+            .order("created_at", { ascending: false })
+            .limit(5),
+          supabase
+            .from("research_artifact_runs")
+            .select("id, status, mojo_score, evidence_status, summary_json, artifacts_json, created_at, user_id")
+            .eq("company_id", companyId)
+            .order("created_at", { ascending: false })
+            .limit(5),
+        ]);
 
       if (cancelled) return;
 
-      if (error) {
+      if (reviewError) {
         setReviewRuns([]);
         setSelectedReviewRunId(null);
       } else {
-        const runs = Array.isArray(data)
-          ? data.map((item) => ({
+        const runs = Array.isArray(reviewData)
+          ? reviewData.map((item) => ({
               id: item.id,
               status: item.status,
               review_summary: item.review_summary,
               reviews_json: Array.isArray(item.reviews_json) ? (item.reviews_json as ReviewEntry[]) : [],
               finalizer_applied: Boolean(item.finalizer_applied),
               created_at: item.created_at,
+              user_id: item.user_id,
             }))
           : [];
 
@@ -307,13 +360,40 @@ export default function AdminCompanies() {
         );
       }
 
+      if (artifactError) {
+        setArtifactRuns([]);
+        setSelectedArtifactRunId(null);
+      } else {
+        const runs = Array.isArray(artifactData)
+          ? artifactData.map((item) => ({
+              id: item.id,
+              status: item.status,
+              mojo_score: item.mojo_score,
+              evidence_status: item.evidence_status,
+              summary_json: (item.summary_json as ArtifactRunSummary) ?? {},
+              artifacts_json: (item.artifacts_json as ArtifactRunPayload) ?? {},
+              created_at: item.created_at,
+              user_id: item.user_id,
+            }))
+          : [];
+
+        setArtifactRuns(runs);
+        setSelectedArtifactRunId((current) =>
+          current && runs.some((run) => run.id === current) ? current : runs[0]?.id ?? null,
+        );
+      }
+
       setReviewLoading(false);
     };
 
     void loadLatestReviewRun();
+    const intervalId = window.setInterval(() => {
+      void loadLatestReviewRun();
+    }, REVIEW_REFRESH_MS);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [activeCompany?.id, companies.length, reviewRefreshKey]);
 
@@ -328,7 +408,7 @@ export default function AdminCompanies() {
     const loadRunLocks = async () => {
       const { data, error } = await supabase
         .from("company_run_locks")
-        .select("company_id, operation, started_at, expires_at")
+        .select("company_id, operation, started_at, expires_at, started_by")
         .gt("expires_at", new Date().toISOString());
 
       if (cancelled) return;
@@ -345,16 +425,76 @@ export default function AdminCompanies() {
           operation: item.operation,
           started_at: item.started_at,
           expires_at: item.expires_at,
+          started_by: item.started_by,
         };
       }
       setRunLocksByCompany(next);
     };
 
     void loadRunLocks();
+    const intervalId = window.setInterval(() => {
+      void loadRunLocks();
+    }, LOCKS_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [companies.length, researchingId, baselineId, comboId, reviewRefreshKey]);
+
+  useEffect(() => {
+    const userIds = Array.from(
+      new Set([
+        ...reviewRuns.map((run) => run.user_id).filter(Boolean),
+        ...artifactRuns.map((run) => run.user_id).filter(Boolean),
+        ...Object.values(runLocksByCompany).map((lock) => lock.started_by).filter(Boolean),
+      ]),
+    );
+
+    if (userIds.length === 0) {
+      setUserNamesById({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadNames = async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("user_id, display_name")
+        .in("user_id", userIds);
+
+      if (cancelled) return;
+
+      if (error || !Array.isArray(data)) {
+        return;
+      }
+
+      const next: Record<string, string> = {};
+      for (const row of data) {
+        next[row.user_id] = row.display_name?.trim() || row.user_id;
+      }
+
+      setUserNamesById((current) => ({ ...current, ...next }));
+    };
+
+    void loadNames();
     return () => {
       cancelled = true;
     };
-  }, [companies.length, researchingId, baselineId, comboId, reviewRefreshKey]);
+  }, [reviewRuns, artifactRuns, runLocksByCompany]);
+
+  useEffect(() => {
+    if (companies.length === 0) return;
+
+    const intervalId = window.setInterval(() => {
+      void refetch();
+    }, COMPANIES_REFRESH_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [companies.length, refetch]);
 
   const showPersistentError = (title: string, description: string) => {
     const entry = {
@@ -558,6 +698,29 @@ export default function AdminCompanies() {
     await refetch();
   };
 
+  const handleCancelRunLock = async (companyId: string) => {
+    const { error } = await supabase
+      .from("company_run_locks")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("started_by", user?.id || "");
+
+    if (error) {
+      showPersistentError("Cancel Run Failed", error.message);
+      return;
+    }
+
+    if (researchingId === companyId) setResearchingId(null);
+    if (baselineId === companyId) setBaselineId(null);
+    if (comboId === companyId) setComboId(null);
+
+    toast({
+      title: "Run Lock Cleared",
+      description: "The company lock was removed. This clears a stuck run badge, but it does not forcibly stop a background function that is still executing.",
+    });
+    setReviewRefreshKey((current) => current + 1);
+  };
+
   const severityTone = (severity?: string) => {
     const normalized = String(severity || "low").toLowerCase();
     if (normalized === "high") {
@@ -576,6 +739,48 @@ export default function AdminCompanies() {
 
   const selectedReviewRun =
     reviewRuns.find((run) => run.id === selectedReviewRunId) ?? reviewRuns[0] ?? null;
+  const selectedArtifactRun =
+    artifactRuns.find((run) => run.id === selectedArtifactRunId) ?? artifactRuns[0] ?? null;
+
+  const labelForUser = (userId?: string) => {
+    if (!userId) return "Unknown";
+    if (user?.id && userId === user.id) return "You";
+    return userNamesById[userId] || userId;
+  };
+
+  const filteredCompanies = useMemo(() => {
+    const needle = searchTerm.trim().toLowerCase();
+    const items = companies.filter((company) => {
+      if (!needle) return true;
+      return [
+        company.name,
+        company.website ?? "",
+        company.id,
+      ].some((value) => value.toLowerCase().includes(needle));
+    });
+
+    const sorted = [...items];
+    sorted.sort((a, b) => {
+      if (sortBy === "oldest") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      if (sortBy === "name_asc") {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === "name_desc") {
+        return b.name.localeCompare(a.name);
+      }
+      if (sortBy === "score_desc") {
+        return (b.mojo_score ?? -1) - (a.mojo_score ?? -1);
+      }
+      if (sortBy === "score_asc") {
+        return (a.mojo_score ?? 101) - (b.mojo_score ?? 101);
+      }
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    return sorted;
+  }, [companies, searchTerm, sortBy]);
 
   return (
     <div className="min-h-screen" style={{ background: c.bg }}>
@@ -778,42 +983,62 @@ export default function AdminCompanies() {
 
         {/* Companies list card */}
         <div className="rounded-2xl p-4 shadow-sm" style={{ background: c.panel, border: `1px solid ${c.line}` }}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
             <div>
               <div className="font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
                 Company Instances
               </div>
               <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-                Select which client’s Mojo Map you want to work in
+                Sort and browse companies, then open a dedicated research detail page for each one
               </div>
             </div>
 
-            {activeCompany && (
-              <div className="font-mono text-[10px] uppercase tracking-wide flex items-center gap-1" style={{ color: c.muted }}>
-                <Globe className="w-3 h-3" />
-                Active:{" "}
-                <span style={{ color: c.charcoal }}>{activeCompany.name}</span>
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {activeCompany && (
+                <div className="font-mono text-[10px] uppercase tracking-wide flex items-center gap-1" style={{ color: c.muted }}>
+                  <Globe className="w-3 h-3" />
+                  Active:{" "}
+                  <span style={{ color: c.charcoal }}>{activeCompany.name}</span>
+                </div>
+              )}
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search name, website, or id"
+              />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="rounded-full border px-3 py-2 font-mono text-[10px] uppercase tracking-wide"
+                style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+              >
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="name_asc">Name A-Z</option>
+                <option value="name_desc">Name Z-A</option>
+                <option value="score_desc">Score High-Low</option>
+                <option value="score_asc">Score Low-High</option>
+              </select>
+            </div>
           </div>
 
           {loading ? (
             <div className="py-10 text-center font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
               Loading…
             </div>
-          ) : companies.length === 0 ? (
+          ) : filteredCompanies.length === 0 ? (
             <div className="py-10 text-center">
               <FileX className="w-5 h-5 mx-auto mb-2" style={{ color: c.muted }} />
               <div className="font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
-                No companies yet
+                No matching companies
               </div>
               <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-                Create one to get started
+                Adjust your search or sort to find a company
               </div>
             </div>
           ) : (
             <div className="space-y-3">
-              {companies.map((company) => {
+              {filteredCompanies.map((company) => {
                 const isActive = activeCompany?.id === company.id;
                 const isResearching = researchingId === company.id;
                 const isBaselining = baselineId === company.id;
@@ -860,17 +1085,56 @@ export default function AdminCompanies() {
                           )}
                         </div>
 
+                        <div className="mt-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <Link
+                              to={`/admin/companies/${company.id}`}
+                              className="font-mono text-[10px] uppercase tracking-wide inline-flex items-center gap-1"
+                              style={{ color: c.secondary }}
+                            >
+                              Open Company
+                              <ArrowRight className="w-3 h-3" />
+                            </Link>
+                            <Link
+                              to={`/admin/companies/${company.id}/files`}
+                              className="font-mono text-[10px] uppercase tracking-wide inline-flex items-center gap-1"
+                              style={{ color: c.secondary }}
+                            >
+                              Files
+                              <ArrowRight className="w-3 h-3" />
+                            </Link>
+                          </div>
+                        </div>
+
                         <div className="font-mono text-[10px] mt-1 uppercase tracking-wide" style={{ color: c.muted }}>
                           ID:{" "}
                           <span style={{ color: c.secondary }}>{company.id}</span>
                         </div>
 
                         {activeLock ? (
-                          <div
-                            className="mt-2 inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
-                            style={{ color: c.coral, borderColor: "#E7C3A4", background: "#FFF7F0" }}
-                          >
-                            {activeLock.operation} running
+                          <div className="mt-2 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div
+                                className="inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
+                                style={{ color: c.coral, borderColor: "#E7C3A4", background: "#FFF7F0" }}
+                              >
+                                {activeLock.operation} running
+                              </div>
+                              {user?.id && activeLock.started_by === user.id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelRunLock(company.id)}
+                                  className="font-mono text-[10px] uppercase tracking-wide px-3 py-1 rounded-full border transition-colors inline-flex items-center gap-1"
+                                  style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                                  title="Clear a stuck lock that you started. This does not forcibly terminate a running background function."
+                                >
+                                  Cancel Run
+                                </button>
+                              ) : null}
+                            </div>
+                            <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                              Started by {labelForUser(activeLock.started_by)}
+                            </p>
                           </div>
                         ) : null}
 
@@ -896,12 +1160,24 @@ export default function AdminCompanies() {
                           type="button"
                           onClick={() => {
                             setActiveCompanyId(company.id);
-                            navigate("/");
+                            navigate(`/admin/companies/${company.id}`);
                           }}
                           className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
                           style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
                         >
-                          View Map <ArrowRight className="w-3 h-3" />
+                          Open Company <ArrowRight className="w-3 h-3" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCompanyId(company.id);
+                            navigate(`/admin/companies/${company.id}/files`);
+                          }}
+                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
+                          style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                        >
+                          Files <ArrowRight className="w-3 h-3" />
                         </button>
 
                         {/* NEW: combo button */}
@@ -993,16 +1269,6 @@ export default function AdminCompanies() {
           )}
         </div>
 
-        {/* Public baseline panel (light) */}
-        {activeCompany?.id && <PublicBaselinePanel companyId={activeCompany.id} />}
-
-        {activeCompany?.id && (
-          <FrameworkProvenancePanel
-            companyId={activeCompany.id}
-            companyName={activeCompany.name}
-          />
-        )}
-
         {/* Footer */}
         <div className="flex items-center justify-between">
           <Link
@@ -1060,9 +1326,14 @@ export default function AdminCompanies() {
                           }}
                         >
                           <div className="flex items-center justify-between gap-3">
-                            <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-                              {new Date(run.created_at).toLocaleString()}
-                            </span>
+                            <div>
+                              <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                {new Date(run.created_at).toLocaleString()}
+                              </span>
+                              <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                By {labelForUser(run.user_id)}
+                              </p>
+                            </div>
                             <span
                               className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-wide"
                               style={{
@@ -1096,6 +1367,9 @@ export default function AdminCompanies() {
                       </p>
                       <p className="mt-2 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
                         {selectedReviewRun.finalizer_applied ? "Repair pass applied" : "No repair pass needed"}
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                        Run by {labelForUser(selectedReviewRun.user_id)}
                       </p>
                     </div>
                     <div className="text-right">
@@ -1177,6 +1451,137 @@ export default function AdminCompanies() {
                       </div>
                     );
                   })}
+                </div>
+
+                <div className="pt-2 space-y-3">
+                  <div>
+                    <p className="font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
+                      Saved Output Runs
+                    </p>
+                    <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+                      Recent saved artifact snapshots for this company.
+                    </p>
+                  </div>
+
+                  {artifactRuns.length > 0 ? (
+                    <>
+                      <div className="space-y-2">
+                        {artifactRuns.map((run) => (
+                          <button
+                            key={run.id}
+                            type="button"
+                            onClick={() => setSelectedArtifactRunId(run.id)}
+                            className="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
+                            style={{
+                              borderColor: run.id === selectedArtifactRun?.id ? c.teal : c.line,
+                              background: run.id === selectedArtifactRun?.id ? "#F7FBF9" : "#FFFFFF",
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                  {new Date(run.created_at).toLocaleString()}
+                                </span>
+                                <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                  By {labelForUser(run.user_id)}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <span
+                                  className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-wide"
+                                  style={{ color: c.teal, borderColor: c.line, background: "#FFFFFF" }}
+                                >
+                                  {statusLabel(run.status)}
+                                </span>
+                                {typeof run.mojo_score === "number" ? (
+                                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.charcoal }}>
+                                    Mojo {run.mojo_score}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {selectedArtifactRun ? (
+                        <div
+                          className="rounded-2xl border px-4 py-4"
+                          style={{ borderColor: c.line, background: "#FCFDFB" }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
+                                {selectedArtifactRun.summary_json?.positioning?.market_category || "No market category saved"}
+                              </p>
+                              <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+                                {selectedArtifactRun.summary_json?.positioning?.proposed_tagline || "No proposed tagline saved"}
+                              </p>
+                              <p className="mt-2 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                Evidence: {selectedArtifactRun.evidence_status || "unknown"}
+                              </p>
+                            </div>
+                            {typeof selectedArtifactRun.mojo_score === "number" ? (
+                              <span
+                                className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
+                                style={{ color: c.charcoal, borderColor: c.line, background: "#FFFFFF" }}
+                              >
+                                Mojo {selectedArtifactRun.mojo_score}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                              <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                Counts
+                              </p>
+                              <p className="mt-1 font-sans text-[13px]" style={{ color: c.charcoal }}>
+                                {selectedArtifactRun.summary_json?.counts?.inputs ?? 0} inputs, {selectedArtifactRun.summary_json?.counts?.opportunities ?? 0} opportunities, {selectedArtifactRun.summary_json?.counts?.routes ?? 0} routes
+                              </p>
+                            </div>
+                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                              <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                Strategy
+                              </p>
+                              <p className="mt-1 font-sans text-[13px]" style={{ color: c.charcoal }}>
+                                {selectedArtifactRun.summary_json?.strategy?.where_to_play || "No where-to-play saved"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 space-y-2">
+                            <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                              Top Routes
+                            </p>
+                            {(selectedArtifactRun.artifacts_json?.routes ?? []).slice(0, 3).map((route, index) => (
+                              <div
+                                key={`${selectedArtifactRun.id}-route-${index}`}
+                                className="rounded-xl border px-3 py-2"
+                                style={{ borderColor: c.line, background: "#FFFFFF" }}
+                              >
+                                <p className="font-sans text-[13px] font-semibold capitalize" style={{ color: c.charcoal }}>
+                                  {route.title || "Untitled route"}
+                                </p>
+                                <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                  {route.category || "unknown"} · {route.pts_value ?? 0} pts
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div
+                      className="rounded-2xl border px-4 py-4"
+                      style={{ borderColor: c.line, background: "#FFFFFF" }}
+                    >
+                      <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
+                        No saved artifact snapshots exist for this company yet.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

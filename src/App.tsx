@@ -17,6 +17,8 @@ import RoutesView from "./views/Routes";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminCompanies from "./pages/AdminCompanies";
+import AdminCompanyDetail from "./pages/AdminCompanyDetail";
+import AdminCompanyFiles from "./pages/AdminCompanyFiles";
 import AdminPageEditor from "./pages/AdminPageEditor";
 import MethodologyPage from "./pages/MethodologyPage";
 import MojoMapPage from "./pages/MojoMapPage";
@@ -48,6 +50,8 @@ const App = () => (
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
               <Route path="/admin/companies" element={<AdminGuard><AdminCompanies /></AdminGuard>} />
+              <Route path="/admin/companies/:companyId" element={<AdminGuard><AdminCompanyDetail /></AdminGuard>} />
+              <Route path="/admin/companies/:companyId/files" element={<AdminGuard><AdminCompanyFiles /></AdminGuard>} />
               <Route path="/admin/new" element={<AdminGuard><AdminPageEditor /></AdminGuard>} />
               <Route path="/admin/edit/:id" element={<AdminGuard><AdminPageEditor /></AdminGuard>} />
               <Route path="/process/:slug" element={<MethodologyPage />} />

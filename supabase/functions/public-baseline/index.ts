@@ -60,6 +60,28 @@ async function releaseCompanyRunLock(supabase: ReturnType<typeof createClient>, 
   }
 }
 
+function startCompanyRunLockHeartbeat(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  ttlMinutes: number;
+  intervalMs?: number;
+}) {
+  const intervalMs = args.intervalMs ?? 5 * 60_000;
+
+  const timer = setInterval(async () => {
+    const { error } = await args.supabase
+      .from("company_run_locks")
+      .update({ expires_at: addMinutesIso(args.ttlMinutes) })
+      .eq("company_id", args.companyId);
+
+    if (error) {
+      console.log("[baseline] lock heartbeat error", error.message);
+    }
+  }, intervalMs);
+
+  return () => clearInterval(timer);
+}
+
 function extractTextBasic(html: string): string {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
@@ -296,6 +318,20 @@ async function fetchAndExtract(url: string) {
   }
 }
 
+function inferSourceType(url: string, title = "", snippet = ""): string {
+  const host = getDomain(url);
+  const text = `${title} ${snippet}`.toLowerCase();
+
+  if (/(glassdoor|indeed)\./.test(host)) return "employee_review";
+  if (/(g2|capterra|trustpilot|yelp)\./.test(host)) return "customer_review";
+  if (/(reddit|quora)\./.test(host)) return "community_discussion";
+  if (/(linkedin)\./.test(host)) return "profile_or_company_page";
+  if (/(crunchbase|pitchbook|zoominfo|guidestar|charitynavigator)\./.test(host)) return "third_party_profile";
+  if (text.includes("review") || text.includes("rating")) return "review_signal";
+  if (text.includes("news") || text.includes("press")) return "news_signal";
+  return "public_web";
+}
+
 function extractResponsesOutputText(data: any): string | null {
   if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
 
@@ -315,7 +351,7 @@ async function callOpenAI(opts: {
   model: string;
   companyName: string;
   companyUrl: string;
-  evidence: { url: string; title: string; snippet: string; extracted: string }[];
+  evidence: { url: string; title: string; snippet: string; extracted: string; source_type?: string }[];
 }) {
   const { apiKey, model, companyName, companyUrl, evidence } = opts;
 
@@ -373,8 +409,44 @@ async function callOpenAI(opts: {
         },
         top_hypotheses: { type: "array", items: { type: "string" } },
         open_questions: { type: "array", items: { type: "string" } },
+        message_alignment: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            company_claim_posture: { type: "string" },
+            outside_voice_posture: { type: "string" },
+            alignment_status: { type: "string" },
+            alignment_summary: { type: "string" },
+          },
+          required: ["company_claim_posture", "outside_voice_posture", "alignment_status", "alignment_summary"],
+        },
+        outside_voice_signals: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              perspective: { type: "string" },
+              source_type: { type: "string" },
+              signal: { type: "string" },
+              sentiment: { type: "string" },
+              alignment: { type: "string" },
+              url: { type: "string" },
+              confidence: { type: "integer" },
+            },
+            required: ["perspective", "source_type", "signal", "sentiment", "alignment", "url", "confidence"],
+          },
+        },
       },
-      required: ["category_archetype", "lens_card", "evidence_ledger", "top_hypotheses", "open_questions"],
+      required: [
+        "category_archetype",
+        "lens_card",
+        "evidence_ledger",
+        "top_hypotheses",
+        "open_questions",
+        "message_alignment",
+        "outside_voice_signals",
+      ],
     },
   };
 
@@ -401,8 +473,9 @@ async function callOpenAI(opts: {
             text:
               `Company: ${companyName}\nWebsite: ${companyUrl}\n\n` +
               `TASK: Build a public baseline from provided evidence.\n` +
-              `- Infer category archetype\n- Produce a lens card\n- Build an evidence ledger tied to buckets/signals\n- Provide top hypotheses + open questions\n\n` +
-              `Use only evidence. If unknown, say unknown.\n`,
+              `- Infer category archetype\n- Produce a lens card\n- Build an evidence ledger tied to buckets/signals\n- Compare company claims against employee/customer/market signals when outside sources exist\n- Provide top hypotheses + open questions\n\n` +
+              `Use only evidence. If unknown, say unknown.\n` +
+              `Treat review, community, employee, news, and profile sources as outside voices rather than company claims.\n`,
           },
           { type: "input_text", text: JSON.stringify({ evidence }) },
         ],
@@ -460,6 +533,13 @@ function buildInsufficientResult(args: {
     open_questions: [
       "Not enough public sources to establish a baseline. Add more sources (press, docs, profiles) or upload internal docs.",
     ],
+    message_alignment: {
+      company_claim_posture: "unknown",
+      outside_voice_posture: "unknown",
+      alignment_status: "unknown",
+      alignment_summary: "No reliable outside-voice evidence was available to compare company claims against the market.",
+    },
+    outside_voice_signals: [],
   };
 }
 
@@ -497,6 +577,13 @@ function buildAmbiguousResult(args: {
       "Search results look like they may refer to a different company. Review closest_sources and adjust name/domain if needed.",
       "If this company has a small footprint, add a LinkedIn page, press mention, or upload internal docs for baseline.",
     ],
+    message_alignment: {
+      company_claim_posture: "unknown",
+      outside_voice_posture: "ambiguous",
+      alignment_status: "ambiguous",
+      alignment_summary: "Outside-voice evidence is too ambiguous to compare against the company's narrative with confidence.",
+    },
+    outside_voice_signals: [],
   };
 }
 
@@ -541,12 +628,13 @@ Deno.serve(async (req) => {
       return json({ error: "company_id, company_name, website required" }, 400);
     }
 
+    const lockTtlMinutes = 30;
     const lockResult = await acquireCompanyRunLock({
       supabase,
       companyId: company_id,
       userId: userRes.user.id,
       operation: "baseline",
-      ttlMinutes: 30,
+      ttlMinutes: lockTtlMinutes,
     });
 
     if (lockResult) {
@@ -558,6 +646,12 @@ Deno.serve(async (req) => {
         expires_at: lockResult.existing?.expires_at ?? null,
       }, 409);
     }
+
+    const stopLockHeartbeat = startCompanyRunLockHeartbeat({
+      supabase,
+      companyId: company_id,
+      ttlMinutes: lockTtlMinutes,
+    });
 
     try {
     const domain = getDomain(website);
@@ -577,6 +671,10 @@ Deno.serve(async (req) => {
 
     const queryC =
       `${domain} ${variants.join(" OR ")} (about OR company OR pricing OR reviews OR news)`;
+    const queryD =
+      `"${spaced}" "${domain}" (glassdoor OR indeed OR g2 OR capterra OR trustpilot OR reddit OR forum OR complaints)`;
+    const queryE =
+      `${quoted} "${domain}" (customer reviews OR employee reviews OR testimonials OR ratings OR reddit OR community OR nonprofit)`;
 
     const mergeUnique = (a: any[], b: any[]) => {
       const seen = new Set<string>();
@@ -592,8 +690,13 @@ Deno.serve(async (req) => {
     const sourcesA = await searxSearch(searxUrl, queryA, 20);
     const sourcesB = await searxSearch(searxUrl, queryB, 20);
     const sourcesC = await searxSearch(searxUrl, queryC, 20);
+    const sourcesD = await searxSearch(searxUrl, queryD, 16);
+    const sourcesE = await searxSearch(searxUrl, queryE, 16);
 
-    const rawSources = mergeUnique(mergeUnique(sourcesA, sourcesB), sourcesC);
+    const rawSources = mergeUnique(
+      mergeUnique(mergeUnique(sourcesA, sourcesB), mergeUnique(sourcesC, sourcesD)),
+      sourcesE,
+    );
 
     // Annotate ALL sources with soft match scores (keep even if wrong — useful for review)
     const annotated = rawSources
@@ -605,7 +708,12 @@ Deno.serve(async (req) => {
           title: r?.title,
           snippet: r?.snippet,
         });
-        return { ...r, match_score: m.score, match_reason: m.reasons };
+        return {
+          ...r,
+          source_type: inferSourceType(r?.url, r?.title, r?.snippet),
+          match_score: m.score,
+          match_reason: m.reasons,
+        };
       })
       .sort((a: any, b: any) => (b.match_score ?? 0) - (a.match_score ?? 0));
 
@@ -648,7 +756,19 @@ Deno.serve(async (req) => {
         domain,
         variants,
         reason: "No public sources returned by search; direct website fetch also failed or too thin.",
-        debug: { queryA, queryB, queryC, rawA: sourcesA.length, rawB: sourcesB.length, rawC: sourcesC.length, directOk: direct.ok },
+        debug: {
+          queryA,
+          queryB,
+          queryC,
+          queryD,
+          queryE,
+          rawA: sourcesA.length,
+          rawB: sourcesB.length,
+          rawC: sourcesC.length,
+          rawD: sourcesD.length,
+          rawE: sourcesE.length,
+          directOk: direct.ok,
+        },
       });
 
       const { data: inserted, error: insErr } = await supabase
@@ -657,7 +777,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
-          sources_json: { note: "no-results", queryA, queryB, queryC, raw_sources: rawSources },
+          sources_json: { note: "no-results", queryA, queryB, queryC, queryD, queryE, raw_sources: rawSources },
           result_json: resultJson,
         })
         .select("id")
@@ -689,7 +809,7 @@ Deno.serve(async (req) => {
         domain,
         variants,
         reason: "Search results did not strongly match provided company/domain.",
-        debug: { queryA, queryB, queryC, rawCount: rawSources.length, strong: strong.length, medium: medium.length },
+        debug: { queryA, queryB, queryC, queryD, queryE, rawCount: rawSources.length, strong: strong.length, medium: medium.length },
         closest_sources: closest,
       });
 
@@ -699,7 +819,7 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
-          sources_json: { note: "ambiguous", queryA, queryB, queryC, annotated_top: closest },
+          sources_json: { note: "ambiguous", queryA, queryB, queryC, queryD, queryE, annotated_top: closest },
           result_json: resultJson,
         })
         .select("id")
@@ -723,6 +843,7 @@ Deno.serve(async (req) => {
         title: s.title,
         snippet: s.snippet,
         engine: s.engine,
+        source_type: s.source_type,
         match_score: s.match_score,
         match_reason: s.match_reason,
         extracted: got.ok ? got.text : "",
@@ -737,6 +858,7 @@ Deno.serve(async (req) => {
         url: e.url,
         title: e.title,
         snippet: e.snippet,
+        source_type: e.source_type,
         extracted: e.extracted,
       }));
 
@@ -788,8 +910,16 @@ Deno.serve(async (req) => {
             queryA,
             queryB,
             queryC,
+            queryD,
+            queryE,
             annotated_top: closest,
-            extracted_meta: extracted.map((x) => ({ url: x.url, ok: x.ok, len: (x.extracted || "").length, match_score: x.match_score })),
+            extracted_meta: extracted.map((x) => ({
+              url: x.url,
+              ok: x.ok,
+              len: (x.extracted || "").length,
+              match_score: x.match_score,
+              source_type: x.source_type,
+            })),
           },
           result_json: resultJson,
         })
@@ -821,7 +951,7 @@ Deno.serve(async (req) => {
         company_name,
         website,
         // Save full annotated sources for later review (includes “wrong company” candidates like CiboGlobal)
-        sources_json: { queries: { queryA, queryB, queryC }, annotated_sources: annotated.slice(0, 60) },
+        sources_json: { queries: { queryA, queryB, queryC, queryD, queryE }, annotated_sources: annotated.slice(0, 60) },
         result_json: result,
       })
       .select("id")
@@ -840,6 +970,7 @@ Deno.serve(async (req) => {
       medium_matches: medium.length,
     });
     } finally {
+      stopLockHeartbeat();
       await releaseCompanyRunLock(supabase, company_id);
     }
   } catch (err) {

@@ -712,6 +712,60 @@ export type Database = {
           },
         ]
       }
+      research_artifact_runs: {
+        Row: {
+          artifacts_json: Json
+          baseline_run_id: number | null
+          company_id: string
+          created_at: string
+          evidence_status: string | null
+          id: string
+          mojo_score: number | null
+          status: string
+          summary_json: Json
+          user_id: string
+        }
+        Insert: {
+          artifacts_json?: Json
+          baseline_run_id?: number | null
+          company_id: string
+          created_at?: string
+          evidence_status?: string | null
+          id?: string
+          mojo_score?: number | null
+          status?: string
+          summary_json?: Json
+          user_id: string
+        }
+        Update: {
+          artifacts_json?: Json
+          baseline_run_id?: number | null
+          company_id?: string
+          created_at?: string
+          evidence_status?: string | null
+          id?: string
+          mojo_score?: number | null
+          status?: string
+          summary_json?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "research_artifact_runs_baseline_run_id_fkey"
+            columns: ["baseline_run_id"]
+            isOneToOne: false
+            referencedRelation: "public_baseline_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "research_artifact_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       positioning_canvases: {
         Row: {
           best_fit_customers: string

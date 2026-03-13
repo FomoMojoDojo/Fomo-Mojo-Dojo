@@ -19,6 +19,21 @@ type PublicBaselineResult = {
   evidence_ledger?: EvidenceLedgerItem[];
   top_hypotheses?: string[];
   open_questions?: string[];
+  message_alignment?: {
+    company_claim_posture?: string;
+    outside_voice_posture?: string;
+    alignment_status?: string;
+    alignment_summary?: string;
+  };
+  outside_voice_signals?: Array<{
+    perspective?: string;
+    source_type?: string;
+    signal?: string;
+    sentiment?: string;
+    alignment?: string;
+    url?: string;
+    confidence?: number;
+  }>;
 };
 
 export function PublicBaselinePanel({ companyId }: { companyId: string }) {
@@ -70,6 +85,17 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
     : null;
   const topHypotheses = Array.isArray(r.top_hypotheses) ? r.top_hypotheses.slice(0, 4) : [];
   const openQuestions = Array.isArray(r.open_questions) ? r.open_questions.slice(0, 4) : [];
+  const alignment = r.message_alignment ?? {};
+  const outsideSignals = Array.isArray(r.outside_voice_signals) ? r.outside_voice_signals.slice(0, 4) : [];
+  const outsideSignalConfidences = outsideSignals
+    .map((item) => (typeof item?.confidence === "number" ? item.confidence : null))
+    .filter((value: number | null): value is number => value !== null);
+  const avgOutsideConfidence = outsideSignalConfidences.length
+    ? Math.round(outsideSignalConfidences.reduce((sum, value) => sum + value, 0) / outsideSignalConfidences.length)
+    : 0;
+  const alignmentValidationScore = outsideSignals.length
+    ? Math.max(20, Math.min(55, Math.round(avgOutsideConfidence * 0.55)))
+    : 15;
   const baselineStatus = typeof r.status === "string" ? r.status : "baseline_available";
   const baselineReason = typeof r.reason === "string" ? r.reason : null;
   const statusTone =
@@ -149,6 +175,25 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
 
         <div className="border border-border rounded-xl p-3 bg-muted/10">
           <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
+            Message Alignment
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <MetaBadge>{alignment.alignment_status || "unknown"}</MetaBadge>
+            <ScoreChip label="Validation" value={alignmentValidationScore} />
+          </div>
+          <div className="mt-2 font-sans text-[12px] italic text-muted-foreground">
+            {alignment.outside_voice_posture || "Outside voice unknown."}
+          </div>
+          <div className="mt-2 font-sans text-[12px] text-muted-foreground">
+            Public-web inference only. This has not been hard-validated with primary customer interviews, internal data, or direct stakeholder testing.
+          </div>
+          <div className="font-sans text-[12px] text-foreground mt-2">
+            {alignment.alignment_summary || "No message-alignment summary captured."}
+          </div>
+        </div>
+
+        <div className="border border-border rounded-xl p-3 bg-muted/10">
+          <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
             Top Hypotheses
           </div>
           {topHypotheses.length === 0 ? (
@@ -179,6 +224,43 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
               {openQuestions.map((item: string, index: number) => (
                 <div key={`${item}-${index}`} className="font-sans text-[12px] text-foreground">
                   {item}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border border-border rounded-xl p-3 bg-muted/10">
+          <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
+            Outside Voice Signals
+          </div>
+          {outsideSignals.length === 0 ? (
+            <div className="font-sans text-[12px] text-muted-foreground mt-1">
+              No explicit employee, customer, or market signals captured.
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {outsideSignals.map((item, index) => (
+                <div key={`${item.url ?? "signal"}-${index}`} className="rounded-lg border border-border bg-white p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <MetaBadge>{item.perspective || "outside voice"}</MetaBadge>
+                    <MetaBadge>{item.sentiment || "unknown sentiment"}</MetaBadge>
+                    <MetaBadge>{item.alignment || "unknown alignment"}</MetaBadge>
+                    <ScoreChip label="Conf" value={item.confidence} />
+                  </div>
+                  <div className="mt-2 font-sans text-[12px] text-foreground">
+                    {item.signal || "No outside-voice summary captured."}
+                  </div>
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline mt-2 inline-block break-all"
+                    >
+                      {item.url}
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
