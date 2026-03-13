@@ -352,6 +352,51 @@ async function runPositioningReview(opts: {
   });
 }
 
+async function runEvidenceReview(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  journeys: unknown;
+  opportunities: unknown;
+  routes: unknown;
+  positioning: unknown;
+  strategy: unknown;
+}) {
+  const userText =
+    `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
+    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
+    `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
+    `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
+    `Strategy:\n${JSON.stringify(opts.strategy)}\n\n` +
+    `Review the draft bundle for evidence grounding and overclaiming.`;
+
+  const systemText =
+    `You are a strict evidence reviewer.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Your job is to review, not rewrite.\n` +
+    `Check for:\n` +
+    `- claims that go beyond the baseline evidence ledger or open questions\n` +
+    `- invented specifics such as channels, buyer types, operating details, or differentiators not supported by evidence\n` +
+    `- excessive certainty where baseline evidence is thin\n` +
+    `- downstream artifacts that should say unknown, developing, or uncertain instead of asserting facts\n` +
+    `Use severity=high only when the draft materially overclaims or presents unsupported specifics as fact.\n`;
+
+  return await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_evidence_review_v1",
+    schema: reviewSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1400,
+    temperature: 0.1,
+  });
+}
+
 function frameworkKeysFor(artifact: "inputs" | "journeys" | "opportunities" | "routes") {
   return getFrameworkRoutingPlan(artifact).map((framework) => framework.key);
 }
@@ -1412,9 +1457,23 @@ Deno.serve(async (req) => {
       routes,
     });
 
+    const evidenceReview = await runEvidenceReview({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      journeys,
+      opportunities,
+      routes,
+      positioning: positioningCanvasResult,
+      strategy: strategyCascadeResult,
+    });
+
     const reviewResults = [
       { key: "consistency", review: consistencyReview },
       { key: "positioning", review: positioningReview },
+      { key: "evidence", review: evidenceReview },
     ];
     const highSeverityReviews = reviewResults.filter(
       (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
