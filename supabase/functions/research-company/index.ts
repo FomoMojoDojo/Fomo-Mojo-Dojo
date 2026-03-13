@@ -493,7 +493,8 @@ async function runStrategyReview(opts: {
     `- capabilities and management systems being concrete rather than generic department labels\n` +
     `- assumptions reflecting real uncertainty rather than fake precision\n` +
     `- strategy language staying aligned with the baseline and generated opportunity/route context\n` +
-    `Use severity=high only when the strategy is materially contradictory, generic to the point of being unusable, or falsely precise beyond the evidence.\n`;
+    `Use severity=high only when the strategy is materially contradictory, switches company/market context, or presents unsupported specifics as established fact.\n` +
+    `If the strategy is directionally coherent but still missing stronger capability detail, management-system detail, or better-framed assumptions, use severity=medium instead of high.\n`;
 
   return await callOpenAIJSON({
     apiKey: opts.apiKey,
@@ -1255,7 +1256,7 @@ async function runFinalizer(opts: {
     schema: repairBundleSchema,
     systemText,
     userText,
-    maxOutputTokens: 4200,
+    maxOutputTokens: 2800,
     temperature: 0.15,
   });
 }
@@ -1943,7 +1944,7 @@ Deno.serve(async (req) => {
       (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
     );
 
-    if (actionableReviews.length > 0) {
+    if (highSeverityReviews.length > 0) {
       const repairedBundle = await runFinalizer({
         apiKey: openaiKey,
         model: openaiModel,
@@ -2023,6 +2024,11 @@ Deno.serve(async (req) => {
         { key: "evidence", review: evidenceReview },
         { key: "strategy", review: strategyReview },
       ];
+      actionableReviews = reviewResults.filter(
+        (entry) =>
+          String(entry.review?.severity || "low").toLowerCase() !== "low" ||
+          entry.review?.pass === false,
+      );
       highSeverityReviews = reviewResults.filter(
         (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
       );

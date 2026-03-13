@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { FunctionsHttpError } from "@supabase/supabase-js";
@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Sparkles,
   FileX,
+  X,
 } from "lucide-react";
 
 const c = {
@@ -44,7 +45,20 @@ function sanitizeWebsite(url?: string) {
 
 async function describeResearchInvokeError(error: unknown) {
   if (error instanceof FunctionsHttpError) {
-    const payload = await error.context.json().catch(() => null) as {
+    const payloadText = await error.context.text().catch(() => "");
+    const payload = (() => {
+      if (!payloadText) return null;
+      try {
+        return JSON.parse(payloadText) as {
+          error?: string;
+          status?: string;
+          reason?: string;
+          reviews?: Array<{ key?: string; review?: { severity?: string; summary?: string } }>;
+        };
+      } catch {
+        return null;
+      }
+    })() as {
       error?: string;
       status?: string;
       reason?: string;
@@ -84,7 +98,7 @@ async function describeResearchInvokeError(error: unknown) {
 
     return {
       title: "Research Failed",
-      description: String(payload?.error || error.message),
+      description: String(payload?.error || payloadText || error.message),
     };
   }
 
@@ -109,6 +123,64 @@ export default function AdminCompanies() {
   const [researchingId, setResearchingId] = useState<string | null>(null);
   const [baselineId, setBaselineId] = useState<string | null>(null);
   const [comboId, setComboId] = useState<string | null>(null);
+  const [recentErrors, setRecentErrors] = useState<Array<{
+    id: string;
+    title: string;
+    description: string;
+    createdAt: string;
+  }>>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const saved = window.sessionStorage.getItem("admin-companies-recent-errors");
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved) as Array<{
+        id: string;
+        title: string;
+        description: string;
+        createdAt: string;
+      }>;
+      if (Array.isArray(parsed)) {
+        setRecentErrors(parsed.slice(0, 8));
+      }
+    } catch {
+      window.sessionStorage.removeItem("admin-companies-recent-errors");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (recentErrors.length === 0) {
+      window.sessionStorage.removeItem("admin-companies-recent-errors");
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      "admin-companies-recent-errors",
+      JSON.stringify(recentErrors),
+    );
+  }, [recentErrors]);
+
+  const showPersistentError = (title: string, description: string) => {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      description,
+      createdAt: new Date().toLocaleString(),
+    };
+
+    setRecentErrors((current) => [entry, ...current].slice(0, 8));
+    toast({
+      title,
+      description,
+      variant: "destructive",
+      duration: 86400000,
+    });
+  };
 
   const handleCreate = async (useAI: boolean) => {
     if (!name.trim() || !user) return;
@@ -127,11 +199,7 @@ export default function AdminCompanies() {
       .single();
 
     if (error) {
-      toast({
-        title: "Create Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      showPersistentError("Create Failed", error.message);
       setCreating(false);
       return;
     }
@@ -179,11 +247,7 @@ export default function AdminCompanies() {
 
     if (error) {
       const details = await describeResearchInvokeError(error);
-      toast({
-        title: details.title,
-        description: details.description,
-        variant: "destructive",
-      });
+      showPersistentError(details.title, details.description);
     } else {
       toast({
         title: "Research Complete",
@@ -199,11 +263,7 @@ export default function AdminCompanies() {
     companyWebsite: string
   ) => {
     if (!companyWebsite.trim()) {
-      toast({
-        title: "Website Required",
-        description: `Add a website for ${companyName} before running the public baseline.`,
-        variant: "destructive",
-      });
+      showPersistentError("Website Required", `Add a website for ${companyName} before running the public baseline.`);
       return false;
     }
 
@@ -224,11 +284,7 @@ export default function AdminCompanies() {
     setBaselineId(null);
 
     if (error) {
-      toast({
-        title: "Web Baseline Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      showPersistentError("Web Baseline Failed", error.message);
       return false;
     } else {
       toast({
@@ -274,11 +330,7 @@ export default function AdminCompanies() {
 
       if (error) {
         const details = await describeResearchInvokeError(error);
-        toast({
-          title: details.title,
-          description: details.description,
-          variant: "destructive",
-        });
+        showPersistentError(details.title, details.description);
         setComboId(null);
         return;
       }
@@ -291,11 +343,7 @@ export default function AdminCompanies() {
         description: `Mojo Map data + scores updated for ${companyName}`,
       });
     } catch (e: unknown) {
-      toast({
-        title: "Baseline + Research Failed",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
+      showPersistentError("Baseline + Research Failed", e instanceof Error ? e.message : String(e));
     } finally {
       setComboId(null);
       setResearchingId(null);
@@ -308,11 +356,7 @@ export default function AdminCompanies() {
 
     const { error } = await supabase.from("companies").delete().eq("id", id);
     if (error) {
-      toast({
-        title: "Delete Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      showPersistentError("Delete Failed", error.message);
       return;
     }
     await refetch();
@@ -378,6 +422,69 @@ export default function AdminCompanies() {
 
       {/* Body */}
       <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+        {recentErrors.length > 0 ? (
+          <section
+            className="rounded-[24px] border px-5 py-4"
+            style={{ borderColor: "#E7C3A4", background: "#FFF7F0" }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
+                  Recent Errors
+                </h2>
+                <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+                  Destructive errors stay here so you can review them even after closing the toast.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecentErrors([])}
+                className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border"
+                style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {recentErrors.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-2xl border px-4 py-3"
+                  style={{ borderColor: "#E7C3A4", background: "#FFFFFF" }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
+                        {entry.title}
+                      </p>
+                      <p className="mt-1 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                        {entry.description}
+                      </p>
+                    </div>
+                    <div className="shrink-0 flex items-start gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                        {entry.createdAt}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRecentErrors((current) => current.filter((item) => item.id !== entry.id))
+                        }
+                        className="rounded-full border p-1 transition-colors"
+                        style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                        aria-label={`Dismiss ${entry.title}`}
+                        title="Dismiss error"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
         <AiBoundaryNote
           label="Public Research"
           tone="public"
