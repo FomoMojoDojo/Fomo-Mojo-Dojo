@@ -675,6 +675,25 @@ Deno.serve(async (req) => {
 
     if (baselineErr) console.log("[research-company] baseline fetch error:", baselineErr.message);
 
+    const baselineStatus = String((baselineRun?.result_json as { status?: string } | null)?.status || "ok");
+    const baselineReason = String((baselineRun?.result_json as { reason?: string } | null)?.reason || "");
+
+    if (baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence") {
+      console.log("[research-company] blocked by baseline status", {
+        company_id,
+        baseline_run_id: baselineRun?.id ?? null,
+        baselineStatus,
+        baselineReason,
+      });
+
+      return jsonResponse({
+        error: "Public baseline is not strong enough to generate company research",
+        status: baselineStatus,
+        reason: baselineReason || "Latest public baseline does not have enough trustworthy evidence.",
+        baseline_run_id: baselineRun?.id ?? null,
+      }, 422);
+    }
+
     // -------------------------
     // 1) Generate INPUTS (14) — schema does NOT include group fields
     // -------------------------

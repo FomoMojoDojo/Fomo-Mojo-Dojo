@@ -55,6 +55,11 @@ export default function RouteCard({
   frameworks: string[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const categoryLabel = String(route.category || "improve");
+  const typeLabel = String(route.type || "");
+  const showTypeBadge =
+    typeLabel.trim().length > 0 &&
+    typeLabel.trim().toLowerCase() !== categoryLabel.trim().toLowerCase();
 
   const completedSteps = useMemo(
     () => steps.filter((step) => step.status === "complete").length,
@@ -76,10 +81,10 @@ export default function RouteCard({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <TierBadge tone={toneForCategory(String(route.category || "improve")) as "focus" | "monitor" | "defer"}>
-                {String(route.category || "improve")}
+              <TierBadge tone={toneForCategory(categoryLabel) as "focus" | "monitor" | "defer"}>
+                {categoryLabel}
               </TierBadge>
-              {route.type ? <MetaBadge>{route.type}</MetaBadge> : null}
+              {showTypeBadge ? <MetaBadge>{typeLabel}</MetaBadge> : null}
               {typeof route.sort_order === "number" ? <MetaBadge>#{route.sort_order}</MetaBadge> : null}
             </div>
 
