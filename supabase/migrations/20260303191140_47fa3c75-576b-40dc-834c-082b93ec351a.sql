@@ -1,0 +1,1 @@
+ALTER TABLE public.input_files ADD COLUMN tags text[] NOT NULL DEFAULT '{}'::text[];

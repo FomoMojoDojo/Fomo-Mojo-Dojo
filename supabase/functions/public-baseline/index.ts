@@ -1,0 +1,781 @@
+// supabase/functions/public-baseline/index.ts
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function extractTextBasic(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(p|div|br|li|h1|h2|h3|h4|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal, redirect: "follow" });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function getDomain(rawUrl: string): string {
+  try {
+    return new URL(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`)
+      .hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function domainStem(domain: string): string {
+  const d = (domain || "").replace(/^www\./, "");
+  return d.split(".")[0] || "";
+}
+
+function normalizeText(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function tokenSet(s: string): Set<string> {
+  return new Set(
+    normalizeText(s)
+      .split(" ")
+      .filter((t) => t.length >= 3),
+  );
+}
+
+function splitCamelCase(name: string): string {
+  return (name || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildNameVariants(companyName: string, website: string): string[] {
+  const d = getDomain(website);
+  const stem = domainStem(d);
+
+  const v1 = (companyName || "").trim();
+  const v2 = splitCamelCase(v1);
+  const v3 = stem ? stem : "";
+  const v4 = stem ? splitCamelCase(stem) : "";
+
+  const variants = [v1, v2, v3, v4]
+    .map((x) => (x || "").trim())
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of variants) {
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
+}
+
+const GENERIC_TOKENS = new Set([
+  "inc",
+  "llc",
+  "ltd",
+  "co",
+  "company",
+  "corp",
+  "corporation",
+  "group",
+  "labs",
+  "lab",
+  "systems",
+  "system",
+  "platform",
+  "solutions",
+  "solution",
+  "services",
+  "service",
+  "technologies",
+  "technology",
+  "the",
+  "and",
+  "for",
+]);
+
+/**
+ * Soft-match scoring:
+ * - We keep ALL search results, but assign match_score + match_reason.
+ * - We then pick evidence candidates from best matches.
+ */
+function scoreCompanyMatch(args: {
+  companyName: string;
+  website: string;
+  url: string;
+  title?: string;
+  snippet?: string;
+}) {
+  const { companyName, website, url, title = "", snippet = "" } = args;
+
+  const domain = getDomain(website);
+  const stem = domainStem(domain);
+  const u = (url || "").toLowerCase();
+  const hay = normalizeText(`${title} ${snippet}`);
+
+  const reasons: string[] = [];
+  let score = 0;
+
+  // 1) Domain match is strongest
+  if (domain && u.includes(domain)) {
+    score += 90;
+    reasons.push("domain_match");
+  }
+
+  // 2) Domain stem match (fomomojodojo)
+  if (stem && (u.includes(stem) || hay.includes(stem))) {
+    score += 20;
+    reasons.push("domain_stem");
+  }
+
+  // 3) Company name token overlap
+  const variants = buildNameVariants(companyName, website);
+  const nameTokens = new Set<string>();
+  for (const v of variants) for (const t of tokenSet(v)) nameTokens.add(t);
+  for (const g of GENERIC_TOKENS) nameTokens.delete(g);
+
+  let hits = 0;
+  let longHit = false;
+  for (const t of nameTokens) {
+    if (hay.includes(t)) {
+      hits++;
+      if (t.length >= 5) longHit = true;
+    }
+  }
+
+  if (hits >= 3) {
+    score += 40;
+    reasons.push("name_tokens_strong");
+  } else if (hits === 2) {
+    score += 25;
+    reasons.push("name_tokens_medium");
+  } else if (hits === 1) {
+    score += 10;
+    reasons.push("name_tokens_weak");
+  }
+
+  // Slight confidence bump if we hit at least one longer token
+  if (longHit) {
+    score += 5;
+    reasons.push("rare_token");
+  }
+
+  if (nameTokens.size === 0) reasons.push("no_name_tokens");
+
+  score = Math.min(100, score);
+  return { score, reasons, variants, domain, stem };
+}
+
+async function searxSearch(searxUrl: string, query: string, count: number) {
+  console.log("[baseline] starting search", { searxUrl, query, count });
+
+  const u = new URL("/search", searxUrl);
+  u.searchParams.set("q", query);
+  u.searchParams.set("format", "json");
+  u.searchParams.set("language", "en");
+  u.searchParams.set("safesearch", "0");
+
+  const resp = await fetchWithTimeout(u.toString(), 20_000);
+  if (!resp.ok) throw new Error(`SearxNG error ${resp.status}`);
+
+  const data = await resp.json();
+  const results = Array.isArray(data?.results) ? data.results : [];
+
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const r of results) {
+    const url = r?.url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push({
+      url,
+      title: r?.title ?? "",
+      snippet: r?.content ?? "",
+      engine: r?.engine ?? "",
+    });
+    if (out.length >= count) break;
+  }
+
+  console.log("[baseline] search results", {
+    rawCount: results.length,
+    outCount: out.length,
+    first: out[0]?.url ?? null,
+  });
+
+  return out;
+}
+
+async function fetchAndExtract(url: string) {
+  try {
+    const resp = await fetchWithTimeout(url, 20_000);
+    const ct = resp.headers.get("content-type") || "";
+    if (!resp.ok) return { url, ok: false, status: resp.status, text: "" };
+
+    if (ct.includes("application/pdf")) return { url, ok: false, status: 415, text: "" };
+
+    const html = await resp.text();
+    const text = extractTextBasic(html);
+    const capped = text.slice(0, 12_000);
+    return { url, ok: true, status: 200, text: capped };
+  } catch {
+    return { url, ok: false, status: 0, text: "" };
+  }
+}
+
+function extractResponsesOutputText(data: any): string | null {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
+
+  const msg = Array.isArray(data?.output)
+    ? data.output.find((o: any) => o?.type === "message" && Array.isArray(o?.content))
+    : null;
+
+  const outText =
+    msg?.content?.find((c: any) => c?.type === "output_text" && typeof c?.text === "string")?.text ?? null;
+
+  if (typeof outText === "string" && outText.trim()) return outText;
+  return null;
+}
+
+async function callOpenAI(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  companyUrl: string;
+  evidence: { url: string; title: string; snippet: string; extracted: string }[];
+}) {
+  const { apiKey, model, companyName, companyUrl, evidence } = opts;
+
+  console.log("[baseline] calling openai", { model, evidenceCount: evidence.length });
+
+  const format = {
+    type: "json_schema",
+    name: "public_baseline",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        category_archetype: { type: "string" },
+        lens_card: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            primary_buyer: { type: "string" },
+            chooser: { type: "string" },
+            user: { type: "string" },
+            switching_costs: { type: "string" },
+            adoption_constraints: { type: "string" },
+            value_chain: { type: "string" },
+            risk_surface: { type: "string" },
+            economic_engine: { type: "string" },
+          },
+          required: [
+            "primary_buyer",
+            "chooser",
+            "user",
+            "switching_costs",
+            "adoption_constraints",
+            "value_chain",
+            "risk_surface",
+            "economic_engine",
+          ],
+        },
+        evidence_ledger: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              url: { type: "string" },
+              source_type: { type: "string" },
+              date: { type: "string" },
+              snippet: { type: "string" },
+              bucket: { type: "string" },
+              signal_strength: { type: "string" },
+              confidence: { type: "integer" },
+            },
+            required: ["url", "source_type", "date", "snippet", "bucket", "signal_strength", "confidence"],
+          },
+        },
+        top_hypotheses: { type: "array", items: { type: "string" } },
+        open_questions: { type: "array", items: { type: "string" } },
+      },
+      required: ["category_archetype", "lens_card", "evidence_ledger", "top_hypotheses", "open_questions"],
+    },
+  };
+
+  const body = {
+    model,
+    input: [
+      {
+        role: "system",
+        content: [
+          {
+            type: "input_text",
+            text:
+              "You are an outside-in strategy analyst. Use ONLY the evidence provided. " +
+              "Do not assume private info. If uncertain, say unknown. " +
+              "If evidence appears to describe a different company, note it as ambiguous in open_questions.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text:
+              `Company: ${companyName}\nWebsite: ${companyUrl}\n\n` +
+              `TASK: Build a public baseline from provided evidence.\n` +
+              `- Infer category archetype\n- Produce a lens card\n- Build an evidence ledger tied to buckets/signals\n- Provide top hypotheses + open questions\n\n` +
+              `Use only evidence. If unknown, say unknown.\n`,
+          },
+          { type: "input_text", text: JSON.stringify({ evidence }) },
+        ],
+      },
+    ],
+    text: { format },
+  };
+
+  const resp = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`OpenAI error ${resp.status}: ${errText}`);
+  }
+
+  const data = await resp.json();
+  const text = extractResponsesOutputText(data);
+  if (!text) throw new Error("OpenAI response missing output_text");
+
+  return JSON.parse(text);
+}
+
+function buildInsufficientResult(args: {
+  companyName: string;
+  website: string;
+  domain: string;
+  variants: string[];
+  reason: string;
+  debug: Record<string, any>;
+}) {
+  const { companyName, website, domain, variants, reason, debug } = args;
+
+  return {
+    status: "insufficient_public_evidence",
+    reason,
+    company: { name: companyName, website, domain, variants },
+    debug,
+    category_archetype: "unknown",
+    lens_card: {
+      primary_buyer: "unknown",
+      chooser: "unknown",
+      user: "unknown",
+      switching_costs: "unknown",
+      adoption_constraints: "unknown",
+      value_chain: "unknown",
+      risk_surface: "unknown",
+      economic_engine: "unknown",
+    },
+    evidence_ledger: [],
+    top_hypotheses: [],
+    open_questions: [
+      "Not enough public sources to establish a baseline. Add more sources (press, docs, profiles) or upload internal docs.",
+    ],
+  };
+}
+
+function buildAmbiguousResult(args: {
+  companyName: string;
+  website: string;
+  domain: string;
+  variants: string[];
+  reason: string;
+  debug: Record<string, any>;
+  closest_sources: any[];
+}) {
+  const { companyName, website, domain, variants, reason, debug, closest_sources } = args;
+
+  return {
+    status: "ambiguous_public_evidence",
+    reason,
+    company: { name: companyName, website, domain, variants },
+    debug,
+    closest_sources,
+    category_archetype: "unknown",
+    lens_card: {
+      primary_buyer: "unknown",
+      chooser: "unknown",
+      user: "unknown",
+      switching_costs: "unknown",
+      adoption_constraints: "unknown",
+      value_chain: "unknown",
+      risk_surface: "unknown",
+      economic_engine: "unknown",
+    },
+    evidence_ledger: [],
+    top_hypotheses: [],
+    open_questions: [
+      "Search results look like they may refer to a different company. Review closest_sources and adjust name/domain if needed.",
+      "If this company has a small footprint, add a LinkedIn page, press mention, or upload internal docs for baseline.",
+    ],
+  };
+}
+
+Deno.serve(async (req) => {
+  console.log(`[baseline] HIT method=${req.method} url=${req.url}`);
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+
+    const searxUrl = Deno.env.get("SEARXNG_URL") || "http://host.docker.internal:8888";
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    const openaiModel = Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini";
+
+    console.log(
+      `[baseline] env supabaseUrl=${!!supabaseUrl} serviceRole=${!!serviceRoleKey} anonKey=${!!anonKey} searxUrl=${searxUrl} openaiKey=${!!openaiKey} model=${openaiModel}`,
+    );
+
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) return json({ error: "Missing Supabase env vars" }, 500);
+    if (!openaiKey) return json({ error: "Missing OPENAI_API_KEY" }, 500);
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "No auth header" }, 401);
+
+    const anonClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: userRes, error: authError } = await anonClient.auth.getUser();
+    if (authError || !userRes?.user) return json({ error: "Unauthorized" }, 401);
+
+    const body = await req.json().catch(() => ({}));
+    const company_id = body?.company_id;
+    const company_name = body?.company_name;
+    const website = body?.website ?? "";
+
+    if (!company_id || !company_name || !website) {
+      return json({ error: "company_id, company_name, website required" }, 400);
+    }
+
+    const domain = getDomain(website);
+    const stem = domainStem(domain);
+    const variants = buildNameVariants(company_name, website);
+    const spaced = splitCamelCase(company_name);
+    const quoted = `"${company_name}"`;
+
+    // Search passes (general-purpose + works for many companies)
+    const queryA =
+      `${quoted} (site:${domain} OR "${domain}" OR "${stem}") ` +
+      `("about" OR "company" OR "press" OR "investor" OR "careers")`;
+
+    const queryB =
+      `"${spaced}" "${domain}" (company OR product OR services OR platform) ` +
+      `(competitors OR pricing OR reviews OR news OR investors)`;
+
+    const queryC =
+      `${domain} ${variants.join(" OR ")} (about OR company OR pricing OR reviews OR news)`;
+
+    const mergeUnique = (a: any[], b: any[]) => {
+      const seen = new Set<string>();
+      const out: any[] = [];
+      for (const r of [...a, ...b]) {
+        if (!r?.url || seen.has(r.url)) continue;
+        seen.add(r.url);
+        out.push(r);
+      }
+      return out;
+    };
+
+    const sourcesA = await searxSearch(searxUrl, queryA, 20);
+    const sourcesB = await searxSearch(searxUrl, queryB, 20);
+    const sourcesC = await searxSearch(searxUrl, queryC, 20);
+
+    const rawSources = mergeUnique(mergeUnique(sourcesA, sourcesB), sourcesC);
+
+    // Annotate ALL sources with soft match scores (keep even if wrong — useful for review)
+    const annotated = rawSources
+      .map((r: any) => {
+        const m = scoreCompanyMatch({
+          companyName: company_name,
+          website,
+          url: r?.url,
+          title: r?.title,
+          snippet: r?.snippet,
+        });
+        return { ...r, match_score: m.score, match_reason: m.reasons };
+      })
+      .sort((a: any, b: any) => (b.match_score ?? 0) - (a.match_score ?? 0));
+
+    const strong = annotated.filter((x: any) => (x.match_score ?? 0) >= 80);
+    const medium = annotated.filter((x: any) => (x.match_score ?? 0) >= 50 && (x.match_score ?? 0) < 80);
+
+    // Candidates: best matches first. If nothing strong, we still keep a few “closest” for an ambiguous run.
+    const candidates =
+      strong.length ? strong.slice(0, 12) :
+      medium.length ? medium.slice(0, 10) :
+      annotated.slice(0, 6);
+
+    // Always attempt direct website fetch (helps tiny footprints)
+    const directUrl = website.startsWith("http") ? website : `https://${website}`;
+    const direct = await fetchAndExtract(directUrl);
+    const directEvidence =
+      direct.ok && direct.text && direct.text.length > 500
+        ? [{ url: directUrl, title: company_name, snippet: "Direct website fetch", extracted: direct.text }]
+        : [];
+
+    console.log("[baseline] source scoring", {
+      domain,
+      variants,
+      rawCount: rawSources.length,
+      annotatedCount: annotated.length,
+      top1: annotated[0]?.url ?? null,
+      top1Score: annotated[0]?.match_score ?? null,
+      strong: strong.length,
+      medium: medium.length,
+      candidates: candidates.length,
+      directOk: direct.ok,
+      directLen: direct.text?.length ?? 0,
+    });
+
+    // If nothing at all and no direct evidence -> insufficient (200, not 500)
+    if (annotated.length === 0 && directEvidence.length === 0) {
+      const resultJson = buildInsufficientResult({
+        companyName: company_name,
+        website,
+        domain,
+        variants,
+        reason: "No public sources returned by search; direct website fetch also failed or too thin.",
+        debug: { queryA, queryB, queryC, rawA: sourcesA.length, rawB: sourcesB.length, rawC: sourcesC.length, directOk: direct.ok },
+      });
+
+      const { data: inserted, error: insErr } = await supabase
+        .from("public_baseline_runs")
+        .insert({
+          company_id,
+          company_name,
+          website,
+          sources_json: { note: "no-results", queryA, queryB, queryC, raw_sources: rawSources },
+          result_json: resultJson,
+        })
+        .select("id")
+        .single();
+
+      if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+
+      return json({
+        message: "Public baseline: insufficient public evidence",
+        status: "insufficient_public_evidence",
+        run_id: inserted?.id,
+      });
+    }
+
+    // If there are results but none match well (and no direct site), record ambiguous (200) and include closest sources
+    if (strong.length === 0 && medium.length === 0 && directEvidence.length === 0) {
+      const closest = annotated.slice(0, 10).map((x: any) => ({
+        url: x.url,
+        title: x.title,
+        snippet: x.snippet,
+        engine: x.engine,
+        match_score: x.match_score,
+        match_reason: x.match_reason,
+      }));
+
+      const resultJson = buildAmbiguousResult({
+        companyName: company_name,
+        website,
+        domain,
+        variants,
+        reason: "Search results did not strongly match provided company/domain.",
+        debug: { queryA, queryB, queryC, rawCount: rawSources.length, strong: strong.length, medium: medium.length },
+        closest_sources: closest,
+      });
+
+      const { data: inserted, error: insErr } = await supabase
+        .from("public_baseline_runs")
+        .insert({
+          company_id,
+          company_name,
+          website,
+          sources_json: { note: "ambiguous", queryA, queryB, queryC, annotated_top: closest },
+          result_json: resultJson,
+        })
+        .select("id")
+        .single();
+
+      if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+
+      return json({
+        message: "Public baseline: ambiguous evidence (possible different company)",
+        status: "ambiguous_public_evidence",
+        run_id: inserted?.id,
+      });
+    }
+
+    // Fetch & extract only candidates (faster + avoids trash)
+    const extracted: any[] = [];
+    for (const s of candidates) {
+      const got = await fetchAndExtract(s.url);
+      extracted.push({
+        url: s.url,
+        title: s.title,
+        snippet: s.snippet,
+        engine: s.engine,
+        match_score: s.match_score,
+        match_reason: s.match_reason,
+        extracted: got.ok ? got.text : "",
+        ok: got.ok,
+      });
+    }
+
+    const evidenceFromSearch = extracted
+      .filter((e) => e.ok && e.extracted && e.extracted.length > 500)
+      .slice(0, 12)
+      .map((e) => ({
+        url: e.url,
+        title: e.title,
+        snippet: e.snippet,
+        extracted: e.extracted,
+      }));
+
+    // Combine (direct first so it’s always included)
+    const evidence = [...directEvidence, ...evidenceFromSearch].slice(0, 12);
+
+    console.log("[baseline] evidence ready", {
+      evidenceCount: evidence.length,
+      fromDirect: directEvidence.length,
+      fromSearchOk: evidenceFromSearch.length,
+      candidateCount: candidates.length,
+    });
+
+    // If evidence is too thin, record insufficient (200) and include top sources for debugging
+    if (evidence.length < 2) {
+      const closest = annotated.slice(0, 10).map((x: any) => ({
+        url: x.url,
+        title: x.title,
+        snippet: x.snippet,
+        engine: x.engine,
+        match_score: x.match_score,
+        match_reason: x.match_reason,
+      }));
+
+      const resultJson = buildInsufficientResult({
+        companyName: company_name,
+        website,
+        domain,
+        variants,
+        reason: "Not enough extractable evidence (need at least 2 sources with meaningful text).",
+        debug: {
+          filteredStrong: strong.length,
+          filteredMedium: medium.length,
+          candidates: candidates.length,
+          extractedOk: evidenceFromSearch.length,
+          directIncluded: directEvidence.length,
+          closest_sources: closest,
+        },
+      });
+
+      const { data: inserted, error: insErr } = await supabase
+        .from("public_baseline_runs")
+        .insert({
+          company_id,
+          company_name,
+          website,
+          sources_json: {
+            note: "thin-evidence",
+            queryA,
+            queryB,
+            queryC,
+            annotated_top: closest,
+            extracted_meta: extracted.map((x) => ({ url: x.url, ok: x.ok, len: (x.extracted || "").length, match_score: x.match_score })),
+          },
+          result_json: resultJson,
+        })
+        .select("id")
+        .single();
+
+      if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+
+      return json({
+        message: "Public baseline: insufficient public evidence",
+        status: "insufficient_public_evidence",
+        run_id: inserted?.id,
+      });
+    }
+
+    // Normal: OpenAI baseline
+    const result = await callOpenAI({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      companyUrl: website,
+      evidence,
+    });
+
+    const { data: inserted, error: insErr } = await supabase
+      .from("public_baseline_runs")
+      .insert({
+        company_id,
+        company_name,
+        website,
+        // Save full annotated sources for later review (includes “wrong company” candidates like CiboGlobal)
+        sources_json: { queries: { queryA, queryB, queryC }, annotated_sources: annotated.slice(0, 60) },
+        result_json: result,
+      })
+      .select("id")
+      .single();
+
+    if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+
+    console.log("[baseline] DONE", { run_id: inserted?.id, sources: annotated.length });
+
+    return json({
+      message: "Public baseline complete",
+      status: "ok",
+      run_id: inserted?.id,
+      sources: annotated.length,
+      strong_matches: strong.length,
+      medium_matches: medium.length,
+    });
+  } catch (err) {
+    console.error("[baseline] error:", err);
+    return json({ error: String((err as any)?.message || err) }, 500);
+  }
+});

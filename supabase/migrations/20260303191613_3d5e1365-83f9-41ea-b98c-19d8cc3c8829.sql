@@ -1,0 +1,1 @@
+CREATE POLICY "Users can update own files" ON public.input_files FOR UPDATE USING (EXISTS (SELECT 1 FROM inputs WHERE inputs.id = input_files.input_id AND inputs.user_id = auth.uid()));

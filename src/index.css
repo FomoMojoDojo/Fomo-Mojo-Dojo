@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --cream:      45 39% 93%;
+    --cream-mid:  40 38% 88%;
+    --cream-dark: 41 29% 82%;
+    --ink:        40 27% 9%;
+    --ink-2:      38 25% 15%;
+    --ink-sub:    40 33% 5%;
+
+    /* Text — light surfaces */
+    --text-primary:   40 27% 9%;
+    --text-secondary: 37 28% 18%;
+    --text-tertiary:  40 23% 28%;
+    --text-muted:     40 25% 44%;
+    --text-faint:     40 28% 61%;
+
+    /* Text — dark surfaces */
+    --text-dp: 43 42% 91%;
+    --text-ds: 40 35% 67%;
+    --text-dt: 40 27% 38%;
+    --text-dm: 40 29% 22%;
+
+    /* Accent */
+    --gold:        47 84% 66%;
+    --gold-light:  47 87% 73%;
+    --gold-dark:   41 85% 42%;
+    --rust:        26 51% 50%;
+    --forest:      108 32% 36%;
+    --forest-mid:  111 34% 28%;
+    --slate:       207 32% 33%;
+    --amber:       33 81% 44%;
+    --danger:      7 62% 42%;
+
+    /* Shadcn mappings */
+    --background: 45 39% 93%;
+    --foreground: 40 27% 9%;
+    --card: 40 38% 88%;
+    --card-foreground: 40 27% 9%;
+    --popover: 40 38% 88%;
+    --popover-foreground: 40 27% 9%;
+    --primary: 47 84% 66%;
+    --primary-foreground: 40 27% 9%;
+    --secondary: 40 38% 88%;
+    --secondary-foreground: 40 27% 9%;
+    --muted: 41 29% 82%;
+    --muted-foreground: 40 25% 44%;
+    --accent: 47 84% 66%;
+    --accent-foreground: 40 27% 9%;
+    --destructive: 7 62% 42%;
+    --destructive-foreground: 45 39% 93%;
+    --border: 41 29% 82%;
+    --input: 41 29% 82%;
+    --ring: 47 84% 66%;
+    --radius: 0.75rem;
+
+    --sidebar-background: 40 27% 9%;
+    --sidebar-foreground: 45 39% 93%;
+    --sidebar-primary: 47 84% 66%;
+    --sidebar-primary-foreground: 40 27% 9%;
+    --sidebar-accent: 38 25% 15%;
+    --sidebar-accent-foreground: 45 39% 93%;
+    --sidebar-border: 38 25% 15%;
+    --sidebar-ring: 47 84% 66%;
+
+    /* Typography */
+    --font-serif: 'Literata', Georgia, serif;
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'DM Mono', 'Fira Mono', 'Courier New', monospace;
+  }
+
+  .dark {
+    --background: 40 27% 9%;
+    --foreground: 45 39% 93%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom scrollbar for dark panels */
+.dark-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.dark-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--ink-2));
+  border-radius: 2px;
+}
+
+/* Score bar fill animation */
+@keyframes score-fill {
+  from { width: 0; }
+}
+
+/* Stagger fade-in */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}

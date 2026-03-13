@@ -1,0 +1,2 @@
+UPDATE inputs SET completeness = 0, status = 'not_started' WHERE company_id = 'c1f34e51-fe7c-44b6-b0c4-7b4e95c9785e';
+UPDATE input_subitems SET done = false WHERE input_id IN (SELECT id FROM inputs WHERE company_id = 'c1f34e51-fe7c-44b6-b0c4-7b4e95c9785e');

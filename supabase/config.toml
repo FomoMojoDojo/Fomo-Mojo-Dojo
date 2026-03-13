@@ -1,0 +1,21 @@
+project_id = "dzlgyxcvuwiulgifbmew"
+
+[api]
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[functions.public-baseline]
+verify_jwt = false
+
+[functions.research-company]
+verify_jwt = false
+
+[functions.analyze-file]
+verify_jwt = false
+
+[functions.generate-deep-dive]
+verify_jwt = false
+
+[functions.seed-inputs]
+verify_jwt = false

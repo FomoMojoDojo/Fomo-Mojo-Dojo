@@ -1,0 +1,471 @@
+{
+  "mojoScoreSummary": {
+    "companyName": "Edgewood Center for Children & Families",
+    "strategyMapLabel": "Q1 2026 · Baseline + Messaging Update",
+    "lastUpdated": "2026-03-02",
+    "currentScore": 38.0,
+    "weeklyDelta": 4,
+    "potentialScore": 76.0,
+    "potentialConditionLabel": "if all inputs complete",
+    "inputsCompleteCount": 0,
+    "inputsTotalCount": 14,
+    "criticalGapsCount": 5
+  },
+  "readinessDimensions": [
+    {
+      "id": "foundation",
+      "label": "Foundation",
+      "percentComplete": 45,
+      "status": "in_progress",
+      "summary": "Positioning strengthened to 55% with formal mission/vision. Strategy gaps (17.5%) remain — competitive landscape is the critical missing piece."
+    },
+    {
+      "id": "execution",
+      "label": "Execution",
+      "percentComplete": 52,
+      "status": "in_progress",
+      "summary": "Brand narrative jumped to 85% with formal messaging. Channel strategy (45%) and referral tracking (20%) are the constraints."
+    },
+    {
+      "id": "evidence",
+      "label": "Evidence",
+      "percentComplete": 17,
+      "status": "missing",
+      "summary": "Fundraising infrastructure exists but donor retention (15%) and grant pipeline (5%) lack measurement."
+    }
+  ],
+  "routes": [
+    {
+      "id": "fix-01",
+      "title": "Map competitive landscape",
+      "category": "fix",
+      "shortDescription": "No competitive mapping exists. Understanding alternatives families consider unlocks positioning clarity and referral strategy. (Suggested — needs client verification)",
+      "mojoImpactPoints": 8.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "fix-01-s1", "title": "List direct nonprofit competitors in the Bay Area", "status": "not_started" },
+        { "id": "fix-01-s2", "title": "Map private practice alternatives for youth mental health", "status": "not_started" },
+        { "id": "fix-01-s3", "title": "Document county and state service pathways", "status": "not_started" },
+        { "id": "fix-01-s4", "title": "Conduct 5+ family decision-journey interviews", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-01-e1", "title": "Competitive alternatives matrix", "status": "missing" },
+        { "id": "fix-01-e2", "title": "Family decision-journey interview notes", "status": "missing" },
+        { "id": "fix-01-e3", "title": "Referral partner perception survey", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Highest-impact gap at 0% completeness.",
+        "Unlocks positioning clarity across all downstream areas.",
+        "Needs client verification before starting."
+      ]
+    },
+    {
+      "id": "fix-02",
+      "title": "Build referral conversion tracking",
+      "category": "fix",
+      "shortDescription": "Formstack intake forms capture data but referral-to-intake conversion rates are unknown. Tracking reveals growth levers. (Suggested — needs client verification)",
+      "mojoImpactPoints": 6.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution", "evidence"],
+      "steps": [
+        { "id": "fix-02-s1", "title": "List all current referral sources", "status": "not_started" },
+        { "id": "fix-02-s2", "title": "Analyze Formstack data for referral patterns", "status": "not_started" },
+        { "id": "fix-02-s3", "title": "Calculate referral-to-intake conversion rates by source", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-02-e1", "title": "Referral source inventory", "status": "missing" },
+        { "id": "fix-02-e2", "title": "Conversion rate analysis", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Referral pipeline is Edgewood's primary intake channel.",
+        "Infrastructure exists (Formstack forms) but data isn't being analyzed.",
+        "Needs client verification before starting."
+      ]
+    },
+    {
+      "id": "fix-03",
+      "title": "Differentiate value propositions by audience",
+      "category": "fix",
+      "shortDescription": "All four audience intake forms use similar copy. Each segment (families, teens, young adults, partners) needs distinct value statements. (Suggested — needs client verification)",
+      "mojoImpactPoints": 4.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "fix-03-s1", "title": "Draft family-specific value proposition", "status": "not_started" },
+        { "id": "fix-03-s2", "title": "Draft donor-specific value proposition", "status": "not_started" },
+        { "id": "fix-03-s3", "title": "Draft county/government value proposition", "status": "not_started" },
+        { "id": "fix-03-s4", "title": "Differentiate messaging across intake forms", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-03-e1", "title": "Audience-specific value statements", "status": "missing" },
+        { "id": "fix-03-e2", "title": "Updated intake form copy", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Current messaging is generic across segments.",
+        "Each audience cares about different outcomes.",
+        "Needs client verification before starting."
+      ]
+    },
+    {
+      "id": "fix-04",
+      "title": "Validate competitive differentiators",
+      "category": "fix",
+      "shortDescription": "Differentiators (history, scale, continuum) are well-articulated but not validated against competitors. Formal audit needed. (Suggested — needs client verification)",
+      "mojoImpactPoints": 3.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation", "evidence"],
+      "steps": [
+        { "id": "fix-04-s1", "title": "Audit differentiators against Bay Area competitors", "status": "not_started" },
+        { "id": "fix-04-s2", "title": "Validate with staff and families", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-04-e1", "title": "Competitive differentiator matrix", "status": "missing" },
+        { "id": "fix-04-e2", "title": "Staff and family validation notes", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Differentiators look strong but are unvalidated.",
+        "Needs competitive context to confirm uniqueness."
+      ]
+    },
+    {
+      "id": "fix-05",
+      "title": "Test category framing with audiences",
+      "category": "fix",
+      "shortDescription": "'Leading nonprofit mental healthcare provider' is consistent but untested. Does this framing maximize referrals and funding? (Suggested — needs client verification)",
+      "mojoImpactPoints": 2.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "fix-05-s1", "title": "Test category framing with key audiences", "status": "not_started" },
+        { "id": "fix-05-s2", "title": "Validate 'People. Place. Path.' resonance across segments", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-05-e1", "title": "Audience reaction notes", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Category is established and consistent.",
+        "Testing validates whether it maximizes outcomes."
+      ]
+    },
+    {
+      "id": "fix-06",
+      "title": "Document program logic models",
+      "category": "fix",
+      "shortDescription": "Programs are well-described on the website but formal logic models (inputs→activities→outputs→outcomes) are not visible. Essential for grant applications. (Suggested — needs client verification)",
+      "mojoImpactPoints": 3.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "fix-06-s1", "title": "Document logic models for each program area", "status": "not_started" },
+        { "id": "fix-06-s2", "title": "Validate outcomes framework with program staff", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "fix-06-e1", "title": "Logic models for each program", "status": "missing" },
+        { "id": "fix-06-e2", "title": "Staff validation notes", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Programs exist and are strong — documentation gap.",
+        "Critical for grant applications and program evaluation."
+      ]
+    },
+    {
+      "id": "improve-01",
+      "title": "Formalize outreach channel strategy",
+      "category": "improve",
+      "shortDescription": "Multiple channels exist (6 sites, events, Issuu, Formstack, Calendly) but no formal audience-channel mapping or performance tracking. (Suggested — needs client verification)",
+      "mojoImpactPoints": 5.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution", "foundation"],
+      "steps": [
+        { "id": "improve-01-s1", "title": "Map family discovery journey across channels", "status": "not_started" },
+        { "id": "improve-01-s2", "title": "Prioritize channels by audience segment", "status": "not_started" },
+        { "id": "improve-01-s3", "title": "Implement channel performance tracking", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-01-e1", "title": "Audience-channel alignment map", "status": "missing" },
+        { "id": "improve-01-e2", "title": "Channel performance baseline", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Sophisticated multi-channel infrastructure already exists.",
+        "Formalization would maximize ROI on existing investments."
+      ]
+    },
+    {
+      "id": "improve-02",
+      "title": "Develop audience-specific narratives",
+      "category": "improve",
+      "shortDescription": "Core 'People. Place. Path.' narrative is strong (75%). Variations for families, donors, referral partners, and government would complete it. (Suggested — needs client verification)",
+      "mojoImpactPoints": 3.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "improve-02-s1", "title": "Draft family-facing narrative variation", "status": "not_started" },
+        { "id": "improve-02-s2", "title": "Draft donor-facing narrative variation", "status": "not_started" },
+        { "id": "improve-02-s3", "title": "Draft referral partner narrative variation", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-02-e1", "title": "Audience-specific narrative drafts", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Strong foundation to build on.",
+        "Tailored narratives improve conversion per segment."
+      ]
+    },
+    {
+      "id": "improve-03",
+      "title": "Standardize outcome measurement",
+      "category": "improve",
+      "shortDescription": "FY25 Impact Report shows data capability. Standardizing measures across all 15+ programs would strengthen grants and accountability. (Suggested — needs client verification)",
+      "mojoImpactPoints": 5.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution"],
+      "steps": [
+        { "id": "improve-03-s1", "title": "Select standardized outcome measures", "status": "not_started" },
+        { "id": "improve-03-s2", "title": "Benchmark against national norms", "status": "not_started" },
+        { "id": "improve-03-s3", "title": "Build real-time outcome dashboards", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-03-e1", "title": "Standardized measure selection", "status": "missing" },
+        { "id": "improve-03-e2", "title": "Benchmark comparison data", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Data infrastructure appears to exist (two annual reports).",
+        "Standardization would elevate grant competitiveness."
+      ]
+    },
+    {
+      "id": "improve-04",
+      "title": "Implement family satisfaction surveys",
+      "category": "improve",
+      "shortDescription": "7+ testimonials and 3 impact stories show positive sentiment. Systematic NPS and post-program surveys would provide actionable data. (Suggested — needs client verification)",
+      "mojoImpactPoints": 3.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["evidence"],
+      "steps": [
+        { "id": "improve-04-s1", "title": "Implement post-program family surveys", "status": "not_started" },
+        { "id": "improve-04-s2", "title": "Establish NPS tracking", "status": "not_started" },
+        { "id": "improve-04-s3", "title": "Analyze journey friction points", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-04-e1", "title": "Survey instrument design", "status": "missing" },
+        { "id": "improve-04-e2", "title": "Baseline NPS score", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Positive anecdotal evidence exists.",
+        "Systematic measurement turns sentiment into strategy."
+      ]
+    },
+    {
+      "id": "improve-05",
+      "title": "Run donor retention analysis",
+      "category": "improve",
+      "shortDescription": "Robust fundraising infrastructure (Give platform, Fair, Grace Magill Fund, campaigns) but no retention data or cohort analysis. (Suggested — needs client verification)",
+      "mojoImpactPoints": 2.0,
+      "effort": "low",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["evidence"],
+      "steps": [
+        { "id": "improve-05-s1", "title": "Run donor cohort retention analysis", "status": "not_started" },
+        { "id": "improve-05-s2", "title": "Survey lapsed donors", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-05-e1", "title": "Donor retention curves", "status": "missing" },
+        { "id": "improve-05-e2", "title": "Lapsed donor survey results", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Investment in fundraising is substantial.",
+        "Retention analysis optimizes existing stewardship spend."
+      ]
+    },
+    {
+      "id": "improve-06",
+      "title": "Conduct community needs assessment",
+      "category": "improve",
+      "shortDescription": "FY25 report cites external data but no formal needs assessment for the 3-county service area. Validates program priorities and strengthens grants. (Suggested — needs client verification)",
+      "mojoImpactPoints": 1.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation"],
+      "steps": [
+        { "id": "improve-06-s1", "title": "Compile county-level youth mental health needs data", "status": "not_started" },
+        { "id": "improve-06-s2", "title": "Conduct service gap analysis across 3 counties", "status": "not_started" },
+        { "id": "improve-06-s3", "title": "Assess waitlist trends and demand forecasting", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "improve-06-e1", "title": "County-level needs data", "status": "missing" },
+        { "id": "improve-06-e2", "title": "Service gap analysis report", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: External data is cited but not specific to service area.",
+        "Formal assessment strengthens grant competitiveness."
+      ]
+    },
+    {
+      "id": "create-01",
+      "title": "Build donor impact dashboard",
+      "category": "create",
+      "shortDescription": "FY25 Impact Report demonstrates data capability. A real-time donor-facing dashboard would connect giving to measurable outcomes. (Suggested — needs client verification)",
+      "mojoImpactPoints": 10.0,
+      "effort": "high",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution", "evidence"],
+      "steps": [
+        { "id": "create-01-s1", "title": "Define donor dashboard requirements", "status": "not_started" },
+        { "id": "create-01-s2", "title": "Build prototype with FY25 data", "status": "not_started" },
+        { "id": "create-01-s3", "title": "Test with top donors and refine", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-01-e1", "title": "Dashboard prototype", "status": "missing" },
+        { "id": "create-01-e2", "title": "Donor feedback on prototype", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: High impact but requires strong foundation first.",
+        "FY25 data infrastructure suggests feasibility."
+      ]
+    },
+    {
+      "id": "create-02",
+      "title": "Build referral partner toolkit",
+      "category": "create",
+      "shortDescription": "Partners & Providers form exists but referral partners lack clear criteria for when to refer to Edgewood. A toolkit makes referrals frictionless. (Suggested — needs client verification)",
+      "mojoImpactPoints": 7.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation", "execution"],
+      "steps": [
+        { "id": "create-02-s1", "title": "Define referral criteria per service type", "status": "not_started" },
+        { "id": "create-02-s2", "title": "Create one-pager for school counselors and pediatricians", "status": "not_started" },
+        { "id": "create-02-s3", "title": "Pilot with 5 referral partners and iterate", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-02-e1", "title": "Referral criteria document", "status": "missing" },
+        { "id": "create-02-e2", "title": "Pilot partner feedback", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Intake infrastructure exists — toolkit bridges the gap.",
+        "Creates systematic referral growth."
+      ]
+    },
+    {
+      "id": "create-03",
+      "title": "Launch family-facing digital content",
+      "category": "create",
+      "shortDescription": "Website serves those who already know Edgewood. Content reaching families in the discovery phase before crisis would expand reach. (Suggested — needs client verification)",
+      "mojoImpactPoints": 5.0,
+      "effort": "high",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["foundation", "execution"],
+      "steps": [
+        { "id": "create-03-s1", "title": "Map family discovery journey content gaps", "status": "not_started" },
+        { "id": "create-03-s2", "title": "Create content for pre-crisis awareness", "status": "not_started" },
+        { "id": "create-03-s3", "title": "Distribute through identified high-impact channels", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-03-e1", "title": "Content gap analysis", "status": "missing" },
+        { "id": "create-03-e2", "title": "Content performance metrics", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Requires positioning foundation first.",
+        "Expands reach beyond existing referral network."
+      ]
+    },
+    {
+      "id": "create-04",
+      "title": "Grant pipeline tracking system",
+      "category": "create",
+      "shortDescription": "Active capital campaigns exist ('Place to Begin', Outpatient Expansion) but no systematic pipeline tracking or win rate analysis. (Suggested — needs client verification)",
+      "mojoImpactPoints": 4.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["evidence"],
+      "steps": [
+        { "id": "create-04-s1", "title": "Document current grant pipeline", "status": "not_started" },
+        { "id": "create-04-s2", "title": "Analyze win/loss rates by funder type", "status": "not_started" },
+        { "id": "create-04-s3", "title": "Score funder alignment with programs", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-04-e1", "title": "Grant pipeline document", "status": "missing" },
+        { "id": "create-04-e2", "title": "Funder alignment scores", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Cases for support already published on Issuu.",
+        "Systematic tracking optimizes proposal investment."
+      ]
+    },
+    {
+      "id": "create-05",
+      "title": "Design transition support protocol",
+      "category": "create",
+      "shortDescription": "Continuum of care is well-documented but family experience during transitions between programs is unconfirmed. Protocol would ensure seamless handoffs. (Suggested — needs client verification)",
+      "mojoImpactPoints": 4.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution"],
+      "steps": [
+        { "id": "create-05-s1", "title": "Map family journey across transitions", "status": "not_started" },
+        { "id": "create-05-s2", "title": "Design warm handoff protocol", "status": "not_started" },
+        { "id": "create-05-s3", "title": "Implement 30/60/90 day post-program check-ins", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-05-e1", "title": "Transition journey map", "status": "missing" },
+        { "id": "create-05-e2", "title": "Handoff protocol document", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Continuum exists — transition experience is the unknown.",
+        "Would improve retention and family satisfaction."
+      ]
+    },
+    {
+      "id": "create-06",
+      "title": "Build post-program alumni network",
+      "category": "create",
+      "shortDescription": "No visible post-program connection or alumni engagement. Families who graduate could become advocates and donors if connected. (Suggested — needs client verification)",
+      "mojoImpactPoints": 3.0,
+      "effort": "medium",
+      "status": "not_started",
+      "recommended": false,
+      "dependencies": ["execution", "evidence"],
+      "steps": [
+        { "id": "create-06-s1", "title": "Design alumni engagement model", "status": "not_started" },
+        { "id": "create-06-s2", "title": "Pilot with recent program graduates", "status": "not_started" },
+        { "id": "create-06-s3", "title": "Connect alumni to giving and volunteer programs", "status": "not_started" }
+      ],
+      "evidenceChecklist": [
+        { "id": "create-06-e1", "title": "Alumni engagement plan", "status": "missing" },
+        { "id": "create-06-e2", "title": "Pilot feedback", "status": "missing" }
+      ],
+      "whyRecommended": [
+        "Suggested: Advocate step (Step 8) is designed but underserved.",
+        "Creates a sustainable growth loop."
+      ]
+    }
+  ]
+}
