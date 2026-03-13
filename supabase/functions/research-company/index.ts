@@ -239,6 +239,65 @@ function buildPositioningBrief(positioning: unknown) {
   ].join("\n");
 }
 
+function buildStrategyBrief(strategy: unknown) {
+  const entry = (strategy ?? {}) as {
+    winning_aspiration?: string;
+    where_to_play?: string;
+    how_to_win?: string;
+    capabilities?: Array<{ name?: string; status?: string; note?: string }>;
+    management_systems?: Array<{ name?: string; status?: string; note?: string }>;
+    assumptions?: Array<{ assumption?: string; tested?: boolean; note?: string }>;
+  };
+
+  const capabilities = Array.isArray(entry.capabilities) ? entry.capabilities.slice(0, 8) : [];
+  const systems = Array.isArray(entry.management_systems) ? entry.management_systems.slice(0, 8) : [];
+  const assumptions = Array.isArray(entry.assumptions) ? entry.assumptions.slice(0, 8) : [];
+
+  return [
+    `Winning aspiration: ${entry.winning_aspiration || "unknown"}`,
+    `Where to play: ${entry.where_to_play || "unknown"}`,
+    `How to win: ${entry.how_to_win || "unknown"}`,
+    capabilities.length
+      ? `Capabilities:\n${capabilities.map((item, index) => `${index + 1}. ${item.name || "Unknown"} | ${item.status || "unknown"} | ${item.note || "No note"}`).join("\n")}`
+      : "Capabilities: none",
+    systems.length
+      ? `Management systems:\n${systems.map((item, index) => `${index + 1}. ${item.name || "Unknown"} | ${item.status || "unknown"} | ${item.note || "No note"}`).join("\n")}`
+      : "Management systems: none",
+    assumptions.length
+      ? `Assumptions:\n${assumptions.map((item, index) => `${index + 1}. ${item.assumption || "Unknown"} | tested=${item.tested ? "yes" : "no"} | ${item.note || "No note"}`).join("\n")}`
+      : "Assumptions: none",
+  ].join("\n");
+}
+
+function buildODIBrief(args: {
+  baselineResultJson: unknown;
+  customerJourneyTitle?: string;
+  opportunities: unknown;
+}) {
+  const baselineLens = (args.baselineResultJson as {
+    lens_card?: { primary_buyer?: string; chooser?: string; user?: string };
+  } | null)?.lens_card ?? {};
+  const opps = Array.isArray(args.opportunities) ? args.opportunities : [];
+  const topOpps = opps.slice(0, 6).map((opp, index) => {
+    const entry = opp as {
+      outcome?: string;
+      journey_key?: string;
+      step_number?: number;
+      step_label?: string;
+      importance?: number;
+      satisfaction?: number;
+    };
+    return `${index + 1}. ${entry.outcome || "Untitled"} | ${entry.journey_key || "unknown"} | step ${entry.step_number ?? "?"} ${entry.step_label || ""} | importance ${entry.importance ?? "?"} | satisfaction ${entry.satisfaction ?? "?"}`;
+  });
+
+  return [
+    `Job executor: ${baselineLens.user || baselineLens.primary_buyer || "unknown"}`,
+    `Chooser: ${baselineLens.chooser || "unknown"}`,
+    `JTBD: ${args.customerJourneyTitle ? `Make progress through ${String(args.customerJourneyTitle).toLowerCase()}` : "unknown"}`,
+    topOpps.length ? `Derived needs:\n${topOpps.join("\n")}` : "Derived needs: none",
+  ].join("\n");
+}
+
 const reviewSchema = {
   type: "object",
   additionalProperties: false,
@@ -255,7 +314,7 @@ const reviewSchema = {
         properties: {
           artifact: {
             type: "string",
-            enum: ["baseline", "inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
+            enum: ["baseline", "odi", "inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
           },
           field: { type: "string" },
           issue: { type: "string" },
@@ -274,6 +333,7 @@ async function runConsistencyReview(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  odiBrief: string;
   inputs: unknown;
   journeys: unknown;
   opportunities: unknown;
@@ -284,6 +344,7 @@ async function runConsistencyReview(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Derived ODI context:\n${opts.odiBrief}\n\n` +
     `Inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
@@ -297,7 +358,7 @@ async function runConsistencyReview(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
-    `- buyer / chooser / user consistency across baseline, journeys, positioning, and strategy\n` +
+    `- buyer / chooser / user consistency across baseline, journeys, ODI, positioning, and strategy\n` +
     `- market category consistency across baseline, positioning, and strategy\n` +
     `- opportunity rows correctly tied to journey steps\n` +
     `- routes that meaningfully connect to opportunities and job-step gaps\n` +
@@ -397,6 +458,47 @@ async function runEvidenceReview(opts: {
     apiKey: opts.apiKey,
     model: opts.model,
     schemaName: "mojo_evidence_review_v1",
+    schema: reviewSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1400,
+    temperature: 0.1,
+  });
+}
+
+async function runStrategyReview(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  strategy: unknown;
+  routes: unknown;
+  opportunities: unknown;
+}) {
+  const userText =
+    `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
+    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Strategy draft:\n${buildStrategyBrief(opts.strategy)}\n\n` +
+    `Route context:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Opportunity context:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
+    `Review the strategy draft for coherence, concreteness, and honest uncertainty.`;
+
+  const systemText =
+    `You are a strict strategy reviewer.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Your job is to review, not rewrite.\n` +
+    `Check for:\n` +
+    `- winning aspiration, where to play, and how to win being coherent with each other\n` +
+    `- capabilities and management systems being concrete rather than generic department labels\n` +
+    `- assumptions reflecting real uncertainty rather than fake precision\n` +
+    `- strategy language staying aligned with the baseline and generated opportunity/route context\n` +
+    `Use severity=high only when the strategy is materially contradictory, generic to the point of being unusable, or falsely precise beyond the evidence.\n`;
+
+  return await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_strategy_review_v1",
     schema: reviewSchema,
     systemText,
     userText,
@@ -894,6 +996,270 @@ const INPUT_KEYS: string[] = [
   "family-satisfaction",
 ];
 
+const repairBundleSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    inputs: {
+      type: "array",
+      minItems: 14,
+      maxItems: 14,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          input_key: { type: "string", enum: INPUT_KEYS },
+          input_label: { type: "string" },
+          sub_group: { type: "string" },
+          description: { type: "string" },
+          why_it_matters: { type: "string" },
+        },
+        required: ["input_key", "input_label", "sub_group", "description", "why_it_matters"],
+      },
+    },
+    journeys: {
+      type: "array",
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          journey_title: { type: "string" },
+          journey_subtitle: { type: "string" },
+          steps: {
+            type: "array",
+            minItems: 5,
+            maxItems: 8,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                step_number: { type: "integer" },
+                step_label: { type: "string" },
+                description: { type: "string" },
+                designed: { type: "boolean" },
+                has_gap: { type: "boolean" },
+                evidence_status: { type: "string", enum: ["evidenced", "implied", "unclear"] },
+                evidence_basis: { type: "string" },
+                evidence_confidence: { type: "integer" },
+                gap_note: { type: "string" },
+              },
+              required: ["step_number", "step_label", "description", "designed", "has_gap", "evidence_status", "evidence_basis", "evidence_confidence", "gap_note"],
+            },
+          },
+        },
+        required: ["journey_key", "journey_title", "journey_subtitle", "steps"],
+      },
+    },
+    opportunities: {
+      type: "array",
+      minItems: 15,
+      maxItems: 30,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          outcome: { type: "string" },
+          step_number: { type: "integer" },
+          step_label: { type: "string" },
+          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          importance: { type: "integer" },
+          satisfaction: { type: "integer" },
+          opportunity_score: { type: "integer" },
+          priority_tier: { type: "string", enum: ["focus", "monitor", "defer"] },
+        },
+        required: ["outcome", "step_number", "step_label", "journey_key", "importance", "satisfaction", "opportunity_score", "priority_tier"],
+      },
+    },
+    routes: {
+      type: "array",
+      minItems: 9,
+      maxItems: 18,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          category: { type: "string", enum: ["fix", "improve", "create"] },
+          title: { type: "string" },
+          short_description: { type: "string" },
+          pts_value: { type: "integer" },
+          effort: { type: "string", enum: ["low", "medium", "high"] },
+          type: { type: "string", enum: ["Fix", "Improve", "Create"] },
+          sort_order: { type: "integer" },
+        },
+        required: ["category", "title", "short_description", "pts_value", "effort", "type", "sort_order"],
+      },
+    },
+    positioning: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        competitive_alternatives: {
+          type: "array",
+          minItems: 3,
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              description: { type: "string" },
+              highlighted: { type: "boolean" },
+            },
+            required: ["id", "name", "description", "highlighted"],
+          },
+        },
+        unique_attributes: {
+          type: "array",
+          minItems: 3,
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              description: { type: "string" },
+              highlighted: { type: "boolean" },
+            },
+            required: ["id", "name", "description", "highlighted"],
+          },
+        },
+        value_for_customer: { type: "string" },
+        best_fit_customers: { type: "string" },
+        market_category: { type: "string" },
+        category_rationale: { type: "string" },
+        current_tagline: { type: "string" },
+        proposed_tagline: { type: "string" },
+      },
+      required: [
+        "competitive_alternatives",
+        "unique_attributes",
+        "value_for_customer",
+        "best_fit_customers",
+        "market_category",
+        "category_rationale",
+        "current_tagline",
+        "proposed_tagline",
+      ],
+    },
+    strategy: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        winning_aspiration: { type: "string" },
+        where_to_play: { type: "string" },
+        how_to_win: { type: "string" },
+        capabilities: {
+          type: "array",
+          minItems: 4,
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string" },
+              status: { type: "string", enum: ["strong", "developing", "gap"] },
+              note: { type: "string" },
+            },
+            required: ["name", "status", "note"],
+          },
+        },
+        management_systems: {
+          type: "array",
+          minItems: 4,
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string" },
+              status: { type: "string", enum: ["strong", "developing", "gap"] },
+              note: { type: "string" },
+            },
+            required: ["name", "status", "note"],
+          },
+        },
+        assumptions: {
+          type: "array",
+          minItems: 4,
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              assumption: { type: "string" },
+              tested: { type: "boolean" },
+              note: { type: "string" },
+            },
+            required: ["assumption", "tested", "note"],
+          },
+        },
+      },
+      required: [
+        "winning_aspiration",
+        "where_to_play",
+        "how_to_win",
+        "capabilities",
+        "management_systems",
+        "assumptions",
+      ],
+    },
+  },
+  required: ["inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
+};
+
+async function runFinalizer(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  odiBrief: string;
+  inputs: unknown;
+  journeys: unknown;
+  opportunities: unknown;
+  routes: unknown;
+  positioning: unknown;
+  strategy: unknown;
+  reviews: unknown;
+}) {
+  const userText =
+    `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
+    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Derived ODI context:\n${opts.odiBrief}\n\n` +
+    `Current inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
+    `Current journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
+    `Current opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
+    `Current routes:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Current positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
+    `Current strategy:\n${buildStrategyBrief(opts.strategy)}\n\n` +
+    `Reviewer findings:\n${JSON.stringify(opts.reviews)}\n\n` +
+    `Revise only the flagged areas and return the full repaired bundle.`;
+
+  const systemText =
+    `You are a careful strategy finalizer.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Revise only the areas identified by reviewer findings.\n` +
+    `Do not rewrite unaffected areas for style alone.\n` +
+    `Stay strictly consistent with the public baseline and ODI context.\n` +
+    `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n`;
+
+  return await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_repair_bundle_v1",
+    schema: repairBundleSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 4200,
+    temperature: 0.15,
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -1036,7 +1402,7 @@ Deno.serve(async (req) => {
       if (!k) continue;
       byKey[k] = it;
     }
-    const inputs: any[] = INPUT_KEYS.map((k) => byKey[k]).filter(Boolean);
+    let inputs: any[] = INPUT_KEYS.map((k) => byKey[k]).filter(Boolean);
     if (inputs.length !== 14) return jsonResponse({ error: "Inputs missing one or more required keys" }, 500);
     const inputFrameworkKeys = frameworkKeysFor("inputs");
 
@@ -1138,7 +1504,7 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
-    const journeys: any[] = Array.isArray(journeysResult?.journeys) ? journeysResult.journeys : [];
+    let journeys: any[] = Array.isArray(journeysResult?.journeys) ? journeysResult.journeys : [];
     if (journeys.length !== 3) return jsonResponse({ error: `Expected 3 journeys, got ${journeys.length}` }, 500);
 
     // -------------------------
@@ -1212,7 +1578,7 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
-    const opportunities: any[] = Array.isArray(oppsResult?.opportunities) ? oppsResult.opportunities : [];
+    let opportunities: any[] = Array.isArray(oppsResult?.opportunities) ? oppsResult.opportunities : [];
     if (opportunities.length < 15) return jsonResponse({ error: `Expected >=15 opportunities, got ${opportunities.length}` }, 500);
     const opportunityFrameworkKeys = frameworkKeysFor("opportunities");
     const odiFrameworkKeys = Array.from(new Set([
@@ -1284,7 +1650,7 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
-    const routes: any[] = Array.isArray(routesResult?.routes) ? routesResult.routes : [];
+    let routes: any[] = Array.isArray(routesResult?.routes) ? routesResult.routes : [];
     if (routes.length < 9) return jsonResponse({ error: `Expected >=9 routes, got ${routes.length}` }, 500);
     const routeFrameworkKeys = frameworkKeysFor("routes");
 
@@ -1381,7 +1747,7 @@ Deno.serve(async (req) => {
         .join("\n")}\n\n` +
       `Generate a positioning canvas for this exact company.`;
 
-    const positioningCanvasResult = await callOpenAIJSON({
+    let positioningCanvasResult = await callOpenAIJSON({
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_positioning_canvas_v1",
@@ -1494,7 +1860,7 @@ Deno.serve(async (req) => {
         .join("\n")}\n\n` +
       `Generate a full strategy cascade for this exact company in the supplied schema.`;
 
-    const strategyCascadeResult = await callOpenAIJSON({
+    let strategyCascadeResult = await callOpenAIJSON({
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_strategy_cascade_v1",
@@ -1505,7 +1871,14 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
-    const consistencyReview = await runConsistencyReview({
+    const customerJourneyDraft = journeys.find((journey) => journey?.journey_key === "customer");
+    const odiBrief = buildODIBrief({
+      baselineResultJson: baselineRun?.result_json ?? null,
+      customerJourneyTitle: String(customerJourneyDraft?.journey_title || ""),
+      opportunities,
+    });
+
+    let consistencyReview = await runConsistencyReview({
       apiKey: openaiKey,
       model: openaiModel,
       companyName: company_name,
@@ -1517,9 +1890,10 @@ Deno.serve(async (req) => {
       routes,
       positioning: positioningCanvasResult,
       strategy: strategyCascadeResult,
+      odiBrief,
     });
 
-    const positioningReview = await runPositioningReview({
+    let positioningReview = await runPositioningReview({
       apiKey: openaiKey,
       model: openaiModel,
       companyName: company_name,
@@ -1530,7 +1904,7 @@ Deno.serve(async (req) => {
       routes,
     });
 
-    const evidenceReview = await runEvidenceReview({
+    let evidenceReview = await runEvidenceReview({
       apiKey: openaiKey,
       model: openaiModel,
       companyName: company_name,
@@ -1543,14 +1917,116 @@ Deno.serve(async (req) => {
       strategy: strategyCascadeResult,
     });
 
-    const reviewResults = [
+    let strategyReview = await runStrategyReview({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      strategy: strategyCascadeResult,
+      routes,
+      opportunities,
+    });
+
+    let reviewResults = [
       { key: "consistency", review: consistencyReview },
       { key: "positioning", review: positioningReview },
       { key: "evidence", review: evidenceReview },
+      { key: "strategy", review: strategyReview },
     ];
-    const highSeverityReviews = reviewResults.filter(
+    let actionableReviews = reviewResults.filter(
+      (entry) =>
+        String(entry.review?.severity || "low").toLowerCase() !== "low" ||
+        entry.review?.pass === false,
+    );
+    let highSeverityReviews = reviewResults.filter(
       (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
     );
+
+    if (actionableReviews.length > 0) {
+      const repairedBundle = await runFinalizer({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        odiBrief,
+        inputs,
+        journeys,
+        opportunities,
+        routes,
+        positioning: positioningCanvasResult,
+        strategy: strategyCascadeResult,
+        reviews: reviewResults,
+      });
+
+      inputs = Array.isArray(repairedBundle?.inputs) ? repairedBundle.inputs : inputs;
+      journeys = Array.isArray(repairedBundle?.journeys) ? repairedBundle.journeys : journeys;
+      opportunities = Array.isArray(repairedBundle?.opportunities) ? repairedBundle.opportunities : opportunities;
+      routes = Array.isArray(repairedBundle?.routes) ? repairedBundle.routes : routes;
+      positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
+      strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
+
+      consistencyReview = await runConsistencyReview({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        inputs,
+        journeys,
+        opportunities,
+        routes,
+        positioning: positioningCanvasResult,
+        strategy: strategyCascadeResult,
+        odiBrief,
+      });
+
+      positioningReview = await runPositioningReview({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        positioning: positioningCanvasResult,
+        opportunities,
+        routes,
+      });
+
+      evidenceReview = await runEvidenceReview({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        journeys,
+        opportunities,
+        routes,
+        positioning: positioningCanvasResult,
+        strategy: strategyCascadeResult,
+      });
+
+      strategyReview = await runStrategyReview({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        strategy: strategyCascadeResult,
+        routes,
+        opportunities,
+      });
+
+      reviewResults = [
+        { key: "consistency", review: consistencyReview },
+        { key: "positioning", review: positioningReview },
+        { key: "evidence", review: evidenceReview },
+        { key: "strategy", review: strategyReview },
+      ];
+      highSeverityReviews = reviewResults.filter(
+        (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
+      );
+    }
 
     if (highSeverityReviews.length > 0) {
       console.log("[research-company] blocked by reviewer findings", {
