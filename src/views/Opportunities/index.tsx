@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, GitBranch, Info, Sparkles } from "lucide-react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from "@/components/ui/semantic-badges";
 
 const c = {
@@ -40,6 +41,93 @@ function servingLabel(item: OpportunityRow) {
   if (delta >= 3) return "underserved";
   if (delta <= -2) return "overserved";
   return "served";
+}
+
+function priorityLabel(tier: string) {
+  if (tier === "focus") return "Prioritize now";
+  if (tier === "monitor") return "Investigate next";
+  return "Keep visible";
+}
+
+function journeyRootLabel(key: string, companyName?: string | null) {
+  if (key === "customer") return `Improve customer progress for ${companyName || "this company"}`;
+  if (key === "revenue") return `Improve demand and funding progress for ${companyName || "this company"}`;
+  if (key === "operations") return `Improve delivery and operating leverage for ${companyName || "this company"}`;
+  return `Improve outcomes for ${companyName || "this company"}`;
+}
+
+function evidenceNeeded(item: OpportunityRow) {
+  return [
+    item.step_label
+      ? `Confirm where "${item.step_label}" breaks down in real practice.`
+      : "Tie this opportunity to a specific job step or workflow moment.",
+    "Collect direct customer, operator, or buyer language for this outcome.",
+    item.priority_tier === "focus"
+      ? "Validate importance and dissatisfaction with interviews or survey evidence."
+      : "Confirm this is a real underserved outcome before choosing a solution.",
+  ];
+}
+
+function OpportunityHoverDetail({ item }: { item: OpportunityRow }) {
+  return (
+    <div className="w-[320px] rounded-[20px] border p-4" style={{ borderColor: c.line, background: "#FBFAF7" }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <TierBadge tone={item.priority_tier} />
+        <StateBadge tone={servingLabel(item)} />
+        <ScoreChip label="Opp" value={item.opportunity_score} />
+      </div>
+
+      <div className="mt-3 font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+        {item.outcome}
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
+        {item.step_number ? <MetaBadge>Step {item.step_number}</MetaBadge> : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <ScoreChip label="I" value={item.importance} />
+        <ScoreChip label="S" value={item.satisfaction} />
+        <ScoreChip label="Gap" value={(item.importance ?? 0) - (item.satisfaction ?? 0)} />
+      </div>
+
+      <div className="mt-4">
+        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+          Why this node exists
+        </div>
+        <p className="mt-2 font-sans text-[12px] leading-[1.65]" style={{ color: c.secondary }}>
+          {item.priority_tier === "focus"
+            ? "This appears underserved enough to justify discovery attention before choosing a solution."
+            : item.priority_tier === "monitor"
+              ? "This may matter, but it needs better evidence before it becomes a top branch in the tree."
+              : "Keep this opportunity visible, but do not invest heavily until stronger evidence appears."}
+        </p>
+      </div>
+
+      <div className="mt-4">
+        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+          Evidence still needed
+        </div>
+        <ul className="mt-2 space-y-2">
+          {evidenceNeeded(item).map((entry, index) => (
+            <li
+              key={`${item.id}-hover-evidence-${index}`}
+              className="flex items-start gap-2 font-sans text-[12px] leading-[1.55]"
+              style={{ color: c.secondary }}
+            >
+              <span style={{ color: JOURNEY_ACCENT[item.journey_key] || c.monitor }}>•</span>
+              <span>{entry}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="mt-4 font-sans text-[11px] italic leading-[1.6]" style={{ color: c.muted }}>
+        Estimated from public evidence and generated research, not validated ODI survey data or customer interviews.
+      </div>
+    </div>
+  );
 }
 
 function OpportunityCard({ item }: { item: OpportunityRow }) {
@@ -254,78 +342,168 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
     <div className="space-y-6">
       <div className="rounded-[24px] border p-5" style={{ borderColor: c.line, background: c.panel }}>
         <h2 className="font-sans text-[22px] font-semibold" style={{ color: c.charcoal }}>
-          Opportunity Tree
+          Opportunity Solution Tree
         </h2>
         <p className="mt-2 max-w-4xl font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
-          This view organizes opportunities the way an opportunity map would start to branch: by journey, then by job step,
-          then by desired outcome opportunities. Solution branches should come only after the strongest opportunities are validated. Current scores are estimated from public evidence, not survey-based ODI measurements.
+          This view now behaves like a discovery opportunity tree: a desired outcome area at the top, branching into step-level opportunities beneath it. We are stopping before solution ideas on purpose. Hover any branch to inspect the context, evidence gap, and why it is prioritized. Current scores are still estimated from public evidence, not survey-based ODI measurements.
         </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <MetaBadge>Outcome area</MetaBadge>
+          <MetaBadge>Step branch</MetaBadge>
+          <MetaBadge>Opportunity node</MetaBadge>
+          <MetaBadge>Solutions come later</MetaBadge>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+      <div className="space-y-6">
         {grouped.map(({ journeyKey, steps }) => {
           const accent = JOURNEY_ACCENT[journeyKey] || c.monitor;
+          const itemCount = steps.reduce((sum, step) => sum + step.items.length, 0);
           return (
             <section
               key={journeyKey}
-              className="rounded-[24px] border p-4"
+              className="rounded-[28px] border p-4 sm:p-5"
               style={{ borderColor: c.line, background: c.panel }}
             >
-              <div className="flex items-center gap-2 mb-4">
-                <span className="inline-block h-3 w-3 rounded-full" style={{ background: accent }} />
-                <h3 className="font-sans text-[20px] font-semibold" style={{ color: c.charcoal }}>
-                  {titleCaseJourney(journeyKey)}
-                </h3>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full" style={{ background: accent }} />
+                  <h3 className="font-sans text-[20px] font-semibold" style={{ color: c.charcoal }}>
+                    {titleCaseJourney(journeyKey)}
+                  </h3>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <MetaBadge>{steps.length} steps</MetaBadge>
+                  <MetaBadge>{itemCount} opportunities</MetaBadge>
+                </div>
               </div>
 
               {steps.length === 0 ? (
-                <div className="rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
+                <div className="mt-4 rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
                   <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
                     No opportunities mapped to this journey yet.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {steps.map((step) => (
-                    <div
-                      key={`${journeyKey}-${step.stepNumber}-${step.stepLabel}`}
-                      className="rounded-2xl border p-4"
-                      style={{ borderColor: c.line, background: c.card }}
-                    >
-                      <div className="mb-3">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                          Job Step {step.stepNumber}
-                        </p>
-                        <p className="mt-1 font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
-                          {step.stepLabel}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        {step.items.map((item) => (
+                <div className="mt-5 overflow-x-auto pb-2">
+                  <div className="min-w-[960px]">
+                    <div className="flex justify-center">
+                      <HoverCard openDelay={100}>
+                        <HoverCardTrigger asChild>
                           <div
-                            key={item.id}
-                            className="rounded-xl border p-3"
-                            style={{ borderColor: c.line, background: c.paper }}
+                            className="relative max-w-[360px] rounded-[24px] border px-5 py-4 text-center shadow-sm"
+                            style={{ borderColor: c.line, background: "#F8F4ED" }}
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                                {item.outcome}
-                              </p>
-                              <TierBadge tone={item.priority_tier} />
+                            <div
+                              className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full"
+                              style={{ background: `${accent}18`, color: accent }}
+                            >
+                              <Sparkles className="h-4 w-4" />
                             </div>
-
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <StateBadge tone={servingLabel(item)} />
-                              <ScoreChip label="Est. I" value={item.importance} />
-                              <ScoreChip label="Est. S" value={item.satisfaction} />
-                              <ScoreChip label="Est. Opp" value={item.opportunity_score} />
-                            </div>
+                            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                              Desired outcome area
+                            </p>
+                            <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+                              {journeyRootLabel(journeyKey)}
+                            </p>
                           </div>
-                        ))}
-                      </div>
+                        </HoverCardTrigger>
+                        <HoverCardContent className="w-[320px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
+                          <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                            Outcome root
+                          </div>
+                          <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                            This root represents the outcome area the team is trying to improve. The branches below are opportunity hypotheses, not solutions.
+                          </p>
+                        </HoverCardContent>
+                      </HoverCard>
                     </div>
-                  ))}
+
+                    <div className="mx-auto h-8 w-px" style={{ background: `${accent}66` }} />
+                    <div className="mx-auto h-px w-[88%]" style={{ background: `${accent}55` }} />
+
+                    <div className="mt-6 grid gap-5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(220px, 1fr))` }}>
+                      {steps.map((step) => (
+                        <div key={`${journeyKey}-${step.stepNumber}-${step.stepLabel}`} className="flex flex-col items-center">
+                          <div className="h-6 w-px" style={{ background: `${accent}55` }} />
+                          <HoverCard openDelay={100}>
+                            <HoverCardTrigger asChild>
+                              <button
+                                type="button"
+                                className="w-full rounded-[22px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                                style={{ borderColor: c.line, background: c.card }}
+                              >
+                                <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                  Job Step {step.stepNumber}
+                                </div>
+                                <div className="mt-1 font-sans text-[14px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                  {step.stepLabel}
+                                </div>
+                                <div className="mt-3 flex items-center gap-2">
+                                  <GitBranch className="h-3.5 w-3.5" style={{ color: accent }} />
+                                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                                    {step.items.length} branches
+                                  </span>
+                                </div>
+                              </button>
+                            </HoverCardTrigger>
+                            <HoverCardContent className="w-[300px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
+                              <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                Step branch
+                              </div>
+                              <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                                This branch groups the opportunity nodes around the same moment in the journey, so we can see where to investigate before discussing solutions.
+                              </p>
+                            </HoverCardContent>
+                          </HoverCard>
+
+                          <div className="h-5 w-px" style={{ background: `${accent}44` }} />
+
+                          <div className="w-full space-y-3">
+                            {step.items.map((item) => (
+                              <div key={item.id} className="flex justify-center">
+                                <HoverCard openDelay={80}>
+                                  <HoverCardTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                                      style={{ borderColor: c.line, background: c.paper }}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                                            <TierBadge tone={item.priority_tier} />
+                                            <StateBadge tone={servingLabel(item)} />
+                                          </div>
+                                          <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                            {item.outcome}
+                                          </p>
+                                        </div>
+                                        <div className="shrink-0">
+                                          <ScoreChip label="Opp" value={item.opportunity_score} />
+                                        </div>
+                                      </div>
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        <ScoreChip label="I" value={item.importance} />
+                                        <ScoreChip label="S" value={item.satisfaction} />
+                                      </div>
+                                      <div className="mt-3 flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                        <Info className="h-3 w-3" />
+                                        Hover for detail
+                                      </div>
+                                    </button>
+                                  </HoverCardTrigger>
+                                  <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
+                                    <OpportunityHoverDetail item={item} />
+                                  </HoverCardContent>
+                                </HoverCard>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </section>
@@ -340,6 +518,19 @@ export default function OpportunitiesView() {
   const { activeCompany } = useCompany();
   const { loading, items, error } = useOpportunities(activeCompany?.id);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const sortedForTree = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const journeyRank = ["customer", "revenue", "operations"].indexOf(String(a.journey_key));
+        const otherRank = ["customer", "revenue", "operations"].indexOf(String(b.journey_key));
+        const normalizedA = journeyRank === -1 ? 99 : journeyRank;
+        const normalizedB = otherRank === -1 ? 99 : otherRank;
+        if (normalizedA !== normalizedB) return normalizedA - normalizedB;
+        if ((a.step_number ?? 999) !== (b.step_number ?? 999)) return (a.step_number ?? 999) - (b.step_number ?? 999);
+        return (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+      }),
+    [items],
+  );
 
   const prioritizeNow = items.filter((item) => item.priority_tier === "focus");
   const investigateNext = items.filter((item) => item.priority_tier === "monitor");
@@ -399,7 +590,7 @@ export default function OpportunitiesView() {
             </p>
           </div>
         ) : viewMode === "map" ? (
-          <OpportunityTreeView items={items} />
+          <OpportunityTreeView items={sortedForTree} />
         ) : (
           <div className="space-y-8">
             <OpportunitySection
