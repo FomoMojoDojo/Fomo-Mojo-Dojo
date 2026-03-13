@@ -353,6 +353,62 @@ export type Database = {
           },
         ]
       }
+      managed_outcomes: {
+        Row: {
+          company_id: string
+          confidence: number
+          created_at: string
+          evidence_basis: string
+          frameworks_used: string[]
+          id: string
+          journey_key: string
+          leading_indicator: string
+          outcome_statement: string
+          outcome_title: string
+          target_direction: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          confidence?: number
+          created_at?: string
+          evidence_basis?: string
+          frameworks_used?: string[]
+          id?: string
+          journey_key?: string
+          leading_indicator?: string
+          outcome_statement?: string
+          outcome_title?: string
+          target_direction?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          confidence?: number
+          created_at?: string
+          evidence_basis?: string
+          frameworks_used?: string[]
+          id?: string
+          journey_key?: string
+          leading_indicator?: string
+          outcome_statement?: string
+          outcome_title?: string
+          target_direction?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "managed_outcomes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       methodology_pages: {
         Row: {
           created_at: string

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, GitBranch, Info, Sparkles } from "lucide-react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
+import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from "@/components/ui/semantic-badges";
@@ -316,7 +317,21 @@ function ViewToggle({
   );
 }
 
-function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
+function OpportunityTreeView({
+  items,
+  managedOutcomes,
+}: {
+  items: OpportunityRow[];
+  managedOutcomes: Array<{
+    journey_key: string;
+    outcome_title: string;
+    outcome_statement: string;
+    leading_indicator: string;
+    target_direction: string;
+    evidence_basis: string;
+    confidence: number;
+  }>;
+}) {
   const grouped = ["customer", "revenue", "operations"].map((journeyKey) => {
     const journeyItems = items.filter((item) => item.journey_key === journeyKey);
     const stepMap = new Map<string, OpportunityRow[]>();
@@ -341,6 +356,7 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
     return {
       journeyKey,
       steps,
+      managedOutcome: managedOutcomes.find((outcome) => outcome.journey_key === journeyKey) ?? null,
     };
   });
 
@@ -362,7 +378,7 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
       </div>
 
       <div className="space-y-6">
-        {grouped.map(({ journeyKey, steps }) => {
+        {grouped.map(({ journeyKey, steps, managedOutcome }) => {
           const accent = JOURNEY_ACCENT[journeyKey] || c.monitor;
           const itemCount = steps.reduce((sum, step) => sum + step.items.length, 0);
           return (
@@ -410,10 +426,12 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
                               Product outcome target
                             </p>
                             <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
-                              {journeyRootLabel(journeyKey)}
+                              {managedOutcome?.outcome_title || journeyRootLabel(journeyKey)}
                             </p>
                             <p className="mt-2 font-sans text-[12px] italic leading-[1.55]" style={{ color: c.secondary }}>
-                              Provisional leading-indicator target derived from public evidence, not yet a hard-measured KPI.
+                              {managedOutcome?.leading_indicator
+                                ? `Leading indicator: ${managedOutcome.leading_indicator}`
+                                : "Provisional leading-indicator target derived from public evidence, not yet a hard-measured KPI."}
                             </p>
                           </div>
                         </HoverCardTrigger>
@@ -422,10 +440,23 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
                             Product outcome target
                           </div>
                           <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
-                            This root is the result the team should manage toward. It is not a feature, project, or initiative. The branches below are opportunities that may explain why the team is or is not reaching that outcome.
+                            {managedOutcome?.outcome_statement ||
+                              "This root is the result the team should manage toward. It is not a feature, project, or initiative. The branches below are opportunities that may explain why the team is or is not reaching that outcome."}
                           </p>
+                          {managedOutcome?.target_direction ? (
+                            <p className="mt-3 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                              Target direction: {managedOutcome.target_direction}
+                            </p>
+                          ) : null}
+                          {managedOutcome?.evidence_basis ? (
+                            <p className="mt-3 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                              Evidence basis: {managedOutcome.evidence_basis}
+                            </p>
+                          ) : null}
                           <p className="mt-3 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
-                            A true managed outcome should eventually become a measurable leading indicator with a baseline and target.
+                            {managedOutcome
+                              ? `Confidence ${managedOutcome.confidence}/100. Still provisional until backed by measured baseline and target data.`
+                              : "A true managed outcome should eventually become a measurable leading indicator with a baseline and target."}
                           </p>
                         </HoverCardContent>
                       </HoverCard>
@@ -529,6 +560,7 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
 export default function OpportunitiesView() {
   const { activeCompany } = useCompany();
   const { loading, items, error } = useOpportunities(activeCompany?.id);
+  const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const sortedForTree = useMemo(
     () =>
@@ -602,7 +634,7 @@ export default function OpportunitiesView() {
             </p>
           </div>
         ) : viewMode === "map" ? (
-          <OpportunityTreeView items={sortedForTree} />
+          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} />
         ) : (
           <div className="space-y-8">
             <OpportunitySection

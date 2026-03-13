@@ -326,6 +326,25 @@ function buildOpportunityBrief(opportunities: unknown): string {
     .join("\n");
 }
 
+function buildManagedOutcomeBrief(outcomes: unknown): string {
+  const items = Array.isArray(outcomes) ? outcomes : [];
+
+  return items
+    .map((outcome, index) => {
+      const entry = outcome as {
+        journey_key?: string;
+        outcome_title?: string;
+        outcome_statement?: string;
+        leading_indicator?: string;
+        target_direction?: string;
+        confidence?: number;
+      };
+
+      return `${index + 1}. ${entry.journey_key || "unknown"} | ${entry.outcome_title || "Untitled"} | ${entry.outcome_statement || "No statement"} | leading indicator: ${entry.leading_indicator || "unknown"} | target direction: ${entry.target_direction || "unknown"} | confidence ${entry.confidence ?? "?"}`;
+    })
+    .join("\n");
+}
+
 const WEAK_OUTCOME_STARTERS = [
   "build ",
   "create ",
@@ -413,6 +432,48 @@ async function repairWeakOpportunities(args: {
     userText,
     maxOutputTokens: 2200,
     temperature: 0.1,
+  });
+}
+
+async function generateManagedOutcomes(args: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  journeys: unknown;
+  opportunities: unknown;
+}) {
+  const systemText =
+    `You are defining managed product outcomes for a Teresa Torres style opportunity solution tree.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Create exactly one managed outcome for each journey_key: customer, revenue, operations.\n` +
+    `A managed outcome is the result the team should manage toward, not an opportunity branch, feature, initiative, or broad vanity KPI.\n` +
+    `Each managed outcome should:\n` +
+    `- be a leading-indicator style result within the company's influence\n` +
+    `- be broad enough to span multiple opportunities and solutions\n` +
+    `- stay specific to the company, audience, and journey context\n` +
+    `- have a clear target_direction like increase, reduce, improve, maximize, or minimize\n` +
+    `- include a plausible leading indicator that could eventually be measured\n` +
+    `- note evidence_basis honestly from public evidence only\n` +
+    `- keep confidence lower when evidence is inferential rather than directly measured\n`;
+
+  const userText =
+    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
+    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
+    `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
+    `Generate one managed outcome per journey that the team should manage toward.\n`;
+
+  return callOpenAIJSON({
+    apiKey: args.apiKey,
+    model: args.model,
+    schemaName: "mojo_managed_outcomes_v1",
+    schema: managedOutcomesSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1200,
+    temperature: 0.15,
   });
 }
 
@@ -1598,6 +1659,41 @@ const repairBundleSchema = {
   required: ["inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
 };
 
+const managedOutcomesSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    outcomes: {
+      type: "array",
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          outcome_title: { type: "string" },
+          outcome_statement: { type: "string" },
+          leading_indicator: { type: "string" },
+          target_direction: { type: "string" },
+          evidence_basis: { type: "string" },
+          confidence: { type: "integer" },
+        },
+        required: [
+          "journey_key",
+          "outcome_title",
+          "outcome_statement",
+          "leading_indicator",
+          "target_direction",
+          "evidence_basis",
+          "confidence",
+        ],
+      },
+    },
+  },
+  required: ["outcomes"],
+};
+
 async function runFinalizer(opts: {
   apiKey: string;
   model: string;
@@ -2494,6 +2590,7 @@ Deno.serve(async (req) => {
     await supabase.from("job_steps").delete().eq("company_id", company_id);
     await supabase.from("opportunities").delete().eq("company_id", company_id);
     await supabase.from("routes").delete().eq("company_id", company_id);
+    await supabase.from("managed_outcomes").delete().eq("company_id", company_id);
     await supabase.from("odi_needs").delete().eq("company_id", company_id);
     await supabase.from("odi_market_definitions").delete().eq("company_id", company_id);
     await supabase.from("positioning_canvases").delete().eq("company_id", company_id);
@@ -2506,6 +2603,7 @@ Deno.serve(async (req) => {
     let stepsInserted = 0;
     let oppsInserted = 0;
     let routesInserted = 0;
+    let managedOutcomesInserted = 0;
     let odiNeedsInserted = 0;
     let positioningCanvasInserted = 0;
     let strategyCascadeInserted = 0;
@@ -2759,6 +2857,45 @@ Deno.serve(async (req) => {
       else routesInserted++;
     }
 
+    const managedOutcomesResult = await generateManagedOutcomes({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      journeys,
+      opportunities,
+    });
+
+    const managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
+      ? managedOutcomesResult.outcomes
+      : [];
+
+    for (const outcome of managedOutcomes) {
+      const journeyKey = ["customer", "revenue", "operations"].includes(String(outcome?.journey_key))
+        ? String(outcome?.journey_key)
+        : "customer";
+
+      const { error: managedOutcomeErr } = await supabase.from("managed_outcomes").insert({
+        company_id,
+        user_id: user.id,
+        journey_key: journeyKey,
+        outcome_title: String(outcome?.outcome_title || ""),
+        outcome_statement: String(outcome?.outcome_statement || ""),
+        leading_indicator: String(outcome?.leading_indicator || ""),
+        target_direction: String(outcome?.target_direction || ""),
+        evidence_basis: String(outcome?.evidence_basis || ""),
+        confidence: clamp(Number(outcome?.confidence) || 0, 0, 100),
+        frameworks_used: opportunityFrameworkKeys,
+      });
+
+      if (managedOutcomeErr) {
+        console.error("[research-company] managed outcome insert error:", managedOutcomeErr);
+      } else {
+        managedOutcomesInserted++;
+      }
+    }
+
     const positioningPayload = {
       company_id,
       user_id: user.id,
@@ -2906,6 +3043,7 @@ Deno.serve(async (req) => {
           journeys: journeys.length,
           opportunities: opportunities.length,
           routes: routes.length,
+          managed_outcomes: managedOutcomesInserted,
         },
       },
       artifactsJson: {
@@ -2936,6 +3074,12 @@ Deno.serve(async (req) => {
           title: String(route?.title || ""),
           pts_value: Number(route?.pts_value) || 0,
         })),
+        managed_outcomes: managedOutcomes.map((outcome: any) => ({
+          journey_key: String(outcome?.journey_key || ""),
+          outcome_title: String(outcome?.outcome_title || ""),
+          leading_indicator: String(outcome?.leading_indicator || ""),
+          confidence: Number(outcome?.confidence) || 0,
+        })),
         positioning: positioningCanvasResult,
         strategy: strategyCascadeResult,
       },
@@ -2947,6 +3091,7 @@ Deno.serve(async (req) => {
       steps_inserted: stepsInserted,
       opportunities_inserted: oppsInserted,
       routes_inserted: routesInserted,
+      managed_outcomes_inserted: managedOutcomesInserted,
       odi_needs_inserted: odiNeedsInserted,
       positioning_canvas_inserted: positioningCanvasInserted,
       strategy_cascade_inserted: strategyCascadeInserted,
