@@ -115,6 +115,9 @@ function buildJourneyBrief(journeys: unknown): string {
           description?: string;
           designed?: boolean;
           has_gap?: boolean;
+          evidence_status?: string;
+          evidence_basis?: string;
+          evidence_confidence?: number;
         }>;
       };
 
@@ -130,9 +133,12 @@ function buildJourneyBrief(journeys: unknown): string {
             description?: string;
             designed?: boolean;
             has_gap?: boolean;
+            evidence_status?: string;
+            evidence_basis?: string;
+            evidence_confidence?: number;
           };
 
-          return `- Step ${typedStep.step_number ?? "?"}: ${typedStep.step_label || "Untitled"} | designed=${typedStep.designed ? "yes" : "no"} | gap=${typedStep.has_gap ? "yes" : "no"} | ${typedStep.description || "No description"}`;
+          return `- Step ${typedStep.step_number ?? "?"}: ${typedStep.step_label || "Untitled"} | designed=${typedStep.designed ? "yes" : "no"} | gap=${typedStep.has_gap ? "yes" : "no"} | evidence=${typedStep.evidence_status || "unknown"} | conf=${typedStep.evidence_confidence ?? "?"} | basis=${typedStep.evidence_basis || "unknown"} | ${typedStep.description || "No description"}`;
         }),
       ].join("\n");
     })
@@ -296,7 +302,9 @@ async function runConsistencyReview(opts: {
     `- opportunity rows correctly tied to journey steps\n` +
     `- routes that meaningfully connect to opportunities and job-step gaps\n` +
     `- any sign of wrong-company drift, adjacent-market drift, or contradictory language\n` +
-    `Use severity=high only when the draft should not be saved without correction.\n`;
+    `Do NOT treat ordinary capability gaps, missing measurement systems, incomplete governance, or nonprofit operating weaknesses as high-severity review failures by themselves.\n` +
+    `Those kinds of weaknesses are expected outputs of strategy work and should usually be medium or low severity unless they directly contradict the baseline or other generated artifacts.\n` +
+    `Use severity=high only when there is wrong-company drift, market/category contradiction, buyer/user contradiction, or a material cross-artifact inconsistency that makes the draft unsafe to save.\n`;
 
   return await callOpenAIJSON({
     apiKey: opts.apiKey,
@@ -429,12 +437,18 @@ async function callOpenAIJSON(opts: {
     temperature = 0.2,
   } = opts;
 
-  const body = {
+  const buildBody = (outputBudget: number, retryNote = "") => ({
     model,
     temperature,
-    max_output_tokens: maxOutputTokens,
+    max_output_tokens: outputBudget,
     input: [
-      { role: "system", content: [{ type: "input_text", text: systemText }] },
+      {
+        role: "system",
+        content: [{
+          type: "input_text",
+          text: `${systemText}${retryNote ? `\n\n${retryNote}` : ""}`,
+        }],
+      },
       { role: "user", content: [{ type: "input_text", text: userText }] },
     ],
     text: {
@@ -445,36 +459,63 @@ async function callOpenAIJSON(opts: {
         schema,
       },
     },
-  };
-
-  const resp = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
   });
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`OpenAI error ${resp.status}: ${errText}`);
+  const budgets = [maxOutputTokens, Math.round(maxOutputTokens * 1.75)];
+
+  for (let attempt = 0; attempt < budgets.length; attempt++) {
+    const retryNote =
+      attempt === 0
+        ? ""
+        : "Your previous response was truncated or invalid JSON. Return the full JSON object in one complete response that exactly matches the schema.";
+
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`OpenAI error ${resp.status}: ${errText}`);
+    }
+
+    const data = await resp.json();
+    const text = extractResponsesOutputText(data);
+    if (!text) {
+      console.log("[research-company] OpenAI response missing output_text. keys=", Object.keys(data || {}));
+      throw new Error("OpenAI response missing output_text");
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.log("[research-company] OpenAI JSON parse failed. first200=", text.slice(0, 200));
+      console.log("[research-company] OpenAI JSON parse failed. last200=", text.slice(-200));
+
+      const parseMessage = e instanceof Error ? e.message : String(e);
+      const looksTruncated =
+        parseMessage.toLowerCase().includes("unterminated") ||
+        parseMessage.toLowerCase().includes("unexpected end") ||
+        text.trim().length > 0 && !text.trim().endsWith("}");
+
+      if (attempt < budgets.length - 1 && looksTruncated) {
+        console.log("[research-company] retrying OpenAI JSON parse with larger token budget", {
+          schemaName,
+          previousBudget: budgets[attempt],
+          nextBudget: budgets[attempt + 1],
+        });
+        continue;
+      }
+
+      throw e;
+    }
   }
 
-  const data = await resp.json();
-  const text = extractResponsesOutputText(data);
-  if (!text) {
-    console.log("[research-company] OpenAI response missing output_text. keys=", Object.keys(data || {}));
-    throw new Error("OpenAI response missing output_text");
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    console.log("[research-company] OpenAI JSON parse failed. first200=", text.slice(0, 200));
-    console.log("[research-company] OpenAI JSON parse failed. last200=", text.slice(-200));
-    throw e;
-  }
+  throw new Error("OpenAI JSON generation failed after retries");
 }
 
 const POSITIONING_KEYS = new Set([
@@ -520,6 +561,15 @@ function normalizeConfidence(value: number) {
 function ratio(count: number, max: number) {
   if (max <= 0) return 0;
   return clamp(count / max, 0, 1);
+}
+
+function isJobStepEvidenceColumnError(message: unknown) {
+  const lower = String(message || "").toLowerCase();
+  return (
+    lower.includes("evidence_status") ||
+    lower.includes("evidence_basis") ||
+    lower.includes("evidence_confidence")
+  );
 }
 
 function averageCompleteness(items: Array<{ completeness?: unknown }>) {
@@ -940,8 +990,11 @@ Deno.serve(async (req) => {
       required: ["inputs"],
     };
 
+    const baselineBrief = buildBaselineBrief(baselineRun?.result_json ?? null);
+
     const inputsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
+      `Public baseline context:\n${baselineBrief}\n\n` +
       `Return EXACTLY 14 input objects, one per input_key in this list.\n` +
       `Do not omit any.\n\n` +
       `Keys:\n` +
@@ -953,6 +1006,10 @@ Deno.serve(async (req) => {
       `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
       `Framework guidance:\n${buildFrameworkBrief("inputs", getFrameworkRoutingPlan("inputs"))}\n\n` +
       `Constraints:\n` +
+      `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
+      `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
+      `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
+      `- When evidence is weak, use cautious wording instead of inventing specifics\n` +
       `- input_label max 5 words\n` +
       `- sub_group max 4 words\n` +
       `- description max 10 words\n` +
@@ -1014,9 +1071,12 @@ Deno.serve(async (req) => {
                     description: { type: "string" },
                     designed: { type: "boolean" },
                     has_gap: { type: "boolean" },
+                    evidence_status: { type: "string", enum: ["evidenced", "implied", "unclear"] },
+                    evidence_basis: { type: "string" },
+                    evidence_confidence: { type: "integer" },
                     gap_note: { type: "string" },
                   },
-                  required: ["step_number", "step_label", "description", "designed", "has_gap", "gap_note"],
+                  required: ["step_number", "step_label", "description", "designed", "has_gap", "evidence_status", "evidence_basis", "evidence_confidence", "gap_note"],
                 },
               },
             },
@@ -1027,7 +1087,6 @@ Deno.serve(async (req) => {
       required: ["journeys"],
     };
 
-    const baselineBrief = buildBaselineBrief(baselineRun?.result_json ?? null);
     const journeyFrameworks = getFrameworkRoutingPlan("journeys");
     const journeyFrameworkBrief = buildFrameworkBrief("journeys", journeyFrameworks);
     const journeyFrameworkKeys = journeyFrameworks.map((framework) => framework.key);
@@ -1044,11 +1103,20 @@ Deno.serve(async (req) => {
       `- customer journey = external user/buyer experience from discovery to post-use\n` +
       `- revenue journey = how the company wins, funds, contracts, renews, or monetizes demand\n` +
       `- operations journey = how the company delivers, operates, manufactures, certifies, or supports the offering\n` +
+      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
       `- step_label 2–5 words\n` +
       `- description 18–40 words, concrete and sequential\n` +
+      `- evidence_status must be one of evidenced, implied, or unclear\n` +
+      `- evidenced = directly supported by public evidence\n` +
+      `- implied = strongly suggested by the business model or multiple signals, but not directly proven\n` +
+      `- unclear = weak, missing, or ambiguous evidence\n` +
+      `- evidence_basis 8–24 words explaining the evidence or inference behind the step status\n` +
+      `- evidence_confidence 0..100 based on how grounded the step is in public evidence\n` +
       `- gap_note 6–18 words and specific when there is a gap\n` +
-      `- designed=true only when the step appears meaningfully evidenced or clearly implied by the business model\n` +
-      `- designed=false and has_gap=true when evidence is weak, missing, or clearly immature\n`;
+      `- designed=true only when the step appears intentionally supported and evidence_status is evidenced or implied\n` +
+      `- designed=false when evidence_status is unclear\n` +
+      `- has_gap=true when there is a visible weakness, missing capability, or unclear handoff\n` +
+      `- if has_gap=false, set gap_note to an empty string\n`;
 
     const journeysUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -1066,7 +1134,7 @@ Deno.serve(async (req) => {
       schema: journeysSchema,
       systemText: journeysSystemText,
       userText: journeysUserText,
-      maxOutputTokens: 1800,
+      maxOutputTokens: 2400,
       temperature: 0.2,
     });
 
@@ -1116,6 +1184,7 @@ Deno.serve(async (req) => {
       `- Use a structured formula close to: direction + metric + object + context\n` +
       `- Use verbs like minimize, reduce, increase, improve, maximize, or avoid when appropriate\n` +
       `- Keep outcomes solution-free, stable over time, and measurable in spirit\n` +
+      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
       `- Good example style: "Minimize the time it takes to complete intake during a family crisis"\n` +
       `- Bad example style: "Build a better intake form" or "Add referral dashboard"\n` +
       `- importance/satisfaction 1..10\n` +
@@ -1193,6 +1262,7 @@ Deno.serve(async (req) => {
       `- short_description should be 16-32 words and mention why the route matters\n` +
       `- pts_value should be 1..10 and reflect likely score impact\n` +
       `- sort_order should rank strongest routes first within the whole set\n` +
+      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
       `- Fix = remove blockers/gaps, Improve = strengthen existing systems, Create = build net-new strategic assets\n` +
       `- type must match category in title case\n`;
 
@@ -1397,6 +1467,9 @@ Deno.serve(async (req) => {
       `Use strong, executive-quality language, but stay tethered to the supplied evidence.\n` +
       `If evidence is thin, make the uncertainty explicit through status and assumptions rather than pretending certainty.\n\n` +
       `Rules:\n` +
+      `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
+      `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
+      `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
       `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +
       `- capabilities should be concrete operational or strategic abilities, not departments\n` +
       `- management_systems should be recurring operating loops, measurement systems, governance, planning, or resource systems\n` +
@@ -1584,7 +1657,7 @@ Deno.serve(async (req) => {
 
       const steps = Array.isArray(journey?.steps) ? journey.steps : [];
       for (const step of steps) {
-        const { error: stepErr } = await supabase.from("job_steps").insert({
+        const stepPayload = {
           company_id,
           user_id: user.id,
           frameworks_used: journeyFrameworkKeys,
@@ -1596,8 +1669,33 @@ Deno.serve(async (req) => {
           description: String(step?.description || ""),
           designed: !!step?.designed,
           has_gap: !!step?.has_gap,
+          evidence_status: ["evidenced", "implied", "unclear"].includes(String(step?.evidence_status))
+            ? String(step?.evidence_status)
+            : "unclear",
+          evidence_basis: String(step?.evidence_basis || ""),
+          evidence_confidence: clamp(Number(step?.evidence_confidence) || 0, 0, 100),
           gap_note: String(step?.gap_note || ""),
-        });
+        };
+
+        let { error: stepErr } = await supabase.from("job_steps").insert(stepPayload);
+
+        if (stepErr && isJobStepEvidenceColumnError(stepErr.message || "")) {
+          const fallback = await supabase.from("job_steps").insert({
+            company_id,
+            user_id: user.id,
+            frameworks_used: journeyFrameworkKeys,
+            journey_key: journeyKey,
+            journey_title: String(journey?.journey_title || ""),
+            journey_subtitle: String(journey?.journey_subtitle || ""),
+            step_number: Number(step?.step_number) || 1,
+            step_label: String(step?.step_label || ""),
+            description: String(step?.description || ""),
+            designed: !!step?.designed,
+            has_gap: !!step?.has_gap,
+            gap_note: String(step?.gap_note || ""),
+          });
+          stepErr = fallback.error;
+        }
 
         if (stepErr) console.error("[research-company] job step insert error:", stepErr);
         else stepsInserted++;

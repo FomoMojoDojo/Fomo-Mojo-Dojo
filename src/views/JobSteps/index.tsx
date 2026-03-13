@@ -24,7 +24,11 @@ const c = {
   slate: "#233C4B",
   gap: "#FF7D2D",
   empty: "#E7EEDC",
+  designedDot: "#7B8F66",
 };
+
+const STEP_CARD_WIDTH = "250px";
+const STEP_DETAIL_BLOCK_HEIGHT = "96px";
 
 type JourneyKey = "customer" | "revenue" | "operations";
 
@@ -92,12 +96,14 @@ function TimelineRow({
   return (
     <div className="flex gap-3 px-5 py-4">
       {steps.map((step, index) => {
-        const active = !!step.designed;
-        const bg = active ? color : c.empty;
-        const text = active ? "#fff" : c.muted;
+        const evidenced = step.evidence_status === "evidenced";
+        const implied = step.evidence_status === "implied";
+        const active = evidenced || implied || !!step.designed;
+        const bg = evidenced ? color : implied ? `${color}B3` : c.empty;
+        const text = evidenced || implied ? "#fff" : c.muted;
 
         return (
-          <div key={step.id} className="w-[150px] shrink-0">
+          <div key={step.id} className="w-[250px] shrink-0" style={{ width: STEP_CARD_WIDTH }}>
             <div className="flex items-center">
               <div
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-mono text-[12px] font-bold"
@@ -120,21 +126,83 @@ function TimelineRow({
 }
 
 function StepCard({ step }: { step: JobStepRow }) {
+  const evidenceTone =
+    step.evidence_status === "evidenced"
+      ? { label: "Evidenced", color: c.teal, bg: "#EEF6E7", border: "#BDD8CF" }
+      : step.evidence_status === "implied"
+        ? { label: "Implied", color: c.slate, bg: "#EDF4F6", border: "#C4D7DE" }
+        : { label: "Unclear", color: c.gap, bg: "#FFF0E6", border: "#FFD1B4" };
+
   return (
     <div
-      className="flex h-full w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl"
-      style={{ background: c.paper, border: `1px solid ${c.line}` }}
+      className="flex h-full w-[250px] shrink-0 flex-col overflow-hidden rounded-2xl"
+      style={{
+        width: STEP_CARD_WIDTH,
+        background: c.paper,
+        border: `1px solid ${step.has_gap ? "#E7C3A4" : c.line}`,
+        boxShadow: step.has_gap ? "0 0 0 1px rgba(255,125,45,0.08) inset" : "none",
+      }}
     >
-      <div className="flex-1 p-4">
-        <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-          Step {step.step_number ?? "—"}
-        </p>
-        <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
-          {safeText(step.step_label, "Untitled step")}
-        </p>
-        <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-          {safeText(step.description, "No description yet.")}
-        </p>
+      <div className="flex min-h-[440px] flex-1 flex-col p-4">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+            Step {step.step_number ?? "—"}
+          </p>
+          <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
+            {safeText(step.step_label, "Untitled step")}
+          </p>
+          <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+            {safeText(step.description, "No description yet.")}
+          </p>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span
+            className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+            style={{ color: evidenceTone.color, background: evidenceTone.bg, borderColor: evidenceTone.border }}
+          >
+            {evidenceTone.label}
+          </span>
+          <MetaBadge>Conf {step.evidence_confidence ?? 0}</MetaBadge>
+        </div>
+
+        <div
+          className="mt-3 rounded-xl border px-3 py-2"
+          style={{ borderColor: c.line, background: c.lineFaint, minHeight: STEP_DETAIL_BLOCK_HEIGHT }}
+        >
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+            Evidence Basis
+          </p>
+          <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+            {safeText(step.evidence_basis, "No evidence rationale captured.")}
+          </p>
+        </div>
+
+        {step.has_gap ? (
+          <div
+            className="mt-3 rounded-xl border px-3 py-2"
+            style={{
+              borderColor: "#E7C3A4",
+              background: "#FFF7F0",
+              minHeight: STEP_DETAIL_BLOCK_HEIGHT,
+            }}
+          >
+            <p
+              className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]"
+              style={{ color: c.gap }}
+            >
+              Gap Identified
+            </p>
+            <p
+              className="mt-1 font-sans text-[12px] leading-[1.55]"
+              style={{ color: c.gap }}
+            >
+              {safeText(step.gap_note, "Gap present, but no rationale captured yet.")}
+            </p>
+          </div>
+        ) : (
+          <div style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }} className="mt-3" />
+        )}
       </div>
 
       <div
@@ -148,7 +216,7 @@ function StepCard({ step }: { step: JobStepRow }) {
           </span>
         ) : (
           <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-            Designed
+            {step.designed ? "Designed" : evidenceTone.label}
           </span>
         )}
       </div>
@@ -284,6 +352,7 @@ function JourneySection({ journey }: { journey: JourneyGroup }) {
 
   const { rail, dot, preview } = JOURNEY_STYLE[journey.key];
   const designedCount = journey.steps.filter((step) => step.designed).length;
+  const evidencedCount = journey.steps.filter((step) => step.evidence_status === "evidenced").length;
   const gapsCount = journey.steps.filter((step) => step.has_gap).length;
 
   useEffect(() => {
@@ -340,8 +409,12 @@ function JourneySection({ journey }: { journey: JourneyGroup }) {
 
           <div className="mt-1 flex items-center gap-5 whitespace-nowrap">
             <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: dot }} />
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.designedDot }} />
               {designedCount} designed
+            </span>
+            <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.teal }} />
+              {evidencedCount} evidenced
             </span>
             <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.gap }} />
@@ -441,7 +514,7 @@ export default function JobStepsView() {
           label="Public Research"
           tone="public"
           className="mb-6 max-w-[780px]"
-          detail="This journey map is generated from the public baseline and company research flow. Uploaded client files feed the deep-dive panels separately, not this public research layer."
+          detail="This journey map is generated from the public baseline and company research flow. Designed steps may be directly evidenced or strongly implied by the public evidence; they are not the same as validated internal proof."
         />
 
         {!activeCompany?.id ? (

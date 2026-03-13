@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
+function isJobStepEvidenceColumnError(message: string) {
+  const lower = String(message || "").toLowerCase();
+  return (
+    lower.includes("evidence_status") ||
+    lower.includes("evidence_basis") ||
+    lower.includes("evidence_confidence")
+  );
+}
+
 export type JobStepRow = {
   id: string;
   company_id: string;
@@ -13,6 +22,9 @@ export type JobStepRow = {
   description: string | null;
   designed: boolean | null;
   has_gap: boolean | null;
+  evidence_status: "evidenced" | "implied" | "unclear" | string | null;
+  evidence_basis: string | null;
+  evidence_confidence: number | null;
   gap_note: string | null;
   created_at?: string;
 };
@@ -36,15 +48,41 @@ export function useJobSteps(companyId?: string) {
       setLoading(true);
       setError(null);
 
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("job_steps")
         .select(
-          "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, gap_note, created_at"
+          "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence, gap_note, created_at"
         )
         .eq("company_id", companyId)
         .order("journey_key", { ascending: true })
         .order("step_number", { ascending: true })
         .limit(400);
+
+      if (error && isJobStepEvidenceColumnError(error.message || "")) {
+        const fallback = await supabase
+          .from("job_steps")
+          .select(
+            "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, gap_note, created_at"
+          )
+          .eq("company_id", companyId)
+          .order("journey_key", { ascending: true })
+          .order("step_number", { ascending: true })
+          .limit(400);
+
+        data = fallback.data as any[] | null;
+        error = fallback.error;
+
+        if (!fallback.error) {
+          data = ((fallback.data as any[]) ?? []).map((row) => ({
+            ...row,
+            evidence_status: row?.designed ? "implied" : "unclear",
+            evidence_basis: row?.designed
+              ? "Legacy row without explicit evidence basis; inferred from designed step."
+              : "Legacy row without explicit evidence basis.",
+            evidence_confidence: row?.designed ? 55 : 0,
+          }));
+        }
+      }
 
       if (cancelled) return;
 
