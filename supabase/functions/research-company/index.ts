@@ -326,6 +326,96 @@ function buildOpportunityBrief(opportunities: unknown): string {
     .join("\n");
 }
 
+const WEAK_OUTCOME_STARTERS = [
+  "build ",
+  "create ",
+  "add ",
+  "launch ",
+  "implement ",
+  "improve the ",
+  "design ",
+  "develop ",
+  "roll out ",
+  "introduce ",
+  "use ",
+];
+
+const WEAK_OUTCOME_TERMS = [
+  "dashboard",
+  "portal",
+  "feature",
+  "tool",
+  "campaign",
+  "workflow",
+  "form",
+  "program",
+  "website",
+  "crm",
+  "integration",
+];
+
+function analyzeOutcomeQuality(outcome: string) {
+  const text = String(outcome || "").trim().toLowerCase();
+  const issues: string[] = [];
+
+  if (!text) issues.push("missing_text");
+  if (text.split(/\s+/).length < 7) issues.push("too_short");
+  if (WEAK_OUTCOME_STARTERS.some((starter) => text.startsWith(starter))) issues.push("starts_like_output");
+  if (WEAK_OUTCOME_TERMS.some((term) => text.includes(term))) issues.push("contains_solution_language");
+  if (!/^(minimize|reduce|increase|improve|maximize|avoid)\b/.test(text)) issues.push("missing_directional_verb");
+  if (!/\b(time|effort|likelihood|confidence|consistency|clarity|risk|delay|drop-off|completion|cost|burden|visibility|follow-through|continuity|conversion|retention|readiness|access)\b/.test(text)) {
+    issues.push("missing_measurable_dimension");
+  }
+
+  return {
+    weak: issues.length >= 2,
+    issues,
+  };
+}
+
+async function repairWeakOpportunities(args: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  journeys: unknown;
+  opportunities: unknown;
+  schema: any;
+}) {
+  const systemText =
+    `You are improving product discovery outcomes so they follow Teresa Torres style outcome rules.\n` +
+    `Return ONLY valid JSON that matches the schema. No prose.\n` +
+    `Keep journey_key, step_number, step_label, importance, satisfaction, opportunity_score, and priority_tier grounded to the original draft.\n` +
+    `Rewrite only weak outcomes.\n` +
+    `A strong outcome:\n` +
+    `- describes a change in customer behavior, progress, or value rather than a feature or solution\n` +
+    `- is within the team's influence, not a distant business KPI by itself\n` +
+    `- spans multiple possible solutions rather than naming one implementation\n` +
+    `- uses a directional construction like minimize, reduce, increase, improve, maximize, or avoid\n` +
+    `- includes a measurable dimension in spirit: time, effort, risk, confidence, clarity, consistency, completion, follow-through, retention, conversion, continuity, or similar\n` +
+    `- stays specific to the company, audience, and step context\n` +
+    `Do not output feature ideas, initiatives, deliverables, launches, forms, portals, dashboards, or campaigns as outcomes.\n`;
+
+  const userText =
+    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
+    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Generated journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
+    `Current opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
+    `Rewrite weak outcomes so they read like strong product discovery outcomes while staying faithful to the same step context and company reality.\n`;
+
+  return callOpenAIJSON({
+    apiKey: args.apiKey,
+    model: args.model,
+    schemaName: "mojo_opps_outcome_repair_v1",
+    schema: args.schema,
+    systemText,
+    userText,
+    maxOutputTokens: 2200,
+    temperature: 0.1,
+  });
+}
+
 function buildInputBrief(inputs: unknown): string {
   const items = Array.isArray(inputs) ? inputs : [];
 
@@ -735,6 +825,72 @@ async function runStrategyReview(opts: {
     maxOutputTokens: 1400,
     temperature: 0.1,
   });
+}
+
+async function runAllDraftReviews(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  odiBrief: string;
+  inputs: unknown;
+  journeys: unknown;
+  opportunities: unknown;
+  routes: unknown;
+  positioning: unknown;
+  strategy: unknown;
+}) {
+  const [consistencyReview, positioningReview, evidenceReview, strategyReview] = await Promise.all([
+    runConsistencyReview({
+      apiKey: opts.apiKey,
+      model: opts.model,
+      companyName: opts.companyName,
+      website: opts.website,
+      baselineBrief: opts.baselineBrief,
+      odiBrief: opts.odiBrief,
+      inputs: opts.inputs,
+      journeys: opts.journeys,
+      opportunities: opts.opportunities,
+      routes: opts.routes,
+      positioning: opts.positioning,
+      strategy: opts.strategy,
+    }),
+    runPositioningReview({
+      apiKey: opts.apiKey,
+      model: opts.model,
+      companyName: opts.companyName,
+      website: opts.website,
+      baselineBrief: opts.baselineBrief,
+      positioning: opts.positioning,
+      opportunities: opts.opportunities,
+      routes: opts.routes,
+    }),
+    runEvidenceReview({
+      apiKey: opts.apiKey,
+      model: opts.model,
+      companyName: opts.companyName,
+      website: opts.website,
+      baselineBrief: opts.baselineBrief,
+      journeys: opts.journeys,
+      opportunities: opts.opportunities,
+      routes: opts.routes,
+      positioning: opts.positioning,
+      strategy: opts.strategy,
+    }),
+    runStrategyReview({
+      apiKey: opts.apiKey,
+      model: opts.model,
+      companyName: opts.companyName,
+      website: opts.website,
+      baselineBrief: opts.baselineBrief,
+      strategy: opts.strategy,
+      routes: opts.routes,
+      opportunities: opts.opportunities,
+    }),
+  ]);
+
+  return { consistencyReview, positioningReview, evidenceReview, strategyReview };
 }
 
 function frameworkKeysFor(artifact: "inputs" | "journeys" | "opportunities" | "routes") {
@@ -1813,13 +1969,18 @@ Deno.serve(async (req) => {
       `Rules:\n` +
       `- Use the provided journeys and steps exactly; do not invent unrelated step labels\n` +
       `- Opportunities should target bottlenecks, missing capabilities, weak transitions, or unclear handoffs in those journeys\n` +
-      `- outcome must read like an ODI desired outcome statement, not a feature idea or recommendation\n` +
-      `- Use a structured formula close to: direction + metric + object + context\n` +
-      `- Use verbs like minimize, reduce, increase, improve, maximize, or avoid when appropriate\n` +
+      `- outcome must read like a strong product discovery outcome or ODI desired outcome, not a feature idea, deliverable, or recommendation\n` +
+      `- Use a structured formula close to: direction + measurable dimension + object + context\n` +
+      `- Start with verbs like minimize, reduce, increase, improve, maximize, or avoid when appropriate\n` +
       `- Keep outcomes solution-free, stable over time, and measurable in spirit\n` +
+      `- Good outcomes describe a change in customer behavior, progress, clarity, effort, risk, confidence, continuity, completion, conversion, or retention\n` +
+      `- Good outcomes stay within the company's span of influence, rather than naming broad business goals with no customer mechanism\n` +
+      `- Do not output initiatives, launches, campaigns, dashboards, websites, forms, workflows, programs, portals, tools, or features as outcomes\n` +
+      `- Do not use vague outcome text like "Improve engagement" or "Increase awareness" without a concrete object and context\n` +
       `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
       `- Good example style: "Minimize the time it takes to complete intake during a family crisis"\n` +
-      `- Bad example style: "Build a better intake form" or "Add referral dashboard"\n` +
+      `- Better example style: "Increase the likelihood that a referred family completes the first intake step after initial outreach"\n` +
+      `- Bad example style: "Build a better intake form", "Add referral dashboard", or "Launch a new donor campaign"\n` +
       `- importance/satisfaction 1..10\n` +
       `- opportunity_score = importance + (10 - satisfaction)\n` +
       `- priority_tier: focus if >= 12, monitor if >= 7, defer if < 7\n` +
@@ -1847,6 +2008,27 @@ Deno.serve(async (req) => {
 
     let opportunities: any[] = Array.isArray(oppsResult?.opportunities) ? oppsResult.opportunities : [];
     if (opportunities.length < 15) return jsonResponse({ error: `Expected >=15 opportunities, got ${opportunities.length}` }, 500);
+    const weakOutcomeCount = opportunities.filter((opp) => analyzeOutcomeQuality(String(opp?.outcome || "")).weak).length;
+    if (weakOutcomeCount > 0) {
+      const repairedOppsResult = await repairWeakOpportunities({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        journeys,
+        opportunities,
+        schema: oppsSchema,
+      });
+
+      const repairedOpportunities = Array.isArray(repairedOppsResult?.opportunities)
+        ? repairedOppsResult.opportunities
+        : [];
+
+      if (repairedOpportunities.length >= 15) {
+        opportunities = repairedOpportunities;
+      }
+    }
     const opportunityFrameworkKeys = frameworkKeysFor("opportunities");
     const odiFrameworkKeys = Array.from(new Set([
       ...getFrameworkRoutingPlan("journeys").map((framework) => framework.key),
@@ -2014,7 +2196,7 @@ Deno.serve(async (req) => {
         .join("\n")}\n\n` +
       `Generate a positioning canvas for this exact company.`;
 
-    let positioningCanvasResult = await callOpenAIJSON({
+    const positioningPromise = callOpenAIJSON({
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_positioning_canvas_v1",
@@ -2127,7 +2309,7 @@ Deno.serve(async (req) => {
         .join("\n")}\n\n` +
       `Generate a full strategy cascade for this exact company in the supplied schema.`;
 
-    let strategyCascadeResult = await callOpenAIJSON({
+    const strategyPromise = callOpenAIJSON({
       apiKey: openaiKey,
       model: openaiModel,
       schemaName: "mojo_strategy_cascade_v1",
@@ -2138,6 +2320,11 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
+    let [positioningCanvasResult, strategyCascadeResult] = await Promise.all([
+      positioningPromise,
+      strategyPromise,
+    ]);
+
     const customerJourneyDraft = journeys.find((journey) => journey?.journey_key === "customer");
     const odiBrief = buildODIBrief({
       baselineResultJson: baselineRun?.result_json ?? null,
@@ -2145,54 +2332,24 @@ Deno.serve(async (req) => {
       opportunities,
     });
 
-    let consistencyReview = await runConsistencyReview({
+    let {
+      consistencyReview,
+      positioningReview,
+      evidenceReview,
+      strategyReview,
+    } = await runAllDraftReviews({
       apiKey: openaiKey,
       model: openaiModel,
       companyName: company_name,
       website,
       baselineBrief,
+      odiBrief,
       inputs,
       journeys,
       opportunities,
       routes,
       positioning: positioningCanvasResult,
       strategy: strategyCascadeResult,
-      odiBrief,
-    });
-
-    let positioningReview = await runPositioningReview({
-      apiKey: openaiKey,
-      model: openaiModel,
-      companyName: company_name,
-      website,
-      baselineBrief,
-      positioning: positioningCanvasResult,
-      opportunities,
-      routes,
-    });
-
-    let evidenceReview = await runEvidenceReview({
-      apiKey: openaiKey,
-      model: openaiModel,
-      companyName: company_name,
-      website,
-      baselineBrief,
-      journeys,
-      opportunities,
-      routes,
-      positioning: positioningCanvasResult,
-      strategy: strategyCascadeResult,
-    });
-
-    let strategyReview = await runStrategyReview({
-      apiKey: openaiKey,
-      model: openaiModel,
-      companyName: company_name,
-      website,
-      baselineBrief,
-      strategy: strategyCascadeResult,
-      routes,
-      opportunities,
     });
 
     let reviewResults = [
@@ -2236,55 +2393,25 @@ Deno.serve(async (req) => {
       positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
       strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
 
-      consistencyReview = await runConsistencyReview({
+      ({
+        consistencyReview,
+        positioningReview,
+        evidenceReview,
+        strategyReview,
+      } = await runAllDraftReviews({
         apiKey: openaiKey,
         model: openaiModel,
         companyName: company_name,
         website,
         baselineBrief,
+        odiBrief,
         inputs,
         journeys,
         opportunities,
         routes,
         positioning: positioningCanvasResult,
         strategy: strategyCascadeResult,
-        odiBrief,
-      });
-
-      positioningReview = await runPositioningReview({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        positioning: positioningCanvasResult,
-        opportunities,
-        routes,
-      });
-
-      evidenceReview = await runEvidenceReview({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        journeys,
-        opportunities,
-        routes,
-        positioning: positioningCanvasResult,
-        strategy: strategyCascadeResult,
-      });
-
-      strategyReview = await runStrategyReview({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        strategy: strategyCascadeResult,
-        routes,
-        opportunities,
-      });
+      }));
 
       reviewResults = [
         { key: "consistency", review: consistencyReview },

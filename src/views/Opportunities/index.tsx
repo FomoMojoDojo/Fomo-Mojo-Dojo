@@ -50,10 +50,10 @@ function priorityLabel(tier: string) {
 }
 
 function journeyRootLabel(key: string, companyName?: string | null) {
-  if (key === "customer") return `Improve customer progress for ${companyName || "this company"}`;
-  if (key === "revenue") return `Improve demand and funding progress for ${companyName || "this company"}`;
-  if (key === "operations") return `Improve delivery and operating leverage for ${companyName || "this company"}`;
-  return `Improve outcomes for ${companyName || "this company"}`;
+  if (key === "customer") return `Increase the share of target customers who successfully progress through the customer journey at ${companyName || "this company"}`;
+  if (key === "revenue") return `Increase the rate at which qualified demand converts into sustainable funding, contracts, or revenue for ${companyName || "this company"}`;
+  if (key === "operations") return `Increase the consistency and timeliness of delivery across the operating journey for ${companyName || "this company"}`;
+  return `Increase successful progress through the core journey for ${companyName || "this company"}`;
 }
 
 function evidenceNeeded(item: OpportunityRow) {
@@ -93,6 +93,12 @@ function OpportunityHoverDetail({ item }: { item: OpportunityRow }) {
       </div>
 
       <div className="mt-4">
+        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+          Opportunity branch
+        </div>
+      </div>
+
+      <div className="mt-3">
         <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
           Why this node exists
         </div>
@@ -345,12 +351,12 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
           Opportunity Solution Tree
         </h2>
         <p className="mt-2 max-w-4xl font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
-          This view now behaves like a discovery opportunity tree: a desired outcome area at the top, branching into step-level opportunities beneath it. We are stopping before solution ideas on purpose. Hover any branch to inspect the context, evidence gap, and why it is prioritized. Current scores are still estimated from public evidence, not survey-based ODI measurements.
+          This view now separates a top-level product outcome target from the opportunity branches beneath it, which is closer to Teresa Torres' guidance on managing outcomes. The top node is the leading-indicator result the team should manage toward. The lower nodes are opportunity hypotheses to explore before selecting solutions. Hover any branch to inspect the context, evidence gap, and why it is prioritized. Current scores are still estimated from public evidence, not survey-based ODI measurements.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <MetaBadge>Outcome area</MetaBadge>
+          <MetaBadge>Product outcome target</MetaBadge>
           <MetaBadge>Step branch</MetaBadge>
-          <MetaBadge>Opportunity node</MetaBadge>
+          <MetaBadge>Opportunity branch</MetaBadge>
           <MetaBadge>Solutions come later</MetaBadge>
         </div>
       </div>
@@ -401,19 +407,25 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
                               <Sparkles className="h-4 w-4" />
                             </div>
                             <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                              Desired outcome area
+                              Product outcome target
                             </p>
                             <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
                               {journeyRootLabel(journeyKey)}
+                            </p>
+                            <p className="mt-2 font-sans text-[12px] italic leading-[1.55]" style={{ color: c.secondary }}>
+                              Provisional leading-indicator target derived from public evidence, not yet a hard-measured KPI.
                             </p>
                           </div>
                         </HoverCardTrigger>
                         <HoverCardContent className="w-[320px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
                           <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                            Outcome root
+                            Product outcome target
                           </div>
                           <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
-                            This root represents the outcome area the team is trying to improve. The branches below are opportunity hypotheses, not solutions.
+                            This root is the result the team should manage toward. It is not a feature, project, or initiative. The branches below are opportunities that may explain why the team is or is not reaching that outcome.
+                          </p>
+                          <p className="mt-3 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
+                            A true managed outcome should eventually become a measurable leading indicator with a baseline and target.
                           </p>
                         </HoverCardContent>
                       </HoverCard>
@@ -489,7 +501,7 @@ function OpportunityTreeView({ items }: { items: OpportunityRow[] }) {
                                       </div>
                                       <div className="mt-3 flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                                         <Info className="h-3 w-3" />
-                                        Hover for detail
+                                        Hover for opportunity detail
                                       </div>
                                     </button>
                                   </HoverCardTrigger>
@@ -556,7 +568,7 @@ export default function OpportunitiesView() {
             Opportunities
           </h1>
           <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
-            Focus on the desired outcomes behind the jobs customers, buyers, and operators are trying to get done. Prioritize underserved outcomes first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
+            Focus on the product outcomes and leading indicators behind the jobs customers, buyers, and operators are trying to get done. The top of the tree should represent a result to manage toward. The branches below should capture the opportunity space, not outputs, initiatives, or deliverables. Prioritize underserved opportunities first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
           </p>
           {items.length > 0 ? (
             <div className="mt-4">
