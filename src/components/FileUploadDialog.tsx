@@ -152,56 +152,58 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="bg-ink border-[#2a2618] text-t-dp max-w-[480px]">
+      <DialogContent className="max-w-[520px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
         <DialogHeader>
-          <DialogTitle className="font-serif text-[20px] text-t-dp">Upload File</DialogTitle>
+          <DialogTitle className="font-serif text-[22px] text-[#233c4b]">Upload File</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 mt-2">
           {/* File picker */}
           <div>
-            <label className="font-mono text-[10px] text-t-ds uppercase tracking-[0.12em] block mb-2">
+            <label className="font-mono text-[10px] text-[#6e847f] uppercase tracking-[0.12em] block mb-2">
               FILE
             </label>
             <input ref={fileRef} type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg" />
             <button
               onClick={() => fileRef.current?.click()}
-              className="w-full border border-dashed border-[#3e3828] rounded-lg py-4 text-center hover:bg-ink-2 transition-colors cursor-pointer"
+              className="w-full rounded-[18px] border border-dashed py-4 text-center transition-colors cursor-pointer"
+              style={{ borderColor: '#cfdace', background: '#ffffff' }}
             >
               {file ? (
-                <span className="font-serif text-[14px] text-gold-light">{file.name}</span>
+                <span className="font-serif text-[15px]" style={{ color: '#233c4b' }}>{file.name}</span>
               ) : (
-                <span className="font-serif text-[14px] text-t-ds">Click to choose a file</span>
+                <span className="font-serif text-[15px]" style={{ color: '#46606d' }}>Click to choose a file</span>
               )}
             </button>
           </div>
 
           {/* AI analysis status */}
           {analyzing && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-ink-2 rounded-lg border border-[#3e3828]">
-              <div className="w-3 h-3 border-2 border-gold border-t-transparent rounded-full animate-spin" />
-              <span className="font-mono text-[11px] text-gold">Analyzing file content…</span>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-[16px] border" style={{ background: '#fffdf7', borderColor: '#e4d8ac' }}>
+              <div className="w-3 h-3 border-2 rounded-full animate-spin" style={{ borderColor: '#c89b2b', borderTopColor: 'transparent' }} />
+              <span className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: '#8a6b12' }}>Analyzing file content…</span>
             </div>
           )}
 
           {/* AI reasoning */}
           {aiReasoning && !analyzing && (
-            <div className="px-3 py-2 bg-ink-2 rounded-lg border border-[#3e3828]">
-              <span className="font-mono text-[10px] text-t-ds uppercase tracking-[0.12em]">AI SUGGESTION</span>
-              <p className="font-serif text-[12px] text-t-dp mt-1 leading-relaxed">{aiReasoning}</p>
+            <div className="px-3 py-3 rounded-[16px] border" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
+              <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>AI SUGGESTION</span>
+              <p className="font-serif text-[13px] mt-1 leading-relaxed" style={{ color: '#46606d' }}>{aiReasoning}</p>
             </div>
           )}
 
           {/* Area picker */}
           <div>
-            <label className="font-mono text-[10px] text-t-ds uppercase tracking-[0.12em] block mb-2">
+            <label className="font-mono text-[10px] text-[#6e847f] uppercase tracking-[0.12em] block mb-2">
               BELONGS TO INPUT
             </label>
             <select
               value={inputId}
               onChange={(e) => setInputId(e.target.value)}
-              className="w-full bg-ink-2 border border-[#3e3828] rounded-lg px-3 py-2.5 font-serif text-[13px] text-t-dp appearance-none cursor-pointer"
+              className="w-full rounded-[16px] px-3 py-2.5 font-serif text-[14px] appearance-none cursor-pointer"
+              style={{ background: '#ffffff', border: '1px solid #dde6d1', color: '#233c4b' }}
             >
               <option value="">Select an input area…</option>
               {groupedInputs.map(({ groupKey, items }) => {
@@ -223,7 +225,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
           {/* Suggested tags */}
           {suggestedTags.length > 0 && (
             <div>
-              <label className="font-mono text-[10px] text-t-ds uppercase tracking-[0.12em] block mb-2">
+              <label className="font-mono text-[10px] text-[#6e847f] uppercase tracking-[0.12em] block mb-2">
                 SUGGESTED TAGS
               </label>
               <div className="flex flex-wrap gap-2">
@@ -231,11 +233,12 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
                   <button
                     key={tag}
                     onClick={() => toggleTag(tag)}
-                    className={`font-mono text-[11px] px-3 py-1 rounded-full border transition-colors cursor-pointer ${
+                    className="font-mono text-[11px] px-3 py-1 rounded-full border transition-colors cursor-pointer"
+                    style={
                       selectedTags.includes(tag)
-                        ? 'bg-gold text-ink border-gold'
-                        : 'border-[#3e3828] text-t-ds hover:border-gold hover:text-gold'
-                    }`}
+                        ? { background: '#233c4b', color: '#faf7f6', borderColor: '#233c4b' }
+                        : { borderColor: '#dde6d1', color: '#46606d', background: '#ffffff' }
+                    }
                   >
                     {tag}
                   </button>
@@ -246,7 +249,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
 
           {/* All tags */}
           <div>
-            <label className="font-mono text-[10px] text-t-ds uppercase tracking-[0.12em] block mb-2">
+            <label className="font-mono text-[10px] text-[#6e847f] uppercase tracking-[0.12em] block mb-2">
               TAGS
             </label>
             <div className="flex flex-wrap gap-2">
@@ -254,11 +257,12 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
                 <button
                   key={tag}
                   onClick={() => toggleTag(tag)}
-                  className={`font-mono text-[11px] px-3 py-1 rounded-full border transition-colors cursor-pointer ${
+                  className="font-mono text-[11px] px-3 py-1 rounded-full border transition-colors cursor-pointer"
+                  style={
                     selectedTags.includes(tag)
-                      ? 'bg-gold text-ink border-gold'
-                      : 'border-[#3e3828] text-t-ds hover:border-gold hover:text-gold'
-                  }`}
+                      ? { background: '#233c4b', color: '#faf7f6', borderColor: '#233c4b' }
+                      : { borderColor: '#dde6d1', color: '#46606d', background: '#ffffff' }
+                  }
                 >
                   {tag}
                 </button>
@@ -270,15 +274,16 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
           <button
             onClick={handleUpload}
             disabled={!file || !inputId || uploading || analyzing}
-            className="w-full bg-[#2e2a1a] border border-[#3e3a28] text-gold rounded-[7px] py-3 font-mono text-[11px] uppercase tracking-[0.1em] hover:bg-[#3e3a28] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full rounded-[16px] py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: '#233c4b', border: '1px solid #233c4b', color: '#faf7f6' }}
           >
             {uploading ? 'Uploading…' : analyzing ? 'Analyzing…' : 'Upload & Update Map'}
           </button>
 
-          <p className="font-mono text-[10px] text-t-ds text-center -mt-1">
+          <p className="font-mono text-[10px] text-center -mt-1" style={{ color: '#6e847f' }}>
             Uploading evidence updates your scores and strategy map
           </p>
-          <p className="font-mono text-[10px] text-t-ds text-center">
+          <p className="font-mono text-[10px] text-center" style={{ color: '#6e847f' }}>
             File suggestions run on your local internal AI path, not the public research path.
           </p>
         </div>

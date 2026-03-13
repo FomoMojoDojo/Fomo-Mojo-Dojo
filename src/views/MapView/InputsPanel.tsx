@@ -74,23 +74,29 @@ export default function InputsPanel({ open, onClose }: Props) {
           className={`fixed inset-0 z-40 transition-opacity duration-300 ${
             open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
-          style={{ background: 'rgba(30,26,18,0.4)', top: 52 }}
+          style={{ background: 'rgba(35,60,75,0.18)', top: 52, backdropFilter: 'blur(2px)' }}
           onClick={onClose}
         />
         <div
-          className="fixed right-0 z-50 bg-ink flex flex-col dark-scrollbar"
+          className="fixed right-0 z-50 flex flex-col dark-scrollbar"
           style={{
             top: 52,
             width: 500,
             height: 'calc(100vh - 52px)',
             transform: open ? 'translateX(0)' : 'translateX(100%)',
             transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
+            background: '#faf7f6',
+            borderLeft: '1px solid #dde6d1',
+            borderTopLeftRadius: 28,
+            borderBottomLeftRadius: 28,
+            boxShadow: '0 20px 60px rgba(35,60,75,0.16)',
           }}
         >
-          <div className="px-6 py-3 border-b border-[#2a2618]">
+          <div className="px-6 py-3 border-b border-[#dde6d1]">
             <button
               onClick={() => setSelectedInput(null)}
-              className="font-mono text-[11px] text-gold hover:text-gold-light transition-colors cursor-pointer"
+              className="font-mono text-[11px] uppercase tracking-[0.08em] transition-colors cursor-pointer"
+              style={{ color: '#46606d' }}
             >
               ← Back to Inputs List
             </button>
@@ -115,49 +121,55 @@ export default function InputsPanel({ open, onClose }: Props) {
         className={`fixed inset-0 z-40 transition-opacity duration-300 ${
           open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
-        style={{ background: 'rgba(30,26,18,0.4)', top: 52 }}
+        style={{ background: 'rgba(35,60,75,0.18)', top: 52, backdropFilter: 'blur(2px)' }}
         onClick={onClose}
       />
 
       {/* Panel */}
       <div
-        className="fixed right-0 z-50 bg-ink flex flex-col dark-scrollbar"
+        className="fixed right-0 z-50 flex flex-col dark-scrollbar"
         style={{
           top: 52,
           width: 500,
           height: 'calc(100vh - 52px)',
           transform: open ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
+          background: '#faf7f6',
+          borderLeft: '1px solid #dde6d1',
+          borderTopLeftRadius: 28,
+          borderBottomLeftRadius: 28,
+          boxShadow: '0 20px 60px rgba(35,60,75,0.16)',
         }}
       >
         {/* Header */}
-        <div className="px-6 py-[18px] relative" style={{ minHeight: 72 }}>
-          <p className="font-mono text-[10px] text-t-ds uppercase tracking-wide">
+        <div className="px-6 py-[18px] relative border-b border-[#dde6d1]" style={{ minHeight: 72 }}>
+          <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: '#6e847f' }}>
             Map View &gt; Diagnostic Inputs
           </p>
-          <h2 className="font-serif text-[22px] text-t-dp mt-1 leading-[1.2]">Your Inputs</h2>
+          <h2 className="font-serif text-[22px] mt-1 leading-[1.2]" style={{ color: '#233c4b' }}>Your Inputs</h2>
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 w-7 h-7 border border-[#3e3828] rounded flex items-center justify-center text-t-ds hover:text-t-dp transition-colors cursor-pointer text-sm"
+            className="absolute top-4 right-4 w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer text-sm"
+            style={{ border: '1px solid #dde6d1', color: '#46606d', background: '#ffffff' }}
           >
             ✕
           </button>
         </div>
 
         {/* Completeness bar */}
-        <div className="px-6 py-4 border-b border-[#2a2618]">
+        <div className="px-6 py-4 border-b border-[#dde6d1]">
           <div className="flex items-center gap-3 mb-2">
-            <span className="font-mono text-[10px] text-t-ds uppercase tracking-[0.1em]">Overall</span>
-            <div className="flex-1 h-[6px] rounded bg-[#2a2618] relative overflow-hidden">
+            <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: '#6e847f' }}>Overall</span>
+            <div className="flex-1 h-[6px] rounded relative overflow-hidden" style={{ background: '#dde6d1' }}>
               <div
                 className="absolute left-0 top-0 h-[6px] rounded transition-all duration-[800ms]"
                 style={{
                   width: `${pct}%`,
-                  background: 'linear-gradient(to right, hsl(var(--forest-mid)), hsl(var(--forest)))',
+                  background: 'linear-gradient(to right, #5f9b8c, #233c4b)',
                 }}
               />
             </div>
-            <span className="font-mono text-[14px] font-medium text-forest">{pct}%</span>
+            <span className="font-mono text-[14px] font-medium" style={{ color: '#233c4b' }}>{pct}%</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ScoreChip label="Done" value={complete} />

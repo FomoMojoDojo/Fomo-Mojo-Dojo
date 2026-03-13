@@ -254,11 +254,12 @@ export default function InputsView() {
                 PDF · DOCX · XLSX · MP4 · Max 50MB
               </p>
               <button
-                className="mt-4 px-5 py-[9px] rounded-lg font-mono text-[11px] uppercase cursor-pointer transition-colors"
+                className="mt-4 px-5 py-[9px] rounded-[16px] font-mono text-[11px] uppercase cursor-pointer transition-colors border"
                 style={{
-                  background: c.charcoal,
-                  color: 'hsl(47, 87%, 73%)',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                  background: '#233c4b',
+                  color: '#faf7f6',
+                  borderColor: '#233c4b',
+                  boxShadow: '0 10px 30px rgba(35,60,75,0.14)',
                 }}
               >
                 Choose File

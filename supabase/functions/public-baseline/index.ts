@@ -14,6 +14,52 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function addMinutesIso(minutes: number) {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+async function acquireCompanyRunLock(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  operation: string;
+  ttlMinutes?: number;
+}) {
+  const ttlMinutes = args.ttlMinutes ?? 30;
+
+  await args.supabase
+    .from("company_run_locks")
+    .delete()
+    .eq("company_id", args.companyId)
+    .lt("expires_at", new Date().toISOString());
+
+  const { error } = await args.supabase
+    .from("company_run_locks")
+    .insert({
+      company_id: args.companyId,
+      operation: args.operation,
+      started_by: args.userId,
+      expires_at: addMinutesIso(ttlMinutes),
+    });
+
+  if (!error) return null;
+
+  const { data: existing } = await args.supabase
+    .from("company_run_locks")
+    .select("operation, started_at, expires_at")
+    .eq("company_id", args.companyId)
+    .maybeSingle();
+
+  return { error, existing };
+}
+
+async function releaseCompanyRunLock(supabase: ReturnType<typeof createClient>, companyId: string) {
+  const { error } = await supabase.from("company_run_locks").delete().eq("company_id", companyId);
+  if (error) {
+    console.log("[baseline] lock release error", error.message);
+  }
+}
+
 function extractTextBasic(html: string): string {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
@@ -495,6 +541,25 @@ Deno.serve(async (req) => {
       return json({ error: "company_id, company_name, website required" }, 400);
     }
 
+    const lockResult = await acquireCompanyRunLock({
+      supabase,
+      companyId: company_id,
+      userId: userRes.user.id,
+      operation: "baseline",
+      ttlMinutes: 30,
+    });
+
+    if (lockResult) {
+      return json({
+        error: "Another run is already in progress for this company",
+        status: "company_locked",
+        operation: lockResult.existing?.operation ?? "unknown",
+        started_at: lockResult.existing?.started_at ?? null,
+        expires_at: lockResult.existing?.expires_at ?? null,
+      }, 409);
+    }
+
+    try {
     const domain = getDomain(website);
     const stem = domainStem(domain);
     const variants = buildNameVariants(company_name, website);
@@ -774,6 +839,9 @@ Deno.serve(async (req) => {
       strong_matches: strong.length,
       medium_matches: medium.length,
     });
+    } finally {
+      await releaseCompanyRunLock(supabase, company_id);
+    }
   } catch (err) {
     console.error("[baseline] error:", err);
     return json({ error: String((err as any)?.message || err) }, 500);

@@ -13,15 +13,15 @@ interface Props {
 }
 
 const c = {
-  bg: '#4a4a4a',
-  bgSub: '#424242',
-  bgHover: '#525252',
-  line: '#5a5a5a',
-  lineFaint: '#505050',
-  heading: '#ffffff',
-  body: '#d8d4cc',
-  muted: '#a09a90',
-  accent: '#e8e0d0',
+  bg: '#faf7f6',
+  bgSub: '#ffffff',
+  bgHover: '#f4efe8',
+  line: '#dde6d1',
+  lineFaint: '#ebe3d8',
+  heading: '#233c4b',
+  body: '#46606d',
+  muted: '#6e847f',
+  accent: '#233c4b',
 };
 
 const tierAccent: Record<string, string> = {
@@ -107,10 +107,10 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
           <StateBadge tone={statusTone}>{input.status.replace('_', ' ')}</StateBadge>
           <TierBadge tone={tierTone}>{tier === 'done' ? 'Done' : `${tier} impact`}</TierBadge>
         </div>
-        <button
+          <button
           onClick={onClose}
-          className="absolute top-4 right-4 w-7 h-7 rounded flex items-center justify-center transition-colors cursor-pointer text-sm"
-          style={{ border: `1px solid ${c.line}`, color: c.muted }}
+          className="absolute top-4 right-4 w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer text-sm"
+          style={{ border: `1px solid ${c.line}`, color: c.muted, background: '#ffffff' }}
         >
           ✕
         </button>
@@ -134,7 +134,7 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
             <div className="relative h-[5px] rounded-[3px]" style={{ background: c.lineFaint }}>
               <div
                 className="absolute left-0 top-0 h-[5px] rounded-l-[3px]"
-                style={{ width: `${mojoScore}%`, background: '#4a4a4a' }}
+                style={{ width: `${mojoScore}%`, background: '#c7d6d1' }}
               />
               {tier !== 'done' && (
                 <div
@@ -206,7 +206,7 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
               {item.done && <span className="text-[11px]">✓</span>}
             </div>
             <span className="font-sans text-[13px] leading-[1.45]"
-              style={{ color: item.done ? c.muted : c.heading, textDecoration: item.done ? 'line-through' : undefined, opacity: item.done ? 0.6 : 1 }}
+              style={{ color: item.done ? c.muted : c.heading, textDecoration: item.done ? 'line-through' : undefined, opacity: item.done ? 0.72 : 1 }}
             >
               {item.name}
             </span>

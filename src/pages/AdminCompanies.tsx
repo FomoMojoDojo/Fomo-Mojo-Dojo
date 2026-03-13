@@ -6,6 +6,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { PublicBaselinePanel } from "@/components/PublicBaselinePanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePanel";
@@ -17,8 +24,42 @@ import {
   ArrowRight,
   Sparkles,
   FileX,
+  PanelRight,
   X,
 } from "lucide-react";
+
+type ReviewFinding = {
+  artifact?: string;
+  field?: string;
+  issue?: string;
+  suggestion?: string;
+};
+
+type ReviewEntry = {
+  key?: string;
+  review?: {
+    pass?: boolean;
+    severity?: string;
+    summary?: string;
+    findings?: ReviewFinding[];
+  };
+};
+
+type ResearchReviewRun = {
+  id: string;
+  status: string;
+  review_summary: string;
+  reviews_json: ReviewEntry[];
+  finalizer_applied: boolean;
+  created_at: string;
+};
+
+type CompanyRunLock = {
+  company_id: string;
+  operation: string;
+  started_at: string;
+  expires_at: string;
+};
 
 const c = {
   bg: "#faf7f6",
@@ -53,6 +94,8 @@ async function describeResearchInvokeError(error: unknown) {
           error?: string;
           status?: string;
           reason?: string;
+          operation?: string;
+          started_at?: string;
           reviews?: Array<{ key?: string; review?: { severity?: string; summary?: string } }>;
         };
       } catch {
@@ -62,6 +105,8 @@ async function describeResearchInvokeError(error: unknown) {
       error?: string;
       status?: string;
       reason?: string;
+      operation?: string;
+      started_at?: string;
       reviews?: Array<{ key?: string; review?: { severity?: string; summary?: string } }>;
     } | null;
 
@@ -94,6 +139,15 @@ async function describeResearchInvokeError(error: unknown) {
               : "The generated draft has high-severity consistency or positioning issues. Review the company context and rerun AI Research.",
         };
       }
+
+      if (status === "company_locked") {
+        const operation = String(payload?.operation || "another run");
+        const startedAt = payload?.started_at ? new Date(payload.started_at).toLocaleTimeString() : "";
+        return {
+          title: "Company Busy",
+          description: `${operation} is already running for this company${startedAt ? ` since ${startedAt}` : ""}. Wait for it to finish, then retry.`,
+        };
+      }
     }
 
     return {
@@ -104,6 +158,44 @@ async function describeResearchInvokeError(error: unknown) {
 
   return {
     title: "Research Failed",
+    description: error instanceof Error ? error.message : String(error),
+  };
+}
+
+async function describeBaselineInvokeError(error: unknown) {
+  if (error instanceof FunctionsHttpError) {
+    const payloadText = await error.context.text().catch(() => "");
+    const payload = (() => {
+      if (!payloadText) return null;
+      try {
+        return JSON.parse(payloadText) as {
+          error?: string;
+          status?: string;
+          operation?: string;
+          started_at?: string;
+        };
+      } catch {
+        return null;
+      }
+    })();
+
+    if (error.context.status === 409 && payload?.status === "company_locked") {
+      const operation = String(payload.operation || "another run");
+      const startedAt = payload.started_at ? new Date(payload.started_at).toLocaleTimeString() : "";
+      return {
+        title: "Company Busy",
+        description: `${operation} is already running for this company${startedAt ? ` since ${startedAt}` : ""}. Wait for it to finish, then retry.`,
+      };
+    }
+
+    return {
+      title: "Web Baseline Failed",
+      description: String(payload?.error || payloadText || error.message),
+    };
+  }
+
+  return {
+    title: "Web Baseline Failed",
     description: error instanceof Error ? error.message : String(error),
   };
 }
@@ -129,6 +221,12 @@ export default function AdminCompanies() {
     description: string;
     createdAt: string;
   }>>([]);
+  const [reviewRuns, setReviewRuns] = useState<ResearchReviewRun[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
+  const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
+  const [selectedReviewRunId, setSelectedReviewRunId] = useState<string | null>(null);
+  const [runLocksByCompany, setRunLocksByCompany] = useState<Record<string, CompanyRunLock>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -164,6 +262,99 @@ export default function AdminCompanies() {
       JSON.stringify(recentErrors),
     );
   }, [recentErrors]);
+
+  useEffect(() => {
+    const companyId = activeCompany?.id;
+
+    if (!companyId) {
+      setReviewRuns([]);
+      setSelectedReviewRunId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadLatestReviewRun = async () => {
+      setReviewLoading(true);
+
+      const { data, error } = await supabase
+        .from("research_review_runs")
+        .select("id, status, review_summary, reviews_json, finalizer_applied, created_at")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (cancelled) return;
+
+      if (error) {
+        setReviewRuns([]);
+        setSelectedReviewRunId(null);
+      } else {
+        const runs = Array.isArray(data)
+          ? data.map((item) => ({
+              id: item.id,
+              status: item.status,
+              review_summary: item.review_summary,
+              reviews_json: Array.isArray(item.reviews_json) ? (item.reviews_json as ReviewEntry[]) : [],
+              finalizer_applied: Boolean(item.finalizer_applied),
+              created_at: item.created_at,
+            }))
+          : [];
+
+        setReviewRuns(runs);
+        setSelectedReviewRunId((current) =>
+          current && runs.some((run) => run.id === current) ? current : runs[0]?.id ?? null,
+        );
+      }
+
+      setReviewLoading(false);
+    };
+
+    void loadLatestReviewRun();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCompany?.id, companies.length, reviewRefreshKey]);
+
+  useEffect(() => {
+    if (companies.length === 0) {
+      setRunLocksByCompany({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRunLocks = async () => {
+      const { data, error } = await supabase
+        .from("company_run_locks")
+        .select("company_id, operation, started_at, expires_at")
+        .gt("expires_at", new Date().toISOString());
+
+      if (cancelled) return;
+
+      if (error || !Array.isArray(data)) {
+        setRunLocksByCompany({});
+        return;
+      }
+
+      const next: Record<string, CompanyRunLock> = {};
+      for (const item of data) {
+        next[item.company_id] = {
+          company_id: item.company_id,
+          operation: item.operation,
+          started_at: item.started_at,
+          expires_at: item.expires_at,
+        };
+      }
+      setRunLocksByCompany(next);
+    };
+
+    void loadRunLocks();
+    return () => {
+      cancelled = true;
+    };
+  }, [companies.length, researchingId, baselineId, comboId, reviewRefreshKey]);
 
   const showPersistentError = (title: string, description: string) => {
     const entry = {
@@ -255,6 +446,8 @@ export default function AdminCompanies() {
       });
       await refetch();
     }
+
+    setReviewRefreshKey((current) => current + 1);
   };
 
   const runPublicBaseline = async (
@@ -284,7 +477,8 @@ export default function AdminCompanies() {
     setBaselineId(null);
 
     if (error) {
-      showPersistentError("Web Baseline Failed", error.message);
+      const details = await describeBaselineInvokeError(error);
+      showPersistentError(details.title, details.description);
       return false;
     } else {
       toast({
@@ -332,6 +526,7 @@ export default function AdminCompanies() {
         const details = await describeResearchInvokeError(error);
         showPersistentError(details.title, details.description);
         setComboId(null);
+        setReviewRefreshKey((current) => current + 1);
         return;
       }
 
@@ -342,6 +537,7 @@ export default function AdminCompanies() {
         title: "Baseline + Research Complete",
         description: `Mojo Map data + scores updated for ${companyName}`,
       });
+      setReviewRefreshKey((current) => current + 1);
     } catch (e: unknown) {
       showPersistentError("Baseline + Research Failed", e instanceof Error ? e.message : String(e));
     } finally {
@@ -361,6 +557,25 @@ export default function AdminCompanies() {
     }
     await refetch();
   };
+
+  const severityTone = (severity?: string) => {
+    const normalized = String(severity || "low").toLowerCase();
+    if (normalized === "high") {
+      return { border: "#E7C3A4", background: "#FFF7F0", color: "#A44D14" };
+    }
+    if (normalized === "medium") {
+      return { border: "#E4D8AC", background: "#FFFBEA", color: "#8A6B12" };
+    }
+    return { border: c.line, background: "#F7FBF9", color: c.teal };
+  };
+
+  const statusLabel = (status?: string) => {
+    const normalized = String(status || "saved");
+    return normalized.replace(/_/g, " ");
+  };
+
+  const selectedReviewRun =
+    reviewRuns.find((run) => run.id === selectedReviewRunId) ?? reviewRuns[0] ?? null;
 
   return (
     <div className="min-h-screen" style={{ background: c.bg }}>
@@ -604,8 +819,10 @@ export default function AdminCompanies() {
                 const isBaselining = baselineId === company.id;
                 const isCombo = comboId === company.id;
                 const hasWebsite = Boolean(company.website?.trim());
+                const activeLock = runLocksByCompany[company.id];
+                const isLocked = Boolean(activeLock);
 
-                const disabled = isResearching || isBaselining || isCombo;
+                const disabled = isResearching || isBaselining || isCombo || isLocked;
 
                 return (
                   <div
@@ -647,6 +864,31 @@ export default function AdminCompanies() {
                           ID:{" "}
                           <span style={{ color: c.secondary }}>{company.id}</span>
                         </div>
+
+                        {activeLock ? (
+                          <div
+                            className="mt-2 inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
+                            style={{ color: c.coral, borderColor: "#E7C3A4", background: "#FFF7F0" }}
+                          >
+                            {activeLock.operation} running
+                          </div>
+                        ) : null}
+
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveCompanyId(company.id);
+                              setReviewSheetOpen(true);
+                              setReviewRefreshKey((current) => current + 1);
+                            }}
+                            className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors inline-flex items-center gap-1"
+                            style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                          >
+                            <PanelRight className="w-3 h-3" />
+                            View Review
+                          </button>
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -676,7 +918,9 @@ export default function AdminCompanies() {
                           className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
                           style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
                           title={
-                            hasWebsite
+                            isLocked
+                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
+                              : hasWebsite
                               ? "Run public baseline, then AI research"
                               : "Add a website before running baseline + research"
                           }
@@ -698,6 +942,11 @@ export default function AdminCompanies() {
                           disabled={disabled}
                           className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
                           style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                          title={
+                            isLocked
+                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
+                              : "Run AI Research"
+                          }
                         >
                           <Sparkles className="w-3 h-3" />
                           {isResearching ? "Researching…" : "AI Research"}
@@ -716,7 +965,9 @@ export default function AdminCompanies() {
                           className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
                           style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
                           title={
-                            hasWebsite
+                            isLocked
+                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
+                              : hasWebsite
                               ? "Run public baseline from the company website"
                               : "Add a website before running the public baseline"
                           }
@@ -766,6 +1017,181 @@ export default function AdminCompanies() {
           </div>
         </div>
       </div>
+
+      <Sheet open={reviewSheetOpen} onOpenChange={setReviewSheetOpen}>
+        <SheetContent
+          side="right"
+          className="w-[92vw] sm:max-w-[560px] overflow-y-auto"
+          style={{ background: c.bg, borderColor: c.line }}
+        >
+          <SheetHeader className="pr-8">
+            <SheetTitle style={{ color: c.charcoal }}>
+              Latest Research Review
+            </SheetTitle>
+            <SheetDescription style={{ color: c.secondary }}>
+              {activeCompany
+                ? `Reviewer output for ${activeCompany.name}.`
+                : "Select a company to inspect its latest research review."}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-6 space-y-4">
+            {reviewLoading ? (
+              <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
+                Loading latest review…
+              </p>
+            ) : selectedReviewRun ? (
+              <>
+                {reviewRuns.length > 1 ? (
+                  <div className="space-y-2">
+                    <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                      Recent Runs
+                    </p>
+                    <div className="space-y-2">
+                      {reviewRuns.map((run) => (
+                        <button
+                          key={run.id}
+                          type="button"
+                          onClick={() => setSelectedReviewRunId(run.id)}
+                          className="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
+                          style={{
+                            borderColor: run.id === selectedReviewRun.id ? c.teal : c.line,
+                            background: run.id === selectedReviewRun.id ? "#F7FBF9" : "#FFFFFF",
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                              {new Date(run.created_at).toLocaleString()}
+                            </span>
+                            <span
+                              className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-wide"
+                              style={{
+                                color:
+                                  run.status === "review_blocked" ||
+                                  run.status === "ambiguous_public_evidence" ||
+                                  run.status === "insufficient_public_evidence"
+                                    ? c.coral
+                                    : c.teal,
+                                borderColor: c.line,
+                                background: "#FFFFFF",
+                              }}
+                            >
+                              {statusLabel(run.status)}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div
+                  className="rounded-2xl border px-4 py-4"
+                  style={{ borderColor: c.line, background: "#FCFDFB" }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
+                        {selectedReviewRun.review_summary || "No summary was recorded for this run."}
+                      </p>
+                      <p className="mt-2 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                        {selectedReviewRun.finalizer_applied ? "Repair pass applied" : "No repair pass needed"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div
+                        className="inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
+                        style={{
+                          color:
+                            selectedReviewRun.status === "review_blocked" ||
+                            selectedReviewRun.status === "ambiguous_public_evidence" ||
+                            selectedReviewRun.status === "insufficient_public_evidence"
+                              ? c.coral
+                              : c.teal,
+                          borderColor: c.line,
+                          background: "#F8FBF7",
+                        }}
+                      >
+                        {statusLabel(selectedReviewRun.status)}
+                      </div>
+                      <p className="mt-2 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                        {new Date(selectedReviewRun.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {selectedReviewRun.reviews_json.map((entry, index) => {
+                    const tone = severityTone(entry.review?.severity);
+                    const findings = Array.isArray(entry.review?.findings)
+                      ? entry.review.findings.filter((finding) => finding?.issue || finding?.suggestion).slice(0, 3)
+                      : [];
+
+                    return (
+                      <div
+                        key={`${entry.key || "review"}-${index}`}
+                        className="rounded-2xl border px-4 py-3"
+                        style={{ borderColor: tone.border, background: tone.background }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-sans text-[14px] font-semibold capitalize" style={{ color: c.charcoal }}>
+                              {String(entry.key || "review").replace(/_/g, " ")}
+                            </p>
+                            <p className="mt-1 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                              {entry.review?.summary || "No summary available."}
+                            </p>
+                          </div>
+                          <span
+                            className="shrink-0 rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
+                            style={{ color: tone.color, borderColor: tone.border, background: "#FFFFFF" }}
+                          >
+                            {String(entry.review?.severity || "low")}
+                          </span>
+                        </div>
+
+                        {findings.length > 0 ? (
+                          <div className="mt-3 space-y-2">
+                            {findings.map((finding, findingIndex) => (
+                              <div
+                                key={`${entry.key || "review"}-finding-${findingIndex}`}
+                                className="rounded-xl border px-3 py-2"
+                                style={{ borderColor: c.line, background: "#FFFFFF" }}
+                              >
+                                <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                                  {finding.artifact || "artifact"}{finding.field ? ` · ${finding.field}` : ""}
+                                </p>
+                                <p className="mt-1 font-sans text-[13px]" style={{ color: c.charcoal }}>
+                                  {finding.issue || "Issue noted."}
+                                </p>
+                                {finding.suggestion ? (
+                                  <p className="mt-1 font-sans text-[12px]" style={{ color: c.secondary }}>
+                                    Suggestion: {finding.suggestion}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div
+                className="rounded-2xl border px-4 py-4"
+                style={{ borderColor: c.line, background: c.panel }}
+              >
+                <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
+                  No research review has been saved for this company yet.
+                </p>
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

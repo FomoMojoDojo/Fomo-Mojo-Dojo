@@ -71,6 +71,38 @@ export type Database = {
         }
         Relationships: []
       }
+      company_run_locks: {
+        Row: {
+          company_id: string
+          expires_at: string
+          operation: string
+          started_at: string
+          started_by: string
+        }
+        Insert: {
+          company_id: string
+          expires_at: string
+          operation: string
+          started_at?: string
+          started_by: string
+        }
+        Update: {
+          company_id?: string
+          expires_at?: string
+          operation?: string
+          started_at?: string
+          started_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_run_locks_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       deep_dive_analyses: {
         Row: {
           area_key: string
@@ -622,6 +654,57 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "public_baseline_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      research_review_runs: {
+        Row: {
+          baseline_run_id: number | null
+          company_id: string
+          created_at: string
+          finalizer_applied: boolean
+          id: string
+          review_summary: string
+          reviews_json: Json
+          status: string
+          user_id: string
+        }
+        Insert: {
+          baseline_run_id?: number | null
+          company_id: string
+          created_at?: string
+          finalizer_applied?: boolean
+          id?: string
+          review_summary?: string
+          reviews_json?: Json
+          status?: string
+          user_id: string
+        }
+        Update: {
+          baseline_run_id?: number | null
+          company_id?: string
+          created_at?: string
+          finalizer_applied?: boolean
+          id?: string
+          review_summary?: string
+          reviews_json?: Json
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "research_review_runs_baseline_run_id_fkey"
+            columns: ["baseline_run_id"]
+            isOneToOne: false
+            referencedRelation: "public_baseline_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "research_review_runs_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"

@@ -18,6 +18,55 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function addMinutesIso(minutes: number) {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+async function acquireCompanyRunLock(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  operation: string;
+  ttlMinutes?: number;
+}) {
+  const ttlMinutes = args.ttlMinutes ?? 30;
+
+  await args.supabase
+    .from("company_run_locks")
+    .delete()
+    .eq("company_id", args.companyId)
+    .lt("expires_at", new Date().toISOString());
+
+  const { error } = await args.supabase
+    .from("company_run_locks")
+    .insert({
+      company_id: args.companyId,
+      operation: args.operation,
+      started_by: args.userId,
+      expires_at: addMinutesIso(ttlMinutes),
+    });
+
+  if (!error) return null;
+
+  const { data: existing } = await args.supabase
+    .from("company_run_locks")
+    .select("operation, started_at, expires_at")
+    .eq("company_id", args.companyId)
+    .maybeSingle();
+
+  return {
+    error,
+    existing,
+  };
+}
+
+async function releaseCompanyRunLock(supabase: ReturnType<typeof createClient>, companyId: string) {
+  const { error } = await supabase.from("company_run_locks").delete().eq("company_id", companyId);
+  if (error) {
+    console.log("[research-company] lock release error", error.message);
+  }
+}
+
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -25,6 +74,10 @@ function clamp(n: number, lo: number, hi: number) {
 function avg(nums: number[]) {
   if (!nums.length) return 0;
   return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function roundInt(n: number) {
+  return Math.round(n);
 }
 
 function extractResponsesOutputText(data: any): string | null {
@@ -98,6 +151,64 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     hypotheses.length ? `Top hypotheses:\n- ${hypotheses.join("\n- ")}` : "Top hypotheses: none",
     openQuestions.length ? `Open questions:\n- ${openQuestions.join("\n- ")}` : "Open questions: none",
   ].join("\n");
+}
+
+const INPUT_PUBLIC_EVIDENCE_WEIGHTS: Record<string, number> = {
+  "comp-alt": 0.8,
+  "unique-attr": 0.75,
+  "val-prop": 0.72,
+  "target-aud": 0.65,
+  "market-cat": 0.68,
+  "program-model": 0.72,
+  "needs-assessment": 0.55,
+  "outcome-data": 0.4,
+  "referral-map": 0.38,
+  "brand-narrative": 0.45,
+  "channel-strat": 0.3,
+  "donor-retention": 0.22,
+  "grant-pipeline": 0.24,
+  "family-satisfaction": 0.22,
+};
+
+function seedInputProgress(args: {
+  inputKey: string;
+  description?: string;
+  whyItMatters?: string;
+  baselineResultJson: any | null;
+}) {
+  const ledger = Array.isArray(args.baselineResultJson?.evidence_ledger)
+    ? args.baselineResultJson.evidence_ledger
+    : [];
+
+  const avgConfidence = avg(
+    ledger
+      .map((item: any) => Number(item?.confidence))
+      .filter((value: number) => Number.isFinite(value)),
+  );
+  const confNorm = normalizeConfidence(avgConfidence);
+  const strengthNorm = avg(ledger.map((item: any) => normalizeSignalStrength(item?.signal_strength)));
+  const baselineSupport = clamp(0.55 * confNorm + 0.45 * strengthNorm, 0, 1);
+
+  const key = String(args.inputKey || "").trim();
+  const keyWeight = INPUT_PUBLIC_EVIDENCE_WEIGHTS[key] ?? 0.35;
+  const text = `${String(args.description || "")} ${String(args.whyItMatters || "")}`.toLowerCase();
+
+  const signalsUnclear =
+    text.includes("unknown") ||
+    text.includes("unclear") ||
+    text.includes("not public") ||
+    text.includes("not evidenced") ||
+    text.includes("thin evidence");
+
+  const baseCompleteness = 6 + baselineSupport * keyWeight * 52;
+  const adjustedCompleteness = signalsUnclear ? baseCompleteness * 0.45 : baseCompleteness;
+  const completeness = roundInt(clamp(adjustedCompleteness, 0, 48));
+
+  return {
+    completeness,
+    status: completeness >= 8 ? "partial" : "not_started",
+    impact_tier: completeness >= 28 ? "high" : completeness >= 16 ? "med" : "low",
+  } as const;
 }
 
 function buildJourneyBrief(journeys: unknown): string {
@@ -267,6 +378,47 @@ function buildStrategyBrief(strategy: unknown) {
       ? `Assumptions:\n${assumptions.map((item, index) => `${index + 1}. ${item.assumption || "Unknown"} | tested=${item.tested ? "yes" : "no"} | ${item.note || "No note"}`).join("\n")}`
       : "Assumptions: none",
   ].join("\n");
+}
+
+function summarizeReviews(reviews: Array<{ key?: string; review?: { severity?: string; summary?: string } }>) {
+  const summaries = reviews
+    .map((entry) => {
+      const severity = String(entry?.review?.severity || "low").toUpperCase();
+      const key = String(entry?.key || "review").replace(/_/g, " ");
+      const summary = String(entry?.review?.summary || "").trim();
+      if (!summary) return "";
+      return `${key} (${severity}): ${summary}`;
+    })
+    .filter(Boolean);
+
+  return summaries.slice(0, 3).join(" ");
+}
+
+async function persistResearchReviewRun(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  baselineRunId?: number | null;
+  status: string;
+  reviewSummary: string;
+  reviews: unknown;
+  finalizerApplied?: boolean;
+}) {
+  const { error } = await args.supabase
+    .from("research_review_runs")
+    .insert({
+      company_id: args.companyId,
+      user_id: args.userId,
+      baseline_run_id: args.baselineRunId ?? null,
+      status: args.status,
+      review_summary: args.reviewSummary,
+      reviews_json: args.reviews ?? [],
+      finalizer_applied: Boolean(args.finalizerApplied),
+    });
+
+  if (error) {
+    console.log("[research-company] review run persist error", error.message);
+  }
 }
 
 function buildODIBrief(args: {
@@ -1299,6 +1451,25 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
     }
 
+    const lockResult = await acquireCompanyRunLock({
+      supabase,
+      companyId: company_id,
+      userId: user.id,
+      operation: "research",
+      ttlMinutes: 45,
+    });
+
+    if (lockResult) {
+      return jsonResponse({
+        error: "Research is already running for this company",
+        status: "company_locked",
+        operation: lockResult.existing?.operation ?? "unknown",
+        started_at: lockResult.existing?.started_at ?? null,
+        expires_at: lockResult.existing?.expires_at ?? null,
+      }, 409);
+    }
+
+    try {
     // ✅ Option A: fetch latest public baseline once, reuse later
     const { data: baselineRun, error: baselineErr } = await supabase
       .from("public_baseline_runs")
@@ -1319,6 +1490,17 @@ Deno.serve(async (req) => {
         baseline_run_id: baselineRun?.id ?? null,
         baselineStatus,
         baselineReason,
+      });
+
+      await persistResearchReviewRun({
+        supabase,
+        companyId: company_id,
+        userId: user.id,
+        baselineRunId: baselineRun?.id ?? null,
+        status: baselineStatus,
+        reviewSummary: baselineReason || "Latest public baseline does not have enough trustworthy evidence.",
+        reviews: [],
+        finalizerApplied: false,
       });
 
       return jsonResponse({
@@ -1944,6 +2126,8 @@ Deno.serve(async (req) => {
       (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
     );
 
+    const finalizerApplied = highSeverityReviews.length > 0;
+
     if (highSeverityReviews.length > 0) {
       const repairedBundle = await runFinalizer({
         apiKey: openaiKey,
@@ -2046,6 +2230,20 @@ Deno.serve(async (req) => {
         })),
       });
 
+      await persistResearchReviewRun({
+        supabase,
+        companyId: company_id,
+        userId: user.id,
+        baselineRunId: baselineRun?.id ?? null,
+        status: "review_blocked",
+        reviewSummary:
+          summarizeReviews(
+            highSeverityReviews as Array<{ key?: string; review?: { severity?: string; summary?: string } }>
+          ) || "Generated draft needs review before it can be saved.",
+        reviews: reviewResults,
+        finalizerApplied,
+      });
+
       return jsonResponse({
         error: "Generated draft needs review before it can be saved",
         status: "review_blocked",
@@ -2053,6 +2251,22 @@ Deno.serve(async (req) => {
         reviews: reviewResults,
       }, 422);
     }
+
+    await persistResearchReviewRun({
+      supabase,
+      companyId: company_id,
+      userId: user.id,
+      baselineRunId: baselineRun?.id ?? null,
+      status: actionableReviews.length > 0 ? "saved_after_review" : "saved",
+      reviewSummary:
+        actionableReviews.length > 0
+          ? summarizeReviews(
+              actionableReviews as Array<{ key?: string; review?: { severity?: string; summary?: string } }>
+            ) || "Research saved after reviewer-guided repair."
+          : "All reviewers passed. Research saved successfully.",
+      reviews: reviewResults,
+      finalizerApplied,
+    });
 
     // -------------------------
     // 7) Clear old rows for company
@@ -2092,6 +2306,12 @@ Deno.serve(async (req) => {
 
       const derivedGroupKey = INPUT_GROUP_BY_KEY[key] ?? "foundation";
       const derivedGroupLabel = groupLabelForKey(derivedGroupKey);
+      const seededProgress = seedInputProgress({
+        inputKey: key,
+        description: String(input?.description || ""),
+        whyItMatters: String(input?.why_it_matters || ""),
+        baselineResultJson: baselineRun?.result_json ?? null,
+      });
 
       const { data: row, error: insertErr } = await supabase
         .from("inputs")
@@ -2105,9 +2325,9 @@ Deno.serve(async (req) => {
           description: String(input?.description || ""),
           why_it_matters: String(input?.why_it_matters || ""),
           score_impact: 5,
-          impact_tier: "med",
-          completeness: 0,
-          status: "not_started",
+          impact_tier: seededProgress.impact_tier,
+          completeness: seededProgress.completeness,
+          status: seededProgress.status,
           user_id: user.id,
           company_id,
         })
@@ -2465,6 +2685,9 @@ Deno.serve(async (req) => {
       mojo_score: scored.mojo_score,
       evidence_status: scored.evidence_status,
     });
+    } finally {
+      await releaseCompanyRunLock(supabase, company_id);
+    }
   } catch (err) {
     console.error("[research-company] error:", err);
     return jsonResponse({ error: String((err as any)?.message || err) }, 500);
