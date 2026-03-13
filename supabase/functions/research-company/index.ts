@@ -179,6 +179,179 @@ function buildInputBrief(inputs: unknown): string {
     .join("\n");
 }
 
+function buildRouteBrief(routes: unknown) {
+  const items = Array.isArray(routes) ? routes : [];
+
+  return items
+    .slice(0, 20)
+    .map((route, index) => {
+      const entry = route as {
+        category?: string;
+        title?: string;
+        short_description?: string;
+        pts_value?: number;
+        effort?: string;
+      };
+
+      return `${index + 1}. ${entry.category || "unknown"} | ${entry.title || "Untitled"} | ${entry.short_description || "No description"} | pts ${entry.pts_value ?? "?"} | ${entry.effort || "unknown"} effort`;
+    })
+    .join("\n");
+}
+
+function buildPositioningBrief(positioning: unknown) {
+  const entry = (positioning ?? {}) as {
+    competitive_alternatives?: Array<{ name?: string; description?: string; highlighted?: boolean }>;
+    unique_attributes?: Array<{ name?: string; description?: string; highlighted?: boolean }>;
+    value_for_customer?: string;
+    best_fit_customers?: string;
+    market_category?: string;
+    category_rationale?: string;
+    current_tagline?: string;
+    proposed_tagline?: string;
+  };
+
+  const alternatives = Array.isArray(entry.competitive_alternatives)
+    ? entry.competitive_alternatives.slice(0, 6)
+    : [];
+  const attributes = Array.isArray(entry.unique_attributes)
+    ? entry.unique_attributes.slice(0, 6)
+    : [];
+
+  return [
+    alternatives.length
+      ? `Competitive alternatives:\n${alternatives.map((item, index) => `${index + 1}. ${item.name || "Unknown"} | ${item.description || "No description"} | highlighted=${item.highlighted ? "yes" : "no"}`).join("\n")}`
+      : "Competitive alternatives: none",
+    attributes.length
+      ? `Unique attributes:\n${attributes.map((item, index) => `${index + 1}. ${item.name || "Unknown"} | ${item.description || "No description"} | highlighted=${item.highlighted ? "yes" : "no"}`).join("\n")}`
+      : "Unique attributes: none",
+    `Value for customer: ${entry.value_for_customer || "unknown"}`,
+    `Best fit customers: ${entry.best_fit_customers || "unknown"}`,
+    `Market category: ${entry.market_category || "unknown"}`,
+    `Category rationale: ${entry.category_rationale || "unknown"}`,
+    `Current tagline: ${entry.current_tagline || "unknown"}`,
+    `Proposed tagline: ${entry.proposed_tagline || "unknown"}`,
+  ].join("\n");
+}
+
+const reviewSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    pass: { type: "boolean" },
+    severity: { type: "string", enum: ["low", "medium", "high"] },
+    summary: { type: "string" },
+    findings: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          artifact: {
+            type: "string",
+            enum: ["baseline", "inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
+          },
+          field: { type: "string" },
+          issue: { type: "string" },
+          suggestion: { type: "string" },
+        },
+        required: ["artifact", "field", "issue", "suggestion"],
+      },
+    },
+  },
+  required: ["pass", "severity", "summary", "findings"],
+};
+
+async function runConsistencyReview(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  inputs: unknown;
+  journeys: unknown;
+  opportunities: unknown;
+  routes: unknown;
+  positioning: unknown;
+  strategy: unknown;
+}) {
+  const userText =
+    `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
+    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
+    `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
+    `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
+    `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
+    `Strategy:\n${JSON.stringify(opts.strategy)}\n\n` +
+    `Review the full draft bundle for cross-artifact consistency.`;
+
+  const systemText =
+    `You are a strict strategy QA reviewer.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Your job is to review, not rewrite.\n` +
+    `Check for:\n` +
+    `- buyer / chooser / user consistency across baseline, journeys, positioning, and strategy\n` +
+    `- market category consistency across baseline, positioning, and strategy\n` +
+    `- opportunity rows correctly tied to journey steps\n` +
+    `- routes that meaningfully connect to opportunities and job-step gaps\n` +
+    `- any sign of wrong-company drift, adjacent-market drift, or contradictory language\n` +
+    `Use severity=high only when the draft should not be saved without correction.\n`;
+
+  return await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_consistency_review_v1",
+    schema: reviewSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1600,
+    temperature: 0.1,
+  });
+}
+
+async function runPositioningReview(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  positioning: unknown;
+  opportunities: unknown;
+  routes: unknown;
+}) {
+  const userText =
+    `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
+    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Positioning draft:\n${buildPositioningBrief(opts.positioning)}\n\n` +
+    `Opportunity context:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
+    `Route context:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Review the positioning draft for category fit, audience fit, alternative relevance, differentiation quality, and generic wording.`;
+
+  const systemText =
+    `You are a strict positioning reviewer.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Your job is to review, not rewrite.\n` +
+    `Check for:\n` +
+    `- market category credibility and alignment with baseline evidence\n` +
+    `- best-fit customers matching the buyer/job context\n` +
+    `- competitive alternatives serving the same job context\n` +
+    `- unique attributes being specific and credible rather than generic\n` +
+    `- current/proposed tagline quality and company fit\n` +
+    `Use severity=high only when the positioning should not be saved without correction.\n`;
+
+  return await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_positioning_review_v1",
+    schema: reviewSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1400,
+    temperature: 0.1,
+  });
+}
+
 function frameworkKeysFor(artifact: "inputs" | "journeys" | "opportunities" | "routes") {
   return getFrameworkRoutingPlan(artifact).map((framework) => framework.key);
 }
@@ -1213,6 +1386,59 @@ Deno.serve(async (req) => {
       maxOutputTokens: 2200,
       temperature: 0.2,
     });
+
+    const consistencyReview = await runConsistencyReview({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      inputs,
+      journeys,
+      opportunities,
+      routes,
+      positioning: positioningCanvasResult,
+      strategy: strategyCascadeResult,
+    });
+
+    const positioningReview = await runPositioningReview({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      positioning: positioningCanvasResult,
+      opportunities,
+      routes,
+    });
+
+    const reviewResults = [
+      { key: "consistency", review: consistencyReview },
+      { key: "positioning", review: positioningReview },
+    ];
+    const highSeverityReviews = reviewResults.filter(
+      (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
+    );
+
+    if (highSeverityReviews.length > 0) {
+      console.log("[research-company] blocked by reviewer findings", {
+        company_id,
+        baseline_run_id: baselineRun?.id ?? null,
+        reviews: highSeverityReviews.map((entry) => ({
+          key: entry.key,
+          severity: entry.review?.severity,
+          summary: entry.review?.summary,
+          findings: Array.isArray(entry.review?.findings) ? entry.review.findings.length : 0,
+        })),
+      });
+
+      return jsonResponse({
+        error: "Generated draft needs review before it can be saved",
+        status: "review_blocked",
+        baseline_run_id: baselineRun?.id ?? null,
+        reviews: reviewResults,
+      }, 422);
+    }
 
     // -------------------------
     // 7) Clear old rows for company

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useToast } from "@/hooks/use-toast";
@@ -39,6 +40,58 @@ function normalizeUrl(url?: string) {
 
 function sanitizeWebsite(url?: string) {
   return (url ?? "").trim();
+}
+
+async function describeResearchInvokeError(error: unknown) {
+  if (error instanceof FunctionsHttpError) {
+    const payload = await error.context.json().catch(() => null) as {
+      error?: string;
+      status?: string;
+      reason?: string;
+      reviews?: Array<{ key?: string; review?: { severity?: string; summary?: string } }>;
+    } | null;
+
+    if (error.context.status === 422) {
+      const status = String(payload?.status || "");
+      const reason = String(payload?.reason || "");
+
+      if (status === "ambiguous_public_evidence" || status === "insufficient_public_evidence") {
+        return {
+          title: "Baseline Review Needed",
+          description:
+            reason ||
+            "Baseline evidence is too weak or ambiguous. Run Web Baseline and review the Public Baseline panel before retrying AI Research.",
+        };
+      }
+
+      if (status === "review_blocked") {
+        const summaries = Array.isArray(payload?.reviews)
+          ? payload.reviews
+              .map((item) => String(item?.review?.summary || "").trim())
+              .filter(Boolean)
+              .slice(0, 2)
+          : [];
+
+        return {
+          title: "Draft Review Blocked Save",
+          description:
+            summaries.length > 0
+              ? summaries.join(" ")
+              : "The generated draft has high-severity consistency or positioning issues. Review the company context and rerun AI Research.",
+        };
+      }
+    }
+
+    return {
+      title: "Research Failed",
+      description: String(payload?.error || error.message),
+    };
+  }
+
+  return {
+    title: "Research Failed",
+    description: error instanceof Error ? error.message : String(error),
+  };
 }
 
 export default function AdminCompanies() {
@@ -125,9 +178,10 @@ export default function AdminCompanies() {
     setResearchingId(null);
 
     if (error) {
+      const details = await describeResearchInvokeError(error);
       toast({
-        title: "Research Failed",
-        description: error.message,
+        title: details.title,
+        description: details.description,
         variant: "destructive",
       });
     } else {
@@ -219,9 +273,10 @@ export default function AdminCompanies() {
       setResearchingId(null);
 
       if (error) {
+        const details = await describeResearchInvokeError(error);
         toast({
-          title: "Baseline OK, Research Failed",
-          description: error.message,
+          title: details.title,
+          description: details.description,
           variant: "destructive",
         });
         setComboId(null);
