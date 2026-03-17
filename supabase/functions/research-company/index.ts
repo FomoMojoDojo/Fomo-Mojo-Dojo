@@ -373,6 +373,17 @@ const WEAK_OUTCOME_TERMS = [
   "integration",
 ];
 
+const GENERIC_MANAGED_OUTCOME_PHRASES = [
+  "improve customer progress",
+  "improve demand and funding progress",
+  "improve delivery and operating leverage",
+  "increase successful progress",
+  "increase customer progress",
+  "increase delivery consistency",
+  "increase conversion",
+  "improve operations",
+];
+
 function analyzeOutcomeQuality(outcome: string) {
   const text = String(outcome || "").trim().toLowerCase();
   const issues: string[] = [];
@@ -456,14 +467,19 @@ async function generateManagedOutcomes(args: {
     `- have a clear target_direction like increase, reduce, improve, maximize, or minimize\n` +
     `- include a plausible leading indicator that could eventually be measured\n` +
     `- note evidence_basis honestly from public evidence only\n` +
-    `- keep confidence lower when evidence is inferential rather than directly measured\n`;
+    `- keep confidence lower when evidence is inferential rather than directly measured\n` +
+    `- reuse concrete nouns and contexts from the top opportunities and steps for that journey\n` +
+    `- do not use generic roots like "Improve customer progress", "Improve operations", or "Increase conversion" without a concrete object and context\n` +
+    `- outcome_title should be specific enough to distinguish this company from another company in a different sector\n` +
+    `- leading_indicator should mention what specifically changes, not just "progress" or "performance"\n`;
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
     `Public baseline context:\n${args.baselineBrief}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
-    `Generate one managed outcome per journey that the team should manage toward.\n`;
+    `Generate one managed outcome per journey that the team should manage toward.\n` +
+    `Anchor each managed outcome in the actual top opportunities for that journey instead of using generic template wording.\n`;
 
   return callOpenAIJSON({
     apiKey: args.apiKey,
@@ -474,6 +490,74 @@ async function generateManagedOutcomes(args: {
     userText,
     maxOutputTokens: 1200,
     temperature: 0.15,
+  });
+}
+
+function analyzeManagedOutcomeSpecificity(outcome: {
+  outcome_title?: string;
+  outcome_statement?: string;
+  leading_indicator?: string;
+}) {
+  const text = [
+    String(outcome?.outcome_title || ""),
+    String(outcome?.outcome_statement || ""),
+    String(outcome?.leading_indicator || ""),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .trim();
+
+  const issues: string[] = [];
+  if (!text) issues.push("missing_text");
+  if (GENERIC_MANAGED_OUTCOME_PHRASES.some((phrase) => text.includes(phrase))) issues.push("generic_phrase");
+  if (!/\b(family|families|patient|patients|referral|intake|enrollment|program|care|handoff|service|donor|grant|contract|renewal|screening|transition|follow-up|delivery|crisis|community)\b/.test(text)) {
+    issues.push("missing_concrete_context");
+  }
+  if (!/\b(time|rate|share|likelihood|percentage|retention|completion|conversion|continuity|delay|drop-off|handoff|follow-through|readiness|access|consistency)\b/.test(text)) {
+    issues.push("missing_indicator_language");
+  }
+
+  return {
+    weak: issues.length >= 2,
+    issues,
+  };
+}
+
+async function repairManagedOutcomes(args: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  baselineBrief: string;
+  journeys: unknown;
+  opportunities: unknown;
+  outcomes: unknown;
+}) {
+  const systemText =
+    `You are improving managed product outcomes so they stop collapsing into generic template language.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `Keep exactly one outcome per journey_key: customer, revenue, operations.\n` +
+    `Rewrite only outcomes that are too generic.\n` +
+    `Make each managed outcome clearly company-specific by using the audience, step context, and concrete nouns already present in the opportunities.\n` +
+    `Do not output generic wording like "Improve customer progress", "Improve operations", or "Increase conversion" unless a specific object and context are attached.\n`;
+
+  const userText =
+    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
+    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
+    `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
+    `Current managed outcomes:\n${buildManagedOutcomeBrief(args.outcomes)}\n\n` +
+    `Rewrite weak managed outcomes so each one is materially distinct and clearly tied to the company's actual journey context.\n`;
+
+  return callOpenAIJSON({
+    apiKey: args.apiKey,
+    model: args.model,
+    schemaName: "mojo_managed_outcomes_repair_v1",
+    schema: managedOutcomesSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1200,
+    temperature: 0.1,
   });
 }
 
@@ -2867,9 +2951,38 @@ Deno.serve(async (req) => {
       opportunities,
     });
 
-    const managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
+    let managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
       ? managedOutcomesResult.outcomes
       : [];
+
+    const weakManagedOutcomeCount = managedOutcomes.filter((outcome) =>
+      analyzeManagedOutcomeSpecificity({
+        outcome_title: String(outcome?.outcome_title || ""),
+        outcome_statement: String(outcome?.outcome_statement || ""),
+        leading_indicator: String(outcome?.leading_indicator || ""),
+      }).weak
+    ).length;
+
+    if (weakManagedOutcomeCount > 0) {
+      const repairedManagedOutcomesResult = await repairManagedOutcomes({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        journeys,
+        opportunities,
+        outcomes: managedOutcomes,
+      });
+
+      const repairedManagedOutcomes = Array.isArray(repairedManagedOutcomesResult?.outcomes)
+        ? repairedManagedOutcomesResult.outcomes
+        : [];
+
+      if (repairedManagedOutcomes.length === 3) {
+        managedOutcomes = repairedManagedOutcomes;
+      }
+    }
 
     for (const outcome of managedOutcomes) {
       const journeyKey = ["customer", "revenue", "operations"].includes(String(outcome?.journey_key))

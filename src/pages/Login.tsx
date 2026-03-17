@@ -2,6 +2,20 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 
+const c = {
+  bg: "#faf7f6",
+  panel: "#FFFFFF",
+  paper: "#FBFAF7",
+  line: "#DDE6D1",
+  charcoal: "#233C4B",
+  secondary: "#46606D",
+  muted: "#6E847F",
+  warm: "#B67A45",
+  warmSoft: "#FFF8F2",
+  danger: "#A35646",
+  success: "#4D7A63",
+};
+
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,60 +60,73 @@ export default function Login() {
       if (error) {
         setError(error.message);
       } else {
-        navigate('/admin');
+        navigate('/admin/companies');
       }
     }
   };
 
   return (
-    <div className="min-h-screen bg-ink flex items-center justify-center px-4">
-      <div className="w-full max-w-[380px]">
-        <div className="flex items-center gap-2.5 mb-8 justify-center">
-          <div className="w-8 h-8 rounded-[5px] bg-gold flex items-center justify-center">
-            <span className="font-serif text-ink text-[18px] font-bold leading-none">M</span>
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{
+        background: c.bg,
+        backgroundImage:
+          'url("data:image/svg+xml,%3Csvg width=\'6\' height=\'6\' viewBox=\'0 0 6 6\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'%23000\' fill-opacity=\'0.025\'%3E%3Cpath d=\'M5 0h1L0 5V4zM6 5v1H5z\'/%3E%3C/g%3E%3C/svg%3E")',
+      }}
+    >
+      <div className="w-full max-w-[430px]">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-[12px] border shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
+            <span className="font-serif text-[22px] font-bold leading-none" style={{ color: c.charcoal }}>M</span>
           </div>
-          <span className="font-sans text-[15px] font-bold text-gold tracking-[0.06em] uppercase">
+          <span className="font-sans text-[15px] font-bold tracking-[0.08em] uppercase" style={{ color: c.charcoal }}>
             MOJO MAP
           </span>
+          <p className="mt-3 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+            Strategy workspace access for company research, opportunity mapping, and internal review.
+          </p>
         </div>
 
-        <div className="bg-ink-2 border border-[#3e3828] rounded-xl p-6">
-          <h1 className="font-serif text-[20px] text-t-dp mb-1">
+        <div className="rounded-[24px] border p-6 shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
+          <h1 className="font-serif text-[24px] mb-1" style={{ color: c.charcoal }}>
             {mode === 'login' ? 'Admin Login' : mode === 'signup' ? 'Create Account' : 'Reset Password'}
           </h1>
-          <p className="font-mono text-[11px] text-t-ds mb-5 uppercase tracking-wide">
+          <p className="font-mono text-[11px] mb-5 uppercase tracking-wide" style={{ color: c.muted }}>
             {mode === 'forgot' ? 'Enter your email to reset' : 'CMS Access'}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="font-mono text-[10px] text-t-ds uppercase tracking-wide block mb-1">Email</label>
+              <label className="font-mono text-[10px] uppercase tracking-wide block mb-1" style={{ color: c.muted }}>Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-ink border border-[#3e3828] rounded-lg px-3 py-2.5 text-t-dp font-sans text-[14px] focus:border-gold focus:outline-none transition-colors"
+                className="w-full rounded-[16px] px-3 py-2.5 font-sans text-[14px] focus:outline-none transition-colors"
+                style={{ background: c.paper, border: `1px solid ${c.line}`, color: c.charcoal }}
                 required
               />
             </div>
             {mode !== 'forgot' && (
               <div>
-                <label className="font-mono text-[10px] text-t-ds uppercase tracking-wide block mb-1">Password</label>
+                <label className="font-mono text-[10px] uppercase tracking-wide block mb-1" style={{ color: c.muted }}>Password</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-ink border border-[#3e3828] rounded-lg px-3 py-2.5 text-t-dp font-sans text-[14px] focus:border-gold focus:outline-none transition-colors"
+                  className="w-full rounded-[16px] px-3 py-2.5 font-sans text-[14px] focus:outline-none transition-colors"
+                  style={{ background: c.paper, border: `1px solid ${c.line}`, color: c.charcoal }}
                   required
                 />
               </div>
             )}
-            {error && <p className="font-mono text-[12px] text-danger">{error}</p>}
-            {success && <p className="font-mono text-[12px] text-green-400">{success}</p>}
+            {error && <p className="font-mono text-[12px]" style={{ color: c.danger }}>{error}</p>}
+            {success && <p className="font-mono text-[12px]" style={{ color: c.success }}>{success}</p>}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gold text-ink font-mono text-[12px] uppercase tracking-wide py-3 rounded-lg font-semibold hover:bg-gold-light transition-colors disabled:opacity-50"
+              className="w-full font-mono text-[12px] uppercase tracking-wide py-3 rounded-[16px] font-semibold transition-colors disabled:opacity-50"
+              style={{ background: c.charcoal, color: "#FAF7F6" }}
             >
               {loading
                 ? (mode === 'forgot' ? 'Sending…' : mode === 'login' ? 'Signing in…' : 'Creating account…')
@@ -112,19 +139,21 @@ export default function Login() {
               <button
                 type="button"
                 onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
-                className="font-mono text-[11px] text-gold hover:underline"
+                className="font-mono text-[11px] hover:underline"
+                style={{ color: c.warm }}
               >
                 Forgot password?
               </button>
             </p>
           )}
 
-          <p className="mt-3 text-center font-mono text-[11px] text-t-ds">
+          <p className="mt-3 text-center font-mono text-[11px]" style={{ color: c.muted }}>
             {mode === 'login' ? "Don't have an account?" : 'Back to'}{' '}
             <button
               type="button"
               onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess(''); }}
-              className="text-gold hover:underline"
+              className="hover:underline"
+              style={{ color: c.warm }}
             >
               {mode === 'login' ? 'Sign up' : 'Sign in'}
             </button>

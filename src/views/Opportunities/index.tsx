@@ -51,10 +51,22 @@ function priorityLabel(tier: string) {
 }
 
 function journeyRootLabel(key: string, companyName?: string | null) {
-  if (key === "customer") return `Increase the share of target customers who successfully progress through the customer journey at ${companyName || "this company"}`;
-  if (key === "revenue") return `Increase the rate at which qualified demand converts into sustainable funding, contracts, or revenue for ${companyName || "this company"}`;
-  if (key === "operations") return `Increase the consistency and timeliness of delivery across the operating journey for ${companyName || "this company"}`;
-  return `Increase successful progress through the core journey for ${companyName || "this company"}`;
+  if (key === "customer") {
+    return companyName
+      ? `Increase the share of target customers who successfully progress through ${companyName}'s customer journey`
+      : "Increase the share of target customers who successfully progress through the customer journey";
+  }
+  if (key === "revenue") {
+    return companyName
+      ? `Increase the rate at which qualified demand converts into sustainable funding, contracts, or revenue for ${companyName}`
+      : "Increase the rate at which qualified demand converts into sustainable funding, contracts, or revenue";
+  }
+  if (key === "operations") {
+    return companyName
+      ? `Increase the consistency and timeliness of delivery across ${companyName}'s operating journey`
+      : "Increase the consistency and timeliness of delivery across the operating journey";
+  }
+  return "Increase successful progress through the core journey";
 }
 
 function evidenceNeeded(item: OpportunityRow) {

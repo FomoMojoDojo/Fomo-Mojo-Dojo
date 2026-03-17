@@ -11,6 +11,7 @@ import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
 import { useOpportunities } from "@/hooks/useOpportunities";
+import { useRoutes } from "@/views/Routes/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
@@ -139,6 +140,7 @@ export default function MapView() {
     items: oppItems,
     error: oppError,
   } = useOpportunities(activeCompany?.id);
+  const { items: routeItems } = useRoutes(activeCompany?.id);
 
   const fallbackScores = useMemo(
     () =>
@@ -173,6 +175,10 @@ export default function MapView() {
   const projected = Math.round(safeNumber(displayProjected, 0));
   const evidenceLabel = formatEvidenceLabel(activeCompany?.evidence_status ?? fallbackScores.evidence_status);
   const evidencePct = evidencePercent(activeCompany?.area_scores_json) ?? Math.round(fallbackScores.evidenceBreakdown.baseline_strength);
+  const displayAreaScoresJson =
+    typeof activeCompany?.area_scores_json === "object" && activeCompany?.area_scores_json !== null
+      ? activeCompany.area_scores_json
+      : fallbackScores.area_scores_json;
 
   const inputComplete = inputs.filter((i) => i.status === "complete").length;
   const inputTotal = inputs.length;
@@ -292,6 +298,31 @@ export default function MapView() {
   const topAreas = areaList
     .slice()
     .sort((a, b) => safeNumber(b.score, 0) - safeNumber(a.score, 0));
+
+  const mapRoutes = useMemo(
+    () =>
+      (Array.isArray(routeItems) ? routeItems : []).map((route, index) => {
+        const effortRaw = String(route.effort || "medium").toLowerCase();
+        const effort = effortRaw === "low" || effortRaw === "medium" || effortRaw === "high" ? effortRaw : "medium";
+        const categoryRaw = String(route.category || "improve").toLowerCase();
+        const category = categoryRaw === "fix" || categoryRaw === "improve" || categoryRaw === "create" ? categoryRaw : "improve";
+        return {
+          id: route.id,
+          title: route.title || "Untitled route",
+          category,
+          shortDescription: route.short_description || "No route description yet.",
+          mojoImpactPoints: Math.max(1, safeNumber(route.pts_value, 1)),
+          effort,
+          status: "not_started" as const,
+          recommended: (route.sort_order ?? index + 1) === 1,
+          dependencies: [],
+          steps: [],
+          evidenceChecklist: [],
+          whyRecommended: [],
+        };
+      }),
+    [routeItems],
+  );
 
   return (
     <div
@@ -423,6 +454,8 @@ export default function MapView() {
               onAreaClick={openDeepDive}
               currentScore={score}
               potentialScore={projected}
+              areaScoresJson={displayAreaScoresJson}
+              routesData={mapRoutes}
             />
           </div>
 

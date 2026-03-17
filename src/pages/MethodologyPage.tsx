@@ -25,6 +25,16 @@ interface PageData {
   section5_content: string;
 }
 
+const c = {
+  bg: '#faf7f6',
+  line: '#DDE6D1',
+  charcoal: '#233C4B',
+  secondary: '#46606D',
+  muted: '#6E847F',
+  faint: '#C8D8CA',
+  coral: '#FF7D2D',
+};
+
 export default function MethodologyPage() {
   const { slug } = useParams<{ slug: string }>();
   const [page, setPage] = useState<PageData | null>(null);
@@ -46,10 +56,10 @@ export default function MethodologyPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-cream">
+      <div className="min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="flex items-center justify-center py-32">
-          <p className="font-mono text-[13px] text-t-muted">Loading…</p>
+          <p className="font-mono text-[13px]" style={{ color: c.muted }}>Loading…</p>
         </div>
       </div>
     );
@@ -57,12 +67,12 @@ export default function MethodologyPage() {
 
   if (!page) {
     return (
-      <div className="min-h-screen bg-cream">
+      <div className="min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
-            <h1 className="font-serif text-[28px] text-foreground mb-2">Page Not Found</h1>
-            <Link to="/" className="font-mono text-[12px] text-gold hover:text-gold-light transition-colors">← Back to Map</Link>
+            <h1 className="font-sans text-[28px] font-bold mb-2" style={{ color: c.charcoal }}>Page Not Found</h1>
+            <Link to="/" className="font-mono text-[12px] transition-colors" style={{ color: c.coral }}>← Back to Map</Link>
           </div>
         </div>
       </div>
@@ -70,16 +80,23 @@ export default function MethodologyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-cream">
+    <div
+      className="min-h-screen"
+      style={{
+        background: c.bg,
+        backgroundImage:
+          `url("data:image/svg+xml,%3Csvg width='6' height='6' viewBox='0 0 6 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='0.025'%3E%3Cpath d='M5 0h1L0 5V4zM6 5v1H5z'/%3E%3C/g%3E%3C/svg%3E")`,
+      }}
+    >
       <TopNav />
-      <main className="max-w-content mx-auto py-7 px-9">
+      <main className="max-w-content mx-auto py-7 px-4 sm:px-6 md:px-9 pb-12">
         {/* Breadcrumb */}
         <div className="mb-5">
-          <Link to="/" className="font-mono text-[11px] text-t-muted hover:text-gold transition-colors uppercase tracking-[0.08em]">
+          <Link to="/" className="font-mono text-[11px] uppercase tracking-[0.08em] transition-colors" style={{ color: c.muted }}>
             Map View
           </Link>
-          <span className="font-mono text-[11px] text-t-faint mx-2">›</span>
-          <span className="font-mono text-[11px] text-t-tertiary uppercase tracking-[0.08em]">
+          <span className="font-mono text-[11px] mx-2" style={{ color: c.faint }}>›</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
             {page.phase} · {page.page_number}
           </span>
         </div>

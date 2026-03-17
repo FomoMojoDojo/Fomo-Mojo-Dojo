@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import { ROUTES_DATA, type Route } from '@/lib/routesData';
 import { Check, Circle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from '@/components/ui/semantic-badges';
+import type { ClientSummary, ScoreArea } from '@/lib/types';
 
 /* ── Palette matching alt view ── */
 const c = {
@@ -52,18 +53,134 @@ const cardStyle = {
 } as const;
 
 interface Props {
+  areas?: ScoreArea[];
+  summary?: ClientSummary;
+  onAreaClick?: (areaKey: string) => void;
   onRouteSelect?: (route: Route) => void;
   currentScore?: number;
   potentialScore?: number;
+  areaScoresJson?: unknown;
+  routesData?: Route[];
 }
 
-export default function StrategyJourneyMapAlt({ onRouteSelect, currentScore, potentialScore }: Props) {
-  const { routes, readinessDimensions, mojoScoreSummary: seedSummary } = ROUTES_DATA;
+type DisplayReadinessDimension = {
+  id: string;
+  label: string;
+  percentComplete: number;
+  score: number;
+  status: 'in_progress' | 'missing' | 'complete';
+  summary: string;
+};
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function statusFromPercent(percent: number): DisplayReadinessDimension['status'] {
+  if (percent >= 70) return 'complete';
+  if (percent >= 35) return 'in_progress';
+  return 'missing';
+}
+
+function gateScoreFromAreaScoresJson(areaScoresJson: unknown, key: string): number | null {
+  if (typeof areaScoresJson !== 'object' || areaScoresJson === null) return null;
+  const perGate = (areaScoresJson as { per_gate_scores?: Record<string, unknown> }).per_gate_scores;
+  if (typeof perGate !== 'object' || perGate === null) return null;
+  const gate = perGate[key];
+  if (typeof gate === 'number' && Number.isFinite(gate)) return clampPercent(gate);
+  if (typeof gate === 'object' && gate !== null) {
+    const score = (gate as { score?: unknown }).score;
+    if (typeof score === 'number' && Number.isFinite(score)) return clampPercent(score);
+  }
+  return null;
+}
+
+export default function StrategyJourneyMapAlt({
+  areas = [],
+  onRouteSelect,
+  currentScore,
+  potentialScore,
+  areaScoresJson,
+  routesData = [],
+}: Props) {
+  const { readinessDimensions: seedReadinessDimensions, mojoScoreSummary: seedSummary } = ROUTES_DATA;
+  const routes = Array.isArray(routesData) ? routesData : [];
   const summary = {
     ...seedSummary,
     currentScore: currentScore ?? seedSummary.currentScore,
     potentialScore: potentialScore ?? seedSummary.potentialScore,
   };
+
+  const readinessDimensions: DisplayReadinessDimension[] = useMemo(() => {
+    const positioningGate = gateScoreFromAreaScoresJson(areaScoresJson, 'positioning');
+    const strategyGate = gateScoreFromAreaScoresJson(areaScoresJson, 'strategy_cascade');
+    const customerGate = gateScoreFromAreaScoresJson(areaScoresJson, 'customer_insight');
+    const gtmGate = gateScoreFromAreaScoresJson(areaScoresJson, 'gtm_execution');
+
+    const hasGateData =
+      positioningGate !== null &&
+      strategyGate !== null &&
+      customerGate !== null &&
+      gtmGate !== null;
+
+    if (hasGateData) {
+      const foundation = clampPercent(((positioningGate as number) + (strategyGate as number)) / 2);
+      const execution = clampPercent(gtmGate as number);
+      const evidence = clampPercent(customerGate as number);
+
+      const dims = [
+        { id: 'foundation', label: 'Foundation', percentComplete: foundation, summary: 'Positioning + strategy coherence' },
+        { id: 'execution', label: 'Execution', percentComplete: execution, summary: 'Go-to-market and operating execution' },
+        { id: 'evidence', label: 'Evidence', percentComplete: evidence, summary: 'Customer insight and market proof' },
+      ] as const;
+
+      return dims.map((dim) => ({
+        ...dim,
+        score: dim.percentComplete,
+        status: statusFromPercent(dim.percentComplete),
+      }));
+    }
+
+    const areaMap = new Map<string, number>();
+    for (const area of areas) {
+      areaMap.set(String(area.area_key || '').toLowerCase(), Number(area.score || 0));
+    }
+
+    const hasAreaData = areaMap.size > 0;
+    if (!hasAreaData) {
+      return seedReadinessDimensions.map((dim) => {
+        const percentComplete = clampPercent(Number(dim.percentComplete || 0));
+        const score = percentComplete;
+        return {
+          ...dim,
+          percentComplete,
+          score,
+        };
+      });
+    }
+
+    const foundation = clampPercent(
+      ((areaMap.get('positioning') ?? 0) + (areaMap.get('strategy') ?? 0)) / 2,
+    );
+    const execution = clampPercent(
+      ((areaMap.get('product') ?? 0) + (areaMap.get('marketing') ?? 0)) / 2,
+    );
+    const evidence = clampPercent(
+      ((areaMap.get('sales') ?? 0) + (areaMap.get('cx') ?? 0)) / 2,
+    );
+
+    const dims = [
+      { id: 'foundation', label: 'Foundation', percentComplete: foundation, summary: 'Positioning + strategic clarity' },
+      { id: 'execution', label: 'Execution', percentComplete: execution, summary: 'Operating system + go-to-market' },
+      { id: 'evidence', label: 'Evidence', percentComplete: evidence, summary: 'Market signals + customer proof' },
+    ] as const;
+
+    return dims.map((dim) => ({
+        ...dim,
+        score: dim.percentComplete,
+        status: statusFromPercent(dim.percentComplete),
+      }));
+  }, [areas, areaScoresJson, seedReadinessDimensions]);
 
   const [catFilters, setCatFilters] = useState<Set<string>>(new Set(['fix', 'improve', 'create']));
   const [sortMode, setSortMode] = useState<SortMode>('recommended');
@@ -112,7 +229,9 @@ export default function StrategyJourneyMapAlt({ onRouteSelect, currentScore, pot
             <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: c.coral }}>Strategy Journey Map</span>
             <p className="font-sans text-[13px] mt-0.5" style={{ color: c.secondary }}>Where are we — and where do we go next?</p>
           </div>
-          <span className="font-mono text-[10px]" style={{ color: c.muted }}>{visibleRoutes.length} of {routes.length} routes</span>
+          <span className="font-mono text-[10px]" style={{ color: c.muted }}>
+            {routes.length > 0 ? `${visibleRoutes.length} of ${routes.length} routes` : "No routes yet"}
+          </span>
         </div>
 
         {/* Map + Filters */}
@@ -173,6 +292,18 @@ export default function StrategyJourneyMapAlt({ onRouteSelect, currentScore, pot
                   </g>
                 );
               })}
+
+              {routes.length === 0 && (
+                <g>
+                  <rect x={285} y={165} width={440} height={90} rx="14" fill="#ffffff" stroke={c.line} />
+                  <text x={505} y={197} textAnchor="middle" fontSize="11" fill={c.secondary} className="font-sans" fontWeight="600">
+                    No route recommendations yet
+                  </text>
+                  <text x={505} y={216} textAnchor="middle" fontSize="9" fill={c.muted} className="font-mono" letterSpacing="0.04em">
+                    Run AI Research to generate fix / improve / create routes
+                  </text>
+                </g>
+              )}
 
               {/* Start / Baseline node */}
               <g
@@ -235,7 +366,9 @@ export default function StrategyJourneyMapAlt({ onRouteSelect, currentScore, pot
                     <text x={currentX - 30} y={gateY + 4} textAnchor="end" fontSize="8" fill={c.muted} className="font-mono" letterSpacing="0.05em">{dim.label}</text>
                     <rect x={currentX - 25} y={gateY - 2} width={barW} height={6} rx="3" fill={c.lineFaint} />
                     <rect x={currentX - 25} y={gateY - 2} width={fillW} height={6} rx="3" fill={barColor} />
-                    <text x={currentX + 30} y={gateY + 4} fontSize="8" fill={c.muted} className="font-mono">{dim.percentComplete}%</text>
+                    <text x={currentX + 30} y={gateY + 4} fontSize="8" fill={c.muted} className="font-mono">
+                      {dim.percentComplete}%
+                    </text>
                   </g>
                 );
               })}
@@ -243,43 +376,52 @@ export default function StrategyJourneyMapAlt({ onRouteSelect, currentScore, pot
           </div>
 
           {/* Filters sidebar */}
-          <div className="flex flex-row md:flex-col gap-2.5 min-w-[120px] shrink-0 overflow-x-auto">
-            <span className="font-sans text-[9px] font-bold uppercase tracking-wider" style={{ color: c.muted }}>Category</span>
-            {(['fix', 'improve', 'create'] as const).map(cat => {
-              const meta = catMeta[cat];
-              const active = catFilters.has(cat);
-              return (
+          {routes.length > 0 ? (
+            <div className="flex flex-row md:flex-col gap-2.5 min-w-[120px] shrink-0 overflow-x-auto">
+              <span className="font-sans text-[9px] font-bold uppercase tracking-wider" style={{ color: c.muted }}>Category</span>
+              {(['fix', 'improve', 'create'] as const).map(cat => {
+                const meta = catMeta[cat];
+                const active = catFilters.has(cat);
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => toggleCat(cat)}
+                    className="transition-all cursor-pointer text-left"
+                    style={{
+                      color: meta.stroke,
+                      background: 'transparent',
+                      opacity: active ? 1 : 0.5,
+                    }}
+                  >
+                    <TierBadge tone={cat === 'fix' ? 'focus' : cat === 'improve' ? 'monitor' : 'defer'}>
+                      {meta.label}
+                    </TierBadge>
+                  </button>
+                );
+              })}
+              <div className="h-px my-1" style={{ background: c.line }} />
+              <span className="font-sans text-[9px] font-bold uppercase tracking-wider" style={{ color: c.muted }}>Sort by</span>
+              {([['recommended', 'Recommended'], ['impact', 'Highest Impact'], ['effort', 'Lowest Effort']] as const).map(([key, label]) => (
                 <button
-                  key={cat}
-                  onClick={() => toggleCat(cat)}
+                  key={key}
+                  onClick={() => setSortMode(key as SortMode)}
                   className="transition-all cursor-pointer text-left"
                   style={{
-                    color: meta.stroke,
-                    background: 'transparent',
-                    opacity: active ? 1 : 0.5,
+                    opacity: sortMode === key ? 1 : 0.7,
                   }}
                 >
-                  <TierBadge tone={cat === 'fix' ? 'focus' : cat === 'improve' ? 'monitor' : 'defer'}>
-                    {meta.label}
-                  </TierBadge>
+                  <MetaBadge>{label}</MetaBadge>
                 </button>
-              );
-            })}
-            <div className="h-px my-1" style={{ background: c.line }} />
-            <span className="font-sans text-[9px] font-bold uppercase tracking-wider" style={{ color: c.muted }}>Sort by</span>
-            {([['recommended', 'Recommended'], ['impact', 'Highest Impact'], ['effort', 'Lowest Effort']] as const).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setSortMode(key as SortMode)}
-                className="transition-all cursor-pointer text-left"
-                style={{
-                  opacity: sortMode === key ? 1 : 0.7,
-                }}
-              >
-                <MetaBadge>{label}</MetaBadge>
-              </button>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="min-w-[160px] rounded-xl p-3 h-fit" style={{ background: c.lineFaint, border: `1px solid ${c.line}` }}>
+              <p className="font-mono text-[9px] uppercase tracking-wider" style={{ color: c.muted }}>Route Data</p>
+              <p className="mt-1 font-sans text-[11px] leading-[1.45]" style={{ color: c.secondary }}>
+                Waiting for generated routes.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Hover tooltip */}

@@ -36,6 +36,19 @@ interface Props {
   initialSlug?: string | null;
 }
 
+const c = {
+  bg: '#faf7f6',
+  card: '#ffffff',
+  line: '#DDE6D1',
+  lineFaint: '#EEF3E9',
+  charcoal: '#233C4B',
+  secondary: '#46606D',
+  muted: '#6E847F',
+  faint: '#C8D8CA',
+  coral: '#FF7D2D',
+  amber: '#FAC846',
+};
+
 export default function MethodologyPanel({ open, onClose, initialSlug }: Props) {
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(initialSlug || null);
@@ -101,39 +114,43 @@ export default function MethodologyPanel({ open, onClose, initialSlug }: Props) 
         className={`fixed inset-0 z-40 transition-opacity duration-300 ${
           open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
-        style={{ background: 'rgba(30,26,18,0.4)', top: 52 }}
+        style={{ background: 'rgba(35,60,75,0.24)', top: 52 }}
         onClick={onClose}
       />
 
       {/* Panel */}
       <div
-        className="fixed right-0 z-50 bg-cream flex flex-col"
+        className="fixed right-0 z-50 flex flex-col"
         style={{
           top: 52,
           width: 560,
           height: 'calc(100vh - 52px)',
+          background: c.bg,
+          borderLeft: `1px solid ${c.line}`,
           transform: open ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-cream-dark flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: `1px solid ${c.line}` }}>
           <div className="flex items-center gap-2">
             {selectedSlug && (
               <button
                 onClick={() => setSelectedSlug(null)}
-                className="font-mono text-[11px] text-gold hover:text-gold-light transition-colors uppercase tracking-[0.08em] mr-2 cursor-pointer"
+                className="font-mono text-[11px] transition-colors uppercase tracking-[0.08em] mr-2 cursor-pointer"
+                style={{ color: c.coral }}
               >
                 ← All Pages
               </button>
             )}
-            <h2 className="font-serif text-[18px] font-medium text-foreground">
+            <h2 className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
               {selectedSlug ? page?.page_title || 'Loading…' : 'Our Process'}
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 border border-cream-dark rounded flex items-center justify-center text-t-muted hover:text-foreground transition-colors cursor-pointer text-sm"
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer text-sm"
+            style={{ border: `1px solid ${c.line}`, color: c.muted, background: c.card }}
           >
             ✕
           </button>
@@ -143,18 +160,18 @@ export default function MethodologyPanel({ open, onClose, initialSlug }: Props) 
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {selectedSlug ? (
             loading ? (
-              <p className="font-mono text-[13px] text-t-muted text-center py-12">Loading…</p>
+              <p className="font-mono text-[13px] text-center py-12" style={{ color: c.muted }}>Loading…</p>
             ) : page ? (
               <MethodologyContent page={page} compact />
             ) : (
-              <p className="font-mono text-[13px] text-t-muted text-center py-12">Page not found.</p>
+              <p className="font-mono text-[13px] text-center py-12" style={{ color: c.muted }}>Page not found.</p>
             )
           ) : (
             /* Page index grouped by phase */
             <div className="space-y-6">
               {Object.entries(grouped).map(([phase, items]) => (
                 <div key={phase}>
-                  <p className="font-mono text-[10px] text-t-muted uppercase tracking-[0.14em] border-b border-cream-dark pb-2 mb-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.14em] pb-2 mb-3" style={{ color: c.muted, borderBottom: `1px solid ${c.line}` }}>
                     {phase}
                   </p>
                   <div className="space-y-2">
@@ -162,13 +179,17 @@ export default function MethodologyPanel({ open, onClose, initialSlug }: Props) 
                       <button
                         key={item.slug}
                         onClick={() => setSelectedSlug(item.slug)}
-                        className="w-full text-left bg-cream-mid hover:bg-cream-dark rounded-lg p-4 transition-colors cursor-pointer group"
+                        className="w-full text-left rounded-xl p-4 transition-colors cursor-pointer group border"
+                        style={{ background: c.card, borderColor: c.line }}
                       >
                         <div className="flex items-center gap-3">
-                          <span className="inline-flex w-[28px] h-[28px] rounded-full bg-gold text-ink font-serif text-[13px] font-bold items-center justify-center shrink-0">
+                          <span
+                            className="inline-flex w-[28px] h-[28px] rounded-full font-sans text-[12px] font-bold items-center justify-center shrink-0"
+                            style={{ background: c.amber, color: c.charcoal }}
+                          >
                             {item.page_number}
                           </span>
-                          <span className="font-serif text-[15px] text-foreground group-hover:text-gold transition-colors">
+                          <span className="font-sans text-[15px] font-semibold transition-colors" style={{ color: c.charcoal }}>
                             {item.page_title}
                           </span>
                         </div>
@@ -182,10 +203,11 @@ export default function MethodologyPanel({ open, onClose, initialSlug }: Props) 
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-cream-dark shrink-0">
+        <div className="px-6 py-3 shrink-0" style={{ borderTop: `1px solid ${c.line}` }}>
           <button
             onClick={onClose}
-            className="w-full font-mono text-[12px] text-t-muted hover:text-foreground transition-colors cursor-pointer py-1"
+            className="w-full font-mono text-[12px] transition-colors cursor-pointer py-1"
+            style={{ color: c.muted }}
           >
             ← Back to Map View
           </button>
