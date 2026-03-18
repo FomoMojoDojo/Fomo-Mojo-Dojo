@@ -201,6 +201,121 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
   ].join("\n");
 }
 
+type StrategicProblemStatement = {
+  id?: string;
+  statement: string;
+  source: "client" | "intake" | "company" | "public" | "evidence";
+  status: "open" | "reconciled";
+  reconciliation_note?: string;
+};
+
+function normalizeStrategicProblemSource(value: unknown): StrategicProblemStatement["source"] {
+  const source = String(value || "").trim().toLowerCase();
+  if (source === "intake" || source === "company" || source === "public" || source === "evidence") {
+    return source;
+  }
+  return "client";
+}
+
+function normalizeStrategicProblemStatus(value: unknown): StrategicProblemStatement["status"] {
+  return String(value || "").trim().toLowerCase() === "reconciled" ? "reconciled" : "open";
+}
+
+function normalizeStrategicProblems(rows: unknown): StrategicProblemStatement[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const statement = String(item?.statement || "").trim();
+      if (!statement) return null;
+      const normalized: StrategicProblemStatement = {
+        id: typeof item?.id === "string" ? item.id : undefined,
+        statement,
+        source: normalizeStrategicProblemSource(item?.source),
+        status: normalizeStrategicProblemStatus(item?.status),
+      };
+      const note = String(item?.reconciliation_note || "").trim();
+      if (note) normalized.reconciliation_note = note;
+      return normalized;
+    })
+    .filter((item): item is StrategicProblemStatement => item !== null);
+}
+
+function buildStrategicProblemBrief(problems: StrategicProblemStatement[]): string {
+  if (!problems.length) {
+    return "No client-stated strategic problems recorded yet. Keep outputs grounded in evidence and surface what problem framing still needs clarification.";
+  }
+
+  const open = problems.filter((item) => item.status !== "reconciled");
+  const reconciled = problems.filter((item) => item.status === "reconciled");
+  const lines = problems.slice(0, 12).map((item, index) => {
+    const note = item.reconciliation_note ? ` | note: ${item.reconciliation_note}` : "";
+    return `${index + 1}. [${item.source} | ${item.status}] ${item.statement}${note}`;
+  });
+
+  return [
+    `${problems.length} strategic problem statement(s) captured.`,
+    `${open.length} open, ${reconciled.length} reconciled.`,
+    `Use these as reference for prioritization, tradeoffs, and what must be true.`,
+    `Strategic problems:\n${lines.join("\n")}`,
+  ].join("\n");
+}
+
+type StrategicAssumptionStatement = {
+  id?: string;
+  assumption: string;
+  source: "client" | "intake" | "company" | "public" | "evidence";
+  status: "untested" | "validating" | "validated" | "invalidated";
+  note?: string;
+};
+
+function normalizeStrategicAssumptionStatus(value: unknown): StrategicAssumptionStatement["status"] {
+  const status = String(value || "").trim().toLowerCase();
+  if (status === "validating" || status === "validated" || status === "invalidated") return status;
+  return "untested";
+}
+
+function normalizeStrategicAssumptions(rows: unknown): StrategicAssumptionStatement[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const assumption = String(item?.assumption || "").trim();
+      if (!assumption) return null;
+
+      const normalized: StrategicAssumptionStatement = {
+        id: typeof item?.id === "string" ? item.id : undefined,
+        assumption,
+        source: normalizeStrategicProblemSource(item?.source),
+        status: normalizeStrategicAssumptionStatus(item?.status),
+      };
+      const note = String(item?.note || "").trim();
+      if (note) normalized.note = note;
+      return normalized;
+    })
+    .filter((item): item is StrategicAssumptionStatement => item !== null);
+}
+
+function buildStrategicAssumptionBrief(assumptions: StrategicAssumptionStatement[]): string {
+  if (!assumptions.length) {
+    return "No manually tracked strategic assumptions recorded yet.";
+  }
+
+  const pending = assumptions.filter((item) => item.status === "untested" || item.status === "validating").length;
+  const validated = assumptions.filter((item) => item.status === "validated").length;
+  const invalidated = assumptions.filter((item) => item.status === "invalidated").length;
+  const lines = assumptions.slice(0, 16).map((item, index) => {
+    const note = item.note ? ` | note: ${item.note}` : "";
+    return `${index + 1}. [${item.source} | ${item.status}] ${item.assumption}${note}`;
+  });
+
+  return [
+    `${assumptions.length} strategic assumption(s) tracked manually.`,
+    `${pending} pending validation, ${validated} validated, ${invalidated} invalidated.`,
+    `Strategic assumptions:\n${lines.join("\n")}`,
+  ].join("\n");
+}
+
 const INPUT_PUBLIC_EVIDENCE_WEIGHTS: Record<string, number> = {
   "comp-alt": 0.8,
   "unique-attr": 0.75,
@@ -409,6 +524,7 @@ async function repairWeakOpportunities(args: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   journeys: unknown;
   opportunities: unknown;
   schema: any;
@@ -430,6 +546,7 @@ async function repairWeakOpportunities(args: {
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
     `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Generated journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Current opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
     `Rewrite weak outcomes so they read like strong product discovery outcomes while staying faithful to the same step context and company reality.\n`;
@@ -452,13 +569,14 @@ async function generateManagedOutcomes(args: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   journeys: unknown;
   opportunities: unknown;
 }) {
   const systemText =
     `You are defining managed product outcomes for a Teresa Torres style opportunity solution tree.\n` +
     `Return ONLY valid JSON matching the schema. No prose.\n` +
-    `Create exactly one managed outcome for each journey_key: customer, revenue, operations.\n` +
+    `Create exactly one managed outcome for journey_key=customer.\n` +
     `A managed outcome is the result the team should manage toward, not an opportunity branch, feature, initiative, or broad vanity KPI.\n` +
     `Each managed outcome should:\n` +
     `- be a leading-indicator style result within the company's influence\n` +
@@ -476,10 +594,11 @@ async function generateManagedOutcomes(args: {
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
     `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
-    `Generate one managed outcome per journey that the team should manage toward.\n` +
-    `Anchor each managed outcome in the actual top opportunities for that journey instead of using generic template wording.\n`;
+    `Generate one customer managed outcome that the team should manage toward.\n` +
+    `Anchor it in the actual top customer opportunities instead of using generic template wording.\n`;
 
   return callOpenAIJSON({
     apiKey: args.apiKey,
@@ -529,6 +648,7 @@ async function repairManagedOutcomes(args: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   journeys: unknown;
   opportunities: unknown;
   outcomes: unknown;
@@ -536,7 +656,7 @@ async function repairManagedOutcomes(args: {
   const systemText =
     `You are improving managed product outcomes so they stop collapsing into generic template language.\n` +
     `Return ONLY valid JSON matching the schema. No prose.\n` +
-    `Keep exactly one outcome per journey_key: customer, revenue, operations.\n` +
+    `Keep exactly one outcome for journey_key=customer.\n` +
     `Rewrite only outcomes that are too generic.\n` +
     `Make each managed outcome clearly company-specific by using the audience, step context, and concrete nouns already present in the opportunities.\n` +
     `Do not output generic wording like "Improve customer progress", "Improve operations", or "Increase conversion" unless a specific object and context are attached.\n`;
@@ -544,6 +664,7 @@ async function repairManagedOutcomes(args: {
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
     `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
     `Current managed outcomes:\n${buildManagedOutcomeBrief(args.outcomes)}\n\n` +
@@ -797,6 +918,7 @@ async function runConsistencyReview(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   odiBrief: string;
   inputs: unknown;
   journeys: unknown;
@@ -808,6 +930,7 @@ async function runConsistencyReview(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Derived ODI context:\n${opts.odiBrief}\n\n` +
     `Inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
@@ -822,6 +945,7 @@ async function runConsistencyReview(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
+    `- strategic problem alignment: drafts should clearly connect to client-stated problems\n` +
     `- buyer / chooser / user consistency across baseline, journeys, ODI, positioning, and strategy\n` +
     `- market category consistency across baseline, positioning, and strategy\n` +
     `- opportunity rows correctly tied to journey steps\n` +
@@ -849,6 +973,7 @@ async function runPositioningReview(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   positioning: unknown;
   opportunities: unknown;
   routes: unknown;
@@ -856,6 +981,7 @@ async function runPositioningReview(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Positioning draft:\n${buildPositioningBrief(opts.positioning)}\n\n` +
     `Opportunity context:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Route context:\n${buildRouteBrief(opts.routes)}\n\n` +
@@ -866,6 +992,7 @@ async function runPositioningReview(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
+    `- positioning clearly addresses the client-stated strategic problem(s)\n` +
     `- market category credibility and alignment with baseline evidence\n` +
     `- best-fit customers matching the buyer/job context\n` +
     `- competitive alternatives serving the same job context\n` +
@@ -891,6 +1018,7 @@ async function runEvidenceReview(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   journeys: unknown;
   opportunities: unknown;
   routes: unknown;
@@ -900,6 +1028,7 @@ async function runEvidenceReview(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
@@ -912,6 +1041,7 @@ async function runEvidenceReview(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
+    `- strategic-problem claims that are unsupported or not tied to evidence\n` +
     `- claims that go beyond the baseline evidence ledger or open questions\n` +
     `- invented specifics such as channels, buyer types, operating details, or differentiators not supported by evidence\n` +
     `- excessive certainty where baseline evidence is thin\n` +
@@ -936,6 +1066,7 @@ async function runStrategyReview(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   strategy: unknown;
   routes: unknown;
   opportunities: unknown;
@@ -943,6 +1074,7 @@ async function runStrategyReview(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Strategy draft:\n${buildStrategyBrief(opts.strategy)}\n\n` +
     `Route context:\n${buildRouteBrief(opts.routes)}\n\n` +
     `Opportunity context:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
@@ -953,6 +1085,7 @@ async function runStrategyReview(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
+    `- strategy directly addresses the client-stated strategic problem(s)\n` +
     `- winning aspiration, where to play, and how to win being coherent with each other\n` +
     `- capabilities and management systems being concrete rather than generic department labels\n` +
     `- assumptions reflecting real uncertainty rather than fake precision\n` +
@@ -978,6 +1111,7 @@ async function runAllDraftReviews(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   odiBrief: string;
   inputs: unknown;
   journeys: unknown;
@@ -993,6 +1127,7 @@ async function runAllDraftReviews(opts: {
       companyName: opts.companyName,
       website: opts.website,
       baselineBrief: opts.baselineBrief,
+      strategicProblemBrief: opts.strategicProblemBrief,
       odiBrief: opts.odiBrief,
       inputs: opts.inputs,
       journeys: opts.journeys,
@@ -1007,6 +1142,7 @@ async function runAllDraftReviews(opts: {
       companyName: opts.companyName,
       website: opts.website,
       baselineBrief: opts.baselineBrief,
+      strategicProblemBrief: opts.strategicProblemBrief,
       positioning: opts.positioning,
       opportunities: opts.opportunities,
       routes: opts.routes,
@@ -1017,6 +1153,7 @@ async function runAllDraftReviews(opts: {
       companyName: opts.companyName,
       website: opts.website,
       baselineBrief: opts.baselineBrief,
+      strategicProblemBrief: opts.strategicProblemBrief,
       journeys: opts.journeys,
       opportunities: opts.opportunities,
       routes: opts.routes,
@@ -1029,6 +1166,7 @@ async function runAllDraftReviews(opts: {
       companyName: opts.companyName,
       website: opts.website,
       baselineBrief: opts.baselineBrief,
+      strategicProblemBrief: opts.strategicProblemBrief,
       strategy: opts.strategy,
       routes: opts.routes,
       opportunities: opts.opportunities,
@@ -1167,6 +1305,62 @@ const GTM_KEYS = new Set([
   "donor-retention",
   "grant-pipeline",
 ]);
+const JOURNEY_KEYS = ["customer", "revenue", "operations"] as const;
+type JourneyKey = (typeof JOURNEY_KEYS)[number];
+const JOURNEY_KEY_SET = new Set<string>(JOURNEY_KEYS);
+const STRATEGIC_PROBLEM_STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "against",
+  "all",
+  "also",
+  "among",
+  "and",
+  "are",
+  "because",
+  "been",
+  "being",
+  "between",
+  "both",
+  "but",
+  "can",
+  "cannot",
+  "could",
+  "during",
+  "each",
+  "from",
+  "have",
+  "into",
+  "just",
+  "more",
+  "most",
+  "not",
+  "only",
+  "other",
+  "our",
+  "over",
+  "same",
+  "should",
+  "that",
+  "their",
+  "there",
+  "they",
+  "this",
+  "those",
+  "through",
+  "under",
+  "very",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "without",
+  "would",
+  "your",
+]);
 
 function round1(n: number) {
   return Math.round(n * 10) / 10;
@@ -1174,6 +1368,181 @@ function round1(n: number) {
 
 function normalizeJourneyKey(value: unknown) {
   return String(value || "").trim().toLowerCase();
+}
+
+function parseRequestedJourneyKeys(value: unknown): JourneyKey[] {
+  const raw = Array.isArray(value) ? value : [];
+  const keys: JourneyKey[] = [];
+
+  for (const item of raw) {
+    const key = normalizeJourneyKey(item);
+    if (!JOURNEY_KEY_SET.has(key)) continue;
+    if (keys.includes(key as JourneyKey)) continue;
+    keys.push(key as JourneyKey);
+  }
+
+  return keys;
+}
+
+type SelectedJobMap = {
+  journey_key: JourneyKey;
+  journey_title: string;
+  journey_subtitle: string;
+  source: "selected" | "custom" | "existing" | "requested";
+};
+
+function defaultJourneyTitle(key: JourneyKey) {
+  if (key === "revenue") return "Job Map: Securing Revenue Outcomes";
+  if (key === "operations") return "Job Map: Delivering Consistent Service";
+  return "Job Map: Customer Progress";
+}
+
+function defaultJourneySubtitle(key: JourneyKey) {
+  if (key === "revenue") return "How demand converts into recurring economic outcomes.";
+  if (key === "operations") return "How delivery operations prepare, execute, monitor, and improve service.";
+  return "How the primary job performer defines, prepares, executes, and concludes progress.";
+}
+
+function sanitizeJobMapTitle(value: unknown, key: JourneyKey) {
+  const title = String(value || "").trim();
+  return title || defaultJourneyTitle(key);
+}
+
+function sanitizeJobMapSubtitle(value: unknown, key: JourneyKey) {
+  const subtitle = String(value || "").trim();
+  return subtitle || defaultJourneySubtitle(key);
+}
+
+function parseSelectedJobMaps(value: unknown): SelectedJobMap[] {
+  const rows = Array.isArray(value) ? value : [];
+  const byKey = new Map<JourneyKey, SelectedJobMap>();
+
+  for (const row of rows) {
+    const item = row as Record<string, unknown>;
+    const keyRaw = item?.journey_key ?? item?.key;
+    const key = normalizeJourneyKey(keyRaw);
+    if (!JOURNEY_KEY_SET.has(key)) continue;
+    const journeyKey = key as JourneyKey;
+    const sourceRaw = String(item?.source || "").trim().toLowerCase();
+    const source: SelectedJobMap["source"] =
+      sourceRaw === "custom" ? "custom" : sourceRaw === "selected" ? "selected" : "requested";
+
+    byKey.set(journeyKey, {
+      journey_key: journeyKey,
+      journey_title: sanitizeJobMapTitle(item?.journey_title ?? item?.title, journeyKey),
+      journey_subtitle: sanitizeJobMapSubtitle(item?.journey_subtitle ?? item?.subtitle, journeyKey),
+      source,
+    });
+  }
+
+  return Array.from(byKey.values());
+}
+
+function deriveExistingJobMaps(rows: unknown): SelectedJobMap[] {
+  const items = Array.isArray(rows) ? rows : [];
+  const byKey = new Map<JourneyKey, SelectedJobMap>();
+
+  for (const row of items) {
+    const item = row as Record<string, unknown>;
+    const key = normalizeJourneyKey(item?.journey_key);
+    if (!JOURNEY_KEY_SET.has(key)) continue;
+    const journeyKey = key as JourneyKey;
+    if (byKey.has(journeyKey)) continue;
+
+    byKey.set(journeyKey, {
+      journey_key: journeyKey,
+      journey_title: sanitizeJobMapTitle(item?.journey_title, journeyKey),
+      journey_subtitle: sanitizeJobMapSubtitle(item?.journey_subtitle, journeyKey),
+      source: "existing",
+    });
+  }
+
+  return Array.from(byKey.values());
+}
+
+function inferSuggestedJobMapsFromBaseline(args: {
+  companyName: string;
+  baselineResultJson: unknown;
+}) {
+  const baseline = (args.baselineResultJson ?? {}) as {
+    lens_card?: {
+      primary_buyer?: string;
+      chooser?: string;
+      user?: string;
+      value_chain?: string;
+      economic_engine?: string;
+      adoption_constraints?: string;
+      risk_surface?: string;
+    };
+    evidence_ledger?: Array<{ bucket?: string; snippet?: string }>;
+  };
+
+  const lens = baseline?.lens_card ?? {};
+  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+  const publicSignalText = [
+    String(lens.value_chain || ""),
+    String(lens.economic_engine || ""),
+    String(lens.adoption_constraints || ""),
+    String(lens.risk_surface || ""),
+    ...ledger.slice(0, 14).map((entry) => `${String(entry?.bucket || "")} ${String(entry?.snippet || "")}`),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const role = String(lens.user || lens.primary_buyer || lens.chooser || "Core Audience")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+    .trim();
+  const audienceLabel = role || "Core Audience";
+
+  const suggestions: Array<{
+    journey_key: JourneyKey;
+    journey_title: string;
+    journey_subtitle: string;
+    confidence: number;
+    rationale: string;
+  }> = [];
+
+  suggestions.push({
+    journey_key: "customer",
+    journey_title: `Job Map: ${audienceLabel}`,
+    journey_subtitle: `How ${audienceLabel.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
+    confidence: role ? 95 : 80,
+    rationale: role
+      ? `Audience signal from baseline lens: ${role}`
+      : `Customer job performer is unresolved; start by framing the core job for ${args.companyName}.`,
+  });
+
+  if (/(investment|investor|capital|funding|raise|grant|donor|referral|pipeline|conversion|revenue|pricing|contract|renewal|payer|reimbursement)/.test(publicSignalText)) {
+    let revenueTitle = "Job Map: Securing Revenue Outcomes";
+    if (/(investment|investor|capital|funding|raise)/.test(publicSignalText)) {
+      revenueTitle = "Job Map: Getting Financial Investment";
+    } else if (/(grant|donor|philanthrop)/.test(publicSignalText)) {
+      revenueTitle = "Job Map: Securing Donor and Grant Support";
+    } else if (/(referral|pipeline|conversion|enrollment)/.test(publicSignalText)) {
+      revenueTitle = "Job Map: Converting Qualified Demand";
+    }
+
+    suggestions.push({
+      journey_key: "revenue",
+      journey_title: revenueTitle,
+      journey_subtitle: "How demand converts into sustained economic outcomes.",
+      confidence: 78,
+      rationale: "Public signals suggest meaningful economic, funding, or conversion dynamics.",
+    });
+  }
+
+  if (/(operations|delivery|capacity|workflow|staffing|compliance|quality|handoff|throughput|support|service continuity|risk|constraint)/.test(publicSignalText)) {
+    suggestions.push({
+      journey_key: "operations",
+      journey_title: "Job Map: Delivering Consistent Service",
+      journey_subtitle: "How internal delivery systems prepare, execute, monitor, and improve service quality.",
+      confidence: 74,
+      rationale: "Public constraints/risk signals suggest operational friction worth mapping.",
+    });
+  }
+
+  return suggestions;
 }
 
 function normalizeSignalStrength(value: unknown) {
@@ -1239,6 +1608,166 @@ function weightedHarmonicMean(entries: Array<{ value: number; weight: number }>)
   return weightSum / denom;
 }
 
+function tokenizeStrategicText(value: unknown) {
+  const raw = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) return [] as string[];
+
+  return raw
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4 && !STRATEGIC_PROBLEM_STOPWORDS.has(token));
+}
+
+function computeStrategicProblemAlignment(args: {
+  strategicProblems?: StrategicProblemStatement[];
+  opportunities?: Array<{ outcome?: unknown; step_label?: unknown }>;
+  routes?: Array<{ title?: unknown; short_description?: unknown; category?: unknown }>;
+  positioning?: {
+    competitive_alternatives?: Array<{ name?: unknown; description?: unknown }>;
+    unique_attributes?: Array<{ name?: unknown; description?: unknown }>;
+    value_for_customer?: unknown;
+    best_fit_customers?: unknown;
+    market_category?: unknown;
+    category_rationale?: unknown;
+    current_tagline?: unknown;
+    proposed_tagline?: unknown;
+  } | null;
+  strategy?: {
+    winning_aspiration?: unknown;
+    where_to_play?: unknown;
+    how_to_win?: unknown;
+    capabilities?: Array<{ name?: unknown; note?: unknown }>;
+    management_systems?: Array<{ name?: unknown; note?: unknown }>;
+    assumptions?: Array<{ assumption?: unknown; note?: unknown }>;
+  } | null;
+}) {
+  const strategicProblems = Array.isArray(args.strategicProblems) ? args.strategicProblems : [];
+  const reconciledCount = strategicProblems.filter((item) => item.status === "reconciled").length;
+
+  if (!strategicProblems.length) {
+    return {
+      score: 50,
+      token_coverage: 50,
+      statement_coverage: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "no_strategic_problem",
+      strategic_problem_count: 0,
+      reconciled_count: 0,
+    };
+  }
+
+  const keywordSet = new Set<string>();
+  for (const problem of strategicProblems) {
+    for (const token of tokenizeStrategicText(problem.statement)) {
+      keywordSet.add(token);
+    }
+  }
+  const keywords = Array.from(keywordSet).slice(0, 28);
+
+  if (!keywords.length) {
+    return {
+      score: 50,
+      token_coverage: 50,
+      statement_coverage: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "insufficient_problem_keywords",
+      strategic_problem_count: strategicProblems.length,
+      reconciled_count: reconciledCount,
+    };
+  }
+
+  const opportunities = Array.isArray(args.opportunities) ? args.opportunities : [];
+  const routes = Array.isArray(args.routes) ? args.routes : [];
+  const positioning = args.positioning ?? {};
+  const strategy = args.strategy ?? {};
+
+  const corpusParts: string[] = [];
+  for (const opp of opportunities) {
+    corpusParts.push(String(opp?.outcome || ""));
+    corpusParts.push(String(opp?.step_label || ""));
+  }
+  for (const route of routes) {
+    corpusParts.push(String(route?.title || ""));
+    corpusParts.push(String(route?.short_description || ""));
+    corpusParts.push(String(route?.category || ""));
+  }
+
+  const compAlts = Array.isArray(positioning?.competitive_alternatives)
+    ? positioning.competitive_alternatives
+    : [];
+  const uniqueAttrs = Array.isArray(positioning?.unique_attributes)
+    ? positioning.unique_attributes
+    : [];
+
+  for (const alt of compAlts) {
+    corpusParts.push(String(alt?.name || ""));
+    corpusParts.push(String(alt?.description || ""));
+  }
+  for (const attr of uniqueAttrs) {
+    corpusParts.push(String(attr?.name || ""));
+    corpusParts.push(String(attr?.description || ""));
+  }
+
+  corpusParts.push(String(positioning?.value_for_customer || ""));
+  corpusParts.push(String(positioning?.best_fit_customers || ""));
+  corpusParts.push(String(positioning?.market_category || ""));
+  corpusParts.push(String(positioning?.category_rationale || ""));
+  corpusParts.push(String(positioning?.current_tagline || ""));
+  corpusParts.push(String(positioning?.proposed_tagline || ""));
+
+  corpusParts.push(String(strategy?.winning_aspiration || ""));
+  corpusParts.push(String(strategy?.where_to_play || ""));
+  corpusParts.push(String(strategy?.how_to_win || ""));
+
+  const caps = Array.isArray(strategy?.capabilities) ? strategy.capabilities : [];
+  const systems = Array.isArray(strategy?.management_systems) ? strategy.management_systems : [];
+  const assumptions = Array.isArray(strategy?.assumptions) ? strategy.assumptions : [];
+
+  for (const item of caps) {
+    corpusParts.push(String(item?.name || ""));
+    corpusParts.push(String(item?.note || ""));
+  }
+  for (const item of systems) {
+    corpusParts.push(String(item?.name || ""));
+    corpusParts.push(String(item?.note || ""));
+  }
+  for (const item of assumptions) {
+    corpusParts.push(String(item?.assumption || ""));
+    corpusParts.push(String(item?.note || ""));
+  }
+
+  const corpusTokens = new Set<string>(tokenizeStrategicText(corpusParts.join(" ")));
+  const matchedKeywords = keywords.filter((keyword) => corpusTokens.has(keyword));
+  const missingKeywords = keywords.filter((keyword) => !corpusTokens.has(keyword));
+  const tokenCoverage = keywords.length ? matchedKeywords.length / keywords.length : 0.5;
+
+  const statementCoverage =
+    strategicProblems.filter((problem) =>
+      tokenizeStrategicText(problem.statement).some((token) => corpusTokens.has(token))
+    ).length / strategicProblems.length;
+
+  const alignmentNorm = clamp(0.65 * tokenCoverage + 0.35 * statementCoverage, 0, 1);
+  const score = round1(alignmentNorm * 100);
+
+  return {
+    score,
+    token_coverage: round1(tokenCoverage * 100),
+    statement_coverage: round1(statementCoverage * 100),
+    matched_keywords: matchedKeywords.slice(0, 16),
+    missing_keywords: missingKeywords.slice(0, 16),
+    status: score >= 70 ? "aligned" : score >= 45 ? "partial" : "weak",
+    strategic_problem_count: strategicProblems.length,
+    reconciled_count: reconciledCount,
+  };
+}
+
 function computePotentialProjected(mojo_score: number) {
   const current = clamp(mojo_score, 0, 100);
   const headroom = 100 - current;
@@ -1263,10 +1792,32 @@ function scoreCompanyMojo(args: {
   jobSteps: Array<{ journey_key?: unknown; designed?: unknown; has_gap?: unknown }>;
   opportunities: Array<{
     journey_key?: unknown;
+    outcome?: unknown;
+    step_label?: unknown;
     importance?: unknown;
     satisfaction?: unknown;
     priority_tier?: unknown;
   }>;
+  routes?: Array<{ title?: unknown; short_description?: unknown; category?: unknown }>;
+  positioning?: {
+    competitive_alternatives?: Array<{ name?: unknown; description?: unknown }>;
+    unique_attributes?: Array<{ name?: unknown; description?: unknown }>;
+    value_for_customer?: unknown;
+    best_fit_customers?: unknown;
+    market_category?: unknown;
+    category_rationale?: unknown;
+    current_tagline?: unknown;
+    proposed_tagline?: unknown;
+  } | null;
+  strategy?: {
+    winning_aspiration?: unknown;
+    where_to_play?: unknown;
+    how_to_win?: unknown;
+    capabilities?: Array<{ name?: unknown; note?: unknown }>;
+    management_systems?: Array<{ name?: unknown; note?: unknown }>;
+    assumptions?: Array<{ assumption?: unknown; note?: unknown }>;
+  } | null;
+  strategicProblems?: StrategicProblemStatement[];
   gamma?: number;
 }) {
   const safeInputs = Array.isArray(args.inputs) ? args.inputs : [];
@@ -1317,6 +1868,14 @@ function scoreCompanyMojo(args: {
   const customerCoverage = ratio(customerInputs.length, CUSTOMER_KEYS.size);
   const strategyCoverage = ratio(strategyInputs.length, STRATEGY_KEYS.size);
   const gtmCoverage = ratio(gtmInputs.length, GTM_KEYS.size);
+  const strategicAlignment = computeStrategicProblemAlignment({
+    strategicProblems: args.strategicProblems,
+    opportunities: safeOpps,
+    routes: args.routes,
+    positioning: args.positioning ?? null,
+    strategy: args.strategy ?? null,
+  });
+  const strategicAlignmentNorm = clamp(strategicAlignment.score / 100, 0, 1);
 
   const positioning = round1(
     100 * (
@@ -1337,12 +1896,13 @@ function scoreCompanyMojo(args: {
   );
   const strategy_cascade = round1(
     100 * (
-      0.25 * strategyCoverage +
-      0.2 * journeyHealth(revenueSteps) +
-      0.2 * journeyHealth(opsSteps) +
+      0.2 * strategyCoverage +
+      0.15 * journeyHealth(revenueSteps) +
+      0.15 * journeyHealth(opsSteps) +
       0.15 * baselineSupport +
       0.1 * ratio(revenueOpps.length + opsOpps.length, 12) +
-      0.1 * averageCompleteness(strategyInputs)
+      0.1 * averageCompleteness(strategyInputs) +
+      0.15 * strategicAlignmentNorm
     ),
   );
   const gtm_execution = round1(
@@ -1434,6 +1994,7 @@ function scoreCompanyMojo(args: {
       strategy_cascade: {
         label: "Strategy Cascade",
         score: perGateScores.strategy_cascade,
+        strategic_problem_alignment: strategicAlignment.score,
       },
       gtm_execution: {
         label: "GTM Execution",
@@ -1454,7 +2015,9 @@ function scoreCompanyMojo(args: {
       job_steps: stepsCount,
       opportunities: oppsCount,
       evidence_ledger: ledgerCount,
+      strategic_problems: strategicAlignment.strategic_problem_count,
     },
+    strategic_problem_context: strategicAlignment,
     calibration: {
       gamma,
       p_raw: round1(p_raw * 100) / 100,
@@ -1550,13 +2113,13 @@ const repairBundleSchema = {
     },
     journeys: {
       type: "array",
-      minItems: 3,
+      minItems: 1,
       maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
-          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          journey_key: { type: "string", enum: [...JOURNEY_KEYS] },
           journey_title: { type: "string" },
           journey_subtitle: { type: "string" },
           steps: {
@@ -1586,8 +2149,8 @@ const repairBundleSchema = {
     },
     opportunities: {
       type: "array",
-      minItems: 15,
-      maxItems: 30,
+      minItems: 8,
+      maxItems: 20,
       items: {
         type: "object",
         additionalProperties: false,
@@ -1595,7 +2158,7 @@ const repairBundleSchema = {
           outcome: { type: "string" },
           step_number: { type: "integer" },
           step_label: { type: "string" },
-          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          journey_key: { type: "string", enum: ["customer"] },
           importance: { type: "integer" },
           satisfaction: { type: "integer" },
           opportunity_score: { type: "integer" },
@@ -1606,8 +2169,8 @@ const repairBundleSchema = {
     },
     routes: {
       type: "array",
-      minItems: 9,
-      maxItems: 18,
+      minItems: 4,
+      maxItems: 12,
       items: {
         type: "object",
         additionalProperties: false,
@@ -1749,13 +2312,13 @@ const managedOutcomesSchema = {
   properties: {
     outcomes: {
       type: "array",
-      minItems: 3,
-      maxItems: 3,
+      minItems: 1,
+      maxItems: 1,
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
-          journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+          journey_key: { type: "string", enum: ["customer"] },
           outcome_title: { type: "string" },
           outcome_statement: { type: "string" },
           leading_indicator: { type: "string" },
@@ -1784,6 +2347,7 @@ async function runFinalizer(opts: {
   companyName: string;
   website: string;
   baselineBrief: string;
+  strategicProblemBrief?: string;
   odiBrief: string;
   inputs: unknown;
   journeys: unknown;
@@ -1796,6 +2360,7 @@ async function runFinalizer(opts: {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
     `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Derived ODI context:\n${opts.odiBrief}\n\n` +
     `Current inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
     `Current journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
@@ -1812,6 +2377,7 @@ async function runFinalizer(opts: {
     `Revise only the areas identified by reviewer findings.\n` +
     `Do not rewrite unaffected areas for style alone.\n` +
     `Stay strictly consistent with the public baseline and ODI context.\n` +
+    `Ensure revisions remain aligned to client-stated strategic problems.\n` +
     `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n`;
 
   return await callOpenAIJSON({
@@ -1859,6 +2425,8 @@ Deno.serve(async (req) => {
     const company_id = body?.company_id;
     const company_name = body?.company_name;
     const website = typeof body?.website === "string" ? body.website : "";
+    const requestedJourneyKeys = parseRequestedJourneyKeys(body?.journeys_to_generate);
+    const submittedJobMaps = parseSelectedJobMaps(body?.job_maps);
 
     if (!company_id || !company_name) {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
@@ -1931,6 +2499,117 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
+    const { data: strategicProblemRows, error: strategicProblemErr } = await supabase
+      .from("strategy_problem_statements")
+      .select("id, statement, source, status, reconciliation_note")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: true })
+      .limit(80);
+
+    if (strategicProblemErr) {
+      console.log("[research-company] strategic problem fetch error:", strategicProblemErr.message);
+    }
+
+    const strategicProblems = normalizeStrategicProblems(strategicProblemRows ?? []);
+    const { data: strategicAssumptionRows, error: strategicAssumptionErr } = await supabase
+      .from("strategy_assumptions")
+      .select("id, assumption, source, status, note")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: true })
+      .limit(120);
+
+    if (strategicAssumptionErr) {
+      console.log("[research-company] strategic assumption fetch error:", strategicAssumptionErr.message);
+    }
+
+    const strategicAssumptions = normalizeStrategicAssumptions(strategicAssumptionRows ?? []);
+    const strategicProblemBrief = [
+      buildStrategicProblemBrief(strategicProblems),
+      buildStrategicAssumptionBrief(strategicAssumptions),
+      "Use both strategic problems and assumptions to determine what to prioritize, what to test next, and where confidence is still low.",
+    ].join("\n\n");
+    const suggestedJobMaps = inferSuggestedJobMapsFromBaseline({
+      companyName: String(company_name),
+      baselineResultJson: baselineRun?.result_json ?? null,
+    });
+    const suggestedJobMapByKey = new Map<JourneyKey, (typeof suggestedJobMaps)[number]>(
+      suggestedJobMaps.map((item) => [item.journey_key, item]),
+    );
+
+    const requestedJobMaps: SelectedJobMap[] = requestedJourneyKeys.map((key) => {
+      const suggested = suggestedJobMapByKey.get(key);
+      return {
+        journey_key: key,
+        journey_title: sanitizeJobMapTitle(suggested?.journey_title, key),
+        journey_subtitle: sanitizeJobMapSubtitle(suggested?.journey_subtitle, key),
+        source: "requested",
+      };
+    });
+
+    const { data: existingJobStepRows, error: existingJobStepsErr } = await supabase
+      .from("job_steps")
+      .select("journey_key, journey_title, journey_subtitle, created_at")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: false })
+      .limit(240);
+
+    if (existingJobStepsErr) {
+      console.log("[research-company] existing job map fetch error:", existingJobStepsErr.message);
+    }
+    const existingJobMaps = deriveExistingJobMaps(existingJobStepRows ?? []);
+
+    const selectedBase: SelectedJobMap[] =
+      submittedJobMaps.length > 0
+        ? submittedJobMaps
+        : requestedJobMaps.length > 0
+          ? requestedJobMaps
+          : existingJobMaps;
+
+    const selectedMapByKey = new Map<JourneyKey, SelectedJobMap>();
+    for (const map of selectedBase) {
+      if (!selectedMapByKey.has(map.journey_key)) {
+        selectedMapByKey.set(map.journey_key, map);
+      }
+    }
+
+    if (!selectedMapByKey.has("customer")) {
+      const existingCustomer = existingJobMaps.find((map) => map.journey_key === "customer");
+      if (existingCustomer) {
+        selectedMapByKey.set("customer", existingCustomer);
+      }
+    }
+
+    const selectedJobMaps: SelectedJobMap[] = Array.from(selectedMapByKey.values());
+
+    if (selectedJobMaps.length === 0) {
+      return jsonResponse({
+        error: "job_map_selection_required",
+        status: "job_map_selection_required",
+        message: "Choose at least one job map before running research.",
+        suggested_job_maps: suggestedJobMaps,
+      }, 422);
+    }
+
+    if (!selectedJobMaps.some((map) => map.journey_key === "customer")) {
+      return jsonResponse({
+        error: "customer_job_map_required",
+        status: "customer_job_map_required",
+        message: "Include a customer job map so ODI opportunities can anchor to a primary job performer.",
+        suggested_job_maps: suggestedJobMaps,
+      }, 422);
+    }
+
+    const targetJourneyKeys: JourneyKey[] = [
+      ...new Set(selectedJobMaps.map((map) => map.journey_key)),
+    ];
+    const targetJourneyKeySet = new Set(targetJourneyKeys);
+    const selectedJobMapByKey = new Map<JourneyKey, SelectedJobMap>(
+      selectedJobMaps.map((map) => [map.journey_key, map]),
+    );
+    const selectedJobMapBrief = selectedJobMaps
+      .map((map, index) => `${index + 1}. ${map.journey_key} | ${map.journey_title} | ${map.journey_subtitle}`)
+      .join("\n");
+
     // -------------------------
     // 1) Generate INPUTS (14) — schema does NOT include group fields
     // -------------------------
@@ -1964,6 +2643,7 @@ Deno.serve(async (req) => {
     const inputsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Return EXACTLY 14 input objects, one per input_key in this list.\n` +
       `Do not omit any.\n\n` +
       `Keys:\n` +
@@ -1978,6 +2658,7 @@ Deno.serve(async (req) => {
       `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
       `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
+      `- Input descriptions should highlight what must be clarified to resolve strategic problems\n` +
       `- When evidence is weak, use cautious wording instead of inventing specifics\n` +
       `- input_label max 5 words\n` +
       `- sub_group max 4 words\n` +
@@ -2010,21 +2691,30 @@ Deno.serve(async (req) => {
     const inputFrameworkKeys = frameworkKeysFor("inputs");
 
     // -------------------------
-    // 2) Generate JOURNEYS (customer/revenue/operations)
+    // 2) Generate JOURNEYS (customer required, others optional by request)
     // -------------------------
+    const journeyTypeDefinition = (key: JourneyKey) => {
+      if (key === "customer") return "external user/buyer experience from discovery to post-use";
+      if (key === "revenue") return "how demand converts to recurring revenue or funding outcomes";
+      return "internal delivery and operating system from intake through fulfillment";
+    };
+    const journeyTypeGuidance = targetJourneyKeys
+      .map((key) => `- ${key} journey = ${journeyTypeDefinition(key)}`)
+      .join("\n");
+
     const journeysSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
         journeys: {
           type: "array",
-          minItems: 3,
-          maxItems: 3,
+          minItems: targetJourneyKeys.length,
+          maxItems: targetJourneyKeys.length,
           items: {
             type: "object",
             additionalProperties: false,
             properties: {
-              journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+              journey_key: { type: "string", enum: [...targetJourneyKeys] },
               journey_title: { type: "string" },
               journey_subtitle: { type: "string" },
               steps: {
@@ -2063,18 +2753,18 @@ Deno.serve(async (req) => {
     const journeysSystemText =
       `You are generating an executive-quality journey map for a strategy platform.\n` +
       `Return ONLY valid JSON that matches the schema. No prose.\n` +
-      `Write content that reads like a real end-to-end operating journey, not generic placeholders.\n` +
+      `Write an ODI/JTBD style job map, not a generic funnel journey.\n` +
       `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
       `Framework guidance:\n${journeyFrameworkBrief}\n\n` +
       `Constraints:\n` +
-      `- journey_title should be specific to the company context\n` +
-      `- journey_subtitle should explain the full journey in one sentence\n` +
-      `- customer journey = external user/buyer experience from discovery to post-use\n` +
-      `- revenue journey = how the company wins, funds, contracts, renews, or monetizes demand\n` +
-      `- operations journey = how the company delivers, operates, manufactures, certifies, or supports the offering\n` +
+      `- Keep journey_title and journey_subtitle aligned with selected job maps\n` +
+      `- Generate exactly these journey keys: ${targetJourneyKeys.join(", ")}\n` +
+      `${journeyTypeGuidance}\n` +
       `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
-      `- step_label 2–5 words\n` +
-      `- description 18–40 words, concrete and sequential\n` +
+      `- Journey bottlenecks should connect to the client-stated strategic problems when provided\n` +
+      `- Use ODI job map sequencing language (define, locate, prepare, confirm, execute, monitor, modify, conclude) as the structural spine\n` +
+      `- step_label 2–5 words, action-oriented, no generic funnel labels\n` +
+      `- description 18–40 words, concrete, sequential, and tied to the selected job performer context\n` +
       `- evidence_status must be one of evidenced, implied, or unclear\n` +
       `- evidenced = directly supported by public evidence\n` +
       `- implied = strongly suggested by the business model or multiple signals, but not directly proven\n` +
@@ -2090,9 +2780,11 @@ Deno.serve(async (req) => {
     const journeysUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
-      `Create 3 journeys: customer, revenue, operations.\n` +
-      `For each journey: 5–8 steps, numbered 1..N.\n` +
-      `Make the sequence realistic for this exact company category and economic model.\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
+      `Create these journeys: ${targetJourneyKeys.join(", ")}.\n` +
+      `For each journey: 6–8 ODI-style steps, numbered 1..N.\n` +
+      `Make the sequence realistic for this exact company category and audience.\n` +
       `Do not use generic labels like "Engagement" or "Operations" unless they are qualified.\n` +
       `Mark designed=false and has_gap=true when unclear from public info.\n`;
 
@@ -2108,10 +2800,33 @@ Deno.serve(async (req) => {
     });
 
     let journeys: any[] = Array.isArray(journeysResult?.journeys) ? journeysResult.journeys : [];
-    if (journeys.length !== 3) return jsonResponse({ error: `Expected 3 journeys, got ${journeys.length}` }, 500);
+    journeys = journeys.filter((journey) => targetJourneyKeySet.has(normalizeJourneyKey(journey?.journey_key)));
+
+    const alignedJourneys: any[] = [];
+    for (const key of targetJourneyKeys) {
+      const match = journeys.find((journey) => normalizeJourneyKey(journey?.journey_key) === key);
+      const selectedMap = selectedJobMapByKey.get(key);
+      if (match) {
+        alignedJourneys.push({
+          ...match,
+          journey_key: key,
+          journey_title: selectedMap?.journey_title || String(match?.journey_title || defaultJourneyTitle(key)),
+          journey_subtitle: selectedMap?.journey_subtitle || String(match?.journey_subtitle || defaultJourneySubtitle(key)),
+        });
+      }
+    }
+    journeys = alignedJourneys;
+
+    if (journeys.length !== targetJourneyKeys.length) {
+      const found = new Set(journeys.map((journey) => normalizeJourneyKey(journey?.journey_key)));
+      const missing = targetJourneyKeys.filter((key) => !found.has(key));
+      return jsonResponse({
+        error: `Expected journeys for keys: ${targetJourneyKeys.join(", ")}. Missing: ${missing.join(", ")}`,
+      }, 500);
+    }
 
     // -------------------------
-    // 3) Generate OPPORTUNITIES (15–30)
+    // 3) Generate OPPORTUNITIES (customer journey)
     // -------------------------
     const oppsSchema = {
       type: "object",
@@ -2119,8 +2834,8 @@ Deno.serve(async (req) => {
       properties: {
         opportunities: {
           type: "array",
-          minItems: 15,
-          maxItems: 30,
+          minItems: 8,
+          maxItems: 20,
           items: {
             type: "object",
             additionalProperties: false,
@@ -2128,7 +2843,7 @@ Deno.serve(async (req) => {
               outcome: { type: "string" },
               step_number: { type: "integer" },
               step_label: { type: "string" },
-              journey_key: { type: "string", enum: ["customer", "revenue", "operations"] },
+              journey_key: { type: "string", enum: ["customer"] },
               importance: { type: "integer" },
               satisfaction: { type: "integer" },
               opportunity_score: { type: "integer" },
@@ -2147,8 +2862,9 @@ Deno.serve(async (req) => {
       `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
       `Framework guidance:\n${buildFrameworkBrief("opportunities", getFrameworkRoutingPlan("opportunities"))}\n\n` +
       `Rules:\n` +
-      `- Use the provided journeys and steps exactly; do not invent unrelated step labels\n` +
+      `- Use the provided journeys and steps exactly; do not invent unrelated step labels or step numbers\n` +
       `- Opportunities should target bottlenecks, missing capabilities, weak transitions, or unclear handoffs in those journeys\n` +
+      `- Opportunities should directly address the client-stated strategic problems when provided\n` +
       `- outcome must read like a strong product discovery outcome or ODI desired outcome, not a feature idea, deliverable, or recommendation\n` +
       `- Use a structured formula close to: direction + measurable dimension + object + context\n` +
       `- Start with verbs like minimize, reduce, increase, improve, maximize, or avoid when appropriate\n` +
@@ -2170,10 +2886,12 @@ Deno.serve(async (req) => {
     const oppsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated journeys and steps:\n${buildJourneyBrief(journeys)}\n\n` +
-      `Generate 15–30 opportunities across customer/revenue/operations.\n` +
+      `Generate 8–20 opportunities for the customer journey only.\n` +
       `Tie each opportunity to an existing step_number + step_label from the generated journeys above.\n` +
-      `Cover all three journeys.\n`;
+      `Every opportunity must use journey_key=customer.\n`;
 
     const oppsResult = await callOpenAIJSON({
       apiKey: openaiKey,
@@ -2187,7 +2905,10 @@ Deno.serve(async (req) => {
     });
 
     let opportunities: any[] = Array.isArray(oppsResult?.opportunities) ? oppsResult.opportunities : [];
-    if (opportunities.length < 15) return jsonResponse({ error: `Expected >=15 opportunities, got ${opportunities.length}` }, 500);
+    opportunities = opportunities.filter((opp) => normalizeJourneyKey(opp?.journey_key) === "customer");
+    if (opportunities.length < 8) {
+      return jsonResponse({ error: `Expected >=8 customer opportunities, got ${opportunities.length}` }, 500);
+    }
     const weakOutcomeCount = opportunities.filter((opp) => analyzeOutcomeQuality(String(opp?.outcome || "")).weak).length;
     if (weakOutcomeCount > 0) {
       const repairedOppsResult = await repairWeakOpportunities({
@@ -2196,6 +2917,7 @@ Deno.serve(async (req) => {
         companyName: company_name,
         website,
         baselineBrief,
+        strategicProblemBrief,
         journeys,
         opportunities,
         schema: oppsSchema,
@@ -2205,9 +2927,34 @@ Deno.serve(async (req) => {
         ? repairedOppsResult.opportunities
         : [];
 
-      if (repairedOpportunities.length >= 15) {
-        opportunities = repairedOpportunities;
+      const repairedCustomerOnly = repairedOpportunities.filter(
+        (opp) => normalizeJourneyKey(opp?.journey_key) === "customer"
+      );
+      if (repairedCustomerOnly.length >= 8) {
+        opportunities = repairedCustomerOnly;
       }
+    }
+
+    const customerJourneySteps = journeys
+      .filter((journey) => normalizeJourneyKey(journey?.journey_key) === "customer")
+      .flatMap((journey) => Array.isArray(journey?.steps) ? journey.steps : []);
+    const customerStepIndex = new Set(
+      customerJourneySteps.map((step: any) => {
+        const stepNumber = Number(step?.step_number) || 0;
+        const stepLabel = String(step?.step_label || "").trim().toLowerCase();
+        return `${stepNumber}::${stepLabel}`;
+      }),
+    );
+
+    opportunities = opportunities.filter((opp) => {
+      const key = `${Number(opp?.step_number) || 0}::${String(opp?.step_label || "").trim().toLowerCase()}`;
+      return customerStepIndex.has(key);
+    });
+
+    if (opportunities.length < 8) {
+      return jsonResponse({
+        error: "Generated opportunities did not align to existing customer job-map steps.",
+      }, 500);
     }
     const opportunityFrameworkKeys = frameworkKeysFor("opportunities");
     const odiFrameworkKeys = Array.from(new Set([
@@ -2216,7 +2963,7 @@ Deno.serve(async (req) => {
     ]));
 
     // -------------------------
-    // 4) Generate ROUTES (9–18)
+    // 4) Generate ROUTES (customer-focused)
     // -------------------------
     const routesSchema = {
       type: "object",
@@ -2224,8 +2971,8 @@ Deno.serve(async (req) => {
       properties: {
         routes: {
           type: "array",
-          minItems: 9,
-          maxItems: 18,
+          minItems: 4,
+          maxItems: 12,
           items: {
             type: "object",
             additionalProperties: false,
@@ -2251,8 +2998,9 @@ Deno.serve(async (req) => {
       `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
       `Framework guidance:\n${buildFrameworkBrief("routes", getFrameworkRoutingPlan("routes"))}\n\n` +
       `Rules:\n` +
-      `- Create 9-18 routes total across fix, improve, create\n` +
+      `- Create 4-12 routes total across fix, improve, create\n` +
       `- Use the journey and opportunity context provided; routes should feel like logical initiatives, not raw issues\n` +
+      `- Prioritize routes that directly reduce the client-stated strategic problems when provided\n` +
       `- title should be 3-7 words and action-oriented\n` +
       `- short_description should be 16-32 words and mention why the route matters\n` +
       `- pts_value should be 1..10 and reflect likely score impact\n` +
@@ -2264,6 +3012,8 @@ Deno.serve(async (req) => {
     const routesUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
       `Generate routes that synthesize these into coherent strategic workstreams.\n`;
@@ -2280,7 +3030,7 @@ Deno.serve(async (req) => {
     });
 
     let routes: any[] = Array.isArray(routesResult?.routes) ? routesResult.routes : [];
-    if (routes.length < 9) return jsonResponse({ error: `Expected >=9 routes, got ${routes.length}` }, 500);
+    if (routes.length < 4) return jsonResponse({ error: `Expected >=4 routes, got ${routes.length}` }, 500);
     const routeFrameworkKeys = frameworkKeysFor("routes");
 
     // -------------------------
@@ -2358,6 +3108,7 @@ Deno.serve(async (req) => {
       `- best_fit_customers should describe the clearest-fit audience in one paragraph\n` +
       `- market_category should be the category the company should claim or reshape\n` +
       `- market_category and best_fit_customers must align with the public baseline and website evidence\n` +
+      `- positioning should directly address the client-stated strategic problem framing when provided\n` +
       `- category_rationale should explain why this category framing helps buyers understand the company\n` +
       `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
       `- proposed_tagline should be a strategist-quality direction, not a generic slogan\n` +
@@ -2366,6 +3117,8 @@ Deno.serve(async (req) => {
     const positioningCanvasUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
       `Generated routes:\n${routes
@@ -2463,6 +3216,7 @@ Deno.serve(async (req) => {
       `If evidence is thin, make the uncertainty explicit through status and assumptions rather than pretending certainty.\n\n` +
       `Rules:\n` +
       `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
+      `- Strategy choices should directly resolve or reduce the client-stated strategic problem(s) when provided\n` +
       `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
       `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +
@@ -2478,6 +3232,8 @@ Deno.serve(async (req) => {
     const strategyCascadeUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
       `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
@@ -2505,7 +3261,7 @@ Deno.serve(async (req) => {
       strategyPromise,
     ]);
 
-    const customerJourneyDraft = journeys.find((journey) => journey?.journey_key === "customer");
+    const customerJourneyDraft = journeys.find((journey) => normalizeJourneyKey(journey?.journey_key) === "customer");
     const odiBrief = buildODIBrief({
       baselineResultJson: baselineRun?.result_json ?? null,
       customerJourneyTitle: String(customerJourneyDraft?.journey_title || ""),
@@ -2523,6 +3279,7 @@ Deno.serve(async (req) => {
       companyName: company_name,
       website,
       baselineBrief,
+      strategicProblemBrief,
       odiBrief,
       inputs,
       journeys,
@@ -2556,6 +3313,7 @@ Deno.serve(async (req) => {
         companyName: company_name,
         website,
         baselineBrief,
+        strategicProblemBrief,
         odiBrief,
         inputs,
         journeys,
@@ -2573,6 +3331,18 @@ Deno.serve(async (req) => {
       positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
       strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
 
+      const repairedJourneyByKey = new Map<string, any>();
+      for (const journey of journeys) {
+        const key = normalizeJourneyKey(journey?.journey_key);
+        if (!targetJourneyKeySet.has(key)) continue;
+        if (!repairedJourneyByKey.has(key)) {
+          repairedJourneyByKey.set(key, { ...journey, journey_key: key });
+        }
+      }
+      journeys = targetJourneyKeys
+        .map((key) => repairedJourneyByKey.get(key))
+        .filter(Boolean);
+
       ({
         consistencyReview,
         positioningReview,
@@ -2584,6 +3354,7 @@ Deno.serve(async (req) => {
         companyName: company_name,
         website,
         baselineBrief,
+        strategicProblemBrief,
         odiBrief,
         inputs,
         journeys,
@@ -2765,9 +3536,8 @@ Deno.serve(async (req) => {
 
     // Job steps
     for (const journey of journeys) {
-      const journeyKey = ["customer", "revenue", "operations"].includes(journey?.journey_key)
-        ? journey.journey_key
-        : "customer";
+      const journeyKey = normalizeJourneyKey(journey?.journey_key);
+      if (!JOURNEY_KEY_SET.has(journeyKey)) continue;
 
       const steps = Array.isArray(journey?.steps) ? journey.steps : [];
       for (const step of steps) {
@@ -2818,9 +3588,8 @@ Deno.serve(async (req) => {
 
     // Opportunities: recompute tier from score to keep consistent
     for (const opp of opportunities) {
-      const journeyKey = ["customer", "revenue", "operations"].includes(opp?.journey_key)
-        ? opp.journey_key
-        : "customer";
+      const normalizedJourneyKey = normalizeJourneyKey(opp?.journey_key);
+      const journeyKey = JOURNEY_KEY_SET.has(normalizedJourneyKey) ? normalizedJourneyKey : "customer";
 
       const importance = clamp(Number(opp?.importance) || 5, 1, 10);
       const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
@@ -2851,7 +3620,7 @@ Deno.serve(async (req) => {
       else oppsInserted++;
     }
 
-    const customerJourney = journeys.find((journey) => journey?.journey_key === "customer");
+    const customerJourney = journeys.find((journey) => normalizeJourneyKey(journey?.journey_key) === "customer");
     const baselineLens = (baselineRun?.result_json as {
       lens_card?: {
         primary_buyer?: string;
@@ -2898,9 +3667,7 @@ Deno.serve(async (req) => {
         user_id: user.id,
         tier: "need",
         desired_outcome: String(opp?.outcome || ""),
-        journey_key: ["customer", "revenue", "operations"].includes(opp?.journey_key)
-          ? opp.journey_key
-          : "customer",
+        journey_key: "customer",
         step_number: Number(opp?.step_number) || 0,
         step_label: String(opp?.step_label || ""),
         importance,
@@ -2966,6 +3733,7 @@ Deno.serve(async (req) => {
       companyName: company_name,
       website,
       baselineBrief,
+      strategicProblemBrief,
       journeys,
       opportunities,
     });
@@ -2989,6 +3757,7 @@ Deno.serve(async (req) => {
         companyName: company_name,
         website,
         baselineBrief,
+        strategicProblemBrief,
         journeys,
         opportunities,
         outcomes: managedOutcomes,
@@ -2998,15 +3767,21 @@ Deno.serve(async (req) => {
         ? repairedManagedOutcomesResult.outcomes
         : [];
 
-      if (repairedManagedOutcomes.length === 3) {
-        managedOutcomes = repairedManagedOutcomes;
+      const repairedCustomerOutcomes = repairedManagedOutcomes.filter(
+        (outcome) => String(outcome?.journey_key || "") === "customer"
+      );
+
+      if (repairedCustomerOutcomes.length >= 1) {
+        managedOutcomes = repairedCustomerOutcomes;
       }
     }
 
+    managedOutcomes = managedOutcomes.filter(
+      (outcome) => String(outcome?.journey_key || "") === "customer"
+    );
+
     for (const outcome of managedOutcomes) {
-      const journeyKey = ["customer", "revenue", "operations"].includes(String(outcome?.journey_key))
-        ? String(outcome?.journey_key)
-        : "customer";
+      const journeyKey = "customer";
 
       const { error: managedOutcomeErr } = await supabase.from("managed_outcomes").insert({
         company_id,
@@ -3127,10 +3902,40 @@ Deno.serve(async (req) => {
       })) : []),
       opportunities: opportunities.map((opp) => ({
         journey_key: opp?.journey_key,
+        outcome: opp?.outcome,
+        step_label: opp?.step_label,
         importance: opp?.importance,
         satisfaction: opp?.satisfaction,
         priority_tier: opp?.priority_tier,
       })),
+      routes: routes.map((route) => ({
+        title: route?.title,
+        short_description: route?.short_description,
+        category: route?.category,
+      })),
+      positioning: {
+        competitive_alternatives: Array.isArray(positioningCanvasResult?.competitive_alternatives)
+          ? positioningCanvasResult.competitive_alternatives
+          : [],
+        unique_attributes: Array.isArray(positioningCanvasResult?.unique_attributes)
+          ? positioningCanvasResult.unique_attributes
+          : [],
+        value_for_customer: positioningCanvasResult?.value_for_customer,
+        best_fit_customers: positioningCanvasResult?.best_fit_customers,
+        market_category: positioningCanvasResult?.market_category,
+        category_rationale: positioningCanvasResult?.category_rationale,
+        current_tagline: positioningCanvasResult?.current_tagline,
+        proposed_tagline: positioningCanvasResult?.proposed_tagline,
+      },
+      strategy: {
+        winning_aspiration: strategyCascadeResult?.winning_aspiration,
+        where_to_play: strategyCascadeResult?.where_to_play,
+        how_to_win: strategyCascadeResult?.how_to_win,
+        capabilities: Array.isArray(strategyCascadeResult?.capabilities) ? strategyCascadeResult.capabilities : [],
+        management_systems: Array.isArray(strategyCascadeResult?.management_systems) ? strategyCascadeResult.management_systems : [],
+        assumptions: Array.isArray(strategyCascadeResult?.assumptions) ? strategyCascadeResult.assumptions : [],
+      },
+      strategicProblems,
       gamma: 2.2,
     });
 
@@ -3170,6 +3975,17 @@ Deno.serve(async (req) => {
           winning_aspiration: String(strategyCascadeResult?.winning_aspiration || ""),
           where_to_play: String(strategyCascadeResult?.where_to_play || ""),
         },
+        strategic_problem_context: {
+          count: strategicProblems.length,
+          reconciled_count: strategicProblems.filter((item) => item.status === "reconciled").length,
+          primary_statement: strategicProblems[0]?.statement || null,
+          alignment_score: Number((scored as any)?.area_scores_json?.strategic_problem_context?.score || 0),
+        },
+        job_maps: selectedJobMaps.map((map) => ({
+          journey_key: map.journey_key,
+          journey_title: map.journey_title,
+          source: map.source,
+        })),
         counts: {
           inputs: inputs.length,
           journeys: journeys.length,
@@ -3211,6 +4027,11 @@ Deno.serve(async (req) => {
           outcome_title: String(outcome?.outcome_title || ""),
           leading_indicator: String(outcome?.leading_indicator || ""),
           confidence: Number(outcome?.confidence) || 0,
+        })),
+        strategic_problems: strategicProblems.map((item) => ({
+          statement: item.statement,
+          source: item.source,
+          status: item.status,
         })),
         positioning: positioningCanvasResult,
         strategy: strategyCascadeResult,

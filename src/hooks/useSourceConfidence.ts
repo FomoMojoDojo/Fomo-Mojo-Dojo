@@ -9,7 +9,7 @@ export function useSourceConfidence(args: {
   areaScoresJson?: unknown;
   inputsOverride?: InputItem[];
 }) {
-  const { query } = useInputs();
+  const { query } = useInputs(args.companyId);
   const { signal: primarySignal } = usePrimaryEvidenceSignal(args.companyId);
   const inputs = args.inputsOverride ?? query.data ?? [];
 
@@ -29,4 +29,3 @@ export function useSourceConfidence(args: {
     sourceLabels: primarySignal.sourceLabels,
   };
 }
-

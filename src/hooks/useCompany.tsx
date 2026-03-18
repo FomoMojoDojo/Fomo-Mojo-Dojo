@@ -32,7 +32,7 @@ interface CompanyCtx {
 const CompanyContext = createContext<CompanyCtx | undefined>(undefined);
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, loading: authLoading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() =>
     localStorage.getItem('active_company_id')
@@ -40,6 +40,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchCompanies = useCallback(async () => {
+    if (authLoading) {
+      setLoading(true);
+      return;
+    }
+
     if (!user || !isAdmin) {
       setCompanies([]);
       setActiveId(null);
@@ -63,7 +68,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
     setCompanies((data as Company[]) || []);
     setLoading(false);
-  }, [user, isAdmin]);
+  }, [user, isAdmin, authLoading]);
 
   useEffect(() => {
     fetchCompanies();

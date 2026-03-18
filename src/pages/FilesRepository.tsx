@@ -13,6 +13,7 @@ import { getFileSignedUrl, useDeleteInputFile, useInputs, useUpdateFileTags } fr
 import type { InputFile } from "@/lib/types";
 
 interface FileWithContext extends InputFile {
+  inputKey: string;
   inputLabel: string;
   groupLabel: string;
   subGroup: string;
@@ -27,6 +28,15 @@ type AwaitingAnalysisProgress = {
   succeeded: string[];
   failed: string[];
 };
+
+type FileAnalysisState = "analyzed" | "awaiting";
+
+type FileAreaStatus = {
+  state: FileAnalysisState;
+  areaKey: AreaKey;
+};
+
+type AreaKey = "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx";
 
 const c = {
   bg: "#faf7f6",
@@ -44,7 +54,36 @@ function normalizeText(value: string) {
   return value.trim().toLowerCase();
 }
 
-function resolveAreaKey(subGroup: string): "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx" | null {
+function timestampMs(value?: string) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+const AREA_BY_INPUT_KEY: Record<string, AreaKey> = {
+  "comp-alt": "positioning",
+  "unique-attr": "positioning",
+  "val-prop": "positioning",
+  "target-aud": "positioning",
+  "market-cat": "positioning",
+  "outcome-data": "strategy",
+  "program-model": "product",
+  "brand-narrative": "marketing",
+  "channel-strat": "marketing",
+  "referral-map": "sales",
+  "donor-retention": "sales",
+  "grant-pipeline": "sales",
+  "needs-assessment": "cx",
+  "family-satisfaction": "cx",
+};
+
+const AREA_BY_GROUP_KEY: Record<string, AreaKey> = {
+  foundation: "strategy",
+  execution: "product",
+  market_evidence: "cx",
+};
+
+function resolveAreaFromSubGroup(subGroup: string): AreaKey | null {
   const normalized = normalizeText(subGroup);
   if (!normalized) return null;
 
@@ -68,6 +107,18 @@ function resolveAreaKey(subGroup: string): "positioning" | "strategy" | "product
     return "cx";
   }
   return null;
+}
+
+function resolveAreaForFile(file: Pick<FileWithContext, "inputKey" | "subGroup" | "groupKey">): AreaKey {
+  const normalizedInputKey = normalizeText(String(file.inputKey || ""));
+  const byInputKey = AREA_BY_INPUT_KEY[normalizedInputKey];
+  if (byInputKey) return byInputKey;
+  const bySubGroup = resolveAreaFromSubGroup(file.subGroup);
+  if (bySubGroup) return bySubGroup;
+  const normalizedGroupKey = normalizeText(String(file.groupKey || ""));
+  const byGroupKey = AREA_BY_GROUP_KEY[normalizedGroupKey];
+  if (byGroupKey) return byGroupKey;
+  return "strategy";
 }
 
 function TagEditor({ file, onClose }: { file: FileWithContext; onClose: () => void }) {
@@ -157,8 +208,12 @@ export default function FilesRepository() {
   };
 
   const analyzedAreas = useMemo(() => {
-    if (!dbAnalyses) return new Set<string>();
-    return new Set(Object.keys(dbAnalyses));
+    const rows = dbAnalyses ?? {};
+    return new Set(
+      Object.entries(rows)
+        .filter(([, analysis]) => !!analysis)
+        .map(([areaKey]) => areaKey),
+    );
   }, [dbAnalyses]);
 
   const allFiles = useMemo<FileWithContext[]>(
@@ -166,6 +221,7 @@ export default function FilesRepository() {
       inputs.flatMap((input) =>
         input.files.map((file) => ({
           ...file,
+          inputKey: input.input_key,
           inputLabel: input.input_label,
           groupLabel: input.group_label,
           subGroup: input.sub_group,
@@ -191,23 +247,45 @@ export default function FilesRepository() {
     );
   }, [activeFilter, allFiles]);
 
+  const fileAreaStatusById = useMemo(() => {
+    const statuses = new Map<string, FileAreaStatus>();
+
+    for (const file of allFiles) {
+      const areaKey = resolveAreaForFile(file);
+
+      const areaAnalysis = dbAnalyses?.[areaKey];
+      if (!areaAnalysis) {
+        statuses.set(file.id, { state: "awaiting", areaKey });
+        continue;
+      }
+
+      const analysisAt = timestampMs(areaAnalysis.generated_at ?? areaAnalysis.updated_at ?? undefined);
+      const fileAt = timestampMs(file.uploaded_at);
+      if (analysisAt != null && fileAt != null && fileAt > analysisAt) {
+        statuses.set(file.id, { state: "awaiting", areaKey });
+        continue;
+      }
+
+      statuses.set(file.id, { state: "analyzed", areaKey });
+    }
+
+    return statuses;
+  }, [allFiles, dbAnalyses]);
+
   const pendingAreaKeys = useMemo(() => {
     const pending = new Set<string>();
     for (const file of allFiles) {
-      const areaKey = resolveAreaKey(file.subGroup);
-      if (!areaKey) continue;
-      if (!analyzedAreas.has(areaKey)) pending.add(areaKey);
+      const status = fileAreaStatusById.get(file.id);
+      if (!status || status.state !== "awaiting" || !status.areaKey) continue;
+      pending.add(status.areaKey);
     }
     return [...pending];
-  }, [allFiles, analyzedAreas]);
+  }, [allFiles, fileAreaStatusById]);
 
   const pendingFileCount = useMemo(
     () =>
-      allFiles.filter((file) => {
-        const areaKey = resolveAreaKey(file.subGroup);
-        return !!areaKey && !analyzedAreas.has(areaKey);
-      }).length,
-    [allFiles, analyzedAreas],
+      allFiles.filter((file) => fileAreaStatusById.get(file.id)?.state === "awaiting").length,
+    [allFiles, fileAreaStatusById],
   );
 
   const isAwaitingAnalysisRunning = analysisProgress?.running ?? false;
@@ -380,7 +458,7 @@ export default function FilesRepository() {
               ) : null}
               {user && !hasAwaitingAreas ? (
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                  No pending areas to analyze right now.
+                  No pending analysis areas right now.
                 </p>
               ) : null}
               {isAwaitingAnalysisRunning ? (
@@ -393,7 +471,7 @@ export default function FilesRepository() {
               <button
                 type="button"
                 onClick={handleAnalyzeAwaiting}
-                disabled={isAwaitingAnalysisRunning}
+                disabled={isAwaitingAnalysisRunning || !canAnalyzeAwaiting}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
                   color: canAnalyzeAwaiting ? c.panel : c.secondary,
@@ -529,8 +607,7 @@ export default function FilesRepository() {
                     </div>
 
                     {(() => {
-                      const areaKey = resolveAreaKey(file.subGroup);
-                      const isAnalyzed = !!areaKey && analyzedAreas.has(areaKey);
+                      const status = fileAreaStatusById.get(file.id) ?? { state: "awaiting", areaKey: "strategy" as AreaKey };
 
                       if (!user) {
                         return (
@@ -541,7 +618,7 @@ export default function FilesRepository() {
                         );
                       }
 
-                      if (isAnalyzed) {
+                      if (status.state === "analyzed") {
                         return (
                           <div className="flex items-center gap-1.5" title="Included in latest Deep Dive analysis for this area">
                             <CheckCircle size={13} className="text-forest" />
@@ -632,7 +709,12 @@ export default function FilesRepository() {
         </section>
       </div>
 
-      <FileUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+      <FileUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        companyId={activeCompany?.id}
+        companyName={activeCompany?.name}
+      />
     </div>
   );
 }

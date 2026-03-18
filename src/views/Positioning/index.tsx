@@ -3,10 +3,12 @@ import { useCompany } from "@/hooks/useCompany";
 import { useInputs } from "@/hooks/useInputs";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useLatestPositioningReview } from "@/hooks/useLatestPositioningReview";
+import { useLatestLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
+import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
 import {
   AlertTriangle,
@@ -678,6 +680,8 @@ export default function PositioningView() {
     frameworks: frameworksUsed,
     review: latestReview,
   });
+  const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
+  const positioningAlignment = localAlignment?.areas?.positioning ?? null;
 
   return (
     <div
@@ -727,6 +731,16 @@ export default function PositioningView() {
           <EmptyState message="No foundation inputs yet. Run AI Research in Admin → Companies." />
         ) : (
           <div className="space-y-5">
+            <AreaAlignmentPanel
+              title="Positioning"
+              area={positioningAlignment}
+              run={localAlignment}
+              lineColor={c.line}
+              panelColor={c.panel}
+              textColor={c.charcoal}
+              mutedColor={c.muted}
+            />
+
             {!hasStoredCanvas ? (
               <section
                 className="rounded-[20px] border px-5 py-4"

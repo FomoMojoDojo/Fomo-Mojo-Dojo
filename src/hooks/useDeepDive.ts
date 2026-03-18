@@ -11,6 +11,8 @@ type DeepDiveRow = {
   what_good_looks_like: string;
   path_forward: DeepDive['path_forward'] | null;
   holding_back: DeepDive['holding_back'] | null;
+  generated_at?: string | null;
+  updated_at?: string | null;
 };
 
 function mapRow(row: DeepDiveRow): DeepDive {
@@ -21,6 +23,8 @@ function mapRow(row: DeepDiveRow): DeepDive {
     what_good_looks_like: row.what_good_looks_like,
     path_forward: row.path_forward ?? [],
     holding_back: row.holding_back ?? [],
+    generated_at: row.generated_at ?? null,
+    updated_at: row.updated_at ?? null,
   };
 }
 

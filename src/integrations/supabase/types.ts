@@ -990,6 +990,50 @@ export type Database = {
           },
         ]
       }
+      strategy_assumptions: {
+        Row: {
+          assumption: string
+          company_id: string
+          created_at: string
+          id: string
+          note: string | null
+          source: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assumption: string
+          company_id: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          source?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assumption?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          source?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_assumptions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           id: string

@@ -301,7 +301,12 @@ export default function InputsView() {
         </div>
       </div>
 
-      <FileUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+      <FileUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        companyId={activeCompany?.id}
+        companyName={activeCompany?.name}
+      />
     </div>
   );
 }

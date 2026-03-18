@@ -14,14 +14,30 @@ const AREA_LABELS: Record<string, string> = {
   cx: "Family Experience",
 };
 
-const AREA_INPUT_MAP: Record<string, string[]> = {
-  positioning: ["Positioning"],
-  strategy: ["Strategy"],
-  product: ["Service Delivery"],
-  marketing: ["Awareness"],
-  sales: ["Referral Pipeline", "Fundraising"],
-  cx: ["Family Experience", "Fundraising"],
+const AREA_BY_INPUT_KEY: Record<string, string> = {
+  "comp-alt": "positioning",
+  "unique-attr": "positioning",
+  "val-prop": "positioning",
+  "target-aud": "positioning",
+  "market-cat": "positioning",
+  "outcome-data": "strategy",
+  "program-model": "product",
+  "brand-narrative": "marketing",
+  "channel-strat": "marketing",
+  "referral-map": "sales",
+  "donor-retention": "sales",
+  "grant-pipeline": "sales",
+  "needs-assessment": "cx",
+  "family-satisfaction": "cx",
 };
+
+const AREA_BY_GROUP_KEY: Record<string, string> = {
+  foundation: "strategy",
+  execution: "product",
+  market_evidence: "cx",
+};
+
+const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 
 type DeepDiveResult = {
   why_it_matters: string;
@@ -38,6 +54,13 @@ type DeepDiveResult = {
     gap: string;
     description: string;
   }>;
+};
+
+type StrategicProblemRecord = {
+  statement: string;
+  source: string;
+  status: string;
+  reconciliation_note: string | null;
 };
 
 function envFlag(name: string, fallback: boolean) {
@@ -131,6 +154,145 @@ function normalizeDeepDive(raw: Record<string, unknown>, areaLabel: string): Dee
   };
 }
 
+function buildStrategicProblemContext(rows: unknown) {
+  const items = Array.isArray(rows) ? rows : [];
+  const normalized: StrategicProblemRecord[] = items
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const statement = String(item.statement || "").trim();
+      if (!statement) return null;
+      return {
+        statement,
+        source: String(item.source || "client").trim().toLowerCase(),
+        status: String(item.status || "open").trim().toLowerCase(),
+        reconciliation_note: String(item.reconciliation_note || "").trim() || null,
+      };
+    })
+    .filter((item): item is StrategicProblemRecord => Boolean(item));
+
+  if (!normalized.length) {
+    return {
+      count: 0,
+      reconciledCount: 0,
+      text: "No strategic problem statements are currently recorded.",
+    };
+  }
+
+  const reconciledCount = normalized.filter((item) => item.status === "reconciled").length;
+  const lines = normalized
+    .slice(0, 10)
+    .map((item, index) => `${index + 1}. [${item.source} | ${item.status}] ${item.statement}${item.reconciliation_note ? ` | note: ${item.reconciliation_note}` : ""}`)
+    .join("\n");
+
+  return {
+    count: normalized.length,
+    reconciledCount,
+    text: `${normalized.length} strategic problem statement(s), ${reconciledCount} reconciled.\n${lines}`,
+  };
+}
+
+function normalizeTag(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+}
+
+function isLocalOllamaUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    return LOCAL_HOST_ALLOWLIST.has(String(url.hostname || "").trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function resolveAreaFromSubGroup(subGroup: unknown): string | null {
+  const normalized = normalizeText(subGroup);
+  if (!normalized) return null;
+
+  if (
+    normalized.includes("positioning") ||
+    normalized.includes("competitive") ||
+    normalized.includes("providers")
+  ) return "positioning";
+  if (normalized.includes("strategy")) return "strategy";
+  if (normalized.includes("service delivery") || normalized.includes("program model") || normalized.includes("program")) {
+    return "product";
+  }
+  if (normalized.includes("awareness") || normalized.includes("marketing") || normalized.includes("outreach")) {
+    return "marketing";
+  }
+  if (normalized.includes("referral") || normalized.includes("fundraising") || normalized.includes("sales")) {
+    return "sales";
+  }
+  if (normalized.includes("family") || normalized.includes("experience") || normalized.includes("cx")) {
+    return "cx";
+  }
+
+  return null;
+}
+
+function resolveAreaForInput(input: Record<string, unknown>): string {
+  const byInputKey = AREA_BY_INPUT_KEY[normalizeText(input.input_key)];
+  if (byInputKey) return byInputKey;
+  const bySubGroup = resolveAreaFromSubGroup(input.sub_group);
+  if (bySubGroup) return bySubGroup;
+  const byGroupKey = AREA_BY_GROUP_KEY[normalizeText(input.group_key)];
+  if (byGroupKey) return byGroupKey;
+  return "strategy";
+}
+
+function hasAnyTag(tags: string[], candidates: string[]) {
+  return tags.some((tag) => candidates.includes(tag));
+}
+
+function inferSourceTier(tags: string[]) {
+  if (hasAnyTag(tags, ["implemented & tested", "implemented tested"])) return "implemented_tested";
+  if (hasAnyTag(tags, ["primary evidence", "evidence"])) return "evidence";
+  if (hasAnyTag(tags, ["company"])) return "company";
+  if (hasAnyTag(tags, ["public"])) return "public";
+  return "company";
+}
+
+function withProvenanceSummary(analysis: DeepDiveResult, summary: string) {
+  if (!summary.trim()) return analysis;
+  const hasSummary = analysis.what_we_found.toLowerCase().includes("source mix:");
+  if (hasSummary) return analysis;
+  return {
+    ...analysis,
+    what_we_found: `${summary}\n\n${analysis.what_we_found}`,
+  };
+}
+
+function mergeDeterministicGaps(
+  analysis: DeepDiveResult,
+  deterministicGaps: Array<{ gap: string; description: string }>,
+) {
+  if (!Array.isArray(deterministicGaps) || deterministicGaps.length === 0) return analysis;
+
+  const merged: Array<{ gap: string; description: string }> = [];
+  const seen = new Set<string>();
+  for (const item of [...analysis.holding_back, ...deterministicGaps]) {
+    const gap = String(item?.gap || "").trim();
+    const description = String(item?.description || "").trim();
+    if (!gap || !description) continue;
+    const key = `${gap.toLowerCase()}::${description.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({ gap, description });
+  }
+
+  return {
+    ...analysis,
+    holding_back: merged.slice(0, 10),
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -148,6 +310,14 @@ Deno.serve(async (req) => {
 
     const OLLAMA_BASE_URL =
       Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    if (!isLocalOllamaUrl(OLLAMA_BASE_URL)) {
+      return new Response(JSON.stringify({
+        error: "Local-only policy violation: OLLAMA_BASE_URL must be localhost/host.docker.internal.",
+      }), {
+        status: 412,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -186,17 +356,24 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Unauthorized company access" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Get inputs for this area
-    const subGroups = AREA_INPUT_MAP[area_key] || [];
+    const { data: strategicProblemRows, error: strategicProblemErr } = await supabase
+      .from("strategy_problem_statements")
+      .select("statement, source, status, reconciliation_note")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: true })
+      .limit(80);
+    if (strategicProblemErr) {
+      console.log("generate-deep-dive strategic problem fetch error:", strategicProblemErr.message);
+    }
+    const strategicProblemContext = buildStrategicProblemContext(strategicProblemRows ?? []);
+
+    // Get inputs for this company and auto-map each input to a deep-dive area.
     const { data: inputs } = await supabase
       .from("inputs")
       .select("*")
-      .eq("user_id", user.id)
       .eq("company_id", company_id);
 
-    const areaInputs = (inputs || []).filter((i: any) =>
-      subGroups.some((sg) => i.sub_group.includes(sg))
-    );
+    const areaInputs = (inputs || []).filter((i: any) => resolveAreaForInput(i) === area_key);
 
     // Get subitems for area inputs
     const inputIds = areaInputs.map((i: any) => i.id);
@@ -209,23 +386,88 @@ Deno.serve(async (req) => {
       ? await supabase.from("input_files").select("*").in("input_id", inputIds)
       : { data: [] };
 
+    const uncertainMarkers = ["unknown", "unclear", "not verified", "needs verification", "thin evidence", "not evidenced"];
+    const deterministicGapHints: Array<{ gap: string; description: string }> = [];
+    const pushDeterministicGap = (gap: string, description: string) => {
+      const normalizedGap = String(gap || "").trim();
+      const normalizedDescription = String(description || "").trim();
+      if (!normalizedGap || !normalizedDescription) return;
+      if (deterministicGapHints.some((item) => item.gap === normalizedGap && item.description === normalizedDescription)) return;
+      deterministicGapHints.push({ gap: normalizedGap, description: normalizedDescription });
+    };
+    if (strategicProblemContext.count === 0) {
+      pushDeterministicGap(
+        "No strategic problem framing",
+        "Capture and reconcile a client-stated strategic problem so this area can be prioritized against a clear decision context.",
+      );
+    } else if (strategicProblemContext.reconciledCount === 0 && strategicProblemContext.count > 1) {
+      pushDeterministicGap(
+        "Strategic problem not reconciled",
+        "Multiple strategic problems exist but none are reconciled. Prioritize one framing before finalizing recommendations.",
+      );
+    }
+
     // Build context for AI
     const inputContext = areaInputs.map((input: any) => {
       const inputSubs = (subitems || []).filter((s: any) => s.input_id === input.id);
       const inputFiles = (files || []).filter((f: any) => f.input_id === input.id);
+      const normalizedTags = Array.from(new Set(
+        inputFiles.flatMap((f: any) =>
+          (Array.isArray(f.tags) ? f.tags : [])
+            .map((tag: unknown) => normalizeTag(tag))
+            .filter(Boolean),
+        ),
+      ));
+      const sourceTier = inferSourceTier(normalizedTags);
+      const hasPublic = normalizedTags.includes("public");
+      const hasCompanyLike = sourceTier !== "public";
+      const hasMixedSources = hasPublic && hasCompanyLike;
+      const descriptiveText = `${String(input.description || "")} ${String(input.why_it_matters || "")}`.toLowerCase();
+      const hasUncertainText = uncertainMarkers.some((marker) => descriptiveText.includes(marker));
+
+      if (hasCompanyLike && hasUncertainText) {
+        pushDeterministicGap(
+          `${input.input_label}: reconcile prior assumptions`,
+          `Company evidence now exists, but this area is still written as uncertain. Confirm what changed and update the baseline assumption.`,
+        );
+      }
+
+      if (hasMixedSources) {
+        pushDeterministicGap(
+          `${input.input_label}: source mismatch check`,
+          `Public and company evidence are both present. Resolve conflicts explicitly so this area has one coherent, verified narrative.`,
+        );
+      }
+
       return {
         label: input.input_label,
+        input_key: input.input_key,
         sub_group: input.sub_group,
         completeness: input.completeness,
         status: input.status,
         score_impact: input.score_impact,
         description: input.description,
         why_it_matters: input.why_it_matters,
+        source_tier_hint: sourceTier,
+        source_tags: normalizedTags,
         subitems_done: inputSubs.filter((s: any) => s.done).map((s: any) => s.name),
         subitems_remaining: inputSubs.filter((s: any) => !s.done).map((s: any) => s.name),
         files_attached: inputFiles.map((f: any) => ({ name: f.file_name, tags: f.tags })),
       };
     });
+
+    const sourceCounts = inputContext.reduce(
+      (acc, item: any) => {
+        const tier = String(item.source_tier_hint || "company");
+        if (tier === "public") acc.public += 1;
+        if (tier === "company") acc.company += 1;
+        if (tier === "evidence") acc.evidence += 1;
+        if (tier === "implemented_tested") acc.implemented += 1;
+        return acc;
+      },
+      { public: 0, company: 0, evidence: 0, implemented: 0 },
+    );
+    const provenanceSummary = `Source mix: Public ${sourceCounts.public} · Company ${sourceCounts.company} · Evidence ${sourceCounts.evidence} · Implemented/Tested ${sourceCounts.implemented}`;
 
     // Read text content from uploaded files (first 3000 chars each, max 3 files)
     const fileContents: string[] = [];
@@ -243,20 +485,29 @@ Deno.serve(async (req) => {
       } catch { /* skip unreadable */ }
     }
 
-    const systemPrompt = `You are a strategic analyst for a consulting platform. Generate a deep-dive analysis for the "${AREA_LABELS[area_key]}" area based on actual client data.
+const systemPrompt = `You are a strategic analyst for a consulting platform. Generate a deep-dive analysis for the "${AREA_LABELS[area_key]}" area based on actual client data.
 
 Your output must reflect what evidence EXISTS (uploaded files, completed checklist items) vs what's MISSING (incomplete items, no files).
 
 When files have been uploaded for an input, acknowledge this as evidence that work has been done — do NOT say "no data exists" if files are present.
 
-Be specific, reference actual file names and completed items. Use markdown bold (**text**) for emphasis.`;
+Be specific, reference actual file names and completed items. Use markdown bold (**text**) for emphasis.
+
+When company evidence (or stronger) is present, do not keep this area framed as public-only. Upgrade confidence language to match the evidence source tier.
+
+Use strategic problem statements as the prioritization anchor for what matters, what is missing, and what should happen next.`;
 
     const userPrompt = `Area: ${AREA_LABELS[area_key]}
+
+Strategic problem context:
+${strategicProblemContext.text}
 
 Input status for this area:
 ${JSON.stringify(inputContext, null, 2)}
 
 ${fileContents.length > 0 ? `\nFile contents:\n${fileContents.join("\n\n")}` : ""}
+
+${provenanceSummary}
 
 Generate the analysis as structured data. For path_forward, each step should have: step (string), duration (string), owner (string), impact_pts (number 1-10), action_label (optional string). For holding_back, each item should have: gap (string), description (string). Only include genuine remaining gaps — if evidence exists, don't list it as a gap.`;
 
@@ -376,7 +627,13 @@ Only JSON, no markdown wrapper.`,
 
         const fallbackData = await fallbackResponse.json();
         const parsed = safeParseJsonObject(fallbackData?.choices?.[0]?.message?.content) ?? {};
-        const analysis = normalizeDeepDive(parsed, AREA_LABELS[area_key]);
+        const analysis = mergeDeterministicGaps(
+          withProvenanceSummary(
+            normalizeDeepDive(parsed, AREA_LABELS[area_key]),
+            provenanceSummary,
+          ),
+          deterministicGapHints,
+        );
 
         const { error: upsertErr } = await supabase
           .from("deep_dive_analyses")
@@ -421,9 +678,15 @@ Only JSON, no markdown wrapper.`,
         ? safeParseJsonObject(toolCall.function.arguments)
         : null;
     const parsedFromContent = safeParseJsonObject(aiData?.choices?.[0]?.message?.content);
-    const analysis = normalizeDeepDive(
-      parsedFromTools ?? parsedFromContent ?? {},
-      AREA_LABELS[area_key],
+    const analysis = mergeDeterministicGaps(
+      withProvenanceSummary(
+        normalizeDeepDive(
+          parsedFromTools ?? parsedFromContent ?? {},
+          AREA_LABELS[area_key],
+        ),
+        provenanceSummary,
+      ),
+      deterministicGapHints,
     );
 
     // Upsert into deep_dive_analyses

@@ -1,8 +1,10 @@
 import TopNav from "@/components/layout/TopNav";
+import { Wrench, LineChart, Rocket } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useOpportunities } from "@/hooks/useOpportunities";
+import { useInputs } from "@/hooks/useInputs";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
@@ -14,7 +16,10 @@ import type { OpportunityRow } from "@/hooks/useOpportunities";
 const c = {
   bg: "#faf7f6",
   panel: "#FFFFFF",
+  panelDark: "#1E1A14",
   line: "#DDE6D1",
+  lineWarm: "#D6CCB8",
+  warmCard: "#F2EEE7",
   charcoal: "#233C4B",
   secondary: "#46606D",
   muted: "#6E847F",
@@ -26,17 +31,17 @@ const c = {
 const CATEGORY_META: Record<string, { title: string; subtitle: string; accent: string }> = {
   fix: {
     title: "Fix",
-    subtitle: "Address blockers and broken transitions before scaling the rest.",
+    subtitle: "Address gaps that are holding back your score.",
     accent: c.coral,
   },
   improve: {
     title: "Improve",
-    subtitle: "Tighten systems that already exist but are not yet reliable or measurable.",
+    subtitle: "Strengthen what's partially in place.",
     accent: c.amber,
   },
   create: {
     title: "Create",
-    subtitle: "Build new strategic assets or operating loops that do not exist yet.",
+    subtitle: "Build new capabilities for growth.",
     accent: c.teal,
   },
 };
@@ -179,7 +184,13 @@ function routeDetail(route: RouteRow, opportunities: OpportunityRow[], steps: Jo
   };
 }
 
-function RoutesSection({
+function categoryIcon(category: string) {
+  if (category === "fix") return <Wrench className="h-4 w-4" />;
+  if (category === "improve") return <LineChart className="h-4 w-4" />;
+  return <Rocket className="h-4 w-4" />;
+}
+
+function RoutesColumn({
   category,
   items,
   opportunities,
@@ -196,46 +207,107 @@ function RoutesSection({
     accent: c.amber,
   };
 
-  if (items.length === 0) return null;
-
   return (
     <section
-      className="overflow-hidden rounded-[28px] border"
-      style={{ borderColor: c.line, background: c.panel }}
+      className="overflow-hidden rounded-[18px] border p-4"
+      style={{ borderColor: c.lineWarm, background: c.warmCard }}
     >
-      <div className="h-[6px] w-full" style={{ background: meta.accent }} />
-      <div className="p-6">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
-              {meta.title}
-            </h2>
-            <p className="mt-1 max-w-3xl font-sans text-[14px]" style={{ color: c.secondary }}>
-              {meta.subtitle}
-            </p>
+      <div className="mb-4 flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: c.lineWarm }}>
+        <div className="flex items-center gap-2">
+          <span style={{ color: meta.accent }}>{categoryIcon(category)}</span>
+          <h2 className="font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
+            {meta.title}
+          </h2>
+        </div>
+        <MetaBadge>{items.length}</MetaBadge>
+      </div>
+
+      <p className="mb-4 font-sans text-[13px]" style={{ color: c.secondary }}>
+        {meta.subtitle}
+      </p>
+
+      <div className="space-y-3">
+        {items.map((route) => {
+          const detail = routeDetail(route, opportunities, steps);
+          return (
+            <RouteCard
+              key={route.id}
+              route={route}
+              accent={meta.accent}
+              steps={detail.steps}
+              evidence={detail.evidence}
+              whyThisMatters={detail.whyThisMatters}
+              frameworks={detail.frameworks}
+            />
+          );
+        })}
+        {items.length === 0 ? (
+          <div
+            className="rounded-lg border px-3 py-4 text-center font-sans text-[13px]"
+            style={{ borderColor: c.lineWarm, color: c.secondary, background: c.panel }}
+          >
+            No routes in this category yet.
           </div>
-
-          <MetaBadge>{items.length} routes</MetaBadge>
-        </div>
-
-        <div className="space-y-3">
-          {items.map((route) => {
-            const detail = routeDetail(route, opportunities, steps);
-            return (
-              <RouteCard
-                key={route.id}
-                route={route}
-                accent={meta.accent}
-                steps={detail.steps}
-                evidence={detail.evidence}
-                whyThisMatters={detail.whyThisMatters}
-                frameworks={detail.frameworks}
-              />
-            );
-          })}
-        </div>
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function groupStats(
+  inputs: Array<{ group_key: string; completeness: number; status: string; input_label: string; score_impact: number }>,
+  groupKey: string,
+) {
+  const group = inputs.filter((item) => item.group_key === groupKey);
+  if (group.length === 0) {
+    return {
+      percent: 0,
+      text: "No mapped inputs yet for this section.",
+    };
+  }
+
+  const percent = Math.round(group.reduce((sum, item) => sum + Number(item.completeness || 0), 0) / group.length);
+  const gaps = group
+    .filter((item) => item.status === "gap" || item.status === "not_started")
+    .sort((a, b) => Number(b.score_impact || 0) - Number(a.score_impact || 0));
+
+  return {
+    percent,
+    text: gaps[0]
+      ? `${gaps[0].input_label} is currently the highest-impact gap.`
+      : "Core inputs are in place; keep evidence current.",
+  };
+}
+
+function StatBand({
+  label,
+  percent,
+  text,
+  accent,
+}: {
+  label: string;
+  percent: number;
+  text: string;
+  accent: string;
+}) {
+  const bounded = Math.max(0, Math.min(100, percent));
+  return (
+    <div className="rounded-xl border p-4" style={{ borderColor: c.lineWarm, background: c.panel }}>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: c.charcoal }}>
+          {label}
+        </p>
+        <span className="font-mono text-[12px] font-semibold" style={{ color: accent }}>
+          {bounded}%
+        </span>
+      </div>
+      <div className="h-[6px] w-full rounded-full" style={{ background: "#DDD5C7" }}>
+        <div className="h-full rounded-full" style={{ width: `${bounded}%`, background: accent }} />
+      </div>
+      <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
+        {text}
+      </p>
+    </div>
   );
 }
 
@@ -244,6 +316,8 @@ export default function RoutesView() {
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
+  const { query: inputsQuery } = useInputs(activeCompany?.id);
+  const inputs = inputsQuery.data ?? [];
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
@@ -252,6 +326,17 @@ export default function RoutesView() {
   const fix = items.filter((route) => String(route.category).toLowerCase() === "fix");
   const improve = items.filter((route) => String(route.category).toLowerCase() === "improve");
   const create = items.filter((route) => String(route.category).toLowerCase() === "create");
+
+  const currentScore = Math.round(Number(activeCompany?.mojo_score ?? 0));
+  const potentialScore = Math.round(Number(activeCompany?.potential_score ?? activeCompany?.projected_score ?? 0));
+  const totalPts = items.reduce((sum, route) => sum + Math.max(0, Number(route.pts_value || 0)), 0);
+  const inputTotal = inputs.length;
+  const inputComplete = inputs.filter((item) => item.status === "complete").length;
+  const criticalGaps = inputs.filter((item) => item.status === "gap" || item.status === "not_started").length;
+
+  const foundationStats = groupStats(inputs, "foundation");
+  const executionStats = groupStats(inputs, "execution");
+  const evidenceStats = groupStats(inputs, "market_evidence");
 
   return (
     <div
@@ -275,7 +360,7 @@ export default function RoutesView() {
                 Routes
               </h1>
               <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
-                Click any route to see the work sequence, missing evidence, and why it deserves attention now.
+                Click any route to expand steps, evidence needed, and why this matters.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -307,17 +392,70 @@ export default function RoutesView() {
               Failed to load routes: {error}
             </p>
           </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-[24px] border px-6 py-12 text-center" style={{ borderColor: c.line, background: c.panel }}>
-            <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
-              No routes yet for this company.
-            </p>
-          </div>
         ) : (
-          <div className="space-y-6">
-            <RoutesSection category="fix" items={fix} opportunities={opportunities} steps={steps} />
-            <RoutesSection category="improve" items={improve} opportunities={opportunities} steps={steps} />
-            <RoutesSection category="create" items={create} opportunities={opportunities} steps={steps} />
+          <div className="space-y-5">
+            <section className="rounded-[18px] border px-5 py-4" style={{ borderColor: "#2A251C", background: c.panelDark }}>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex min-w-[220px] items-center gap-4">
+                  <div>
+                    <p className="font-sans text-[54px] font-black leading-none tracking-tight" style={{ color: c.amber }}>
+                      {currentScore}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                      Current reality
+                    </p>
+                  </div>
+                  <div className="h-10 w-px" style={{ background: "#3B352A" }} />
+                  <div>
+                    <p className="font-mono text-[11px]" style={{ color: "#7EB55B" }}>
+                      {`+${Math.max(0, potentialScore - currentScore)} potential delta`}
+                    </p>
+                    <p className="mt-1 font-sans text-[25px]" style={{ color: "#D6CCB8" }}>
+                      {inputComplete} of {inputTotal} inputs complete · {criticalGaps} critical gaps
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-end gap-6">
+                  <div className="text-right">
+                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: c.teal }}>
+                      {potentialScore}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                      Potential
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: c.amber }}>
+                      {items.length}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                      Routes
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: "#F1D174" }}>
+                      {Math.round(totalPts)}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                      Total Pts
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <StatBand label="Foundation" percent={foundationStats.percent} text={foundationStats.text} accent={c.amber} />
+              <StatBand label="Execution" percent={executionStats.percent} text={executionStats.text} accent="#5D9B58" />
+              <StatBand label="Evidence" percent={evidenceStats.percent} text={evidenceStats.text} accent={c.coral} />
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <RoutesColumn category="fix" items={fix} opportunities={opportunities} steps={steps} />
+              <RoutesColumn category="improve" items={improve} opportunities={opportunities} steps={steps} />
+              <RoutesColumn category="create" items={create} opportunities={opportunities} steps={steps} />
+            </section>
           </div>
         )}
       </main>

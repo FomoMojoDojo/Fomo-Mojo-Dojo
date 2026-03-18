@@ -34,6 +34,7 @@ type InputFileRow = {
   file_type: string;
   file_path: string;
   tags: string[] | null;
+  uploaded_at: string;
 };
 
 const PUBLIC_SEED_COMPLETENESS_BY_KEY: Record<string, number> = {
@@ -118,14 +119,37 @@ function mapInput(row: InputRow, subitems: InputSubitemRow[], files: InputFileRo
       .map((s) => ({ id: s.id, sort_order: s.sort_order, name: s.name, done: s.done })),
     files: files
       .filter((f) => f.input_id === row.id)
-      .map((f) => ({ id: f.id, file_name: f.file_name, file_type: f.file_type, file_url: f.file_path, tags: f.tags ?? [] })),
+      .map((f) => ({
+        id: f.id,
+        file_name: f.file_name,
+        file_type: f.file_type,
+        file_url: f.file_path,
+        tags: f.tags ?? [],
+        uploaded_at: f.uploaded_at,
+      })),
   };
 }
 
-export function useInputs() {
+function sanitizePathSegment(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "unknown";
+}
+
+function sanitizeFileName(name: string) {
+  return String(name || "file")
+    .replace(/[\\/]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || `file-${Date.now()}`;
+}
+
+export function useInputs(companyIdOverride?: string) {
   const qc = useQueryClient();
   const { activeCompany } = useCompany();
-  const companyId = activeCompany?.id;
+  const companyId = companyIdOverride ?? activeCompany?.id;
 
   const query = useQuery({
     queryKey: ['inputs', companyId],
@@ -185,11 +209,30 @@ export function useToggleSubitem() {
 export function useUploadInputFile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ inputId, file, tags }: { inputId: string; file: File; tags?: string[] }) => {
+    mutationFn: async ({
+      inputId,
+      inputKey,
+      companyName,
+      file,
+      tags,
+    }: {
+      inputId: string;
+      inputKey?: string;
+      companyName?: string;
+      file: File;
+      tags?: string[];
+    }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      const filePath = `${user.id}/${inputId}/${Date.now()}-${file.name}`;
+      const safeCompany = sanitizePathSegment(companyName || "company");
+      const safeInputKey = sanitizePathSegment(inputKey || "input");
+      const safeFile = sanitizeFileName(file.name);
+      const filePath = `${user.id}/${safeCompany}/${safeInputKey}/${inputId}/${Date.now()}-${safeFile}`;
+      const normalizedTags = Array.from(
+        new Set([...(Array.isArray(tags) ? tags : []), "Company"]),
+      );
+
       const { error: uploadError } = await supabase.storage.from('input-files').upload(filePath, file);
       if (uploadError) throw uploadError;
 
@@ -198,7 +241,7 @@ export function useUploadInputFile() {
         file_name: file.name,
         file_type: file.type || file.name.split('.').pop() || '',
         file_path: filePath,
-        tags: tags ?? [],
+        tags: normalizedTags,
       });
       if (dbError) throw dbError;
     },

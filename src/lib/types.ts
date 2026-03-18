@@ -85,6 +85,7 @@ export interface InputFile {
   file_type: string;
   file_url: string;
   tags: string[];
+  uploaded_at?: string;
 }
 
 export interface DeepDive {
@@ -94,6 +95,8 @@ export interface DeepDive {
   what_good_looks_like: string;
   path_forward: PathStep[];
   holding_back: GapItem[];
+  generated_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface PathStep {

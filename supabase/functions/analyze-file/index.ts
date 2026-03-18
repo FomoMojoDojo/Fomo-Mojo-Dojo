@@ -10,6 +10,8 @@ const FILE_CATEGORIES = [
   "Positioning", "Marketing", "Customer Data", "Operations", "Legal", "Other",
 ];
 
+const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
+
 interface InputArea {
   id: string;
   input_label: string;
@@ -26,6 +28,15 @@ function envFlag(name: string, fallback: boolean) {
   const raw = Deno.env.get(name);
   if (raw == null) return fallback;
   return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
+}
+
+function isLocalOllamaUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    return LOCAL_HOST_ALLOWLIST.has(String(url.hostname || "").trim().toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
@@ -92,6 +103,14 @@ serve(async (req) => {
 
     const OLLAMA_BASE_URL =
       Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    if (!isLocalOllamaUrl(OLLAMA_BASE_URL)) {
+      return new Response(JSON.stringify({
+        error: "Local-only policy violation: OLLAMA_BASE_URL must be localhost/host.docker.internal.",
+      }), {
+        status: 412,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { fileName, fileContent, inputAreas } = await req.json() as {
       fileName?: string;

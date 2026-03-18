@@ -176,6 +176,16 @@ async function describeResearchInvokeError(error: unknown) {
         };
       }
 
+      if (status === "job_map_selection_required" || status === "customer_job_map_required") {
+        return {
+          title: "Job Map Selection Required",
+          description:
+            status === "customer_job_map_required"
+              ? "Define at least one customer job map in Job Steps before running full AI Research."
+              : "Choose a job map in Job Steps before running full AI Research.",
+        };
+      }
+
       if (status === "company_locked") {
         const operation = String(payload?.operation || "another run");
         const startedAt = payload?.started_at ? new Date(payload.started_at).toLocaleTimeString() : "";

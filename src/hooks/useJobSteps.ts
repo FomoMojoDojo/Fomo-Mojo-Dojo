@@ -33,6 +33,7 @@ export function useJobSteps(companyId?: string) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<JobStepRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!companyId) {
@@ -90,7 +91,7 @@ export function useJobSteps(companyId?: string) {
         setError(error.message);
         setItems([]);
       } else {
-        setItems((data as any[]) ?? []);
+        setItems((data as JobStepRow[]) ?? []);
       }
 
       setLoading(false);
@@ -99,7 +100,12 @@ export function useJobSteps(companyId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
-  return { loading, items, error };
+  return {
+    loading,
+    items,
+    error,
+    refetch: () => setRefreshKey((current) => current + 1),
+  };
 }

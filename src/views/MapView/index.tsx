@@ -8,6 +8,7 @@ import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useDynamicScoring } from "@/hooks/useDynamicScoring";
 import { useJobSteps } from "@/hooks/useJobSteps";
+import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
@@ -18,6 +19,7 @@ import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
+import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { toast } from "sonner";
 
 /* ── Clean, sophisticated palette ── */
@@ -53,6 +55,23 @@ function isClientSummary(value: unknown): value is ClientSummary {
 
 function areaDisplayLabel(area: ScoreArea): string {
   return area.area_label || area.area_key || "Area";
+}
+
+function mapInputToAreaKey(input: InputItem): "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx" {
+  const sub = String(input.sub_group || "").toLowerCase();
+  const group = input.group_key;
+
+  if (sub.includes("positioning")) return "positioning";
+  if (sub.includes("strategy")) return "strategy";
+  if (sub.includes("service delivery") || sub.includes("operations") || sub.includes("product")) return "product";
+  if (sub.includes("awareness") || sub.includes("marketing") || sub.includes("outreach")) return "marketing";
+  if (sub.includes("referral") || sub.includes("sales") || sub.includes("pipeline")) return "sales";
+  if (sub.includes("fundraising") || sub.includes("revenue") || sub.includes("donor")) return "sales";
+  if (sub.includes("family") || sub.includes("customer") || sub.includes("client") || sub.includes("experience") || sub.includes("satisfaction")) return "cx";
+
+  if (group === "foundation") return "positioning";
+  if (group === "execution") return "marketing";
+  return "cx";
 }
 
 function formatEvidenceLabel(status: unknown) {
@@ -137,6 +156,7 @@ export default function MapView() {
     areaScoresJson: activeCompany?.area_scores_json,
     inputsOverride: inputs,
   });
+  const { items: strategicProblems } = useStrategicProblems(activeCompany?.id);
   const { items: jobSteps } = useJobSteps(activeCompany?.id);
   const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
   const applyLocalAlignment = useRunLocalAlignment(activeCompany?.id);
@@ -159,9 +179,11 @@ export default function MapView() {
         inputs,
         jobSteps,
         opportunities: Array.isArray(oppItems) ? oppItems : [],
+        routes: Array.isArray(routeItems) ? routeItems : [],
+        strategicProblems,
         baselineRunResultJson: null,
       }),
-    [inputs, jobSteps, oppItems],
+    [inputs, jobSteps, oppItems, routeItems, strategicProblems],
   );
 
   // Prefer stored company scores (from public baseline / research), fallback to shared scorer, then 0
@@ -393,21 +415,48 @@ export default function MapView() {
     };
   }, [focusOpps, weakestArea, topInputGap, summary]);
 
-  // “Where you’re headed” (placeholder until milestones are DB-backed)
-  const headedTitle =
-    inputGaps > 0 ? "Close foundation gaps" : focusOpps.length > 0 ? "Execute your focus lane" : "Run research + baseline";
-  const headedDetail =
-    inputGaps > 0
-      ? "Complete the highest-impact inputs to raise confidence and score."
-      : focusOpps.length > 0
-      ? "Pick the top 1–2 focus opportunities and build routes + inputs around them."
-      : "Run Web Baseline + AI Research to populate signals, inputs, steps, and opportunities.";
-
   // Areas list (full width card)
   const areaList: ScoreArea[] = Array.isArray(areas) ? areas : [];
   const topAreas = areaList
     .slice()
     .sort((a, b) => safeNumber(b.score, 0) - safeNumber(a.score, 0));
+
+  const areaContextByKey = useMemo(() => {
+    const grouped = new Map<string, InputItem[]>();
+    for (const input of inputs) {
+      const key = mapInputToAreaKey(input);
+      const existing = grouped.get(key) ?? [];
+      existing.push(input);
+      grouped.set(key, existing);
+    }
+
+    const result: Record<string, { summary: string; detail: string }> = {};
+    for (const area of topAreas) {
+      const key = String(area.area_key || "");
+      const areaInputs = grouped.get(key) ?? [];
+      if (areaInputs.length === 0) {
+        result[key] = {
+          summary: "No mapped inputs yet",
+          detail: "Add inputs in this area so map guidance is contextual.",
+        };
+        continue;
+      }
+
+      const complete = areaInputs.filter((item) => item.status === "complete").length;
+      const gaps = areaInputs.filter((item) => item.status === "gap" || item.status === "not_started");
+      const topGap = gaps
+        .slice()
+        .sort((a, b) => safeNumber(b.score_impact, 0) - safeNumber(a.score_impact, 0))[0];
+
+      result[key] = {
+        summary: `${complete}/${areaInputs.length} inputs complete`,
+        detail: topGap
+          ? `Top gap: ${topGap.input_label} (+${Math.round(safeNumber(topGap.score_impact, 0))} pts)`
+          : "No critical mapped gap right now.",
+      };
+    }
+    return result;
+  }, [inputs, topAreas]);
 
   const mapRoutes = useMemo(
     () =>
@@ -433,6 +482,26 @@ export default function MapView() {
       }),
     [routeItems],
   );
+
+  const workflow = useMemo(
+    () =>
+      computeWorkflowGuidance({
+        inputs,
+        sourceSignals,
+        focusOpportunityCount: focusOpps.length,
+        routeCount: mapRoutes.length,
+        strategicProblemCount: strategicProblems.length,
+        reconciledStrategicProblemCount: strategicProblems.filter((item) => item.status === "reconciled").length,
+      }),
+    [inputs, sourceSignals, focusOpps.length, mapRoutes.length, strategicProblems],
+  );
+  const headedPlan = workflow.steps;
+  const currentHeadedIndex = Math.max(
+    0,
+    headedPlan.findIndex((step) => !step.done),
+  );
+  const headedTitle = workflow.title;
+  const headedDetail = workflow.detail;
 
   return (
     <div
@@ -773,35 +842,84 @@ export default function MapView() {
                 Where You’re Headed
               </p>
               <p className="font-sans text-[13px] font-semibold mt-2" style={{ color: c.charcoal }}>
-                Next 7–14 days
+                {workflow.phase === "diagnose"
+                  ? "Diagnose Phase"
+                  : workflow.phase === "focus"
+                    ? "Focus Phase"
+                    : "Flow Phase"}
               </p>
 
-              <div className="mt-3 space-y-2">
-                <div className="rounded-lg p-3" style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}>
-                  <p className="font-sans text-[12px] font-semibold" style={{ color: c.charcoal }}>
-                    1) Confirm public baseline
-                  </p>
-                  <p className="font-sans text-[12px] mt-1" style={{ color: c.secondary }}>
-                    Ensure evidence ledger is meaningful and recent.
-                  </p>
-                </div>
+              <div
+                className="mt-3 rounded-xl border px-3 py-3"
+                style={{ borderColor: c.line, background: c.lineFaint }}
+              >
+                <div className="relative">
+                  <div
+                    className="absolute bottom-2 left-[11px] top-[16px] w-px"
+                    style={{ background: c.line }}
+                  />
+                  <div className="space-y-3">
+                    {headedPlan.map((step, index) => {
+                      const isCurrent = index === currentHeadedIndex;
+                      const isDone = step.done;
+                      return (
+                        <div key={step.title} className="relative flex items-start gap-3">
+                          <div
+                            className="mt-[1px] flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border font-mono text-[10px]"
+                            style={{
+                              borderColor: isCurrent ? c.coral : isDone ? c.teal : c.line,
+                              background: isCurrent ? "#fff" : isDone ? "#EFF7F3" : "#F0EFEC",
+                              color: isCurrent ? c.coral : isDone ? c.teal : c.muted,
+                              boxShadow: isCurrent ? "0 0 0 2px rgba(255,125,45,0.14)" : "none",
+                            }}
+                          >
+                            {isCurrent ? (
+                              <span className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: c.coral }} />
+                            ) : isDone ? (
+                              <span className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: c.teal }} />
+                            ) : (
+                              index + 1
+                            )}
+                          </div>
 
-                <div className="rounded-lg p-3" style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}>
-                  <p className="font-sans text-[12px] font-semibold" style={{ color: c.charcoal }}>
-                    2) Close top gaps
-                  </p>
-                  <p className="font-sans text-[12px] mt-1" style={{ color: c.secondary }}>
-                    Complete 3–5 highest impact inputs first.
-                  </p>
-                </div>
-
-                <div className="rounded-lg p-3" style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}>
-                  <p className="font-sans text-[12px] font-semibold" style={{ color: c.charcoal }}>
-                    3) Choose a focus lane
-                  </p>
-                  <p className="font-sans text-[12px] mt-1" style={{ color: c.secondary }}>
-                    Pick the top opportunity and turn it into routes + actions.
-                  </p>
+                          <div className="min-w-0 pt-[1px]">
+                            <p
+                              className="font-sans text-[13px] font-semibold leading-[1.35]"
+                              style={{ color: isCurrent ? c.charcoal : isDone ? c.secondary : c.muted }}
+                            >
+                              {step.title}
+                            </p>
+                            <p className="mt-1 font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
+                              {step.detail}
+                            </p>
+                            {isCurrent ? (
+                              <span
+                                className="mt-1 inline-flex rounded-[4px] border px-1.5 py-[2px] font-mono text-[9px] uppercase tracking-[0.08em]"
+                                style={{
+                                  borderColor: "#FFCBAA",
+                                  background: "#FFF0E6",
+                                  color: c.coral,
+                                }}
+                              >
+                                You are here
+                              </span>
+                            ) : isDone ? (
+                              <span
+                                className="mt-1 inline-flex rounded-[4px] border px-1.5 py-[2px] font-mono text-[9px] uppercase tracking-[0.08em]"
+                                style={{
+                                  borderColor: "#B5D9CC",
+                                  background: "#EFF7F3",
+                                  color: c.teal,
+                                }}
+                              >
+                                Done
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -841,6 +959,10 @@ export default function MapView() {
                   const label = areaDisplayLabel(a);
                   const key = a.area_key || label;
                   const s = Math.round(safeNumber(a.score, 0));
+                  const context = areaContextByKey[String(key)] ?? {
+                    summary: "No mapped inputs yet",
+                    detail: "Add inputs in this area so map guidance is contextual.",
+                  };
 
                   return (
                     <button
@@ -859,8 +981,14 @@ export default function MapView() {
                       <div className="mt-2">
                         <MiniBar value={s} />
                       </div>
-                      <p className="font-sans text-[12px] mt-2" style={{ color: c.secondary }}>
-                        Click to open deep dive →
+                      <p className="font-sans text-[12px] mt-2 font-semibold" style={{ color: c.charcoal }}>
+                        {context.summary}
+                      </p>
+                      <p className="font-sans text-[12px] mt-1" style={{ color: c.secondary }}>
+                        {context.detail}
+                      </p>
+                      <p className="font-sans text-[11px] mt-2" style={{ color: c.muted }}>
+                        Open deep dive →
                       </p>
                     </button>
                   );

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { InputItem } from '@/lib/types';
 import { useUploadInputFile, useDeleteInputFile, getFileSignedUrl } from '@/hooks/useInputs';
+import { useCompany } from '@/hooks/useCompany';
 import { toast } from 'sonner';
 import FileUploadDialog from '@/components/FileUploadDialog';
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from '@/components/ui/semantic-badges';
@@ -39,6 +40,7 @@ const statusAccent: Record<string, string> = {
 };
 
 export default function InputSidePanel({ input, mojoScore, potentialScore, onClose }: Props) {
+  const { activeCompany } = useCompany();
   const tier = input.impact_tier;
   const afterScore = mojoScore + input.score_impact;
   const circumference = 2 * Math.PI * 22;
@@ -66,7 +68,12 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
     if (!file) return;
     setUploading(true);
     try {
-      await uploadMutation.mutateAsync({ inputId: input.id, file });
+      await uploadMutation.mutateAsync({
+        inputId: input.id,
+        inputKey: input.input_key,
+        companyName: activeCompany?.name ?? "",
+        file,
+      });
       toast.success(`Uploaded ${file.name}`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Upload failed');
@@ -298,7 +305,13 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
         </button>
       </div>
 
-      <FileUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} defaultInputId={input.id} />
+      <FileUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        defaultInputId={input.id}
+        companyId={activeCompany?.id}
+        companyName={activeCompany?.name}
+      />
     </div>
   );
 }

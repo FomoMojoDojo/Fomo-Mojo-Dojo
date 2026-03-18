@@ -16,10 +16,24 @@ export type ScoreableJobStep = {
 
 export type ScoreableOpportunity = {
   journey_key?: string | null;
+  outcome?: string | null;
+  step_label?: string | null;
   importance?: number | null;
   satisfaction?: number | null;
   opportunity_score?: number | null;
   priority_tier?: string | null;
+};
+
+export type ScoreableRoute = {
+  title?: string | null;
+  short_description?: string | null;
+  category?: string | null;
+};
+
+export type StrategicProblemInput = {
+  statement?: string | null;
+  source?: string | null;
+  status?: string | null;
 };
 
 export type BaselineLedgerItem = {
@@ -63,6 +77,17 @@ export type GateScoreResult = {
     job_steps: number;
     opportunities: number;
     evidence_ledger: number;
+    strategic_problems: number;
+  };
+  strategicProblemContext: {
+    score: number;
+    token_coverage: number;
+    statement_coverage: number;
+    matched_keywords: string[];
+    missing_keywords: string[];
+    status: string;
+    strategic_problem_count: number;
+    reconciled_count: number;
   };
 };
 
@@ -124,6 +149,59 @@ const GATE_WEIGHTS: Record<GateKey, number> = {
   strategy_cascade: 0.25,
   gtm_execution: 0.2,
 };
+const STRATEGIC_PROBLEM_STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "against",
+  "all",
+  "also",
+  "among",
+  "and",
+  "are",
+  "because",
+  "been",
+  "being",
+  "between",
+  "both",
+  "but",
+  "can",
+  "cannot",
+  "could",
+  "during",
+  "each",
+  "from",
+  "have",
+  "into",
+  "just",
+  "more",
+  "most",
+  "not",
+  "only",
+  "other",
+  "our",
+  "over",
+  "same",
+  "should",
+  "that",
+  "their",
+  "there",
+  "they",
+  "this",
+  "those",
+  "through",
+  "under",
+  "very",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "without",
+  "would",
+  "your",
+]);
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -205,11 +283,105 @@ function weightedHarmonicMean(entries: Array<{ value: number; weight: number }>)
   return (weightSum / denom);
 }
 
+function tokenizeStrategicText(value: unknown) {
+  const raw = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) return [] as string[];
+
+  return raw
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4 && !STRATEGIC_PROBLEM_STOPWORDS.has(token));
+}
+
+function computeStrategicProblemAlignment(
+  strategicProblems: StrategicProblemInput[],
+  opportunities: ScoreableOpportunity[],
+  routes: ScoreableRoute[],
+) {
+  const problems = Array.isArray(strategicProblems) ? strategicProblems : [];
+  const reconciledCount = problems.filter((item) => String(item.status || "").toLowerCase() === "reconciled").length;
+
+  if (!problems.length) {
+    return {
+      score: 50,
+      token_coverage: 50,
+      statement_coverage: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "no_strategic_problem",
+      strategic_problem_count: 0,
+      reconciled_count: 0,
+    };
+  }
+
+  const keywordSet = new Set<string>();
+  for (const problem of problems) {
+    for (const token of tokenizeStrategicText(problem.statement)) {
+      keywordSet.add(token);
+    }
+  }
+  const keywords = Array.from(keywordSet).slice(0, 28);
+
+  if (!keywords.length) {
+    return {
+      score: 50,
+      token_coverage: 50,
+      statement_coverage: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "insufficient_problem_keywords",
+      strategic_problem_count: problems.length,
+      reconciled_count: reconciledCount,
+    };
+  }
+
+  const corpusParts: string[] = [];
+  for (const opp of opportunities) {
+    corpusParts.push(String(opp.outcome || ""));
+    corpusParts.push(String(opp.step_label || ""));
+  }
+  for (const route of routes) {
+    corpusParts.push(String(route.title || ""));
+    corpusParts.push(String(route.short_description || ""));
+    corpusParts.push(String(route.category || ""));
+  }
+
+  const corpusTokens = new Set<string>(tokenizeStrategicText(corpusParts.join(" ")));
+  const matchedKeywords = keywords.filter((keyword) => corpusTokens.has(keyword));
+  const missingKeywords = keywords.filter((keyword) => !corpusTokens.has(keyword));
+  const tokenCoverage = keywords.length ? matchedKeywords.length / keywords.length : 0.5;
+  const statementCoverage =
+    problems.filter((problem) =>
+      tokenizeStrategicText(problem.statement).some((token) => corpusTokens.has(token))
+    ).length / problems.length;
+
+  const alignmentNorm = clamp(0.65 * tokenCoverage + 0.35 * statementCoverage, 0, 1);
+  const score = round1(alignmentNorm * 100);
+
+  return {
+    score,
+    token_coverage: round1(tokenCoverage * 100),
+    statement_coverage: round1(statementCoverage * 100),
+    matched_keywords: matchedKeywords.slice(0, 16),
+    missing_keywords: missingKeywords.slice(0, 16),
+    status: score >= 70 ? "aligned" : score >= 45 ? "partial" : "weak",
+    strategic_problem_count: problems.length,
+    reconciled_count: reconciledCount,
+  };
+}
+
 export function computeGateScores(
   inputs: ScoreableInput[],
   jobSteps: ScoreableJobStep[],
   opportunities: ScoreableOpportunity[],
   baselineRunResultJson?: BaselineRunResult,
+  strategicProblems: StrategicProblemInput[] = [],
+  routes: ScoreableRoute[] = [],
 ): GateScoreResult {
   const safeInputs = Array.isArray(inputs) ? inputs : [];
   const safeSteps = Array.isArray(jobSteps) ? jobSteps : [];
@@ -269,6 +441,12 @@ export function computeGateScores(
   const customerCoverage = ratio(countMatchingInputs(safeInputs, CUSTOMER_KEYS), CUSTOMER_KEYS.length);
   const strategyCoverage = ratio(countMatchingInputs(safeInputs, STRATEGY_KEYS), STRATEGY_KEYS.length);
   const gtmCoverage = ratio(countMatchingInputs(safeInputs, GTM_KEYS), GTM_KEYS.length);
+  const strategicProblemContext = computeStrategicProblemAlignment(
+    strategicProblems,
+    safeOpps,
+    routes,
+  );
+  const strategicAlignmentNorm = clamp(strategicProblemContext.score / 100, 0, 1);
 
   const positioningScore = round1(
     clamp(
@@ -298,12 +476,13 @@ export function computeGateScores(
   const strategyCascadeScore = round1(
     clamp(
       100 *
-        (0.25 * strategyCoverage +
-          0.2 * journeyHealth(revenueSteps) +
-          0.2 * journeyHealth(opsSteps) +
+        (0.2 * strategyCoverage +
+          0.15 * journeyHealth(revenueSteps) +
+          0.15 * journeyHealth(opsSteps) +
           0.15 * baselineSupport +
           0.1 * ratio(revenueOpps.length + opsOpps.length, 12) +
-          0.1 * averageCompleteness(strategyInputs)),
+          0.1 * averageCompleteness(strategyInputs) +
+          0.15 * strategicAlignmentNorm),
       0,
       100,
     ),
@@ -362,6 +541,7 @@ export function computeGateScores(
           baseline_support: round1(baselineSupport * 100),
           strategy_opportunity_coverage: round1(ratio(revenueOpps.length + opsOpps.length, 12) * 100),
           completion_bonus: round1(averageCompleteness(strategyInputs) * 100),
+          strategic_problem_alignment: strategicProblemContext.score,
         },
       },
       gtm_execution: {
@@ -382,7 +562,9 @@ export function computeGateScores(
       job_steps: safeSteps.length,
       opportunities: safeOpps.length,
       evidence_ledger: ledgerCount,
+      strategic_problems: strategicProblemContext.strategic_problem_count,
     },
+    strategicProblemContext,
   };
 }
 
@@ -505,6 +687,8 @@ export function scoreCompanyMojo(args: {
   inputs: ScoreableInput[];
   jobSteps: ScoreableJobStep[];
   opportunities: ScoreableOpportunity[];
+  routes?: ScoreableRoute[];
+  strategicProblems?: StrategicProblemInput[];
   baselineRunResultJson?: BaselineRunResult;
   gamma?: number;
 }): FullMojoScoreResult {
@@ -513,6 +697,8 @@ export function scoreCompanyMojo(args: {
     args.jobSteps,
     args.opportunities,
     args.baselineRunResultJson,
+    args.strategicProblems ?? [],
+    args.routes ?? [],
   );
 
   const evidenceResult = computeEvidenceMultiplier(
@@ -542,6 +728,7 @@ export function scoreCompanyMojo(args: {
       ...evidenceResult.evidenceBreakdown,
     },
     counts: gateResult.counts,
+    strategic_problem_context: gateResult.strategicProblemContext,
     calibration: {
       gamma: mojoResult.gamma,
       p_raw: mojoResult.p_raw,

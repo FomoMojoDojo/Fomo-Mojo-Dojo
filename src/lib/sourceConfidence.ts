@@ -27,6 +27,13 @@ function nestedNumber(value: unknown, path: string[]) {
   return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : null;
 }
 
+function normalizeTag(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+}
+
 export function detectTestedSignal(areaScoresJson: unknown) {
   return (
     nestedNumber(areaScoresJson, ["evidence", "implementation_tested"]) ??
@@ -43,6 +50,32 @@ export function countUploadedInputFiles(inputs: InputItem[]) {
   );
 }
 
+function fileTagSignals(inputs: InputItem[]) {
+  let hasCompanyTag = false;
+  let hasEvidenceTag = false;
+  let hasImplementedTag = false;
+
+  for (const input of Array.isArray(inputs) ? inputs : []) {
+    for (const file of Array.isArray(input.files) ? input.files : []) {
+      for (const tag of Array.isArray(file.tags) ? file.tags : []) {
+        const normalized = normalizeTag(tag);
+        if (!normalized) continue;
+        if (normalized === "company") hasCompanyTag = true;
+        if (normalized === "primary evidence" || normalized === "evidence") hasEvidenceTag = true;
+        if (normalized === "implemented & tested" || normalized === "implemented tested") {
+          hasImplementedTag = true;
+        }
+      }
+    }
+  }
+
+  return {
+    hasCompanyTag,
+    hasEvidenceTag,
+    hasImplementedTag,
+  };
+}
+
 export function buildSourceConfidenceSignals(args: {
   inputs: InputItem[];
   hasPrimaryEvidence: boolean;
@@ -51,16 +84,19 @@ export function buildSourceConfidenceSignals(args: {
 }): SourceConfidenceSignals {
   const uploadedFiles = countUploadedInputFiles(args.inputs);
   const testedSignal = detectTestedSignal(args.areaScoresJson);
-  const hasCompanyEvidence = uploadedFiles > 0;
-  const hasImplementedTested = hasCompanyEvidence && args.hasPrimaryEvidence && testedSignal >= 60;
+  const tags = fileTagSignals(args.inputs);
+  const hasCompanyEvidence = uploadedFiles > 0 || tags.hasCompanyTag;
+  const hasPrimaryEvidence = args.hasPrimaryEvidence || tags.hasEvidenceTag;
+  const hasImplementedTested =
+    tags.hasImplementedTag ||
+    (hasCompanyEvidence && hasPrimaryEvidence && testedSignal >= 60);
 
   return {
     uploadedFiles,
     hasCompanyEvidence,
-    hasPrimaryEvidence: args.hasPrimaryEvidence,
+    hasPrimaryEvidence,
     primaryEvidenceSignals: Math.max(0, args.primaryEvidenceSignals || 0),
     testedSignal,
     hasImplementedTested,
   };
 }
-

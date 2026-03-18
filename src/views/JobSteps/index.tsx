@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
+import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
@@ -41,6 +45,16 @@ type JourneyGroup = {
   steps: JobStepRow[];
 };
 
+type SuggestedJourneyOption = {
+  key: JourneyKey;
+  title: string;
+  subtitle: string;
+  confidence: number;
+  rationale: string;
+};
+
+type JourneyDraftMap = Record<JourneyKey, { title: string; subtitle: string }>;
+
 const JOURNEY_STYLE: Record<
   JourneyKey,
   { rail: string; dot: string; preview?: string }
@@ -66,6 +80,36 @@ function subtitleFromKey(key: JourneyKey) {
   return "How the company builds and operates the service.";
 }
 
+async function describeJobMapInvokeError(error: unknown) {
+  if (error instanceof FunctionsHttpError) {
+    const payloadText = await error.context.text().catch(() => "");
+    const payload = (() => {
+      if (!payloadText) return null;
+      try {
+        return JSON.parse(payloadText) as {
+          error?: string;
+          status?: string;
+          message?: string;
+        };
+      } catch {
+        return null;
+      }
+    })();
+
+    const status = String(payload?.status || "");
+    if (status === "job_map_selection_required") {
+      return "Choose at least one job map, then run research.";
+    }
+    if (status === "customer_job_map_required") {
+      return "Include a customer job map so opportunities can anchor to the primary job performer.";
+    }
+
+    return String(payload?.message || payload?.error || payloadText || error.message);
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
 function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
   const order: JourneyKey[] = ["customer", "revenue", "operations"];
 
@@ -86,6 +130,147 @@ function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
       };
     })
     .filter((group): group is JourneyGroup => group !== null);
+}
+
+function normalizeRoleLabel(value: string) {
+  const cleaned = value
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+    .trim();
+  if (!cleaned) return "Core Audience";
+  return cleaned.length > 48 ? `${cleaned.slice(0, 45).trim()}…` : cleaned;
+}
+
+function inferRevenueMapTitle(economicEngine: string, publicSignalText: string) {
+  const text = `${economicEngine} ${publicSignalText}`.toLowerCase();
+  if (/(investment|investor|capital|funding|raise)/.test(text)) {
+    return "Job Map: Getting Financial Investment";
+  }
+  if (/(donor|grant|philanthrop)/.test(text)) {
+    return "Job Map: Securing Donor and Grant Support";
+  }
+  if (/(referral|pipeline|conversion|enrollment)/.test(text)) {
+    return "Job Map: Converting Qualified Demand";
+  }
+  return "Job Map: Securing Revenue Outcomes";
+}
+
+function inferSuggestedJourneyOptions(args: {
+  baselineRun: any | null;
+  journeys: JourneyGroup[];
+}): SuggestedJourneyOption[] {
+  const existingJourneyKeys = new Set(args.journeys.map((journey) => journey.key));
+  const baseline = args.baselineRun?.result_json as {
+    lens_card?: {
+      primary_buyer?: string;
+      chooser?: string;
+      user?: string;
+      value_chain?: string;
+      economic_engine?: string;
+      adoption_constraints?: string;
+      risk_surface?: string;
+    };
+    evidence_ledger?: Array<{ bucket?: string; snippet?: string }>;
+  } | null;
+
+  const lens = baseline?.lens_card ?? {};
+  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+
+  const publicSignalText = [
+    String(lens.value_chain || ""),
+    String(lens.economic_engine || ""),
+    String(lens.adoption_constraints || ""),
+    String(lens.risk_surface || ""),
+    ...ledger.slice(0, 14).map((entry) => `${String(entry?.bucket || "")} ${String(entry?.snippet || "")}`),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const countMatches = (terms: string[]) =>
+    terms.reduce((sum, term) => (publicSignalText.includes(term) ? sum + 1 : sum), 0);
+
+  const options: SuggestedJourneyOption[] = [];
+
+  if (!existingJourneyKeys.has("customer")) {
+    const customerSignalRaw = safeText(lens.user || lens.primary_buyer || lens.chooser, "");
+    const customerSignal = normalizeRoleLabel(customerSignalRaw || "Core Audience");
+    options.push({
+      key: "customer",
+      title: `Job Map: ${customerSignal}`,
+      subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
+      confidence: customerSignalRaw ? 95 : 80,
+      rationale: customerSignalRaw
+        ? `Public signal identifies primary job performer context: ${customerSignalRaw}`
+        : "Customer job map is required first and should define the core functional job performer.",
+    });
+  }
+
+  if (!existingJourneyKeys.has("revenue")) {
+    const revenueMatches = countMatches([
+      "revenue",
+      "pricing",
+      "contract",
+      "renewal",
+      "payer",
+      "reimbursement",
+      "donor",
+      "fundraising",
+      "referral",
+      "pipeline",
+      "conversion",
+    ]);
+    const economicEngine = safeText(lens.economic_engine, "");
+    const hasEconomicSignal =
+      economicEngine.length > 0 && economicEngine.toLowerCase() !== "unknown";
+
+    if (revenueMatches >= 2 || hasEconomicSignal) {
+      const revenueTitle = inferRevenueMapTitle(economicEngine, publicSignalText);
+      options.push({
+        key: "revenue",
+        title: revenueTitle,
+        subtitle: "How the company secures, converts, and retains economic value for the chosen market.",
+        confidence: Math.min(92, 50 + revenueMatches * 8 + (hasEconomicSignal ? 12 : 0)),
+        rationale: hasEconomicSignal
+          ? `Public signal in economic engine: ${economicEngine}`
+          : "Public signals suggest monetization, funding, or referral conversion dynamics.",
+      });
+    }
+  }
+
+  if (!existingJourneyKeys.has("operations")) {
+    const operationsMatches = countMatches([
+      "operations",
+      "delivery",
+      "capacity",
+      "workflow",
+      "staffing",
+      "compliance",
+      "quality",
+      "handoff",
+      "throughput",
+      "support",
+      "service continuity",
+    ]);
+    const adoptionConstraints = safeText(lens.adoption_constraints, "");
+    const riskSurface = safeText(lens.risk_surface, "");
+    const hasOpsSignal =
+      (adoptionConstraints.length > 0 && adoptionConstraints.toLowerCase() !== "unknown") ||
+      (riskSurface.length > 0 && riskSurface.toLowerCase() !== "unknown");
+
+    if (operationsMatches >= 2 || hasOpsSignal) {
+      options.push({
+        key: "operations",
+        title: "Job Map: Delivering Consistent Service",
+        subtitle: "How delivery systems coordinate define, prepare, execute, monitor, and adjust work at quality.",
+        confidence: Math.min(92, 50 + operationsMatches * 8 + (hasOpsSignal ? 10 : 0)),
+        rationale: hasOpsSignal
+          ? `Public signal in constraints/risk: ${safeText(adoptionConstraints || riskSurface)}`
+          : "Public signals suggest delivery, quality, or operational coordination risk.",
+      });
+    }
+  }
+
+  return options.sort((a, b) => b.confidence - a.confidence);
 }
 
 function TimelineRow({
@@ -467,20 +652,232 @@ function JourneySection({ journey }: { journey: JourneyGroup }) {
   );
 }
 
+function SuggestedMapsSection({
+  options,
+  selectedKeys,
+  drafts,
+  onToggle,
+  onDraftChange,
+  onRunSelected,
+  canRunSelected,
+  running,
+}: {
+  options: SuggestedJourneyOption[];
+  selectedKeys: string[];
+  drafts: JourneyDraftMap;
+  onToggle: (key: SuggestedJourneyOption["key"]) => void;
+  onDraftChange: (key: JourneyKey, field: "title" | "subtitle", value: string) => void;
+  onRunSelected: () => void;
+  canRunSelected: boolean;
+  running: boolean;
+}) {
+  if (options.length === 0) return null;
+
+  return (
+    <section
+      className="rounded-[24px] border px-6 py-5"
+      style={{ borderColor: c.line, background: c.panel }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
+            Choose Job Maps
+          </p>
+          <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+            Select from suggested maps, or edit the title/subtitle to define your own map before running research.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRunSelected}
+          disabled={!canRunSelected || running}
+          className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+          style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+        >
+          {running ? "Running…" : "Run Selected Job Maps"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+        {options.map((option) => (
+          <div
+            key={option.key}
+            className="rounded-xl border p-3"
+            style={{
+              borderColor: selectedKeys.includes(option.key) ? c.teal : c.line,
+              background: c.paper,
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => onToggle(option.key)}
+                className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                style={{
+                  borderColor: selectedKeys.includes(option.key) ? c.teal : c.line,
+                  color: selectedKeys.includes(option.key) ? c.teal : c.secondary,
+                  background: "#fff",
+                }}
+              >
+                {selectedKeys.includes(option.key) ? "Selected" : "Select"}
+              </button>
+              <ScoreChip label="Confidence" value={option.confidence} />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
+                {drafts[option.key]?.title || option.title}
+              </p>
+              <MetaBadge>Public signal</MetaBadge>
+              <StateBadge tone={selectedKeys.includes(option.key) ? "designed" : "monitor"}>
+                {selectedKeys.includes(option.key) ? "Selected" : "Optional"}
+              </StateBadge>
+            </div>
+            <p className="mt-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+              {option.rationale}
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-2">
+              <input
+                value={drafts[option.key]?.title || option.title}
+                onChange={(event) => onDraftChange(option.key, "title", event.target.value)}
+                className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                placeholder="Map title"
+              />
+              <textarea
+                value={drafts[option.key]?.subtitle || option.subtitle}
+                onChange={(event) => onDraftChange(option.key, "subtitle", event.target.value)}
+                className="min-h-[62px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                placeholder="Map subtitle"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function JobStepsView() {
   const { activeCompany } = useCompany();
-  const { loading, items, error } = useJobSteps(activeCompany?.id);
+  const { loading, items, error, refetch: refetchJobSteps } = useJobSteps(activeCompany?.id);
+  const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(activeCompany?.id);
   const { marketDefinition, needs } = useOdiNeeds(activeCompany?.id);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
+  const [selectedJourneyKeys, setSelectedJourneyKeys] = useState<JourneyKey[]>([]);
+  const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({
+    customer: { title: "", subtitle: "" },
+    revenue: { title: "", subtitle: "" },
+    operations: { title: "", subtitle: "" },
+  });
+  const [runningSelectedJourneys, setRunningSelectedJourneys] = useState(false);
 
   const journeys = useMemo(() => groupJourneys(items), [items]);
   const totalGaps = useMemo(
     () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => step.has_gap).length, 0),
     [journeys]
   );
+  const suggestedJourneyOptions = useMemo(
+    () => inferSuggestedJourneyOptions({ baselineRun, journeys }),
+    [baselineRun, journeys],
+  );
+  const suggestedByKey = useMemo(
+    () => new Map<JourneyKey, SuggestedJourneyOption>(suggestedJourneyOptions.map((option) => [option.key, option])),
+    [suggestedJourneyOptions],
+  );
+  const canRunSelectedJourneys = !!activeCompany?.id && selectedJourneyKeys.length > 0;
+
+  useEffect(() => {
+    const optionKeys = suggestedJourneyOptions.map((option) => option.key);
+    setSelectedJourneyKeys((previous) => previous.filter((key) => optionKeys.includes(key)));
+  }, [suggestedJourneyOptions]);
+
+  useEffect(() => {
+    setJourneyDrafts((previous) => {
+      const next = { ...previous };
+      for (const option of suggestedJourneyOptions) {
+        const current = next[option.key] || { title: "", subtitle: "" };
+        next[option.key] = {
+          title: safeText(current.title, option.title),
+          subtitle: safeText(current.subtitle, option.subtitle),
+        };
+      }
+      return next;
+    });
+  }, [suggestedJourneyOptions]);
+
+  const toggleJourneySelection = (key: JourneyKey) => {
+    setSelectedJourneyKeys((previous) =>
+      previous.includes(key)
+        ? previous.filter((item) => item !== key)
+        : [...previous, key],
+    );
+  };
+
+  const updateJourneyDraft = (key: JourneyKey, field: "title" | "subtitle", value: string) => {
+    setJourneyDrafts((previous) => ({
+      ...previous,
+      [key]: {
+        ...previous[key],
+        [field]: value,
+      },
+    }));
+  };
+
+  const runSelectedJourneys = async () => {
+    if (!activeCompany?.id) {
+      toast.error("Select a company before running journey research.");
+      return;
+    }
+    if (selectedJourneyKeys.length === 0) {
+      toast.error("Choose at least one job map.");
+      return;
+    }
+
+    try {
+      setRunningSelectedJourneys(true);
+      const journeyRequestKeys = Array.from(new Set<JourneyKey>(selectedJourneyKeys));
+      const jobMaps = journeyRequestKeys.map((key) => {
+        const draft = journeyDrafts[key];
+        const suggested = suggestedByKey.get(key);
+        const fallbackTitle = suggested?.title || titleFromKey(key);
+        const fallbackSubtitle = suggested?.subtitle || subtitleFromKey(key);
+        return {
+          journey_key: key,
+          journey_title: safeText(draft?.title, fallbackTitle),
+          journey_subtitle: safeText(draft?.subtitle, fallbackSubtitle),
+          source: draft?.title || draft?.subtitle ? "custom" : "suggested",
+        };
+      });
+
+      const { data, error: invokeError } = await supabase.functions.invoke("research-company", {
+        body: {
+          company_id: activeCompany.id,
+          company_name: activeCompany.name,
+          website: activeCompany.website ?? "",
+          journeys_to_generate: journeyRequestKeys,
+          job_maps: jobMaps,
+        },
+      });
+
+      if (invokeError) {
+        throw new Error(await describeJobMapInvokeError(invokeError));
+      }
+      if (data?.error) {
+        throw new Error(String(data.message || data.error));
+      }
+
+      await Promise.all([refetchJobSteps(), refetchBaseline()]);
+      toast.success("Job map research completed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to run job map research.");
+    } finally {
+      setRunningSelectedJourneys(false);
+    }
+  };
 
   return (
     <div
@@ -503,7 +900,7 @@ export default function JobStepsView() {
             Job Steps Map
           </h1>
           <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
-            Job steps and desired-outcome context across the customer, revenue, and operations journeys for the current company.
+            Select and define ODI-style job maps first, then run research to generate steps and aligned opportunities.
           </p>
         </div>
 
@@ -530,7 +927,7 @@ export default function JobStepsView() {
           label="Public Research"
           tone="public"
           className="mb-6 max-w-[780px]"
-          detail="This journey map is generated from the public baseline and company research flow. Designed steps may be directly evidenced or strongly implied by the public evidence; they are not the same as validated internal proof."
+          detail="Map suggestions are inferred from public baseline signals. No job map is generated until you explicitly choose or define it."
         />
 
         {!activeCompany?.id ? (
@@ -560,35 +957,50 @@ export default function JobStepsView() {
               Failed to load job steps: {error}
             </p>
           </div>
-        ) : journeys.length === 0 ? (
-          <div
-            className="rounded-[24px] border px-6 py-12 text-center"
-            style={{ borderColor: c.line, background: c.panel }}
-          >
-            <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
-              No job step data is available yet. Run AI Research in Admin → Companies to generate industry-specific journey maps.
-            </p>
-          </div>
         ) : (
           <div className="space-y-6">
-            {journeys.map((journey) => (
-              <JourneySection key={journey.key} journey={journey} />
-            ))}
-
-            <OdiNeedsSection
-              marketDefinition={marketDefinition}
-              needs={needs}
+            <SuggestedMapsSection
+              options={suggestedJourneyOptions}
+              selectedKeys={selectedJourneyKeys}
+              drafts={journeyDrafts}
+              onToggle={toggleJourneySelection}
+              onDraftChange={updateJourneyDraft}
+              onRunSelected={runSelectedJourneys}
+              canRunSelected={canRunSelectedJourneys}
+              running={runningSelectedJourneys}
             />
 
-            <div
-              className="rounded-[24px] border px-6 py-5"
-              style={{ borderColor: c.line, background: c.panel }}
-            >
-              <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.secondary }}>
-                <strong style={{ color: c.charcoal }}>{totalGaps} steps have active gaps</strong> across the current journeys.
-                Use this page to confirm the sequence and then move to Inputs and Opportunities to close the highest-impact issues.
-              </p>
-            </div>
+            {journeys.length === 0 ? (
+              <div
+                className="rounded-[24px] border px-6 py-12 text-center"
+                style={{ borderColor: c.line, background: c.panel }}
+              >
+                <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+                  No job map exists yet. Choose or define at least one map above, then run research.
+                </p>
+              </div>
+            ) : (
+              <>
+                {journeys.map((journey) => (
+                  <JourneySection key={journey.key} journey={journey} />
+                ))}
+
+                <OdiNeedsSection
+                  marketDefinition={marketDefinition}
+                  needs={needs}
+                />
+
+                <div
+                  className="rounded-[24px] border px-6 py-5"
+                  style={{ borderColor: c.line, background: c.panel }}
+                >
+                  <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.secondary }}>
+                    <strong style={{ color: c.charcoal }}>{totalGaps} steps have active gaps</strong> across the current map{journeys.length === 1 ? "" : "s"}.
+                    Use this page to confirm the sequence and then move to Inputs and Opportunities to close the highest-impact issues.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )}
       </main>
