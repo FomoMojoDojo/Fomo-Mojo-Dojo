@@ -5,35 +5,28 @@
 When you upload in the app, files are stored in:
 
 - Supabase Storage bucket: `input-files`
-- Object path format: `<user_id>/<input_id>/<timestamp>-<filename>`
+- Object path format: `<user_id>/<company>/<input_key>/<input_id>/<timestamp>-<filename>`
 - Metadata row: `public.input_files` (`input_id`, `file_name`, `file_type`, `file_path`, tags)
 
 That storage path is why files are company/input scoped inside the app.
 
 ## Recommended local folder structure
 
-Use one local folder per company and place files under the input key they belong to:
+Use one local folder per company and place files in business-context folders:
 
 ```text
 Client_Files/
   Edgewood/
-    comp-alt/
-    unique-attr/
-    val-prop/
-    target-aud/
-    market-cat/
-    program-model/
-    needs-assessment/
-    outcome-data/
-    referral-map/
-    brand-narrative/
-    channel-strat/
-    donor-retention/
-    grant-pipeline/
-    family-satisfaction/
+    Foundation/
+      Mental Health Providers/
+        Competitive Alternatives/
+    Execution/
+      Storytelling/
+        Brand Narrative/
 ```
 
-You can add subfolders under each input key.
+You can add subfolders under each input area folder.
+The sync script still supports the old `<input_key>/...` format for backward compatibility.
 
 ## Batch sync local files into the app
 
@@ -60,14 +53,14 @@ Credential options:
 ## Safety behavior
 
 - Default is dry run.
-- Files not inside an input-key path are skipped.
+- Files without a recognizable input area in their path are skipped.
 - Existing linked paths are not duplicated.
 - You can review output before running `--apply`.
 
 ## Pull uploaded files back to local folders
 
 If files are uploaded through the web app, they are stored in Supabase first.
-Use this to mirror them back into `Client_Files/<Company>/<input_key>/...`:
+Use this to mirror them back into `Client_Files/<Company>/<group>/<sub-group>/<input-label>/...`:
 
 ```sh
 # Dry run

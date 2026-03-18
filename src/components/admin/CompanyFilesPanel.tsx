@@ -43,6 +43,14 @@ function safeFileName(name: string) {
   return name.replace(/[/:*?"<>|]/g, "_");
 }
 
+function safeDirSegment(value: string) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/[/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ");
+  return normalized || "General";
+}
+
 function splitName(name: string) {
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return { base: name, ext: "" };
@@ -73,7 +81,7 @@ async function writeBlobUnique(dirHandle: FileSystemDirectoryHandleLike, desired
 }
 
 export default function CompanyFilesPanel({ companyId, companyName, mode = "preview" }: Props) {
-  const { query } = useInputs();
+  const { query } = useInputs(companyId);
   const deleteMutation = useDeleteInputFile();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -180,7 +188,18 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
           if (!response.ok) throw new Error(`Download failed: ${response.status}`);
           const blob = await response.blob();
 
-          const inputDir = await companyDir.getDirectoryHandle(file.inputKey || "unmapped", { create: true });
+          const groupDir = await companyDir.getDirectoryHandle(
+            safeDirSegment(file.groupLabel || "General"),
+            { create: true },
+          );
+          const subGroupDir = await groupDir.getDirectoryHandle(
+            safeDirSegment(file.subGroup || "General"),
+            { create: true },
+          );
+          const inputDir = await subGroupDir.getDirectoryHandle(
+            safeDirSegment(file.inputLabel || file.inputKey || "Input"),
+            { create: true },
+          );
           await writeBlobUnique(inputDir, file.file_name, blob);
           written += 1;
         } catch (error) {
@@ -227,7 +246,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
               disabled={mirroring || allFiles.length === 0}
               className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
               style={{ color: c.secondary, borderColor: c.line, background: c.paper }}
-              title="Pick a local folder, then mirror files into <chosen-folder>/<company>/<input_key>/..."
+              title="Pick a local folder, then mirror files into <chosen-folder>/<company>/<group>/<sub-group>/<input-label>/..."
             >
               <FolderDown className="w-3 h-3" />
               {mirroring ? "Mirroring..." : "Mirror to Local"}
@@ -405,7 +424,12 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
         </div>
       ) : null}
 
-      <FileUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+      <FileUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        companyId={companyId}
+        companyName={companyName}
+      />
     </section>
   );
 }

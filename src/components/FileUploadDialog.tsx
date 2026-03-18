@@ -11,6 +11,8 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultInputId?: string;
+  companyId?: string;
+  companyName?: string;
 }
 
 type AnalysisResult = {
@@ -58,6 +60,15 @@ const KEYWORDS_BY_INPUT_KEY: Array<{ key: string; terms: string[] }> = [
 ];
 
 const PROVENANCE_TAG_OPTIONS = ['Public', 'Company', 'Primary Evidence', 'Implemented & Tested'] as const;
+
+function isInputNotApplicable(input: Pick<InputItem, 'input_label' | 'sub_group'>): boolean {
+  const combined = `${input.input_label} ${input.sub_group}`.toLowerCase();
+  return (
+    combined.includes('not applicable') ||
+    combined.includes('n/a') ||
+    combined.includes('not app')
+  );
+}
 
 async function readFileText(file: File): Promise<string | null> {
   const textTypes = ['text/', 'application/json', 'application/csv', 'text/csv'];
@@ -127,7 +138,13 @@ function sourceLabel(source: AssignmentSource): string {
   return 'Unmapped';
 }
 
-export default function FileUploadDialog({ open, onOpenChange, defaultInputId }: Props) {
+export default function FileUploadDialog({
+  open,
+  onOpenChange,
+  defaultInputId,
+  companyId,
+  companyName,
+}: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -138,19 +155,24 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
   const [selectedProvenanceTags, setSelectedProvenanceTags] = useState<string[]>([]);
   const uploadMutation = useUploadInputFile();
   const { activeCompany } = useCompany();
-  const { query } = useInputs();
+  const { query } = useInputs(companyId);
   const inputs = useMemo(() => query.data ?? [], [query.data]);
-  const hasInputs = inputs.length > 0;
+  const eligibleInputs = useMemo(() => {
+    const filtered = inputs.filter((input) => !isInputNotApplicable(input));
+    return filtered.length > 0 ? filtered : inputs;
+  }, [inputs]);
+  const hasInputs = eligibleInputs.length > 0;
+  const effectiveCompanyName = companyName || activeCompany?.name || 'No company selected';
 
   const assigned = useMemo(
     () =>
       resolveAssignedInput({
-        inputs,
+        inputs: eligibleInputs,
         suggestedInputId: analysis?.suggestedInputId ?? null,
         defaultInputId,
         fileName: file?.name,
       }),
-    [analysis?.suggestedInputId, defaultInputId, file?.name, inputs],
+    [analysis?.suggestedInputId, defaultInputId, file?.name, eligibleInputs],
   );
 
   useEffect(() => {
@@ -163,7 +185,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
       setAnalysis(null);
       try {
         const fileContent = await readFileText(currentFile);
-        const inputAreas = inputs.map((input) => ({
+        const inputAreas = eligibleInputs.map((input) => ({
           id: input.id,
           input_label: input.input_label,
           sub_group: input.sub_group,
@@ -226,7 +248,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
     return () => {
       cancelled = true;
     };
-  }, [file, hasInputs, inputs]);
+  }, [file, hasInputs, eligibleInputs]);
 
   function clearNativeInputValue() {
     if (fileRef.current) fileRef.current.value = '';
@@ -264,7 +286,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
     setFile(nextFile);
     setAnalysis(null);
     setUploadSummary(null);
-    setSelectedProvenanceTags([]);
+    setSelectedProvenanceTags(["Company"]);
   }
 
   function toggleProvenanceTag(tag: string) {
@@ -288,6 +310,8 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
       const uploadTags = [...mergedTags];
       await uploadMutation.mutateAsync({
         inputId: assigned.input.id,
+        inputKey: assigned.input.input_key,
+        companyName: companyName ?? activeCompany?.name ?? "",
         file,
         tags: uploadTags,
       });
@@ -341,7 +365,7 @@ export default function FileUploadDialog({ open, onOpenChange, defaultInputId }:
               </span>
             </div>
             <p className="mt-1 font-sans text-[13px]" style={{ color: '#233c4b' }}>
-              {activeCompany?.name ?? 'No company selected'}
+              {effectiveCompanyName}
             </p>
           </div>
 

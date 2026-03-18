@@ -17,11 +17,11 @@ Required env:
   OR run local Supabase (supabase start) so this script can auto-detect.
 
 Folder convention:
+  Preferred:
+  Client_Files/<Company>/<group>/<sub-group>/<input-label>/<any-subfolders>/<file>
+
+  Backward compatible:
   Client_Files/<Company>/<input_key>/<any-subfolders>/<file>
-  where input_key is one of:
-  comp-alt, unique-attr, val-prop, target-aud, market-cat,
-  program-model, needs-assessment, outcome-data, referral-map,
-  brand-narrative, channel-strat, donor-retention, grant-pipeline, family-satisfaction
 `.trim();
 
 function parseArgs(argv) {
@@ -77,8 +77,24 @@ function extType(fileName) {
   return byExt[ext] || "application/octet-stream";
 }
 
+function canonicalFileName(fileName) {
+  const raw = String(fileName || "").trim().toLowerCase();
+  const ext = path.extname(raw);
+  const base = ext ? raw.slice(0, -ext.length) : raw;
+  const normalizedBase = base.replace(/-[a-f0-9]{8}$/i, "");
+  return `${normalizedBase}${ext}`;
+}
+
 function normalizeRel(from, fullPath) {
   return path.relative(from, fullPath).split(path.sep).join("/");
+}
+
+function safeDirSegment(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 async function walkFiles(dir) {
@@ -98,11 +114,42 @@ async function walkFiles(dir) {
   return files;
 }
 
-function locateInputKey(relPath, inputKeys) {
-  const parts = relPath.split("/").filter(Boolean);
-  for (const part of parts) {
-    if (inputKeys.has(part)) return part;
+function buildInputLookups(inputRows) {
+  const byKey = new Map();
+  const byLabel = new Map();
+
+  for (const row of inputRows) {
+    const key = safeDirSegment(row.input_key);
+    if (key) byKey.set(key, row);
+
+    const label = safeDirSegment(row.input_label);
+    if (label) {
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label).push(row);
+    }
   }
+
+  return { byKey, byLabel };
+}
+
+function locateInputFromRel(relPath, lookups) {
+  const relParts = relPath.split("/").filter(Boolean);
+  const normalizedParts = relParts.map((part) => safeDirSegment(part));
+
+  for (let index = 0; index < normalizedParts.length; index += 1) {
+    const keyMatch = lookups.byKey.get(normalizedParts[index]);
+    if (keyMatch) {
+      return { input: keyMatch, matchedIndex: index, strategy: "key" };
+    }
+  }
+
+  for (let index = 0; index < normalizedParts.length; index += 1) {
+    const labelMatches = lookups.byLabel.get(normalizedParts[index]);
+    if (Array.isArray(labelMatches) && labelMatches.length === 1) {
+      return { input: labelMatches[0], matchedIndex: index, strategy: "label" };
+    }
+  }
+
   return null;
 }
 
@@ -170,8 +217,7 @@ async function main() {
     throw new Error(`No inputs found for ${company.name}. Run AI Research first.`);
   }
 
-  const inputByKey = new Map(inputRows.map((row) => [String(row.input_key), row]));
-  const inputKeys = new Set(inputByKey.keys());
+  const inputLookups = buildInputLookups(inputRows);
 
   const localFiles = await walkFiles(root);
   if (localFiles.length === 0) {
@@ -185,11 +231,19 @@ async function main() {
   const inputIds = inputRows.map((row) => row.id);
   const { data: existingRows, error: existingErr } = await supabase
     .from("input_files")
-    .select("id,input_id,file_path")
+    .select("id,input_id,file_name,file_path")
     .in("input_id", inputIds);
   if (existingErr) throw existingErr;
   const existingByPath = new Map(
     (Array.isArray(existingRows) ? existingRows : []).map((row) => [String(row.file_path), row]),
+  );
+  const existingByInputAndName = new Set(
+    (Array.isArray(existingRows) ? existingRows : []).flatMap((row) => {
+      const inputId = String(row.input_id);
+      const rawName = String(row.file_name || "").toLowerCase();
+      const canonical = canonicalFileName(rawName);
+      return [`${inputId}::${rawName}`, `${inputId}::${canonical}`];
+    }),
   );
 
   const plan = [];
@@ -197,32 +251,34 @@ async function main() {
 
   for (const fullPath of localFiles) {
     const rel = normalizeRel(root, fullPath);
-    const inputKey = locateInputKey(rel, inputKeys);
-    if (!inputKey) {
-      skipped.push({ rel, reason: "no_input_key_in_path" });
+    const located = locateInputFromRel(rel, inputLookups);
+    if (!located) {
+      skipped.push({ rel, reason: "no_input_area_in_path" });
       continue;
     }
-    const input = inputByKey.get(inputKey);
-    if (!input) {
-      skipped.push({ rel, reason: "input_not_found" });
-      continue;
-    }
+    const { input, matchedIndex, strategy } = located;
 
     const relParts = rel.split("/");
-    const keyIdx = relParts.indexOf(inputKey);
-    const afterKey = relParts.slice(keyIdx + 1).join("/");
+    const afterMatch = relParts.slice(matchedIndex + 1).join("/");
     const baseName = path.basename(fullPath);
-    const tail = afterKey || baseName;
+    const tail = afterMatch || baseName;
     const storagePath = `${input.user_id}/${input.id}/${tail}`;
 
+    const rawName = String(baseName).toLowerCase();
+    const canonicalName = canonicalFileName(rawName);
     plan.push({
       fullPath,
       rel,
       input,
-      inputKey,
+      inputKey: String(input.input_key || ""),
+      inputLabel: String(input.input_label || ""),
+      matchedBy: strategy,
       storagePath,
       contentType: extType(baseName),
-      exists: existingByPath.has(storagePath),
+      exists:
+        existingByPath.has(storagePath) ||
+        existingByInputAndName.has(`${String(input.id)}::${rawName}`) ||
+        existingByInputAndName.has(`${String(input.id)}::${canonicalName}`),
     });
   }
 

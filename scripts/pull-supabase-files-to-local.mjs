@@ -70,6 +70,21 @@ function safeFileName(name) {
   return name.replace(/[/:*?"<>|]/g, '_');
 }
 
+function safeDirSegment(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/[/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ");
+  return normalized || "General";
+}
+
+function buildInputDir(root, input) {
+  const group = safeDirSegment(input.group_label || input.group_key || "General");
+  const subGroup = safeDirSegment(input.sub_group || "General");
+  const inputLabel = safeDirSegment(input.input_label || input.input_key || "Input");
+  return path.join(root, group, subGroup, inputLabel);
+}
+
 async function fileExists(targetPath) {
   try {
     await fs.access(targetPath);
@@ -77,6 +92,108 @@ async function fileExists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function walkFiles(dir) {
+  const files = [];
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await walkFiles(full)));
+      continue;
+    }
+    if (entry.isFile()) files.push(full);
+  }
+  return files;
+}
+
+async function removeEmptyDirsRecursively(dir) {
+  let removed = 0;
+  let entries = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    removed += await removeEmptyDirsRecursively(path.join(dir, entry.name));
+  }
+
+  try {
+    const remaining = await fs.readdir(dir);
+    if (remaining.length === 0) {
+      await fs.rmdir(dir);
+      removed += 1;
+    }
+  } catch {
+    // ignore
+  }
+  return removed;
+}
+
+async function migrateLegacyInputKeyDirs(root, inputRows) {
+  let moved = 0;
+  let deduped = 0;
+  let removedDirs = 0;
+
+  for (const input of inputRows) {
+    const legacyDir = path.join(root, String(input.input_key || ""));
+    let legacyExists = false;
+    try {
+      const stat = await fs.stat(legacyDir);
+      legacyExists = stat.isDirectory();
+    } catch {
+      legacyExists = false;
+    }
+    if (!legacyExists) continue;
+
+    const targetDir = buildInputDir(root, input);
+    const legacyFiles = await walkFiles(legacyDir);
+    for (const legacyFile of legacyFiles) {
+      const relative = path.relative(legacyDir, legacyFile);
+      const targetFile = path.join(targetDir, relative);
+      await fs.mkdir(path.dirname(targetFile), { recursive: true });
+
+      if (!(await fileExists(targetFile))) {
+        await fs.rename(legacyFile, targetFile);
+        moved += 1;
+        continue;
+      }
+
+      try {
+        const [legacyStat, targetStat] = await Promise.all([fs.stat(legacyFile), fs.stat(targetFile)]);
+        if (legacyStat.size === targetStat.size) {
+          await fs.unlink(legacyFile);
+          deduped += 1;
+        }
+      } catch {
+        // keep both when we cannot compare safely
+      }
+    }
+
+    removedDirs += await removeEmptyDirsRecursively(legacyDir);
+  }
+
+  return { moved, deduped, removedDirs };
+}
+
+async function pruneEmptyLegacyInputKeyDirs(root, inputRows) {
+  let removed = 0;
+  for (const input of inputRows) {
+    const legacyDir = path.join(root, String(input.input_key || ""));
+    try {
+      const entries = await fs.readdir(legacyDir);
+      if (entries.length > 0) continue;
+      await fs.rmdir(legacyDir);
+      removed += 1;
+    } catch {
+      // ignore missing/not-empty directories
+    }
+  }
+  return removed;
 }
 
 async function main() {
@@ -102,7 +219,7 @@ async function main() {
 
   const { data: inputs, error: inputErr } = await supabase
     .from('inputs')
-    .select('id,input_key')
+    .select('id,input_key,input_label,group_key,group_label,sub_group')
     .eq('company_id', company.id);
   if (inputErr) throw inputErr;
   const inputRows = Array.isArray(inputs) ? inputs : [];
@@ -129,7 +246,7 @@ async function main() {
   for (const file of fileRows) {
     const input = inputById.get(file.input_id);
     if (!input) continue;
-    const dir = path.join(root, input.input_key);
+    const dir = buildInputDir(root, input);
     const base = safeFileName(file.file_name || path.basename(file.file_path));
     const preferred = path.join(dir, base);
     const fallback = path.join(dir, `${base.replace(/\.[^.]+$/, "")}-${String(file.id).slice(0, 8)}${path.extname(base)}`);
@@ -141,6 +258,9 @@ async function main() {
       filePath: file.file_path,
       fileName: file.file_name,
       inputKey: input.input_key,
+      inputLabel: input.input_label,
+      groupLabel: input.group_label,
+      subGroup: input.sub_group,
       localPath,
       exists: existsPreferred || existsFallback,
     });
@@ -158,7 +278,7 @@ async function main() {
   if (!args.apply) {
     console.log('');
     for (const item of pending.slice(0, 20)) {
-      console.log(`- ${item.inputKey}: ${item.fileName} -> ${item.localPath}`);
+      console.log(`- ${item.groupLabel} / ${item.subGroup} / ${item.inputLabel}: ${item.fileName} -> ${item.localPath}`);
     }
     console.log('');
     console.log('Dry run complete. Add --apply to download files locally.');
@@ -179,8 +299,17 @@ async function main() {
     written += 1;
   }
 
+  const migrated = await migrateLegacyInputKeyDirs(root, inputRows);
+  const cleaned = await pruneEmptyLegacyInputKeyDirs(root, inputRows);
+
   console.log('');
   console.log(`Pull complete. Written: ${written}`);
+  if (migrated.moved > 0 || migrated.deduped > 0 || migrated.removedDirs > 0) {
+    console.log(`Legacy migration: moved ${migrated.moved}, deduped ${migrated.deduped}, removed dirs ${migrated.removedDirs}`);
+  }
+  if (cleaned > 0) {
+    console.log(`Legacy empty key folders removed: ${cleaned}`);
+  }
 }
 
 main().catch((err) => {
