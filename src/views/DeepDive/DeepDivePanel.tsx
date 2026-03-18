@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { scoreColor, scoreColorClass } from '@/lib/scoring';
 import ScoreBar from '@/components/ui/ScoreBar';
 import { useDeepDiveAnalyses, useGenerateDeepDive } from '@/hooks/useDeepDive';
 import { useAuth } from '@/hooks/useAuth';
+import { useInputs } from '@/hooks/useInputs';
 import type { DeepDive, ScoreArea } from '@/lib/types';
 
 interface Props {
@@ -22,11 +23,22 @@ const AREA_RELATIONS: Record<string, string[]> = {
   cx: [],
 };
 
+const AREA_SUBGROUP_HINTS: Record<string, string[]> = {
+  positioning: ['positioning', 'competitive'],
+  strategy: ['strategy'],
+  product: ['service delivery', 'program'],
+  marketing: ['awareness', 'marketing'],
+  sales: ['referral pipeline', 'referral', 'fundraising'],
+  cx: ['family experience', 'family'],
+};
+
 export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: Props) {
   const [activeTab, setActiveTab] = useState(0);
   const { user } = useAuth();
+  const { query: inputsQuery } = useInputs();
   const { data: dbAnalyses } = useDeepDiveAnalyses();
   const generateMutation = useGenerateDeepDive();
+  const inputs = inputsQuery.data ?? [];
 
   const areas = dynamicAreas ?? [];
   const area = areas.find((a) => a.area_key === areaKey);
@@ -37,6 +49,22 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
     : null;
 
   const isGenerating = generateMutation.isPending;
+  const hasAnyUploadedFiles = useMemo(
+    () => inputs.some((input) => input.files.length > 0),
+    [inputs],
+  );
+  const hasAreaUploadedFiles = useMemo(() => {
+    if (!areaKey) return false;
+    const hints = AREA_SUBGROUP_HINTS[areaKey] ?? [];
+    if (hints.length === 0) return false;
+
+    return inputs.some((input) => {
+      if (input.files.length === 0) return false;
+      const subGroup = String(input.sub_group || '').toLowerCase();
+      return hints.some((hint) => subGroup.includes(hint));
+    });
+  }, [areaKey, inputs]);
+  const analysisRunLabel = hasAreaUploadedFiles ? 'uploaded evidence' : 'current inputs';
 
   useEffect(() => { setActiveTab(0); }, [areaKey]);
 
@@ -122,7 +150,7 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
                   {isGenerating ? (
                     <>
                       <div className="w-3 h-3 border-2 border-gold border-t-transparent rounded-full animate-spin" />
-                      Analyzing your evidence…
+                      Analyzing {analysisRunLabel}…
                     </>
                   ) : hasDbAnalysis ? (
                     '↻ Re-analyze with latest evidence'
@@ -131,7 +159,11 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
                   )}
                 </button>
                 <p className="mt-2 font-mono text-[10px] text-t-ds leading-relaxed">
-                  This analysis uses client-scoped uploaded evidence on your local internal AI path.
+                  {hasAreaUploadedFiles
+                    ? 'This analysis uses client-scoped uploaded evidence for this area on your local internal AI path.'
+                    : hasAnyUploadedFiles
+                      ? 'No uploaded files are mapped to this area yet. This run uses current inputs only and is provisional.'
+                      : 'No uploaded files exist for this company yet. This run uses current inputs only and is provisional.'}
                 </p>
               </div>
             )}
@@ -157,14 +189,21 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
             <div className="flex-1 overflow-y-auto px-6 py-[22px] dark-scrollbar">
               {deepDive ? (
                 <>
-                  {activeTab === 0 && <TabWhatWeFound deepDive={deepDive} />}
+                  {activeTab === 0 && (
+                    <TabWhatWeFound
+                      deepDive={deepDive}
+                      hasAreaUploadedFiles={hasAreaUploadedFiles}
+                    />
+                  )}
                   {activeTab === 1 && <TabWhatGoodLooksLike deepDive={deepDive} area={area} />}
                   {activeTab === 2 && <TabPathForward deepDive={deepDive} areaKey={areaKey!} />}
                 </>
               ) : (
                 <p className="font-serif text-[14px] italic text-t-ds text-center py-12 px-5 leading-[1.75]">
                   {user
-                    ? 'Click "Analyze with AI" above to generate insights from your uploaded evidence.'
+                    ? hasAreaUploadedFiles
+                      ? 'Click "Analyze with AI" above to generate insights from your uploaded evidence.'
+                      : 'Click "Analyze with AI" above to generate a provisional analysis from current inputs. Upload files to strengthen evidence.'
                     : 'Your strategist is preparing the detailed analysis for this area. It will appear here after your next session.'}
                 </p>
               )}
@@ -197,7 +236,13 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
 
 /* ─── Tab Components ─── */
 
-function TabWhatWeFound({ deepDive }: { deepDive: DeepDive }) {
+function TabWhatWeFound({
+  deepDive,
+  hasAreaUploadedFiles,
+}: {
+  deepDive: DeepDive;
+  hasAreaUploadedFiles: boolean;
+}) {
   return (
     <div>
       <p className="font-mono text-[10px] text-t-ds uppercase tracking-[0.14em] border-b border-[#2a2618] pb-2 mb-[14px]">
@@ -233,7 +278,9 @@ function TabWhatWeFound({ deepDive }: { deepDive: DeepDive }) {
 
       <div className="bg-ink-sub rounded-md p-[11px] px-[14px] mt-2">
         <p className="font-serif text-[13px] italic text-t-ds leading-[1.65]">
-          Analysis generated from your uploaded evidence and input completeness.
+          {hasAreaUploadedFiles
+            ? 'Analysis generated from your uploaded evidence and input completeness.'
+            : 'Analysis generated from current input completeness only. Add uploaded evidence to improve confidence.'}
         </p>
       </div>
     </div>

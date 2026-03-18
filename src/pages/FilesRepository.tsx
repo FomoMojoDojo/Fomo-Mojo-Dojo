@@ -19,6 +19,15 @@ interface FileWithContext extends InputFile {
   groupKey: string;
 }
 
+type AwaitingAnalysisProgress = {
+  running: boolean;
+  total: number;
+  completed: number;
+  currentArea: string | null;
+  succeeded: string[];
+  failed: string[];
+};
+
 const c = {
   bg: "#faf7f6",
   panel: "#ffffff",
@@ -28,6 +37,38 @@ const c = {
   muted: "#6e847f",
   soft: "#f6f3ee",
 };
+
+const AREA_ANALYSIS_TIMEOUT_MS = 180_000;
+
+function normalizeText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function resolveAreaKey(subGroup: string): "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx" | null {
+  const normalized = normalizeText(subGroup);
+  if (!normalized) return null;
+
+  if (
+    normalized.includes("positioning") ||
+    normalized.includes("competitive") ||
+    normalized.includes("mental health providers") ||
+    normalized.includes("providers")
+  ) {
+    return "positioning";
+  }
+  if (normalized.includes("strategy")) return "strategy";
+  if (normalized.includes("service delivery") || normalized.includes("program model") || normalized.includes("program")) {
+    return "product";
+  }
+  if (normalized.includes("awareness") || normalized.includes("marketing")) return "marketing";
+  if (normalized.includes("referral") || normalized.includes("fundraising") || normalized.includes("sales")) {
+    return "sales";
+  }
+  if (normalized.includes("family experience") || normalized.includes("family") || normalized.includes("cx")) {
+    return "cx";
+  }
+  return null;
+}
 
 function TagEditor({ file, onClose }: { file: FileWithContext; onClose: () => void }) {
   const [selected, setSelected] = useState<string[]>(file.tags ?? []);
@@ -104,18 +145,8 @@ export default function FilesRepository() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
-  const [analyzingAwaiting, setAnalyzingAwaiting] = useState(false);
-  const [activeAnalysisArea, setActiveAnalysisArea] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<AwaitingAnalysisProgress | null>(null);
 
-  const subGroupToArea: Record<string, string> = {
-    Positioning: "positioning",
-    Strategy: "strategy",
-    "Service Delivery": "product",
-    Awareness: "marketing",
-    "Referral Pipeline": "sales",
-    Fundraising: "sales",
-    "Family Experience": "cx",
-  };
   const areaLabelByKey: Record<string, string> = {
     positioning: "Positioning",
     strategy: "Strategy",
@@ -163,21 +194,29 @@ export default function FilesRepository() {
   const pendingAreaKeys = useMemo(() => {
     const pending = new Set<string>();
     for (const file of allFiles) {
-      const areaKey = subGroupToArea[file.subGroup];
+      const areaKey = resolveAreaKey(file.subGroup);
       if (!areaKey) continue;
       if (!analyzedAreas.has(areaKey)) pending.add(areaKey);
     }
     return [...pending];
-  }, [allFiles, analyzedAreas, subGroupToArea]);
+  }, [allFiles, analyzedAreas]);
 
   const pendingFileCount = useMemo(
     () =>
       allFiles.filter((file) => {
-        const areaKey = subGroupToArea[file.subGroup];
+        const areaKey = resolveAreaKey(file.subGroup);
         return !!areaKey && !analyzedAreas.has(areaKey);
       }).length,
-    [allFiles, analyzedAreas, subGroupToArea],
+    [allFiles, analyzedAreas],
   );
+
+  const isAwaitingAnalysisRunning = analysisProgress?.running ?? false;
+  const hasAwaitingAreas = pendingAreaKeys.length > 0;
+  const canAnalyzeAwaiting = !!user && hasAwaitingAreas;
+  const progressPercent =
+    analysisProgress && analysisProgress.total > 0
+      ? Math.round((analysisProgress.completed / analysisProgress.total) * 100)
+      : 0;
 
   async function handleAnalyzeAwaiting() {
     if (!user) {
@@ -189,28 +228,66 @@ export default function FilesRepository() {
       return;
     }
 
-    setAnalyzingAwaiting(true);
-    setActiveAnalysisArea(null);
-    let succeeded = 0;
-    let failed = 0;
+    const runAreas = [...pendingAreaKeys];
+    const succeededAreas: string[] = [];
+    const failedAreas: string[] = [];
 
-    for (const areaKey of pendingAreaKeys) {
+    setAnalysisProgress({
+      running: true,
+      total: runAreas.length,
+      completed: 0,
+      currentArea: null,
+      succeeded: [],
+      failed: [],
+    });
+
+    for (const areaKey of runAreas) {
+      setAnalysisProgress((current) =>
+        current
+          ? { ...current, currentArea: areaKey }
+          : current,
+      );
+
       try {
-        setActiveAnalysisArea(areaKey);
-        await generateDeepDive.mutateAsync(areaKey);
-        succeeded += 1;
+        await Promise.race([
+          generateDeepDive.mutateAsync(areaKey),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("analysis_timeout")), AREA_ANALYSIS_TIMEOUT_MS);
+          }),
+        ]);
+        succeededAreas.push(areaKey);
       } catch {
-        failed += 1;
+        failedAreas.push(areaKey);
+      } finally {
+        setAnalysisProgress((current) =>
+          current
+            ? {
+                ...current,
+                completed: current.completed + 1,
+                succeeded: [...succeededAreas],
+                failed: [...failedAreas],
+              }
+            : current,
+        );
       }
     }
 
-    setActiveAnalysisArea(null);
-    setAnalyzingAwaiting(false);
+    setAnalysisProgress({
+      running: false,
+      total: runAreas.length,
+      completed: runAreas.length,
+      currentArea: null,
+      succeeded: [...succeededAreas],
+      failed: [...failedAreas],
+    });
 
-    if (failed > 0) {
-      toast.message(`Analyzed ${succeeded} area${succeeded === 1 ? "" : "s"} (${failed} failed)`);
+    const finalSucceeded = succeededAreas.length;
+    const finalFailed = failedAreas.length;
+
+    if (finalFailed > 0) {
+      toast.message(`Analyzed ${finalSucceeded} area${finalSucceeded === 1 ? "" : "s"} (${finalFailed} failed)`);
     } else {
-      toast.success(`Analyzed ${succeeded} area${succeeded === 1 ? "" : "s"} from awaiting files`);
+      toast.success(`Analyzed ${finalSucceeded} area${finalSucceeded === 1 ? "" : "s"} from awaiting files`);
     }
   }
 
@@ -296,18 +373,41 @@ export default function FilesRepository() {
               <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {pendingFileCount} file{pendingFileCount === 1 ? "" : "s"} awaiting across {pendingAreaKeys.length} area{pendingAreaKeys.length === 1 ? "" : "s"}
               </p>
+              {!user ? (
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#915e46" }}>
+                  Sign in required to run local analysis.
+                </p>
+              ) : null}
+              {user && !hasAwaitingAreas ? (
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  No pending areas to analyze right now.
+                </p>
+              ) : null}
+              {isAwaitingAnalysisRunning ? (
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#915e46" }}>
+                  If an area stalls, it auto-times out after 3 minutes.
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={handleAnalyzeAwaiting}
-                disabled={analyzingAwaiting || pendingAreaKeys.length === 0 || !user}
+                disabled={isAwaitingAnalysisRunning}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:cursor-not-allowed disabled:opacity-60"
-                style={{ color: c.panel, borderColor: c.charcoal, background: c.charcoal }}
+                style={{
+                  color: canAnalyzeAwaiting ? c.panel : c.secondary,
+                  borderColor: canAnalyzeAwaiting ? c.charcoal : c.line,
+                  background: canAnalyzeAwaiting ? c.charcoal : c.panel,
+                }}
               >
-                {analyzingAwaiting
-                  ? `Analyzing ${areaLabelByKey[activeAnalysisArea ?? ""] ?? "area"}...`
-                  : "Analyze Awaiting Files"}
+                {isAwaitingAnalysisRunning
+                  ? `Analyzing ${analysisProgress?.completed ?? 0}/${analysisProgress?.total ?? 0}...`
+                  : canAnalyzeAwaiting
+                    ? "Analyze Awaiting Files"
+                    : !user
+                      ? "Sign In to Analyze"
+                      : "No Awaiting Files"}
               </button>
               <Link
                 to="/admin/companies"
@@ -319,6 +419,40 @@ export default function FilesRepository() {
               </Link>
             </div>
           </div>
+          {analysisProgress ? (
+            <div className="mt-3 rounded-xl border p-3" style={{ background: c.soft, borderColor: c.line }}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  {analysisProgress.running ? "Local analysis running" : "Local analysis complete"}
+                </p>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                  {analysisProgress.completed}/{analysisProgress.total} areas
+                </p>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ background: "#e7ede2" }}>
+                <div
+                  className="h-2 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${progressPercent}%`,
+                    background: analysisProgress.running ? "#5f9b8c" : "#233c4b",
+                  }}
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                  Success: {analysisProgress.succeeded.length}
+                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#915e46" }}>
+                  Failed: {analysisProgress.failed.length}
+                </span>
+                {analysisProgress.currentArea ? (
+                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                    Current: {areaLabelByKey[analysisProgress.currentArea] ?? analysisProgress.currentArea}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="mt-6 rounded-2xl border p-5 shadow-sm" style={{ background: c.panel, borderColor: c.line }}>
@@ -395,7 +529,7 @@ export default function FilesRepository() {
                     </div>
 
                     {(() => {
-                      const areaKey = subGroupToArea[file.subGroup];
+                      const areaKey = resolveAreaKey(file.subGroup);
                       const isAnalyzed = !!areaKey && analyzedAreas.has(areaKey);
 
                       if (!user) {

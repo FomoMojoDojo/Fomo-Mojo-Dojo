@@ -26,6 +26,9 @@ If the app is up but data, auth, or edge functions are failing, the local Supaba
 From the same project folder:
 
 ```bash
+set -a
+source supabase/functions/.env.local
+set +a
 supabase start
 ```
 
@@ -53,6 +56,9 @@ Commands:
 
 ```bash
 cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+set -a
+source supabase/functions/.env.local
+set +a
 supabase start
 npm run dev -- --host 0.0.0.0 --port 8080
 ```
