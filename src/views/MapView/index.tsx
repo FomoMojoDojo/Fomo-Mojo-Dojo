@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
@@ -8,6 +8,7 @@ import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useDynamicScoring } from "@/hooks/useDynamicScoring";
 import { useJobSteps } from "@/hooks/useJobSteps";
+import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
@@ -17,6 +18,7 @@ import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
+import { toast } from "sonner";
 
 /* ── Clean, sophisticated palette ── */
 const c = {
@@ -123,7 +125,7 @@ export default function MapView() {
   const [deepDiveArea, setDeepDiveArea] = useState<string | null>(null);
 
   const { user } = useAuth();
-  const { activeCompany } = useCompany();
+  const { activeCompany, refetch: refetchCompanies } = useCompany();
 
   const { query: inputsQuery } = useInputs();
   const inputs = useMemo<InputItem[]>(() => {
@@ -136,6 +138,8 @@ export default function MapView() {
     inputsOverride: inputs,
   });
   const { items: jobSteps } = useJobSteps(activeCompany?.id);
+  const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
+  const applyLocalAlignment = useRunLocalAlignment(activeCompany?.id);
 
   const hasData = inputs.length > 0;
 
@@ -180,12 +184,75 @@ export default function MapView() {
   const score = Math.round(safeNumber(displayMojo, 0));
   const potential = Math.round(safeNumber(displayPotential, 0));
   const projected = Math.round(safeNumber(displayProjected, 0));
+  const previousScoresRef = useRef<{ mojo: number; potential: number; projected: number } | null>(null);
+  const [scoreDeltas, setScoreDeltas] = useState<{
+    mojo: number | null;
+    potential: number | null;
+    projected: number | null;
+  }>({
+    mojo: null,
+    potential: null,
+    projected: null,
+  });
   const evidenceLabel = formatEvidenceLabel(activeCompany?.evidence_status ?? fallbackScores.evidence_status);
   const evidencePct = evidencePercent(activeCompany?.area_scores_json) ?? Math.round(fallbackScores.evidenceBreakdown.baseline_strength);
   const displayAreaScoresJson =
     typeof activeCompany?.area_scores_json === "object" && activeCompany?.area_scores_json !== null
       ? activeCompany.area_scores_json
       : fallbackScores.area_scores_json;
+  const localScoreImpact = localAlignment?.score_impact ?? null;
+
+  useEffect(() => {
+    previousScoresRef.current = null;
+    setScoreDeltas({ mojo: null, potential: null, projected: null });
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    const previous = previousScoresRef.current;
+    if (!previous) {
+      previousScoresRef.current = { mojo: score, potential, projected };
+      return;
+    }
+
+    const mojoDelta = score - previous.mojo;
+    const potentialDelta = potential - previous.potential;
+    const projectedDelta = projected - previous.projected;
+
+    setScoreDeltas((current) =>
+      current.mojo === mojoDelta &&
+      current.potential === potentialDelta &&
+      current.projected === projectedDelta
+        ? current
+        : {
+            mojo: mojoDelta,
+            potential: potentialDelta,
+            projected: projectedDelta,
+          },
+    );
+
+    previousScoresRef.current = { mojo: score, potential, projected };
+  }, [score, potential, projected]);
+
+  const scoreSubtext = useMemo(() => {
+    const pointsChangeText = (delta: number | null) => {
+      if (delta === null) return "Points change: 0";
+      if (delta > 0) return `Points change: +${delta}`;
+      if (delta < 0) return `Points change: -${Math.abs(delta)}`;
+      return "Points change: 0";
+    };
+
+    const conciseDeltaText = (delta: number | null): string | null => {
+      if (delta === null || delta === 0) return null;
+      if (delta > 0) return `↑ +${delta} pts`;
+      return `↓ ${Math.abs(delta)} pts`;
+    };
+
+    return {
+      currentReality: pointsChangeText(scoreDeltas.mojo),
+      potential: conciseDeltaText(scoreDeltas.potential),
+      projected: conciseDeltaText(scoreDeltas.projected),
+    };
+  }, [scoreDeltas.mojo, scoreDeltas.potential, scoreDeltas.projected]);
 
   const inputComplete = inputs.filter((i) => i.status === "complete").length;
   const inputTotal = inputs.length;
@@ -217,6 +284,42 @@ export default function MapView() {
   function closeDeepDive() {
     setDeepDiveOpen(false);
     setTimeout(() => setDeepDiveArea(null), 300);
+  }
+
+  async function handleApplyScoreUpdate() {
+    if (!activeCompany?.id || applyLocalAlignment.isPending) return;
+    try {
+      const result = await applyLocalAlignment.mutateAsync({
+        areas: ["positioning", "strategy"],
+        trigger: "manual_apply",
+        applyScoreUpdate: true,
+      });
+      await refetchCompanies();
+      const applied = result?.applied_score_update;
+      if (applied?.applied) {
+        toast.success(
+          `Score updated: ${applied.previous_mojo ?? 0} → ${applied.updated_mojo ?? 0}`,
+        );
+      } else {
+        toast.message(applied?.reason || "No score change was applied.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to apply score update.");
+    }
+  }
+
+  async function handleRunLocalComparison() {
+    if (!activeCompany?.id || applyLocalAlignment.isPending) return;
+    try {
+      await applyLocalAlignment.mutateAsync({
+        areas: ["positioning", "strategy"],
+        trigger: "manual_refresh",
+        applyScoreUpdate: false,
+      });
+      toast.success("Local comparison updated.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to run local comparison.");
+    }
   }
 
   const weakestArea = useMemo(() => {
@@ -405,17 +508,69 @@ export default function MapView() {
             </div>
           ) : null}
 
+          <div className="mb-5 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.lineFaint }}>
+            <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
+              Local Comparison Impact
+            </p>
+            {localAlignment ? (
+              <>
+                <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                  {localScoreImpact?.should_change
+                    ? `Local strategy/positioning comparison suggests a ${localScoreImpact.direction} adjustment of ${localScoreImpact.points} point${localScoreImpact.points === 1 ? "" : "s"} when reconciliation actions are completed.`
+                    : "Local strategy/positioning comparison did not recommend a score change from this run."}
+                </p>
+                <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                  {localScoreImpact?.reason || "No score-impact rationale returned."}
+                </p>
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
+                  Run: {new Date(localAlignment.created_at).toLocaleString()} · {localAlignment.provider} · {localAlignment.model}
+                </p>
+                {localAlignment.applied_score_update?.applied ? (
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wider" style={{ color: c.teal }}>
+                    Applied: {localAlignment.applied_score_update.previous_mojo ?? 0} → {localAlignment.applied_score_update.updated_mojo ?? 0}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                No local comparison has run for this company yet. Run it to generate side-by-side public vs company evidence and gap/overlap findings.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleRunLocalComparison}
+                disabled={applyLocalAlignment.isPending}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ borderColor: c.line, color: c.charcoal, background: "#FFFFFF" }}
+              >
+                {applyLocalAlignment.isPending ? "Running..." : "Run Local Comparison"}
+              </button>
+              {localAlignment && localScoreImpact?.should_change ? (
+                <button
+                  type="button"
+                  onClick={handleApplyScoreUpdate}
+                  disabled={applyLocalAlignment.isPending}
+                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ borderColor: c.charcoal, color: "#ffffff", background: c.charcoal }}
+                >
+                  {applyLocalAlignment.isPending ? "Applying..." : "Apply Score Update"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+
           {/* ── Hero stats ── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
             {[
               {
                 value: score,
-                label: "Mojo Score",
+                label: "Current Reality",
                 bg: c.coral,
-                sub: `↑ +${safeNumber(summary?.score_delta, 0)} this quarter`,
+                sub: scoreSubtext.currentReality,
               },
-              { value: potential, label: "Potential", bg: c.amber, sub: "with clearer strategic framing" },
-              { value: projected, label: "Projected", bg: c.teal, sub: "if positioning, customer insight, and execution gaps are closed" },
+              { value: potential, label: "Potential", bg: c.amber, sub: scoreSubtext.potential },
+              { value: projected, label: "Projected", bg: c.teal, sub: scoreSubtext.projected },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -431,9 +586,11 @@ export default function MapView() {
                 <span className="font-sans text-[11px] font-semibold uppercase tracking-[0.06em] mt-2 text-white/80">
                   {stat.label}
                 </span>
-                <span className="mt-1 max-w-[220px] text-center font-mono text-[11px] text-white/60">
-                  {stat.sub}
-                </span>
+                {stat.sub ? (
+                  <span className="mt-1 max-w-[220px] text-center font-mono text-[11px] text-white/60">
+                    {stat.sub}
+                  </span>
+                ) : null}
               </div>
             ))}
           </div>
@@ -491,7 +648,7 @@ export default function MapView() {
                   ))
                 ) : (
                   <>
-                    <ScoreChip label="Mojo" value={score} />
+                    <ScoreChip label="Current Reality" value={score} />
                     <ScoreChip label="Potential" value={potential} />
                     <ScoreChip label="Projected" value={projected} />
                   </>
