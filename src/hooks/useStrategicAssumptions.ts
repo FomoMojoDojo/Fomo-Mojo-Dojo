@@ -168,6 +168,43 @@ export function useStrategicAssumptions(companyId?: string) {
     }
   };
 
+  const updateAssumption = async (
+    id: string,
+    updates: {
+      assumption?: string;
+      source?: StrategicAssumption["source"];
+      status?: StrategicAssumption["status"];
+      note?: string;
+    },
+  ) => {
+    if (!companyId) throw new Error("No active company selected.");
+    const assumption = updates.assumption !== undefined ? String(updates.assumption || "").trim() : undefined;
+    if (assumption !== undefined && !assumption) {
+      throw new Error("Assumption text cannot be empty.");
+    }
+
+    setUpdatingId(id);
+    try {
+      const client = supabase as any;
+      const { error } = await client
+        .from("strategy_assumptions")
+        .update({
+          ...(assumption !== undefined ? { assumption } : {}),
+          ...(updates.source ? { source: updates.source } : {}),
+          ...(updates.status ? { status: updates.status } : {}),
+          ...(updates.note !== undefined ? { note: updates.note.trim() ? updates.note.trim() : null } : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .eq("company_id", companyId);
+
+      if (error) throw new Error(error.message || "Failed to update assumption.");
+      await load(companyId);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   return {
     loading,
     items,
@@ -177,6 +214,7 @@ export function useStrategicAssumptions(companyId?: string) {
     updatingId,
     addAssumption,
     setAssumptionStatus,
+    updateAssumption,
     refetch: async () => {
       if (!companyId) return;
       await load(companyId);

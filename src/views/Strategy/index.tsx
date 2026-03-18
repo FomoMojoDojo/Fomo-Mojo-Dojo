@@ -145,12 +145,15 @@ type AssumptionViewFilter = "all" | "generated" | "submitted";
 type UnifiedAssumption = {
   key: string;
   origin: "generated" | "submitted";
+  submittedId?: string;
   assumption: string;
   evidence: string;
+  status: StrategicAssumption["status"];
   statusLabel: string;
   statusTone: { bg: string; fg: string; border: string };
   source?: ProvenanceSource;
   createdAt?: string;
+  updatedAt?: string;
 };
 
 function sourceLabel(source: ProvenanceSource) {
@@ -187,49 +190,182 @@ function originTone(origin: UnifiedAssumption["origin"]) {
   return { bg: "#EEF4F9", fg: c.secondary, border: "#C9D8E7", label: "Generated" };
 }
 
-function UnifiedAssumptionCard({ item }: { item: UnifiedAssumption }) {
+function UnifiedAssumptionCard({
+  item,
+  isEditing,
+  onEdit,
+  onCancelEdit,
+  editDraft,
+  onDraftChange,
+  onSaveEdit,
+  isSaving,
+}: {
+  item: UnifiedAssumption;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  editDraft: {
+    assumption: string;
+    evidence: string;
+    source: StrategicAssumption["source"];
+    status: StrategicAssumption["status"];
+  } | null;
+  onDraftChange: (draft: {
+    assumption: string;
+    evidence: string;
+    source: StrategicAssumption["source"];
+    status: StrategicAssumption["status"];
+  }) => void;
+  onSaveEdit: () => void;
+  isSaving: boolean;
+}) {
   const originStyle = originTone(item.origin);
   const sourceStyle = item.source ? sourceTone(item.source) : null;
+  const createdLabel = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "Generated snapshot";
+  const updatedLabel = item.updatedAt
+    ? new Date(item.updatedAt).toLocaleDateString()
+    : item.createdAt
+      ? new Date(item.createdAt).toLocaleDateString()
+      : "Not edited yet";
   return (
     <div
       className="rounded-[18px] border p-4"
       style={{ borderColor: c.line, background: c.paper }}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-          style={{ borderColor: originStyle.border, background: originStyle.bg, color: originStyle.fg }}
-        >
-          {originStyle.label}
-        </span>
-        {sourceStyle ? (
-          <span
-            className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-            style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
-          >
-            {sourceLabel(item.source!)}
-          </span>
-        ) : null}
-        <span
-          className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-          style={{ borderColor: item.statusTone.border, background: item.statusTone.bg, color: item.statusTone.fg }}
-        >
-          {item.statusLabel}
-        </span>
-        {item.createdAt ? (
-          <span className="font-mono text-[10px]" style={{ color: c.muted }}>
-            {new Date(item.createdAt).toLocaleDateString()}
-          </span>
-        ) : null}
-      </div>
-
-      <p className="mt-2 font-sans text-[15px] leading-[1.6]" style={{ color: c.charcoal }}>
-        {item.assumption}
-      </p>
-
-      <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-        {item.evidence ? `Evidence needed: ${item.evidence}` : "Evidence needed: not defined yet."}
-      </p>
+      {isEditing && editDraft ? (
+        <div className="space-y-3">
+          <textarea
+            className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+            style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+            rows={2}
+            value={editDraft.assumption}
+            onChange={(event) => onDraftChange({ ...editDraft, assumption: event.target.value })}
+          />
+          <input
+            className="w-full rounded-[12px] border px-3 py-2 font-sans text-[13px] outline-none"
+            style={{ borderColor: c.line, background: "#fff", color: c.secondary }}
+            value={editDraft.evidence}
+            onChange={(event) => onDraftChange({ ...editDraft, evidence: event.target.value })}
+            placeholder="Evidence needed (editable)"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className="font-mono text-[10px] uppercase tracking-[0.08em]"
+              style={{ color: c.muted }}
+            >
+              Source
+            </span>
+            <select
+              className="rounded-md border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              value={editDraft.source}
+              onChange={(event) =>
+                onDraftChange({
+                  ...editDraft,
+                  source: event.target.value as StrategicAssumption["source"],
+                })
+              }
+            >
+              <option value="client">Client</option>
+              <option value="intake">Intake</option>
+              <option value="company">Company</option>
+              <option value="public">Public</option>
+              <option value="evidence">Evidence</option>
+            </select>
+            <span
+              className="ml-2 font-mono text-[10px] uppercase tracking-[0.08em]"
+              style={{ color: c.muted }}
+            >
+              Status
+            </span>
+            <select
+              className="rounded-md border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              value={editDraft.status}
+              onChange={(event) =>
+                onDraftChange({
+                  ...editDraft,
+                  status: event.target.value as StrategicAssumption["status"],
+                })
+              }
+            >
+              <option value="untested">Untested</option>
+              <option value="validating">Validating</option>
+              <option value="validated">Validated</option>
+              <option value="invalidated">Invalidated</option>
+            </select>
+          </div>
+          <div className="rounded-[10px] border px-2.5 py-2" style={{ borderColor: c.lineFaint, background: "#F9FBF7" }}>
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Created: {createdLabel}
+            </p>
+            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Last edited: {updatedLabel}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onSaveEdit}
+              disabled={isSaving}
+              className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              disabled={isSaving}
+              className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-3">
+            <p className="font-sans text-[15px] leading-[1.5]" style={{ color: c.charcoal }}>
+              {item.assumption}
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <span
+                className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ borderColor: originStyle.border, background: originStyle.bg, color: originStyle.fg }}
+              >
+                {originStyle.label}
+              </span>
+              {sourceStyle ? (
+                <span
+                  className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                  style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
+                >
+                  {sourceLabel(item.source!)}
+                </span>
+              ) : null}
+              <span
+                className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ borderColor: item.statusTone.border, background: item.statusTone.bg, color: item.statusTone.fg }}
+              >
+                {item.statusLabel}
+              </span>
+              <button
+                type="button"
+                onClick={onEdit}
+                className="rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              >
+                Edit
+              </button>
+            </div>
+          </div>
+          <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+            {item.evidence ? `Evidence needed: ${item.evidence}` : "Evidence needed: not defined yet."}
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -278,7 +414,7 @@ export default function StrategyView() {
     saving: strategicAssumptionSaving,
     updatingId: assumptionUpdatingId,
     addAssumption,
-    setAssumptionStatus,
+    updateAssumption,
   } = useStrategicAssumptions(activeCompany?.id);
   const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
   const strategyAlignment = localAlignment?.areas?.strategy ?? null;
@@ -292,49 +428,64 @@ export default function StrategyView() {
   const [newAssumptionText, setNewAssumptionText] = useState("");
   const [newAssumptionSource, setNewAssumptionSource] = useState<StrategicAssumption["source"]>("client");
   const [newAssumptionNote, setNewAssumptionNote] = useState("");
-  const [assumptionNoteById, setAssumptionNoteById] = useState<Record<string, string>>({});
   const [assumptionsEditorOpen, setAssumptionsEditorOpen] = useState(false);
   const [assumptionViewFilter, setAssumptionViewFilter] = useState<AssumptionViewFilter>("all");
+  const [editingAssumptionKey, setEditingAssumptionKey] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState<{
+    assumption: string;
+    evidence: string;
+    source: StrategicAssumption["source"];
+    status: StrategicAssumption["status"];
+  } | null>(null);
+  const [hiddenGeneratedKeys, setHiddenGeneratedKeys] = useState<Set<string>>(new Set());
 
   const openProblemsCount = useMemo(
     () => strategicProblems.filter((problem) => problem.status !== "reconciled").length,
     [strategicProblems],
   );
 
-  const openAssumptionsCount = useMemo(
-    () =>
-      strategicAssumptions.filter(
-        (assumption) => assumption.status === "untested" || assumption.status === "validating",
-      ).length,
-    [strategicAssumptions],
-  );
   const suggestedEvidenceForNewAssumption = useMemo(
     () => suggestEvidenceNeeded(newAssumptionText),
     [newAssumptionText],
   );
   const unifiedAssumptions = useMemo<UnifiedAssumption[]>(() => {
-    const generated = (item?.assumptions ?? []).map((assumption, index) => ({
-      key: `generated-${index}-${assumption.assumption}`,
-      origin: "generated" as const,
-      assumption: String(assumption.assumption || "").trim(),
-      evidence: String(assumption.note || assumption.outcome || "").trim(),
-      statusLabel: assumption.tested ? "Tested" : "Untested",
-      statusTone: assumptionStatusTone(assumption.tested ? "validated" : "untested"),
-    }));
+    const generated = (item?.assumptions ?? [])
+      .map((assumption, index) => ({
+        key: `generated-${index}-${assumption.assumption}`,
+        origin: "generated" as const,
+        assumption: String(assumption.assumption || "").trim(),
+        evidence: String(assumption.note || assumption.outcome || "").trim(),
+        status: assumption.tested ? "validated" : "untested",
+        statusLabel: assumption.tested ? "Tested" : "Untested",
+        statusTone: assumptionStatusTone(assumption.tested ? "validated" : "untested"),
+        source: "public" as ProvenanceSource,
+      }))
+      .filter((assumption) => !hiddenGeneratedKeys.has(assumption.key));
 
     const submitted = strategicAssumptions.map((assumption) => ({
       key: `submitted-${assumption.id}`,
       origin: "submitted" as const,
+      submittedId: assumption.id,
       assumption: String(assumption.assumption || "").trim(),
       evidence: String(assumption.note || "").trim(),
+      status: assumption.status,
       statusLabel: assumptionStatusLabel(assumption.status),
       statusTone: assumptionStatusTone(assumption.status),
       source: assumption.source,
       createdAt: assumption.created_at,
+      updatedAt: assumption.updated_at,
     }));
 
     return [...generated, ...submitted].filter((assumption) => assumption.assumption);
-  }, [item?.assumptions, strategicAssumptions]);
+  }, [hiddenGeneratedKeys, item?.assumptions, strategicAssumptions]);
+
+  const openAssumptionsCount = useMemo(
+    () =>
+      unifiedAssumptions.filter(
+        (assumption) => assumption.status === "untested" || assumption.status === "validating",
+      ).length,
+    [unifiedAssumptions],
+  );
 
   const filteredUnifiedAssumptions = useMemo(() => {
     if (assumptionViewFilter === "generated") {
@@ -394,26 +545,60 @@ export default function StrategyView() {
     }
   };
 
-  const updateAssumptionStatus = async (
-    assumption: StrategicAssumption,
-    status: StrategicAssumption["status"],
-  ) => {
-    const note = assumptionNoteById[assumption.id] ?? assumption.note ?? "";
-    try {
-      await setAssumptionStatus(assumption.id, status, note);
-      toast.success(`Assumption marked ${assumptionStatusLabel(status).toLowerCase()}.`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update assumption.");
-    }
+  const beginAssumptionEdit = (assumption: UnifiedAssumption) => {
+    setEditingAssumptionKey(assumption.key);
+    setEditingDraft({
+      assumption: assumption.assumption,
+      evidence: assumption.evidence || suggestEvidenceNeeded(assumption.assumption),
+      source: (assumption.source as StrategicAssumption["source"]) || "public",
+      status: assumption.status,
+    });
   };
 
-  const saveAssumptionEvidenceNeeded = async (assumption: StrategicAssumption) => {
-    const note = assumptionNoteById[assumption.id] ?? assumption.note ?? "";
+  const cancelAssumptionEdit = () => {
+    setEditingAssumptionKey(null);
+    setEditingDraft(null);
+  };
+
+  const saveAssumptionEdit = async (assumption: UnifiedAssumption) => {
+    if (!editingDraft) return;
+    const draft = {
+      assumption: editingDraft.assumption.trim(),
+      evidence: editingDraft.evidence.trim(),
+      source: editingDraft.source,
+      status: editingDraft.status,
+    };
+    if (!draft.assumption) {
+      toast.error("Assumption text cannot be empty.");
+      return;
+    }
+
     try {
-      await setAssumptionStatus(assumption.id, assumption.status, note);
-      toast.success("Evidence needed saved.");
+      if (assumption.origin === "submitted" && assumption.submittedId) {
+        await updateAssumption(assumption.submittedId, {
+          assumption: draft.assumption,
+          source: draft.source,
+          status: draft.status,
+          note: draft.evidence,
+        });
+        toast.success("Assumption updated.");
+      } else {
+        await addAssumption({
+          assumption: draft.assumption,
+          source: draft.source,
+          status: draft.status,
+          note: draft.evidence,
+        });
+        setHiddenGeneratedKeys((current) => {
+          const next = new Set(current);
+          next.add(assumption.key);
+          return next;
+        });
+        toast.success("Generated assumption saved as submitted.");
+      }
+      cancelAssumptionEdit();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save evidence needed.");
+      toast.error(err instanceof Error ? err.message : "Failed to save assumption edit.");
     }
   };
 
@@ -723,7 +908,22 @@ export default function StrategyView() {
                   ) : (
                     <div className="mt-4 space-y-3">
                       {filteredUnifiedAssumptions.map((assumption) => (
-                        <UnifiedAssumptionCard key={assumption.key} item={assumption} />
+                        <UnifiedAssumptionCard
+                          key={assumption.key}
+                          item={assumption}
+                          isEditing={editingAssumptionKey === assumption.key}
+                          editDraft={editingDraft}
+                          onEdit={() => beginAssumptionEdit(assumption)}
+                          onCancelEdit={cancelAssumptionEdit}
+                          onDraftChange={setEditingDraft}
+                          onSaveEdit={() => saveAssumptionEdit(assumption)}
+                          isSaving={
+                            strategicAssumptionSaving ||
+                            (assumption.origin === "submitted" &&
+                              !!assumption.submittedId &&
+                              assumptionUpdatingId === assumption.submittedId)
+                          }
+                        />
                       ))}
                     </div>
                   )}
@@ -741,7 +941,7 @@ export default function StrategyView() {
                       className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
                       style={{ borderColor: c.line, color: c.secondary, background: c.paper }}
                     >
-                      <span>{assumptionsEditorOpen ? "Hide Assumption Entry" : "Add Or Edit Assumptions"}</span>
+                      <span>{assumptionsEditorOpen ? "Hide Add Assumption" : "Add Assumption"}</span>
                       <span>{assumptionsEditorOpen ? "−" : "+"}</span>
                     </button>
 
@@ -817,155 +1017,11 @@ export default function StrategyView() {
                                 </button>
                               </div>
                             </div>
-
-                            {assumptionsLoading ? (
-                              <p className="mt-4 font-sans text-[13px]" style={{ color: c.secondary }}>
-                                Loading assumptions...
-                              </p>
-                            ) : strategicAssumptionsError ? (
+                            {strategicAssumptionsError ? (
                               <p className="mt-4 font-sans text-[13px]" style={{ color: c.coral }}>
                                 Failed to load assumptions: {strategicAssumptionsError}
                               </p>
-                            ) : strategicAssumptions.length === 0 ? (
-                              <p className="mt-4 font-sans text-[13px]" style={{ color: c.secondary }}>
-                                No assumptions captured yet.
-                              </p>
-                            ) : (
-                              <div className="mt-4 space-y-3">
-                                {strategicAssumptions.map((assumption) => {
-                                  const sourceStyle = sourceTone(assumption.source);
-                                  const statusStyle = assumptionStatusTone(assumption.status);
-                                  return (
-                                    <div
-                                      key={assumption.id}
-                                      className="rounded-[18px] border p-4"
-                                      style={{ borderColor: c.line, background: c.paper }}
-                                    >
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span
-                                          className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                                          style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
-                                        >
-                                          {sourceLabel(assumption.source)}
-                                        </span>
-                                        <span
-                                          className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                                          style={{ borderColor: statusStyle.border, background: statusStyle.bg, color: statusStyle.fg }}
-                                        >
-                                          {assumptionStatusLabel(assumption.status)}
-                                        </span>
-                                        <span className="font-mono text-[10px]" style={{ color: c.muted }}>
-                                          {new Date(assumption.created_at).toLocaleDateString()}
-                                        </span>
-                                      </div>
-
-                                      <p className="mt-2 font-sans text-[15px] leading-[1.6]" style={{ color: c.charcoal }}>
-                                        {assumption.assumption}
-                                      </p>
-
-                                      {assumption.note ? (
-                                        <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                                          Evidence needed: {assumption.note}
-                                        </p>
-                                      ) : null}
-
-                                      <div
-                                        className="mt-3 rounded-[12px] border px-3 py-2"
-                                        style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}
-                                      >
-                                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-                                          Suggested Evidence Needed
-                                        </p>
-                                        <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-                                          {suggestEvidenceNeeded(assumption.assumption)}
-                                        </p>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setAssumptionNoteById((current) => ({
-                                              ...current,
-                                              [assumption.id]: suggestEvidenceNeeded(assumption.assumption),
-                                            }))
-                                          }
-                                          className="mt-2 rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                                          style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                        >
-                                          Use Suggestion
-                                        </button>
-                                      </div>
-
-                                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                                        <input
-                                          value={assumptionNoteById[assumption.id] ?? assumption.note ?? ""}
-                                          onChange={(event) =>
-                                            setAssumptionNoteById((current) => ({
-                                              ...current,
-                                              [assumption.id]: event.target.value,
-                                            }))
-                                          }
-                                          placeholder="Evidence needed (editable)"
-                                          className="min-w-[240px] flex-1 rounded-md border px-2.5 py-1.5 font-sans text-[12px] outline-none"
-                                          style={{ borderColor: c.line, background: "#fff", color: c.secondary }}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => saveAssumptionEvidenceNeeded(assumption)}
-                                          disabled={assumptionUpdatingId === assumption.id}
-                                          className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                          style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                        >
-                                          {assumptionUpdatingId === assumption.id ? "Saving..." : "Save Evidence"}
-                                        </button>
-                                        {assumption.status !== "validating" ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => updateAssumptionStatus(assumption, "validating")}
-                                            disabled={assumptionUpdatingId === assumption.id}
-                                            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                          >
-                                            {assumptionUpdatingId === assumption.id ? "Saving..." : "Set Validating"}
-                                          </button>
-                                        ) : null}
-                                        {assumption.status !== "validated" ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => updateAssumptionStatus(assumption, "validated")}
-                                            disabled={assumptionUpdatingId === assumption.id}
-                                            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                          >
-                                            {assumptionUpdatingId === assumption.id ? "Saving..." : "Mark Validated"}
-                                          </button>
-                                        ) : null}
-                                        {assumption.status !== "invalidated" ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => updateAssumptionStatus(assumption, "invalidated")}
-                                            disabled={assumptionUpdatingId === assumption.id}
-                                            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                          >
-                                            {assumptionUpdatingId === assumption.id ? "Saving..." : "Mark Invalidated"}
-                                          </button>
-                                        ) : null}
-                                        {assumption.status !== "untested" ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => updateAssumptionStatus(assumption, "untested")}
-                                            disabled={assumptionUpdatingId === assumption.id}
-                                            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                          >
-                                            {assumptionUpdatingId === assumption.id ? "Saving..." : "Reset Untested"}
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                            ) : null}
                           </>
                         )}
                       </div>
