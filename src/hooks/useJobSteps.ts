@@ -10,6 +10,14 @@ function isJobStepEvidenceColumnError(message: string) {
   );
 }
 
+function isMissingTableError(message: string, tableName: string) {
+  const lower = String(message || "").toLowerCase();
+  return (
+    lower.includes("could not find the table") &&
+    lower.includes(`public.${tableName}`.toLowerCase())
+  ) || (lower.includes(tableName.toLowerCase()) && lower.includes("schema cache"));
+}
+
 export type JobStepRow = {
   id: string;
   company_id: string;
@@ -34,6 +42,7 @@ export function useJobSteps(companyId?: string) {
   const [items, setItems] = useState<JobStepRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [removingJourneyKey, setRemovingJourneyKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -106,6 +115,74 @@ export function useJobSteps(companyId?: string) {
     loading,
     items,
     error,
+    removingJourneyKey,
+    removeJourneyMap: async (journeyKey: string) => {
+      if (!companyId) {
+        throw new Error("No active company selected.");
+      }
+      const key = String(journeyKey || "").trim().toLowerCase();
+      if (!key) {
+        throw new Error("Missing journey key.");
+      }
+
+      setRemovingJourneyKey(key);
+      try {
+        const errors: string[] = [];
+
+        const { error: stepsError } = await supabase
+          .from("job_steps")
+          .delete()
+          .eq("company_id", companyId)
+          .eq("journey_key", key);
+        if (stepsError && !isMissingTableError(stepsError.message || "", "job_steps")) {
+          errors.push(`job_steps: ${stepsError.message}`);
+        }
+
+        const { error: oppsError } = await supabase
+          .from("opportunities")
+          .delete()
+          .eq("company_id", companyId)
+          .eq("journey_key", key);
+        if (oppsError && !isMissingTableError(oppsError.message || "", "opportunities")) {
+          errors.push(`opportunities: ${oppsError.message}`);
+        }
+
+        const { error: needsError } = await supabase
+          .from("odi_needs")
+          .delete()
+          .eq("company_id", companyId)
+          .eq("journey_key", key);
+        if (needsError && !isMissingTableError(needsError.message || "", "odi_needs")) {
+          errors.push(`odi_needs: ${needsError.message}`);
+        }
+
+        const { error: outcomesError } = await supabase
+          .from("managed_outcomes")
+          .delete()
+          .eq("company_id", companyId)
+          .eq("journey_key", key);
+        if (outcomesError && !isMissingTableError(outcomesError.message || "", "managed_outcomes")) {
+          errors.push(`managed_outcomes: ${outcomesError.message}`);
+        }
+
+        if (key === "customer") {
+          const { error: routesError } = await supabase
+            .from("routes")
+            .delete()
+            .eq("company_id", companyId);
+          if (routesError && !isMissingTableError(routesError.message || "", "routes")) {
+            errors.push(`routes: ${routesError.message}`);
+          }
+        }
+
+        if (errors.length > 0) {
+          throw new Error(`Failed to remove job map artifacts (${errors.join(" | ")})`);
+        }
+        setRefreshKey((current) => current + 1);
+      } finally {
+        setRemovingJourneyKey(null);
+      }
+    },
     refetch: () => setRefreshKey((current) => current + 1),
   };
 }

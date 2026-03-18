@@ -2580,6 +2580,9 @@ Deno.serve(async (req) => {
     }
 
     const selectedJobMaps: SelectedJobMap[] = Array.from(selectedMapByKey.values());
+    const explicitSelectedJourneyKeys: JourneyKey[] = [
+      ...new Set(selectedBase.map((map) => map.journey_key)),
+    ];
 
     if (selectedJobMaps.length === 0) {
       return jsonResponse({
@@ -2602,6 +2605,9 @@ Deno.serve(async (req) => {
     const targetJourneyKeys: JourneyKey[] = [
       ...new Set(selectedJobMaps.map((map) => map.journey_key)),
     ];
+    const jobMapUpdateJourneyKeys: JourneyKey[] =
+      explicitSelectedJourneyKeys.length > 0 ? explicitSelectedJourneyKeys : targetJourneyKeys;
+    const jobMapUpdateJourneyKeySet = new Set(jobMapUpdateJourneyKeys);
     const targetJourneyKeySet = new Set(targetJourneyKeys);
     const selectedJobMapByKey = new Map<JourneyKey, SelectedJobMap>(
       selectedJobMaps.map((map) => [map.journey_key, map]),
@@ -3442,7 +3448,13 @@ Deno.serve(async (req) => {
       await supabase.from("inputs").delete().in("id", existingIds);
     }
 
-    await supabase.from("job_steps").delete().eq("company_id", company_id);
+    if (jobMapUpdateJourneyKeys.length > 0) {
+      await supabase
+        .from("job_steps")
+        .delete()
+        .eq("company_id", company_id)
+        .in("journey_key", jobMapUpdateJourneyKeys);
+    }
     await supabase.from("opportunities").delete().eq("company_id", company_id);
     await supabase.from("routes").delete().eq("company_id", company_id);
     await supabase.from("managed_outcomes").delete().eq("company_id", company_id);
@@ -3538,6 +3550,7 @@ Deno.serve(async (req) => {
     for (const journey of journeys) {
       const journeyKey = normalizeJourneyKey(journey?.journey_key);
       if (!JOURNEY_KEY_SET.has(journeyKey)) continue;
+      if (!jobMapUpdateJourneyKeySet.has(journeyKey)) continue;
 
       const steps = Array.isArray(journey?.steps) ? journey.steps : [];
       for (const step of steps) {

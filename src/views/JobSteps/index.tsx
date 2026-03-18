@@ -532,7 +532,15 @@ function OdiNeedsSection({
   );
 }
 
-function JourneySection({ journey }: { journey: JourneyGroup }) {
+function JourneySection({
+  journey,
+  onRemove,
+  removing,
+}: {
+  journey: JourneyGroup;
+  onRemove: (key: JourneyKey) => void;
+  removing: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -607,6 +615,15 @@ function JourneySection({ journey }: { journey: JourneyGroup }) {
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.gap }} />
               {gapsCount} gaps
             </span>
+            <button
+              type="button"
+              onClick={() => onRemove(journey.key)}
+              disabled={removing}
+              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+            >
+              {removing ? "Removing…" : "Remove Map"}
+            </button>
           </div>
         </div>
 
@@ -654,22 +671,18 @@ function JourneySection({ journey }: { journey: JourneyGroup }) {
 
 function SuggestedMapsSection({
   options,
-  selectedKeys,
   drafts,
-  onToggle,
   onDraftChange,
-  onRunSelected,
-  canRunSelected,
-  running,
+  onAddMap,
+  runningKey,
+  hasCustomerJourney,
 }: {
   options: SuggestedJourneyOption[];
-  selectedKeys: string[];
   drafts: JourneyDraftMap;
-  onToggle: (key: SuggestedJourneyOption["key"]) => void;
   onDraftChange: (key: JourneyKey, field: "title" | "subtitle", value: string) => void;
-  onRunSelected: () => void;
-  canRunSelected: boolean;
-  running: boolean;
+  onAddMap: (key: JourneyKey) => void;
+  runningKey: JourneyKey | null;
+  hasCustomerJourney: boolean;
 }) {
   if (options.length === 0) return null;
 
@@ -684,18 +697,9 @@ function SuggestedMapsSection({
             Choose Job Maps
           </p>
           <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-            Select from suggested maps, or edit the title/subtitle to define your own map before running research.
+            Add maps one at a time. You can edit title/subtitle first, then click add.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRunSelected}
-          disabled={!canRunSelected || running}
-          className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-          style={{ borderColor: c.line, color: c.secondary, background: c.card }}
-        >
-          {running ? "Running…" : "Run Selected Job Maps"}
-        </button>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -703,24 +707,10 @@ function SuggestedMapsSection({
           <div
             key={option.key}
             className="rounded-xl border p-3"
-            style={{
-              borderColor: selectedKeys.includes(option.key) ? c.teal : c.line,
-              background: c.paper,
-            }}
+            style={{ borderColor: c.line, background: c.paper }}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => onToggle(option.key)}
-                className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                style={{
-                  borderColor: selectedKeys.includes(option.key) ? c.teal : c.line,
-                  color: selectedKeys.includes(option.key) ? c.teal : c.secondary,
-                  background: "#fff",
-                }}
-              >
-                {selectedKeys.includes(option.key) ? "Selected" : "Select"}
-              </button>
+              <MetaBadge>{titleCaseJourney(option.key)}</MetaBadge>
               <ScoreChip label="Confidence" value={option.confidence} />
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -728,9 +718,6 @@ function SuggestedMapsSection({
                 {drafts[option.key]?.title || option.title}
               </p>
               <MetaBadge>Public signal</MetaBadge>
-              <StateBadge tone={selectedKeys.includes(option.key) ? "designed" : "monitor"}>
-                {selectedKeys.includes(option.key) ? "Selected" : "Optional"}
-              </StateBadge>
             </div>
             <p className="mt-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
               {option.rationale}
@@ -751,6 +738,24 @@ function SuggestedMapsSection({
                 placeholder="Map subtitle"
               />
             </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              {!hasCustomerJourney && option.key !== "customer" ? (
+                <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                  Add customer map first.
+                </p>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => onAddMap(option.key)}
+                disabled={runningKey !== null || (!hasCustomerJourney && option.key !== "customer")}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              >
+                {runningKey === option.key ? "Adding…" : "Add Map"}
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -760,40 +765,53 @@ function SuggestedMapsSection({
 
 export default function JobStepsView() {
   const { activeCompany } = useCompany();
-  const { loading, items, error, refetch: refetchJobSteps } = useJobSteps(activeCompany?.id);
+  const {
+    loading,
+    items,
+    error,
+    removingJourneyKey,
+    removeJourneyMap,
+    refetch: refetchJobSteps,
+  } = useJobSteps(activeCompany?.id);
   const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(activeCompany?.id);
   const { marketDefinition, needs } = useOdiNeeds(activeCompany?.id);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
-  const [selectedJourneyKeys, setSelectedJourneyKeys] = useState<JourneyKey[]>([]);
   const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({
     customer: { title: "", subtitle: "" },
     revenue: { title: "", subtitle: "" },
     operations: { title: "", subtitle: "" },
   });
-  const [runningSelectedJourneys, setRunningSelectedJourneys] = useState(false);
+  const [runningJourneyKey, setRunningJourneyKey] = useState<JourneyKey | null>(null);
+  const [recentlyRemovedKeys, setRecentlyRemovedKeys] = useState<JourneyKey[]>([]);
 
   const journeys = useMemo(() => groupJourneys(items), [items]);
   const totalGaps = useMemo(
     () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => step.has_gap).length, 0),
     [journeys]
   );
-  const suggestedJourneyOptions = useMemo(
-    () => inferSuggestedJourneyOptions({ baselineRun, journeys }),
-    [baselineRun, journeys],
+  const suggestedJourneyOptions = useMemo(() => {
+    const inferred = inferSuggestedJourneyOptions({ baselineRun, journeys });
+    const byKey = new Map<JourneyKey, SuggestedJourneyOption>(inferred.map((option) => [option.key, option]));
+    for (const key of recentlyRemovedKeys) {
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          key,
+          title: titleFromKey(key),
+          subtitle: subtitleFromKey(key),
+          confidence: 70,
+          rationale: "Previously removed map. Add it again any time.",
+        });
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => b.confidence - a.confidence);
+  }, [baselineRun, journeys, recentlyRemovedKeys]);
+  const hasCustomerJourney = useMemo(
+    () => journeys.some((journey) => journey.key === "customer"),
+    [journeys],
   );
-  const suggestedByKey = useMemo(
-    () => new Map<JourneyKey, SuggestedJourneyOption>(suggestedJourneyOptions.map((option) => [option.key, option])),
-    [suggestedJourneyOptions],
-  );
-  const canRunSelectedJourneys = !!activeCompany?.id && selectedJourneyKeys.length > 0;
-
-  useEffect(() => {
-    const optionKeys = suggestedJourneyOptions.map((option) => option.key);
-    setSelectedJourneyKeys((previous) => previous.filter((key) => optionKeys.includes(key)));
-  }, [suggestedJourneyOptions]);
 
   useEffect(() => {
     setJourneyDrafts((previous) => {
@@ -809,14 +827,6 @@ export default function JobStepsView() {
     });
   }, [suggestedJourneyOptions]);
 
-  const toggleJourneySelection = (key: JourneyKey) => {
-    setSelectedJourneyKeys((previous) =>
-      previous.includes(key)
-        ? previous.filter((item) => item !== key)
-        : [...previous, key],
-    );
-  };
-
   const updateJourneyDraft = (key: JourneyKey, field: "title" | "subtitle", value: string) => {
     setJourneyDrafts((previous) => ({
       ...previous,
@@ -827,39 +837,36 @@ export default function JobStepsView() {
     }));
   };
 
-  const runSelectedJourneys = async () => {
+  const addMap = async (key: JourneyKey) => {
     if (!activeCompany?.id) {
       toast.error("Select a company before running journey research.");
       return;
     }
-    if (selectedJourneyKeys.length === 0) {
-      toast.error("Choose at least one job map.");
+    if (key !== "customer" && !hasCustomerJourney) {
+      toast.error("Add the customer map first.");
       return;
     }
 
     try {
-      setRunningSelectedJourneys(true);
-      const journeyRequestKeys = Array.from(new Set<JourneyKey>(selectedJourneyKeys));
-      const jobMaps = journeyRequestKeys.map((key) => {
-        const draft = journeyDrafts[key];
-        const suggested = suggestedByKey.get(key);
-        const fallbackTitle = suggested?.title || titleFromKey(key);
-        const fallbackSubtitle = suggested?.subtitle || subtitleFromKey(key);
-        return {
-          journey_key: key,
-          journey_title: safeText(draft?.title, fallbackTitle),
-          journey_subtitle: safeText(draft?.subtitle, fallbackSubtitle),
-          source: draft?.title || draft?.subtitle ? "custom" : "suggested",
-        };
-      });
+      setRunningJourneyKey(key);
+      const draft = journeyDrafts[key];
+      const suggested = suggestedJourneyOptions.find((option) => option.key === key);
+      const fallbackTitle = suggested?.title || titleFromKey(key);
+      const fallbackSubtitle = suggested?.subtitle || subtitleFromKey(key);
+      const jobMap = {
+        journey_key: key,
+        journey_title: safeText(draft?.title, fallbackTitle),
+        journey_subtitle: safeText(draft?.subtitle, fallbackSubtitle),
+        source: draft?.title || draft?.subtitle ? "custom" : "suggested",
+      };
 
       const { data, error: invokeError } = await supabase.functions.invoke("research-company", {
         body: {
           company_id: activeCompany.id,
           company_name: activeCompany.name,
           website: activeCompany.website ?? "",
-          journeys_to_generate: journeyRequestKeys,
-          job_maps: jobMaps,
+          journeys_to_generate: [key],
+          job_maps: [jobMap],
         },
       });
 
@@ -871,11 +878,38 @@ export default function JobStepsView() {
       }
 
       await Promise.all([refetchJobSteps(), refetchBaseline()]);
-      toast.success("Job map research completed.");
+      setRecentlyRemovedKeys((previous) => previous.filter((removed) => removed !== key));
+      toast.success(`${titleCaseJourney(key)} map added.`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to run job map research.");
+      toast.error(err instanceof Error ? err.message : "Failed to add job map.");
     } finally {
-      setRunningSelectedJourneys(false);
+      setRunningJourneyKey(null);
+    }
+  };
+
+  const handleRemoveJourneyMap = async (key: JourneyKey) => {
+    if (!activeCompany?.id) {
+      toast.error("Select a company before removing a job map.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Remove the ${titleCaseJourney(key)} job map from this company? This deletes its current step map.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await removeJourneyMap(key);
+      setRecentlyRemovedKeys((previous) =>
+        previous.includes(key) ? previous : [...previous, key],
+      );
+      toast.success(
+        key === "customer"
+          ? "Customer job map and related opportunities, ODI needs, outcomes, and routes removed."
+          : `${titleCaseJourney(key)} job map and related opportunities/ODI needs removed.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove job map.");
     }
   };
 
@@ -961,13 +995,11 @@ export default function JobStepsView() {
           <div className="space-y-6">
             <SuggestedMapsSection
               options={suggestedJourneyOptions}
-              selectedKeys={selectedJourneyKeys}
               drafts={journeyDrafts}
-              onToggle={toggleJourneySelection}
               onDraftChange={updateJourneyDraft}
-              onRunSelected={runSelectedJourneys}
-              canRunSelected={canRunSelectedJourneys}
-              running={runningSelectedJourneys}
+              onAddMap={addMap}
+              runningKey={runningJourneyKey}
+              hasCustomerJourney={hasCustomerJourney}
             />
 
             {journeys.length === 0 ? (
@@ -982,7 +1014,12 @@ export default function JobStepsView() {
             ) : (
               <>
                 {journeys.map((journey) => (
-                  <JourneySection key={journey.key} journey={journey} />
+                  <JourneySection
+                    key={journey.key}
+                    journey={journey}
+                    onRemove={handleRemoveJourneyMap}
+                    removing={removingJourneyKey === journey.key}
+                  />
                 ))}
 
                 <OdiNeedsSection
