@@ -16,10 +16,63 @@ interface InputArea {
   sub_group: string;
 }
 
+type FileMetadataResult = {
+  suggested_tags: string[];
+  suggested_input_id: string | null;
+  reasoning: string;
+};
+
 function envFlag(name: string, fallback: boolean) {
   const raw = Deno.env.get(name);
   if (raw == null) return fallback;
   return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
+}
+
+function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+  } catch {
+    // fall through
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const slice = trimmed.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(slice);
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function normalizeFileMetadata(raw: Record<string, unknown>, inputAreas?: InputArea[]): FileMetadataResult {
+  const allowedTags = new Set(FILE_CATEGORIES);
+  const validInputIds = new Set((inputAreas ?? []).map((area) => area.id));
+
+  const rawTags = Array.isArray(raw.suggested_tags) ? raw.suggested_tags : [];
+  const suggested_tags = rawTags
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0 && allowedTags.has(tag))
+    .slice(0, 6);
+
+  const rawInputId = typeof raw.suggested_input_id === "string" ? raw.suggested_input_id.trim() : "";
+  const suggested_input_id =
+    rawInputId && validInputIds.has(rawInputId) ? rawInputId : null;
+
+  const reasoningRaw = typeof raw.reasoning === "string" ? raw.reasoning.trim() : "";
+  const reasoning = reasoningRaw || "Analysis completed using local model output.";
+
+  return { suggested_tags, suggested_input_id, reasoning };
 }
 
 serve(async (req) => {
@@ -111,6 +164,63 @@ Return your analysis.`;
     });
 
     if (!response.ok) {
+      const t = await response.text();
+      const toolUnsupported = response.status === 400 && t.includes("does not support tools");
+
+      if (toolUnsupported) {
+        const fallbackMessages = [
+          {
+            role: "system",
+            content: `${systemPrompt}
+
+Return STRICT JSON with shape:
+{
+  "suggested_tags": string[],
+  "suggested_input_id": string | null,
+  "reasoning": string
+}
+Only JSON, no markdown.`,
+          },
+          { role: "user", content: userPrompt },
+        ];
+
+        let fallbackResponse = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "llama3:70b",
+            response_format: { type: "json_object" },
+            messages: fallbackMessages,
+          }),
+        });
+
+        if (!fallbackResponse.ok) {
+          fallbackResponse = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "llama3:70b",
+              messages: fallbackMessages,
+            }),
+          });
+
+          if (!fallbackResponse.ok) {
+            const fallbackText = await fallbackResponse.text();
+            console.error("AI gateway fallback error:", fallbackResponse.status, fallbackText);
+            throw new Error("AI analysis failed");
+          }
+        }
+
+        const fallbackData = await fallbackResponse.json();
+        const content = fallbackData?.choices?.[0]?.message?.content;
+        const parsed = safeParseJsonObject(content) ?? {};
+        const normalized = normalizeFileMetadata(parsed, inputAreas);
+
+        return new Response(JSON.stringify(normalized), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limited, please try again" }), {
           status: 429,
@@ -123,7 +233,6 @@ Return your analysis.`;
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const t = await response.text();
       console.error("AI gateway error:", response.status, t);
       throw new Error("AI analysis failed");
     }
@@ -131,13 +240,11 @@ Return your analysis.`;
     const data = await response.json();
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
 
-    if (!toolCall) {
-      return new Response(JSON.stringify({ suggested_tags: [], suggested_input_id: null, reasoning: "Could not analyze file" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const result = JSON.parse(toolCall.function.arguments);
+    const fromTools = typeof toolCall?.function?.arguments === "string"
+      ? safeParseJsonObject(toolCall.function.arguments)
+      : null;
+    const fromContent = safeParseJsonObject(data?.choices?.[0]?.message?.content);
+    const result = normalizeFileMetadata(fromTools ?? fromContent ?? {}, inputAreas);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

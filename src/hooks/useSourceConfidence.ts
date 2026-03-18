@@ -1,0 +1,32 @@
+import { useMemo } from "react";
+import { useInputs } from "@/hooks/useInputs";
+import { usePrimaryEvidenceSignal } from "@/hooks/usePrimaryEvidenceSignal";
+import { buildSourceConfidenceSignals } from "@/lib/sourceConfidence";
+import type { InputItem } from "@/lib/types";
+
+export function useSourceConfidence(args: {
+  companyId?: string;
+  areaScoresJson?: unknown;
+  inputsOverride?: InputItem[];
+}) {
+  const { query } = useInputs();
+  const { signal: primarySignal } = usePrimaryEvidenceSignal(args.companyId);
+  const inputs = args.inputsOverride ?? query.data ?? [];
+
+  const signals = useMemo(
+    () =>
+      buildSourceConfidenceSignals({
+        inputs,
+        hasPrimaryEvidence: primarySignal.hasPrimaryEvidence,
+        primaryEvidenceSignals: primarySignal.primaryCount,
+        areaScoresJson: args.areaScoresJson,
+      }),
+    [inputs, primarySignal.hasPrimaryEvidence, primarySignal.primaryCount, args.areaScoresJson],
+  );
+
+  return {
+    signals,
+    sourceLabels: primarySignal.sourceLabels,
+  };
+}
+

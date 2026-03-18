@@ -6,7 +6,9 @@ import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
+import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
+import { SourceLegend } from "@/components/provenance/SourceLegend";
 
 const c = {
   bg: "#faf7f6",
@@ -469,6 +471,10 @@ export default function JobStepsView() {
   const { activeCompany } = useCompany();
   const { loading, items, error } = useJobSteps(activeCompany?.id);
   const { marketDefinition, needs } = useOdiNeeds(activeCompany?.id);
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId: activeCompany?.id,
+    areaScoresJson: activeCompany?.area_scores_json,
+  });
 
   const journeys = useMemo(() => groupJourneys(items), [items]);
   const totalGaps = useMemo(
@@ -501,13 +507,23 @@ export default function JobStepsView() {
           </p>
         </div>
 
-          <Link
-            to="/"
-            className="rounded-full border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em]"
-            style={{ borderColor: c.line, color: c.secondary, background: c.card }}
-          >
-            Back to Map
-          </Link>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <MetaBadge>
+                {activeCompany?.last_scored_at
+                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
+                  : "Awaiting research"}
+              </MetaBadge>
+              <SourceLegend signals={sourceSignals} />
+            </div>
+            <Link
+              to="/"
+              className="rounded-full border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em]"
+              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+            >
+              Back to Map
+            </Link>
+          </div>
         </div>
 
         <AiBoundaryNote

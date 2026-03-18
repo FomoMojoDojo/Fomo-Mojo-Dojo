@@ -77,10 +77,18 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
   }
 
   async function handleFileClick(fileUrl: string) {
+    const newTab = window.open('about:blank', '_blank');
+    if (!newTab) {
+      toast.error('Pop-up blocked. Allow pop-ups for this site to open files.');
+      return;
+    }
+    newTab.opener = null;
+
     try {
       const url = await getFileSignedUrl(fileUrl);
-      window.open(url, '_blank');
+      newTab.location.href = url;
     } catch {
+      newTab.close();
       toast.error('Could not open file');
     }
   }

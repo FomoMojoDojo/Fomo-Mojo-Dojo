@@ -2733,12 +2733,31 @@ Deno.serve(async (req) => {
       }
 
       if (row?.id) {
-        await supabase.from("input_subitems").insert({
+        const { error: subitemErr } = await supabase.from("input_subitems").insert({
           input_id: row.id,
           name: String(input?.input_label || "Checklist item"),
           done: false,
           sort_order: 0,
         });
+
+        if (subitemErr) {
+          console.error("[research-company] insert input_subitem error:", subitemErr);
+        }
+
+        // The input_subitems trigger recalculates completeness from checklist/files.
+        // Re-apply the public baseline seed so newly generated inputs show non-zero progress from web research.
+        const { error: reseedErr } = await supabase
+          .from("inputs")
+          .update({
+            completeness: seededProgress.completeness,
+            status: seededProgress.status,
+            impact_tier: seededProgress.impact_tier,
+          })
+          .eq("id", row.id);
+
+        if (reseedErr) {
+          console.error("[research-company] reseed input completeness error:", reseedErr);
+        }
       }
 
       inputsInserted++;

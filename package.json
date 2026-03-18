@@ -10,7 +10,13 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "training:review": "node scripts/training-inputs.mjs review",
+    "training:status": "node scripts/training-inputs.mjs status",
+    "training:accept": "node scripts/training-inputs.mjs accept",
+    "files:sync-local": "node scripts/sync-local-files-to-supabase.mjs",
+    "files:pull-local": "node scripts/pull-supabase-files-to-local.mjs",
+    "files:auto-mirror": "node scripts/auto-mirror-local-files.mjs --root \"Client_Files\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

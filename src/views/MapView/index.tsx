@@ -5,6 +5,7 @@ import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { useInputs } from "@/hooks/useInputs";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
+import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useDynamicScoring } from "@/hooks/useDynamicScoring";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
@@ -14,6 +15,7 @@ import { useOpportunities } from "@/hooks/useOpportunities";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
+import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 
 /* ── Clean, sophisticated palette ── */
@@ -128,6 +130,11 @@ export default function MapView() {
     if (!user) return [];
     return inputsQuery.data ?? [];
   }, [user, inputsQuery.data]);
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId: activeCompany?.id,
+    areaScoresJson: activeCompany?.area_scores_json,
+    inputsOverride: inputs,
+  });
   const { items: jobSteps } = useJobSteps(activeCompany?.id);
 
   const hasData = inputs.length > 0;
@@ -352,12 +359,15 @@ export default function MapView() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <MetaBadge>
-              {usingStoredScores
-                ? `${evidenceLabel} · ${evidencePct}% confidence`
-                : `Estimated from current artifacts · ${evidencePct}% confidence`}
-            </MetaBadge>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <MetaBadge>
+                {usingStoredScores
+                  ? `${evidenceLabel} · ${evidencePct}% confidence`
+                  : `Estimated from current artifacts · ${evidencePct}% confidence`}
+              </MetaBadge>
+              <SourceLegend signals={sourceSignals} />
+            </div>
             <Link
               to="/admin/companies"
               className="font-mono text-[10px] uppercase tracking-wider hover:opacity-70 transition-opacity"

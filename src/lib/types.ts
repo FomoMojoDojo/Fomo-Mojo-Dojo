@@ -172,6 +172,7 @@ export interface PositioningCanvas {
   category_rationale: string;
   current_tagline: string;
   proposed_tagline: string;
+  frameworks_used?: string[];
 }
 
 export interface PositioningItem {

@@ -87,3 +87,30 @@ INTERNAL_AI_DEEP_DIVE_ENABLED=false
 ```
 
 In local development those values live in `supabase/functions/.env.local`.
+
+## Training Inputs (proposal-first)
+
+Use the `Training_Inputs/` folder for framework/process references.
+
+The workflow is explicit by design:
+
+1. Review proposed impacts first (`npm run training:review`)
+2. Accept only when ready (`npm run training:accept -- --yes`)
+
+Accepted context outputs are generated in `docs/training-inputs/` for agents and local Ollama usage.
+
+See full details in `docs/training-inputs-workflow.md`.
+
+## Client File Storage + Local Folders
+
+Uploaded files are stored in Supabase Storage bucket `input-files`, with metadata in `public.input_files`.
+
+For local-first organization and batch syncing per company, see:
+
+- `docs/client-files-local-workflow.md`
+
+Batch sync command:
+
+```sh
+npm run files:sync-local -- --company "Edgewood" --root "Client_Files/Edgewood"
+```

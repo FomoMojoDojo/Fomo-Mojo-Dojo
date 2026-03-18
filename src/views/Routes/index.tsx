@@ -1,9 +1,11 @@
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
+import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useOpportunities } from "@/hooks/useOpportunities";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { MetaBadge } from "@/components/ui/semantic-badges";
+import { SourceLegend } from "@/components/provenance/SourceLegend";
 import RouteCard from "./RouteCard";
 import type { RouteRow } from "./useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
@@ -242,6 +244,10 @@ export default function RoutesView() {
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId: activeCompany?.id,
+    areaScoresJson: activeCompany?.area_scores_json,
+  });
 
   const fix = items.filter((route) => String(route.category).toLowerCase() === "fix");
   const improve = items.filter((route) => String(route.category).toLowerCase() === "improve");
@@ -260,15 +266,27 @@ export default function RoutesView() {
 
       <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
         <div className="mb-6">
-          <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-            {activeCompany?.name || "No company selected"}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                {activeCompany?.name || "No company selected"}
+              </div>
+              <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
+                Routes
+              </h1>
+              <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
+                Click any route to see the work sequence, missing evidence, and why it deserves attention now.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <MetaBadge>
+                {activeCompany?.last_scored_at
+                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
+                  : "Awaiting research"}
+              </MetaBadge>
+              <SourceLegend signals={sourceSignals} />
+            </div>
           </div>
-          <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
-            Routes
-          </h1>
-          <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
-            Click any route to see the work sequence, missing evidence, and why it deserves attention now.
-          </p>
         </div>
 
         {!activeCompany?.id ? (

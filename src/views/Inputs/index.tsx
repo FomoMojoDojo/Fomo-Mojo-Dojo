@@ -8,7 +8,9 @@ import { useInputs } from '@/hooks/useInputs';
 import { useAuth } from '@/hooks/useAuth';
 import { useCompany } from '@/hooks/useCompany';
 import FileUploadDialog from '@/components/FileUploadDialog';
+import { useSourceConfidence } from '@/hooks/useSourceConfidence';
 import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badges';
+import { SourceLegend } from '@/components/provenance/SourceLegend';
 
 const c = {
   bg: '#eae5db',
@@ -36,6 +38,11 @@ export default function InputsView() {
   const { user } = useAuth();
   const { activeCompany } = useCompany();
   const { query: inputsQuery, reseed } = useInputs();
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId: activeCompany?.id,
+    areaScoresJson: activeCompany?.area_scores_json,
+    inputsOverride: inputsQuery.data ?? [],
+  });
   const dbInputs = inputsQuery.data;
 
   const handleReseed = async () => {
@@ -99,7 +106,15 @@ export default function InputsView() {
                   </StateBadge>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <MetaBadge>
+                    {activeCompany?.last_scored_at
+                      ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
+                      : "Awaiting research"}
+                  </MetaBadge>
+                  <SourceLegend signals={sourceSignals} />
+                </div>
                 {user && (
                   <button
                     onClick={handleReseed}

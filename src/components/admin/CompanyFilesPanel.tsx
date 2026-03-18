@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, FileText, Upload, ExternalLink, Trash2 } from "lucide-react";
+import { ArrowRight, FileText, Upload, ExternalLink, Trash2, FolderDown } from "lucide-react";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { getFileSignedUrl, useDeleteInputFile, useInputs } from "@/hooks/useInputs";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ const c = {
 
 interface FileWithContext extends InputFile {
   inputId: string;
+  inputKey: string;
   inputLabel: string;
   groupLabel: string;
   subGroup: string;
@@ -29,11 +30,54 @@ interface Props {
   mode?: "preview" | "full";
 }
 
+type FileSystemDirectoryHandleLike = {
+  getDirectoryHandle: (name: string, options?: { create?: boolean }) => Promise<FileSystemDirectoryHandleLike>;
+  getFileHandle: (name: string, options?: { create?: boolean }) => Promise<FileSystemFileHandleLike>;
+};
+
+type FileSystemFileHandleLike = {
+  createWritable: () => Promise<{ write: (data: Blob | BufferSource | string) => Promise<void>; close: () => Promise<void> }>;
+};
+
+function safeFileName(name: string) {
+  return name.replace(/[/:*?"<>|]/g, "_");
+}
+
+function splitName(name: string) {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return { base: name, ext: "" };
+  return { base: name.slice(0, dot), ext: name.slice(dot) };
+}
+
+async function writeBlobUnique(dirHandle: FileSystemDirectoryHandleLike, desiredName: string, blob: Blob) {
+  const cleanName = safeFileName(desiredName);
+  const { base, ext } = splitName(cleanName);
+  let attempt = 0;
+
+  while (attempt < 200) {
+    const candidate = attempt === 0 ? cleanName : `${base}-${attempt + 1}${ext}`;
+    try {
+      await dirHandle.getFileHandle(candidate, { create: false });
+      attempt += 1;
+      continue;
+    } catch {
+      const fileHandle = await dirHandle.getFileHandle(candidate, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return candidate;
+    }
+  }
+
+  throw new Error(`Could not create unique local filename for ${desiredName}`);
+}
+
 export default function CompanyFilesPanel({ companyId, companyName, mode = "preview" }: Props) {
   const { query } = useInputs();
   const deleteMutation = useDeleteInputFile();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [mirroring, setMirroring] = useState(false);
   const inputs = query.data ?? [];
 
   const allFiles = useMemo<FileWithContext[]>(() => {
@@ -41,6 +85,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       input.files.map((file) => ({
         ...file,
         inputId: input.id,
+        inputKey: input.input_key,
         inputLabel: input.input_label,
         groupLabel: input.group_label,
         subGroup: input.sub_group,
@@ -77,10 +122,18 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
   }, [visibleFiles]);
 
   async function handleOpen(filePath: string) {
+    const newTab = window.open("about:blank", "_blank");
+    if (!newTab) {
+      toast.error("Pop-up blocked. Allow pop-ups for this site to open files.");
+      return;
+    }
+    newTab.opener = null;
+
     try {
       const url = await getFileSignedUrl(filePath);
-      window.open(url, "_blank", "noopener,noreferrer");
+      newTab.location.href = url;
     } catch {
+      newTab.close();
       toast.error("Could not open file");
     }
   }
@@ -91,6 +144,66 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       toast.success("File removed");
     } catch {
       toast.error("Could not delete file");
+    }
+  }
+
+  async function handleMirrorToLocal() {
+    if (allFiles.length === 0) {
+      toast.message("No files to mirror yet");
+      return;
+    }
+
+    const picker = (window as Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandleLike> }).showDirectoryPicker;
+    if (typeof picker !== "function") {
+      const command = `npm run files:pull-local -- --company "${companyName}" --root "Client_Files/${companyName}" --apply`;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+        toast.error("This browser cannot write local folders directly. Pull command copied to clipboard.");
+      } else {
+        toast.error("This browser cannot write local folders directly. Use the terminal pull command.");
+      }
+      return;
+    }
+
+    setMirroring(true);
+    try {
+      const pickedRoot = await picker();
+      const companyDir = await pickedRoot.getDirectoryHandle(companyName, { create: true });
+
+      let written = 0;
+      let failed = 0;
+
+      for (const file of allFiles) {
+        try {
+          const signedUrl = await getFileSignedUrl(file.file_url);
+          const response = await fetch(signedUrl);
+          if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+          const blob = await response.blob();
+
+          const inputDir = await companyDir.getDirectoryHandle(file.inputKey || "unmapped", { create: true });
+          await writeBlobUnique(inputDir, file.file_name, blob);
+          written += 1;
+        } catch (error) {
+          console.warn("Mirror failed for file:", file.file_name, error);
+          failed += 1;
+        }
+      }
+
+      if (failed > 0) {
+        toast.message(`Mirrored ${written} file${written === 1 ? "" : "s"} (${failed} failed)`);
+      } else {
+        toast.success(`Mirrored ${written} file${written === 1 ? "" : "s"} locally`);
+      }
+    } catch (error: unknown) {
+      const isAbort = error && typeof error === "object" && "name" in error && (error as { name?: string }).name === "AbortError";
+      if (isAbort) {
+        toast.message("Mirror canceled");
+      } else {
+        console.warn("Local mirror failed", error);
+        toast.error("Could not mirror files locally");
+      }
+    } finally {
+      setMirroring(false);
     }
   }
 
@@ -107,6 +220,19 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {mode === "full" ? (
+            <button
+              type="button"
+              onClick={handleMirrorToLocal}
+              disabled={mirroring || allFiles.length === 0}
+              className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
+              style={{ color: c.secondary, borderColor: c.line, background: c.paper }}
+              title="Pick a local folder, then mirror files into <chosen-folder>/<company>/<input_key>/..."
+            >
+              <FolderDown className="w-3 h-3" />
+              {mirroring ? "Mirroring..." : "Mirror to Local"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setUploadOpen(true)}

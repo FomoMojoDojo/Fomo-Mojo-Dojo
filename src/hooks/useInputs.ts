@@ -36,7 +36,69 @@ type InputFileRow = {
   tags: string[] | null;
 };
 
+const PUBLIC_SEED_COMPLETENESS_BY_KEY: Record<string, number> = {
+  "comp-alt": 30,
+  "unique-attr": 28,
+  "val-prop": 27,
+  "target-aud": 24,
+  "market-cat": 25,
+  "program-model": 26,
+  "needs-assessment": 20,
+  "outcome-data": 16,
+  "referral-map": 14,
+  "brand-narrative": 18,
+  "channel-strat": 12,
+  "donor-retention": 10,
+  "grant-pipeline": 10,
+  "family-satisfaction": 11,
+};
+
+function inferPublicSeed(row: InputRow) {
+  const existingCompleteness = Number(row.completeness);
+  const existingStatus = String(row.status || "").toLowerCase();
+  if (Number.isFinite(existingCompleteness) && existingCompleteness > 0) {
+    return {
+      completeness: existingCompleteness,
+      status: row.status,
+    };
+  }
+
+  if (existingStatus === "complete" || existingStatus === "partial" || existingStatus === "gap") {
+    return {
+      completeness: Math.max(0, existingCompleteness || 0),
+      status: row.status,
+    };
+  }
+
+  const key = String(row.input_key || "").trim();
+  const base = PUBLIC_SEED_COMPLETENESS_BY_KEY[key] ?? 10;
+  const text = `${String(row.description || "")} ${String(row.why_it_matters || "")}`.toLowerCase();
+
+  const hasSubstance = text.replace(/\s+/g, " ").trim().length >= 30;
+  if (!hasSubstance) {
+    return {
+      completeness: 0,
+      status: "not_started" as InputItem["status"],
+    };
+  }
+
+  const uncertain =
+    text.includes("unknown") ||
+    text.includes("unclear") ||
+    text.includes("not public") ||
+    text.includes("not evidenced") ||
+    text.includes("thin evidence") ||
+    text.includes("needs verification");
+
+  const seeded = Math.max(0, Math.min(48, Math.round(base * (uncertain ? 0.45 : 1))));
+  return {
+    completeness: seeded,
+    status: (seeded >= 8 ? "partial" : "not_started") as InputItem["status"],
+  };
+}
+
 function mapInput(row: InputRow, subitems: InputSubitemRow[], files: InputFileRow[]): InputItem {
+  const seeded = inferPublicSeed(row);
   return {
     id: row.id,
     input_key: row.input_key,
@@ -44,8 +106,8 @@ function mapInput(row: InputRow, subitems: InputSubitemRow[], files: InputFileRo
     group_key: row.group_key,
     group_label: row.group_label,
     sub_group: row.sub_group,
-    completeness: row.completeness,
-    status: row.status,
+    completeness: seeded.completeness,
+    status: seeded.status,
     score_impact: Number(row.score_impact),
     impact_tier: row.impact_tier,
     description: row.description,

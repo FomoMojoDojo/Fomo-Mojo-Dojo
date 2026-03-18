@@ -1,7 +1,9 @@
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
+import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
+import { SourceLegend } from "@/components/provenance/SourceLegend";
 import type { CascadeAssumption, CascadeItem } from "@/lib/types";
 
 const c = {
@@ -159,6 +161,10 @@ function AssumptionRow({ item }: { item: CascadeAssumption }) {
 export default function StrategyView() {
   const { activeCompany } = useCompany();
   const { loading, item, error } = useStrategyCascade(activeCompany?.id);
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId: activeCompany?.id,
+    areaScoresJson: activeCompany?.area_scores_json,
+  });
 
   return (
     <div
@@ -188,11 +194,14 @@ export default function StrategyView() {
               </p>
             </div>
 
-            <MetaBadge>
-              {activeCompany?.last_scored_at
-                ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                : "Awaiting research"}
-            </MetaBadge>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <MetaBadge>
+                {activeCompany?.last_scored_at
+                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
+                  : "Awaiting research"}
+              </MetaBadge>
+              <SourceLegend signals={sourceSignals} />
+            </div>
           </div>
         </div>
 

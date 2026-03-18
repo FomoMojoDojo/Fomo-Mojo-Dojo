@@ -47,6 +47,7 @@ function mapRow(row: PositioningCanvasRow): PositioningCanvas {
     category_rationale: row.category_rationale || "",
     current_tagline: row.current_tagline || "",
     proposed_tagline: row.proposed_tagline || "",
+    frameworks_used: Array.isArray(row.frameworks_used) ? row.frameworks_used : [],
   };
 }
 
