@@ -10,6 +10,7 @@ import { MetaBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import type { CascadeItem } from "@/lib/types";
+import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import { toast } from "sonner";
 
 const c = {
@@ -66,10 +67,21 @@ function EmptyState({ message }: { message: string }) {
 function NarrativeBlock({
   label,
   text,
+  emptyText,
+  saving,
+  onAcceptSuggestion,
+  onIgnoreSuggestion,
 }: {
   label: string;
   text: string;
+  emptyText: string;
+  saving?: boolean;
+  onAcceptSuggestion?: (suggested: string) => void | Promise<void>;
+  onIgnoreSuggestion?: (primary: string) => void | Promise<void>;
 }) {
+  const parsed = parseClaritySuggestion(text);
+  const renderedText = parsed.primary || emptyText;
+
   return (
     <section
       className="rounded-[24px] border px-5 py-5 sm:px-6"
@@ -80,8 +92,40 @@ function NarrativeBlock({
         className="mt-3 font-sans text-[15px] leading-[1.9] sm:text-[16px]"
         style={{ color: c.charcoal }}
       >
-        {text}
+        {renderedText}
       </p>
+      {parsed.suggested ? (
+        <div className="mt-4 rounded-[16px] border px-4 py-3" style={{ borderColor: c.line, background: c.paper }}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+            Suggested clearer version
+          </p>
+          <p className="mt-2 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+            {parsed.suggested}
+          </p>
+          {onAcceptSuggestion && onIgnoreSuggestion ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onAcceptSuggestion(parsed.suggested!)}
+                disabled={!!saving}
+                className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              >
+                Accept Suggestion
+              </button>
+              <button
+                type="button"
+                onClick={() => onIgnoreSuggestion(parsed.primary)}
+                disabled={!!saving}
+                className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              >
+                Ignore
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -169,6 +213,82 @@ function sourceTone(source: ProvenanceSource) {
   if (source === "company" || source === "intake") return { bg: "#EEF6E7", fg: c.teal, border: "#BDD8CF" };
   if (source === "evidence") return { bg: "#F8F4E6", fg: "#9D7B2B", border: "#E7D5AA" };
   return { bg: "#FFF0E6", fg: c.coral, border: "#FFD1B4" };
+}
+
+function truncateText(value: string, maxChars: number) {
+  const cleaned = String(value || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= maxChars) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, maxChars - 1)).trim()}…`;
+}
+
+function strategicProblemTitle(statement: string, fallbackIndex: number) {
+  const lines = String(statement || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const headline = lines[0] || "";
+  if (headline) return truncateText(headline, 88);
+
+  const compact = String(statement || "").replace(/\s+/g, " ").trim();
+  if (!compact) return `Strategic Problem ${fallbackIndex + 1}`;
+  return truncateText(compact, 88);
+}
+
+function strategicProblemSummary(statement: string, title: string) {
+  const lines = String(statement || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const body = lines.slice(1).join(" ").trim();
+  const fallback = lines[0] || "";
+  const candidate = body || fallback;
+  const cleaned = String(candidate || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "No additional context captured yet.";
+
+  const normalizedTitle = String(title || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const normalizedBody = cleaned.toLowerCase();
+  if (normalizedTitle && normalizedBody === normalizedTitle) {
+    return "Open this problem to review the full client statement.";
+  }
+  return truncateText(cleaned, 180);
+}
+
+function strategicProblemDecisionAsk(statement: string) {
+  const text = String(statement || "").toLowerCase();
+
+  if (/(audience|segment|buyer|customer|icp|persona|who we serve|target market)/.test(text)) {
+    return "Decide which audience segment to prioritize first.";
+  }
+  if (/(position|category|differentiat|competit|alternative|value proposition|tagline)/.test(text)) {
+    return "Decide the market category and differentiation focus.";
+  }
+  if (/(channel|outreach|acquisition|conversion|pipeline|funnel|distribution)/.test(text)) {
+    return "Decide the primary acquisition path to focus on next.";
+  }
+  if (/(referral|partner|ecosystem|alliance)/.test(text)) {
+    return "Decide which partner and referral path should lead.";
+  }
+  if (/(evidence|data|measure|metric|proof|validate|interview|survey)/.test(text)) {
+    return "Decide what evidence must be collected next.";
+  }
+  if (/(team|org|capabil|resource|operat|workflow|process|delivery)/.test(text)) {
+    return "Decide which internal capability gap to fix first.";
+  }
+  if (/(pricing|price|package|offer)/.test(text)) {
+    return "Decide the pricing and offer structure to test.";
+  }
+
+  return "Decide the first strategic choice and owner.";
+}
+
+function problemStatusTone(status: StrategicProblem["status"]) {
+  if (status === "reconciled") {
+    return { bg: "#F3F6F1", fg: "#708070", border: "#D4DDCF", label: "Reconciled" };
+  }
+  return { bg: "#FFF0E6", fg: c.coral, border: "#FFD1B4", label: "Open" };
 }
 
 function assumptionStatusLabel(status: StrategicAssumption["status"]) {
@@ -395,7 +515,7 @@ function suggestEvidenceNeeded(assumptionText: string): string {
 
 export default function StrategyView() {
   const { activeCompany } = useCompany();
-  const { loading, item, error } = useStrategyCascade(activeCompany?.id);
+  const { loading, item, error, savingField, updateNarrativeField } = useStrategyCascade(activeCompany?.id);
   const {
     loading: problemsLoading,
     items: strategicProblems,
@@ -403,8 +523,10 @@ export default function StrategyView() {
     tableMissing: strategicProblemsTableMissing,
     saving: strategicProblemSaving,
     reconcilingId,
+    deletingId,
     addProblem,
     setProblemStatus,
+    deleteProblem,
   } = useStrategicProblems(activeCompany?.id);
   const {
     loading: assumptionsLoading,
@@ -425,6 +547,7 @@ export default function StrategyView() {
   const [newProblemText, setNewProblemText] = useState("");
   const [newProblemSource, setNewProblemSource] = useState<StrategicProblem["source"]>("client");
   const [reconcileNoteById, setReconcileNoteById] = useState<Record<string, string>>({});
+  const [expandedProblemIds, setExpandedProblemIds] = useState<Set<string>>(new Set());
   const [newAssumptionText, setNewAssumptionText] = useState("");
   const [newAssumptionSource, setNewAssumptionSource] = useState<StrategicAssumption["source"]>("client");
   const [newAssumptionNote, setNewAssumptionNote] = useState("");
@@ -439,10 +562,69 @@ export default function StrategyView() {
   } | null>(null);
   const [hiddenGeneratedKeys, setHiddenGeneratedKeys] = useState<Set<string>>(new Set());
 
+  const applyClaritySuggestion = async (
+    field: "winning_aspiration" | "where_to_play" | "how_to_win",
+    value: string,
+    mode: "accept" | "ignore",
+  ) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+    try {
+      await updateNarrativeField(field, next);
+      toast.success(mode === "accept" ? "Suggestion applied." : "Suggestion ignored.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update strategy narrative.");
+    }
+  };
+
   const openProblemsCount = useMemo(
     () => strategicProblems.filter((problem) => problem.status !== "reconciled").length,
     [strategicProblems],
   );
+  const orderedStrategicProblems = useMemo(
+    () =>
+      [...strategicProblems].sort((a, b) => {
+        const aRank = a.status === "reconciled" ? 1 : 0;
+        const bRank = b.status === "reconciled" ? 1 : 0;
+        if (aRank !== bRank) return aRank - bRank;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }),
+    [strategicProblems],
+  );
+  const strategicProblemCards = useMemo(() => {
+    const baseTitles = orderedStrategicProblems.map((problem, index) =>
+      strategicProblemTitle(problem.statement, index),
+    );
+    const counts = new Map<string, number>();
+    for (const title of baseTitles) {
+      const key = title.toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const seen = new Map<string, number>();
+
+    return orderedStrategicProblems.map((problem, index) => {
+      const baseTitle = baseTitles[index];
+      const key = baseTitle.toLowerCase();
+      const total = counts.get(key) ?? 0;
+      const nextSeen = (seen.get(key) ?? 0) + 1;
+      seen.set(key, nextSeen);
+
+      const disambiguator =
+        total > 1
+          ? `${sourceLabel(problem.source)} · ${new Date(problem.created_at).toLocaleDateString()}`
+          : "";
+      const title = disambiguator ? `${baseTitle} — ${disambiguator}` : baseTitle;
+      const summary = strategicProblemSummary(problem.statement, baseTitle);
+      const decisionAsk = strategicProblemDecisionAsk(problem.statement);
+
+      return {
+        problem,
+        title,
+        summary,
+        decisionAsk,
+      };
+    });
+  }, [orderedStrategicProblems]);
 
   const suggestedEvidenceForNewAssumption = useMemo(
     () => suggestEvidenceNeeded(newAssumptionText),
@@ -525,6 +707,26 @@ export default function StrategyView() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to reopen strategic problem.");
     }
+  };
+
+  const handleDeleteProblem = async (problem: StrategicProblem) => {
+    const confirmed = window.confirm("Delete this strategic problem permanently?");
+    if (!confirmed) return;
+    try {
+      await deleteProblem(problem.id);
+      toast.success("Strategic problem deleted.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete strategic problem.");
+    }
+  };
+
+  const toggleProblemExpanded = (id: string) => {
+    setExpandedProblemIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleAddAssumption = async () => {
@@ -717,74 +919,130 @@ export default function StrategyView() {
                     </p>
                   ) : (
                     <div className="mt-4 space-y-3">
-                      {strategicProblems.map((problem) => {
+                      {strategicProblemCards.map((entry) => {
+                        const { problem, title, summary, decisionAsk } = entry;
                         const sourceStyle = sourceTone(problem.source);
+                        const statusStyle = problemStatusTone(problem.status);
+                        const expanded = expandedProblemIds.has(problem.id);
+                        const inactive = problem.status === "reconciled";
                         return (
                           <div
                             key={problem.id}
-                            className="rounded-[18px] border p-4"
-                            style={{ borderColor: c.line, background: c.paper }}
+                            className="rounded-[18px] border p-4 transition-opacity"
+                            style={{
+                              borderColor: c.line,
+                              background: inactive ? "#F8FAF6" : c.paper,
+                              opacity: inactive ? 0.64 : 1,
+                            }}
                           >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span
-                                className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                                style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
-                              >
-                                {sourceLabel(problem.source)}
-                              </span>
-                              <MetaBadge>{problem.status === "reconciled" ? "Reconciled" : "Open"}</MetaBadge>
-                              <span className="font-mono text-[10px]" style={{ color: c.muted }}>
-                                {new Date(problem.created_at).toLocaleDateString()}
-                              </span>
-                            </div>
-
-                            <p className="mt-2 font-sans text-[15px] leading-[1.6]" style={{ color: c.charcoal }}>
-                              {problem.statement}
-                            </p>
-
-                            {problem.reconciliation_note ? (
-                              <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                                Reconciliation note: {problem.reconciliation_note}
-                              </p>
-                            ) : null}
-
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              {problem.status === "reconciled" ? (
-                                <button
-                                  type="button"
-                                  onClick={() => reopenProblem(problem)}
-                                  disabled={reconcilingId === problem.id}
-                                  className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                  style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                                >
-                                  {reconcilingId === problem.id ? "Saving..." : "Reopen"}
-                                </button>
-                              ) : (
-                                <>
-                                  <input
-                                    value={reconcileNoteById[problem.id] || ""}
-                                    onChange={(event) =>
-                                      setReconcileNoteById((current) => ({
-                                        ...current,
-                                        [problem.id]: event.target.value,
-                                      }))
-                                    }
-                                    placeholder="Optional note for how this was reconciled"
-                                    className="min-w-[260px] flex-1 rounded-md border px-2.5 py-1.5 font-sans text-[12px] outline-none"
-                                    style={{ borderColor: c.line, background: "#fff", color: c.secondary }}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => markReconciled(problem)}
-                                    disabled={reconcilingId === problem.id}
-                                    className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                    style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+                                  {title}
+                                </p>
+                                <p className="mt-1 font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
+                                  {summary}
+                                </p>
+                                <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.muted }}>
+                                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]">Decision ask:</span>{" "}
+                                  {decisionAsk}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                                    style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
                                   >
-                                    {reconcilingId === problem.id ? "Saving..." : "Mark Reconciled"}
-                                  </button>
-                                </>
-                              )}
+                                    {sourceLabel(problem.source)}
+                                  </span>
+                                  <span
+                                    className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                                    style={{ borderColor: statusStyle.border, background: statusStyle.bg, color: statusStyle.fg }}
+                                  >
+                                    {statusStyle.label}
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => toggleProblemExpanded(problem.id)}
+                                className="shrink-0 rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
+                                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                              >
+                                {expanded ? "Collapse" : "Expand"}
+                              </button>
                             </div>
+
+                            {expanded ? (
+                              <div className="mt-3">
+                                <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.charcoal }}>
+                                  {problem.statement}
+                                </p>
+
+                                {problem.reconciliation_note ? (
+                                  <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                                    Reconciliation note: {problem.reconciliation_note}
+                                  </p>
+                                ) : null}
+
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  {problem.status === "reconciled" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => reopenProblem(problem)}
+                                        disabled={reconcilingId === problem.id || deletingId === problem.id}
+                                        className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                      >
+                                        {reconcilingId === problem.id ? "Saving..." : "Reopen"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteProblem(problem)}
+                                        disabled={deletingId === problem.id || reconcilingId === problem.id}
+                                        className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                        style={{ borderColor: "#F1C3AC", color: c.coral, background: "#fff" }}
+                                      >
+                                        {deletingId === problem.id ? "Deleting..." : "Delete"}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <input
+                                        value={reconcileNoteById[problem.id] || ""}
+                                        onChange={(event) =>
+                                          setReconcileNoteById((current) => ({
+                                            ...current,
+                                            [problem.id]: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="Optional note for how this was reconciled"
+                                        className="min-w-[260px] flex-1 rounded-md border px-2.5 py-1.5 font-sans text-[12px] outline-none"
+                                        style={{ borderColor: c.line, background: "#fff", color: c.secondary }}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => markReconciled(problem)}
+                                        disabled={reconcilingId === problem.id || deletingId === problem.id}
+                                        className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                      >
+                                        {reconcilingId === problem.id ? "Saving..." : "Mark Reconciled"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteProblem(problem)}
+                                        disabled={deletingId === problem.id || reconcilingId === problem.id}
+                                        className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                        style={{ borderColor: "#F1C3AC", color: c.coral, background: "#fff" }}
+                                      >
+                                        {deletingId === problem.id ? "Deleting..." : "Delete"}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -820,7 +1078,15 @@ export default function StrategyView() {
               <>
                 <NarrativeBlock
                   label="Winning Aspiration"
-                  text={item.winning_aspiration || "No winning aspiration generated yet."}
+                  text={item.winning_aspiration}
+                  emptyText="No winning aspiration generated yet."
+                  saving={savingField === "winning_aspiration"}
+                  onAcceptSuggestion={(suggested) =>
+                    applyClaritySuggestion("winning_aspiration", suggested, "accept")
+                  }
+                  onIgnoreSuggestion={(primary) =>
+                    applyClaritySuggestion("winning_aspiration", primary, "ignore")
+                  }
                 />
 
                 {connector()}
@@ -828,11 +1094,27 @@ export default function StrategyView() {
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <NarrativeBlock
                     label="Where To Play"
-                    text={item.where_to_play || "No where-to-play definition generated yet."}
+                    text={item.where_to_play}
+                    emptyText="No where-to-play definition generated yet."
+                    saving={savingField === "where_to_play"}
+                    onAcceptSuggestion={(suggested) =>
+                      applyClaritySuggestion("where_to_play", suggested, "accept")
+                    }
+                    onIgnoreSuggestion={(primary) =>
+                      applyClaritySuggestion("where_to_play", primary, "ignore")
+                    }
                   />
                   <NarrativeBlock
                     label="How To Win"
-                    text={item.how_to_win || "No how-to-win logic generated yet."}
+                    text={item.how_to_win}
+                    emptyText="No how-to-win logic generated yet."
+                    saving={savingField === "how_to_win"}
+                    onAcceptSuggestion={(suggested) =>
+                      applyClaritySuggestion("how_to_win", suggested, "accept")
+                    }
+                    onIgnoreSuggestion={(primary) =>
+                      applyClaritySuggestion("how_to_win", primary, "ignore")
+                    }
                   />
                 </div>
 

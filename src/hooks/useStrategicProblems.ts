@@ -61,6 +61,7 @@ export function useStrategicProblems(companyId?: string) {
   const [tableMissing, setTableMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reconcilingId, setReconcilingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = async (id: string) => {
     setLoading(true);
@@ -158,6 +159,26 @@ export function useStrategicProblems(companyId?: string) {
     }
   };
 
+  const deleteProblem = async (id: string) => {
+    if (!companyId) throw new Error("No active company selected.");
+    const targetId = String(id || "").trim();
+    if (!targetId) throw new Error("Missing strategic problem id.");
+
+    setDeletingId(targetId);
+    try {
+      const client = supabase as any;
+      const { error } = await client
+        .from("strategy_problem_statements")
+        .delete()
+        .eq("id", targetId)
+        .eq("company_id", companyId);
+      if (error) throw new Error(error.message || "Failed to delete strategic problem.");
+      await load(companyId);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return {
     loading,
     items,
@@ -165,8 +186,10 @@ export function useStrategicProblems(companyId?: string) {
     tableMissing,
     saving,
     reconcilingId,
+    deletingId,
     addProblem,
     setProblemStatus,
+    deleteProblem,
     refetch: async () => {
       if (!companyId) return;
       await load(companyId);

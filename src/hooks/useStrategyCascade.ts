@@ -71,6 +71,7 @@ export function useStrategyCascade(companyId?: string) {
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<StrategyCascade | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [savingField, setSavingField] = useState<"winning_aspiration" | "where_to_play" | "how_to_win" | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -83,6 +84,7 @@ export function useStrategyCascade(companyId?: string) {
     let cancelled = false;
 
     (async () => {
+      setItem(null);
       setLoading(true);
       setError(null);
 
@@ -121,5 +123,39 @@ export function useStrategyCascade(companyId?: string) {
     };
   }, [companyId]);
 
-  return { loading, item, error };
+  async function updateNarrativeField(
+    field: "winning_aspiration" | "where_to_play" | "how_to_win",
+    value: string,
+  ) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    setSavingField(field);
+    try {
+      const { data, error } = await supabase
+        .from("strategy_cascades")
+        .update({ [field]: String(value || "").trim() })
+        .eq("company_id", companyId)
+        .select(
+          "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
+        )
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(error.message || "Failed to update strategy narrative.");
+      }
+
+      if (data) {
+        setItem(mapRow(data as StrategyCascadeRow));
+      } else if (item) {
+        setItem({
+          ...item,
+          [field]: String(value || "").trim(),
+        });
+      }
+    } finally {
+      setSavingField(null);
+    }
+  }
+
+  return { loading, item, error, savingField, updateNarrativeField };
 }

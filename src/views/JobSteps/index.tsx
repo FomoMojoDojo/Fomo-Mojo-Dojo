@@ -10,7 +10,11 @@ import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useStrategyCascade } from "@/hooks/useStrategyCascade";
+import { useStrategicProblems } from "@/hooks/useStrategicProblems";
+import { useInputs } from "@/hooks/useInputs";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
+import type { InputItem } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
 
@@ -36,7 +40,7 @@ const c = {
 const STEP_CARD_WIDTH = "250px";
 const STEP_DETAIL_BLOCK_HEIGHT = "96px";
 
-type JourneyKey = "customer" | "revenue" | "operations";
+type JourneyKey = string;
 
 type JourneyGroup = {
   key: JourneyKey;
@@ -53,10 +57,10 @@ type SuggestedJourneyOption = {
   rationale: string;
 };
 
-type JourneyDraftMap = Record<JourneyKey, { title: string; subtitle: string }>;
+type JourneyDraftMap = Record<string, { title: string; subtitle: string }>;
 
 const JOURNEY_STYLE: Record<
-  JourneyKey,
+  string,
   { rail: string; dot: string; preview?: string }
 > = {
   customer: { rail: c.coral, dot: c.coral },
@@ -68,21 +72,59 @@ function safeText(value: string | null | undefined, fallback = "") {
   return value?.trim() || fallback;
 }
 
+function normalizeJourneyKey(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
 function titleFromKey(key: JourneyKey) {
   if (key === "customer") return "Customer Journey";
   if (key === "revenue") return "Revenue Journey";
-  return "Operations Journey";
+  if (key === "operations") return "Operations Journey";
+  return `${titleCaseFromKey(key)} Journey`;
 }
 
 function subtitleFromKey(key: JourneyKey) {
   if (key === "customer") return "How a customer experiences the end-to-end service.";
   if (key === "revenue") return "How the company secures and grows revenue.";
-  return "How the company builds and operates the service.";
+  if (key === "operations") return "How the company builds and operates the service.";
+  return `How ${titleCaseFromKey(key).toLowerCase()} progress through the work from start to finish.`;
+}
+
+function titleCaseFromKey(key: string) {
+  return key
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Custom Journey";
+}
+
+function fallbackStyleForJourney(key: string) {
+  const palette = [
+    { rail: c.coral, dot: c.coral },
+    { rail: c.teal, dot: c.teal },
+    { rail: c.slate, dot: c.slate },
+    { rail: "#A0C382", dot: "#A0C382" },
+    { rail: "#FAC846", dot: "#FAC846" },
+  ];
+  const hash = Array.from(key).reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  return palette[hash % palette.length];
 }
 
 async function describeJobMapInvokeError(error: unknown) {
-  if (error instanceof FunctionsHttpError) {
-    const payloadText = await error.context.text().catch(() => "");
+  const maybeContext = (() => {
+    if (!error || typeof error !== "object") return null;
+    const candidate = (error as { context?: { text?: () => Promise<string> } }).context;
+    if (!candidate || typeof candidate.text !== "function") return null;
+    return candidate;
+  })();
+
+  if (error instanceof FunctionsHttpError || maybeContext) {
+    const payloadText = await (maybeContext?.text?.() ?? Promise.resolve("")).catch(() => "");
     const payload = (() => {
       if (!payloadText) return null;
       try {
@@ -110,26 +152,54 @@ async function describeJobMapInvokeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function shouldUseLocalMapFallback(message: string) {
+  const text = String(message || "").toLowerCase();
+  return (
+    text.includes("missing openai_api_key") ||
+    text.includes("edge function returned a non-2xx status code") ||
+    text.includes("public baseline is not strong enough") ||
+    text.includes("insufficient_public_evidence") ||
+    text.includes("ambiguous_public_evidence") ||
+    text.includes("customer_job_map_required")
+  );
+}
+
+const LOCAL_ODI_STEP_SEED = [
+  { label: "Define desired outcome", description: "Clarify the primary progress target and constraints before evaluating alternatives." },
+  { label: "Locate best options", description: "Identify and compare available options relevant to this job context." },
+  { label: "Prepare to execute", description: "Gather prerequisites, resources, and decision criteria needed to act." },
+  { label: "Execute core action", description: "Perform the core action sequence that advances the job toward completion." },
+  { label: "Monitor progress", description: "Track results, quality, and confidence signals while progressing through the job." },
+  { label: "Adjust and conclude", description: "Resolve issues, confirm outcomes, and close the loop for repeatable success." },
+];
+
 function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
-  const order: JourneyKey[] = ["customer", "revenue", "operations"];
+  const byKey = new Map<string, JobStepRow[]>();
+  for (const item of items) {
+    const key = safeText(item.journey_key, "").toLowerCase();
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(item);
+  }
 
-  return order
-    .map((key) => {
-      const steps = items
-        .filter((item) => item.journey_key === key)
-        .sort((a, b) => (a.step_number ?? 0) - (b.step_number ?? 0));
+  const preferredOrder = ["customer", "revenue", "operations"];
+  const orderedKeys = [
+    ...preferredOrder.filter((key) => byKey.has(key)),
+    ...Array.from(byKey.keys())
+      .filter((key) => !preferredOrder.includes(key))
+      .sort((a, b) => a.localeCompare(b)),
+  ];
 
-      if (steps.length === 0) return null;
-
-      const first = steps[0];
-      return {
-        key,
-        title: safeText(first.journey_title, titleFromKey(key)),
-        subtitle: safeText(first.journey_subtitle, subtitleFromKey(key)),
-        steps,
-      };
-    })
-    .filter((group): group is JourneyGroup => group !== null);
+  return orderedKeys.map((key) => {
+    const steps = (byKey.get(key) ?? []).slice().sort((a, b) => (a.step_number ?? 0) - (b.step_number ?? 0));
+    const first = steps[0];
+    return {
+      key,
+      title: safeText(first?.journey_title, key === "customer" || key === "revenue" || key === "operations" ? titleFromKey(key) : `Job Map: ${titleCaseFromKey(key)}`),
+      subtitle: safeText(first?.journey_subtitle, key === "customer" || key === "revenue" || key === "operations" ? subtitleFromKey(key) : `How ${titleCaseFromKey(key).toLowerCase()} define, prepare, execute, monitor, and improve progress.`),
+      steps,
+    };
+  });
 }
 
 function normalizeRoleLabel(value: string) {
@@ -158,6 +228,10 @@ function inferRevenueMapTitle(economicEngine: string, publicSignalText: string) 
 function inferSuggestedJourneyOptions(args: {
   baselineRun: any | null;
   journeys: JourneyGroup[];
+  inputs: InputItem[];
+  strategicProblems: Array<{ statement: string; status?: string; source?: string }>;
+  whereToPlay?: string | null;
+  howToWin?: string | null;
 }): SuggestedJourneyOption[] {
   const existingJourneyKeys = new Set(args.journeys.map((journey) => journey.key));
   const baseline = args.baselineRun?.result_json as {
@@ -176,25 +250,84 @@ function inferSuggestedJourneyOptions(args: {
   const lens = baseline?.lens_card ?? {};
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
 
+  const uploadedSignalText = args.inputs
+    .flatMap((input) => [
+      input.input_key,
+      input.input_label,
+      input.sub_group,
+      input.description,
+      input.why_it_matters,
+      ...input.files.flatMap((file) => [file.file_name, ...(file.tags ?? [])]),
+    ])
+    .join(" ")
+    .toLowerCase();
+  const strategicProblemText = args.strategicProblems
+    .map((item) => String(item?.statement || ""))
+    .join(" ")
+    .toLowerCase();
+
   const publicSignalText = [
     String(lens.value_chain || ""),
     String(lens.economic_engine || ""),
     String(lens.adoption_constraints || ""),
     String(lens.risk_surface || ""),
     ...ledger.slice(0, 14).map((entry) => `${String(entry?.bucket || "")} ${String(entry?.snippet || "")}`),
+    String(args.whereToPlay || ""),
+    String(args.howToWin || ""),
+    uploadedSignalText,
+    strategicProblemText,
   ]
     .join(" ")
     .toLowerCase();
+
+  const marketSignalText = [
+    String(lens.user || ""),
+    String(lens.primary_buyer || ""),
+    String(lens.chooser || ""),
+    String(lens.value_chain || ""),
+    String(args.whereToPlay || ""),
+    String(args.howToWin || ""),
+    strategicProblemText,
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const fileSignals = args.inputs.flatMap((input) =>
+    input.files.map((file) => ({
+      fileName: String(file.file_name || ""),
+      tags: (file.tags ?? []).map((tag) => String(tag || "")),
+    })),
+  );
+
+  const matchingProblemSnippets = (matcher: RegExp) =>
+    args.strategicProblems
+      .map((problem) => String(problem?.statement || "").trim())
+      .filter((statement) => matcher.test(statement))
+      .map((statement) => statement.split(/\n+/)[0].trim())
+      .filter(Boolean)
+      .slice(0, 2);
+
+  const matchingFileSnippets = (matcher: RegExp) =>
+    fileSignals
+      .map((file) => `${file.fileName} ${file.tags.join(" ")}`.trim())
+      .filter((snippet) => matcher.test(snippet))
+      .map((snippet) => snippet.split(/\s+/).slice(0, 10).join(" "))
+      .slice(0, 2);
 
   const countMatches = (terms: string[]) =>
     terms.reduce((sum, term) => (publicSignalText.includes(term) ? sum + 1 : sum), 0);
 
   const options: SuggestedJourneyOption[] = [];
+  const addOption = (option: SuggestedJourneyOption) => {
+    if (existingJourneyKeys.has(option.key)) return;
+    if (options.some((item) => item.key === option.key)) return;
+    options.push(option);
+  };
 
   if (!existingJourneyKeys.has("customer")) {
     const customerSignalRaw = safeText(lens.user || lens.primary_buyer || lens.chooser, "");
     const customerSignal = normalizeRoleLabel(customerSignalRaw || "Core Audience");
-    options.push({
+    addOption({
       key: "customer",
       title: `Job Map: ${customerSignal}`,
       subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
@@ -225,7 +358,7 @@ function inferSuggestedJourneyOptions(args: {
 
     if (revenueMatches >= 2 || hasEconomicSignal) {
       const revenueTitle = inferRevenueMapTitle(economicEngine, publicSignalText);
-      options.push({
+      addOption({
         key: "revenue",
         title: revenueTitle,
         subtitle: "How the company secures, converts, and retains economic value for the chosen market.",
@@ -258,7 +391,7 @@ function inferSuggestedJourneyOptions(args: {
       (riskSurface.length > 0 && riskSurface.toLowerCase() !== "unknown");
 
     if (operationsMatches >= 2 || hasOpsSignal) {
-      options.push({
+      addOption({
         key: "operations",
         title: "Job Map: Delivering Consistent Service",
         subtitle: "How delivery systems coordinate define, prepare, execute, monitor, and adjust work at quality.",
@@ -268,6 +401,46 @@ function inferSuggestedJourneyOptions(args: {
           : "Public signals suggest delivery, quality, or operational coordination risk.",
       });
     }
+  }
+
+  const audienceCandidates = new Set<string>();
+  const hasCafeMarketSignal = /\bcafe|cafes|coffee|venue|venues|restaurant|restaurants\b/.test(marketSignalText);
+  const hasCommercialSignal = /\bb2b\b|\bwholesale\b|\bdistribution\b|\bpartner\b|\bprocurement\b|\bbuyer\b/.test(marketSignalText);
+  const cafeEvidenceMatcher = /\bcafe owner|cafe owners|coffee program|roaster|espresso|specialty venue|restaurant buyer|wholesale account\b/i;
+  const cafeProblemSources = matchingProblemSnippets(cafeEvidenceMatcher);
+  const cafeFileSources = matchingFileSnippets(cafeEvidenceMatcher);
+  const hasCafeEvidenceSignal = cafeProblemSources.length > 0 || cafeFileSources.length > 0;
+  if (hasCafeMarketSignal && (hasCommercialSignal || /\bcafe\b|\bcafes\b/.test(marketSignalText) || hasCafeEvidenceSignal)) {
+    audienceCandidates.add("Cafe Owners and Specialty Venue Buyers");
+  }
+  if (/\binvestor|investment|capital raise|funding round\b/.test(marketSignalText)) {
+    audienceCandidates.add("Investors and Investment Committee");
+  }
+  if (/\bfranchise|wholesale partner|distribution partner|channel partner\b/.test(marketSignalText)) {
+    audienceCandidates.add("Channel and Distribution Partners");
+  }
+
+  for (const candidate of audienceCandidates) {
+    const key = `customer-${candidate.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)}`;
+    const hasCafeCandidate = candidate === "Cafe Owners and Specialty Venue Buyers";
+    const candidateEvidence = hasCafeCandidate
+      ? [
+          ...cafeProblemSources.map((source) => `Problem: ${source}`),
+          ...cafeFileSources.map((source) => `File: ${source}`),
+        ].slice(0, 3)
+      : [];
+    const rationale = hasCafeCandidate
+      ? candidateEvidence.length > 0
+        ? `Derived from uploaded/client evidence: ${candidateEvidence.join(" • ")}`
+        : "Inferred from market context and uploaded/internal signals."
+      : "Inferred from market context and uploaded/internal signals.";
+    addOption({
+      key,
+      title: `Job Map: ${candidate}`,
+      subtitle: `How ${candidate.toLowerCase()} define, evaluate, select, execute, and monitor progress.`,
+      confidence: hasCafeCandidate && hasCafeEvidenceSignal ? 90 : 76,
+      rationale,
+    });
   }
 
   return options.sort((a, b) => b.confidence - a.confidence);
@@ -415,15 +588,15 @@ function titleCaseJourney(key: string) {
   if (key === "customer") return "Customer";
   if (key === "revenue") return "Revenue";
   if (key === "operations") return "Operations";
-  return key;
+  return titleCaseFromKey(key);
 }
 
-function OdiNeedsSection({
+function OdiContextSection({
   marketDefinition,
-  needs,
+  marketContext,
 }: {
   marketDefinition: OdiMarketDefinitionRow | null;
-  needs: OdiNeedRow[];
+  marketContext?: string;
 }) {
   const jobExecutor = safeText(marketDefinition?.job_executor, "Unknown from stored ODI definition");
   const chooser = safeText(marketDefinition?.chooser, "Unknown from stored ODI definition");
@@ -431,12 +604,7 @@ function OdiNeedsSection({
     marketDefinition?.jtbd,
     "Understand and complete the core job progress for this offering"
   );
-
-  const needItems = [...needs].sort((a, b) => {
-    const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
-    if (scoreDiff !== 0) return scoreDiff;
-    return (b.importance ?? 0) - (a.importance ?? 0);
-  });
+  const market = safeText(marketContext, "No market context captured yet.");
 
   return (
     <section
@@ -446,7 +614,7 @@ function OdiNeedsSection({
       <div className="mb-5">
         <div className="flex items-center gap-2">
           <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
-            ODI Needs
+            ODI Needs & Market Context
           </h2>
           <MetaBadge>Public only</MetaBadge>
         </div>
@@ -457,6 +625,15 @@ function OdiNeedsSection({
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div className="rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+            Market Context
+          </p>
+          <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+            {market}
+          </p>
+        </div>
+
         <div className="rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job Executor
@@ -472,7 +649,7 @@ function OdiNeedsSection({
           </p>
         </div>
 
-        <div className="rounded-2xl border p-4 lg:col-span-2" style={{ borderColor: c.line, background: c.paper }}>
+        <div className="rounded-2xl border p-4 lg:col-span-1" style={{ borderColor: c.line, background: c.paper }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job to Be Done
           </p>
@@ -484,9 +661,24 @@ function OdiNeedsSection({
           </p>
         </div>
       </div>
+    </section>
+  );
+}
 
+function OdiNeedsListSection({ needs }: { needs: OdiNeedRow[] }) {
+  const needItems = [...needs].sort((a, b) => {
+    const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return (b.importance ?? 0) - (a.importance ?? 0);
+  });
+
+  return (
+    <section
+      className="rounded-[28px] border px-6 py-6"
+      style={{ borderColor: c.line, background: c.panel }}
+    >
       <div
-        className="mt-5 rounded-2xl border overflow-hidden"
+        className="rounded-2xl border overflow-hidden"
         style={{ borderColor: c.line, background: c.paper }}
       >
         <div className="h-[5px] w-full" style={{ background: c.coral }} />
@@ -545,7 +737,8 @@ function JourneySection({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const { rail, dot, preview } = JOURNEY_STYLE[journey.key];
+  const style = JOURNEY_STYLE[journey.key] ?? fallbackStyleForJourney(journey.key);
+  const { rail, dot, preview } = style;
   const designedCount = journey.steps.filter((step) => step.designed).length;
   const evidencedCount = journey.steps.filter((step) => step.evidence_status === "evidenced").length;
   const gapsCount = journey.steps.filter((step) => step.has_gap).length;
@@ -675,14 +868,12 @@ function SuggestedMapsSection({
   onDraftChange,
   onAddMap,
   runningKey,
-  hasCustomerJourney,
 }: {
   options: SuggestedJourneyOption[];
   drafts: JourneyDraftMap;
-  onDraftChange: (key: JourneyKey, field: "title" | "subtitle", value: string) => void;
-  onAddMap: (key: JourneyKey) => void;
-  runningKey: JourneyKey | null;
-  hasCustomerJourney: boolean;
+  onDraftChange: (key: string, field: "title" | "subtitle", value: string) => void;
+  onAddMap: (key: string) => void;
+  runningKey: string | null;
 }) {
   if (options.length === 0) return null;
 
@@ -739,17 +930,11 @@ function SuggestedMapsSection({
               />
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              {!hasCustomerJourney && option.key !== "customer" ? (
-                <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
-                  Add customer map first.
-                </p>
-              ) : (
-                <span />
-              )}
+              <span />
               <button
                 type="button"
                 onClick={() => onAddMap(option.key)}
-                disabled={runningKey !== null || (!hasCustomerJourney && option.key !== "customer")}
+                disabled={runningKey !== null}
                 className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                 style={{ borderColor: c.line, color: c.secondary, background: c.card }}
               >
@@ -765,6 +950,7 @@ function SuggestedMapsSection({
 
 export default function JobStepsView() {
   const { activeCompany } = useCompany();
+  const activeCompanyId = activeCompany?.id ?? null;
   const {
     loading,
     items,
@@ -772,20 +958,40 @@ export default function JobStepsView() {
     removingJourneyKey,
     removeJourneyMap,
     refetch: refetchJobSteps,
-  } = useJobSteps(activeCompany?.id);
-  const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(activeCompany?.id);
-  const { marketDefinition, needs } = useOdiNeeds(activeCompany?.id);
+  } = useJobSteps(activeCompanyId ?? undefined);
+  const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(activeCompanyId ?? undefined);
+  const { item: strategyCascade } = useStrategyCascade(activeCompanyId ?? undefined);
+  const { items: strategicProblems } = useStrategicProblems(activeCompanyId ?? undefined);
+  const { query: inputsQuery } = useInputs(activeCompanyId ?? undefined);
+  const { marketDefinition, needs } = useOdiNeeds(activeCompanyId ?? undefined);
   const { signals: sourceSignals } = useSourceConfidence({
-    companyId: activeCompany?.id,
+    companyId: activeCompanyId ?? undefined,
     areaScoresJson: activeCompany?.area_scores_json,
   });
-  const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({
-    customer: { title: "", subtitle: "" },
-    revenue: { title: "", subtitle: "" },
-    operations: { title: "", subtitle: "" },
-  });
-  const [runningJourneyKey, setRunningJourneyKey] = useState<JourneyKey | null>(null);
-  const [recentlyRemovedKeys, setRecentlyRemovedKeys] = useState<JourneyKey[]>([]);
+  const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({});
+  const [customMapDraft, setCustomMapDraft] = useState({ key: "", title: "", subtitle: "" });
+  const [runningJourneyKey, setRunningJourneyKey] = useState<string | null>(null);
+  const [showChooseMaps, setShowChooseMaps] = useState(true);
+  const [showCustomMapForm, setShowCustomMapForm] = useState(false);
+  const [recentlyRemovedKeysByCompany, setRecentlyRemovedKeysByCompany] = useState<Record<string, string[]>>({});
+
+  const scopedBaselineRun = useMemo(() => {
+    if (!activeCompanyId || !baselineRun) return null;
+    return baselineRun?.company_id === activeCompanyId ? baselineRun : null;
+  }, [activeCompanyId, baselineRun]);
+
+  const recentlyRemovedKeys = useMemo(() => {
+    if (!activeCompanyId) return [];
+    return recentlyRemovedKeysByCompany[activeCompanyId] ?? [];
+  }, [activeCompanyId, recentlyRemovedKeysByCompany]);
+
+  useEffect(() => {
+    setJourneyDrafts({});
+    setCustomMapDraft({ key: "", title: "", subtitle: "" });
+    setRunningJourneyKey(null);
+    setShowChooseMaps(true);
+    setShowCustomMapForm(false);
+  }, [activeCompanyId]);
 
   const journeys = useMemo(() => groupJourneys(items), [items]);
   const totalGaps = useMemo(
@@ -793,7 +999,14 @@ export default function JobStepsView() {
     [journeys]
   );
   const suggestedJourneyOptions = useMemo(() => {
-    const inferred = inferSuggestedJourneyOptions({ baselineRun, journeys });
+    const inferred = inferSuggestedJourneyOptions({
+      baselineRun: scopedBaselineRun,
+      journeys,
+      inputs: inputsQuery.data ?? [],
+      strategicProblems,
+      whereToPlay: strategyCascade?.where_to_play ?? "",
+      howToWin: strategyCascade?.how_to_win ?? "",
+    });
     const byKey = new Map<JourneyKey, SuggestedJourneyOption>(inferred.map((option) => [option.key, option]));
     for (const key of recentlyRemovedKeys) {
       if (!byKey.has(key)) {
@@ -807,12 +1020,7 @@ export default function JobStepsView() {
       }
     }
     return Array.from(byKey.values()).sort((a, b) => b.confidence - a.confidence);
-  }, [baselineRun, journeys, recentlyRemovedKeys]);
-  const hasCustomerJourney = useMemo(
-    () => journeys.some((journey) => journey.key === "customer"),
-    [journeys],
-  );
-
+  }, [scopedBaselineRun, journeys, recentlyRemovedKeys, inputsQuery.data, strategicProblems, strategyCascade?.where_to_play, strategyCascade?.how_to_win]);
   useEffect(() => {
     setJourneyDrafts((previous) => {
       const next = { ...previous };
@@ -827,7 +1035,7 @@ export default function JobStepsView() {
     });
   }, [suggestedJourneyOptions]);
 
-  const updateJourneyDraft = (key: JourneyKey, field: "title" | "subtitle", value: string) => {
+  const updateJourneyDraft = (key: string, field: "title" | "subtitle", value: string) => {
     setJourneyDrafts((previous) => ({
       ...previous,
       [key]: {
@@ -837,28 +1045,83 @@ export default function JobStepsView() {
     }));
   };
 
-  const addMap = async (key: JourneyKey) => {
+  const insertLocalDraftMap = async (args: {
+    key: string;
+    title: string;
+    subtitle: string;
+  }) => {
+    if (!activeCompanyId) throw new Error("No active company selected.");
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData?.user?.id) {
+      throw new Error("Sign in required to add a local job map draft.");
+    }
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("job_steps")
+      .select("id")
+      .eq("company_id", activeCompanyId)
+      .eq("journey_key", args.key)
+      .limit(1);
+    if (existingErr) throw new Error(existingErr.message || "Failed to verify existing map.");
+    if ((existingRows ?? []).length > 0) return false;
+
+    const rows = LOCAL_ODI_STEP_SEED.map((seed, index) => ({
+      company_id: activeCompanyId,
+      user_id: authData.user.id,
+      journey_key: args.key,
+      journey_title: args.title,
+      journey_subtitle: args.subtitle,
+      step_number: index + 1,
+      step_label: seed.label,
+      description: seed.description,
+      designed: false,
+      has_gap: true,
+      evidence_status: "unclear",
+      evidence_basis: "Local draft step generated without external model run.",
+      evidence_confidence: 20,
+      gap_note: "Awaiting evidence-backed research and validation.",
+    }));
+
+    const { error: insertErr } = await supabase.from("job_steps").insert(rows);
+    if (insertErr) throw new Error(insertErr.message || "Failed to insert local job map draft.");
+    return true;
+  };
+
+  const runAddMap = async (args: {
+    key: string;
+    title?: string;
+    subtitle?: string;
+    source?: "suggested" | "custom";
+  }) => {
     if (!activeCompany?.id) {
       toast.error("Select a company before running journey research.");
       return;
     }
-    if (key !== "customer" && !hasCustomerJourney) {
-      toast.error("Add the customer map first.");
+    const key = normalizeJourneyKey(args.key);
+    if (!key) {
+      toast.error("Enter a valid map key.");
       return;
     }
 
     try {
       setRunningJourneyKey(key);
-      const draft = journeyDrafts[key];
-      const suggested = suggestedJourneyOptions.find((option) => option.key === key);
-      const fallbackTitle = suggested?.title || titleFromKey(key);
-      const fallbackSubtitle = suggested?.subtitle || subtitleFromKey(key);
       const jobMap = {
         journey_key: key,
-        journey_title: safeText(draft?.title, fallbackTitle),
-        journey_subtitle: safeText(draft?.subtitle, fallbackSubtitle),
-        source: draft?.title || draft?.subtitle ? "custom" : "suggested",
+        journey_title: safeText(args.title, titleFromKey(key)),
+        journey_subtitle: safeText(args.subtitle, subtitleFromKey(key)),
+        source: args.source || "custom",
       };
+      const existingCustomerJourney = journeys.find((journey) => journey.key === "customer");
+      const customerSupportMap =
+        key !== "customer" && existingCustomerJourney
+          ? {
+              journey_key: "customer",
+              journey_title: safeText(existingCustomerJourney.title, titleFromKey("customer")),
+              journey_subtitle: safeText(existingCustomerJourney.subtitle, subtitleFromKey("customer")),
+              source: "existing" as const,
+            }
+          : null;
+      const jobMapsPayload = customerSupportMap ? [customerSupportMap, jobMap] : [jobMap];
 
       const { data, error: invokeError } = await supabase.functions.invoke("research-company", {
         body: {
@@ -866,19 +1129,40 @@ export default function JobStepsView() {
           company_name: activeCompany.name,
           website: activeCompany.website ?? "",
           journeys_to_generate: [key],
-          job_maps: [jobMap],
+          job_maps: jobMapsPayload,
         },
       });
 
       if (invokeError) {
-        throw new Error(await describeJobMapInvokeError(invokeError));
+        const invokeMessage = await describeJobMapInvokeError(invokeError);
+        if (shouldUseLocalMapFallback(invokeMessage)) {
+          const inserted = await insertLocalDraftMap({
+            key,
+            title: jobMap.journey_title,
+            subtitle: jobMap.journey_subtitle,
+          });
+          await Promise.all([refetchJobSteps(), refetchBaseline()]);
+          if (inserted) {
+            toast.success(`${titleCaseJourney(key)} map added as a local draft.`);
+            toast.message("Run full AI Research later to generate evidence-backed steps and opportunities.");
+          } else {
+            toast.message(`${titleCaseJourney(key)} map already exists.`);
+          }
+          return;
+        }
+        throw new Error(invokeMessage);
       }
       if (data?.error) {
         throw new Error(String(data.message || data.error));
       }
 
       await Promise.all([refetchJobSteps(), refetchBaseline()]);
-      setRecentlyRemovedKeys((previous) => previous.filter((removed) => removed !== key));
+      if (activeCompanyId) {
+        setRecentlyRemovedKeysByCompany((previous) => ({
+          ...previous,
+          [activeCompanyId]: (previous[activeCompanyId] ?? []).filter((removed) => removed !== key),
+        }));
+      }
       toast.success(`${titleCaseJourney(key)} map added.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to add job map.");
@@ -887,7 +1171,35 @@ export default function JobStepsView() {
     }
   };
 
-  const handleRemoveJourneyMap = async (key: JourneyKey) => {
+  const addMap = async (key: string) => {
+    const draft = journeyDrafts[key];
+    const suggested = suggestedJourneyOptions.find((option) => option.key === key);
+    const fallbackTitle = suggested?.title || titleFromKey(key);
+    const fallbackSubtitle = suggested?.subtitle || subtitleFromKey(key);
+    await runAddMap({
+      key,
+      title: safeText(draft?.title, fallbackTitle),
+      subtitle: safeText(draft?.subtitle, fallbackSubtitle),
+      source: draft?.title || draft?.subtitle ? "custom" : "suggested",
+    });
+  };
+
+  const addCustomMap = async () => {
+    const derivedKey = normalizeJourneyKey(customMapDraft.key || customMapDraft.title);
+    if (!derivedKey) {
+      toast.error("Enter a custom map key or title.");
+      return;
+    }
+    await runAddMap({
+      key: derivedKey,
+      title: safeText(customMapDraft.title, titleFromKey(derivedKey)),
+      subtitle: safeText(customMapDraft.subtitle, subtitleFromKey(derivedKey)),
+      source: "custom",
+    });
+    setCustomMapDraft({ key: "", title: "", subtitle: "" });
+  };
+
+  const handleRemoveJourneyMap = async (key: string) => {
     if (!activeCompany?.id) {
       toast.error("Select a company before removing a job map.");
       return;
@@ -900,9 +1212,15 @@ export default function JobStepsView() {
 
     try {
       await removeJourneyMap(key);
-      setRecentlyRemovedKeys((previous) =>
-        previous.includes(key) ? previous : [...previous, key],
-      );
+      if (activeCompanyId) {
+        setRecentlyRemovedKeysByCompany((previous) => {
+          const current = previous[activeCompanyId] ?? [];
+          return {
+            ...previous,
+            [activeCompanyId]: current.includes(key) ? current : [...current, key],
+          };
+        });
+      }
       toast.success(
         key === "customer"
           ? "Customer job map and related opportunities, ODI needs, outcomes, and routes removed."
@@ -993,14 +1311,122 @@ export default function JobStepsView() {
           </div>
         ) : (
           <div className="space-y-6">
-            <SuggestedMapsSection
-              options={suggestedJourneyOptions}
-              drafts={journeyDrafts}
-              onDraftChange={updateJourneyDraft}
-              onAddMap={addMap}
-              runningKey={runningJourneyKey}
-              hasCustomerJourney={hasCustomerJourney}
+            <OdiContextSection
+              marketDefinition={marketDefinition}
+              marketContext={strategyCascade?.where_to_play}
             />
+
+            <section
+              className="rounded-[24px] border px-6 py-5"
+              style={{ borderColor: c.line, background: c.panel }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
+                    Job Map Selection
+                  </p>
+                  <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+                    Selected maps are shown first. Choose suggested maps or add a custom one as needed.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowChooseMaps((current) => !current)}
+                    className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                    style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                  >
+                    {showChooseMaps ? "Hide Choose Job Maps" : "Show Choose Job Maps"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomMapForm((current) => !current)}
+                    className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                    style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                  >
+                    {showCustomMapForm ? "Hide Add Custom" : "Show Add Custom"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.paper }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+                  Selected Job Maps
+                </p>
+                {journeys.length === 0 ? (
+                  <p className="mt-2 font-sans text-[13px]" style={{ color: c.secondary }}>
+                    No job map selected yet.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {journeys.map((journey) => (
+                      <span
+                        key={`selected-${journey.key}`}
+                        className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                      >
+                        {journey.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {showChooseMaps ? (
+                <div className="mt-4">
+                  <SuggestedMapsSection
+                    options={suggestedJourneyOptions}
+                    drafts={journeyDrafts}
+                    onDraftChange={updateJourneyDraft}
+                    onAddMap={addMap}
+                    runningKey={runningJourneyKey}
+                  />
+                </div>
+              ) : null}
+
+              {showCustomMapForm ? (
+                <div className="mt-4 rounded-xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+                    Add Custom Job Map
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <input
+                      value={customMapDraft.key}
+                      onChange={(event) => setCustomMapDraft((prev) => ({ ...prev, key: event.target.value }))}
+                      className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                      style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      placeholder="Map key (optional, e.g. cafe-owner)"
+                    />
+                    <input
+                      value={customMapDraft.title}
+                      onChange={(event) => setCustomMapDraft((prev) => ({ ...prev, title: event.target.value }))}
+                      className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                      style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      placeholder="Map title (e.g. Job Map: Cafe Owner Buying)"
+                    />
+                    <input
+                      value={customMapDraft.subtitle}
+                      onChange={(event) => setCustomMapDraft((prev) => ({ ...prev, subtitle: event.target.value }))}
+                      className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                      style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                      placeholder="Subtitle"
+                    />
+                  </div>
+
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={addCustomMap}
+                      disabled={runningJourneyKey !== null}
+                      className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                      style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                    >
+                      {runningJourneyKey ? "Adding…" : "Add Custom Map"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </section>
 
             {journeys.length === 0 ? (
               <div
@@ -1022,11 +1448,6 @@ export default function JobStepsView() {
                   />
                 ))}
 
-                <OdiNeedsSection
-                  marketDefinition={marketDefinition}
-                  needs={needs}
-                />
-
                 <div
                   className="rounded-[24px] border px-6 py-5"
                   style={{ borderColor: c.line, background: c.panel }}
@@ -1038,6 +1459,8 @@ export default function JobStepsView() {
                 </div>
               </>
             )}
+
+            <OdiNeedsListSection needs={needs} />
           </div>
         )}
       </main>

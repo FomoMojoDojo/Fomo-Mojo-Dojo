@@ -11,7 +11,12 @@ export function usePublicBaseline(companyId?: string) {
 
   const fetchLatest = useCallback(async () => {
     const cid = companyIdRef.current;
-    if (!cid) return;
+    if (!cid) {
+      setRun(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -37,7 +42,14 @@ export function usePublicBaseline(companyId?: string) {
   }, []);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) {
+      setRun(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setRun(null);
+    setError(null);
     fetchLatest();
   }, [companyId, fetchLatest]);
 

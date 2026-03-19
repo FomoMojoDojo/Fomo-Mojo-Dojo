@@ -48,6 +48,8 @@ export function useOdiNeeds(companyId?: string) {
     let cancelled = false;
 
     (async () => {
+      setMarketDefinition(null);
+      setNeeds([]);
       setLoading(true);
       setError(null);
 
@@ -67,18 +69,13 @@ export function useOdiNeeds(companyId?: string) {
 
       if (cancelled) return;
 
-      if (marketRes.error) {
-        setError(marketRes.error.message);
-        setMarketDefinition(null);
-        setNeeds([]);
-      } else if (needsRes.error) {
-        setError(needsRes.error.message);
-        setMarketDefinition(null);
-        setNeeds([]);
-      } else {
-        setMarketDefinition((marketRes.data as OdiMarketDefinitionRow | null) ?? null);
-        setNeeds((needsRes.data as OdiNeedRow[]) ?? []);
-      }
+      const errors: string[] = [];
+      if (marketRes.error) errors.push(`Market definition: ${marketRes.error.message}`);
+      if (needsRes.error) errors.push(`Needs: ${needsRes.error.message}`);
+
+      setMarketDefinition(marketRes.error ? null : ((marketRes.data as OdiMarketDefinitionRow | null) ?? null));
+      setNeeds(needsRes.error ? [] : ((needsRes.data as OdiNeedRow[]) ?? []));
+      setError(errors.length > 0 ? errors.join(" | ") : null);
 
       setLoading(false);
     })();
