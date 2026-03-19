@@ -4,6 +4,7 @@ import { useCompany } from "@/hooks/useCompany";
 import { PublicBaselinePanel } from "@/components/PublicBaselinePanel";
 import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePanel";
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
+import CouncilRecommendationsPanel from "@/components/admin/CouncilRecommendationsPanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { ArrowLeft, ArrowRight, Building2, Globe } from "lucide-react";
 
@@ -171,6 +172,8 @@ export default function AdminCompanyDetail() {
         <PublicBaselinePanel companyId={company.id} />
 
         <CompanyFilesPanel companyId={company.id} companyName={company.name} mode="preview" />
+
+        <CouncilRecommendationsPanel companyId={company.id} companyName={company.name} />
 
         <FrameworkProvenancePanel companyId={company.id} companyName={company.name} />
       </div>

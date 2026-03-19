@@ -23,6 +23,9 @@ verify_jwt = false
 [functions.local-alignment]
 verify_jwt = false
 
+[functions.council-review]
+verify_jwt = false
+
 [edge_runtime.secrets]
 OPENAI_API_KEY = "env(OPENAI_API_KEY)"
 OPENAI_MODEL = "env(OPENAI_MODEL)"

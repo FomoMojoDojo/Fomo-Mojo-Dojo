@@ -333,6 +333,325 @@ const INPUT_PUBLIC_EVIDENCE_WEIGHTS: Record<string, number> = {
   "family-satisfaction": 0.22,
 };
 
+const INPUT_BASE_IMPACT_BY_KEY: Record<string, number> = {
+  "comp-alt": 9.0,
+  "unique-attr": 8.0,
+  "val-prop": 7.0,
+  "target-aud": 6.0,
+  "market-cat": 7.0,
+  "program-model": 6.0,
+  "needs-assessment": 5.0,
+  "outcome-data": 6.0,
+  "referral-map": 5.5,
+  "brand-narrative": 5.0,
+  "channel-strat": 5.5,
+  "donor-retention": 4.5,
+  "grant-pipeline": 4.5,
+  "family-satisfaction": 4.0,
+};
+
+type InputContextMode = "nonprofit" | "commercial" | "unknown";
+type InputBusinessProfile =
+  | "nonprofit"
+  | "fintech_collections"
+  | "hospitality_coffee"
+  | "telecom_saas"
+  | "legal_services"
+  | "mobility_aviation"
+  | "generic_commercial";
+
+function inferInputContextMode(args: {
+  companyName: string;
+  website: string;
+  baselineResultJson: any | null;
+}): InputContextMode {
+  const textParts: string[] = [];
+  textParts.push(String(args.companyName || ""));
+  textParts.push(String(args.website || ""));
+  textParts.push(String(args.baselineResultJson?.category_archetype || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.economic_engine || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.primary_buyer || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.chooser || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.user || ""));
+
+  const evidenceLedger = Array.isArray(args.baselineResultJson?.evidence_ledger)
+    ? args.baselineResultJson.evidence_ledger
+    : [];
+  for (const entry of evidenceLedger.slice(0, 10)) {
+    textParts.push(String(entry?.bucket || ""));
+    textParts.push(String(entry?.snippet || ""));
+  }
+
+  const text = textParts.join(" ").toLowerCase();
+
+  const nonprofitSignals = [
+    "nonprofit",
+    "donor",
+    "grant",
+    "fundraising",
+    "philanthropy",
+    "foundation giving",
+    "charity",
+    "mission-driven",
+  ];
+  const commercialSignals = [
+    "cafe",
+    "coffee",
+    "restaurant",
+    "retail",
+    "ecommerce",
+    "revenue",
+    "customer",
+    "subscription",
+    "wholesale",
+    "pricing",
+    "sales",
+  ];
+
+  const nonprofitScore = nonprofitSignals.reduce((score, signal) => score + (text.includes(signal) ? 1 : 0), 0);
+  const commercialScore = commercialSignals.reduce((score, signal) => score + (text.includes(signal) ? 1 : 0), 0);
+
+  if (nonprofitScore >= commercialScore + 2) return "nonprofit";
+  if (commercialScore >= nonprofitScore + 1) return "commercial";
+  return "unknown";
+}
+
+function inferInputBusinessProfile(args: {
+  companyName: string;
+  website: string;
+  baselineResultJson: any | null;
+  mode: InputContextMode;
+}): InputBusinessProfile {
+  if (args.mode === "nonprofit") return "nonprofit";
+
+  const textParts: string[] = [];
+  textParts.push(String(args.companyName || ""));
+  textParts.push(String(args.website || ""));
+  textParts.push(String(args.baselineResultJson?.category_archetype || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.economic_engine || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.primary_buyer || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.chooser || ""));
+  textParts.push(String(args.baselineResultJson?.lens_card?.user || ""));
+
+  const evidenceLedger = Array.isArray(args.baselineResultJson?.evidence_ledger)
+    ? args.baselineResultJson.evidence_ledger
+    : [];
+  for (const entry of evidenceLedger.slice(0, 8)) {
+    textParts.push(String(entry?.bucket || ""));
+    textParts.push(String(entry?.snippet || ""));
+  }
+  const text = textParts.join(" ").toLowerCase();
+
+  if (/\bindebted\b|\bdebt\b|\bcollections?\b|\bcreditor\b|\bfintech\b/.test(text)) {
+    return "fintech_collections";
+  }
+  if (/\bcafe\b|\bcoffee\b|\broast|\broastery\b|\bboutique cafe\b|\bbarra\b/.test(text)) {
+    return "hospitality_coffee";
+  }
+  if (/\btelecom\b|\bcarrier\b|\bdealer network\b|\bwireless retail\b|\bpos\b/.test(text)) {
+    return "telecom_saas";
+  }
+  if (/\blaw\b|\blitigation\b|\btoxic tort\b|\bmesothelioma\b|\blegal\b|\bclaimant\b/.test(text)) {
+    return "legal_services";
+  }
+  if (/\baviation\b|\bair taxi\b|\bevtol\b|\bflight\b|\burban air mobility\b/.test(text)) {
+    return "mobility_aviation";
+  }
+
+  return "generic_commercial";
+}
+
+function applyProfileSpecificInputNaming(args: {
+  key: string;
+  profile: InputBusinessProfile;
+  inputLabel: string;
+  subGroup: string;
+  description: string;
+  whyItMatters: string;
+  notApplicable: boolean;
+}) {
+  let { key, profile, inputLabel, subGroup, description, whyItMatters, notApplicable } = args;
+
+  const setRetentionFields = (label: string, sub: string, desc: string, why: string) => {
+    inputLabel = label;
+    subGroup = sub;
+    if (notApplicable) description = desc;
+    if (notApplicable) whyItMatters = why;
+  };
+
+  if (profile === "fintech_collections") {
+    if (key === "val-prop") inputLabel = "Recovery Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Creditors";
+    else if (key === "program-model") inputLabel = "Collections Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Creditor & Debtor Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Recovery Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Acquisition & Partner Channels"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Trust & Compliance Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "Enterprise GTM Channels"; subGroup = "GTM"; }
+    else if (key === "donor-retention") setRetentionFields("Client Retention", "Retention", "Client renewal and account expansion behavior", "Protects recurring enterprise revenue");
+    else if (key === "grant-pipeline") setRetentionFields("Enterprise Pipeline", "Demand Pipeline", "Qualified creditor opportunities and procurement stages", "Predicts near-term contracted revenue");
+    else if (key === "family-satisfaction") setRetentionFields("Debtor Experience Signals", "Customer Experience", "Complaint trends, resolution quality, and fairness sentiment", "Reduces compliance and reputational risk");
+  } else if (profile === "hospitality_coffee") {
+    if (key === "val-prop") inputLabel = "Roaster Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Buyers";
+    else if (key === "program-model") inputLabel = "Roaster Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Buyer & Partner Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Cup Quality Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Wholesale Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Origin & Craft Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "Wholesale + DTC Channels"; subGroup = "GTM"; }
+    else if (key === "donor-retention") setRetentionFields("Repeat Purchase Retention", "Retention", "Reorder frequency and wholesale account retention", "Protects recurring coffee revenue");
+    else if (key === "grant-pipeline") setRetentionFields("Wholesale Pipeline", "Demand Pipeline", "Qualified cafe and restaurant partnership opportunities", "Predicts future wholesale volume");
+    else if (key === "family-satisfaction") setRetentionFields("Customer Experience Signals", "Customer Experience", "Ratings, tasting feedback, and partner NPS", "Guides product quality and service improvements");
+  } else if (profile === "telecom_saas") {
+    if (key === "val-prop") inputLabel = "Platform Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Carrier Segments";
+    else if (key === "program-model") inputLabel = "Platform Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Operator Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Adoption Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Partner Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Platform Positioning Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "Carrier GTM Channels"; subGroup = "GTM"; }
+  } else if (profile === "legal_services") {
+    if (key === "val-prop") inputLabel = "Case Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Claimants";
+    else if (key === "program-model") inputLabel = "Litigation Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Claimant Decision Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Case Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Case Referral Sources"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Advocacy Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "Claim Intake Channels"; subGroup = "GTM"; }
+  } else if (profile === "mobility_aviation") {
+    if (key === "val-prop") inputLabel = "Mobility Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Riders & Partners";
+    else if (key === "program-model") inputLabel = "Flight Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Rider & Partner Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Flight Readiness Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Partnership Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Mobility Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "Route Launch Channels"; subGroup = "GTM"; }
+  } else if (profile === "generic_commercial") {
+    if (key === "val-prop") inputLabel = "Value Themes";
+    else if (key === "target-aud") inputLabel = "Best-Fit Customers";
+    else if (key === "program-model") inputLabel = "Operating Model";
+    else if (key === "needs-assessment") { inputLabel = "Customer Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-data") { inputLabel = "Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "referral-map") { inputLabel = "Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "brand-narrative") { inputLabel = "Positioning Story"; subGroup = "Messaging"; }
+    else if (key === "channel-strat") { inputLabel = "GTM Channels"; subGroup = "GTM"; }
+    else if (key === "donor-retention") setRetentionFields("Customer Retention", "Retention", "Repeat purchase and reorder behavior", "Protects recurring revenue and loyalty");
+    else if (key === "grant-pipeline") setRetentionFields("Growth Pipeline", "Demand Pipeline", "Qualified leads and wholesale opportunities", "Predicts near-term revenue growth");
+    else if (key === "family-satisfaction") setRetentionFields("Customer Satisfaction", "Customer Experience", "Ratings, reviews, and repeat sentiment", "Signals fit, quality, and retention risk");
+  }
+
+  return { inputLabel, subGroup, description, whyItMatters };
+}
+
+function replaceCompanyLeak(text: string, companyName: string): string {
+  const safe = String(text || "");
+  const target = String(companyName || "").trim();
+  if (!target) return safe;
+  if (/edgewood/i.test(target)) return safe;
+  if (!/edgewood/i.test(safe)) return safe;
+  return safe
+    .replace(/\bEdgewood Center for Children & Families\b/gi, target)
+    .replace(/\bEdgewood\b/gi, target);
+}
+
+function contextualizeInputForCompany(args: {
+  input: any;
+  mode: InputContextMode;
+  profile: InputBusinessProfile;
+  companyName: string;
+}) {
+  const raw = args.input ?? {};
+  const key = String(raw?.input_key || "").trim();
+
+  let inputLabel = replaceCompanyLeak(String(raw?.input_label || ""), args.companyName);
+  let subGroup = replaceCompanyLeak(String(raw?.sub_group || ""), args.companyName);
+  let description = replaceCompanyLeak(String(raw?.description || ""), args.companyName);
+  let whyItMatters = replaceCompanyLeak(String(raw?.why_it_matters || ""), args.companyName);
+
+  const combined = `${inputLabel} ${subGroup} ${description} ${whyItMatters}`.toLowerCase();
+  const notApplicable = /not applicable|not relevant|n\/a/.test(combined);
+  const shouldCommercialize = args.mode === "commercial" || (args.mode !== "nonprofit" && notApplicable);
+
+  if (shouldCommercialize) {
+    const mapped = applyProfileSpecificInputNaming({
+      key,
+      profile: args.profile,
+      inputLabel,
+      subGroup,
+      description,
+      whyItMatters,
+      notApplicable,
+    });
+    inputLabel = mapped.inputLabel;
+    subGroup = mapped.subGroup;
+    description = mapped.description;
+    whyItMatters = mapped.whyItMatters;
+  }
+
+  const needsOdiSignal = (text: string) =>
+    !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
+  if (key === "needs-assessment") {
+    if (needsOdiSignal(description)) {
+      description = "ODI job map and desired outcomes by segment";
+    }
+    if (needsOdiSignal(whyItMatters)) {
+      whyItMatters = "Sets importance and satisfaction gaps before solution bets";
+    }
+  }
+  if (key === "outcome-data") {
+    if (needsOdiSignal(description)) {
+      description = "Track ODI outcome satisfaction and completion signals";
+    }
+    if (needsOdiSignal(whyItMatters)) {
+      whyItMatters = "Validates progress on high-importance underserved outcomes";
+    }
+  }
+  if (key === "referral-map") {
+    if (needsOdiSignal(description)) {
+      description = "Map decision-journey triggers and trusted acquisition sources";
+    }
+    if (needsOdiSignal(whyItMatters)) {
+      whyItMatters = "Shows where customers discover, evaluate, and choose";
+    }
+  }
+
+  return {
+    ...raw,
+    input_label: inputLabel,
+    sub_group: subGroup,
+    description,
+    why_it_matters: whyItMatters,
+  };
+}
+
+function deriveInputScoreImpact(args: {
+  inputKey: string;
+  completeness: number;
+  status: "complete" | "partial" | "gap" | "not_started";
+}) {
+  const key = String(args.inputKey || "").trim();
+  const base = INPUT_BASE_IMPACT_BY_KEY[key] ?? 4.5;
+  const completeness = clamp(Number(args.completeness) || 0, 0, 100);
+  const status = args.status;
+
+  if (status === "complete" || completeness >= 100) {
+    return { scoreImpact: 0, impactTier: "done" as const };
+  }
+
+  const remainingWork = clamp(1 - completeness / 100, 0.12, 1);
+  const statusBias = status === "gap" ? 1.08 : status === "not_started" ? 1.02 : 1;
+  const scoreImpact = clamp(Math.round(base * (0.35 + 0.65 * remainingWork) * statusBias * 10) / 10, 0.5, 10);
+
+  const impactTier =
+    scoreImpact >= 6 ? ("high" as const) : scoreImpact >= 3 ? ("med" as const) : ("low" as const);
+
+  return { scoreImpact, impactTier };
+}
+
 function seedInputProgress(args: {
   inputKey: string;
   description?: string;
@@ -1180,6 +1499,14 @@ function frameworkKeysFor(artifact: "inputs" | "journeys" | "opportunities" | "r
   return getFrameworkRoutingPlan(artifact).map((framework) => framework.key);
 }
 
+const PLAIN_LANGUAGE_RULES =
+  "Writing style rules: Use clear, plain language that a non-expert can understand. " +
+  "Avoid consulting jargon, business cliches, and buzzwords. " +
+  "Prefer concrete wording over abstract phrasing. Keep sentences short and direct. " +
+  "Only keep specialized terms when they are required by the evidence or provided explicitly by the user/client. " +
+  "If source evidence includes direct quotes, preserve them verbatim. Do not paraphrase direct quotes. " +
+  "If company-specific phrasing/taglines exist, keep them as-is and, when useful, add a separate optional suggestion prefixed exactly with 'Suggested clearer version:' rather than replacing the original wording.";
+
 function odiServiceState(importance: number, satisfaction: number) {
   const delta = importance - satisfaction;
   if (delta >= 3) return "underserved";
@@ -1217,7 +1544,7 @@ async function callOpenAIJSON(opts: {
         role: "system",
         content: [{
           type: "input_text",
-          text: `${systemText}${retryNote ? `\n\n${retryNote}` : ""}`,
+          text: `${systemText}\n\n${PLAIN_LANGUAGE_RULES}${retryNote ? `\n\n${retryNote}` : ""}`,
         }],
       },
       { role: "user", content: [{ type: "input_text", text: userText }] },
@@ -1305,9 +1632,7 @@ const GTM_KEYS = new Set([
   "donor-retention",
   "grant-pipeline",
 ]);
-const JOURNEY_KEYS = ["customer", "revenue", "operations"] as const;
-type JourneyKey = (typeof JOURNEY_KEYS)[number];
-const JOURNEY_KEY_SET = new Set<string>(JOURNEY_KEYS);
+type JourneyKey = string;
 const STRATEGIC_PROBLEM_STOPWORDS = new Set([
   "about",
   "after",
@@ -1367,7 +1692,17 @@ function round1(n: number) {
 }
 
 function normalizeJourneyKey(value: unknown) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function isCustomerJourneyKey(value: unknown) {
+  const key = normalizeJourneyKey(value);
+  return key === "customer" || key.startsWith("customer-");
 }
 
 function parseRequestedJourneyKeys(value: unknown): JourneyKey[] {
@@ -1376,9 +1711,9 @@ function parseRequestedJourneyKeys(value: unknown): JourneyKey[] {
 
   for (const item of raw) {
     const key = normalizeJourneyKey(item);
-    if (!JOURNEY_KEY_SET.has(key)) continue;
-    if (keys.includes(key as JourneyKey)) continue;
-    keys.push(key as JourneyKey);
+    if (!key) continue;
+    if (keys.includes(key)) continue;
+    keys.push(key);
   }
 
   return keys;
@@ -1394,12 +1729,20 @@ type SelectedJobMap = {
 function defaultJourneyTitle(key: JourneyKey) {
   if (key === "revenue") return "Job Map: Securing Revenue Outcomes";
   if (key === "operations") return "Job Map: Delivering Consistent Service";
+  if (key === "customer") return "Job Map: Customer Progress";
+  const human = key
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  if (human) return `Job Map: ${human}`;
   return "Job Map: Customer Progress";
 }
 
 function defaultJourneySubtitle(key: JourneyKey) {
   if (key === "revenue") return "How demand converts into recurring economic outcomes.";
   if (key === "operations") return "How delivery operations prepare, execute, monitor, and improve service.";
+  if (key === "customer") return "How the primary job performer defines, prepares, executes, and concludes progress.";
   return "How the primary job performer defines, prepares, executes, and concludes progress.";
 }
 
@@ -1421,8 +1764,8 @@ function parseSelectedJobMaps(value: unknown): SelectedJobMap[] {
     const item = row as Record<string, unknown>;
     const keyRaw = item?.journey_key ?? item?.key;
     const key = normalizeJourneyKey(keyRaw);
-    if (!JOURNEY_KEY_SET.has(key)) continue;
-    const journeyKey = key as JourneyKey;
+    if (!key) continue;
+    const journeyKey = key;
     const sourceRaw = String(item?.source || "").trim().toLowerCase();
     const source: SelectedJobMap["source"] =
       sourceRaw === "custom" ? "custom" : sourceRaw === "selected" ? "selected" : "requested";
@@ -1445,8 +1788,8 @@ function deriveExistingJobMaps(rows: unknown): SelectedJobMap[] {
   for (const row of items) {
     const item = row as Record<string, unknown>;
     const key = normalizeJourneyKey(item?.journey_key);
-    if (!JOURNEY_KEY_SET.has(key)) continue;
-    const journeyKey = key as JourneyKey;
+    if (!key) continue;
+    const journeyKey = key;
     if (byKey.has(journeyKey)) continue;
 
     byKey.set(journeyKey, {
@@ -1837,11 +2180,11 @@ function scoreCompanyMojo(args: {
   const strengthNorm = avg(ledger.map((item: any) => normalizeSignalStrength(item?.signal_strength)));
   const baselineSupport = clamp(0.6 * confNorm + 0.4 * strengthNorm, 0, 1);
 
-  const customerSteps = safeSteps.filter((step) => normalizeJourneyKey(step?.journey_key) === "customer");
+  const customerSteps = safeSteps.filter((step) => isCustomerJourneyKey(step?.journey_key));
   const revenueSteps = safeSteps.filter((step) => normalizeJourneyKey(step?.journey_key) === "revenue");
   const opsSteps = safeSteps.filter((step) => normalizeJourneyKey(step?.journey_key) === "operations");
 
-  const customerOpps = safeOpps.filter((opp) => normalizeJourneyKey(opp?.journey_key) === "customer");
+  const customerOpps = safeOpps.filter((opp) => isCustomerJourneyKey(opp?.journey_key));
   const revenueOpps = safeOpps.filter((opp) => normalizeJourneyKey(opp?.journey_key) === "revenue");
   const opsOpps = safeOpps.filter((opp) => normalizeJourneyKey(opp?.journey_key) === "operations");
 
@@ -2039,10 +2382,12 @@ function scoreCompanyMojo(args: {
   };
 }
 
+type InputGroupKey = "foundation" | "execution" | "market_evidence";
+
 /**
- * Deterministic grouping: ignore model group_key/group_label entirely.
+ * Fallback grouping by key when model output is missing/invalid.
  */
-const INPUT_GROUP_BY_KEY: Record<string, "foundation" | "execution" | "market_evidence"> = {
+const INPUT_GROUP_BY_KEY: Record<string, InputGroupKey> = {
   // foundation (7)
   "comp-alt": "foundation",
   "unique-attr": "foundation",
@@ -2052,22 +2397,50 @@ const INPUT_GROUP_BY_KEY: Record<string, "foundation" | "execution" | "market_ev
   "program-model": "foundation",
   "needs-assessment": "foundation",
 
-  // execution (4)
-  "outcome-data": "execution",
+  // execution (3)
   "referral-map": "execution",
   "brand-narrative": "execution",
   "channel-strat": "execution",
 
-  // market evidence (3)
+  // market evidence (4)
+  "outcome-data": "market_evidence",
   "donor-retention": "market_evidence",
   "grant-pipeline": "market_evidence",
   "family-satisfaction": "market_evidence",
 };
 
-function groupLabelForKey(groupKey: "foundation" | "execution" | "market_evidence") {
+function groupLabelForKey(groupKey: InputGroupKey) {
   if (groupKey === "execution") return "Execution";
   if (groupKey === "market_evidence") return "Market Evidence";
   return "Foundation";
+}
+
+function normalizeInputGroupKey(args: {
+  inputKey: string;
+  inputGroupKey?: string;
+  subGroup?: string;
+}): InputGroupKey {
+  const key = String(args.inputKey || "").trim();
+  const rawGroup = String(args.inputGroupKey || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  if (rawGroup === "foundation" || rawGroup === "execution" || rawGroup === "market_evidence") {
+    return rawGroup;
+  }
+
+  if (key === "needs-assessment") return "foundation";
+  if (key === "outcome-data") return "market_evidence";
+
+  const sub = String(args.subGroup || "").toLowerCase();
+  if (/\bmarket evidence\b|\bevidence\b|\bvalidation\b|\bretention\b|\bpipeline\b|\bexperience\b/.test(sub)) {
+    return "market_evidence";
+  }
+  if (/\bgtm\b|\bchannel\b|\bmessaging\b|\bnarrative\b|\breferral\b|\bacquisition\b/.test(sub)) {
+    return "execution";
+  }
+
+  return INPUT_GROUP_BY_KEY[key] ?? "foundation";
 }
 
 /**
@@ -2103,12 +2476,13 @@ const repairBundleSchema = {
         additionalProperties: false,
         properties: {
           input_key: { type: "string", enum: INPUT_KEYS },
+          group_key: { type: "string", enum: ["foundation", "execution", "market_evidence"] },
           input_label: { type: "string" },
           sub_group: { type: "string" },
           description: { type: "string" },
           why_it_matters: { type: "string" },
         },
-        required: ["input_key", "input_label", "sub_group", "description", "why_it_matters"],
+        required: ["input_key", "group_key", "input_label", "sub_group", "description", "why_it_matters"],
       },
     },
     journeys: {
@@ -2119,7 +2493,7 @@ const repairBundleSchema = {
         type: "object",
         additionalProperties: false,
         properties: {
-          journey_key: { type: "string", enum: [...JOURNEY_KEYS] },
+          journey_key: { type: "string" },
           journey_title: { type: "string" },
           journey_subtitle: { type: "string" },
           steps: {
@@ -2458,19 +2832,46 @@ Deno.serve(async (req) => {
     });
 
     try {
-    // ✅ Option A: fetch latest public baseline once, reuse later
-    const { data: baselineRun, error: baselineErr } = await supabase
+    // ✅ Fetch recent public baselines and prefer the latest strong run.
+    const { data: baselineRuns, error: baselineErr } = await supabase
       .from("public_baseline_runs")
       .select("id, created_at, result_json")
       .eq("company_id", company_id)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(12);
 
     if (baselineErr) console.log("[research-company] baseline fetch error:", baselineErr.message);
 
-    const baselineStatus = String((baselineRun?.result_json as { status?: string } | null)?.status || "ok");
-    const baselineReason = String((baselineRun?.result_json as { reason?: string } | null)?.reason || "");
+    type BaselineRunRow = { id?: number | string; created_at?: string; result_json?: unknown };
+    const recentBaselineRuns = (Array.isArray(baselineRuns) ? baselineRuns : []) as BaselineRunRow[];
+    const latestBaselineRun = recentBaselineRuns[0] ?? null;
+    const isWeakBaselineStatus = (status: string) =>
+      status === "ambiguous_public_evidence" || status === "insufficient_public_evidence";
+    const baselineStatusFor = (run: BaselineRunRow | null) =>
+      String((run?.result_json as { status?: string } | null)?.status || "ok");
+    const baselineReasonFor = (run: BaselineRunRow | null) =>
+      String((run?.result_json as { reason?: string } | null)?.reason || "");
+
+    const fallbackStrongBaseline =
+      recentBaselineRuns.find((run) => !isWeakBaselineStatus(baselineStatusFor(run))) ?? null;
+    const baselineRun = fallbackStrongBaseline ?? latestBaselineRun;
+
+    if (
+      latestBaselineRun &&
+      baselineRun &&
+      String(latestBaselineRun?.id ?? "") !== String(baselineRun?.id ?? "")
+    ) {
+      console.log("[research-company] latest baseline weak; falling back to prior strong baseline", {
+        company_id,
+        latest_baseline_run_id: latestBaselineRun?.id ?? null,
+        latest_status: baselineStatusFor(latestBaselineRun),
+        fallback_baseline_run_id: baselineRun?.id ?? null,
+        fallback_status: baselineStatusFor(baselineRun),
+      });
+    }
+
+    const baselineStatus = baselineStatusFor(baselineRun);
+    const baselineReason = baselineReasonFor(baselineRun);
 
     if (baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence") {
       console.log("[research-company] blocked by baseline status", {
@@ -2564,6 +2965,7 @@ Deno.serve(async (req) => {
         : requestedJobMaps.length > 0
           ? requestedJobMaps
           : existingJobMaps;
+    const hasExplicitJobMapRequest = submittedJobMaps.length > 0 || requestedJobMaps.length > 0;
 
     const selectedMapByKey = new Map<JourneyKey, SelectedJobMap>();
     for (const map of selectedBase) {
@@ -2572,17 +2974,42 @@ Deno.serve(async (req) => {
       }
     }
 
+    let autoInjectedCustomerMap = false;
     if (!selectedMapByKey.has("customer")) {
       const existingCustomer = existingJobMaps.find((map) => map.journey_key === "customer");
       if (existingCustomer) {
         selectedMapByKey.set("customer", existingCustomer);
       }
     }
+    if (!selectedMapByKey.has("customer") && !hasExplicitJobMapRequest && selectedMapByKey.size > 0) {
+      const primaryMap = selectedBase[0] ?? existingJobMaps[0];
+      const suggestedCustomer = suggestedJobMapByKey.get("customer");
+      selectedMapByKey.set("customer", {
+        journey_key: "customer",
+        journey_title: sanitizeJobMapTitle(
+          primaryMap?.journey_title || suggestedCustomer?.journey_title,
+          "customer",
+        ),
+        journey_subtitle: sanitizeJobMapSubtitle(
+          primaryMap?.journey_subtitle || suggestedCustomer?.journey_subtitle,
+          "customer",
+        ),
+        source: "existing",
+      });
+      autoInjectedCustomerMap = true;
+      console.log("[research-company] auto-injected customer map from existing non-customer maps", {
+        company_id,
+        selected_keys: Array.from(selectedMapByKey.keys()),
+      });
+    }
 
     const selectedJobMaps: SelectedJobMap[] = Array.from(selectedMapByKey.values());
     const explicitSelectedJourneyKeys: JourneyKey[] = [
       ...new Set(selectedBase.map((map) => map.journey_key)),
     ];
+    if (autoInjectedCustomerMap && !explicitSelectedJourneyKeys.includes("customer")) {
+      explicitSelectedJourneyKeys.push("customer");
+    }
 
     if (selectedJobMaps.length === 0) {
       return jsonResponse({
@@ -2632,12 +3059,13 @@ Deno.serve(async (req) => {
             additionalProperties: false,
             properties: {
               input_key: { type: "string", enum: INPUT_KEYS },
+              group_key: { type: "string", enum: ["foundation", "execution", "market_evidence"] },
               input_label: { type: "string" },
               sub_group: { type: "string" },
               description: { type: "string" },
               why_it_matters: { type: "string" },
             },
-            required: ["input_key", "input_label", "sub_group", "description", "why_it_matters"],
+            required: ["input_key", "group_key", "input_label", "sub_group", "description", "why_it_matters"],
           },
         },
       },
@@ -2653,7 +3081,9 @@ Deno.serve(async (req) => {
       `Return EXACTLY 14 input objects, one per input_key in this list.\n` +
       `Do not omit any.\n\n` +
       `Keys:\n` +
-      INPUT_KEYS.map((k) => `- ${k}`).join("\n");
+      INPUT_KEYS.map((k) => `- ${k}`).join("\n") +
+      `\n\nEach input must include group_key using one of: foundation, execution, market_evidence.\n` +
+      `Group counts are flexible by company context and do not need to follow a fixed 7/4/3 split.`;
 
     const inputsSystemText =
       `You are a strategy analyst using the Mojo Strategy Map.\n` +
@@ -2664,8 +3094,12 @@ Deno.serve(async (req) => {
       `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
       `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
+      `- For commercial businesses, translate nonprofit-style placeholders into category-relevant equivalents (customer retention, growth pipeline, customer satisfaction)\n` +
+      `- Never output "not applicable", "N/A", or "not relevant" for required inputs; provide the closest category-specific signal instead\n` +
+      `- Embed ODI framing in at least needs-assessment, outcome-data, and referral-map by referencing job/outcome context and importance/satisfaction evidence\n` +
       `- Input descriptions should highlight what must be clarified to resolve strategic problems\n` +
       `- When evidence is weak, use cautious wording instead of inventing specifics\n` +
+      `- Set group_key per input based on context; do not force equal counts across groups\n` +
       `- input_label max 5 words\n` +
       `- sub_group max 4 words\n` +
       `- description max 10 words\n` +
@@ -2694,12 +3128,36 @@ Deno.serve(async (req) => {
     }
     let inputs: any[] = INPUT_KEYS.map((k) => byKey[k]).filter(Boolean);
     if (inputs.length !== 14) return jsonResponse({ error: "Inputs missing one or more required keys" }, 500);
+
+    const inputContextMode = inferInputContextMode({
+      companyName: company_name,
+      website,
+      baselineResultJson: baselineRun?.result_json ?? null,
+    });
+    const inputBusinessProfile = inferInputBusinessProfile({
+      companyName: company_name,
+      website,
+      baselineResultJson: baselineRun?.result_json ?? null,
+      mode: inputContextMode,
+    });
+    inputs = inputs.map((input) =>
+      contextualizeInputForCompany({
+        input,
+        mode: inputContextMode,
+        profile: inputBusinessProfile,
+        companyName: company_name,
+      }),
+    );
     const inputFrameworkKeys = frameworkKeysFor("inputs");
 
     // -------------------------
     // 2) Generate JOURNEYS (customer required, others optional by request)
     // -------------------------
     const journeyTypeDefinition = (key: JourneyKey) => {
+      if (key.startsWith("customer")) return "external user/buyer experience from discovery to post-use";
+      if (key.includes("revenue") || key.includes("investment") || key.includes("funding")) {
+        return "how demand converts to recurring revenue or funding outcomes";
+      }
       if (key === "customer") return "external user/buyer experience from discovery to post-use";
       if (key === "revenue") return "how demand converts to recurring revenue or funding outcomes";
       return "internal delivery and operating system from intake through fulfillment";
@@ -2911,7 +3369,7 @@ Deno.serve(async (req) => {
     });
 
     let opportunities: any[] = Array.isArray(oppsResult?.opportunities) ? oppsResult.opportunities : [];
-    opportunities = opportunities.filter((opp) => normalizeJourneyKey(opp?.journey_key) === "customer");
+    opportunities = opportunities.filter((opp) => isCustomerJourneyKey(opp?.journey_key));
     if (opportunities.length < 8) {
       return jsonResponse({ error: `Expected >=8 customer opportunities, got ${opportunities.length}` }, 500);
     }
@@ -2934,7 +3392,7 @@ Deno.serve(async (req) => {
         : [];
 
       const repairedCustomerOnly = repairedOpportunities.filter(
-        (opp) => normalizeJourneyKey(opp?.journey_key) === "customer"
+        (opp) => isCustomerJourneyKey(opp?.journey_key)
       );
       if (repairedCustomerOnly.length >= 8) {
         opportunities = repairedCustomerOnly;
@@ -2942,7 +3400,7 @@ Deno.serve(async (req) => {
     }
 
     const customerJourneySteps = journeys
-      .filter((journey) => normalizeJourneyKey(journey?.journey_key) === "customer")
+      .filter((journey) => isCustomerJourneyKey(journey?.journey_key))
       .flatMap((journey) => Array.isArray(journey?.steps) ? journey.steps : []);
     const customerStepIndex = new Set(
       customerJourneySteps.map((step: any) => {
@@ -3267,7 +3725,7 @@ Deno.serve(async (req) => {
       strategyPromise,
     ]);
 
-    const customerJourneyDraft = journeys.find((journey) => normalizeJourneyKey(journey?.journey_key) === "customer");
+    const customerJourneyDraft = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const odiBrief = buildODIBrief({
       baselineResultJson: baselineRun?.result_json ?? null,
       customerJourneyTitle: String(customerJourneyDraft?.journey_title || ""),
@@ -3332,8 +3790,12 @@ Deno.serve(async (req) => {
 
       inputs = Array.isArray(repairedBundle?.inputs) ? repairedBundle.inputs : inputs;
       journeys = Array.isArray(repairedBundle?.journeys) ? repairedBundle.journeys : journeys;
-      opportunities = Array.isArray(repairedBundle?.opportunities) ? repairedBundle.opportunities : opportunities;
-      routes = Array.isArray(repairedBundle?.routes) ? repairedBundle.routes : routes;
+      if (Array.isArray(repairedBundle?.opportunities) && repairedBundle.opportunities.length > 0) {
+        opportunities = repairedBundle.opportunities;
+      }
+      if (Array.isArray(repairedBundle?.routes) && repairedBundle.routes.length > 0) {
+        routes = repairedBundle.routes;
+      }
       positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
       strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
 
@@ -3439,10 +3901,51 @@ Deno.serve(async (req) => {
     // -------------------------
     // 7) Clear old rows for company
     // -------------------------
-    const { data: existingInputs } = await supabase.from("inputs").select("id").eq("company_id", company_id);
+    const { data: existingInputs } = await supabase
+      .from("inputs")
+      .select("id, input_key")
+      .eq("company_id", company_id);
     const existingIds = (existingInputs || []).map((r: any) => r.id);
+    const inputKeyById = new Map<string, string>(
+      ((existingInputs || []) as Array<{ id?: string; input_key?: string }>)
+        .filter((row) => typeof row?.id === "string" && typeof row?.input_key === "string")
+        .map((row) => [String(row.id), String(row.input_key)]),
+    );
+    const preservedInputFilesByKey = new Map<
+      string,
+      Array<{
+        file_name: string;
+        file_path: string;
+        file_type: string;
+        tags: string[];
+        uploaded_at?: string | null;
+      }>
+    >();
 
     if (existingIds.length > 0) {
+      const { data: existingInputFiles, error: existingInputFilesErr } = await supabase
+        .from("input_files")
+        .select("input_id, file_name, file_path, file_type, tags, uploaded_at")
+        .in("input_id", existingIds);
+
+      if (existingInputFilesErr) {
+        console.error("[research-company] existing input_files fetch error:", existingInputFilesErr);
+      } else {
+        for (const file of (existingInputFiles || []) as Array<any>) {
+          const key = inputKeyById.get(String(file?.input_id || ""));
+          if (!key) continue;
+          const bucket = preservedInputFilesByKey.get(key) || [];
+          bucket.push({
+            file_name: String(file?.file_name || ""),
+            file_path: String(file?.file_path || ""),
+            file_type: String(file?.file_type || "application/octet-stream"),
+            tags: Array.isArray(file?.tags) ? file.tags.map((tag: unknown) => String(tag)) : [],
+            uploaded_at: typeof file?.uploaded_at === "string" ? file.uploaded_at : null,
+          });
+          preservedInputFilesByKey.set(key, bucket);
+        }
+      }
+
       await supabase.from("input_subitems").delete().in("input_id", existingIds);
       await supabase.from("input_files").delete().in("input_id", existingIds);
       await supabase.from("inputs").delete().in("id", existingIds);
@@ -3474,19 +3977,29 @@ Deno.serve(async (req) => {
     let odiNeedsInserted = 0;
     let positioningCanvasInserted = 0;
     let strategyCascadeInserted = 0;
+    const restoredFileKeys = new Set<string>();
 
-    // Inputs: FORCE deterministic group assignment
+    // Inputs: accept model grouping with safe normalization/fallback
     for (const input of inputs) {
       const key = String(input?.input_key || "").trim();
       if (!key) continue;
 
-      const derivedGroupKey = INPUT_GROUP_BY_KEY[key] ?? "foundation";
+      const derivedGroupKey = normalizeInputGroupKey({
+        inputKey: key,
+        inputGroupKey: String(input?.group_key || ""),
+        subGroup: String(input?.sub_group || ""),
+      });
       const derivedGroupLabel = groupLabelForKey(derivedGroupKey);
       const seededProgress = seedInputProgress({
         inputKey: key,
         description: String(input?.description || ""),
         whyItMatters: String(input?.why_it_matters || ""),
         baselineResultJson: baselineRun?.result_json ?? null,
+      });
+      const derivedImpact = deriveInputScoreImpact({
+        inputKey: key,
+        completeness: seededProgress.completeness,
+        status: seededProgress.status,
       });
 
       const { data: row, error: insertErr } = await supabase
@@ -3500,8 +4013,8 @@ Deno.serve(async (req) => {
           sub_group: String(input?.sub_group || ""),
           description: String(input?.description || ""),
           why_it_matters: String(input?.why_it_matters || ""),
-          score_impact: 5,
-          impact_tier: seededProgress.impact_tier,
+          score_impact: derivedImpact.scoreImpact,
+          impact_tier: derivedImpact.impactTier,
           completeness: seededProgress.completeness,
           status: seededProgress.status,
           user_id: user.id,
@@ -3516,6 +4029,30 @@ Deno.serve(async (req) => {
       }
 
       if (row?.id) {
+        if (!restoredFileKeys.has(key)) {
+          const preservedFiles = preservedInputFilesByKey.get(key) || [];
+          if (preservedFiles.length > 0) {
+            const restorePayload = preservedFiles
+              .filter((file) => file.file_name && file.file_path)
+              .map((file) => ({
+                input_id: row.id,
+                file_name: file.file_name,
+                file_path: file.file_path,
+                file_type: file.file_type || "application/octet-stream",
+                tags: Array.isArray(file.tags) ? file.tags : [],
+                uploaded_at: file.uploaded_at || new Date().toISOString(),
+              }));
+
+            if (restorePayload.length > 0) {
+              const { error: restoreErr } = await supabase.from("input_files").insert(restorePayload);
+              if (restoreErr) {
+                console.error("[research-company] restore input_files error:", restoreErr);
+              }
+            }
+          }
+          restoredFileKeys.add(key);
+        }
+
         const { error: subitemErr } = await supabase.from("input_subitems").insert({
           input_id: row.id,
           name: String(input?.input_label || "Checklist item"),
@@ -3534,7 +4071,8 @@ Deno.serve(async (req) => {
           .update({
             completeness: seededProgress.completeness,
             status: seededProgress.status,
-            impact_tier: seededProgress.impact_tier,
+            score_impact: derivedImpact.scoreImpact,
+            impact_tier: derivedImpact.impactTier,
           })
           .eq("id", row.id);
 
@@ -3549,7 +4087,7 @@ Deno.serve(async (req) => {
     // Job steps
     for (const journey of journeys) {
       const journeyKey = normalizeJourneyKey(journey?.journey_key);
-      if (!JOURNEY_KEY_SET.has(journeyKey)) continue;
+      if (!journeyKey) continue;
       if (!jobMapUpdateJourneyKeySet.has(journeyKey)) continue;
 
       const steps = Array.isArray(journey?.steps) ? journey.steps : [];
@@ -3602,7 +4140,7 @@ Deno.serve(async (req) => {
     // Opportunities: recompute tier from score to keep consistent
     for (const opp of opportunities) {
       const normalizedJourneyKey = normalizeJourneyKey(opp?.journey_key);
-      const journeyKey = JOURNEY_KEY_SET.has(normalizedJourneyKey) ? normalizedJourneyKey : "customer";
+      const journeyKey = normalizedJourneyKey || "customer";
 
       const importance = clamp(Number(opp?.importance) || 5, 1, 10);
       const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
@@ -3633,7 +4171,7 @@ Deno.serve(async (req) => {
       else oppsInserted++;
     }
 
-    const customerJourney = journeys.find((journey) => normalizeJourneyKey(journey?.journey_key) === "customer");
+    const customerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const baselineLens = (baselineRun?.result_json as {
       lens_card?: {
         primary_buyer?: string;
