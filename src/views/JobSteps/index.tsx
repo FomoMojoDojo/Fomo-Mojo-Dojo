@@ -72,6 +72,78 @@ function safeText(value: string | null | undefined, fallback = "") {
   return value?.trim() || fallback;
 }
 
+function audienceFromJourneyTitle(title: string | null | undefined) {
+  const raw = safeText(title, "");
+  if (!raw) return "";
+  const withoutMapPrefix = raw.replace(/^job\s*map\s*:\s*/i, "").trim();
+  const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
+  const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
+  return withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw;
+}
+
+function jtbdFromJourneyTitle(title: string | null | undefined) {
+  const audience = audienceFromJourneyTitle(title);
+  const lower = audience.toLowerCase();
+  if (!audience) return "";
+
+  if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
+    return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
+  }
+  if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
+    return `When seeking growth capital, ${lower} want to identify, evaluate, and win the right funding partner, so they can execute their strategy on workable terms.`;
+  }
+  if (/(donor|grant|philanthrop)/.test(lower)) {
+    return `When securing mission funding, ${lower} want to win and retain aligned donors and grant partners, so they can sustain impact without constant funding risk.`;
+  }
+
+  return `When trying to complete this job, ${lower} want to move from defining outcomes to executing and monitoring progress, so they can achieve the intended result with less risk and rework.`;
+}
+
+function chooserFromJourneyTitle(title: string | null | undefined) {
+  const audience = audienceFromJourneyTitle(title);
+  const lower = audience.toLowerCase();
+  if (!audience) return "";
+
+  if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
+    return "Cafe owner, beverage lead, or venue operator";
+  }
+  if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
+    return "CEO, CFO, or finance lead";
+  }
+  if (/(donor|grant|philanthrop)/.test(lower)) {
+    return "Executive director, development lead, or board sponsor";
+  }
+  return audience;
+}
+
+function marketContextFromJourney(args: {
+  title?: string | null;
+  subtitle?: string | null;
+  fallback?: string | null;
+}) {
+  const title = audienceFromJourneyTitle(args.title);
+  const subtitle = safeText(args.subtitle, "");
+  const fallback = safeText(args.fallback, "");
+
+  if (title && subtitle) return `${title}: ${subtitle}`;
+  if (subtitle) return subtitle;
+  if (title) return title;
+  return fallback;
+}
+
+function isDraftPlaceholderStep(step: JobStepRow) {
+  const basis = safeText(step.evidence_basis, "").toLowerCase();
+  return (
+    step.evidence_status === "unclear" &&
+    Number(step.evidence_confidence ?? 0) <= 25 &&
+    basis.includes("local draft step generated without external model run")
+  );
+}
+
+function hasAssessedGap(step: JobStepRow) {
+  return Boolean(step.has_gap) && !isDraftPlaceholderStep(step);
+}
+
 function normalizeJourneyKey(value: string) {
   return String(value || "")
     .trim()
@@ -164,6 +236,47 @@ function shouldUseLocalMapFallback(message: string) {
   );
 }
 
+function shouldAttemptBaselineRetry(message: string) {
+  const text = String(message || "").toLowerCase();
+  return (
+    text.includes("baseline review needed") ||
+    text.includes("public baseline") ||
+    text.includes("insufficient_public_evidence") ||
+    text.includes("ambiguous_public_evidence") ||
+    text.includes("not enough extractable evidence")
+  );
+}
+
+class InvokeTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvokeTimeoutError";
+  }
+}
+
+async function invokeFunctionWithTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new InvokeTimeoutError(
+              "Map generation is still running in the background. This can take a few minutes for full evidence-backed generation.",
+            ),
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 const LOCAL_ODI_STEP_SEED = [
   { label: "Define desired outcome", description: "Clarify the primary progress target and constraints before evaluating alternatives." },
   { label: "Locate best options", description: "Identify and compare available options relevant to this job context." },
@@ -211,12 +324,12 @@ function normalizeRoleLabel(value: string) {
   return cleaned.length > 48 ? `${cleaned.slice(0, 45).trim()}…` : cleaned;
 }
 
-function inferRevenueMapTitle(economicEngine: string, publicSignalText: string) {
+function inferRevenueMapTitle(economicEngine: string, publicSignalText: string, allowNonprofitFunding: boolean) {
   const text = `${economicEngine} ${publicSignalText}`.toLowerCase();
   if (/(investment|investor|capital|funding|raise)/.test(text)) {
     return "Job Map: Getting Financial Investment";
   }
-  if (/(donor|grant|philanthrop)/.test(text)) {
+  if (allowNonprofitFunding && /(donor|grant|philanthrop|fundraising)/.test(text)) {
     return "Job Map: Securing Donor and Grant Support";
   }
   if (/(referral|pipeline|conversion|enrollment)/.test(text)) {
@@ -252,7 +365,6 @@ function inferSuggestedJourneyOptions(args: {
 
   const uploadedSignalText = args.inputs
     .flatMap((input) => [
-      input.input_key,
       input.input_label,
       input.sub_group,
       input.description,
@@ -291,6 +403,18 @@ function inferSuggestedJourneyOptions(args: {
   ]
     .join(" ")
     .toLowerCase();
+  const nonprofitSignalText = [
+    String(lens.value_chain || ""),
+    String(lens.economic_engine || ""),
+    String(args.whereToPlay || ""),
+    String(args.howToWin || ""),
+    strategicProblemText,
+  ]
+    .join(" ")
+    .toLowerCase();
+  const hasNonprofitFundingSignal = /\b(nonprofit|charity|foundation|mission|philanthrop|donor|grant|fundraising)\b/.test(nonprofitSignalText);
+  const hasCommercialMarketSignal = /\b(saas|software|telecom|enterprise|b2b|subscription|arr|contract|procurement|retail|cafe|restaurant|venue)\b/.test(nonprofitSignalText);
+  const allowDonorGrantRevenueMap = hasNonprofitFundingSignal && !hasCommercialMarketSignal;
 
   const fileSignals = args.inputs.flatMap((input) =>
     input.files.map((file) => ({
@@ -346,23 +470,25 @@ function inferSuggestedJourneyOptions(args: {
       "renewal",
       "payer",
       "reimbursement",
-      "donor",
-      "fundraising",
       "referral",
       "pipeline",
       "conversion",
     ]);
+    const nonprofitRevenueMatches = allowDonorGrantRevenueMap
+      ? countMatches(["donor", "fundraising", "grant", "philanthrop"])
+      : 0;
+    const revenueSignalScore = revenueMatches + nonprofitRevenueMatches;
     const economicEngine = safeText(lens.economic_engine, "");
     const hasEconomicSignal =
       economicEngine.length > 0 && economicEngine.toLowerCase() !== "unknown";
 
-    if (revenueMatches >= 2 || hasEconomicSignal) {
-      const revenueTitle = inferRevenueMapTitle(economicEngine, publicSignalText);
+    if (revenueSignalScore >= 2 || hasEconomicSignal) {
+      const revenueTitle = inferRevenueMapTitle(economicEngine, publicSignalText, allowDonorGrantRevenueMap);
       addOption({
         key: "revenue",
         title: revenueTitle,
         subtitle: "How the company secures, converts, and retains economic value for the chosen market.",
-        confidence: Math.min(92, 50 + revenueMatches * 8 + (hasEconomicSignal ? 12 : 0)),
+        confidence: Math.min(92, 50 + revenueSignalScore * 8 + (hasEconomicSignal ? 12 : 0)),
         rationale: hasEconomicSignal
           ? `Public signal in economic engine: ${economicEngine}`
           : "Public signals suggest monetization, funding, or referral conversion dynamics.",
@@ -404,41 +530,42 @@ function inferSuggestedJourneyOptions(args: {
   }
 
   const audienceCandidates = new Set<string>();
-  const hasCafeMarketSignal = /\bcafe|cafes|coffee|venue|venues|restaurant|restaurants\b/.test(marketSignalText);
-  const hasCommercialSignal = /\bb2b\b|\bwholesale\b|\bdistribution\b|\bpartner\b|\bprocurement\b|\bbuyer\b/.test(marketSignalText);
-  const cafeEvidenceMatcher = /\bcafe owner|cafe owners|coffee program|roaster|espresso|specialty venue|restaurant buyer|wholesale account\b/i;
-  const cafeProblemSources = matchingProblemSnippets(cafeEvidenceMatcher);
-  const cafeFileSources = matchingFileSnippets(cafeEvidenceMatcher);
-  const hasCafeEvidenceSignal = cafeProblemSources.length > 0 || cafeFileSources.length > 0;
-  if (hasCafeMarketSignal && (hasCommercialSignal || /\bcafe\b|\bcafes\b/.test(marketSignalText) || hasCafeEvidenceSignal)) {
-    audienceCandidates.add("Cafe Owners and Specialty Venue Buyers");
+  const baselineRoleCandidates = [lens.user, lens.primary_buyer, lens.chooser]
+    .map((value) => normalizeRoleLabel(String(value || "")))
+    .filter((value) => {
+      const lower = value.toLowerCase();
+      return (
+        Boolean(value) &&
+        lower !== "core audience" &&
+        lower !== "unknown" &&
+        lower !== "unknown from public evidence"
+      );
+    });
+  for (const role of baselineRoleCandidates) {
+    audienceCandidates.add(role);
   }
-  if (/\binvestor|investment|capital raise|funding round\b/.test(marketSignalText)) {
+  if (/\binvestor|investment committee|capital partner\b/.test(marketSignalText)) {
     audienceCandidates.add("Investors and Investment Committee");
   }
-  if (/\bfranchise|wholesale partner|distribution partner|channel partner\b/.test(marketSignalText)) {
+  if (/\bchannel partner|distribution partner|reseller|procurement lead\b/.test(marketSignalText)) {
     audienceCandidates.add("Channel and Distribution Partners");
   }
 
   for (const candidate of audienceCandidates) {
     const key = `customer-${candidate.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)}`;
-    const hasCafeCandidate = candidate === "Cafe Owners and Specialty Venue Buyers";
-    const candidateEvidence = hasCafeCandidate
-      ? [
-          ...cafeProblemSources.map((source) => `Problem: ${source}`),
-          ...cafeFileSources.map((source) => `File: ${source}`),
-        ].slice(0, 3)
-      : [];
-    const rationale = hasCafeCandidate
-      ? candidateEvidence.length > 0
-        ? `Derived from uploaded/client evidence: ${candidateEvidence.join(" • ")}`
-        : "Inferred from market context and uploaded/internal signals."
-      : "Inferred from market context and uploaded/internal signals.";
+    const roleMatcher = new RegExp(candidate.split(/\s+/).slice(0, 3).join("|"), "i");
+    const candidateEvidence = [
+      ...matchingProblemSnippets(roleMatcher).map((source) => `Problem: ${source}`),
+      ...matchingFileSnippets(roleMatcher).map((source) => `File: ${source}`),
+    ].slice(0, 3);
+    const rationale = candidateEvidence.length > 0
+      ? `Derived from uploaded/client evidence: ${candidateEvidence.join(" • ")}`
+      : "Derived from baseline role signals and market context.";
     addOption({
       key,
       title: `Job Map: ${candidate}`,
       subtitle: `How ${candidate.toLowerCase()} define, evaluate, select, execute, and monitor progress.`,
-      confidence: hasCafeCandidate && hasCafeEvidenceSignal ? 90 : 76,
+      confidence: candidateEvidence.length > 0 ? 90 : 78,
       rationale,
     });
   }
@@ -486,8 +613,12 @@ function TimelineRow({
 }
 
 function StepCard({ step }: { step: JobStepRow }) {
+  const draftPlaceholder = isDraftPlaceholderStep(step);
+  const assessedGap = hasAssessedGap(step);
   const evidenceTone =
-    step.evidence_status === "evidenced"
+    draftPlaceholder
+      ? { label: "Not Assessed", color: c.muted, bg: "#F3F4EF", border: c.line }
+      : step.evidence_status === "evidenced"
       ? { label: "Evidenced", color: c.teal, bg: "#EEF6E7", border: "#BDD8CF" }
       : step.evidence_status === "implied"
         ? { label: "Implied", color: c.slate, bg: "#EDF4F6", border: "#C4D7DE" }
@@ -499,8 +630,8 @@ function StepCard({ step }: { step: JobStepRow }) {
       style={{
         width: STEP_CARD_WIDTH,
         background: c.paper,
-        border: `1px solid ${step.has_gap ? "#E7C3A4" : c.line}`,
-        boxShadow: step.has_gap ? "0 0 0 1px rgba(255,125,45,0.08) inset" : "none",
+        border: `1px solid ${assessedGap ? "#E7C3A4" : c.line}`,
+        boxShadow: assessedGap ? "0 0 0 1px rgba(255,125,45,0.08) inset" : "none",
       }}
     >
       <div className="flex min-h-[440px] flex-1 flex-col p-4">
@@ -534,11 +665,16 @@ function StepCard({ step }: { step: JobStepRow }) {
             Evidence Basis
           </p>
           <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-            {safeText(step.evidence_basis, "No evidence rationale captured.")}
+            {safeText(
+              step.evidence_basis,
+              draftPlaceholder
+                ? "Template step only. Run research to replace with evidence-backed rationale."
+                : "No evidence rationale captured.",
+            )}
           </p>
         </div>
 
-        {step.has_gap ? (
+        {assessedGap ? (
           <div
             className="mt-3 rounded-xl border px-3 py-2"
             style={{
@@ -560,6 +696,18 @@ function StepCard({ step }: { step: JobStepRow }) {
               {safeText(step.gap_note, "Gap present, but no rationale captured yet.")}
             </p>
           </div>
+        ) : draftPlaceholder ? (
+          <div
+            className="mt-3 rounded-xl border px-3 py-2"
+            style={{ borderColor: c.line, background: c.lineFaint, minHeight: STEP_DETAIL_BLOCK_HEIGHT }}
+          >
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+              Needs Assessment
+            </p>
+            <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+              This step is a draft placeholder. Run research to determine whether a real gap exists.
+            </p>
+          </div>
         ) : (
           <div style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }} className="mt-3" />
         )}
@@ -569,10 +717,14 @@ function StepCard({ step }: { step: JobStepRow }) {
         className="flex min-h-[34px] items-center border-t px-4 py-2"
         style={{ borderColor: c.line }}
       >
-        {step.has_gap ? (
+        {assessedGap ? (
           <span className="flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: c.gap }}>
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.gap }} />
             Gap
+          </span>
+        ) : draftPlaceholder ? (
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+            Draft
           </span>
         ) : (
           <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
@@ -594,17 +746,41 @@ function titleCaseJourney(key: string) {
 function OdiContextSection({
   marketDefinition,
   marketContext,
+  activeCustomerJourneyTitle,
+  activeCustomerJourneySubtitle,
 }: {
   marketDefinition: OdiMarketDefinitionRow | null;
   marketContext?: string;
+  activeCustomerJourneyTitle?: string | null;
+  activeCustomerJourneySubtitle?: string | null;
 }) {
-  const jobExecutor = safeText(marketDefinition?.job_executor, "Unknown from stored ODI definition");
-  const chooser = safeText(marketDefinition?.chooser, "Unknown from stored ODI definition");
-  const jtbd = safeText(
-    marketDefinition?.jtbd,
-    "Understand and complete the core job progress for this offering"
+  const derivedExecutor = audienceFromJourneyTitle(activeCustomerJourneyTitle);
+  const derivedJtbd = jtbdFromJourneyTitle(activeCustomerJourneyTitle);
+  const derivedChooser = chooserFromJourneyTitle(activeCustomerJourneyTitle);
+
+  const jobExecutor = safeText(
+    derivedExecutor,
+    safeText(marketDefinition?.job_executor, "Unknown from stored ODI definition"),
   );
-  const market = safeText(marketContext, "No market context captured yet.");
+  const chooser = safeText(
+    derivedChooser,
+    safeText(marketDefinition?.chooser, "Unknown from stored ODI definition"),
+  );
+  const jtbd = safeText(
+    derivedJtbd,
+    safeText(
+      marketDefinition?.jtbd,
+    "Understand and complete the core job progress for this offering"
+    ),
+  );
+  const market = safeText(
+    marketContextFromJourney({
+      title: activeCustomerJourneyTitle,
+      subtitle: activeCustomerJourneySubtitle,
+      fallback: marketContext,
+    }),
+    "No market context captured yet.",
+  );
 
   return (
     <section
@@ -656,8 +832,8 @@ function OdiContextSection({
           <p className="mt-2 font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
             {jtbd}
           </p>
-          <p className="mt-2 font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
-            ODI needs should be written as stable, solution-free desired outcome statements. The current set and its scores are inferred from public evidence and generated opportunity data, not from validated ODI survey responses.
+          <p className="mt-2 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
+            Note: ODI needs should be written as stable, solution-free desired outcome statements. The current set and its scores are inferred from public evidence and generated opportunity data, not from validated ODI survey responses.
           </p>
         </div>
       </div>
@@ -741,7 +917,8 @@ function JourneySection({
   const { rail, dot, preview } = style;
   const designedCount = journey.steps.filter((step) => step.designed).length;
   const evidencedCount = journey.steps.filter((step) => step.evidence_status === "evidenced").length;
-  const gapsCount = journey.steps.filter((step) => step.has_gap).length;
+  const gapsCount = journey.steps.filter((step) => hasAssessedGap(step)).length;
+  const pendingAssessmentCount = journey.steps.filter((step) => isDraftPlaceholderStep(step)).length;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -807,6 +984,10 @@ function JourneySection({
             <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.gap }} />
               {gapsCount} gaps
+            </span>
+            <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c.muted }} />
+              {pendingAssessmentCount} pending
             </span>
             <button
               type="button"
@@ -994,9 +1175,26 @@ export default function JobStepsView() {
   }, [activeCompanyId]);
 
   const journeys = useMemo(() => groupJourneys(items), [items]);
+  const activeCustomerJourneyTitle = useMemo(() => {
+    const customerJourney = journeys.find((journey) => journey.key === "customer");
+    if (customerJourney) return customerJourney.title;
+    const customCustomerJourney = journeys.find((journey) => journey.key.startsWith("customer-"));
+    return customCustomerJourney?.title ?? null;
+  }, [journeys]);
+  const activeCustomerJourneySubtitle = useMemo(() => {
+    const customerJourney = journeys.find((journey) => journey.key === "customer");
+    if (customerJourney) return customerJourney.subtitle;
+    const customCustomerJourney = journeys.find((journey) => journey.key.startsWith("customer-"));
+    return customCustomerJourney?.subtitle ?? null;
+  }, [journeys]);
   const totalGaps = useMemo(
-    () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => step.has_gap).length, 0),
+    () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => hasAssessedGap(step)).length, 0),
     [journeys]
+  );
+  const pendingAssessmentTotal = useMemo(
+    () =>
+      journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => isDraftPlaceholderStep(step)).length, 0),
+    [journeys],
   );
   const suggestedJourneyOptions = useMemo(() => {
     const inferred = inferSuggestedJourneyOptions({
@@ -1105,6 +1303,20 @@ export default function JobStepsView() {
 
     try {
       setRunningJourneyKey(key);
+      const { data: activeLock } = await supabase
+        .from("company_run_locks")
+        .select("operation, started_at, expires_at")
+        .eq("company_id", activeCompany.id)
+        .maybeSingle();
+
+      if (activeLock?.operation === "research") {
+        const started = activeLock.started_at
+          ? new Date(activeLock.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "recently";
+        toast.message(`Research is already running (started ${started}). We’ll keep this map request queued after it completes.`);
+        return;
+      }
+
       const jobMap = {
         journey_key: key,
         journey_title: safeText(args.title, titleFromKey(key)),
@@ -1123,18 +1335,69 @@ export default function JobStepsView() {
           : null;
       const jobMapsPayload = customerSupportMap ? [customerSupportMap, jobMap] : [jobMap];
 
-      const { data, error: invokeError } = await supabase.functions.invoke("research-company", {
-        body: {
-          company_id: activeCompany.id,
-          company_name: activeCompany.name,
-          website: activeCompany.website ?? "",
-          journeys_to_generate: [key],
-          job_maps: jobMapsPayload,
-        },
-      });
+      const runResearchMap = async () =>
+        invokeFunctionWithTimeout(
+          () =>
+            supabase.functions.invoke("research-company", {
+              body: {
+                company_id: activeCompany.id,
+                company_name: activeCompany.name,
+                website: activeCompany.website ?? "",
+                journeys_to_generate: [key],
+                job_maps: jobMapsPayload,
+                review_mode: "advisory",
+              },
+            }),
+          90_000,
+        );
+
+      let data: any;
+      let invokeError: unknown;
+      try {
+        const first = await runResearchMap();
+        data = first?.data;
+        invokeError = first?.error;
+      } catch (err) {
+        if (err instanceof InvokeTimeoutError) {
+          await Promise.all([refetchJobSteps(), refetchBaseline()]);
+          toast.message(err.message);
+          return;
+        }
+        throw err;
+      }
+      let invokeMessage = invokeError ? await describeJobMapInvokeError(invokeError) : "";
+
+      if (invokeError && shouldAttemptBaselineRetry(invokeMessage)) {
+        toast.message("Refreshing public baseline, then retrying map generation once.");
+        const { error: baselineErr } = await supabase.functions.invoke("public-baseline", {
+          body: {
+            company_id: activeCompany.id,
+            company_name: activeCompany.name,
+            website: activeCompany.website ?? "",
+          },
+        });
+        if (!baselineErr) {
+          await refetchBaseline();
+          try {
+            const retry = await runResearchMap();
+            data = retry?.data;
+            invokeError = retry?.error;
+          } catch (retryErr) {
+            if (retryErr instanceof InvokeTimeoutError) {
+              await Promise.all([refetchJobSteps(), refetchBaseline()]);
+              toast.message(retryErr.message);
+              return;
+            }
+            throw retryErr;
+          }
+          invokeMessage = invokeError ? await describeJobMapInvokeError(invokeError) : "";
+        } else {
+          const baselineMessage = await describeJobMapInvokeError(baselineErr);
+          invokeMessage = `${invokeMessage}. Baseline refresh failed: ${baselineMessage}`;
+        }
+      }
 
       if (invokeError) {
-        const invokeMessage = await describeJobMapInvokeError(invokeError);
         if (shouldUseLocalMapFallback(invokeMessage)) {
           const inserted = await insertLocalDraftMap({
             key,
@@ -1144,7 +1407,7 @@ export default function JobStepsView() {
           await Promise.all([refetchJobSteps(), refetchBaseline()]);
           if (inserted) {
             toast.success(`${titleCaseJourney(key)} map added as a local draft.`);
-            toast.message("Run full AI Research later to generate evidence-backed steps and opportunities.");
+            toast.message("Evidence-backed generation could not run yet. Baseline and model access are required.");
           } else {
             toast.message(`${titleCaseJourney(key)} map already exists.`);
           }
@@ -1314,6 +1577,8 @@ export default function JobStepsView() {
             <OdiContextSection
               marketDefinition={marketDefinition}
               marketContext={strategyCascade?.where_to_play}
+              activeCustomerJourneyTitle={activeCustomerJourneyTitle}
+              activeCustomerJourneySubtitle={activeCustomerJourneySubtitle}
             />
 
             <section
@@ -1454,7 +1719,9 @@ export default function JobStepsView() {
                 >
                   <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.secondary }}>
                     <strong style={{ color: c.charcoal }}>{totalGaps} steps have active gaps</strong> across the current map{journeys.length === 1 ? "" : "s"}.
-                    Use this page to confirm the sequence and then move to Inputs and Opportunities to close the highest-impact issues.
+                    {pendingAssessmentTotal > 0
+                      ? ` ${pendingAssessmentTotal} step${pendingAssessmentTotal === 1 ? "" : "s"} are pending assessment and need an evidence-backed research run.`
+                      : " Use this page to confirm the sequence and then move to Inputs and Opportunities to close the highest-impact issues."}
                   </p>
                 </div>
               </>

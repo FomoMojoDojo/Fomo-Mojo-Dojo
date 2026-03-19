@@ -102,6 +102,26 @@ function roundInt(n: number) {
   return Math.round(n);
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = 180_000,
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("abort")) {
+      throw new Error(`OpenAI request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function extractResponsesOutputText(data: any): string | null {
   if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
 
@@ -138,6 +158,16 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     }>;
     top_hypotheses?: string[];
     open_questions?: string[];
+    market_initiative_success?: {
+      proven?: boolean;
+      low_pct?: number;
+      typical_pct?: number;
+      high_pct?: number;
+      source?: string;
+      as_of?: string;
+      confidence?: number;
+      evidence_urls?: string[];
+    };
     message_alignment?: {
       alignment_status?: string;
       alignment_summary?: string;
@@ -165,6 +195,7 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     ? baseline.open_questions.slice(0, 3)
     : [];
   const alignment = baseline.message_alignment ?? {};
+  const marketSuccess = baseline.market_initiative_success ?? {};
   const outsideSignals = Array.isArray(baseline.outside_voice_signals)
     ? baseline.outside_voice_signals.slice(0, 3)
     : [];
@@ -178,6 +209,7 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     `Value chain: ${lens.value_chain || "unknown"}`,
     `Risk surface: ${lens.risk_surface || "unknown"}`,
     `Economic engine: ${lens.economic_engine || "unknown"}`,
+    `Market initiative success baseline: proven=${marketSuccess.proven === true ? "yes" : "no"} | range=${marketSuccess.low_pct ?? "?"}-${marketSuccess.high_pct ?? "?"}% | typical=${marketSuccess.typical_pct ?? "?"}% | source=${marketSuccess.source || "unknown"} | as_of=${marketSuccess.as_of || "unknown"} | conf=${marketSuccess.confidence ?? "?"}`,
     `Message alignment: ${alignment.alignment_status || "unknown"}${alignment.alignment_summary ? ` — ${alignment.alignment_summary}` : ""}`,
     `Outside voice posture: ${alignment.outside_voice_posture || "unknown"}`,
     evidence.length
@@ -1567,14 +1599,14 @@ async function callOpenAIJSON(opts: {
         ? ""
         : "Your previous response was truncated or invalid JSON. Return the full JSON object in one complete response that exactly matches the schema.";
 
-    const resp = await fetch("https://api.openai.com/v1/responses", {
+    const resp = await fetchWithTimeout("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
-    });
+    }, 180_000);
 
     if (!resp.ok) {
       const errText = await resp.text();
@@ -1691,6 +1723,11 @@ function round1(n: number) {
   return Math.round(n * 10) / 10;
 }
 
+function numberOrNull(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeJourneyKey(value: unknown) {
   return String(value || "")
     .trim()
@@ -1703,6 +1740,33 @@ function normalizeJourneyKey(value: unknown) {
 function isCustomerJourneyKey(value: unknown) {
   const key = normalizeJourneyKey(value);
   return key === "customer" || key.startsWith("customer-");
+}
+
+function audienceFromJourneyTitle(title: unknown) {
+  const raw = String(title || "").trim();
+  if (!raw) return "";
+  const withoutMapPrefix = raw.replace(/^job\s*map\s*:\s*/i, "").trim();
+  const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
+  const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
+  return withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw;
+}
+
+function jtbdFromJourneyTitle(title: unknown) {
+  const audience = audienceFromJourneyTitle(title);
+  const lower = audience.toLowerCase();
+  if (!audience) return "";
+
+  if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
+    return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
+  }
+  if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
+    return `When seeking growth capital, ${lower} want to identify, evaluate, and win the right funding partner, so they can execute their strategy on workable terms.`;
+  }
+  if (/(donor|grant|philanthrop)/.test(lower)) {
+    return `When securing mission funding, ${lower} want to win and retain aligned donors and grant partners, so they can sustain impact without constant funding risk.`;
+  }
+
+  return `When trying to complete this job, ${lower} want to move from defining outcomes to executing and monitoring progress, so they can achieve the intended result with less risk and rework.`;
 }
 
 function parseRequestedJourneyKeys(value: unknown): JourneyKey[] {
@@ -1822,21 +1886,60 @@ function inferSuggestedJobMapsFromBaseline(args: {
 
   const lens = baseline?.lens_card ?? {};
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+  const normalizeSignal = (value: unknown) => {
+    const normalized = String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+      .trim();
+    if (!normalized) return "";
+    if (/^(unknown|n\/a|na|none|unset)$/i.test(normalized)) return "";
+    return normalized;
+  };
   const publicSignalText = [
-    String(lens.value_chain || ""),
-    String(lens.economic_engine || ""),
-    String(lens.adoption_constraints || ""),
-    String(lens.risk_surface || ""),
+    normalizeSignal(lens.value_chain),
+    normalizeSignal(lens.economic_engine),
+    normalizeSignal(lens.adoption_constraints),
+    normalizeSignal(lens.risk_surface),
     ...ledger.slice(0, 14).map((entry) => `${String(entry?.bucket || "")} ${String(entry?.snippet || "")}`),
   ]
     .join(" ")
     .toLowerCase();
 
-  const role = String(lens.user || lens.primary_buyer || lens.chooser || "Core Audience")
-    .replace(/\s+/g, " ")
-    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
-    .trim();
+  const roleSignals = [
+    normalizeSignal(lens.user),
+    normalizeSignal(lens.primary_buyer),
+    normalizeSignal(lens.chooser),
+  ].filter(Boolean);
+  const role = roleSignals[0] || "Core Audience";
   const audienceLabel = role || "Core Audience";
+  const hasNonprofitFundingSignal = /\b(nonprofit|charity|foundation|mission|philanthrop|donor|grant|fundraising)\b/.test(publicSignalText);
+  const hasCommercialMarketSignal = /\b(saas|software|telecom|enterprise|b2b|subscription|arr|contract|procurement|retail|cafe|restaurant|venue|manufacturing|logistics)\b/.test(publicSignalText);
+  const allowDonorGrantRevenueMap = hasNonprofitFundingSignal && !hasCommercialMarketSignal;
+  const countMatches = (terms: string[]) =>
+    terms.reduce((sum, term) => (publicSignalText.includes(term) ? sum + 1 : sum), 0);
+  const revenueSignalScore =
+    countMatches([
+      "investment",
+      "investor",
+      "capital",
+      "funding",
+      "revenue",
+      "pricing",
+      "contract",
+      "renewal",
+      "payer",
+      "reimbursement",
+      "referral",
+      "pipeline",
+      "conversion",
+      "sales",
+      "acquisition",
+      "procurement",
+      "bookings",
+    ]) +
+    (allowDonorGrantRevenueMap ? countMatches(["donor", "grant", "fundraising", "philanthrop"]) : 0);
+  const economicEngine = normalizeSignal(lens.economic_engine);
+  const hasEconomicSignal = Boolean(economicEngine);
 
   const suggestions: Array<{
     journey_key: JourneyKey;
@@ -1850,17 +1953,17 @@ function inferSuggestedJobMapsFromBaseline(args: {
     journey_key: "customer",
     journey_title: `Job Map: ${audienceLabel}`,
     journey_subtitle: `How ${audienceLabel.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
-    confidence: role ? 95 : 80,
-    rationale: role
-      ? `Audience signal from baseline lens: ${role}`
+    confidence: roleSignals.length > 0 ? 95 : 80,
+    rationale: roleSignals.length > 0
+      ? `Audience signal from baseline lens: ${roleSignals[0]}`
       : `Customer job performer is unresolved; start by framing the core job for ${args.companyName}.`,
   });
 
-  if (/(investment|investor|capital|funding|raise|grant|donor|referral|pipeline|conversion|revenue|pricing|contract|renewal|payer|reimbursement)/.test(publicSignalText)) {
+  if (revenueSignalScore >= 2 || hasEconomicSignal) {
     let revenueTitle = "Job Map: Securing Revenue Outcomes";
     if (/(investment|investor|capital|funding|raise)/.test(publicSignalText)) {
       revenueTitle = "Job Map: Getting Financial Investment";
-    } else if (/(grant|donor|philanthrop)/.test(publicSignalText)) {
+    } else if (allowDonorGrantRevenueMap && /(grant|donor|philanthrop|fundraising)/.test(publicSignalText)) {
       revenueTitle = "Job Map: Securing Donor and Grant Support";
     } else if (/(referral|pipeline|conversion|enrollment)/.test(publicSignalText)) {
       revenueTitle = "Job Map: Converting Qualified Demand";
@@ -1870,8 +1973,10 @@ function inferSuggestedJobMapsFromBaseline(args: {
       journey_key: "revenue",
       journey_title: revenueTitle,
       journey_subtitle: "How demand converts into sustained economic outcomes.",
-      confidence: 78,
-      rationale: "Public signals suggest meaningful economic, funding, or conversion dynamics.",
+      confidence: Math.min(92, 50 + revenueSignalScore * 6 + (hasEconomicSignal ? 10 : 0)),
+      rationale: hasEconomicSignal
+        ? `Economic signal from baseline lens: ${economicEngine}`
+        : "Public signals suggest meaningful economic, demand, or conversion dynamics.",
     });
   }
 
@@ -1964,6 +2069,135 @@ function tokenizeStrategicText(value: unknown) {
     .split(" ")
     .map((token) => token.trim())
     .filter((token) => token.length >= 4 && !STRATEGIC_PROBLEM_STOPWORDS.has(token));
+}
+
+function titleFromJourneyKey(key: string) {
+  if (!key) return "Core Initiative";
+  if (key === "customer") return "Customer Journey";
+  if (key === "revenue") return "Revenue Journey";
+  if (key === "operations") return "Operations Journey";
+  return key
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function deriveInitiativeFocusContext(args: {
+  jobSteps: Array<{ journey_key?: unknown; journey_title?: unknown; journey_subtitle?: unknown }>;
+  strategicProblems?: StrategicProblemStatement[];
+}) {
+  const byJourney = new Map<string, { count: number; title: string; subtitle: string }>();
+  const steps = Array.isArray(args.jobSteps) ? args.jobSteps : [];
+
+  for (const step of steps) {
+    const key = normalizeJourneyKey(step?.journey_key);
+    if (!key) continue;
+    const current = byJourney.get(key) ?? { count: 0, title: "", subtitle: "" };
+    current.count += 1;
+    if (!current.title && String(step?.journey_title || "").trim()) {
+      current.title = String(step?.journey_title || "").trim();
+    }
+    if (!current.subtitle && String(step?.journey_subtitle || "").trim()) {
+      current.subtitle = String(step?.journey_subtitle || "").trim();
+    }
+    byJourney.set(key, current);
+  }
+
+  if (!byJourney.size) {
+    return {
+      primary_journey_key: "customer",
+      primary_journey_title: "Customer Journey",
+      initiative_keywords: ["customer", "journey"],
+    };
+  }
+
+  const ranked = Array.from(byJourney.entries())
+    .map(([key, value]) => {
+      const text = `${value.title} ${value.subtitle}`.toLowerCase();
+      const economicSignal = /(revenue|investment|investor|funding|capital|contract|pipeline)/.test(text) ? 2 : 0;
+      const customCustomerSignal = key.startsWith("customer-") ? 2 : 0;
+      const nonGenericSignal = key !== "customer" ? 3 : 0;
+      return {
+        key,
+        value,
+        score: value.count + economicSignal + customCustomerSignal + nonGenericSignal,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const selected = ranked[0];
+  const title = selected.value.title || titleFromJourneyKey(selected.key);
+  const primaryProblem = String(args.strategicProblems?.[0]?.statement || "");
+  const keywords = tokenizeStrategicText(`${selected.key} ${title} ${selected.value.subtitle} ${primaryProblem}`).slice(0, 24);
+
+  return {
+    primary_journey_key: selected.key,
+    primary_journey_title: title,
+    initiative_keywords: keywords.length > 0 ? keywords : tokenizeStrategicText(title).slice(0, 12),
+  };
+}
+
+function keywordOverlap(text: string, keywords: string[]) {
+  if (!keywords.length) return 0;
+  const tokenSet = new Set(tokenizeStrategicText(text));
+  let hits = 0;
+  for (const keyword of keywords) {
+    if (tokenSet.has(keyword)) hits++;
+  }
+  return hits;
+}
+
+function deriveMarketBaselineCalibration(baselineResultJson: unknown) {
+  const baseline = (baselineResultJson ?? null) as Record<string, unknown> | null;
+  const market = (baseline?.market_initiative_success ?? null) as Record<string, unknown> | null;
+  const evidenceUrls = Array.isArray(market?.evidence_urls)
+    ? market?.evidence_urls.filter((item) => String(item || "").trim().length > 0)
+    : [];
+  const hasProof = market?.proven === true || (evidenceUrls.length > 0 && String(market?.source || "").trim().length > 0);
+
+  let low = 0;
+  let high = 20;
+  let typical = 12;
+
+  if (hasProof) {
+    low =
+      numberOrNull(market?.low_pct) ??
+      numberOrNull(baseline?.market_success_low_pct) ??
+      0;
+    high =
+      numberOrNull(market?.high_pct) ??
+      numberOrNull(baseline?.market_success_high_pct) ??
+      20;
+    typical =
+      numberOrNull(market?.typical_pct) ??
+      numberOrNull(baseline?.market_success_rate_pct) ??
+      12;
+  }
+
+  if (high < low) {
+    const swap = low;
+    low = high;
+    high = swap;
+  }
+
+  if (typical < low) low = typical;
+  if (typical > high) high = typical;
+  typical = clamp(typical, low, high);
+
+  const source = hasProof
+    ? String(market?.source || baseline?.market_success_source || "").trim() || "provided_without_source_name"
+    : "default_range_0_20_unproven";
+  const asOfRaw = hasProof ? String(market?.as_of || baseline?.market_success_as_of || "").trim() : "";
+
+  return {
+    low: round1(clamp(low, 0, 100)),
+    high: round1(clamp(high, 0, 100)),
+    typical: round1(clamp(typical, 0, 100)),
+    source,
+    as_of: asOfRaw || null,
+    proven: hasProof,
+  };
 }
 
 function computeStrategicProblemAlignment(args: {
@@ -2132,7 +2366,13 @@ function computePotentialProjected(mojo_score: number) {
 function scoreCompanyMojo(args: {
   baselineResultJson: any | null;
   inputs: Array<{ input_key?: unknown; completeness?: unknown }>;
-  jobSteps: Array<{ journey_key?: unknown; designed?: unknown; has_gap?: unknown }>;
+  jobSteps: Array<{
+    journey_key?: unknown;
+    journey_title?: unknown;
+    journey_subtitle?: unknown;
+    designed?: unknown;
+    has_gap?: unknown;
+  }>;
   opportunities: Array<{
     journey_key?: unknown;
     outcome?: unknown;
@@ -2163,6 +2403,7 @@ function scoreCompanyMojo(args: {
   strategicProblems?: StrategicProblemStatement[];
   gamma?: number;
 }) {
+  const marketBaseline = deriveMarketBaselineCalibration(args.baselineResultJson);
   const safeInputs = Array.isArray(args.inputs) ? args.inputs : [];
   const safeSteps = Array.isArray(args.jobSteps) ? args.jobSteps : [];
   const safeOpps = Array.isArray(args.opportunities) ? args.opportunities : [];
@@ -2180,7 +2421,7 @@ function scoreCompanyMojo(args: {
   const strengthNorm = avg(ledger.map((item: any) => normalizeSignalStrength(item?.signal_strength)));
   const baselineSupport = clamp(0.6 * confNorm + 0.4 * strengthNorm, 0, 1);
 
-  const customerSteps = safeSteps.filter((step) => isCustomerJourneyKey(step?.journey_key));
+  const customerJourneySteps = safeSteps.filter((step) => isCustomerJourneyKey(step?.journey_key));
   const revenueSteps = safeSteps.filter((step) => normalizeJourneyKey(step?.journey_key) === "revenue");
   const opsSteps = safeSteps.filter((step) => normalizeJourneyKey(step?.journey_key) === "operations");
 
@@ -2218,6 +2459,59 @@ function scoreCompanyMojo(args: {
     positioning: args.positioning ?? null,
     strategy: args.strategy ?? null,
   });
+  const initiativeBase = deriveInitiativeFocusContext({
+    jobSteps: safeSteps,
+    strategicProblems: args.strategicProblems,
+  });
+  const initiativeSteps = safeSteps.filter((step) => {
+    const key = normalizeJourneyKey(step?.journey_key);
+    if (key === initiativeBase.primary_journey_key) return true;
+    return initiativeBase.primary_journey_key === "customer" && isCustomerJourneyKey(key);
+  });
+  const opportunityFocus = safeOpps.map((opp) => {
+    const journeyKey = normalizeJourneyKey(opp?.journey_key);
+    const overlap = keywordOverlap(
+      `${String(opp?.outcome || "")} ${String(opp?.step_label || "")}`,
+      initiativeBase.initiative_keywords,
+    );
+    const directJourneyMatch =
+      journeyKey === initiativeBase.primary_journey_key ||
+      (initiativeBase.primary_journey_key === "customer" && isCustomerJourneyKey(journeyKey));
+    if (directJourneyMatch || overlap >= 2) return "initiative" as const;
+    if (overlap >= 1) return "related" as const;
+    return "other" as const;
+  });
+  const routeFocus = (Array.isArray(args.routes) ? args.routes : []).map((route) => {
+    const overlap = keywordOverlap(
+      `${String(route?.title || "")} ${String(route?.short_description || "")}`,
+      initiativeBase.initiative_keywords,
+    );
+    if (overlap >= 2) return "initiative" as const;
+    if (overlap >= 1) return "related" as const;
+    return "other" as const;
+  });
+  const opportunityFocusCounts = {
+    initiative: opportunityFocus.filter((level) => level === "initiative").length,
+    related: opportunityFocus.filter((level) => level === "related").length,
+    other: opportunityFocus.filter((level) => level === "other").length,
+  };
+  const routeFocusCounts = {
+    initiative: routeFocus.filter((level) => level === "initiative").length,
+    related: routeFocus.filter((level) => level === "related").length,
+    other: routeFocus.filter((level) => level === "other").length,
+  };
+  const initiativeOppRatio = safeOpps.length ? opportunityFocusCounts.initiative / safeOpps.length : 0;
+  const relatedOppRatio = safeOpps.length ? opportunityFocusCounts.related / safeOpps.length : 0;
+  const routeCount = routeFocus.length;
+  const initiativeRouteRatio = routeCount ? routeFocusCounts.initiative / routeCount : 0;
+  const relatedRouteRatio = routeCount ? routeFocusCounts.related / routeCount : 0;
+  const initiativeJourneyHealth = journeyHealth(initiativeSteps);
+  const initiativeFocusNorm = clamp(
+    0.5 * initiativeOppRatio + 0.25 * initiativeRouteRatio + 0.25 * initiativeJourneyHealth,
+    0,
+    1,
+  );
+  const initiativeFocusMultiplier = round1(clamp(0.7 + 0.3 * initiativeFocusNorm, 0.7, 1));
   const strategicAlignmentNorm = clamp(strategicAlignment.score / 100, 0, 1);
 
   const positioning = round1(
@@ -2233,7 +2527,7 @@ function scoreCompanyMojo(args: {
       0.2 * customerCoverage +
       0.25 * oppCoverageNorm +
       0.2 * underservedNorm +
-      0.2 * journeyHealth(customerSteps) +
+      0.2 * journeyHealth(customerJourneySteps) +
       0.15 * ratio(customerOpps.length, 8)
     ),
   );
@@ -2307,8 +2601,31 @@ function scoreCompanyMojo(args: {
   ]));
 
   const gamma = Number.isFinite(args.gamma) ? Number(args.gamma) : 2.2;
-  const p_raw = clamp((gateScore / 100) * evidenceMultiplier, 0, 1);
-  const mojo_score = Math.round(clamp(100 * Math.pow(p_raw, gamma), 0, 100));
+  const clarityNorm = clamp((perGateScores.positioning + perGateScores.strategy_cascade) / 200, 0, 1);
+  const marketDefinitionNorm = clamp(perGateScores.positioning / 100, 0, 1);
+  const customerInsightNorm = clamp(perGateScores.customer_insight / 100, 0, 1);
+  const failureCorrectionNorm = clamp(
+    0.4 * clarityNorm + 0.3 * marketDefinitionNorm + 0.3 * customerInsightNorm,
+    0,
+    1,
+  );
+  const failureCorrectionMultiplier = round1(clamp(0.6 + 0.4 * failureCorrectionNorm, 0.6, 1));
+  const p_raw = clamp(
+    (gateScore / 100) * evidenceMultiplier * initiativeFocusMultiplier * failureCorrectionMultiplier,
+    0,
+    1,
+  );
+  const p_curve = clamp(Math.pow(p_raw, gamma), 0, 1);
+  const benchmarkPRaw = marketBaseline.typical / 100;
+  const advantagePoints = Math.max(0, (p_raw - benchmarkPRaw) * 35);
+  const curvePoints = Math.max(0, p_curve * 45);
+  const mojo_score = Math.round(
+    clamp(
+      marketBaseline.typical + advantagePoints + curvePoints,
+      marketBaseline.typical,
+      100,
+    ),
+  );
   const { potential_score, projected_score } = computePotentialProjected(mojo_score);
 
   const evidence_note =
@@ -2317,7 +2634,7 @@ function scoreCompanyMojo(args: {
       : `no baseline ledger, artifacts=${Math.round(artifactCoverage * 100)}%`;
 
   const area_scores_json = {
-    scoring_version: "mojo_v2",
+    scoring_version: "mojo_v3",
     gate_weights: {
       positioning: 0.3,
       customer_insight: 0.25,
@@ -2361,9 +2678,45 @@ function scoreCompanyMojo(args: {
       strategic_problems: strategicAlignment.strategic_problem_count,
     },
     strategic_problem_context: strategicAlignment,
+    initiative_context: {
+      ...initiativeBase,
+      opportunity_focus: {
+        ...opportunityFocusCounts,
+        initiative_ratio: round1(initiativeOppRatio * 100),
+        related_ratio: round1(relatedOppRatio * 100),
+      },
+      route_focus: {
+        ...routeFocusCounts,
+        initiative_ratio: round1(initiativeRouteRatio * 100),
+        related_ratio: round1(relatedRouteRatio * 100),
+      },
+      step_focus: {
+        initiative_steps: initiativeSteps.length,
+        initiative_journey_health: round1(initiativeJourneyHealth * 100),
+      },
+      initiative_focus_norm: round1(initiativeFocusNorm * 100),
+      initiative_focus_multiplier: initiativeFocusMultiplier,
+    },
     calibration: {
       gamma,
       p_raw: round1(p_raw * 100) / 100,
+      p_curve: round1(p_curve * 100) / 100,
+      market_baseline_points: marketBaseline.typical,
+      benchmark_p_raw: round1(benchmarkPRaw * 100) / 100,
+      advantage_points: round1(advantagePoints),
+      curve_points: round1(curvePoints),
+      failure_correction_norm: round1(failureCorrectionNorm * 100) / 100,
+      failure_correction_multiplier: round1(failureCorrectionMultiplier * 100) / 100,
+      initiative_focus_multiplier: initiativeFocusMultiplier,
+      market_statistics: {
+        typical_success_low_pct: marketBaseline.low,
+        typical_success_pct: marketBaseline.typical,
+        typical_success_high_pct: marketBaseline.high,
+        source: marketBaseline.source,
+        as_of: marketBaseline.as_of,
+        proven: marketBaseline.proven,
+        interpretation: "Current reality starts from a market baseline and rises as validated readiness improves.",
+      },
     },
     outputs: {
       mojo_score,
@@ -2799,6 +3152,8 @@ Deno.serve(async (req) => {
     const company_id = body?.company_id;
     const company_name = body?.company_name;
     const website = typeof body?.website === "string" ? body.website : "";
+    const reviewMode = String(body?.review_mode || "").trim().toLowerCase();
+    const allowHighSeverityReviewSave = reviewMode === "advisory" || body?.allow_review_block_save === true;
     const requestedJourneyKeys = parseRequestedJourneyKeys(body?.journeys_to_generate);
     const submittedJobMaps = parseSelectedJobMaps(body?.job_maps);
 
@@ -3003,6 +3358,20 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (selectedMapByKey.size === 0) {
+      const suggestedCustomer = suggestedJobMapByKey.get("customer");
+      selectedMapByKey.set("customer", {
+        journey_key: "customer",
+        journey_title: sanitizeJobMapTitle(suggestedCustomer?.journey_title, "customer"),
+        journey_subtitle: sanitizeJobMapSubtitle(suggestedCustomer?.journey_subtitle, "customer"),
+        source: "selected",
+      });
+      autoInjectedCustomerMap = true;
+      console.log("[research-company] auto-seeded default customer map for empty selection", {
+        company_id,
+      });
+    }
+
     const selectedJobMaps: SelectedJobMap[] = Array.from(selectedMapByKey.values());
     const explicitSelectedJourneyKeys: JourneyKey[] = [
       ...new Set(selectedBase.map((map) => map.journey_key)),
@@ -3020,7 +3389,7 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
-    if (!selectedJobMaps.some((map) => map.journey_key === "customer")) {
+    if (!selectedJobMaps.some((map) => isCustomerJourneyKey(map.journey_key))) {
       return jsonResponse({
         error: "customer_job_map_required",
         status: "customer_job_map_required",
@@ -3848,7 +4217,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (highSeverityReviews.length > 0) {
+    if (highSeverityReviews.length > 0 && !allowHighSeverityReviewSave) {
       console.log("[research-company] blocked by reviewer findings", {
         company_id,
         baseline_run_id: baselineRun?.id ?? null,
@@ -3882,12 +4251,32 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
+    if (highSeverityReviews.length > 0 && allowHighSeverityReviewSave) {
+      console.log("[research-company] advisory review mode: saving despite high-severity findings", {
+        company_id,
+        baseline_run_id: baselineRun?.id ?? null,
+        review_mode: reviewMode || "advisory",
+        reviews: highSeverityReviews.map((entry) => ({
+          key: entry.key,
+          severity: entry.review?.severity,
+          summary: entry.review?.summary,
+        })),
+      });
+    }
+
+    const savedReviewStatus =
+      highSeverityReviews.length > 0 && allowHighSeverityReviewSave
+        ? "saved_with_high_risk_review"
+        : actionableReviews.length > 0
+          ? "saved_after_review"
+          : "saved";
+
     await persistResearchReviewRun({
       supabase,
       companyId: company_id,
       userId: user.id,
       baselineRunId: baselineRun?.id ?? null,
-      status: actionableReviews.length > 0 ? "saved_after_review" : "saved",
+      status: savedReviewStatus,
       reviewSummary:
         actionableReviews.length > 0
           ? summarizeReviews(
@@ -4180,14 +4569,20 @@ Deno.serve(async (req) => {
       };
     } | null)?.lens_card ?? {};
 
+    const journeyDerivedExecutor = audienceFromJourneyTitle(customerJourney?.journey_title);
+    const journeyDerivedJtbd = jtbdFromJourneyTitle(customerJourney?.journey_title);
     const job_executor =
-      String(baselineLens.user || baselineLens.primary_buyer || "Unknown from public evidence");
+      String(
+        journeyDerivedExecutor ||
+        baselineLens.user ||
+        baselineLens.primary_buyer ||
+        "Unknown from public evidence"
+      );
     const chooser =
       String(baselineLens.chooser || "Unknown from public evidence");
     const jtbd =
-      customerJourney?.journey_title
-        ? `Make progress through ${String(customerJourney.journey_title).toLowerCase()}`
-        : "Understand and complete the core job progress for this offering";
+      journeyDerivedJtbd ||
+      "Understand and complete the core job progress for this offering";
 
     const { error: odiMarketErr } = await supabase.from("odi_market_definitions").insert({
       company_id,
@@ -4448,6 +4843,8 @@ Deno.serve(async (req) => {
       inputs,
       jobSteps: journeys.flatMap((journey) => Array.isArray(journey?.steps) ? journey.steps.map((step: any) => ({
         journey_key: journey?.journey_key,
+        journey_title: journey?.journey_title,
+        journey_subtitle: journey?.journey_subtitle,
         designed: step?.designed,
         has_gap: step?.has_gap,
       })) : []),
@@ -4514,7 +4911,7 @@ Deno.serve(async (req) => {
       companyId: company_id,
       userId: user.id,
       baselineRunId: run?.id ?? null,
-      status: actionableReviews.length > 0 ? "saved_after_review" : "saved",
+      status: savedReviewStatus,
       mojoScore: scored.mojo_score,
       evidenceStatus: scored.evidence_status,
       summaryJson: {
@@ -4591,6 +4988,12 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       message: "Research complete",
+      review_status: savedReviewStatus,
+      review_warnings: highSeverityReviews.map((entry) => ({
+        key: entry.key,
+        severity: String(entry.review?.severity || "high"),
+        summary: String(entry.review?.summary || ""),
+      })),
       inputs_inserted: inputsInserted,
       steps_inserted: stepsInserted,
       opportunities_inserted: oppsInserted,
