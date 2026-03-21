@@ -9,7 +9,7 @@
     <array>
       <string>/bin/zsh</string>
       <string>-lc</string>
-      <string>if ! lsof -iTCP:8080 -sTCP:LISTEN -n -P &gt;/dev/null 2&gt;&amp;1; then /usr/bin/osascript -e 'tell application "Terminal" to do script "cd /Users/fomomojodojo/dev/happy-file-hugger-main &amp;&amp; /Users/fomomojodojo/dev/happy-file-hugger-main/scripts/start-local-app.sh"'; fi</string>
+      <string>if ! lsof -iTCP:8080 -sTCP:LISTEN -n -P &gt;/dev/null 2&gt;&amp;1; then launchctl kickstart -k "gui/$(id -u)/com.happyfilehugger.local-app"; fi</string>
     </array>
 
     <key>RunAtLoad</key>

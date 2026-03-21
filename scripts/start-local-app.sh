@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/Users/fomomojodojo/dev/happy-file-hugger-main"
-PORT="8080"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PORT="${PORT:-8080}"
 HOST="0.0.0.0"
 PARSER_PORT="8789"
 FUNCTION_ENV_FILE="$PROJECT_DIR/supabase/functions/.env.local"
