@@ -15,6 +15,13 @@ const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.doc
 const DEFAULT_AREAS = ["positioning", "strategy"] as const;
 const PROMPT_VERSION = "local-alignment-v1-2026-03-18";
 const OLLAMA_TIMEOUT_MS = 4_000;
+const PLAIN_LANGUAGE_RULES =
+  "Use clear, plain language for all output. " +
+  "Avoid consulting jargon, business cliches, and buzzwords. " +
+  "Use concrete wording and short direct sentences. " +
+  "Only keep specialized terms when they come directly from source evidence or user-provided terms. " +
+  "Preserve direct quotes exactly as written. Do not paraphrase quoted text. " +
+  "If clarity help is needed, keep the original wording and add a separate optional line prefixed with 'Suggested clearer version:'.";
 
 const INPUT_KEYS_BY_AREA: Record<string, string[]> = {
   positioning: ["comp-alt", "unique-attr", "val-prop", "target-aud", "market-cat", "brand-narrative"],
@@ -112,6 +119,61 @@ function clampInt(value: number, min = 0, max = 100) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function stableHash(input: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function signatureForComparison(args: {
+  companyId: string;
+  areas: string[];
+  baselineRunId: string | null;
+  baselineRunAt: string | null;
+  positioningId: string | null;
+  positioningUpdatedAt: string | null;
+  strategyId: string | null;
+  strategyUpdatedAt: string | null;
+  inputs: Array<Record<string, unknown>>;
+  files: Array<Record<string, unknown>>;
+}) {
+  const inputSlice = args.inputs
+    .map((entry) =>
+      [
+        String(entry.id || ""),
+        String(entry.input_key || ""),
+        String(entry.updated_at || ""),
+        String(entry.status || ""),
+        String(entry.completeness || ""),
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+
+  const fileSlice = args.files
+    .map((entry) => {
+      const tags = Array.isArray(entry.tags) ? (entry.tags as unknown[]).map((tag) => String(tag || "")).sort().join(",") : "";
+      return [String(entry.id || ""), String(entry.input_id || ""), String(entry.uploaded_at || ""), tags].join(":");
+    })
+    .sort()
+    .join("|");
+
+  const raw = [
+    `company:${args.companyId}`,
+    `areas:${args.areas.slice().sort().join(",")}`,
+    `baseline:${args.baselineRunId || "-"}@${args.baselineRunAt || "-"}`,
+    `positioning:${args.positioningId || "-"}@${args.positioningUpdatedAt || "-"}`,
+    `strategy:${args.strategyId || "-"}@${args.strategyUpdatedAt || "-"}`,
+    `inputs:${inputSlice}`,
+    `files:${fileSlice}`,
+  ].join("||");
+
+  return `local-align-v1:${stableHash(raw)}`;
 }
 
 function computePotentialProjected(mojoScore: number) {
@@ -517,6 +579,7 @@ async function callLocalComparison(args: {
     "Apply the framework guidance below as decision rules, not as output headings. " +
     "Evaluate using this methodology stack: strategy cascade coherence, positioning-first sequencing, customer-job evidence quality (ODI/JTBD), positioning quality, and GTM execution linkage. " +
     "Never use framework creator names in output labels, checks, or recommendations; keep wording neutral. " +
+    `${PLAIN_LANGUAGE_RULES} ` +
     "Return only JSON.";
 
   const userText =
@@ -643,7 +706,7 @@ Deno.serve(async (req) => {
           .maybeSingle(),
         supabase
           .from("inputs")
-          .select("id,input_key,input_label,sub_group,group_key,description,why_it_matters")
+          .select("id,input_key,input_label,sub_group,group_key,description,why_it_matters,status,completeness,updated_at")
           .eq("company_id", companyId),
       ]);
 
@@ -669,6 +732,27 @@ Deno.serve(async (req) => {
       if (!filesByInput.has(key)) filesByInput.set(key, []);
       filesByInput.get(key)!.push(file as Record<string, unknown>);
     }
+
+    const comparisonSignature = signatureForComparison({
+      companyId,
+      areas,
+      baselineRunId: baselineRun?.id ? String(baselineRun.id) : null,
+      baselineRunAt: baselineRun?.created_at ? String(baselineRun.created_at) : null,
+      positioningId: (positioningRow as { id?: unknown } | null)?.id
+        ? String((positioningRow as { id?: unknown }).id)
+        : null,
+      positioningUpdatedAt: (positioningRow as { updated_at?: unknown } | null)?.updated_at
+        ? String((positioningRow as { updated_at?: unknown }).updated_at)
+        : null,
+      strategyId: (strategyRow as { id?: unknown } | null)?.id
+        ? String((strategyRow as { id?: unknown }).id)
+        : null,
+      strategyUpdatedAt: (strategyRow as { updated_at?: unknown } | null)?.updated_at
+        ? String((strategyRow as { updated_at?: unknown }).updated_at)
+        : null,
+      inputs: (inputs as Record<string, unknown>[]),
+      files: (files as Record<string, unknown>[]),
+    });
 
     const baselineJson = (baselineRun?.result_json && typeof baselineRun.result_json === "object")
       ? baselineRun.result_json as Record<string, unknown>
@@ -855,6 +939,23 @@ Deno.serve(async (req) => {
     const hasCurrentMojo = Number.isFinite(currentMojoRaw);
     const currentMojo = hasCurrentMojo ? clampInt(currentMojoRaw, 0, 100) : 0;
     let effectiveMojoForRun = hasCurrentMojo ? currentMojo : null;
+    const existingAreaScores =
+      (companyRow as { area_scores_json?: unknown })?.area_scores_json &&
+        typeof (companyRow as { area_scores_json?: unknown }).area_scores_json === "object"
+        ? ((companyRow as { area_scores_json: Record<string, unknown> }).area_scores_json)
+        : {};
+    const priorLocalAlignment =
+      existingAreaScores.local_alignment && typeof existingAreaScores.local_alignment === "object"
+        ? (existingAreaScores.local_alignment as Record<string, unknown>)
+        : {};
+    const lastManualApply =
+      priorLocalAlignment.last_manual_apply && typeof priorLocalAlignment.last_manual_apply === "object"
+        ? (priorLocalAlignment.last_manual_apply as Record<string, unknown>)
+        : {};
+    const previousComparisonSignature =
+      typeof lastManualApply.comparison_signature === "string"
+        ? String(lastManualApply.comparison_signature)
+        : null;
 
     let appliedScoreUpdate = {
       applied: false,
@@ -866,10 +967,18 @@ Deno.serve(async (req) => {
         ? "No score update was applied."
         : "Manual score update was not requested for this run.",
       applied_at: null as string | null,
+      comparison_signature: comparisonSignature,
     };
 
     if (applyScoreUpdate) {
-      if (
+      if (previousComparisonSignature && previousComparisonSignature === comparisonSignature) {
+        appliedScoreUpdate = {
+          ...appliedScoreUpdate,
+          direction: "none",
+          reason:
+            "This local comparison was already applied to the score. Add new evidence or rerun baseline before applying again.",
+        };
+      } else if (
         aggregateScoreImpact.should_change &&
         aggregateScoreImpact.direction !== "none" &&
         aggregateScoreImpact.points > 0
@@ -880,16 +989,6 @@ Deno.serve(async (req) => {
         const updatedMojo = clampInt(currentMojo + signedDelta, 0, 100);
         const projected = computePotentialProjected(updatedMojo);
         const appliedAt = new Date().toISOString();
-
-        const existingAreaScores =
-          (companyRow as { area_scores_json?: unknown })?.area_scores_json &&
-            typeof (companyRow as { area_scores_json?: unknown }).area_scores_json === "object"
-            ? ((companyRow as { area_scores_json: Record<string, unknown> }).area_scores_json)
-            : {};
-        const priorLocalAlignment =
-          existingAreaScores.local_alignment && typeof existingAreaScores.local_alignment === "object"
-            ? (existingAreaScores.local_alignment as Record<string, unknown>)
-            : {};
 
         const existingEvidenceNote = String((companyRow as { evidence_note?: unknown })?.evidence_note || "").trim();
         const applyNote =
@@ -910,6 +1009,7 @@ Deno.serve(async (req) => {
               direction: aggregateScoreImpact.direction,
               points: aggregateScoreImpact.points,
               reason: aggregateScoreImpact.reason,
+              comparison_signature: comparisonSignature,
             },
           },
         };
@@ -943,6 +1043,7 @@ Deno.serve(async (req) => {
             points: aggregateScoreImpact.points,
             reason: aggregateScoreImpact.reason,
             applied_at: appliedAt,
+            comparison_signature: comparisonSignature,
           };
         }
       } else {

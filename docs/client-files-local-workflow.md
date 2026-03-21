@@ -81,7 +81,7 @@ npm run files:auto-mirror
 To make it automatic on login/restart via LaunchAgent:
 
 ```sh
-cp /Users/fomomojodojo/Downloads/happy-file-hugger-main/launchd/com.happyfilehugger.file-mirror.plist ~/Library/LaunchAgents/
+cp /Users/fomomojodojo/dev/happy-file-hugger-main/launchd/com.happyfilehugger.file-mirror.plist ~/Library/LaunchAgents/
 launchctl unload ~/Library/LaunchAgents/com.happyfilehugger.file-mirror.plist 2>/dev/null || true
 launchctl load ~/Library/LaunchAgents/com.happyfilehugger.file-mirror.plist
 ```

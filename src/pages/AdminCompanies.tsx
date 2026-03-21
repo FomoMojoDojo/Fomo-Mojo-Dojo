@@ -61,6 +61,12 @@ type CompanyRunLock = {
   started_by: string;
 };
 
+type InvokeErrorDetails = {
+  title: string;
+  description: string;
+  isTimeout?: boolean;
+};
+
 type ArtifactRunSummary = {
   positioning?: {
     market_category?: string;
@@ -118,6 +124,27 @@ function normalizeUrl(url?: string) {
 
 function sanitizeWebsite(url?: string) {
   return (url ?? "").trim();
+}
+
+function looksLikeUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function titleCaseWords(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeDisplayName(raw: string | null | undefined) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const local = value.includes("@") ? value.split("@")[0] : value;
+  const cleaned = local.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return titleCaseWords(cleaned);
 }
 
 async function describeResearchInvokeError(error: unknown) {
@@ -196,16 +223,38 @@ async function describeResearchInvokeError(error: unknown) {
       }
     }
 
+    const rawText = [
+      String(payload?.error || ""),
+      String(payloadText || ""),
+      String(error.message || ""),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    if (
+      error.context.status === 504 ||
+      rawText.includes("upstream server is timing out") ||
+      rawText.includes("gateway timeout") ||
+      rawText.includes("timed out")
+    ) {
+      return {
+        title: "Research Still Running",
+        description:
+          "The request timed out, but research may still be running in the background. Check the running badge and review panel in about 1-2 minutes.",
+        isTimeout: true,
+      } satisfies InvokeErrorDetails;
+    }
+
     return {
       title: "Research Failed",
       description: String(payload?.error || payloadText || error.message),
-    };
+    } satisfies InvokeErrorDetails;
   }
 
   return {
     title: "Research Failed",
     description: error instanceof Error ? error.message : String(error),
-  };
+  } satisfies InvokeErrorDetails;
 }
 
 async function describeBaselineInvokeError(error: unknown) {
@@ -482,7 +531,8 @@ export default function AdminCompanies() {
 
       const next: Record<string, string> = {};
       for (const row of data) {
-        next[row.user_id] = row.display_name?.trim() || row.user_id;
+        const normalized = normalizeDisplayName(row.display_name);
+        next[row.user_id] = normalized || "Team member";
       }
 
       setUserNamesById((current) => ({ ...current, ...next }));
@@ -554,6 +604,12 @@ export default function AdminCompanies() {
         } else {
           await runResearch(data.id, data.name, "");
         }
+      } else {
+        toast({
+          title: "Company Created",
+          description:
+            "Created without running research. Use Baseline + Research to populate scores, opportunities, and routes.",
+        });
       }
     } else {
       await refetch();
@@ -588,7 +644,15 @@ export default function AdminCompanies() {
 
     if (error) {
       const details = await describeResearchInvokeError(error);
-      showPersistentError(details.title, details.description);
+      if (details.isTimeout) {
+        toast({
+          title: details.title,
+          description: details.description,
+        });
+        await refetch();
+      } else {
+        showPersistentError(details.title, details.description);
+      }
     } else {
       toast({
         title: "Research Complete",
@@ -674,7 +738,15 @@ export default function AdminCompanies() {
 
       if (error) {
         const details = await describeResearchInvokeError(error);
-        showPersistentError(details.title, details.description);
+        if (details.isTimeout) {
+          toast({
+            title: details.title,
+            description: details.description,
+          });
+          await refetch();
+        } else {
+          showPersistentError(details.title, details.description);
+        }
         setComboId(null);
         setReviewRefreshKey((current) => current + 1);
         return;
@@ -755,7 +827,9 @@ export default function AdminCompanies() {
   const labelForUser = (userId?: string) => {
     if (!userId) return "Unknown";
     if (user?.id && userId === user.id) return "You";
-    return userNamesById[userId] || userId;
+    const name = userNamesById[userId];
+    if (name) return name;
+    return looksLikeUuid(userId) ? "Team member" : userId;
   };
 
   const filteredCompanies = useMemo(() => {
@@ -970,22 +1044,22 @@ export default function AdminCompanies() {
               <button
                 type="button"
                 disabled={creating}
-                onClick={() => handleCreate(false)}
+                onClick={() => handleCreate(true)}
                 className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50"
-                style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
+                style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
               >
-                {creating ? "Creating…" : "Create"}
+                {creating ? "Creating…" : "Create + AI Research"}
               </button>
 
               <button
                 type="button"
                 disabled={creating}
-                onClick={() => handleCreate(true)}
+                onClick={() => handleCreate(false)}
                 className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50 flex items-center gap-1"
-                style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
+                style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
               >
                 <Sparkles className="w-3 h-3" />
-                {creating ? "Creating…" : "Create + AI Research"}
+                {creating ? "Creating…" : "Create only"}
               </button>
             </div>
           </div>

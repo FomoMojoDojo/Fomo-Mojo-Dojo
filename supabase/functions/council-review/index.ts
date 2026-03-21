@@ -9,7 +9,6 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Headers": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 };
-
 const PLAIN_LANGUAGE_RULES =
   "Writing style rules: Use clear, plain language that a non-expert can understand. " +
   "Avoid consulting jargon, business cliches, and buzzwords. " +
@@ -29,27 +28,119 @@ type RecommendationRow = {
   references: string[];
 };
 
+type CouncilKey = "strategy_council" | "mojo_council";
+
+type CouncilProfile = {
+  key: CouncilKey;
+  label: string;
+  systemText: string;
+  userTextTail: string;
+  maxOutputTokens: number;
+  temperature: number;
+  contextMaxChars: number;
+  modelTimeoutMs: number;
+};
+
+const STRATEGY_COUNCIL_PROFILE: CouncilProfile = {
+  key: "strategy_council",
+  label: "Strategy Council",
+  systemText:
+    "You are a five-voice council review panel for business decisions. " +
+    "Panel voices: Steve Jobs (visionary), Steven Bartlett (entrepreneur), Alex Hormozi (marketing strategist), Tony Robbins (integration and momentum), Daniel Priestly (key person of influence). " +
+    "Have the panel challenge assumptions until they converge on practical consensus recommendations. " +
+    "Apply strongest scrutiny to evidence quality, positioning clarity, customer-job clarity, strategy coherence, and execution readiness. " +
+    "Use weakest-link reasoning: if one critical area is weak, prioritize that first. " +
+    "If evidence conflicts, call out the conflict and likely reason. " +
+    "Do not invent evidence. Do not mention framework creator names. " +
+    "Do not ask questions or wait for answers. Produce recommendations immediately from available information only.",
+  userTextTail:
+    "Return only one JSON object with keys summary, panel_discussion, and recommendations. " +
+    "summary: include top results for this company and the most important execution focus now. " +
+    "panel_discussion: short transcript-style panel debate showing distinct perspectives and where they converged. " +
+    "recommendations: array up to 12 items; each item must include title, recommendation, rationale, category, priority, confidence, source_basis, references. " +
+    "Focus on company-specific results and suggestions only. " +
+    "Never ask clarifying questions in output.",
+  maxOutputTokens: 2200,
+  temperature: 0.1,
+  contextMaxChars: 50_000,
+  modelTimeoutMs: 75_000,
+};
+
+const MOJO_COUNCIL_PROFILE: CouncilProfile = {
+  key: "mojo_council",
+  label: "Mojo Council",
+  systemText:
+    "You are a strategic discussion panel of seven experts helping determine the best way forward for a company from provided evidence. " +
+    "Panel members and lenses: " +
+    "Chip & Dan Heath (clarity, simplification, stickiness), " +
+    "April Dunford (differentiated positioning and market context), " +
+    "Roger Martin (where to play/how to win strategic choices), " +
+    "Jonah Berger (behavioral adoption, traction, spread), " +
+    "Teresa Torres (continuous discovery and evidence gaps), " +
+    "Donald Miller (clear customer-facing messaging), " +
+    "Tony Ulwick (ODI/JTBD, core job clarity, desired outcomes, underserved needs, opportunity prioritization). " +
+    "Run a rigorous panel-style discussion with distinct voices, productive disagreement, and explicit tradeoffs. " +
+    "Do not collapse into one blended opinion until final synthesis. " +
+    "Do not confuse strategy with goals, positioning with messaging, or tactics with strategy. " +
+    "Do not confuse discovery with ODI-based opportunity assessment. " +
+    "Separate what is known, assumed, needs validation, and should be decided now. " +
+    "If multiple issue types exist, rank them by importance. " +
+    "Do not invent evidence. If evidence conflicts, call it out and explain likely cause. " +
+    "This workflow is asynchronous: do not ask the user questions, do not request feedback, and do not wait for replies. " +
+    "Produce the strongest recommendation from available evidence only.",
+  userTextTail:
+    "Return only one JSON object with keys summary, panel_discussion, and recommendations. " +
+    "summary: provide a concise synthesis with these headings in order: " +
+    "1) What the panel thinks is really going on, " +
+    "2) Panel discussion, " +
+    "3) Core diagnosis, " +
+    "4) Key strategic issue, " +
+    "5) Main risks and blind spots, " +
+    "6) Recommended way forward, " +
+    "7) Immediate next actions, " +
+    "8) Open questions that still need validation. " +
+    "Keep it practical and company-specific. " +
+    "panel_discussion: show all seven voices challenging each other, surfacing tradeoffs, and converging on decisions. " +
+    "recommendations: array up to 12 items; each item must include title, recommendation, rationale, category, priority, confidence, source_basis, references. " +
+    "Do not ask questions in output.",
+  maxOutputTokens: 2600,
+  temperature: 0.12,
+  contextMaxChars: 28_000,
+  modelTimeoutMs: 75_000,
+};
+
+const COUNCIL_PROFILES: Record<CouncilKey, CouncilProfile> = {
+  strategy_council: STRATEGY_COUNCIL_PROFILE,
+  mojo_council: MOJO_COUNCIL_PROFILE,
+};
+
+function normalizeCouncilKey(value: unknown): CouncilKey {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw === "mojo_council" ? "mojo_council" : "strategy_council";
+}
+
+function normalizePanelDiscussion(value: unknown) {
+  if (typeof value === "string") return value.trim().slice(0, 12_000);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, 12_000);
+  }
+  if (value && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    const transcript = String(row.transcript || row.discussion || row.content || "").trim();
+    return transcript.slice(0, 12_000);
+  }
+  return "";
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function extractResponsesOutputText(data: any): string | null {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
-
-  const out = Array.isArray(data?.output) ? data.output : [];
-  for (const item of out) {
-    if (item?.type !== "message") continue;
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      if (part?.type === "output_text" && typeof part?.text === "string" && part.text.trim()) {
-        return part.text;
-      }
-    }
-  }
-  return null;
 }
 
 function isMissingTableError(error: unknown) {
@@ -91,29 +182,91 @@ function truncateText(text: string, maxChars = 120_000) {
   return `${text.slice(0, maxChars)}\n\n[Context truncated by ${text.length - maxChars} characters]`;
 }
 
+function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
+  if (input && typeof input === "object") return input as Record<string, unknown>;
+  if (typeof input !== "string") return null;
+
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+  } catch {
+    // continue to brace slicing fallback
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(start, end + 1));
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = 90_000,
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("abort")) {
+      throw new Error(`Council model request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractResponsesOutputText(data: any): string | null {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
+
+  const out = Array.isArray(data?.output) ? data.output : [];
+  for (const item of out) {
+    if (item?.type !== "message") continue;
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (part?.type === "output_text" && typeof part?.text === "string" && part.text.trim()) {
+        return part.text;
+      }
+    }
+  }
+  return null;
+}
+
 async function callOpenAIJSON(opts: {
   apiKey: string;
   model: string;
-  schemaName: string;
-  schema: Record<string, unknown>;
   systemText: string;
   userText: string;
   maxOutputTokens?: number;
   temperature?: number;
+  timeoutMs?: number;
 }) {
   const {
     apiKey,
     model,
-    schemaName,
-    schema,
     systemText,
     userText,
     maxOutputTokens = 3500,
     temperature = 0.15,
+    timeoutMs = 55_000,
   } = opts;
 
   const buildBody = (outputBudget: number, retryNote = "") => ({
     model,
+    store: false,
     temperature,
     max_output_tokens: outputBudget,
     input: [
@@ -129,9 +282,41 @@ async function callOpenAIJSON(opts: {
     text: {
       format: {
         type: "json_schema",
-        name: schemaName,
-        strict: true,
-        schema,
+        name: "council_response",
+        strict: false,
+        schema: {
+          type: "object",
+          additionalProperties: true,
+          required: ["summary", "recommendations"],
+          properties: {
+            summary: { type: "string" },
+            panel_discussion: {
+              anyOf: [
+                { type: "string" },
+                { type: "array", items: { type: "string" } },
+                { type: "null" },
+              ],
+            },
+            recommendations: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                required: ["title", "recommendation"],
+                properties: {
+                  title: { type: "string" },
+                  recommendation: { type: "string" },
+                  rationale: { type: "string" },
+                  category: { type: "string" },
+                  priority: { type: "string" },
+                  confidence: { type: "number" },
+                  source_basis: { type: "string" },
+                  references: { type: "array", items: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
       },
     },
   });
@@ -144,35 +329,413 @@ async function callOpenAIJSON(opts: {
         ? ""
         : "Your previous response was truncated or invalid. Return one complete JSON object that exactly matches the schema.";
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const response = await fetchWithTimeout(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
       },
-      body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
-    });
+      timeoutMs,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI error ${response.status}: ${errorText}`);
+      throw new Error(`OpenAI council model error ${response.status}: ${errorText}`);
     }
 
     const payload = await response.json();
     const text = extractResponsesOutputText(payload);
-    if (!text) throw new Error("OpenAI response missing output_text");
+    const parsed = safeParseJsonObject(text);
+    if (parsed) return parsed;
 
-    try {
-      return JSON.parse(text);
-    } catch (error) {
-      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-      const truncated = message.includes("unterminated") || message.includes("unexpected end");
-      if (attempt < budgets.length - 1 && truncated) continue;
-      throw error;
-    }
+    const lower = String(text || "").toLowerCase();
+    const truncated = lower.includes("unterminated") || lower.includes("unexpected end");
+    if (attempt < budgets.length - 1 && truncated) continue;
+    throw new Error("OpenAI council model returned non-JSON output.");
   }
 
-  throw new Error("OpenAI JSON generation failed after retries");
+  throw new Error("OpenAI council JSON generation failed after retries");
+}
+
+function toPercent(value: unknown, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return clamp(fallback, 0, 100);
+  if (num <= 1 && num >= 0) return clamp(num * 100, 0, 100);
+  return clamp(num, 0, 100);
+}
+
+function inferSourceTierLabel(inputFiles: Array<Record<string, unknown>>) {
+  const tags = inputFiles.flatMap((file) =>
+    Array.isArray(file.tags) ? (file.tags as unknown[]).map((tag) => String(tag || "").trim().toLowerCase()) : []
+  );
+  if (tags.some((tag) => tag.includes("implemented"))) return "implemented_tested";
+  if (tags.some((tag) => tag.includes("evidence") || tag.includes("primary"))) return "evidence";
+  if (tags.some((tag) => tag.includes("company"))) return "company";
+  return "public";
+}
+
+function buildDeterministicCouncilOutput(args: {
+  councilProfile: CouncilProfile;
+  company: Record<string, unknown>;
+  contextPayload: Record<string, unknown>;
+  modelFailure?: string;
+}) {
+  const companyName = asText(args.company.name, "Company");
+  const strategicProblems = sliceArray<Record<string, unknown>>(args.contextPayload.strategic_problems, 400);
+  const assumptions = sliceArray<Record<string, unknown>>(args.contextPayload.strategy_assumptions, 400);
+  const inputs = sliceArray<Record<string, unknown>>(args.contextPayload.inputs, 800);
+  const opportunities = sliceArray<Record<string, unknown>>(args.contextPayload.opportunities, 800);
+  const routes = sliceArray<Record<string, unknown>>(args.contextPayload.routes, 800);
+  const positioningCanvases = sliceArray<Record<string, unknown>>(args.contextPayload.positioning_canvases, 100);
+  const jobSteps = sliceArray<Record<string, unknown>>(args.contextPayload.job_steps, 1000);
+  const odiNeeds = sliceArray<Record<string, unknown>>(args.contextPayload.odi_needs, 1200);
+
+  const recommendations: RecommendationRow[] = [];
+  const addRecommendation = (row: RecommendationRow) => {
+    if (recommendations.length >= 12) return;
+    recommendations.push(row);
+  };
+
+  const allInputFiles = inputs.flatMap((input) =>
+    sliceArray<Record<string, unknown>>(input.input_files, 50)
+  );
+  const sourceCounts = {
+    public: 0,
+    company: 0,
+    evidence: 0,
+    implemented_tested: 0,
+  };
+  for (const file of allInputFiles) {
+    const tier = inferSourceTierLabel([file]);
+    sourceCounts[tier as keyof typeof sourceCounts] += 1;
+  }
+
+  if (args.councilProfile.key === "mojo_council") {
+    const openAssumptions = assumptions.filter((row) => asText(row.status, "open").toLowerCase() !== "reconciled");
+    const incompleteInputs = inputs
+      .map((input) => {
+        const done = Boolean(input.done);
+        const completion = toPercent(input.completion, done ? 100 : 0);
+        return { input, completion };
+      })
+      .filter((row) => row.completion < 70)
+      .sort((a, b) => a.completion - b.completion);
+
+    if (strategicProblems.length === 0) {
+      addRecommendation({
+        title: "Anchor this work to one decision-level problem",
+        recommendation:
+          "Define one initiative-level strategic problem and one explicit decision ask so every route and score change maps to the same objective.",
+        rationale:
+          "Without one decision-level anchor, teams often run activity without agreement on what must be true to win.",
+        category: "strategy",
+        priority: "high",
+        confidence: 82,
+        source_basis: "strategic_problems_missing",
+        references: ["strategy_problem_statements"],
+      });
+    }
+
+    if (positioningCanvases.length === 0) {
+      addRecommendation({
+        title: "Tighten competitive context before channel tactics",
+        recommendation:
+          "Define the real alternatives buyers compare against, the market category to own, and the specific value gap you can prove now.",
+        rationale:
+          "Positioning ambiguity usually causes low conversion even when outreach volume increases.",
+        category: "positioning",
+        priority: "high",
+        confidence: 79,
+        source_basis: "positioning_canvas_missing",
+        references: ["positioning_canvases"],
+      });
+    }
+
+    if (jobSteps.length === 0 || odiNeeds.length === 0) {
+      addRecommendation({
+        title: "Rebuild customer-job clarity for this initiative",
+        recommendation:
+          "Select the active customer job map, define ODI-style needs for that job, and link opportunities directly to those unmet outcomes.",
+        rationale:
+          "If the team is not explicit about the customer job and unmet outcomes, routes tend to be generic and hard to prioritize.",
+        category: "jtbd",
+        priority: "high",
+        confidence: 80,
+        source_basis: "job_steps_and_odi_needs",
+        references: [`job_steps:${jobSteps.length}`, `odi_needs:${odiNeeds.length}`],
+      });
+    }
+
+    if (sourceCounts.evidence === 0) {
+      addRecommendation({
+        title: "Shift from assumptions to primary evidence",
+        recommendation:
+          "Run primary interviews/surveys with the target buyer group and attach direct evidence so decisions are not driven by public assumptions alone.",
+        rationale:
+          "Primary evidence is the fastest way to reduce risk and avoid false confidence in projected outcomes.",
+        category: "evidence",
+        priority: "high",
+        confidence: 86,
+        source_basis: "input_files.source_tier",
+        references: [
+          `public:${sourceCounts.public}`,
+          `company:${sourceCounts.company}`,
+          `evidence:${sourceCounts.evidence}`,
+        ],
+      });
+    }
+
+    if (opportunities.length === 0 || routes.length === 0) {
+      addRecommendation({
+        title: "Convert diagnosis into one executable path",
+        recommendation:
+          "Prioritize one route with owner, timeline, and measurable checkpoints tied to the strategic problem and selected job map.",
+        rationale:
+          "Teams stall when diagnosis exists but there is no single implementation path with measurable checkpoints.",
+        category: "routes",
+        priority: "medium",
+        confidence: 75,
+        source_basis: "opportunities_and_routes",
+        references: [`opportunities:${opportunities.length}`, `routes:${routes.length}`],
+      });
+    }
+
+    if (openAssumptions.length > 0) {
+      addRecommendation({
+        title: "Make messaging testable before broad rollout",
+        recommendation:
+          "Translate the chosen positioning into one clear message set and test it with target buyers before scaling channel spend.",
+        rationale:
+          "Message clarity should follow strategy and positioning choices, then be pressure-tested for comprehension and traction.",
+        category: "measurement",
+        priority: "medium",
+        confidence: 73,
+        source_basis: "strategy_assumptions",
+        references: openAssumptions
+          .slice(0, 3)
+          .map((row) => asText(row.title, "") || asText(row.assumption, "assumption"))
+          .filter(Boolean),
+      });
+    }
+
+    const lowestNeed = odiNeeds
+      .map((need) => ({
+        need,
+        opportunity: Number(need.opportunity_score) || 0,
+      }))
+      .filter((row) => Number.isFinite(row.opportunity))
+      .sort((a, b) => b.opportunity - a.opportunity)[0];
+
+    if (lowestNeed && lowestNeed.opportunity >= 8) {
+      addRecommendation({
+        title: "Prioritize the top underserved customer outcome",
+        recommendation:
+          "Center the next route on the highest-opportunity unmet outcome and define explicit success criteria before solution work.",
+        rationale:
+          "Outcome-first prioritization reduces feature-first drift and improves odds of product-market fit.",
+        category: "jtbd",
+        priority: "high",
+        confidence: 78,
+        source_basis: "odi_needs",
+        references: [
+          asText(lowestNeed.need.need_statement, "top_odi_need").slice(0, 160),
+          `opportunity_score:${Math.round(lowestNeed.opportunity)}`,
+        ],
+      });
+    }
+
+    if (recommendations.length === 0) {
+      addRecommendation({
+        title: "Document what is known vs assumed before execution",
+        recommendation:
+          "For each planned action, record one known fact, one assumption, and one validation step before execution starts.",
+        rationale:
+          "This keeps decisions evidence-led and improves accountability for score movement.",
+        category: "measurement",
+        priority: "medium",
+        confidence: 70,
+        source_basis: "company_context",
+        references: ["inputs", "routes", "deep_dive_analyses"],
+      });
+    }
+
+    const summarySections = [
+      "1. What the panel thinks is really going on",
+      `The company has directional momentum but still has core ambiguity between strategic focus, customer-job proof, and execution sequencing.`,
+      "",
+      "2. Panel discussion",
+      "See panel_discussion for the full seven-voice debate and convergence.",
+      "",
+      "3. Core diagnosis",
+      `The current state is weighted toward assumptions/public signals (${sourceCounts.public}) and limited primary evidence (${sourceCounts.evidence}), which increases risk in route selection.`,
+      "",
+      "4. Key strategic issue",
+      strategicProblems.length > 0
+        ? "The main issue is strategic sequencing: convert diagnosis into one decision-level route with measurable proof milestones."
+        : "The main issue is strategic focus: there is not yet one explicit decision-level problem statement anchoring downstream choices.",
+      "",
+      "5. Main risks and blind spots",
+      `Risks include weak differentiation pressure-testing, incomplete customer-job outcomes, and route execution without validated assumptions.`,
+      "",
+      "6. Recommended way forward",
+      "Run a positioning-and-evidence-first sequence, then commit to one prioritized route with clear ownership and checkpoints.",
+      "",
+      "7. Immediate next actions",
+      "Execute the top recommendations below in order, starting with strategic anchor, evidence capture, and route commitment.",
+      "",
+      "8. Open questions that still need validation",
+      "- Which buyer context produces the strongest conversion signal now?",
+      "- Which claim is both most differentiated and provable this cycle?",
+      "- Which route milestone should trigger score re-baseline?",
+    ];
+
+    const summaryTail = args.modelFailure
+      ? `\n\nFallback note: ${args.modelFailure.slice(0, 180)}`
+      : "";
+
+    const panelDiscussion = [
+      "Chip & Dan Heath: We need one clear decision to reduce complexity and drive team alignment.",
+      "April Dunford: Without sharper alternatives/category context, the value story will blur in-market.",
+      "Roger Martin: The core choice is where to play first and how to win there with proof, not breadth.",
+      "Jonah Berger: Adoption risk is high unless the message is immediately understandable and easy to share.",
+      "Teresa Torres: Critical evidence is still missing; run targeted discovery before scaling execution.",
+      "Donald Miller: Clarify the customer-facing message only after strategy and positioning choices are explicit.",
+      "Tony Ulwick: Start with the core job and prioritized underserved outcomes; do not move to feature choices before outcome priorities are explicit.",
+      "Consensus: Anchor one strategic decision, validate with primary evidence, then execute one measurable route.",
+    ].join("\n");
+
+    return {
+      summary: summarySections.join("\n") + summaryTail,
+      panel_discussion: panelDiscussion,
+      recommendations,
+    };
+  }
+
+  if (strategicProblems.length === 0) {
+    addRecommendation({
+      title: "Capture the strategic problem in one sentence",
+      recommendation:
+        "Add one client-stated strategic problem so all scoring and route prioritization are anchored to a specific business outcome.",
+      rationale:
+        "Without a clear problem statement, recommendations drift and score movement is harder to interpret.",
+      category: "strategy",
+      priority: "high",
+      confidence: 80,
+      source_basis: "strategic_problems_missing",
+      references: ["strategy_problem_statements"],
+    });
+  }
+
+  const openAssumptions = assumptions.filter((row) => asText(row.status, "open").toLowerCase() !== "reconciled");
+  if (openAssumptions.length > 0) {
+    addRecommendation({
+      title: "Prioritize top untested assumptions",
+      recommendation:
+        "Select the top 2 open assumptions with highest impact and define one measurable test for each this cycle.",
+      rationale:
+        "Untested assumptions are usually the fastest way to reduce risk and improve score accuracy.",
+      category: "evidence",
+      priority: "high",
+      confidence: 78,
+      source_basis: "strategy_assumptions",
+      references: openAssumptions
+        .slice(0, 4)
+        .map((row) => asText(row.title, "") || asText(row.assumption, "assumption"))
+        .filter(Boolean),
+    });
+  }
+
+  const incompleteInputs = inputs
+    .map((input) => {
+      const done = Boolean(input.done);
+      const completion = toPercent(input.completion, done ? 100 : 0);
+      return { input, completion };
+    })
+    .filter((row) => row.completion < 70)
+    .sort((a, b) => a.completion - b.completion);
+
+  if (incompleteInputs.length > 0) {
+    const top = incompleteInputs[0];
+    addRecommendation({
+      title: `Close input gap: ${asText(top.input.label, asText(top.input.input_key, "key input"))}`,
+      recommendation:
+        "Fill this diagnostic input with evidence-backed detail from uploaded files and market interviews, then re-run analysis.",
+      rationale:
+        "Low-completion diagnostic inputs often act as weakest links and hold down overall confidence and score lift.",
+      category: "execution",
+      priority: "high",
+      confidence: 76,
+      source_basis: asText(top.input.input_key, "input"),
+      references: [asText(top.input.group_key, "inputs"), `${Math.round(top.completion)}% complete`],
+    });
+  }
+
+  if (sourceCounts.evidence === 0) {
+    addRecommendation({
+      title: "Add primary market evidence",
+      recommendation:
+        "Run primary interviews or surveys tied to the selected job map and attach the notes so recommendations can move beyond public assumptions.",
+      rationale:
+        "Primary evidence is required to validate needs and reduce the risk of false confidence.",
+      category: "evidence",
+      priority: "high",
+      confidence: 84,
+      source_basis: "input_files.source_tier",
+      references: [
+        `public:${sourceCounts.public}`,
+        `company:${sourceCounts.company}`,
+        `evidence:${sourceCounts.evidence}`,
+      ],
+    });
+  }
+
+  if (opportunities.length === 0 || routes.length === 0) {
+    addRecommendation({
+      title: "Rebuild opportunities and routes from selected job map",
+      recommendation:
+        "Generate opportunities and routes only from the active customer job map and current strategic problem to keep action plans initiative-specific.",
+      rationale:
+        "Missing opportunities or routes leaves no reliable path from current reality to projected outcome.",
+      category: "routes",
+      priority: "medium",
+      confidence: 74,
+      source_basis: "opportunities_and_routes",
+      references: [`opportunities:${opportunities.length}`, `routes:${routes.length}`],
+    });
+  }
+
+  if (recommendations.length === 0) {
+    addRecommendation({
+      title: "Strengthen traceability across decisions",
+      recommendation:
+        "For each top recommendation, attach one supporting source and one measurable expected outcome before execution.",
+      rationale:
+        "Decision traceability helps teams align quickly and keeps score changes defensible.",
+      category: "measurement",
+      priority: "medium",
+      confidence: 70,
+      source_basis: "company_context",
+      references: ["inputs", "routes", "deep_dive_analyses"],
+    });
+  }
+
+  const summaryParts = [
+    `${args.councilProfile.label} completed for ${companyName} from available company context.`,
+    `Generated ${recommendations.length} recommendation${recommendations.length === 1 ? "" : "s"} without waiting for follow-up answers.`,
+  ];
+  if (args.modelFailure) {
+    summaryParts.push(`Used deterministic local fallback because model response failed: ${args.modelFailure.slice(0, 140)}.`);
+  }
+
+  return {
+    summary: summaryParts.join(" "),
+    panel_discussion: `${args.councilProfile.label} fallback: recommendations generated from available company context without live model debate.`,
+    recommendations,
+  };
 }
 
 async function fetchRowsOptional(
@@ -288,12 +851,17 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    const openaiModel = Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini";
+    const openaiModel =
+      Deno.env.get("COUNCIL_OPENAI_MODEL") ??
+      Deno.env.get("OPENAI_MODEL") ??
+      "gpt-4.1-mini";
 
     if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       return jsonResponse({ error: "Missing Supabase env vars" }, 500);
     }
-    if (!openaiKey) return jsonResponse({ error: "Missing OPENAI_API_KEY" }, 500);
+    if (!openaiKey) {
+      return jsonResponse({ error: "Missing OPENAI_API_KEY" }, 500);
+    }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return jsonResponse({ error: "No auth header" }, 401);
@@ -309,6 +877,8 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const companyId = asText(body?.company_id, "");
+    const councilKey = normalizeCouncilKey(body?.council_key);
+    const councilProfile = COUNCIL_PROFILES[councilKey];
     if (!companyId) return jsonResponse({ error: "company_id is required" }, 400);
 
     const { data: accessibleCompany, error: accessErr } = await anonClient
@@ -335,10 +905,15 @@ Deno.serve(async (req) => {
       .insert({
         company_id: companyId,
         user_id: userId,
-        model: openaiModel,
+        model: `openai:${openaiModel}`,
         status: "running",
         summary: "",
-        source_snapshot_json: {},
+        source_snapshot_json: {
+          council_key: councilProfile.key,
+          council_label: councilProfile.label,
+          llm_model: openaiModel,
+          llm_provider: "openai_api",
+        },
       })
       .select("id")
       .single();
@@ -529,6 +1104,13 @@ Deno.serve(async (req) => {
     sourceSnapshot = {
       started_at: startedAtIso,
       company_id: companyId,
+      council_key: councilProfile.key,
+      council_label: councilProfile.label,
+      llm_path: {
+        provider: "openai_api",
+        model: openaiModel,
+        endpoint: "https://api.openai.com/v1/responses",
+      },
       counts: {
         strategic_problems: contextPayload.strategic_problems.length,
         strategy_assumptions: contextPayload.strategy_assumptions.length,
@@ -554,80 +1136,59 @@ Deno.serve(async (req) => {
       buildFrameworkBrief("routes", getFrameworkRoutingPlan("routes")),
     ].join("\n\n");
 
-    const contextJson = truncateText(JSON.stringify(contextPayload, null, 2), 125_000);
+    const contextJson = truncateText(JSON.stringify(contextPayload, null, 2), councilProfile.contextMaxChars);
     const sourceSnapshotJson = JSON.stringify(sourceSnapshot, null, 2);
 
-    const schema = {
-      type: "object",
-      additionalProperties: false,
-      required: ["summary", "recommendations"],
-      properties: {
-        summary: { type: "string", minLength: 1, maxLength: 600 },
-        recommendations: {
-          type: "array",
-          maxItems: 12,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: [
-              "title",
-              "recommendation",
-              "rationale",
-              "category",
-              "priority",
-              "confidence",
-              "source_basis",
-              "references",
-            ],
-            properties: {
-              title: { type: "string", minLength: 3, maxLength: 120 },
-              recommendation: { type: "string", minLength: 8, maxLength: 900 },
-              rationale: { type: "string", minLength: 8, maxLength: 900 },
-              category: {
-                type: "string",
-                enum: ["strategy", "positioning", "jtbd", "execution", "evidence", "measurement", "routes"],
-              },
-              priority: { type: "string", enum: ["high", "medium", "low"] },
-              confidence: { type: "integer", minimum: 0, maximum: 100 },
-              source_basis: { type: "string", minLength: 3, maxLength: 120 },
-              references: {
-                type: "array",
-                maxItems: 8,
-                items: { type: "string", minLength: 2, maxLength: 180 },
-              },
-            },
-          },
-        },
-      },
-    };
-
-    const systemText =
-      "You are the MojoMap strategy council. Review all company context and produce recommendation cards that can be accepted or ignored by advisors. " +
-      "Use a positioning-first and evidence-led approach across customer jobs, positioning clarity, strategy cascade coherence, and execution readiness. " +
-      "Use weakest-link reasoning: if one critical area is weak, prioritize that first. " +
-      "Never use framework creator names in output. " +
-      "Do not pretend evidence exists when it does not. " +
-      "When public claims and company-uploaded evidence conflict, call it out directly and explain the likely reason.";
+    const systemText = councilProfile.systemText;
 
     const userText =
       `Company context snapshot:\n${sourceSnapshotJson}\n\n` +
       `Applied framework guidance:\n${frameworkGuidance}\n\n` +
       `Full company context JSON:\n${contextJson}\n\n` +
-      "Return recommendations that are clear next steps, include what evidence is missing, and identify likely causes for major gaps.";
+      councilProfile.userTextTail;
 
-    const parsed = await callOpenAIJSON({
-      apiKey: openaiKey,
-      model: openaiModel,
-      schemaName: "council_company_recommendations",
-      schema,
-      systemText,
-      userText,
-      maxOutputTokens: 4200,
-      temperature: 0.1,
-    });
+    let parsed: Record<string, unknown>;
+    let modelFailure: string | undefined;
+    try {
+      parsed = await callOpenAIJSON({
+        apiKey: openaiKey,
+        model: openaiModel,
+        systemText,
+        userText,
+        maxOutputTokens: councilProfile.maxOutputTokens,
+        temperature: councilProfile.temperature,
+        timeoutMs: councilProfile.modelTimeoutMs,
+      });
+    } catch (error) {
+      modelFailure = error instanceof Error ? error.message : String(error);
+      console.log("[council-review] model fallback", modelFailure);
+      parsed = buildDeterministicCouncilOutput({
+        councilProfile,
+        company: company as Record<string, unknown>,
+        contextPayload: contextPayload as Record<string, unknown>,
+        modelFailure,
+      });
+    }
 
-    const summary = asText(parsed?.summary, "Council review completed.");
-    const recommendations = normalizeRecommendations(parsed?.recommendations);
+    let summary = asText(parsed?.summary, "Council review completed.");
+    let panelDiscussion = normalizePanelDiscussion(parsed?.panel_discussion);
+    let recommendations = normalizeRecommendations(parsed?.recommendations);
+    if (recommendations.length === 0) {
+      const fallbackOutput = buildDeterministicCouncilOutput({
+        councilProfile,
+        company: company as Record<string, unknown>,
+        contextPayload: contextPayload as Record<string, unknown>,
+        modelFailure: "Model returned empty recommendations.",
+      });
+      summary = asText(fallbackOutput.summary, summary);
+      panelDiscussion = normalizePanelDiscussion(fallbackOutput.panel_discussion);
+      recommendations = normalizeRecommendations(fallbackOutput.recommendations);
+    }
+    if (!panelDiscussion && councilProfile.key === "mojo_council") {
+      panelDiscussion =
+        "Mojo Council consensus was generated from available evidence. " +
+        "No detailed transcript was returned by the model in this run.";
+    }
 
     if (recommendations.length > 0) {
       const insertPayload = recommendations.map((item) => ({
@@ -643,6 +1204,8 @@ Deno.serve(async (req) => {
         status: "pending",
         source_basis: item.source_basis,
         source_context_json: {
+          council_key: councilProfile.key,
+          council_label: councilProfile.label,
           references: item.references,
           source_snapshot: sourceSnapshot,
         },
@@ -660,7 +1223,10 @@ Deno.serve(async (req) => {
       .update({
         status: "completed",
         summary,
-        source_snapshot_json: sourceSnapshot,
+        source_snapshot_json: {
+          ...sourceSnapshot,
+          panel_discussion: panelDiscussion,
+        },
         recommendation_count: recommendations.length,
         updated_at: new Date().toISOString(),
       })
@@ -670,7 +1236,9 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       run_id: runId,
+      council_key: councilProfile.key,
       summary,
+      panel_discussion: panelDiscussion,
       recommendation_count: recommendations.length,
       status: "completed",
     });

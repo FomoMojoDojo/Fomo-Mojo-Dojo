@@ -13,14 +13,14 @@ import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badge
 import { SourceLegend } from '@/components/provenance/SourceLegend';
 
 const c = {
-  bg: '#eae5db',
-  field: '#ddd8cd',
+  bg: '#faf7f6',
+  field: '#ffffff',
   card: '#ffffff',
-  line: '#ebe7e0',
-  lineFaint: '#f0ede8',
-  charcoal: '#2c2925',
-  secondary: '#5c5750',
-  muted: '#9a958d',
+  line: '#dde6d1',
+  lineFaint: '#edf2e8',
+  charcoal: '#233c4b',
+  secondary: '#46606d',
+  muted: '#6e847f',
 };
 
 const cardStyle = {
@@ -33,22 +33,16 @@ const cardStyle = {
 export default function InputsView() {
   const [selectedInput, setSelectedInput] = useState<InputItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [reseeding, setReseeding] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const { user } = useAuth();
   const { activeCompany } = useCompany();
-  const { query: inputsQuery, reseed } = useInputs();
+  const { query: inputsQuery } = useInputs();
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
     inputsOverride: inputsQuery.data ?? [],
   });
   const dbInputs = inputsQuery.data;
-
-  const handleReseed = async () => {
-    setReseeding(true);
-    try { await reseed(); } finally { setReseeding(false); }
-  };
 
   const inputs = user ? (dbInputs ?? []) : [];
   const complete = inputs.filter((i) => i.status === 'complete').length;
@@ -73,18 +67,15 @@ export default function InputsView() {
   }
 
   const groups = [
-    { key: 'foundation', label: 'Foundation', badge: 'Positioning & Strategy', items: grouped.foundation, accent: '#e8613a' },
-    { key: 'execution', label: 'Execution', badge: 'Product & Marketing', items: grouped.execution, accent: '#3a9a8c' },
-    { key: 'market_evidence', label: 'Market Evidence', badge: 'Sales & Customer Data', items: grouped.market_evidence, accent: '#c48a2a' },
+    { key: 'foundation', label: 'Foundation', badge: 'Positioning + Strategy Cascade', items: grouped.foundation, accent: '#e8613a' },
+    { key: 'execution', label: 'Execution', badge: 'GTM + Messaging', items: grouped.execution, accent: '#3a9a8c' },
+    { key: 'market_evidence', label: 'Market Evidence', badge: 'ODI + Validation', items: grouped.market_evidence, accent: '#c48a2a' },
   ];
 
   return (
     <div
       className="min-h-screen"
-      style={{
-        background: c.bg,
-        backgroundImage: `url("data:image/svg+xml,%3Csvg width='6' height='6' viewBox='0 0 6 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='0.025'%3E%3Cpath d='M5 0h1L0 5V4zM6 5v1H5z'/%3E%3C/g%3E%3C/svg%3E")`,
-      }}
+      style={{ background: c.bg }}
     >
       <TopNav />
       <div className="flex" style={{ height: 'calc(100vh - 52px)' }}>
@@ -95,10 +86,11 @@ export default function InputsView() {
             {/* Page header — matching map view */}
             <div className="flex items-center justify-between mb-8">
               <div>
-                <h1 className="font-sans text-[20px] font-bold tracking-tight" style={{ color: c.charcoal }}>
+                <h1 className="font-sans text-[34px] font-semibold leading-[1] tracking-tight" style={{ color: c.charcoal }}>
                   Diagnostic Inputs
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {activeCompany?.name ? <MetaBadge>{activeCompany.name}</MetaBadge> : null}
                   <ScoreChip label="Done" value={complete} />
                   <ScoreChip label="Total" value={total} />
                   <StateBadge tone={gaps > 0 ? 'gap' : 'designed'}>
@@ -106,25 +98,13 @@ export default function InputsView() {
                   </StateBadge>
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-2">
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <MetaBadge>
-                    {activeCompany?.last_scored_at
-                      ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                      : "Awaiting research"}
-                  </MetaBadge>
-                  <SourceLegend signals={sourceSignals} />
-                </div>
-                {user && (
-                  <button
-                    onClick={handleReseed}
-                    disabled={reseeding}
-                    className="font-mono text-[10px] uppercase tracking-wider hover:opacity-70 transition-opacity cursor-pointer disabled:opacity-50"
-                    style={{ color: c.muted }}
-                  >
-                    {reseeding ? 'Resetting…' : '↻ Reset'}
-                  </button>
-                )}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <MetaBadge>
+                  {activeCompany?.last_scored_at
+                    ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
+                    : "Awaiting research"}
+                </MetaBadge>
+                <SourceLegend signals={sourceSignals} />
               </div>
             </div>
 
@@ -133,34 +113,35 @@ export default function InputsView() {
               className="rounded-2xl p-5 sm:p-6"
               style={{
                 background: c.field,
-                boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.07), inset 0 0 0 1px rgba(0,0,0,0.04)',
+                border: `1px solid ${c.line}`,
+                boxShadow: '0 10px 30px rgba(35,60,75,0.06)',
               }}
             >
 
             {/* Hero completeness bar */}
             <div className="overflow-hidden mb-5" style={{ ...cardStyle, boxShadow: '0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)' }}>
               <div className="p-5 px-6 flex items-center gap-5">
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] whitespace-nowrap" style={{ color: c.muted }}>
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em] whitespace-nowrap" style={{ color: c.secondary }}>
                   OVERALL COMPLETENESS
                 </span>
-                <div className="flex-1 h-3 rounded-full relative overflow-hidden" style={{ background: '#e8e3da' }}>
+                <div className="flex-1 h-3 rounded-full relative overflow-hidden" style={{ background: c.lineFaint }}>
                   <div
                     className="absolute left-0 top-0 h-3 rounded-full transition-all duration-[800ms]"
                     style={{
                       width: `${pct}%`,
-                      background: 'linear-gradient(to right, hsl(108, 42%, 38%), hsl(108, 50%, 45%))',
-                      boxShadow: '0 1px 4px rgba(76, 135, 76, 0.3)',
+                      background: 'linear-gradient(to right, #5f9b8c, #233c4b)',
+                      boxShadow: '0 1px 4px rgba(35,60,75,0.28)',
                     }}
                   />
                 </div>
                 <span
                   className="font-sans leading-none tracking-tighter"
-                  style={{ fontSize: 36, fontWeight: 900, color: 'hsl(108, 42%, 38%)' }}
+                  style={{ fontSize: 36, fontWeight: 900, color: c.charcoal }}
                 >
                   {pct}%
                 </span>
                 <div className="border-l pl-5 ml-1" style={{ borderColor: c.lineFaint }}>
-                  <span className="font-sans text-[13px] font-bold block" style={{ color: c.charcoal }}>
+                  <span className="font-sans text-[14px] font-semibold block" style={{ color: c.charcoal }}>
                     {complete} of {total} complete
                   </span>
                   <div className="mt-2">
@@ -183,7 +164,7 @@ export default function InputsView() {
                 ].map((item) => (
                   <div key={item.label} className="flex items-center gap-2">
                     <div className="w-[10px] h-[10px] rounded-full" style={{ background: item.color, boxShadow: `0 1px 3px ${item.color}40` }} />
-                    <span className="font-mono text-[10px] font-medium" style={{ color: c.muted }}>{item.label}</span>
+                    <span className="font-mono text-[10px] font-medium" style={{ color: c.secondary }}>{item.label}</span>
                   </div>
                 ))}
               </div>
@@ -226,18 +207,6 @@ export default function InputsView() {
                       {group.label}
                     </span>
                     <MetaBadge>{group.badge}</MetaBadge>
-                    <div className="ml-auto flex items-center gap-2">
-                      <div className="w-14 h-[4px] rounded-full overflow-hidden" style={{ background: c.lineFaint }}>
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${groupPct}%`,
-                            background: group.accent,
-                          }}
-                        />
-                      </div>
-                      <ScoreChip label="Avg" value={groupPct} />
-                    </div>
                   </div>
                   <div className="mx-5 h-px" style={{ background: c.lineFaint }} />
                   {/* Circles */}
@@ -258,7 +227,7 @@ export default function InputsView() {
             {/* Upload zone */}
             <div
               className="border-[2px] border-dashed rounded-xl p-7 text-center cursor-pointer hover:border-ink transition-colors"
-              style={{ borderColor: '#ccc7bc', background: 'rgba(255,255,255,0.35)' }}
+              style={{ borderColor: c.line, background: '#f7fbf4' }}
               onClick={() => setUploadOpen(true)}
             >
               <div className="text-[34px] mb-2">📁</div>
@@ -288,7 +257,7 @@ export default function InputsView() {
         {/* Side panel */}
         <div
           className="overflow-hidden transition-all duration-[250ms] shrink-0"
-          style={{ width: panelOpen ? 380 : 0, background: '#4a4a4a' }}
+          style={{ width: panelOpen ? 380 : 0, background: '#faf7f6' }}
         >
           {selectedInput && (
             <InputSidePanel

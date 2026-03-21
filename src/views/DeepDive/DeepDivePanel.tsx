@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { scoreColor, scoreColorClass } from '@/lib/scoring';
 import ScoreBar from '@/components/ui/ScoreBar';
 import { useDeepDiveAnalyses, useGenerateDeepDive } from '@/hooks/useDeepDive';
+import { useLlmTraceDebug } from '@/hooks/useLlmTraceDebug';
 import { useAuth } from '@/hooks/useAuth';
 import { useInputs } from '@/hooks/useInputs';
 import type { DeepDive, ScoreArea } from '@/lib/types';
+import { fileSupportsArea, type AreaKey } from '@/lib/areaMapping';
 
 interface Props {
   open: boolean;
@@ -23,18 +25,10 @@ const AREA_RELATIONS: Record<string, string[]> = {
   cx: [],
 };
 
-const AREA_SUBGROUP_HINTS: Record<string, string[]> = {
-  positioning: ['positioning', 'competitive'],
-  strategy: ['strategy'],
-  product: ['service delivery', 'program'],
-  marketing: ['awareness', 'marketing'],
-  sales: ['referral pipeline', 'referral', 'fundraising'],
-  cx: ['family experience', 'family'],
-};
-
 export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: Props) {
   const [activeTab, setActiveTab] = useState(0);
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { query: inputsQuery } = useInputs();
   const { data: dbAnalyses } = useDeepDiveAnalyses();
   const generateMutation = useGenerateDeepDive();
@@ -53,17 +47,37 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
     () => inputs.some((input) => input.files.length > 0),
     [inputs],
   );
-  const hasAreaUploadedFiles = useMemo(() => {
-    if (!areaKey) return false;
-    const hints = AREA_SUBGROUP_HINTS[areaKey] ?? [];
-    if (hints.length === 0) return false;
-
-    return inputs.some((input) => {
-      if (input.files.length === 0) return false;
-      const subGroup = String(input.sub_group || '').toLowerCase();
-      return hints.some((hint) => subGroup.includes(hint));
+  const areaMappedFiles = useMemo(() => {
+    if (!areaKey) return [] as Array<{ id: string; fileName: string; inputLabel: string }>;
+    const normalizedArea = areaKey as AreaKey;
+    const matched: Array<{ id: string; fileName: string; inputLabel: string }> = [];
+    for (const input of inputs) {
+      for (const file of input.files) {
+        if (!fileSupportsArea({
+          areaKey: normalizedArea,
+          input,
+          fileName: file.file_name,
+          tags: file.tags,
+        })) {
+          continue;
+        }
+        matched.push({
+          id: file.id,
+          fileName: file.file_name,
+          inputLabel: input.input_label,
+        });
+      }
+    }
+    const seen = new Set<string>();
+    return matched.filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
     });
   }, [areaKey, inputs]);
+  const hasAreaUploadedFiles = useMemo(() => {
+    return areaMappedFiles.length > 0;
+  }, [areaMappedFiles]);
   const analysisRunLabel = hasAreaUploadedFiles ? 'uploaded evidence' : 'current inputs';
 
   useEffect(() => { setActiveTab(0); }, [areaKey]);
@@ -165,6 +179,25 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
                       ? 'No uploaded files are mapped to this area yet. This run uses current inputs only and is provisional.'
                       : 'No uploaded files exist for this company yet. This run uses current inputs only and is provisional.'}
                 </p>
+                {hasAreaUploadedFiles ? (
+                  <div className="mt-2 rounded-md border border-[#2a2618] bg-[#19150c] p-2">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-t-ds">
+                      Mapped files ({areaMappedFiles.length})
+                    </p>
+                    <div className="mt-1 space-y-1">
+                      {areaMappedFiles.slice(0, 4).map((file) => (
+                        <p key={file.id} className="font-mono text-[10px] text-gold-light">
+                          {file.fileName} · {file.inputLabel}
+                        </p>
+                      ))}
+                      {areaMappedFiles.length > 4 ? (
+                        <p className="font-mono text-[10px] text-t-ds">
+                          +{areaMappedFiles.length - 4} more
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -193,6 +226,7 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
                     <TabWhatWeFound
                       deepDive={deepDive}
                       hasAreaUploadedFiles={hasAreaUploadedFiles}
+                      showLlmTrace={Boolean(llmTraceEnabled && isAdmin)}
                     />
                   )}
                   {activeTab === 1 && <TabWhatGoodLooksLike deepDive={deepDive} area={area} />}
@@ -239,12 +273,92 @@ export default function DeepDivePanel({ open, areaKey, onClose, dynamicAreas }: 
 function TabWhatWeFound({
   deepDive,
   hasAreaUploadedFiles,
+  showLlmTrace,
 }: {
   deepDive: DeepDive;
   hasAreaUploadedFiles: boolean;
+  showLlmTrace: boolean;
 }) {
+  const traceMatch = deepDive.what_we_found.match(/\[LLM_TRACE\]([\s\S]*?)\[\/LLM_TRACE\]/);
+  const traceRaw = traceMatch?.[1] ?? "";
+  const bodyText = traceMatch
+    ? deepDive.what_we_found.replace(traceMatch[0], "").trim()
+    : deepDive.what_we_found;
+  const traceLines = traceRaw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const provider = traceLines.find((line) => line.toLowerCase().startsWith("provider:"))?.split(":").slice(1).join(":").trim() || "unknown";
+  const model = traceLines.find((line) => line.toLowerCase().startsWith("model:"))?.split(":").slice(1).join(":").trim() || "unknown";
+  const endpoint = traceLines.find((line) => line.toLowerCase().startsWith("endpoint:"))?.split(":").slice(1).join(":").trim() || "unknown";
+  const uploadedFiles = (
+    traceLines.find((line) => line.toLowerCase().startsWith("uploaded_files:"))?.split(":").slice(1).join(":").trim() || ""
+  )
+    .split("|")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "none");
+  const snippets = traceLines
+    .filter((line) => line.toLowerCase().startsWith("snippet:"))
+    .map((line) => line.replace(/^snippet:\s*/i, ""))
+    .map((line) => {
+      const divider = line.indexOf("::");
+      if (divider === -1) return { file: "unknown", text: line.trim() };
+      return {
+        file: line.slice(0, divider).trim(),
+        text: line.slice(divider + 2).trim(),
+      };
+    })
+    .filter((item) => item.text && !item.text.startsWith("none ::"));
+
   return (
     <div>
+      {showLlmTrace ? (
+        <div className="mb-4 rounded-lg border border-[#3a3020] bg-[#1d190f] p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-gold">
+            LLM Evidence Trace (Internal)
+          </p>
+          <p className="mt-2 font-mono text-[11px] text-t-ds">
+            Provider: {provider} · Model: {model}
+          </p>
+          <p className="mt-1 font-mono text-[11px] text-t-ds break-all">
+            Endpoint: {endpoint}
+          </p>
+          <div className="mt-2">
+            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-t-ds">
+              Uploaded files used ({uploadedFiles.length})
+            </p>
+            {uploadedFiles.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {uploadedFiles.map((file, index) => (
+                  <li key={`${file}-${index}`} className="font-mono text-[11px] text-gold-light">
+                    {file}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 font-mono text-[11px] text-t-ds">
+                No uploaded files were listed in trace.
+              </p>
+            )}
+          </div>
+          {snippets.length > 0 ? (
+            <div className="mt-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-t-ds">
+                Evidence snippets used
+              </p>
+              <div className="mt-1 space-y-2">
+                {snippets.slice(0, 6).map((snippet, index) => (
+                  <div key={`${snippet.file}-${index}`} className="rounded border border-[#2a2618] bg-[#14120c] p-2">
+                    <p className="font-mono text-[10px] uppercase text-gold">{snippet.file}</p>
+                    <p className="mt-1 font-serif text-[12px] italic text-t-ds">"{snippet.text}"</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <p className="font-mono text-[10px] text-t-ds uppercase tracking-[0.14em] border-b border-[#2a2618] pb-2 mb-[14px]">
         Key Gaps
       </p>
@@ -264,7 +378,7 @@ function TabWhatWeFound({
       <p className="font-mono text-[10px] text-t-ds uppercase tracking-[0.14em] border-b border-[#2a2618] pb-2 mb-[14px] mt-5">
         What We Observed
       </p>
-      {deepDive.what_we_found.split('\n\n').map((para, i) => (
+      {bodyText.split('\n\n').map((para, i) => (
         <p
           key={i}
           className="font-serif text-[14px] text-t-ds leading-[1.75] mb-[14px]"

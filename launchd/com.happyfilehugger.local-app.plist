@@ -9,7 +9,7 @@
     <array>
       <string>/usr/bin/osascript</string>
       <string>-e</string>
-      <string>tell application "Terminal" to do script "cd /Users/fomomojodojo/Downloads/happy-file-hugger-main &amp;&amp; /Users/fomomojodojo/Downloads/happy-file-hugger-main/scripts/start-local-app.sh"</string>
+      <string>tell application "Terminal" to do script "cd /Users/fomomojodojo/dev/happy-file-hugger-main &amp;&amp; /Users/fomomojodojo/dev/happy-file-hugger-main/scripts/start-local-app.sh"</string>
     </array>
 
     <key>RunAtLoad</key>

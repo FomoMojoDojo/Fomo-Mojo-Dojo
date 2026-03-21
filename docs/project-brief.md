@@ -542,7 +542,7 @@ There is at least one fallback insert path in `research-company` for environment
 
 There are at least two copies of the project on disk:
 
-- `/Users/fomomojodojo/Downloads/happy-file-hugger-main`
+- `/Users/fomomojodojo/dev/happy-file-hugger-main`
 - `/Users/fomomojodojo/dev/happy-file-hugger-main`
 
 The `Downloads` copy is ahead of the `dev` copy. This is a likely source of confusion and lost context.
@@ -575,7 +575,7 @@ This app is a strategy operating system for consulting engagements that turns pu
 
 These are the assumptions this brief is based on:
 
-- the active working copy is `/Users/fomomojodojo/Downloads/happy-file-hugger-main`
+- the active working copy is `/Users/fomomojodojo/dev/happy-file-hugger-main`
 - the current product direction is toward a strategist workspace, not a generic AI file app
 - public evidence and internal evidence are intentionally separated into different model paths
 - ODI / JTBD is becoming a central organizing framework, not a side experiment

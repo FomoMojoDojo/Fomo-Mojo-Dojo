@@ -7,6 +7,8 @@ import type { InputItem } from '@/lib/types';
 import { FILE_CATEGORIES, type FileCategory } from '@/lib/fileCategories';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { mapInputToAreaKey } from '@/lib/areaMapping';
+import { makeAreaSupportTag } from '@/lib/fileTags';
 
 interface Props {
   open: boolean;
@@ -19,6 +21,15 @@ interface Props {
 type AnalysisResult = {
   suggestedInputId: string | null;
   suggestedTags: FileCategory[];
+  crossAreaInputIds: string[];
+  odiNeedCandidates: Array<{
+    desiredOutcome: string;
+    importance: number;
+    satisfaction: number;
+  }>;
+  otherAreaSignals: string[];
+  extractionSource: string;
+  parserEngine: string;
   reasoning: string;
 };
 
@@ -30,6 +41,11 @@ type UploadSummary = {
   inputLabel?: string;
   subGroup?: string;
   tags: string[];
+  derivedNeedsAdded?: number;
+  additionalAreas?: string[];
+  additionalSignals?: string[];
+  extractionSource?: string;
+  parserEngine?: string;
   reasoning: string;
   source: AssignmentSource;
   error?: string;
@@ -101,6 +117,51 @@ function normalizeSuggestedTags(raw: unknown): FileCategory[] {
     .filter((tag): tag is string => typeof tag === 'string')
     .filter((tag): tag is FileCategory => allowed.has(tag as FileCategory))
     .slice(0, 6);
+}
+
+function normalizeCrossAreaInputIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<string>();
+  for (const value of raw) {
+    const id = typeof value === 'string' ? value.trim() : '';
+    if (!id) continue;
+    unique.add(id);
+  }
+  return [...unique];
+}
+
+function normalizeOdiNeedCandidates(raw: unknown) {
+  if (!Array.isArray(raw)) return [] as AnalysisResult['odiNeedCandidates'];
+  const normalized: AnalysisResult['odiNeedCandidates'] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const desiredOutcome = String(record.desired_outcome || '').trim();
+    if (!desiredOutcome) continue;
+    const canonical = desiredOutcome.toLowerCase();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    const importanceRaw = Number(record.importance);
+    const satisfactionRaw = Number(record.satisfaction);
+    const importance = Number.isFinite(importanceRaw) ? Math.max(1, Math.min(10, Math.round(importanceRaw))) : 7;
+    const satisfaction = Number.isFinite(satisfactionRaw) ? Math.max(1, Math.min(10, Math.round(satisfactionRaw))) : 4;
+    normalized.push({ desiredOutcome, importance, satisfaction });
+    if (normalized.length >= 8) break;
+  }
+  return normalized;
+}
+
+function normalizeOtherAreaSignals(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<string>();
+  for (const item of raw) {
+    const text = typeof item === 'string' ? item.trim() : '';
+    if (!text) continue;
+    unique.add(text);
+    if (unique.size >= 8) break;
+  }
+  return [...unique];
 }
 
 function tryFilenameMatch(fileName: string, inputs: InputItem[]): InputItem | null {
@@ -181,18 +242,29 @@ function computeReliableEtaMs(completedDurationsMs: number[], total: number, com
   return Math.round(mean * remaining);
 }
 
-async function analyzeFileForRouting(file: File, inputAreas: InputItem[]): Promise<AnalysisResult | null> {
+async function analyzeFileForRouting(
+  file: File,
+  inputAreas: InputItem[],
+  options?: { filePath?: string; includeFileContent?: boolean },
+): Promise<AnalysisResult | null> {
   try {
-    const fileContent = await readFileText(file);
+    const fileContent = options?.includeFileContent ? (await readFileText(file)) || null : null;
     const payloadInputAreas = inputAreas.map((input) => ({
       id: input.id,
+      input_key: input.input_key,
       input_label: input.input_label,
       sub_group: input.sub_group,
       group_key: input.group_key,
     }));
 
     const { data, error } = await supabase.functions.invoke('analyze-file', {
-      body: { fileName: file.name, fileContent, inputAreas: payloadInputAreas },
+      body: {
+        fileName: file.name,
+        fileContent,
+        filePath: options?.filePath ?? null,
+        fileType: file.type || getFileExtension(file.name),
+        inputAreas: payloadInputAreas,
+      },
     });
 
     if (error || data?.error) return null;
@@ -205,6 +277,17 @@ async function analyzeFileForRouting(file: File, inputAreas: InputItem[]): Promi
     return {
       suggestedInputId,
       suggestedTags: normalizeSuggestedTags(data?.suggested_tags),
+      crossAreaInputIds: normalizeCrossAreaInputIds(data?.cross_area_input_ids),
+      odiNeedCandidates: normalizeOdiNeedCandidates(data?.odi_needs_candidates),
+      otherAreaSignals: normalizeOtherAreaSignals(data?.other_area_signals),
+      extractionSource:
+        typeof data?.extraction_source === 'string' && data.extraction_source.trim().length > 0
+          ? data.extraction_source.trim()
+          : 'none',
+      parserEngine:
+        typeof data?.parser_engine === 'string' && data.parser_engine.trim().length > 0
+          ? data.parser_engine.trim()
+          : 'local_ollama',
       reasoning:
         typeof data?.reasoning === 'string' && data.reasoning.trim().length > 0
           ? data.reasoning
@@ -215,13 +298,83 @@ async function analyzeFileForRouting(file: File, inputAreas: InputItem[]): Promi
   }
 }
 
-async function analyzeFileWithTimeout(file: File, inputAreas: InputItem[]): Promise<AnalysisResult | null> {
+async function analyzeFileWithTimeout(
+  file: File,
+  inputAreas: InputItem[],
+  options?: { filePath?: string; includeFileContent?: boolean },
+): Promise<AnalysisResult | null> {
   return Promise.race([
-    analyzeFileForRouting(file, inputAreas),
+    analyzeFileForRouting(file, inputAreas, options),
     new Promise<null>((resolve) => {
       setTimeout(() => resolve(null), ANALYZE_TIMEOUT_MS);
     }),
   ]);
+}
+
+async function persistUploadDerivedNeeds(params: {
+  companyId: string | null;
+  userId: string | null;
+  sourcePath: string | null;
+  inputLabel: string;
+  candidates: AnalysisResult['odiNeedCandidates'];
+}) {
+  const { companyId, userId, sourcePath, inputLabel, candidates } = params;
+  if (!companyId || !userId || !sourcePath || candidates.length === 0) return 0;
+
+  try {
+    const { data: existingRows, error: existingError } = await supabase
+      .from('odi_needs')
+      .select('desired_outcome')
+      .eq('company_id', companyId)
+      .limit(600);
+    if (existingError) return 0;
+
+    const existing = new Set(
+      ((existingRows ?? []) as Array<{ desired_outcome?: string | null }>)
+        .map((row) => String(row.desired_outcome || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+
+    const toInsert = candidates
+      .map((candidate) => ({
+        desired_outcome: candidate.desiredOutcome.trim(),
+        importance: Math.max(1, Math.min(10, Math.round(candidate.importance || 7))),
+        satisfaction: Math.max(1, Math.min(10, Math.round(candidate.satisfaction || 4))),
+      }))
+      .filter((candidate) => {
+        const key = candidate.desired_outcome.toLowerCase();
+        if (!key || existing.has(key)) return false;
+        existing.add(key);
+        return true;
+      })
+      .slice(0, 6)
+      .map((candidate) => {
+        const opportunityScore = Number((candidate.importance + Math.max(0, candidate.importance - candidate.satisfaction)).toFixed(1));
+        return {
+          company_id: companyId,
+          user_id: userId,
+          desired_outcome: candidate.desired_outcome,
+          importance: candidate.importance,
+          satisfaction: candidate.satisfaction,
+          opportunity_score: opportunityScore,
+          journey_key: 'customer',
+          step_number: 0,
+          step_label: `Upload-derived (${inputLabel || 'Unmapped input'})`,
+          tier: 'company',
+          service_state: 'monitor',
+          source_path: sourcePath,
+          frameworks_used: ['JTBD', 'ODI', 'Local Upload Analysis'],
+        };
+      });
+
+    if (toInsert.length === 0) return 0;
+
+    const { error: insertError } = await supabase.from('odi_needs').insert(toInsert);
+    if (insertError) return 0;
+    return toInsert.length;
+  } catch {
+    return 0;
+  }
 }
 
 export default function FileUploadDialog({
@@ -337,6 +490,10 @@ export default function FileUploadDialog({
     const uploadStartedAtMs = Date.now();
     let successCount = 0;
     let failureCount = 0;
+    const selectedCompanyId = companyId || activeCompany?.id || null;
+    const { data: authData } = await supabase.auth.getUser();
+    const currentUserId = authData.user?.id ?? null;
+    const inputById = new Map(eligibleInputs.map((input) => [input.id, input]));
 
     setUploading(true);
     setProgress({
@@ -365,23 +522,23 @@ export default function FileUploadDialog({
           : current,
       );
 
-      const analysis = await analyzeFileWithTimeout(file, eligibleInputs);
-      const assigned = resolveAssignedInput({
+      const initialAnalysis = await analyzeFileWithTimeout(file, eligibleInputs, { includeFileContent: false });
+      const provisionalAssigned = resolveAssignedInput({
         inputs: eligibleInputs,
-        suggestedInputId: analysis?.suggestedInputId ?? null,
+        suggestedInputId: initialAnalysis?.suggestedInputId ?? null,
         defaultInputId,
         fileName: file.name,
       });
 
-      if (!assigned.input) {
+      if (!provisionalAssigned.input) {
         failureCount += 1;
         failedFiles.push(file);
         localSummaries.push({
           fileName: file.name,
           status: 'failed',
           tags: [],
-          reasoning: analysis?.reasoning ?? 'Could not map this file to an input area.',
-          source: assigned.source,
+          reasoning: initialAnalysis?.reasoning ?? 'Could not map this file to an input area.',
+          source: provisionalAssigned.source,
           error: 'No matching input area.',
         });
         completedDurationsMs.push(Date.now() - fileStartedAtMs);
@@ -413,26 +570,79 @@ export default function FileUploadDialog({
       );
 
       try {
-        const mergedTags = new Set<string>([...(analysis?.suggestedTags ?? []), ...selectedProvenanceTags]);
-        const uploadTags = [...mergedTags];
-
-        await uploadMutation.mutateAsync({
-          inputId: assigned.input.id,
-          inputKey: assigned.input.input_key,
+        const uploadResult = await uploadMutation.mutateAsync({
+          inputId: provisionalAssigned.input.id,
+          inputKey: provisionalAssigned.input.input_key,
           companyName: companyName ?? activeCompany?.name ?? '',
           file,
-          tags: uploadTags,
+          tags: selectedProvenanceTags,
+        });
+        const postUploadAnalysis =
+          uploadResult?.filePath
+            ? await analyzeFileWithTimeout(file, eligibleInputs, {
+                filePath: uploadResult.filePath,
+                includeFileContent: false,
+              })
+            : null;
+        const analysis = postUploadAnalysis ?? initialAnalysis;
+        const finalAssigned = resolveAssignedInput({
+          inputs: eligibleInputs,
+          suggestedInputId: analysis?.suggestedInputId ?? null,
+          defaultInputId: provisionalAssigned.input.id,
+          fileName: file.name,
+        });
+        const finalInput = finalAssigned.input ?? provisionalAssigned.input;
+
+        const crossAreaSupportTags = new Set<string>();
+        const additionalAreaLabels = new Set<string>();
+        for (const crossInputId of analysis?.crossAreaInputIds ?? []) {
+          const crossInput = inputById.get(crossInputId);
+          if (!crossInput) continue;
+          crossAreaSupportTags.add(makeAreaSupportTag(mapInputToAreaKey(crossInput)));
+          additionalAreaLabels.add(crossInput.input_label);
+        }
+        crossAreaSupportTags.add(makeAreaSupportTag(mapInputToAreaKey(finalInput)));
+
+        const finalTags = [
+          ...new Set<string>([
+            ...(analysis?.suggestedTags ?? []),
+            ...selectedProvenanceTags,
+            ...crossAreaSupportTags,
+          ]),
+        ];
+
+        if (uploadResult?.id) {
+          const { error: fileUpdateError } = await supabase
+            .from('input_files')
+            .update({ input_id: finalInput.id, tags: finalTags })
+            .eq('id', uploadResult.id);
+          if (fileUpdateError) {
+            console.warn('Upload enrichment update failed, continuing with uploaded file:', fileUpdateError.message);
+          }
+        }
+
+        const derivedNeedsAdded = await persistUploadDerivedNeeds({
+          companyId: selectedCompanyId,
+          userId: currentUserId,
+          sourcePath: uploadResult?.filePath ?? null,
+          inputLabel: finalInput.input_label,
+          candidates: analysis?.odiNeedCandidates ?? [],
         });
 
         successCount += 1;
         localSummaries.push({
           fileName: file.name,
           status: 'uploaded',
-          inputLabel: assigned.input.input_label,
-          subGroup: assigned.input.sub_group,
-          tags: uploadTags,
+          inputLabel: finalInput.input_label,
+          subGroup: finalInput.sub_group,
+          tags: finalTags.filter((tag) => !tag.startsWith('__area:')),
+          derivedNeedsAdded,
+          additionalAreas: [...additionalAreaLabels].slice(0, 4),
+          additionalSignals: (analysis?.otherAreaSignals ?? []).slice(0, 3),
+          extractionSource: analysis?.extractionSource || undefined,
+          parserEngine: analysis?.parserEngine || 'local_ollama',
           reasoning: analysis?.reasoning ?? 'Uploaded with automatic mapping.',
-          source: assigned.source,
+          source: finalAssigned.source,
         });
       } catch (error: unknown) {
         failureCount += 1;
@@ -440,11 +650,11 @@ export default function FileUploadDialog({
         localSummaries.push({
           fileName: file.name,
           status: 'failed',
-          inputLabel: assigned.input.input_label,
-          subGroup: assigned.input.sub_group,
+          inputLabel: provisionalAssigned.input.input_label,
+          subGroup: provisionalAssigned.input.sub_group,
           tags: [],
-          reasoning: analysis?.reasoning ?? 'Upload failed before save.',
-          source: assigned.source,
+          reasoning: initialAnalysis?.reasoning ?? 'Upload failed before save.',
+          source: provisionalAssigned.source,
           error: error instanceof Error ? error.message : 'Upload failed',
         });
       }
@@ -476,7 +686,10 @@ export default function FileUploadDialog({
       toast.success(`Uploaded ${successCount} file${successCount === 1 ? '' : 's'}.`);
     }
 
-    const selectedCompanyId = companyId || activeCompany?.id;
+    if (successCount > 0) {
+      void queryClient.invalidateQueries({ queryKey: ['inputs', selectedCompanyId] });
+    }
+
     if (successCount > 0 && selectedCompanyId) {
       setAlignmentRunning(true);
       void supabase.functions
@@ -748,9 +961,34 @@ export default function FileUploadDialog({
                       {summary.fileName}
                     </p>
                     {summary.status === 'uploaded' ? (
-                      <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#46606d' }}>
-                        {summary.inputLabel} ({summary.subGroup}) • {sourceLabel(summary.source)}
-                      </p>
+                      <>
+                        <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#46606d' }}>
+                          {summary.inputLabel} ({summary.subGroup}) • {sourceLabel(summary.source)}
+                        </p>
+                        {summary.derivedNeedsAdded && summary.derivedNeedsAdded > 0 ? (
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#4c7f73' }}>
+                            +{summary.derivedNeedsAdded} upload-derived ODI need{summary.derivedNeedsAdded === 1 ? '' : 's'} added
+                          </p>
+                        ) : null}
+                        {summary.additionalAreas && summary.additionalAreas.length > 0 ? (
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#46606d' }}>
+                            Also relevant: {summary.additionalAreas.join(', ')}
+                          </p>
+                        ) : null}
+                        {summary.additionalSignals && summary.additionalSignals.length > 0 ? (
+                          <p className="mt-0.5 font-sans text-[11px] leading-relaxed italic" style={{ color: '#6e847f' }}>
+                            {summary.additionalSignals[0]}
+                          </p>
+                        ) : null}
+                        {summary.parserEngine ? (
+                          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#6e847f' }}>
+                            Parser: {summary.parserEngine}
+                            {summary.extractionSource && summary.extractionSource !== 'unsupported'
+                              ? ` · text extraction: ${summary.extractionSource}`
+                              : ''}
+                          </p>
+                        ) : null}
+                      </>
                     ) : (
                       <p className="mt-0.5 font-sans text-[12px]" style={{ color: '#915e46' }}>
                         Failed: {summary.error ?? 'Upload failed'}

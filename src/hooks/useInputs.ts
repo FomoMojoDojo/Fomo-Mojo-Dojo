@@ -383,13 +383,17 @@ export function useUploadInputFile() {
       const { error: uploadError } = await supabase.storage.from('input-files').upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      const { error: dbError } = await supabase.from('input_files').insert({
-        input_id: inputId,
-        file_name: file.name,
-        file_type: file.type || file.name.split('.').pop() || '',
-        file_path: filePath,
-        tags: normalizedTags,
-      });
+      const { data: insertedRow, error: dbError } = await supabase
+        .from('input_files')
+        .insert({
+          input_id: inputId,
+          file_name: file.name,
+          file_type: file.type || file.name.split('.').pop() || '',
+          file_path: filePath,
+          tags: normalizedTags,
+        })
+        .select('id, file_path, uploaded_at')
+        .single();
       if (dbError) throw dbError;
 
       // If this input uses a single checklist item, treat first uploaded evidence as satisfying it.
@@ -408,6 +412,12 @@ export function useUploadInputFile() {
           .eq('id', rows[0].id);
         if (toggleError) throw toggleError;
       }
+
+      return {
+        id: insertedRow?.id as string | undefined,
+        filePath,
+        uploadedAt: (insertedRow?.uploaded_at as string | null | undefined) ?? null,
+      };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['inputs'] }),
   });

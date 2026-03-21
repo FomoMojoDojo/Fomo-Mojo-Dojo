@@ -7,7 +7,7 @@ This is the quickest way to get the app running again on this machine.
 From the project root:
 
 ```bash
-cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
 npm run dev -- --host 0.0.0.0 --port 8080
 ```
 
@@ -37,6 +37,7 @@ Useful local URLs:
 - App: `http://127.0.0.1:8080/`
 - Supabase Studio: `http://127.0.0.1:54323`
 - Local auth email inbox: `http://127.0.0.1:54324`
+- Local parser service: `http://127.0.0.1:8789/extract`
 
 For Tailscale access from another device, open:
 
@@ -55,13 +56,42 @@ If everything was shut down:
 Commands:
 
 ```bash
-cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
 set -a
 source supabase/functions/.env.local
 set +a
 supabase start
+npm run parser:start
 npm run dev -- --host 0.0.0.0 --port 8080
 ```
+
+If you use `scripts/start-local-app.sh` (or LaunchAgent), it starts the parser automatically.
+
+## Reparse Existing Uploaded Files
+
+If files were uploaded before parser changes, run a one-time reparse so sidecar extracted text is created.
+
+All companies:
+
+```bash
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
+npm run files:reparse-local
+```
+
+Single company (example):
+
+```bash
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
+npm run files:reparse-local -- --company "Cafe Barra"
+```
+
+Optional limit (safe test run):
+
+```bash
+npm run files:reparse-local -- --company "Cafe Barra" --limit 5
+```
+
+After reparsing, rerun Deep Dive/AI analysis for impacted areas so map panels refresh with parsed evidence.
 
 ## Password reset
 
@@ -90,7 +120,7 @@ You are probably in the wrong directory.
 Use:
 
 ```bash
-cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
 ```
 
 ### The app does not load
@@ -121,6 +151,7 @@ This repo includes a LaunchAgent setup for macOS:
 
 - script: `scripts/start-local-app.sh`
 - plist template: `launchd/com.happyfilehugger.local-app.plist`
+- watchdog plist template: `launchd/com.happyfilehugger.local-watchdog.plist`
 
 What it does:
 
@@ -138,13 +169,32 @@ Why Terminal is involved:
 Install it:
 
 ```bash
-chmod +x /Users/fomomojodojo/Downloads/happy-file-hugger-main/scripts/start-local-app.sh
-cp /Users/fomomojodojo/Downloads/happy-file-hugger-main/launchd/com.happyfilehugger.local-app.plist ~/Library/LaunchAgents/
+chmod +x /Users/fomomojodojo/dev/happy-file-hugger-main/scripts/start-local-app.sh
+cp /Users/fomomojodojo/dev/happy-file-hugger-main/launchd/com.happyfilehugger.local-app.plist ~/Library/LaunchAgents/
 launchctl unload ~/Library/LaunchAgents/com.happyfilehugger.local-app.plist 2>/dev/null || true
 launchctl load ~/Library/LaunchAgents/com.happyfilehugger.local-app.plist
 ```
 
+Install watchdog (recommended):
+
+```bash
+cp /Users/fomomojodojo/dev/happy-file-hugger-main/launchd/com.happyfilehugger.local-watchdog.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/com.happyfilehugger.local-watchdog.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.happyfilehugger.local-watchdog.plist
+```
+
+What watchdog does:
+
+- every 2 minutes, checks if app port `8080` is up
+- if app is down, relaunches `start-local-app.sh` via Terminal
+
 After that, the app should start automatically when you log into the Mac.
+
+Important for unattended remote access:
+
+- this is a user LaunchAgent, so the Mac user session must be logged in
+- enable Docker Desktop and Tailscale in Login Items so they start on login
+- if you need it to come up after reboot without manual login, enable macOS auto-login for this account
 
 Useful checks:
 
@@ -159,4 +209,6 @@ To disable it:
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.happyfilehugger.local-app.plist
 rm ~/Library/LaunchAgents/com.happyfilehugger.local-app.plist
+launchctl unload ~/Library/LaunchAgents/com.happyfilehugger.local-watchdog.plist
+rm ~/Library/LaunchAgents/com.happyfilehugger.local-watchdog.plist
 ```

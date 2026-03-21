@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { InputItem, ClientSummary, ScoreArea } from '@/lib/types';
 import { applyCeilings, computeMojoScore, computeProjectedScore } from '@/lib/scoring';
+import { mapInputToAreaKey, type AreaKey } from '@/lib/areaMapping';
 
 
 /**
@@ -8,7 +9,7 @@ import { applyCeilings, computeMojoScore, computeProjectedScore } from '@/lib/sc
  * Groups inputs by sub_group / group_key and averages their completeness.
  */
 function inputsToAreaRaw(inputs: InputItem[]): Record<string, number> {
-  const areaMap: Record<string, number[]> = {
+  const areaMap: Record<AreaKey, number[]> = {
     positioning: [],
     strategy: [],
     product: [],
@@ -18,30 +19,8 @@ function inputsToAreaRaw(inputs: InputItem[]): Record<string, number> {
   };
 
   for (const input of inputs) {
-    const sub = input.sub_group.toLowerCase();
-    const group = input.group_key;
-
-    // Map by sub_group keywords (flexible matching for any industry)
-    if (sub.includes('positioning')) {
-      areaMap.positioning.push(input.completeness);
-    } else if (sub.includes('strategy')) {
-      areaMap.strategy.push(input.completeness);
-    } else if (sub.includes('service delivery') || sub.includes('operations') || sub.includes('product')) {
-      areaMap.product.push(input.completeness);
-    } else if (sub.includes('awareness') || sub.includes('marketing') || sub.includes('outreach')) {
-      areaMap.marketing.push(input.completeness);
-    } else if (sub.includes('referral') || sub.includes('sales') || sub.includes('pipeline')) {
-      areaMap.sales.push(input.completeness);
-    } else if (sub.includes('fundraising') || sub.includes('revenue') || sub.includes('donor')) {
-      areaMap.sales.push(input.completeness);
-    } else if (sub.includes('family') || sub.includes('customer') || sub.includes('client') || sub.includes('experience') || sub.includes('satisfaction')) {
-      areaMap.cx.push(input.completeness);
-    } else {
-      // Fallback: map by group_key
-      if (group === 'foundation') areaMap.positioning.push(input.completeness);
-      else if (group === 'execution') areaMap.marketing.push(input.completeness);
-      else areaMap.cx.push(input.completeness);
-    }
+    const key = mapInputToAreaKey(input);
+    areaMap[key].push(input.completeness);
   }
 
   const raw: Record<string, number> = {};

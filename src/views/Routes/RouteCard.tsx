@@ -2,18 +2,20 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Circle } from "lucide-react";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import type { RouteRow } from "./useRoutes";
+import { alignmentLevelFromFocus, type FocusClassification } from "@/lib/initiativeFocus";
+import AlignmentCircle from "@/components/ui/AlignmentCircle";
 
 const c = {
-  line: "#D6CCB8",
-  paper: "#EDE4D2",
-  paperRaised: "#E8DCC6",
-  lineFaint: "#F2EBDD",
-  charcoal: "#2A2823",
-  secondary: "#4A463D",
-  muted: "#8D8577",
+  line: "#DDE6D1",
+  paper: "#F7FBF8",
+  paperRaised: "#FFFFFF",
+  lineFaint: "#EEF3E9",
+  charcoal: "#233C4B",
+  secondary: "#46606D",
+  muted: "#6E847F",
   coral: "#FF7D2D",
-  amber: "#D6972F",
-  teal: "#3FA592",
+  amber: "#FAC846",
+  teal: "#5F9B8C",
 };
 
 type DetailStep = {
@@ -30,9 +32,9 @@ type DetailEvidence = {
 
 function effortTone(effort: string | null | undefined) {
   const key = String(effort || "").toLowerCase();
-  if (key === "low") return { bg: "#E5F1DD", fg: "#5C8A4D", border: "#BCD9AC" };
-  if (key === "high") return { bg: "#FBE7D9", fg: "#C36E2D", border: "#F0C9A5" };
-  return { bg: "#F7EBD7", fg: "#AF7A2E", border: "#E8C799" };
+  if (key === "low") return { bg: "#EEF6E7", fg: "#5F9B8C", border: "#BDD8CF" };
+  if (key === "high") return { bg: "#FFF0E6", fg: "#FF7D2D", border: "#FFD1B4" };
+  return { bg: "#FFF6D8", fg: "#C68B00", border: "#F3D77A" };
 }
 
 export default function RouteCard({
@@ -42,6 +44,7 @@ export default function RouteCard({
   evidence,
   whyThisMatters,
   frameworks,
+  focus,
 }: {
   route: RouteRow;
   accent: string;
@@ -49,6 +52,7 @@ export default function RouteCard({
   evidence: DetailEvidence[];
   whyThisMatters: string[];
   frameworks: string[];
+  focus?: FocusClassification;
 }) {
   const [expanded, setExpanded] = useState(false);
   const completedSteps = useMemo(
@@ -65,6 +69,7 @@ export default function RouteCard({
       : String(route.category || "").toLowerCase() === "improve"
         ? "Execution"
         : "Evidence";
+  const alignmentLevel = alignmentLevelFromFocus(focus);
 
   return (
     <div
@@ -88,6 +93,15 @@ export default function RouteCard({
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px] font-semibold" style={{ color: accent }}>
                 {points !== null ? `+${points} pts` : "+0 pts"}
+              </span>
+              <span
+                className="inline-flex items-center rounded-full border px-1.5 py-1"
+                style={{ borderColor: c.line, color: c.secondary, background: "#FFFFFF" }}
+              >
+                <AlignmentCircle
+                  level={alignmentLevel}
+                  title={`Goal alignment ${alignmentLevel * 25}%`}
+                />
               </span>
               <span
                 className="rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
@@ -143,8 +157,29 @@ export default function RouteCard({
             <div className="mt-2 space-y-2">
               {evidence.map((item) => (
                 <div key={item.id} className="flex items-start gap-2">
-                  <Circle className="mt-[2px] h-3.5 w-3.5" style={{ color: c.coral }} />
-                  <span className="font-sans text-[12px] leading-[1.5]" style={{ color: c.coral }}>
+                  <Circle
+                    className="mt-[2px] h-3.5 w-3.5"
+                    style={{
+                      color:
+                        item.status === "complete"
+                          ? c.teal
+                          : item.status === "in_progress"
+                            ? c.amber
+                            : c.coral,
+                      fill: item.status === "complete" ? c.teal : "transparent",
+                    }}
+                  />
+                  <span
+                    className="font-sans text-[12px] leading-[1.5]"
+                    style={{
+                      color:
+                        item.status === "complete"
+                          ? c.secondary
+                          : item.status === "in_progress"
+                            ? c.secondary
+                            : c.coral,
+                    }}
+                  >
                     {item.title}
                   </span>
                 </div>

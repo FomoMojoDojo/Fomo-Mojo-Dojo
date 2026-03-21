@@ -3,6 +3,7 @@ import type { InputItem } from '@/lib/types';
 import InputSidePanel from '@/views/Inputs/InputSidePanel';
 import { useInputs } from '@/hooks/useInputs';
 import { useAuth } from '@/hooks/useAuth';
+import { useCompany } from '@/hooks/useCompany';
 import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badges';
 
 interface Props {
@@ -20,6 +21,7 @@ const statusLabels: Record<string, string> = {
 export default function InputsPanel({ open, onClose }: Props) {
   const [selectedInput, setSelectedInput] = useState<InputItem | null>(null);
   const { user } = useAuth();
+  const { activeCompany } = useCompany();
   const { query: inputsQuery } = useInputs();
   const dbInputs = inputsQuery.data;
 
@@ -61,9 +63,9 @@ export default function InputsPanel({ open, onClose }: Props) {
   };
 
   const groups = [
-    { key: 'foundation', label: 'Foundation', badge: 'Positioning & Strategy', items: grouped.foundation },
-    { key: 'execution', label: 'Execution', badge: 'Product & Marketing', items: grouped.execution },
-    { key: 'market_evidence', label: 'Market Evidence', badge: 'Sales & Customer Data', items: grouped.market_evidence },
+    { key: 'foundation', label: 'Foundation', badge: 'Positioning + Strategy Cascade', items: grouped.foundation },
+    { key: 'execution', label: 'Execution', badge: 'GTM + Messaging', items: grouped.execution },
+    { key: 'market_evidence', label: 'Market Evidence', badge: 'ODI + Validation', items: grouped.market_evidence },
   ];
 
   // If an input is selected, show the detail panel
@@ -104,8 +106,8 @@ export default function InputsPanel({ open, onClose }: Props) {
           <div className="flex-1 overflow-y-auto">
             <InputSidePanel
               input={selectedInput}
-              mojoScore={41}
-              potentialScore={78}
+              mojoScore={Math.max(0, Number(activeCompany?.mojo_score ?? 0))}
+              potentialScore={Math.max(0, Number(activeCompany?.potential_score ?? 0))}
               onClose={() => setSelectedInput(null)}
             />
           </div>
@@ -146,7 +148,7 @@ export default function InputsPanel({ open, onClose }: Props) {
           <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: '#6e847f' }}>
             Map View &gt; Diagnostic Inputs
           </p>
-          <h2 className="font-serif text-[22px] mt-1 leading-[1.2]" style={{ color: '#233c4b' }}>Your Inputs</h2>
+          <h2 className="font-sans text-[28px] mt-1 leading-[1.1] font-semibold tracking-tight" style={{ color: '#233c4b' }}>Your Inputs</h2>
           <button
             onClick={onClose}
             className="absolute top-4 right-4 w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer text-sm"
@@ -186,12 +188,9 @@ export default function InputsPanel({ open, onClose }: Props) {
             const groupPct = Math.round((groupComplete / group.items.length) * 100);
             return (
               <div key={group.key} className="mb-6">
-                <div className="flex items-center gap-2 border-b border-[#2a2618] pb-2 mb-3">
-                  <span className="font-serif text-[14px] font-medium text-t-dp">{group.label}</span>
+                <div className="flex items-center gap-2 border-b border-[#dde6d1] pb-2 mb-3">
+                  <span className="font-sans text-[15px] font-semibold" style={{ color: '#233c4b' }}>{group.label}</span>
                   <MetaBadge>{group.badge}</MetaBadge>
-                  <div className="ml-auto">
-                    <ScoreChip label="Avg" value={groupPct} />
-                  </div>
                 </div>
 
                 {group.items.map((input) => {
@@ -200,7 +199,8 @@ export default function InputsPanel({ open, onClose }: Props) {
                     <button
                       key={input.id}
                       onClick={() => setSelectedInput(input)}
-                      className="w-full text-left flex items-center gap-3 py-[10px] px-3 rounded-lg hover:bg-ink-sub transition-colors cursor-pointer border-b border-[#1e1a0e] last:border-0 group"
+                      className="w-full text-left flex items-center gap-3 py-[10px] px-3 rounded-lg transition-colors cursor-pointer border-b border-[#edf2e8] last:border-0 group"
+                      style={{ background: 'transparent' }}
                     >
                       {/* Status dot */}
                       <StateBadge
@@ -217,17 +217,17 @@ export default function InputsPanel({ open, onClose }: Props) {
 
                       {/* Label & sub-group */}
                       <div className="flex-1 min-w-0">
-                        <p className="font-serif text-[13px] text-t-dp leading-[1.3] truncate group-hover:text-gold-light transition-colors">
+                        <p className="font-sans text-[13px] leading-[1.3] truncate transition-colors" style={{ color: '#233c4b' }}>
                           {input.input_label}
                         </p>
-                        <p className="font-mono text-[10px] text-t-ds uppercase tracking-[0.08em] mt-[2px]">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.08em] mt-[2px]" style={{ color: '#6e847f' }}>
                           {input.completeness}% complete
                         </p>
                       </div>
 
                       <ScoreChip label="Pts" value={tier === 'done' ? 0 : input.score_impact} />
 
-                      <span className="text-[11px] text-t-ds group-hover:text-t-dp transition-colors">→</span>
+                      <span className="text-[11px] transition-colors" style={{ color: '#6e847f' }}>→</span>
                     </button>
                   );
                 })}
@@ -237,10 +237,11 @@ export default function InputsPanel({ open, onClose }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-[14px] border-t border-[#2a2618]">
+        <div className="px-6 py-[14px] border-t border-[#dde6d1]">
           <button
             onClick={onClose}
-            className="w-full font-mono text-[12px] text-t-ds hover:text-t-dp transition-colors cursor-pointer py-1"
+            className="w-full font-mono text-[12px] transition-colors cursor-pointer py-1"
+            style={{ color: '#46606d' }}
           >
             ← Back to Map View
           </button>

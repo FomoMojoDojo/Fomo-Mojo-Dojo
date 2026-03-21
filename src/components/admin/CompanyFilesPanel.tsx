@@ -5,6 +5,7 @@ import FileUploadDialog from "@/components/FileUploadDialog";
 import { getFileSignedUrl, useDeleteInputFile, useInputs } from "@/hooks/useInputs";
 import { toast } from "sonner";
 import type { InputFile } from "@/lib/types";
+import { visibleFileTags } from "@/lib/fileTags";
 
 const c = {
   panel: "#FFFFFF",
@@ -105,7 +106,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
     const tags = new Set<string>();
     const groups = new Set<string>();
     allFiles.forEach((file) => {
-      file.tags.forEach((tag) => tags.add(tag));
+      visibleFileTags(file.tags, file.uploaded_at).forEach((tag) => tags.add(tag));
       if (file.subGroup) groups.add(file.subGroup);
     });
     return [...tags, ...groups].sort((a, b) => a.localeCompare(b));
@@ -114,7 +115,10 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
   const filteredFiles = useMemo(() => {
     if (!activeFilter) return allFiles;
     return allFiles.filter(
-      (file) => file.tags.includes(activeFilter) || file.subGroup === activeFilter || file.groupLabel === activeFilter,
+      (file) =>
+        visibleFileTags(file.tags, file.uploaded_at).includes(activeFilter) ||
+        file.subGroup === activeFilter ||
+        file.groupLabel === activeFilter,
     );
   }, [activeFilter, allFiles]);
 
@@ -370,7 +374,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
                           <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
                             {file.file_type || "file"}
                           </span>
-                          {file.tags.map((tag) => (
+                          {visibleFileTags(file.tags, file.uploaded_at).map((tag) => (
                             <span
                               key={`${file.id}-${tag}`}
                               className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide"

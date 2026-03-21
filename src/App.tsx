@@ -25,6 +25,7 @@ import MojoMapPage from "./pages/MojoMapPage";
 import ResetPassword from "./pages/ResetPassword";
 import FilesRepository from "./pages/FilesRepository";
 import NotFound from "./pages/NotFound";
+import MapSignalPrototype from "./pages/MapSignalPrototype";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ const App = () => (
               <Route path="/admin/edit/:id" element={<AdminGuard><AdminPageEditor /></AdminGuard>} />
               <Route path="/process/:slug" element={<MethodologyPage />} />
               <Route path="/process/mojomap" element={<MojoMapPage />} />
+              <Route path="/map-signal-prototype" element={<MapSignalPrototype />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </CompanyProvider>

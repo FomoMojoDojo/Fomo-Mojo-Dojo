@@ -7,10 +7,14 @@ import FileUploadDialog from "@/components/FileUploadDialog";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { useCompany } from "@/hooks/useCompany";
 import { useAuth } from "@/hooks/useAuth";
+import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useDeepDiveAnalyses, useGenerateDeepDive } from "@/hooks/useDeepDive";
 import { FILE_CATEGORIES } from "@/lib/fileCategories";
 import { getFileSignedUrl, useDeleteInputFile, useInputs, useUpdateFileTags } from "@/hooks/useInputs";
 import type { InputFile } from "@/lib/types";
+import { mapInputToAreaKey, type AreaKey } from "@/lib/areaMapping";
+import { isInternalFileTag, sanitizeUserEditableTags, visibleFileTags } from "@/lib/fileTags";
 
 interface FileWithContext extends InputFile {
   inputKey: string;
@@ -36,8 +40,6 @@ type FileAreaStatus = {
   areaKey: AreaKey;
 };
 
-type AreaKey = "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx";
-
 const c = {
   bg: "#faf7f6",
   panel: "#ffffff",
@@ -50,79 +52,31 @@ const c = {
 
 const AREA_ANALYSIS_TIMEOUT_MS = 180_000;
 
-function normalizeText(value: string) {
-  return value.trim().toLowerCase();
-}
-
 function timestampMs(value?: string) {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-const AREA_BY_INPUT_KEY: Record<string, AreaKey> = {
-  "comp-alt": "positioning",
-  "unique-attr": "positioning",
-  "val-prop": "positioning",
-  "target-aud": "positioning",
-  "market-cat": "positioning",
-  "outcome-data": "strategy",
-  "program-model": "product",
-  "brand-narrative": "marketing",
-  "channel-strat": "marketing",
-  "referral-map": "sales",
-  "donor-retention": "sales",
-  "grant-pipeline": "sales",
-  "needs-assessment": "cx",
-  "family-satisfaction": "cx",
-};
-
-const AREA_BY_GROUP_KEY: Record<string, AreaKey> = {
-  foundation: "strategy",
-  execution: "product",
-  market_evidence: "cx",
-};
-
-function resolveAreaFromSubGroup(subGroup: string): AreaKey | null {
-  const normalized = normalizeText(subGroup);
-  if (!normalized) return null;
-
-  if (
-    normalized.includes("positioning") ||
-    normalized.includes("competitive") ||
-    normalized.includes("mental health providers") ||
-    normalized.includes("providers")
-  ) {
-    return "positioning";
-  }
-  if (normalized.includes("strategy")) return "strategy";
-  if (normalized.includes("service delivery") || normalized.includes("program model") || normalized.includes("program")) {
-    return "product";
-  }
-  if (normalized.includes("awareness") || normalized.includes("marketing")) return "marketing";
-  if (normalized.includes("referral") || normalized.includes("fundraising") || normalized.includes("sales")) {
-    return "sales";
-  }
-  if (normalized.includes("family experience") || normalized.includes("family") || normalized.includes("cx")) {
-    return "cx";
-  }
-  return null;
+function extractModelPathLine(text: string | null | undefined) {
+  const match = String(text || "").match(/LLM path:\s*([^\n]+)/i);
+  return match?.[1]?.trim() || null;
 }
 
 function resolveAreaForFile(file: Pick<FileWithContext, "inputKey" | "subGroup" | "groupKey">): AreaKey {
-  const normalizedInputKey = normalizeText(String(file.inputKey || ""));
-  const byInputKey = AREA_BY_INPUT_KEY[normalizedInputKey];
-  if (byInputKey) return byInputKey;
-  const bySubGroup = resolveAreaFromSubGroup(file.subGroup);
-  if (bySubGroup) return bySubGroup;
-  const normalizedGroupKey = normalizeText(String(file.groupKey || ""));
-  const byGroupKey = AREA_BY_GROUP_KEY[normalizedGroupKey];
-  if (byGroupKey) return byGroupKey;
-  return "strategy";
+  return mapInputToAreaKey({
+    input_key: file.inputKey,
+    sub_group: file.subGroup,
+    group_key: file.groupKey as "foundation" | "execution" | "market_evidence",
+  });
 }
 
 function TagEditor({ file, onClose }: { file: FileWithContext; onClose: () => void }) {
-  const [selected, setSelected] = useState<string[]>(file.tags ?? []);
+  const preservedInternalTags = useMemo(
+    () => (file.tags ?? []).filter((tag) => isInternalFileTag(tag)),
+    [file.tags],
+  );
+  const [selected, setSelected] = useState<string[]>(sanitizeUserEditableTags(file.tags ?? []));
   const updateTags = useUpdateFileTags();
 
   function toggle(tag: string) {
@@ -131,7 +85,7 @@ function TagEditor({ file, onClose }: { file: FileWithContext; onClose: () => vo
 
   async function save() {
     try {
-      await updateTags.mutateAsync({ id: file.id, tags: selected });
+      await updateTags.mutateAsync({ id: file.id, tags: [...selected, ...preservedInternalTags] });
       toast.success("Tags updated");
       onClose();
     } catch {
@@ -188,8 +142,10 @@ export default function FilesRepository() {
   const { query } = useInputs();
   const inputs = query.data ?? [];
   const deleteMutation = useDeleteInputFile();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { activeCompany } = useCompany();
+  const { run: latestBaselineRun } = usePublicBaseline(activeCompany?.id);
   const { data: dbAnalyses } = useDeepDiveAnalyses();
   const generateDeepDive = useGenerateDeepDive();
 
@@ -216,6 +172,26 @@ export default function FilesRepository() {
     );
   }, [dbAnalyses]);
 
+  const localModelPath = useMemo(() => {
+    const analyses = Object.values(dbAnalyses ?? {});
+    for (const analysis of analyses) {
+      const extracted = extractModelPathLine((analysis as { what_we_found?: string })?.what_we_found);
+      if (extracted) return extracted;
+    }
+    return "local_ollama · model: llama3:70b";
+  }, [dbAnalyses]);
+
+  const publicModelPath = useMemo(() => {
+    const resultJson = latestBaselineRun?.result_json as
+      | { run_ledger?: { provider?: string; model?: string; path?: string } }
+      | null
+      | undefined;
+    const provider = String(resultJson?.run_ledger?.provider || "openai_public");
+    const model = String(resultJson?.run_ledger?.model || "unknown");
+    const path = String(resultJson?.run_ledger?.path || "public_web_research");
+    return `${provider} · model: ${model} · ${path}`;
+  }, [latestBaselineRun?.result_json]);
+
   const allFiles = useMemo<FileWithContext[]>(
     () =>
       inputs.flatMap((input) =>
@@ -233,7 +209,9 @@ export default function FilesRepository() {
 
   const usedTags = useMemo(() => {
     const tagSet = new Set<string>();
-    allFiles.forEach((file) => file.tags.forEach((tag) => tagSet.add(tag)));
+    allFiles.forEach((file) => {
+      visibleFileTags(file.tags, file.uploaded_at).forEach((tag) => tagSet.add(tag));
+    });
     return Array.from(tagSet).sort((a, b) => a.localeCompare(b));
   }, [allFiles]);
 
@@ -241,7 +219,7 @@ export default function FilesRepository() {
     if (!activeFilter) return allFiles;
     return allFiles.filter(
       (file) =>
-        file.tags.includes(activeFilter) ||
+        visibleFileTags(file.tags, file.uploaded_at).includes(activeFilter) ||
         file.groupLabel === activeFilter ||
         file.subGroup === activeFilter,
     );
@@ -442,6 +420,22 @@ export default function FilesRepository() {
           />
         </div>
 
+        {llmTraceEnabled && isAdmin ? (
+          <section className="mt-4 rounded-2xl border p-4" style={{ background: c.panel, borderColor: c.line }}>
+            <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+              LLM Processing Path
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary, borderColor: c.line, background: c.panel }}>
+                Public: {publicModelPath}
+              </span>
+              <span className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary, borderColor: c.line, background: c.panel }}>
+                Local Files/Deep Dive: {localModelPath}
+              </span>
+            </div>
+          </section>
+        ) : null}
+
         <section className="mt-6 rounded-2xl border p-4" style={{ background: c.panel, borderColor: c.line }}>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -588,7 +582,9 @@ export default function FilesRepository() {
                 <span className="text-right font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Actions</span>
               </div>
 
-              {filtered.map((file) => (
+              {filtered.map((file) => {
+                const displayTags = visibleFileTags(file.tags, file.uploaded_at);
+                return (
                 <div key={file.id}>
                   <div className="grid grid-cols-[1fr_190px_170px_220px_90px] items-center gap-3 border-b px-4 py-3 transition-colors hover:bg-[#fdfcfa]" style={{ borderColor: c.line }}>
                     <button type="button" onClick={() => handleOpen(file.file_url)} className="flex min-w-0 items-center gap-3 text-left">
@@ -636,9 +632,9 @@ export default function FilesRepository() {
                     })()}
 
                     <div className="flex flex-wrap items-center gap-1">
-                      {file.tags.length > 0 ? (
+                      {displayTags.length > 0 ? (
                         <>
-                          {file.tags.map((tag) => (
+                          {displayTags.map((tag) => (
                             <span
                               key={tag}
                               className="rounded-full border px-2 py-[1px] font-mono text-[9px] uppercase tracking-[0.08em]"
@@ -703,7 +699,7 @@ export default function FilesRepository() {
                     </div>
                   ) : null}
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </section>

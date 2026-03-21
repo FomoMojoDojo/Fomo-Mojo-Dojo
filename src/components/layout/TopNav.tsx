@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useCompany } from '@/hooks/useCompany';
+import { useLlmTraceDebug } from '@/hooks/useLlmTraceDebug';
 import { MOCK_NAV_CONFIG } from '@/lib/mockData';
 import { ChevronDown } from 'lucide-react';
 import mojoLogo from '@/assets/mojo-logo.png';
@@ -30,6 +31,7 @@ interface TopNavProps {
 export default function TopNav({ onProcessClick }: TopNavProps) {
   const location = useLocation();
   const { user, isAdmin, signOut } = useAuth();
+  const { enabled: llmTraceEnabled, toggle: toggleLlmTrace } = useLlmTraceDebug();
   const { companies, activeCompany, setActiveCompanyId } = useCompany();
   const [showSwitcher, setShowSwitcher] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
@@ -71,7 +73,9 @@ export default function TopNav({ onProcessClick }: TopNavProps) {
     <nav className="h-[52px] bg-white border-b border-[#ebe7e0] flex items-center px-6 sticky top-0 z-50">
       {/* Logo */}
       <div className="flex items-center mr-6">
-        <img src={mojoLogo} alt="Mojo" className="h-5" />
+        <Link to="/map-signal-prototype" className="inline-flex items-center" title="Open Signal Map Prototype">
+          <img src={mojoLogo} alt="Mojo" className="h-5" />
+        </Link>
       </div>
 
       {/* Tab Group 1 */}
@@ -152,9 +156,20 @@ export default function TopNav({ onProcessClick }: TopNavProps) {
       {/* Auth */}
       {user ? (
         <div className="flex items-center gap-3">
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={toggleLlmTrace}
+              className="font-mono text-[11px] uppercase tracking-[0.08em] transition-colors"
+              style={{ color: llmTraceEnabled ? "#2E6B52" : "#9a958d" }}
+              title="Toggle internal LLM source tracing (admin only)"
+            >
+              LLM {llmTraceEnabled ? "On" : "Off"}
+            </button>
+          ) : null}
           {isAdmin && (
-            <Link to="/admin" className="font-mono text-[11px] text-[#e8613a] uppercase tracking-[0.08em] hover:text-[#c04e2e] transition-colors">
-              CMS
+            <Link to="/admin/companies" className="font-mono text-[11px] text-[#e8613a] uppercase tracking-[0.08em] hover:text-[#c04e2e] transition-colors">
+              Admin
             </Link>
           )}
           <button

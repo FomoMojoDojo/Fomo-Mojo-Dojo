@@ -409,6 +409,38 @@ async function callOpenAI(opts: {
         },
         top_hypotheses: { type: "array", items: { type: "string" } },
         open_questions: { type: "array", items: { type: "string" } },
+        market_initiative_success: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            proven: { type: "boolean" },
+            low_pct: { type: "integer" },
+            typical_pct: { type: "integer" },
+            high_pct: { type: "integer" },
+            source: { type: "string" },
+            as_of: { type: "string" },
+            confidence: { type: "integer" },
+            evidence_urls: {
+              type: "array",
+              items: { type: "string" },
+            },
+            evidence_snippets: {
+              type: "array",
+              items: { type: "string" },
+            },
+          },
+          required: [
+            "proven",
+            "low_pct",
+            "typical_pct",
+            "high_pct",
+            "source",
+            "as_of",
+            "confidence",
+            "evidence_urls",
+            "evidence_snippets",
+          ],
+        },
         message_alignment: {
           type: "object",
           additionalProperties: false,
@@ -444,6 +476,7 @@ async function callOpenAI(opts: {
         "evidence_ledger",
         "top_hypotheses",
         "open_questions",
+        "market_initiative_success",
         "message_alignment",
         "outside_voice_signals",
       ],
@@ -461,7 +494,13 @@ async function callOpenAI(opts: {
             text:
               "You are an outside-in strategy analyst. Use ONLY the evidence provided. " +
               "Do not assume private info. If uncertain, say unknown. " +
-              "If evidence appears to describe a different company, note it as ambiguous in open_questions.",
+              "If evidence appears to describe a different company, note it as ambiguous in open_questions. " +
+              "For market initiative success rates, only mark proven=true when explicit numeric market data appears in the evidence. " +
+              "If not proven, use low_pct=0, typical_pct=12, high_pct=20 and source='unproven'. " +
+              "When proven=true, include source name plus evidence_urls and short evidence_snippets that support the numbers. " +
+              "Use clear, plain language. Avoid consulting jargon, business cliches, and buzzwords unless the source evidence explicitly uses those terms. " +
+              "If the evidence includes direct quotes, preserve them verbatim. " +
+              "If clearer wording is helpful, keep the original wording and add a separate optional line starting with 'Suggested clearer version:'.",
           },
         ],
       },
@@ -533,6 +572,17 @@ function buildInsufficientResult(args: {
     open_questions: [
       "Not enough public sources to establish a baseline. Add more sources (press, docs, profiles) or upload internal docs.",
     ],
+    market_initiative_success: {
+      proven: false,
+      low_pct: 0,
+      typical_pct: 12,
+      high_pct: 20,
+      source: "unproven",
+      as_of: "unknown",
+      confidence: 0,
+      evidence_urls: [],
+      evidence_snippets: [],
+    },
     message_alignment: {
       company_claim_posture: "unknown",
       outside_voice_posture: "unknown",
@@ -577,6 +627,17 @@ function buildAmbiguousResult(args: {
       "Search results look like they may refer to a different company. Review closest_sources and adjust name/domain if needed.",
       "If this company has a small footprint, add a LinkedIn page, press mention, or upload internal docs for baseline.",
     ],
+    market_initiative_success: {
+      proven: false,
+      low_pct: 0,
+      typical_pct: 12,
+      high_pct: 20,
+      source: "unproven",
+      as_of: "unknown",
+      confidence: 0,
+      evidence_urls: [],
+      evidence_snippets: [],
+    },
     message_alignment: {
       company_claim_posture: "unknown",
       outside_voice_posture: "ambiguous",
@@ -584,6 +645,21 @@ function buildAmbiguousResult(args: {
       alignment_summary: "Outside-voice evidence is too ambiguous to compare against the company's narrative with confidence.",
     },
     outside_voice_signals: [],
+  };
+}
+
+function withRunLedger(
+  result: Record<string, unknown>,
+  ledger: Record<string, unknown>,
+) {
+  return {
+    ...result,
+    run_ledger: {
+      ...(typeof result?.run_ledger === "object" && result?.run_ledger !== null
+        ? (result.run_ledger as Record<string, unknown>)
+        : {}),
+      ...ledger,
+    },
   };
 }
 
@@ -599,6 +675,14 @@ Deno.serve(async (req) => {
     const searxUrl = Deno.env.get("SEARXNG_URL") || "http://host.docker.internal:8888";
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     const openaiModel = Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini";
+    const runLedger = {
+      provider: "openai_public",
+      model: openaiModel,
+      endpoint: "https://api.openai.com/v1/responses",
+      path: "public_web_research",
+      local_only: false,
+      generated_at: new Date().toISOString(),
+    };
 
     console.log(
       `[baseline] env supabaseUrl=${!!supabaseUrl} serviceRole=${!!serviceRoleKey} anonKey=${!!anonKey} searxUrl=${searxUrl} openaiKey=${!!openaiKey} model=${openaiModel}`,
@@ -778,7 +862,7 @@ Deno.serve(async (req) => {
           company_name,
           website,
           sources_json: { note: "no-results", queryA, queryB, queryC, queryD, queryE, raw_sources: rawSources },
-          result_json: resultJson,
+          result_json: withRunLedger(resultJson, runLedger),
         })
         .select("id")
         .single();
@@ -820,7 +904,7 @@ Deno.serve(async (req) => {
           company_name,
           website,
           sources_json: { note: "ambiguous", queryA, queryB, queryC, queryD, queryE, annotated_top: closest },
-          result_json: resultJson,
+          result_json: withRunLedger(resultJson, runLedger),
         })
         .select("id")
         .single();
@@ -921,7 +1005,7 @@ Deno.serve(async (req) => {
               source_type: x.source_type,
             })),
           },
-          result_json: resultJson,
+          result_json: withRunLedger(resultJson, runLedger),
         })
         .select("id")
         .single();
@@ -952,7 +1036,12 @@ Deno.serve(async (req) => {
         website,
         // Save full annotated sources for later review (includes “wrong company” candidates like CiboGlobal)
         sources_json: { queries: { queryA, queryB, queryC, queryD, queryE }, annotated_sources: annotated.slice(0, 60) },
-        result_json: result,
+        result_json: withRunLedger(
+          typeof result === "object" && result !== null
+            ? (result as Record<string, unknown>)
+            : {},
+          runLedger,
+        ),
       })
       .select("id")
       .single();

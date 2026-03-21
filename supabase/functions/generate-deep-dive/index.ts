@@ -20,20 +20,20 @@ const AREA_BY_INPUT_KEY: Record<string, string> = {
   "val-prop": "positioning",
   "target-aud": "positioning",
   "market-cat": "positioning",
-  "outcome-data": "strategy",
-  "program-model": "product",
-  "brand-narrative": "marketing",
+  "brand-narrative": "positioning",
+  "program-model": "strategy",
+  "needs-assessment": "strategy",
+  "outcome-data": "product",
   "channel-strat": "marketing",
   "referral-map": "sales",
   "donor-retention": "sales",
   "grant-pipeline": "sales",
-  "needs-assessment": "cx",
   "family-satisfaction": "cx",
 };
 
 const AREA_BY_GROUP_KEY: Record<string, string> = {
-  foundation: "strategy",
-  execution: "product",
+  foundation: "positioning",
+  execution: "marketing",
   market_evidence: "cx",
 };
 
@@ -259,6 +259,70 @@ function inferSourceTier(tags: string[]) {
   return "company";
 }
 
+const TAG_HINTS_BY_AREA: Record<string, string[]> = {
+  positioning: ["positioning", "competitive", "brand"],
+  strategy: ["strategy"],
+  product: ["operations"],
+  marketing: ["marketing", "channel"],
+  sales: ["financial", "pipeline", "referral"],
+  cx: ["customer data", "customer experience", "experience", "odi", "jtbd", "interview", "survey"],
+};
+
+const FILE_NAME_HINTS_BY_AREA: Record<string, string[]> = {
+  positioning: ["position", "compet", "market-cat", "value-prop", "brand", "messag"],
+  strategy: ["strategy", "aspiration", "where-to-play", "how-to-win", "cascade"],
+  product: ["program", "service", "delivery", "ops", "operation"],
+  marketing: ["campaign", "channel", "outreach", "awareness", "content"],
+  sales: ["sales", "revenue", "referral", "pipeline", "funnel", "fundraising", "grant"],
+  cx: ["customer", "client", "family", "journey", "odi", "jtbd", "need", "survey", "interview"],
+};
+
+function inferAreaHintsFromTags(tags: string[]) {
+  const found = new Set<string>();
+  for (const tag of tags) {
+    const normalized = String(tag || "").toLowerCase().trim();
+    if (!normalized) continue;
+    if (normalized.startsWith("__area:")) {
+      const area = normalized.replace("__area:", "").trim();
+      if (area) found.add(area);
+    }
+    for (const [areaKey, hints] of Object.entries(TAG_HINTS_BY_AREA)) {
+      if (hints.some((hint) => normalized.includes(hint))) {
+        found.add(areaKey);
+      }
+    }
+  }
+  return [...found];
+}
+
+function inferAreaHintsFromFileName(fileName: unknown) {
+  const normalized = String(fileName || "").toLowerCase();
+  if (!normalized) return [] as string[];
+  const found = new Set<string>();
+  for (const [areaKey, hints] of Object.entries(FILE_NAME_HINTS_BY_AREA)) {
+    if (hints.some((hint) => normalized.includes(hint))) {
+      found.add(areaKey);
+    }
+  }
+  return [...found];
+}
+
+function fileSupportsArea(params: {
+  areaKey: string;
+  file: Record<string, unknown>;
+  input: Record<string, unknown> | null;
+}) {
+  const { areaKey, file, input } = params;
+  if (input && resolveAreaForInput(input) === areaKey) return true;
+  const rawTags = (Array.isArray(file.tags) ? file.tags : [])
+    .map((tag) => String(tag || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (rawTags.includes(`__area:${areaKey}`)) return true;
+  if (inferAreaHintsFromTags(rawTags).includes(areaKey)) return true;
+  if (inferAreaHintsFromFileName(file.file_name).includes(areaKey)) return true;
+  return false;
+}
+
 function withProvenanceSummary(analysis: DeepDiveResult, summary: string) {
   if (!summary.trim()) return analysis;
   const hasSummary = analysis.what_we_found.toLowerCase().includes("source mix:");
@@ -293,6 +357,53 @@ function mergeDeterministicGaps(
   };
 }
 
+function normalizeSnippet(text: string, max = 180) {
+  const compact = String(text || "").replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max - 1).trimEnd()}…`;
+}
+
+function withLlmTraceBlock(
+  analysis: DeepDiveResult,
+  trace: {
+    provider: string;
+    model: string;
+    endpoint: string;
+    uploadedFiles: string[];
+    snippets: Array<{ file: string; snippet: string }>;
+  },
+) {
+  const existing = String(analysis.what_we_found || "");
+  if (existing.includes("[LLM_TRACE]")) return analysis;
+
+  const uploadedFilesLine =
+    trace.uploadedFiles.length > 0
+      ? trace.uploadedFiles.slice(0, 14).join(" | ")
+      : "none";
+  const snippetLines =
+    trace.snippets.length > 0
+      ? trace.snippets
+          .slice(0, 8)
+          .map((item) => `snippet: ${item.file} :: ${normalizeSnippet(item.snippet)}`)
+          .join("\n")
+      : "snippet: none :: no direct text snippet extracted from uploaded files";
+
+  const block =
+    `[LLM_TRACE]\n` +
+    `provider: ${trace.provider}\n` +
+    `model: ${trace.model}\n` +
+    `endpoint: ${trace.endpoint}\n` +
+    `uploaded_files: ${uploadedFilesLine}\n` +
+    `${snippetLines}\n` +
+    `[/LLM_TRACE]`;
+
+  return {
+    ...analysis,
+    what_we_found: `${block}\n\n${existing}`,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -310,6 +421,7 @@ Deno.serve(async (req) => {
 
     const OLLAMA_BASE_URL =
       Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    const OLLAMA_MODEL = Deno.env.get("OLLAMA_MODEL") ?? "llama3:70b";
     if (!isLocalOllamaUrl(OLLAMA_BASE_URL)) {
       return new Response(JSON.stringify({
         error: "Local-only policy violation: OLLAMA_BASE_URL must be localhost/host.docker.internal.",
@@ -373,18 +485,29 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("company_id", company_id);
 
-    const areaInputs = (inputs || []).filter((i: any) => resolveAreaForInput(i) === area_key);
+    const allInputs = (inputs || []) as Array<Record<string, unknown>>;
+    const inputById = new Map<string, Record<string, unknown>>();
+    for (const input of allInputs) {
+      const id = String(input.id || "").trim();
+      if (id) inputById.set(id, input);
+    }
+    const areaInputs = allInputs.filter((i) => resolveAreaForInput(i) === area_key);
 
     // Get subitems for area inputs
-    const inputIds = areaInputs.map((i: any) => i.id);
-    const { data: subitems } = inputIds.length > 0
-      ? await supabase.from("input_subitems").select("*").in("input_id", inputIds)
+    const areaInputIds = areaInputs.map((i: any) => i.id);
+    const { data: subitems } = areaInputIds.length > 0
+      ? await supabase.from("input_subitems").select("*").in("input_id", areaInputIds)
       : { data: [] };
 
-    // Get files for area inputs
-    const { data: files } = inputIds.length > 0
-      ? await supabase.from("input_files").select("*").in("input_id", inputIds)
+    // Get files for all inputs, then keep files that support this area.
+    const allInputIds = [...inputById.keys()];
+    const { data: allFiles } = allInputIds.length > 0
+      ? await supabase.from("input_files").select("*").in("input_id", allInputIds)
       : { data: [] };
+    const files = (allFiles || []).filter((file: any) => {
+      const input = inputById.get(String(file.input_id || "").trim()) ?? null;
+      return fileSupportsArea({ areaKey: area_key, file, input });
+    });
 
     const uncertainMarkers = ["unknown", "unclear", "not verified", "needs verification", "thin evidence", "not evidenced"];
     const deterministicGapHints: Array<{ gap: string; description: string }> = [];
@@ -455,6 +578,18 @@ Deno.serve(async (req) => {
         files_attached: inputFiles.map((f: any) => ({ name: f.file_name, tags: f.tags })),
       };
     });
+    const crossAreaSupportingFiles = (files || [])
+      .filter((file: any) => !areaInputIds.includes(file.input_id))
+      .map((file: any) => {
+        const input = inputById.get(String(file.input_id || "").trim());
+        return {
+          file_name: String(file.file_name || ""),
+          input_label: String(input?.input_label || "Unmapped input"),
+          sub_group: String(input?.sub_group || ""),
+          tags: Array.isArray(file.tags) ? file.tags : [],
+        };
+      })
+      .slice(0, 20);
 
     const sourceCounts = inputContext.reduce(
       (acc, item: any) => {
@@ -468,22 +603,44 @@ Deno.serve(async (req) => {
       { public: 0, company: 0, evidence: 0, implemented: 0 },
     );
     const provenanceSummary = `Source mix: Public ${sourceCounts.public} · Company ${sourceCounts.company} · Evidence ${sourceCounts.evidence} · Implemented/Tested ${sourceCounts.implemented}`;
+    const modelPathSummary = `LLM path: local_ollama · model: ${OLLAMA_MODEL}`;
+    const combinedSummary = `${provenanceSummary}\n${modelPathSummary}`;
 
-    // Read text content from uploaded files (first 3000 chars each, max 3 files)
+    // Read text content from uploaded files. Prefer sidecar extracted text for binary docs.
     const fileContents: string[] = [];
-    const textFiles = (files || []).filter((f: any) =>
-      /\.(txt|csv|md|json)$/i.test(f.file_name)
-    ).slice(0, 3);
+    const extractedSnippets: Array<{ file: string; snippet: string }> = [];
+    const filesForExtraction = (files || []).slice(0, 8);
 
-    for (const tf of textFiles) {
+    for (const tf of filesForExtraction) {
       try {
-        const { data: fileData } = await supabase.storage.from("input-files").download(tf.file_path);
-        if (fileData) {
-          const text = await fileData.text();
+        let text = "";
+        const sidecarPath = `${String(tf.file_path || "").trim()}.extracted.txt`;
+        if (sidecarPath && sidecarPath !== ".extracted.txt") {
+          const { data: sidecarData } = await supabase.storage.from("input-files").download(sidecarPath);
+          if (sidecarData) {
+            text = await sidecarData.text();
+          }
+        }
+
+        if (!text && /\.(txt|csv|md|json)$/i.test(String(tf.file_name || ""))) {
+          const { data: fileData } = await supabase.storage.from("input-files").download(tf.file_path);
+          if (fileData) {
+            text = await fileData.text();
+          }
+        }
+
+        if (text) {
           fileContents.push(`--- ${tf.file_name} ---\n${text.slice(0, 3000)}`);
+          extractedSnippets.push({
+            file: String(tf.file_name || "uploaded-file"),
+            snippet: normalizeSnippet(text),
+          });
         }
       } catch { /* skip unreadable */ }
     }
+    const uploadedFiles = Array.from(new Set((files || [])
+      .map((file: any) => String(file?.file_name || "").trim())
+      .filter(Boolean)));
 
 const systemPrompt = `You are a strategic analyst for a consulting platform. Generate a deep-dive analysis for the "${AREA_LABELS[area_key]}" area based on actual client data.
 
@@ -495,7 +652,11 @@ Be specific, reference actual file names and completed items. Use markdown bold 
 
 When company evidence (or stronger) is present, do not keep this area framed as public-only. Upgrade confidence language to match the evidence source tier.
 
-Use strategic problem statements as the prioritization anchor for what matters, what is missing, and what should happen next.`;
+Use strategic problem statements as the prioritization anchor for what matters, what is missing, and what should happen next.
+
+Use clear, plain language. Avoid consulting jargon, business cliches, and buzzwords unless the source evidence explicitly uses those terms.
+If source text includes direct quotes or company-specific phrasing/taglines, keep them exactly as written.
+If a clearer phrasing would help, keep the original and add a separate optional line starting with "Suggested clearer version:".`;
 
     const userPrompt = `Area: ${AREA_LABELS[area_key]}
 
@@ -506,8 +667,9 @@ Input status for this area:
 ${JSON.stringify(inputContext, null, 2)}
 
 ${fileContents.length > 0 ? `\nFile contents:\n${fileContents.join("\n\n")}` : ""}
+${crossAreaSupportingFiles.length > 0 ? `\nSupporting files mapped from other inputs:\n${JSON.stringify(crossAreaSupportingFiles, null, 2)}` : ""}
 
-${provenanceSummary}
+${combinedSummary}
 
 Generate the analysis as structured data. For path_forward, each step should have: step (string), duration (string), owner (string), impact_pts (number 1-10), action_label (optional string). For holding_back, each item should have: gap (string), description (string). Only include genuine remaining gaps — if evidence exists, don't list it as a gap.`;
 
@@ -518,7 +680,7 @@ Authorization: "Bearer ollama",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama3:70b",
+        model: OLLAMA_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -599,7 +761,7 @@ Only JSON, no markdown wrapper.`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "llama3:70b",
+            model: OLLAMA_MODEL,
             response_format: { type: "json_object" },
             messages: fallbackMessages,
           }),
@@ -613,7 +775,7 @@ Only JSON, no markdown wrapper.`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "llama3:70b",
+              model: OLLAMA_MODEL,
               messages: fallbackMessages,
             }),
           });
@@ -630,10 +792,17 @@ Only JSON, no markdown wrapper.`,
         const analysis = mergeDeterministicGaps(
           withProvenanceSummary(
             normalizeDeepDive(parsed, AREA_LABELS[area_key]),
-            provenanceSummary,
+            combinedSummary,
           ),
           deterministicGapHints,
         );
+        const tracedAnalysis = withLlmTraceBlock(analysis, {
+          provider: "ollama_local",
+          model: OLLAMA_MODEL,
+          endpoint: OLLAMA_BASE_URL,
+          uploadedFiles,
+          snippets: extractedSnippets,
+        });
 
         const { error: upsertErr } = await supabase
           .from("deep_dive_analyses")
@@ -641,18 +810,26 @@ Only JSON, no markdown wrapper.`,
             user_id: user.id,
             company_id,
             area_key,
-            why_it_matters: analysis.why_it_matters,
-            what_we_found: analysis.what_we_found,
-            what_good_looks_like: analysis.what_good_looks_like,
-            path_forward: analysis.path_forward,
-            holding_back: analysis.holding_back,
+            why_it_matters: tracedAnalysis.why_it_matters,
+            what_we_found: tracedAnalysis.what_we_found,
+            what_good_looks_like: tracedAnalysis.what_good_looks_like,
+            path_forward: tracedAnalysis.path_forward,
+            holding_back: tracedAnalysis.holding_back,
             generated_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }, { onConflict: "user_id,company_id,area_key" });
 
         if (upsertErr) throw upsertErr;
 
-        return new Response(JSON.stringify(analysis), {
+        return new Response(JSON.stringify({
+          ...tracedAnalysis,
+          run_ledger: {
+            provider: "ollama_local",
+            model: OLLAMA_MODEL,
+            endpoint: OLLAMA_BASE_URL,
+            path: "local_uploaded_files",
+          },
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
@@ -684,10 +861,17 @@ Only JSON, no markdown wrapper.`,
           parsedFromTools ?? parsedFromContent ?? {},
           AREA_LABELS[area_key],
         ),
-        provenanceSummary,
+        combinedSummary,
       ),
       deterministicGapHints,
     );
+    const tracedAnalysis = withLlmTraceBlock(analysis, {
+      provider: "ollama_local",
+      model: OLLAMA_MODEL,
+      endpoint: OLLAMA_BASE_URL,
+      uploadedFiles,
+      snippets: extractedSnippets,
+    });
 
     // Upsert into deep_dive_analyses
     const { error: upsertErr } = await supabase
@@ -696,18 +880,26 @@ Only JSON, no markdown wrapper.`,
         user_id: user.id,
         company_id,
         area_key,
-        why_it_matters: analysis.why_it_matters,
-        what_we_found: analysis.what_we_found,
-        what_good_looks_like: analysis.what_good_looks_like,
-        path_forward: analysis.path_forward,
-        holding_back: analysis.holding_back,
+        why_it_matters: tracedAnalysis.why_it_matters,
+        what_we_found: tracedAnalysis.what_we_found,
+        what_good_looks_like: tracedAnalysis.what_good_looks_like,
+        path_forward: tracedAnalysis.path_forward,
+        holding_back: tracedAnalysis.holding_back,
         generated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: "user_id,company_id,area_key" });
 
     if (upsertErr) throw upsertErr;
 
-    return new Response(JSON.stringify(analysis), {
+    return new Response(JSON.stringify({
+      ...tracedAnalysis,
+      run_ledger: {
+        provider: "ollama_local",
+        model: OLLAMA_MODEL,
+        endpoint: OLLAMA_BASE_URL,
+        path: "local_uploaded_files",
+      },
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {

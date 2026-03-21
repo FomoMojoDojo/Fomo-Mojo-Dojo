@@ -1,4 +1,6 @@
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useAuth } from "@/hooks/useAuth";
+import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 
 type EvidenceLedgerItem = {
@@ -12,6 +14,14 @@ type EvidenceLedgerItem = {
 type PublicBaselineResult = {
   status?: string;
   reason?: string;
+  run_ledger?: {
+    provider?: string;
+    model?: string;
+    endpoint?: string;
+    path?: string;
+    local_only?: boolean;
+    generated_at?: string;
+  };
   category_archetype?: string;
   lens_card?: {
     economic_engine?: string;
@@ -37,6 +47,8 @@ type PublicBaselineResult = {
 };
 
 export function PublicBaselinePanel({ companyId }: { companyId: string }) {
+  const { isAdmin } = useAuth();
+  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { loading, run, error } = usePublicBaseline(companyId);
 
   if (loading) {
@@ -98,6 +110,16 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
     : 15;
   const baselineStatus = typeof r.status === "string" ? r.status : "baseline_available";
   const baselineReason = typeof r.reason === "string" ? r.reason : null;
+  const runLedger = r.run_ledger ?? {};
+  const runProvider = String(runLedger.provider || "openai_public");
+  const runModel = String(runLedger.model || "unknown");
+  const runPath = String(runLedger.path || "public_web_research");
+  const providerLabel =
+    runProvider === "openai_public"
+      ? "OpenAI (Public)"
+      : runProvider === "ollama_local"
+        ? "Ollama (Local)"
+        : runProvider.replaceAll("_", " ");
   const statusTone =
     baselineStatus.includes("error") || baselineStatus.includes("fail")
       ? "gap"
@@ -135,6 +157,13 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <MetaBadge>Public web research only</MetaBadge>
+            {llmTraceEnabled && isAdmin ? (
+              <>
+                <MetaBadge>{providerLabel}</MetaBadge>
+                <MetaBadge>{runModel}</MetaBadge>
+                <MetaBadge>{runPath.replaceAll("_", " ")}</MetaBadge>
+              </>
+            ) : null}
             <StateBadge tone={statusTone}>{baselineStatus.replaceAll("_", " ")}</StateBadge>
           </div>
           {baselineReason ? (

@@ -5,9 +5,17 @@ import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities";
+import { useJobSteps } from "@/hooks/useJobSteps";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
+import {
+  alignmentLevelFromFocus,
+  classifyOpportunityFocus,
+  deriveInitiativeContext,
+  type FocusClassification,
+} from "@/lib/initiativeFocus";
+import AlignmentCircle from "@/components/ui/AlignmentCircle";
 
 const c = {
   bg: "#faf7f6",
@@ -28,6 +36,26 @@ const JOURNEY_ACCENT: Record<string, string> = {
   revenue: "#5F9B8C",
   operations: "#233C4B",
 };
+
+function focusSortValue(focus: FocusClassification | undefined) {
+  if (!focus) return 0;
+  if (focus.level === "initiative") return 2;
+  if (focus.level === "related") return 1;
+  return 0;
+}
+
+function AlignmentIcon({ focus }: { focus?: FocusClassification }) {
+  const level = alignmentLevelFromFocus(focus);
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-1.5 py-1"
+      style={{ borderColor: c.line, background: "#FFFFFF" }}
+      title={`Goal alignment ${level * 25}%`}
+    >
+      <AlignmentCircle level={level} />
+    </span>
+  );
+}
 
 function titleCaseJourney(key: string) {
   if (key === "customer") return "Customer";
@@ -83,12 +111,19 @@ function evidenceNeeded(item: OpportunityRow) {
   ];
 }
 
-function OpportunityHoverDetail({ item }: { item: OpportunityRow }) {
+function OpportunityHoverDetail({
+  item,
+  focus,
+}: {
+  item: OpportunityRow;
+  focus?: FocusClassification;
+}) {
   return (
     <div className="w-[320px] rounded-[20px] border p-4" style={{ borderColor: c.line, background: "#FBFAF7" }}>
       <div className="flex flex-wrap items-center gap-2">
         <TierBadge tone={item.priority_tier} />
         <StateBadge tone={servingLabel(item)} />
+        <AlignmentIcon focus={focus} />
         <ScoreChip label="Opp" value={item.opportunity_score} />
       </div>
 
@@ -151,7 +186,13 @@ function OpportunityHoverDetail({ item }: { item: OpportunityRow }) {
   );
 }
 
-function OpportunityCard({ item }: { item: OpportunityRow }) {
+function OpportunityCard({
+  item,
+  focus,
+}: {
+  item: OpportunityRow;
+  focus?: FocusClassification;
+}) {
   const [expanded, setExpanded] = useState(false);
   const accent = JOURNEY_ACCENT[item.journey_key] || c.monitor;
   const evidenceNeeded = [
@@ -183,6 +224,7 @@ function OpportunityCard({ item }: { item: OpportunityRow }) {
               <TierBadge tone={item.priority_tier} />
               <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
               {item.step_number ? <MetaBadge>Step {item.step_number}</MetaBadge> : null}
+              <AlignmentIcon focus={focus} />
             </div>
 
             <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
@@ -264,10 +306,12 @@ function OpportunitySection({
   title,
   subtitle,
   items,
+  focusById,
 }: {
   title: string;
   subtitle: string;
   items: OpportunityRow[];
+  focusById: Map<string, FocusClassification>;
 }) {
   if (items.length === 0) return null;
 
@@ -288,7 +332,7 @@ function OpportunitySection({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {items.map((item) => (
-          <OpportunityCard key={item.id} item={item} />
+          <OpportunityCard key={item.id} item={item} focus={focusById.get(item.id)} />
         ))}
       </div>
     </section>
@@ -334,6 +378,7 @@ function ViewToggle({
 function OpportunityTreeView({
   items,
   managedOutcomes,
+  focusById,
 }: {
   items: OpportunityRow[];
   managedOutcomes: Array<{
@@ -345,8 +390,14 @@ function OpportunityTreeView({
     evidence_basis: string;
     confidence: number;
   }>;
+  focusById: Map<string, FocusClassification>;
 }) {
-  const grouped = ["customer", "revenue", "operations"].map((journeyKey) => {
+  const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
+  const orderedJourneyKeys = [
+    ...["customer", "revenue", "operations"].filter((key) => presentJourneyKeys.includes(key)),
+    ...presentJourneyKeys.filter((key) => !["customer", "revenue", "operations"].includes(key)).sort((a, b) => a.localeCompare(b)),
+  ];
+  const grouped = orderedJourneyKeys.map((journeyKey) => {
     const journeyItems = items.filter((item) => item.journey_key === journeyKey);
     const stepMap = new Map<string, OpportunityRow[]>();
 
@@ -517,45 +568,49 @@ function OpportunityTreeView({
                           <div className="h-5 w-px" style={{ background: `${accent}44` }} />
 
                           <div className="w-full space-y-3">
-                            {step.items.map((item) => (
-                              <div key={item.id} className="flex justify-center">
-                                <HoverCard openDelay={80}>
-                                  <HoverCardTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                      style={{ borderColor: c.line, background: c.paper }}
-                                    >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <div className="mb-2 flex flex-wrap items-center gap-2">
-                                            <TierBadge tone={item.priority_tier} />
-                                            <StateBadge tone={servingLabel(item)} />
+                            {step.items.map((item) => {
+                              const focus = focusById.get(item.id);
+                              return (
+                                <div key={item.id} className="flex justify-center">
+                                  <HoverCard openDelay={80}>
+                                    <HoverCardTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                                        style={{ borderColor: c.line, background: c.paper }}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                                              <TierBadge tone={item.priority_tier} />
+                                              <StateBadge tone={servingLabel(item)} />
+                                              <AlignmentIcon focus={focus} />
+                                            </div>
+                                            <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                              {item.outcome}
+                                            </p>
                                           </div>
-                                          <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                                            {item.outcome}
-                                          </p>
+                                          <div className="shrink-0">
+                                            <ScoreChip label="Opp" value={item.opportunity_score} />
+                                          </div>
                                         </div>
-                                        <div className="shrink-0">
-                                          <ScoreChip label="Opp" value={item.opportunity_score} />
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                          <ScoreChip label="I" value={item.importance} />
+                                          <ScoreChip label="S" value={item.satisfaction} />
                                         </div>
-                                      </div>
-                                      <div className="mt-3 flex flex-wrap gap-2">
-                                        <ScoreChip label="I" value={item.importance} />
-                                        <ScoreChip label="S" value={item.satisfaction} />
-                                      </div>
-                                      <div className="mt-3 flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                                        <Info className="h-3 w-3" />
-                                        Hover for opportunity detail
-                                      </div>
-                                    </button>
-                                  </HoverCardTrigger>
-                                  <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
-                                    <OpportunityHoverDetail item={item} />
-                                  </HoverCardContent>
-                                </HoverCard>
-                              </div>
-                            ))}
+                                        <div className="mt-3 flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                          <Info className="h-3 w-3" />
+                                          Hover for opportunity detail
+                                        </div>
+                                      </button>
+                                    </HoverCardTrigger>
+                                    <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
+                                      <OpportunityHoverDetail item={item} focus={focus} />
+                                    </HoverCardContent>
+                                  </HoverCard>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       ))}
@@ -575,14 +630,32 @@ export default function OpportunitiesView() {
   const { activeCompany } = useCompany();
   const { loading, items, error } = useOpportunities(activeCompany?.id);
   const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
+  const { items: steps } = useJobSteps(activeCompany?.id);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const initiativeContext = useMemo(
+    () =>
+      deriveInitiativeContext({
+        areaScoresJson: activeCompany?.area_scores_json,
+        jobSteps: steps,
+      }),
+    [activeCompany?.area_scores_json, steps],
+  );
+  const focusById = useMemo(() => {
+    const map = new Map<string, FocusClassification>();
+    for (const item of items) {
+      map.set(item.id, classifyOpportunityFocus(item, initiativeContext));
+    }
+    return map;
+  }, [initiativeContext, items]);
   const sortedForTree = useMemo(
     () =>
       [...items].sort((a, b) => {
+        const focusRank = focusSortValue(focusById.get(b.id)) - focusSortValue(focusById.get(a.id));
+        if (focusRank !== 0) return focusRank;
         const journeyRank = ["customer", "revenue", "operations"].indexOf(String(a.journey_key));
         const otherRank = ["customer", "revenue", "operations"].indexOf(String(b.journey_key));
         const normalizedA = journeyRank === -1 ? 99 : journeyRank;
@@ -591,12 +664,18 @@ export default function OpportunitiesView() {
         if ((a.step_number ?? 999) !== (b.step_number ?? 999)) return (a.step_number ?? 999) - (b.step_number ?? 999);
         return (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
       }),
-    [items],
+    [focusById, items],
   );
+  const sortByFocus = (rows: OpportunityRow[]) =>
+    [...rows].sort((a, b) => {
+      const focusRank = focusSortValue(focusById.get(b.id)) - focusSortValue(focusById.get(a.id));
+      if (focusRank !== 0) return focusRank;
+      return (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+    });
 
-  const prioritizeNow = items.filter((item) => item.priority_tier === "focus");
-  const investigateNext = items.filter((item) => item.priority_tier === "monitor");
-  const laterOpportunities = items.filter((item) => item.priority_tier === "defer");
+  const prioritizeNow = sortByFocus(items.filter((item) => item.priority_tier === "focus"));
+  const investigateNext = sortByFocus(items.filter((item) => item.priority_tier === "monitor"));
+  const laterOpportunities = sortByFocus(items.filter((item) => item.priority_tier === "defer"));
 
   return (
     <div
@@ -622,6 +701,10 @@ export default function OpportunitiesView() {
               <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
                 Focus on the product outcomes and leading indicators behind the jobs customers, buyers, and operators are trying to get done. The top of the tree should represent a result to manage toward. The branches below should capture the opportunity space, not outputs, initiatives, or deliverables. Prioritize underserved opportunities first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
               </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <MetaBadge>{`Initiative: ${initiativeContext.primaryJourneyTitle}`}</MetaBadge>
+                <AlignmentIcon focus={{ level: "related", overlap: 1 }} />
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -665,23 +748,26 @@ export default function OpportunitiesView() {
             </p>
           </div>
         ) : viewMode === "map" ? (
-          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} />
+          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} focusById={focusById} />
         ) : (
           <div className="space-y-8">
             <OpportunitySection
               title="Prioritize Now"
               subtitle="Strong opportunities that deserve attention before you commit to a solution."
               items={prioritizeNow}
+              focusById={focusById}
             />
             <OpportunitySection
               title="Investigate Next"
               subtitle="Promising opportunities where the next move is better evidence, sharper assumptions, or smaller tests."
               items={investigateNext}
+              focusById={focusById}
             />
             <OpportunitySection
               title="Later Opportunities"
               subtitle="Keep these visible, but sequence them after higher-leverage opportunity work."
               items={laterOpportunities}
+              focusById={focusById}
             />
           </div>
         )}

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { Wrench, LineChart, Rocket } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
@@ -12,14 +13,19 @@ import RouteCard from "./RouteCard";
 import type { RouteRow } from "./useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
+import {
+  classifyOpportunityFocus,
+  classifyRouteFocus,
+  deriveInitiativeContext,
+  type FocusClassification,
+} from "@/lib/initiativeFocus";
 
 const c = {
   bg: "#faf7f6",
   panel: "#FFFFFF",
-  panelDark: "#1E1A14",
+  panelTint: "#F7FBF8",
   line: "#DDE6D1",
-  lineWarm: "#D6CCB8",
-  warmCard: "#F2EEE7",
+  lineFaint: "#EEF3E9",
   charcoal: "#233C4B",
   secondary: "#46606D",
   muted: "#6E847F",
@@ -75,13 +81,27 @@ function categoryPriority(category: string) {
   return "defer";
 }
 
+function focusSortValue(focus: FocusClassification | undefined) {
+  if (!focus) return 0;
+  if (focus.level === "initiative") return 2;
+  if (focus.level === "related") return 1;
+  return 0;
+}
+
 function stepStatus(step: JobStepRow) {
   if (step.designed && !step.has_gap) return "complete" as const;
   if (step.designed || step.has_gap) return "in_progress" as const;
   return "missing" as const;
 }
 
-function routeDetail(route: RouteRow, opportunities: OpportunityRow[], steps: JobStepRow[]) {
+function routeDetail(args: {
+  route: RouteRow;
+  opportunities: OpportunityRow[];
+  steps: JobStepRow[];
+  initiativeContext: ReturnType<typeof deriveInitiativeContext>;
+  opportunityFocusById: Map<string, FocusClassification>;
+}) {
+  const { route, opportunities, steps, initiativeContext, opportunityFocusById } = args;
   const category = String(route.category || "improve").toLowerCase();
   const expectedPriority = categoryPriority(category);
   const routeTokens = tokenSet(`${route.title} ${route.short_description || ""}`);
@@ -176,11 +196,21 @@ function routeDetail(route: RouteRow, opportunities: OpportunityRow[], steps: Jo
       : "Related job steps are already partly designed, so this route can tighten and scale what exists.",
   ];
 
+  const linkedOpportunityFocus = rankedOpps
+    .map((opp) => opportunityFocusById.get(opp.id))
+    .filter((item): item is FocusClassification => !!item);
+  const focus = classifyRouteFocus({
+    route,
+    context: initiativeContext,
+    linkedOpportunityFocus,
+  });
+
   return {
     steps: stepItems,
     evidence: evidenceItems,
     whyThisMatters,
     frameworks: (route.frameworks_used ?? []).filter(Boolean),
+    focus,
   };
 }
 
@@ -195,11 +225,15 @@ function RoutesColumn({
   items,
   opportunities,
   steps,
+  initiativeContext,
+  opportunityFocusById,
 }: {
   category: string;
   items: RouteRow[];
   opportunities: OpportunityRow[];
   steps: JobStepRow[];
+  initiativeContext: ReturnType<typeof deriveInitiativeContext>;
+  opportunityFocusById: Map<string, FocusClassification>;
 }) {
   const meta = CATEGORY_META[category] ?? {
     title: category,
@@ -210,25 +244,43 @@ function RoutesColumn({
   return (
     <section
       className="overflow-hidden rounded-[18px] border p-4"
-      style={{ borderColor: c.lineWarm, background: c.warmCard }}
+      style={{ borderColor: c.line, background: c.panel }}
     >
-      <div className="mb-4 flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: c.lineWarm }}>
-        <div className="flex items-center gap-2">
-          <span style={{ color: meta.accent }}>{categoryIcon(category)}</span>
-          <h2 className="font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
-            {meta.title}
-          </h2>
+      <div className="mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span style={{ color: meta.accent }}>{categoryIcon(category)}</span>
+            <h2 className="font-sans text-[32px] font-semibold leading-[1.05]" style={{ color: c.charcoal }}>
+              {meta.title}
+            </h2>
+          </div>
+          <MetaBadge>{items.length}</MetaBadge>
         </div>
-        <MetaBadge>{items.length}</MetaBadge>
+
+        <p className="mt-2 font-sans text-[14px] leading-[1.55]" style={{ color: c.secondary }}>
+          {meta.subtitle}
+        </p>
+        <div className="mt-3 border-b" style={{ borderColor: c.line }} />
       </div>
 
-      <p className="mb-4 font-sans text-[13px]" style={{ color: c.secondary }}>
-        {meta.subtitle}
-      </p>
-
       <div className="space-y-3">
-        {items.map((route) => {
-          const detail = routeDetail(route, opportunities, steps);
+        {[...items]
+          .map((route) => ({
+            route,
+            detail: routeDetail({
+              route,
+              opportunities,
+              steps,
+              initiativeContext,
+              opportunityFocusById,
+            }),
+          }))
+          .sort((a, b) => {
+            const focusRank = focusSortValue(b.detail.focus) - focusSortValue(a.detail.focus);
+            if (focusRank !== 0) return focusRank;
+            return Number(a.route.sort_order ?? 999) - Number(b.route.sort_order ?? 999);
+          })
+          .map(({ route, detail }) => {
           return (
             <RouteCard
               key={route.id}
@@ -238,13 +290,14 @@ function RoutesColumn({
               evidence={detail.evidence}
               whyThisMatters={detail.whyThisMatters}
               frameworks={detail.frameworks}
+              focus={detail.focus}
             />
           );
         })}
         {items.length === 0 ? (
           <div
             className="rounded-lg border px-3 py-4 text-center font-sans text-[13px]"
-            style={{ borderColor: c.lineWarm, color: c.secondary, background: c.panel }}
+            style={{ borderColor: c.line, color: c.secondary, background: c.panelTint }}
           >
             No routes in this category yet.
           </div>
@@ -292,7 +345,7 @@ function StatBand({
 }) {
   const bounded = Math.max(0, Math.min(100, percent));
   return (
-    <div className="rounded-xl border p-4" style={{ borderColor: c.lineWarm, background: c.panel }}>
+    <div className="rounded-xl border p-4" style={{ borderColor: c.line, background: c.panel }}>
       <div className="mb-2 flex items-center justify-between">
         <p className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: c.charcoal }}>
           {label}
@@ -301,7 +354,7 @@ function StatBand({
           {bounded}%
         </span>
       </div>
-      <div className="h-[6px] w-full rounded-full" style={{ background: "#DDD5C7" }}>
+      <div className="h-[6px] w-full rounded-full" style={{ background: c.lineFaint }}>
         <div className="h-full rounded-full" style={{ width: `${bounded}%`, background: accent }} />
       </div>
       <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
@@ -322,6 +375,21 @@ export default function RoutesView() {
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
+  const initiativeContext = useMemo(
+    () =>
+      deriveInitiativeContext({
+        areaScoresJson: activeCompany?.area_scores_json,
+        jobSteps: steps,
+      }),
+    [activeCompany?.area_scores_json, steps],
+  );
+  const opportunityFocusById = useMemo(() => {
+    const map = new Map<string, FocusClassification>();
+    for (const opp of opportunities) {
+      map.set(opp.id, classifyOpportunityFocus(opp, initiativeContext));
+    }
+    return map;
+  }, [initiativeContext, opportunities]);
 
   const fix = items.filter((route) => String(route.category).toLowerCase() === "fix");
   const improve = items.filter((route) => String(route.category).toLowerCase() === "improve");
@@ -356,12 +424,15 @@ export default function RoutesView() {
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
               </div>
-              <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
+              <h1 className="mt-1 font-sans text-[34px] font-semibold leading-[1.1]" style={{ color: c.charcoal }}>
                 Routes
               </h1>
-              <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
+              <p className="mt-2 font-sans text-[15px] leading-[1.65]" style={{ color: c.secondary }}>
                 Click any route to expand steps, evidence needed, and why this matters.
               </p>
+              <div className="mt-3">
+                <MetaBadge>{`Initiative: ${initiativeContext.primaryJourneyTitle}`}</MetaBadge>
+              </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <MetaBadge>
@@ -394,23 +465,23 @@ export default function RoutesView() {
           </div>
         ) : (
           <div className="space-y-5">
-            <section className="rounded-[18px] border px-5 py-4" style={{ borderColor: "#2A251C", background: c.panelDark }}>
+            <section className="rounded-[18px] border px-5 py-4" style={{ borderColor: c.line, background: c.panel }}>
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex min-w-[220px] items-center gap-4">
                   <div>
-                    <p className="font-sans text-[54px] font-black leading-none tracking-tight" style={{ color: c.amber }}>
+                    <p className="font-sans text-[54px] font-black leading-none tracking-tight" style={{ color: c.charcoal }}>
                       {currentScore}
                     </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
                       Current reality
                     </p>
                   </div>
-                  <div className="h-10 w-px" style={{ background: "#3B352A" }} />
+                  <div className="h-10 w-px" style={{ background: c.line }} />
                   <div>
-                    <p className="font-mono text-[11px]" style={{ color: "#7EB55B" }}>
+                    <p className="font-mono text-[11px]" style={{ color: c.teal }}>
                       {`+${Math.max(0, potentialScore - currentScore)} potential delta`}
                     </p>
-                    <p className="mt-1 font-sans text-[25px]" style={{ color: "#D6CCB8" }}>
+                    <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
                       {inputComplete} of {inputTotal} inputs complete · {criticalGaps} critical gaps
                     </p>
                   </div>
@@ -418,26 +489,26 @@ export default function RoutesView() {
 
                 <div className="flex items-end gap-6">
                   <div className="text-right">
-                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: c.teal }}>
+                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.teal }}>
                       {potentialScore}
                     </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
                       Potential
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: c.amber }}>
+                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.amber }}>
                       {items.length}
                     </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
                       Routes
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-sans text-[42px] font-bold leading-none" style={{ color: "#F1D174" }}>
+                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.coral }}>
                       {Math.round(totalPts)}
                     </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9B9384" }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
                       Total Pts
                     </p>
                   </div>
@@ -452,9 +523,30 @@ export default function RoutesView() {
             </section>
 
             <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-              <RoutesColumn category="fix" items={fix} opportunities={opportunities} steps={steps} />
-              <RoutesColumn category="improve" items={improve} opportunities={opportunities} steps={steps} />
-              <RoutesColumn category="create" items={create} opportunities={opportunities} steps={steps} />
+              <RoutesColumn
+                category="fix"
+                items={fix}
+                opportunities={opportunities}
+                steps={steps}
+                initiativeContext={initiativeContext}
+                opportunityFocusById={opportunityFocusById}
+              />
+              <RoutesColumn
+                category="improve"
+                items={improve}
+                opportunities={opportunities}
+                steps={steps}
+                initiativeContext={initiativeContext}
+                opportunityFocusById={opportunityFocusById}
+              />
+              <RoutesColumn
+                category="create"
+                items={create}
+                opportunities={opportunities}
+                steps={steps}
+                initiativeContext={initiativeContext}
+                opportunityFocusById={opportunityFocusById}
+              />
             </section>
           </div>
         )}

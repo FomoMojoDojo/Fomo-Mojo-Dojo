@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import { useCompany } from '@/hooks/useCompany';
 
 type DeepDiveRow = {
+  user_id?: string;
+  company_id?: string;
   area_key: string;
   why_it_matters: string;
   what_we_found: string;
@@ -39,10 +41,15 @@ export function useDeepDiveAnalyses() {
       const { data, error } = await supabase
         .from('deep_dive_analyses')
         .select('*')
-        .eq('company_id', companyId);
+        .eq('company_id', companyId)
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .order('generated_at', { ascending: false, nullsFirst: false });
       if (error) throw error;
       const result: Record<string, DeepDive> = {};
       for (const row of (data ?? []) as DeepDiveRow[]) {
+        if (!row.area_key) continue;
+        // Keep the latest analysis per area (ordered above).
+        if (result[row.area_key]) continue;
         result[row.area_key] = mapRow(row);
       }
       return result;

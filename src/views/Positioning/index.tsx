@@ -10,6 +10,7 @@ import { MetaBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
+import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import {
   AlertTriangle,
   Building2,
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
 const c = {
   bg: "#faf7f6",
@@ -45,6 +47,14 @@ type PositioningSectionKey =
   | CanvasKey
   | "current_tagline"
   | "proposed_direction";
+
+type EditablePositioningField =
+  | "value_for_customer"
+  | "best_fit_customers"
+  | "market_category"
+  | "category_rationale"
+  | "current_tagline"
+  | "proposed_tagline";
 
 type SourceTier = "public" | "company" | "evidence" | "implemented_tested";
 
@@ -214,17 +224,72 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
+function SuggestionActions({
+  raw,
+  onAccept,
+  onIgnore,
+  saving,
+}: {
+  raw: string;
+  onAccept?: (value: string) => void | Promise<void>;
+  onIgnore?: (value: string) => void | Promise<void>;
+  saving?: boolean;
+}) {
+  const parsed = parseClaritySuggestion(raw);
+  if (!parsed.suggested) return null;
+
+  return (
+    <div className="mt-3 rounded-[14px] border px-3 py-2.5" style={{ borderColor: c.line, background: c.paper }}>
+      <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+        Suggested clearer version
+      </p>
+      <p className="mt-1.5 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+        {parsed.suggested}
+      </p>
+      {onAccept && onIgnore ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onAccept(parsed.suggested!)}
+            disabled={!!saving}
+            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+          >
+            Accept Suggestion
+          </button>
+          <button
+            type="button"
+            onClick={() => onIgnore(parsed.primary)}
+            disabled={!!saving}
+            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+          >
+            Ignore
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function OptionCard({
   title,
   detail,
   accent,
   highlighted = false,
+  onAcceptSuggestion,
+  onIgnoreSuggestion,
+  saving,
 }: {
   title: string;
   detail: string;
   accent: string;
   highlighted?: boolean;
+  onAcceptSuggestion?: (suggested: string) => void | Promise<void>;
+  onIgnoreSuggestion?: (primary: string) => void | Promise<void>;
+  saving?: boolean;
 }) {
+  const parsedDetail = parseClaritySuggestion(detail);
   return (
     <div
       className="rounded-[18px] border p-4"
@@ -238,19 +303,59 @@ function OptionCard({
         {title}
       </p>
       <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-        {detail}
+        {parsedDetail.primary || detail}
       </p>
+      <SuggestionActions
+        raw={detail}
+        onAccept={onAcceptSuggestion}
+        onIgnore={onIgnoreSuggestion}
+        saving={saving}
+      />
     </div>
   );
 }
 
-function AlternativesBlock({ input }: { input: InputItem | null }) {
+function AlternativesBlock({
+  input,
+  items,
+  onAcceptSuggestion,
+  onIgnoreSuggestion,
+  saving,
+}: {
+  input: InputItem | null;
+  items?: PositioningCanvas["competitive_alternatives"];
+  onAcceptSuggestion?: (index: number, suggested: string) => void | Promise<void>;
+  onIgnoreSuggestion?: (index: number, primary: string) => void | Promise<void>;
+  saving?: boolean;
+}) {
+  if (Array.isArray(items) && items.length > 0) {
+    return (
+      <div className="space-y-3">
+        {items.map((item, index) => (
+          <OptionCard
+            key={item.id || `alt-${index}`}
+            title={item.name}
+            detail={item.description || "Needs stronger validation from buyer interviews or market research."}
+            accent={META.competitive_alternatives.accent}
+            onAcceptSuggestion={
+              onAcceptSuggestion ? (suggested) => onAcceptSuggestion(index, suggested) : undefined
+            }
+            onIgnoreSuggestion={
+              onIgnoreSuggestion ? (primary) => onIgnoreSuggestion(index, primary) : undefined
+            }
+            saving={saving}
+          />
+        ))}
+      </div>
+    );
+  }
+
   const bullets = splitBullets(input?.description).map((entry) => ({
     title: entry,
     detail: input?.why_it_matters || "Needs stronger validation from buyer interviews or market research.",
   }));
 
-  const items =
+  const fallbackItems =
     bullets.length > 0
       ? bullets
       : [
@@ -264,11 +369,11 @@ function AlternativesBlock({ input }: { input: InputItem | null }) {
 
   return (
     <div className="space-y-3">
-      {items.map((item, index) => (
+      {fallbackItems.map((entry, index) => (
         <OptionCard
-          key={`alt-${item.title}-${index}`}
-          title={item.title}
-          detail={item.detail}
+          key={`alt-${entry.title}-${index}`}
+          title={entry.title}
+          detail={entry.detail}
           accent={META.competitive_alternatives.accent}
         />
       ))}
@@ -276,11 +381,46 @@ function AlternativesBlock({ input }: { input: InputItem | null }) {
   );
 }
 
-function AttributesBlock({ input }: { input: InputItem | null }) {
+function AttributesBlock({
+  input,
+  items,
+  onAcceptSuggestion,
+  onIgnoreSuggestion,
+  saving,
+}: {
+  input: InputItem | null;
+  items?: PositioningCanvas["unique_attributes"];
+  onAcceptSuggestion?: (index: number, suggested: string) => void | Promise<void>;
+  onIgnoreSuggestion?: (index: number, primary: string) => void | Promise<void>;
+  saving?: boolean;
+}) {
+  if (Array.isArray(items) && items.length > 0) {
+    return (
+      <div className="space-y-3">
+        {items.map((item, index) => (
+          <OptionCard
+            key={item.id || `attr-${index}`}
+            title={item.name}
+            detail={item.description || "Needs stronger proof from public or client evidence."}
+            accent={META.unique_attributes.accent}
+            highlighted={!!item.highlighted}
+            onAcceptSuggestion={
+              onAcceptSuggestion ? (suggested) => onAcceptSuggestion(index, suggested) : undefined
+            }
+            onIgnoreSuggestion={
+              onIgnoreSuggestion ? (primary) => onIgnoreSuggestion(index, primary) : undefined
+            }
+            saving={saving}
+          />
+        ))}
+      </div>
+    );
+  }
+
   const bullets = splitBullets(input?.description);
   const details = splitBullets(input?.why_it_matters);
 
-  const items =
+  const fallbackItems =
     bullets.length > 0
       ? bullets.map((entry, index) => ({
           title: entry,
@@ -299,13 +439,13 @@ function AttributesBlock({ input }: { input: InputItem | null }) {
 
   return (
     <div className="space-y-3">
-      {items.map((item, index) => (
+      {fallbackItems.map((entry, index) => (
         <OptionCard
-          key={`attr-${item.title}-${index}`}
-          title={item.title}
-          detail={item.detail}
+          key={`attr-${entry.title}-${index}`}
+          title={entry.title}
+          detail={entry.detail}
           accent={META.unique_attributes.accent}
-          highlighted={item.highlighted}
+          highlighted={entry.highlighted}
         />
       ))}
     </div>
@@ -611,7 +751,14 @@ function CanvasSection({
 export default function PositioningView() {
   const { activeCompany } = useCompany();
   const { query } = useInputs();
-  const { loading: canvasLoading, item: storedCanvas, error: canvasError } = usePositioningCanvas(activeCompany?.id);
+  const {
+    loading: canvasLoading,
+    item: storedCanvas,
+    error: canvasError,
+    savingField,
+    updateTextField,
+    updateItemsField,
+  } = usePositioningCanvas(activeCompany?.id);
   const { item: strategyCascade } = useStrategyCascade(activeCompany?.id);
   const { item: latestReview } = useLatestPositioningReview(activeCompany?.id);
 
@@ -682,6 +829,63 @@ export default function PositioningView() {
   });
   const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
   const positioningAlignment = localAlignment?.areas?.positioning ?? null;
+
+  const applyClaritySuggestion = async (
+    field: EditablePositioningField,
+    value: string,
+    mode: "accept" | "ignore",
+  ) => {
+    if (!hasStoredCanvas) return;
+    const next = String(value || "").trim();
+    if (!next) return;
+    try {
+      await updateTextField(field, next);
+      toast.success(mode === "accept" ? "Suggestion applied." : "Suggestion ignored.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update positioning text.");
+    }
+  };
+
+  const applyListItemSuggestion = async (
+    section: "competitive_alternatives" | "unique_attributes",
+    index: number,
+    value: string,
+    mode: "accept" | "ignore",
+  ) => {
+    if (!hasStoredCanvas) return;
+    const next = String(value || "").trim();
+    if (!next) return;
+
+    const sourceItems =
+      section === "competitive_alternatives"
+        ? canvas.competitive_alternatives
+        : canvas.unique_attributes;
+
+    if (index < 0 || index >= sourceItems.length) return;
+
+    const updatedItems = sourceItems.map((entry, entryIndex) =>
+      entryIndex === index ? { ...entry, description: next } : entry,
+    );
+
+    try {
+      await updateItemsField(
+        section === "competitive_alternatives"
+          ? "competitive_alternatives_json"
+          : "unique_attributes_json",
+        updatedItems,
+      );
+      toast.success(mode === "accept" ? "Suggestion applied." : "Suggestion ignored.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update positioning card.");
+    }
+  };
+
+  const valueForCustomerText = parseClaritySuggestion(canvas.value_for_customer);
+  const bestFitCustomersText = parseClaritySuggestion(canvas.best_fit_customers);
+  const marketCategoryText = parseClaritySuggestion(canvas.market_category);
+  const categoryRationaleText = parseClaritySuggestion(canvas.category_rationale);
+  const currentTaglineText = parseClaritySuggestion(canvas.current_tagline);
+  const proposedTaglineText = parseClaritySuggestion(canvas.proposed_tagline);
 
   return (
     <div
@@ -795,25 +999,20 @@ export default function PositioningView() {
                   input={competitiveAlternatives}
                 >
                   <AlternativesBlock
-                    input={
+                    input={competitiveAlternatives}
+                    items={hasStoredCanvas ? canvas.competitive_alternatives : undefined}
+                    saving={savingField === "competitive_alternatives_json"}
+                    onAcceptSuggestion={
                       hasStoredCanvas
-                        ? {
-                            id: "stored-alt",
-                            input_key: "comp-alt",
-                            input_label: "Competitive Alternatives",
-                            group_key: "foundation",
-                            group_label: "Foundation",
-                            sub_group: "Positioning",
-                            completeness: 0,
-                            status: "not_started",
-                            score_impact: 0,
-                            impact_tier: "med",
-                            description: canvas.competitive_alternatives.map((item) => item.name).join("\n"),
-                            why_it_matters: canvas.competitive_alternatives[0]?.description || "",
-                            subitems: [],
-                            files: [],
-                          }
-                        : competitiveAlternatives
+                        ? (index, suggested) =>
+                            applyListItemSuggestion("competitive_alternatives", index, suggested, "accept")
+                        : undefined
+                    }
+                    onIgnoreSuggestion={
+                      hasStoredCanvas
+                        ? (index, primary) =>
+                            applyListItemSuggestion("competitive_alternatives", index, primary, "ignore")
+                        : undefined
                     }
                   />
                 </CanvasSection>
@@ -824,25 +1023,20 @@ export default function PositioningView() {
                   input={uniqueAttributes}
                 >
                   <AttributesBlock
-                    input={
+                    input={uniqueAttributes}
+                    items={hasStoredCanvas ? canvas.unique_attributes : undefined}
+                    saving={savingField === "unique_attributes_json"}
+                    onAcceptSuggestion={
                       hasStoredCanvas
-                        ? {
-                            id: "stored-attr",
-                            input_key: "unique-attr",
-                            input_label: "Unique Attributes",
-                            group_key: "foundation",
-                            group_label: "Foundation",
-                            sub_group: "Positioning",
-                            completeness: 0,
-                            status: "not_started",
-                            score_impact: 0,
-                            impact_tier: "med",
-                            description: canvas.unique_attributes.map((item) => item.name).join("\n"),
-                            why_it_matters: canvas.unique_attributes[0]?.description || "",
-                            subitems: [],
-                            files: [],
-                          }
-                        : uniqueAttributes
+                        ? (index, suggested) =>
+                            applyListItemSuggestion("unique_attributes", index, suggested, "accept")
+                        : undefined
+                    }
+                    onIgnoreSuggestion={
+                      hasStoredCanvas
+                        ? (index, primary) =>
+                            applyListItemSuggestion("unique_attributes", index, primary, "ignore")
+                        : undefined
                     }
                   />
                 </CanvasSection>
@@ -856,13 +1050,41 @@ export default function PositioningView() {
                     {hasStoredCanvas ? "Value Statement" : valueProposition?.input_label || "Value statement not set"}
                   </p>
                   <p className="mt-4 font-sans text-[15px] leading-[1.85]" style={{ color: c.secondary }}>
-                    {canvas.value_for_customer || "No value proposition has been generated yet."}
+                    {valueForCustomerText.primary || "No value proposition has been generated yet."}
                   </p>
-                  {canvas.best_fit_customers ? (
+                  <SuggestionActions
+                    raw={canvas.value_for_customer}
+                    saving={savingField === "value_for_customer"}
+                    onAccept={
+                      hasStoredCanvas
+                        ? (suggested) => applyClaritySuggestion("value_for_customer", suggested, "accept")
+                        : undefined
+                    }
+                    onIgnore={
+                      hasStoredCanvas
+                        ? (primary) => applyClaritySuggestion("value_for_customer", primary, "ignore")
+                        : undefined
+                    }
+                  />
+                  {bestFitCustomersText.primary || bestFitCustomersText.suggested ? (
                     <p className="mt-4 font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
-                      Best-fit audience: {canvas.best_fit_customers}
+                      Best-fit audience: {bestFitCustomersText.primary || "Not set yet."}
                     </p>
                   ) : null}
+                  <SuggestionActions
+                    raw={canvas.best_fit_customers}
+                    saving={savingField === "best_fit_customers"}
+                    onAccept={
+                      hasStoredCanvas
+                        ? (suggested) => applyClaritySuggestion("best_fit_customers", suggested, "accept")
+                        : undefined
+                    }
+                    onIgnore={
+                      hasStoredCanvas
+                        ? (primary) => applyClaritySuggestion("best_fit_customers", primary, "ignore")
+                        : undefined
+                    }
+                  />
                 </CanvasSection>
 
                 <CanvasSection
@@ -871,11 +1093,39 @@ export default function PositioningView() {
                   input={marketCategory}
                 >
                   <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {canvas.market_category || "Market category not set"}
+                    {marketCategoryText.primary || "Market category not set"}
                   </p>
+                  <SuggestionActions
+                    raw={canvas.market_category}
+                    saving={savingField === "market_category"}
+                    onAccept={
+                      hasStoredCanvas
+                        ? (suggested) => applyClaritySuggestion("market_category", suggested, "accept")
+                        : undefined
+                    }
+                    onIgnore={
+                      hasStoredCanvas
+                        ? (primary) => applyClaritySuggestion("market_category", primary, "ignore")
+                        : undefined
+                    }
+                  />
                   <p className="mt-4 font-sans text-[15px] leading-[1.85]" style={{ color: c.secondary }}>
-                    {canvas.category_rationale || "No market category framing has been generated yet."}
+                    {categoryRationaleText.primary || "No market category framing has been generated yet."}
                   </p>
+                  <SuggestionActions
+                    raw={canvas.category_rationale}
+                    saving={savingField === "category_rationale"}
+                    onAccept={
+                      hasStoredCanvas
+                        ? (suggested) => applyClaritySuggestion("category_rationale", suggested, "accept")
+                        : undefined
+                    }
+                    onIgnore={
+                      hasStoredCanvas
+                        ? (primary) => applyClaritySuggestion("category_rationale", primary, "ignore")
+                        : undefined
+                    }
+                  />
                 </CanvasSection>
               </div>
             </section>
@@ -890,9 +1140,23 @@ export default function PositioningView() {
                   <SourcePill tier={sectionTiers.current_tagline} compact />
                 </div>
                 <p className="mt-4 font-sans text-[16px] leading-[1.8]" style={{ color: c.charcoal }}>
-                  {canvas.current_tagline ||
+                  {currentTaglineText.primary ||
                     "No current tagline or brand line has been mapped yet."}
                 </p>
+                <SuggestionActions
+                  raw={canvas.current_tagline}
+                  saving={savingField === "current_tagline"}
+                  onAccept={
+                    hasStoredCanvas
+                      ? (suggested) => applyClaritySuggestion("current_tagline", suggested, "accept")
+                      : undefined
+                  }
+                  onIgnore={
+                    hasStoredCanvas
+                      ? (primary) => applyClaritySuggestion("current_tagline", primary, "ignore")
+                      : undefined
+                  }
+                />
               </section>
 
               <section
@@ -904,9 +1168,23 @@ export default function PositioningView() {
                   <SourcePill tier={sectionTiers.proposed_direction} compact />
                 </div>
                 <p className="mt-4 font-sans text-[16px] font-semibold leading-[1.6]" style={{ color: c.charcoal }}>
-                  {canvas.proposed_tagline ||
+                  {proposedTaglineText.primary ||
                     "Refine the positioning direction after competitive mapping and audience validation."}
                 </p>
+                <SuggestionActions
+                  raw={canvas.proposed_tagline}
+                  saving={savingField === "proposed_tagline"}
+                  onAccept={
+                    hasStoredCanvas
+                      ? (suggested) => applyClaritySuggestion("proposed_tagline", suggested, "accept")
+                      : undefined
+                  }
+                  onIgnore={
+                    hasStoredCanvas
+                      ? (primary) => applyClaritySuggestion("proposed_tagline", primary, "ignore")
+                      : undefined
+                  }
+                />
                 <p className="mt-3 font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
                   The next strategist pass should pressure-test alternatives, sharpen the differentiated claim,
                   and make the market category easier to repeat in real buyer conversations.

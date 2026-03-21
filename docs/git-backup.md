@@ -5,7 +5,7 @@ Use this when you want to save local work to GitHub quickly.
 ## Daily flow
 
 ```bash
-cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
 git add -A
 git commit -m "your message"
 git push
@@ -14,7 +14,7 @@ git push
 ## First-time remote setup (existing repo)
 
 ```bash
-cd /Users/fomomojodojo/Downloads/happy-file-hugger-main
+cd /Users/fomomojodojo/dev/happy-file-hugger-main
 git remote set-url origin https://github.com/FomoMojoDojo/Fomo-Mojo-Dojo.git
 git remote -v
 git push -u origin main

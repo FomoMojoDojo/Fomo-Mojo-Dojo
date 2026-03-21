@@ -51,10 +51,25 @@ function mapRow(row: PositioningCanvasRow): PositioningCanvas {
   };
 }
 
+type PositioningTextField =
+  | "value_for_customer"
+  | "best_fit_customers"
+  | "market_category"
+  | "category_rationale"
+  | "current_tagline"
+  | "proposed_tagline";
+
+type PositioningItemsField =
+  | "competitive_alternatives_json"
+  | "unique_attributes_json";
+
+type PositioningUpdateField = PositioningTextField | PositioningItemsField;
+
 export function usePositioningCanvas(companyId?: string) {
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<PositioningCanvas | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [savingField, setSavingField] = useState<PositioningUpdateField | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -105,5 +120,69 @@ export function usePositioningCanvas(companyId?: string) {
     };
   }, [companyId]);
 
-  return { loading, item, error };
+  async function updateTextField(field: PositioningTextField, value: string) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    setSavingField(field);
+    try {
+      const { data, error } = await supabase
+        .from("positioning_canvases")
+        .update({ [field]: String(value || "").trim() })
+        .eq("company_id", companyId)
+        .select(
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+        )
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(error.message || "Failed to update positioning text.");
+      }
+
+      if (data) {
+        setItem(mapRow(data as PositioningCanvasRow));
+      } else if (item) {
+        setItem({
+          ...item,
+          [field]: String(value || "").trim(),
+        });
+      }
+    } finally {
+      setSavingField(null);
+    }
+  }
+
+  async function updateItemsField(field: PositioningItemsField, items: PositioningItem[]) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    setSavingField(field);
+    try {
+      const { data, error } = await supabase
+        .from("positioning_canvases")
+        .update({ [field]: items })
+        .eq("company_id", companyId)
+        .select(
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+        )
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(error.message || "Failed to update positioning list.");
+      }
+
+      if (data) {
+        setItem(mapRow(data as PositioningCanvasRow));
+      } else if (item) {
+        setItem({
+          ...item,
+          ...(field === "competitive_alternatives_json"
+            ? { competitive_alternatives: items }
+            : { unique_attributes: items }),
+        });
+      }
+    } finally {
+      setSavingField(null);
+    }
+  }
+
+  return { loading, item, error, savingField, updateTextField, updateItemsField };
 }

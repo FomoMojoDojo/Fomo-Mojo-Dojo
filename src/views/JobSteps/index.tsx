@@ -6,6 +6,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -14,9 +15,11 @@ import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { useInputs } from "@/hooks/useInputs";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
+import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import type { InputItem } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
+import { LlmTraceLegend, type LlmTraceItem } from "@/components/provenance/LlmTraceLegend";
 
 const c = {
   bg: "#faf7f6",
@@ -1130,6 +1133,8 @@ function SuggestedMapsSection({
 }
 
 export default function JobStepsView() {
+  const { isAdmin } = useAuth();
+  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { activeCompany } = useCompany();
   const activeCompanyId = activeCompany?.id ?? null;
   const {
@@ -1165,6 +1170,44 @@ export default function JobStepsView() {
     if (!activeCompanyId) return [];
     return recentlyRemovedKeysByCompany[activeCompanyId] ?? [];
   }, [activeCompanyId, recentlyRemovedKeysByCompany]);
+  const llmTraceItems = useMemo<LlmTraceItem[]>(() => {
+    if (!llmTraceEnabled || !isAdmin) return [];
+    const resultJson = scopedBaselineRun?.result_json as
+      | { run_ledger?: { provider?: string; model?: string; path?: string } }
+      | null
+      | undefined;
+    const publicProvider = String(resultJson?.run_ledger?.provider || "openai_public");
+    const publicModel = String(resultJson?.run_ledger?.model || "unknown");
+    const publicPath = String(resultJson?.run_ledger?.path || "public_web_research");
+    const hasLocalDraft = items.some((step) =>
+      String(step.evidence_basis || "").toLowerCase().includes("local draft step generated"),
+    );
+
+    const traces: LlmTraceItem[] = [
+      {
+        id: "jobsteps-public",
+        tier: "public",
+        label: `Public ${publicModel}`,
+        detail: `${publicProvider} · ${publicPath}`,
+      },
+      {
+        id: "jobsteps-research",
+        tier: "public",
+        label: "Research OpenAI",
+        detail: "job-step generation runs on research-company public AI flow.",
+      },
+    ];
+
+    if (hasLocalDraft) {
+      traces.push({
+        id: "jobsteps-fallback",
+        tier: "fallback",
+        label: "Local Draft Fallback",
+        detail: "Local draft steps were used where external generation was unavailable.",
+      });
+    }
+    return traces;
+  }, [isAdmin, items, llmTraceEnabled, scopedBaselineRun?.result_json]);
 
   useEffect(() => {
     setJourneyDrafts({});
@@ -1527,6 +1570,7 @@ export default function JobStepsView() {
                   : "Awaiting research"}
               </MetaBadge>
               <SourceLegend signals={sourceSignals} />
+              {llmTraceEnabled && isAdmin ? <LlmTraceLegend items={llmTraceItems} /> : null}
             </div>
             <Link
               to="/"

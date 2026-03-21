@@ -5,6 +5,7 @@ import { useCompany } from '@/hooks/useCompany';
 import { toast } from 'sonner';
 import FileUploadDialog from '@/components/FileUploadDialog';
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from '@/components/ui/semantic-badges';
+import { visibleFileTags } from '@/lib/fileTags';
 
 interface Props {
   input: InputItem;
@@ -261,7 +262,7 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
               <div className="flex-1 min-w-0">
                 <p className="font-sans text-[13px] truncate" style={{ color: c.accent }}>{file.file_name}</p>
                 <div className="flex gap-1 mt-0.5 flex-wrap">
-                  {file.tags?.map((tag) => (
+                  {visibleFileTags(file.tags, file.uploaded_at).map((tag) => (
                     <MetaBadge key={tag}>{tag}</MetaBadge>
                   ))}
                 </div>

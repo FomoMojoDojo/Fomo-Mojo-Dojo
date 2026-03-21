@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 type RecommendationStatus = "pending" | "accepted" | "ignored";
+type CouncilKey = "strategy_council" | "mojo_council";
 
 type CouncilRecommendationRow = {
   id: string;
@@ -28,6 +29,7 @@ type CouncilRunRow = {
   status: "running" | "completed" | "failed";
   summary: string;
   recommendation_count: number;
+  source_snapshot_json: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -39,6 +41,11 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: "pending", label: "Pending" },
   { key: "accepted", label: "Accepted" },
   { key: "ignored", label: "Ignored" },
+];
+
+const COUNCIL_OPTIONS: Array<{ key: CouncilKey; label: string; runLabel: string }> = [
+  { key: "strategy_council", label: "Strategy Council", runLabel: "Run Strategy Council" },
+  { key: "mojo_council", label: "Mojo Council", runLabel: "Run Mojo Council" },
 ];
 
 async function extractInvokeErrorMessage(error: unknown, fallback: string) {
@@ -63,6 +70,10 @@ async function extractInvokeErrorMessage(error: unknown, fallback: string) {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -82,6 +93,36 @@ function priorityStyle(priority: CouncilRecommendationRow["priority"]) {
   return "bg-[#FFF6E9] text-[#A96900] border-[#F3D7A9]";
 }
 
+function normalizeCouncilKey(value: unknown): CouncilKey {
+  return String(value || "").trim().toLowerCase() === "mojo_council"
+    ? "mojo_council"
+    : "strategy_council";
+}
+
+function councilKeyFromRun(run: CouncilRunRow): CouncilKey {
+  const snapshot = (run.source_snapshot_json ?? {}) as Record<string, unknown>;
+  return normalizeCouncilKey(snapshot.council_key);
+}
+
+function councilKeyFromRecommendation(item: CouncilRecommendationRow): CouncilKey {
+  const context = (item.source_context_json ?? {}) as Record<string, unknown>;
+  const direct = normalizeCouncilKey(context.council_key);
+  if (direct === "mojo_council") return direct;
+  const snapshot = (context.source_snapshot ?? {}) as Record<string, unknown>;
+  return normalizeCouncilKey(snapshot.council_key);
+}
+
+function panelDiscussionFromRun(run: CouncilRunRow | null) {
+  if (!run) return "";
+  const snapshot = (run.source_snapshot_json ?? {}) as Record<string, unknown>;
+  const raw = snapshot.panel_discussion;
+  if (typeof raw === "string") return raw.trim();
+  if (Array.isArray(raw)) {
+    return raw.map((entry) => String(entry || "").trim()).filter(Boolean).join("\n\n");
+  }
+  return "";
+}
+
 export default function CouncilRecommendationsPanel({
   companyId,
   companyName,
@@ -93,11 +134,40 @@ export default function CouncilRecommendationsPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [councilKey, setCouncilKey] = useState<CouncilKey>("strategy_council");
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<CouncilRecommendationRow[]>([]);
   const [runs, setRuns] = useState<CouncilRunRow[]>([]);
   const [decisionBusyId, setDecisionBusyId] = useState<string | null>(null);
 
-  const latestRun = runs[0] ?? null;
+  const councilMeta = useMemo(
+    () => COUNCIL_OPTIONS.find((item) => item.key === councilKey) ?? COUNCIL_OPTIONS[0],
+    [councilKey]
+  );
+
+  const scopedRuns = useMemo(
+    () => runs.filter((run) => councilKeyFromRun(run) === councilKey),
+    [runs, councilKey]
+  );
+  const scopedRecommendations = useMemo(
+    () => recommendations.filter((item) => councilKeyFromRecommendation(item) === councilKey),
+    [recommendations, councilKey]
+  );
+
+  useEffect(() => {
+    if (scopedRuns.length === 0) {
+      setSelectedRunId(null);
+      return;
+    }
+    const hasSelected = selectedRunId && scopedRuns.some((run) => run.id === selectedRunId);
+    if (!hasSelected) setSelectedRunId(scopedRuns[0].id);
+  }, [scopedRuns, selectedRunId]);
+
+  const selectedRun = useMemo(() => {
+    if (!selectedRunId) return scopedRuns[0] ?? null;
+    return scopedRuns.find((run) => run.id === selectedRunId) ?? scopedRuns[0] ?? null;
+  }, [scopedRuns, selectedRunId]);
+  const selectedPanelDiscussion = useMemo(() => panelDiscussionFromRun(selectedRun), [selectedRun]);
 
   async function loadData() {
     setLoading(true);
@@ -113,10 +183,10 @@ export default function CouncilRecommendationsPanel({
           .limit(250),
         sb
           .from("council_review_runs")
-          .select("id, model, status, summary, recommendation_count, created_at, updated_at")
+          .select("id, model, status, summary, recommendation_count, source_snapshot_json, created_at, updated_at")
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
-          .limit(10),
+          .limit(40),
       ]);
 
       if (recommendationResult.error) throw recommendationResult.error;
@@ -138,33 +208,61 @@ export default function CouncilRecommendationsPanel({
   }, [companyId]);
 
   const counts = useMemo(() => {
-    const pending = recommendations.filter((item) => item.status === "pending").length;
-    const accepted = recommendations.filter((item) => item.status === "accepted").length;
-    const ignored = recommendations.filter((item) => item.status === "ignored").length;
-    return { pending, accepted, ignored, total: recommendations.length };
-  }, [recommendations]);
+    const pending = scopedRecommendations.filter((item) => item.status === "pending").length;
+    const accepted = scopedRecommendations.filter((item) => item.status === "accepted").length;
+    const ignored = scopedRecommendations.filter((item) => item.status === "ignored").length;
+    return { pending, accepted, ignored, total: scopedRecommendations.length };
+  }, [scopedRecommendations]);
 
   const filtered = useMemo(() => {
-    if (filter === "all") return recommendations;
-    return recommendations.filter((item) => item.status === filter);
-  }, [filter, recommendations]);
+    if (filter === "all") return scopedRecommendations;
+    return scopedRecommendations.filter((item) => item.status === filter);
+  }, [filter, scopedRecommendations]);
 
   async function runCouncilReview() {
     setRunning(true);
     setError(null);
     try {
+      const beforeLatestRunId = scopedRuns[0]?.id ?? null;
       const { data, error: invokeError } = await supabase.functions.invoke("council-review", {
-        body: { company_id: companyId },
+        body: { company_id: companyId, council_key: councilKey },
       });
       if (invokeError) {
         const msg = await extractInvokeErrorMessage(invokeError, "Council review failed");
-        throw new Error(msg);
+        const lower = msg.toLowerCase();
+        const mayBeTimeout =
+          lower.includes("upstream") ||
+          lower.includes("timing out") ||
+          lower.includes("timed out") ||
+          lower.includes("timeout");
+        if (!mayBeTimeout) throw new Error(msg);
+
+        const sb = supabase as any;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await sleep(1500);
+          const { data: polledRuns, error: pollError } = await sb
+            .from("council_review_runs")
+            .select("id, source_snapshot_json, created_at")
+            .eq("company_id", companyId)
+            .order("created_at", { ascending: false })
+            .limit(20);
+          if (pollError) continue;
+          const scopedPolled = (Array.isArray(polledRuns) ? polledRuns : [])
+            .filter((run: any) => normalizeCouncilKey((run?.source_snapshot_json ?? {}).council_key) === councilKey);
+          const newestScopedRun = scopedPolled[0] ?? null;
+          if (newestScopedRun?.id && newestScopedRun.id !== beforeLatestRunId) {
+            await loadData();
+            toast.success(`${councilMeta.label} completed after timeout recovery for ${companyName}`);
+            return;
+          }
+        }
+        throw new Error(`${msg}. The run may still be processing; refresh in a few seconds.`);
       }
       if (data?.error) throw new Error(String(data.error));
-      toast.success(`Council review completed for ${companyName}`);
+      toast.success(`${councilMeta.label} completed for ${companyName}`);
       await loadData();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Council review failed";
+      const message = err instanceof Error ? err.message : `${councilMeta.label} failed`;
       setError(message);
       toast.error(message);
     } finally {
@@ -224,7 +322,24 @@ export default function CouncilRecommendationsPanel({
             Council Recommendations
           </div>
           <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
-            Review all company context and choose what to accept or ignore
+            Run council-specific recommendations and choose what to accept or ignore
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {COUNCIL_OPTIONS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setCouncilKey(option.key)}
+                className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors"
+                style={{
+                  borderColor: councilKey === option.key ? "#233C4B" : "#DDE6D1",
+                  color: councilKey === option.key ? "#233C4B" : "#6E847F",
+                  background: councilKey === option.key ? "#F3F8F5" : "#FFFFFF",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
         <button
@@ -233,7 +348,7 @@ export default function CouncilRecommendationsPanel({
           disabled={running}
           className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
         >
-          {running ? "Running council review…" : "Run Council Review"}
+          {running ? `Running ${councilMeta.label}…` : councilMeta.runLabel}
         </button>
       </div>
 
@@ -252,24 +367,61 @@ export default function CouncilRecommendationsPanel({
         </div>
       </div>
 
-      {latestRun ? (
+      {selectedRun ? (
         <div className="mt-3 rounded-xl border border-border bg-muted/10 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Latest Run
+              Run Details
             </span>
             <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {latestRun.status}
+              {councilMeta.label}
             </span>
             <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {latestRun.recommendation_count} recommendation{latestRun.recommendation_count === 1 ? "" : "s"}
+              {selectedRun.status}
             </span>
             <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {formatDate(latestRun.created_at)}
+              {selectedRun.recommendation_count} recommendation{selectedRun.recommendation_count === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              {formatDate(selectedRun.created_at)}
             </span>
           </div>
-          {latestRun.summary ? (
-            <p className="mt-2 font-sans text-[13px] text-foreground">{latestRun.summary}</p>
+
+          {scopedRuns.length > 1 ? (
+            <div className="mt-3">
+              <label
+                htmlFor="council-run-picker"
+                className="mb-1 block font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+              >
+                Select Historical Run
+              </label>
+              <select
+                id="council-run-picker"
+                value={selectedRun.id}
+                onChange={(event) => setSelectedRunId(event.target.value)}
+                className="w-full rounded-lg border border-border bg-white px-2 py-1.5 font-sans text-[12px] text-foreground"
+              >
+                {scopedRuns.map((run, index) => (
+                  <option key={run.id} value={run.id}>
+                    {index === 0 ? "Latest" : `Run ${index + 1}`} · {run.status} · {formatDate(run.created_at)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {selectedRun.summary ? (
+            <p className="mt-2 font-sans text-[13px] text-foreground">{selectedRun.summary}</p>
+          ) : null}
+          {selectedPanelDiscussion ? (
+            <details className="mt-3 rounded-lg border border-border bg-white/90 p-3">
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                Panel Discussion
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                {selectedPanelDiscussion}
+              </pre>
+            </details>
           ) : null}
         </div>
       ) : null}

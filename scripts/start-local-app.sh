@@ -2,9 +2,10 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/Users/fomomojodojo/Downloads/happy-file-hugger-main"
+PROJECT_DIR="/Users/fomomojodojo/dev/happy-file-hugger-main"
 PORT="8080"
 HOST="0.0.0.0"
+PARSER_PORT="8789"
 FUNCTION_ENV_FILE="$PROJECT_DIR/supabase/functions/.env.local"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -43,6 +44,11 @@ if docker info >/dev/null 2>&1; then
   supabase start >/tmp/hfh-supabase-start.log 2>&1 || true
 else
   echo "Docker did not become ready in time. Starting the frontend only."
+fi
+
+# Start local parser service used by edge functions for PDF/DOCX extraction.
+if ! lsof -iTCP:"$PARSER_PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+  nohup npm run parser:start >/tmp/hfh-local-parser.log 2>&1 &
 fi
 
 exec npm run dev -- --host "$HOST" --port "$PORT"

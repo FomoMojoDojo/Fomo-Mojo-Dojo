@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.happyfilehugger.local-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>-lc</string>
+      <string>if ! lsof -iTCP:8080 -sTCP:LISTEN -n -P &gt;/dev/null 2&gt;&amp;1; then /usr/bin/osascript -e 'tell application "Terminal" to do script "cd /Users/fomomojodojo/dev/happy-file-hugger-main &amp;&amp; /Users/fomomojodojo/dev/happy-file-hugger-main/scripts/start-local-app.sh"'; fi</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/happy-file-hugger-watchdog.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/happy-file-hugger-watchdog.stderr.log</string>
+  </dict>
+</plist>

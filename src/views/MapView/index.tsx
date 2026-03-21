@@ -10,6 +10,8 @@ import { useDynamicScoring } from "@/hooks/useDynamicScoring";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
@@ -18,8 +20,16 @@ import { useRoutes } from "@/views/Routes/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { SourceLegend } from "@/components/provenance/SourceLegend";
+import { LlmTraceLegend, type LlmTraceItem } from "@/components/provenance/LlmTraceLegend";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 import { computeWorkflowGuidance } from "@/lib/workflowPhase";
+import { mapInputToAreaKey } from "@/lib/areaMapping";
+import {
+  alignmentLevelFromFocus,
+  classifyOpportunityFocus,
+  deriveInitiativeContext,
+} from "@/lib/initiativeFocus";
+import AlignmentCircle from "@/components/ui/AlignmentCircle";
 import { toast } from "sonner";
 
 /* ── Clean, sophisticated palette ── */
@@ -55,23 +65,6 @@ function isClientSummary(value: unknown): value is ClientSummary {
 
 function areaDisplayLabel(area: ScoreArea): string {
   return area.area_label || area.area_key || "Area";
-}
-
-function mapInputToAreaKey(input: InputItem): "positioning" | "strategy" | "product" | "marketing" | "sales" | "cx" {
-  const sub = String(input.sub_group || "").toLowerCase();
-  const group = input.group_key;
-
-  if (sub.includes("positioning")) return "positioning";
-  if (sub.includes("strategy")) return "strategy";
-  if (sub.includes("service delivery") || sub.includes("operations") || sub.includes("product")) return "product";
-  if (sub.includes("awareness") || sub.includes("marketing") || sub.includes("outreach")) return "marketing";
-  if (sub.includes("referral") || sub.includes("sales") || sub.includes("pipeline")) return "sales";
-  if (sub.includes("fundraising") || sub.includes("revenue") || sub.includes("donor")) return "sales";
-  if (sub.includes("family") || sub.includes("customer") || sub.includes("client") || sub.includes("experience") || sub.includes("satisfaction")) return "cx";
-
-  if (group === "foundation") return "positioning";
-  if (group === "execution") return "marketing";
-  return "cx";
 }
 
 function formatEvidenceLabel(status: unknown) {
@@ -143,8 +136,10 @@ export default function MapView() {
   const [deepDiveOpen, setDeepDiveOpen] = useState(false);
   const [deepDiveArea, setDeepDiveArea] = useState<string | null>(null);
 
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { activeCompany, refetch: refetchCompanies } = useCompany();
+  const { run: baselineRun } = usePublicBaseline(activeCompany?.id);
 
   const { query: inputsQuery } = useInputs();
   const inputs = useMemo<InputItem[]>(() => {
@@ -223,6 +218,48 @@ export default function MapView() {
       ? activeCompany.area_scores_json
       : fallbackScores.area_scores_json;
   const localScoreImpact = localAlignment?.score_impact ?? null;
+  const llmTraceItems = useMemo<LlmTraceItem[]>(() => {
+    if (!llmTraceEnabled || !isAdmin) return [];
+    const resultJson = baselineRun?.result_json as
+      | { run_ledger?: { provider?: string; model?: string; path?: string } }
+      | null
+      | undefined;
+    const publicProvider = String(resultJson?.run_ledger?.provider || "openai_public");
+    const publicModel = String(resultJson?.run_ledger?.model || "unknown");
+    const publicPath = String(resultJson?.run_ledger?.path || "public_web_research");
+
+    const items: LlmTraceItem[] = [
+      {
+        id: "public-baseline",
+        tier: "public",
+        label: `Public ${publicModel}`,
+        detail: `${publicProvider} · ${publicPath}`,
+      },
+    ];
+
+    if (localAlignment?.provider || localAlignment?.model) {
+      items.push({
+        id: "local-alignment",
+        tier: "local",
+        label: `Local ${localAlignment.model || "unknown"}`,
+        detail: `${localAlignment.provider || "ollama_local"} · local_comparison`,
+      });
+    }
+
+    const hasLocalDraftStep = jobSteps.some((step) =>
+      String(step.evidence_basis || "").toLowerCase().includes("local draft step generated"),
+    );
+    if (hasLocalDraftStep) {
+      items.push({
+        id: "local-fallback",
+        tier: "fallback",
+        label: "Local Draft Fallback",
+        detail: "Job steps include local draft placeholders (external model unavailable during generation).",
+      });
+    }
+
+    return items;
+  }, [baselineRun?.result_json, isAdmin, jobSteps, llmTraceEnabled, localAlignment?.model, localAlignment?.provider]);
 
   useEffect(() => {
     previousScoresRef.current = null;
@@ -282,21 +319,61 @@ export default function MapView() {
     (i) => i.status === "gap" || i.status === "not_started"
   ).length;
 
-  const completePct =
-    inputTotal > 0
-      ? Math.round(
-          inputs.reduce((s, i) => s + safeNumber(i.completeness, 0), 0) /
-            inputTotal
-        )
-      : 0;
+  const inputGroupCards = useMemo(() => {
+    const groups = [
+      { key: "foundation", label: "Foundation", badge: "Positioning & Strategy", accent: "#e8613a" },
+      { key: "execution", label: "Execution", badge: "Product & Marketing", accent: "#3a9a8c" },
+      { key: "market_evidence", label: "Market Evidence", badge: "Sales & Customer Data", accent: "#c48a2a" },
+    ] as const;
+
+    return groups.map((group) => {
+      const items = inputs.filter((item) => item.group_key === group.key);
+      const total = items.length;
+      const complete = items.filter((item) => item.status === "complete").length;
+      const gaps = items.filter((item) => item.status === "gap" || item.status === "not_started").length;
+      const pct =
+        total > 0
+          ? Math.round(items.reduce((sum, item) => sum + safeNumber(item.completeness, 0), 0) / total)
+          : 0;
+
+      return {
+        ...group,
+        total,
+        complete,
+        gaps,
+        pct,
+      };
+    });
+  }, [inputs]);
+
+  const initiativeContext = useMemo(
+    () =>
+      deriveInitiativeContext({
+        areaScoresJson: activeCompany?.area_scores_json,
+        jobSteps,
+        strategicProblems,
+      }),
+    [activeCompany?.area_scores_json, jobSteps, strategicProblems],
+  );
 
   const focusOpps = useMemo(() => {
     const items = Array.isArray(oppItems) ? oppItems : [];
-    return items
+    const ranked = items
       .filter((o) => o.priority_tier === "focus")
-      .sort((a, b) => safeNumber(b.opportunity_score, 0) - safeNumber(a.opportunity_score, 0))
+      .map((item) => ({
+        item,
+        focus: classifyOpportunityFocus(item, initiativeContext),
+      }))
+      .sort((a, b) => {
+        const alignA = alignmentLevelFromFocus(a.focus);
+        const alignB = alignmentLevelFromFocus(b.focus);
+        if (alignA !== alignB) return alignB - alignA;
+        if (a.focus.overlap !== b.focus.overlap) return b.focus.overlap - a.focus.overlap;
+        return safeNumber(b.item.opportunity_score, 0) - safeNumber(a.item.opportunity_score, 0);
+      })
       .slice(0, 8);
-  }, [oppItems]);
+    return ranked;
+  }, [oppItems, initiativeContext]);
 
   function openDeepDive(areaKey: string) {
     setDeepDiveArea(areaKey);
@@ -358,7 +435,10 @@ export default function MapView() {
   }, [inputs]);
 
   const researchFinding = useMemo(() => {
-    const topFocus = focusOpps[0];
+    const topFocusEntry =
+      focusOpps.find((entry) => alignmentLevelFromFocus(entry.focus) > 0 || entry.focus.overlap > 0) ??
+      focusOpps[0];
+    const topFocus = topFocusEntry?.item;
     if (topFocus) {
       const stepContext =
         topFocus.step_label && topFocus.step_number
@@ -367,17 +447,32 @@ export default function MapView() {
       const oppScore = safeNumber(topFocus.opportunity_score, 0);
       const importance = safeNumber(topFocus.importance, 0);
       const satisfaction = safeNumber(topFocus.satisfaction, 0);
+      const initiativeLabel = initiativeContext.primaryJourneyTitle;
+      const alignmentPct = alignmentLevelFromFocus(topFocusEntry?.focus) * 25;
       return {
         label: "Highest-Impact Finding",
         headline: topFocus.outcome || "A high-impact opportunity was identified.",
         detail:
-          `Research points to ${stepContext} as the strongest leverage point right now. ` +
+          `Research points to ${stepContext} as the strongest leverage point right now for ${initiativeLabel} (alignment ${alignmentPct}%). ` +
           `This outcome carries an estimated opportunity score of ${oppScore}, with importance at ${importance} and satisfaction at ${satisfaction}, which suggests a meaningful gap worth fixing first.`,
         chips: [
           { label: "Opp", value: oppScore },
           { label: "Imp", value: importance },
           { label: "Sat", value: satisfaction },
         ],
+      };
+    }
+
+    const openStrategicProblems = strategicProblems.filter(
+      (item) => String(item?.status || "").toLowerCase() !== "inactive",
+    );
+    if (openStrategicProblems.length > 0) {
+      return {
+        label: "Strategic Problem Coverage",
+        headline: "Current focus opportunities are not yet tied to the stated ask.",
+        detail:
+          "The current generated opportunities do not show clear overlap with your client-stated strategic problem yet. This usually means we need a more initiative-specific job map or a fresh research run grounded in the reconciled problem.",
+        chips: [{ label: "Open Problems", value: openStrategicProblems.length }],
       };
     }
 
@@ -413,7 +508,7 @@ export default function MapView() {
         "Run Web Baseline + AI Research to generate an evidence-backed finding about the most important thing to fix next.",
       chips: [],
     };
-  }, [focusOpps, weakestArea, topInputGap, summary]);
+  }, [focusOpps, weakestArea, topInputGap, summary, initiativeContext, strategicProblems]);
 
   // Areas list (full width card)
   const areaList: ScoreArea[] = Array.isArray(areas) ? areas : [];
@@ -539,14 +634,10 @@ export default function MapView() {
                   : `Estimated from current artifacts · ${evidencePct}% confidence`}
               </MetaBadge>
               <SourceLegend signals={sourceSignals} />
+              {llmTraceEnabled && isAdmin ? (
+                <LlmTraceLegend items={llmTraceItems} />
+              ) : null}
             </div>
-            <Link
-              to="/admin/companies"
-              className="font-mono text-[10px] uppercase tracking-wider hover:opacity-70 transition-opacity"
-              style={{ color: c.muted }}
-            >
-              Admin →
-            </Link>
           </div>
         </div>
 
@@ -680,7 +771,6 @@ export default function MapView() {
                 <ScoreChip label="Done" value={inputComplete} />
                 <ScoreChip label="Total" value={inputTotal} />
                 <StateBadge tone={inputGaps > 0 ? "gap" : "designed"}>{inputGaps} gaps</StateBadge>
-                <ScoreChip label="Avg" value={completePct} />
               </div>
             </div>
 
@@ -804,12 +894,12 @@ export default function MapView() {
                     No focus opportunities yet.
                   </p>
                   <p className="font-sans text-[12px] mt-1" style={{ color: c.muted }}>
-                    Run <span className="font-semibold">AI Research</span> in Admin → Companies.
+                    Run <span className="font-semibold">AI Research</span> to generate focus opportunities.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {focusOpps.map((o) => (
+                  {focusOpps.map(({ item: o, focus }) => (
                     <div
                       key={o.id}
                       className="rounded-lg p-3"
@@ -827,7 +917,13 @@ export default function MapView() {
                           </p>
                         </div>
 
-                        <div className="shrink-0">
+                        <div className="shrink-0 flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full border px-1.5 py-1" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                            <AlignmentCircle
+                              level={alignmentLevelFromFocus(focus)}
+                              title={`Goal alignment ${alignmentLevelFromFocus(focus) * 25}%`}
+                            />
+                          </span>
                           <ScoreChip label="Score" value={o.opportunity_score} />
                         </div>
                       </div>
@@ -1013,29 +1109,30 @@ export default function MapView() {
                   <ScoreChip label="Done" value={inputComplete} />
                   <ScoreChip label="Total" value={inputTotal} />
                   <StateBadge tone={inputGaps > 0 ? "gap" : "designed"}>{inputGaps} gaps</StateBadge>
-                  <ScoreChip label="Avg" value={completePct} />
                 </div>
               </div>
 
               <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-                {[
-                  { label: "Foundation", hint: "Positioning + program clarity", badge: "Positioning & Strategy" },
-                  { label: "Execution", hint: "Channels + operating loop", badge: "Product & Marketing" },
-                  { label: "Market Evidence", hint: "Signals + validation", badge: "Sales & Customer Data" },
-                ].map((x) => (
+                {inputGroupCards.map((group) => (
                   <div
-                    key={x.label}
+                    key={group.label}
                     className="rounded-lg p-3"
                     style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
                   >
                     <p className="font-sans text-[12px] font-semibold" style={{ color: c.charcoal }}>
-                      {x.label}
+                      {group.label}
                     </p>
                     <div className="mt-2">
-                      <MetaBadge>{x.badge}</MetaBadge>
+                      <MetaBadge>{group.badge}</MetaBadge>
+                    </div>
+                    <div className="mt-2 h-[4px] w-full rounded-full overflow-hidden" style={{ background: c.line }}>
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${group.pct}%`, background: group.accent }}
+                      />
                     </div>
                     <p className="font-sans text-[12px] mt-2" style={{ color: c.secondary }}>
-                      {x.hint}
+                      {group.complete}/{group.total} complete · {group.gaps} gaps
                     </p>
                   </div>
                 ))}

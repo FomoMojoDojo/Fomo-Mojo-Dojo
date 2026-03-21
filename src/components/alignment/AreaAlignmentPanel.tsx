@@ -24,12 +24,6 @@ function impactTone(impact: "low" | "medium" | "high") {
   return { fg: "#916404", bg: "#FFF7DD", border: "#F0DB94" };
 }
 
-function checkTone(status: "pass" | "partial" | "fail") {
-  if (status === "pass") return { fg: "#2E6B52", bg: "#EEF7F2", border: "#CDE2D8" };
-  if (status === "fail") return { fg: "#A53F2B", bg: "#FFEDE7", border: "#F5C2B5" };
-  return { fg: "#916404", bg: "#FFF7DD", border: "#F0DB94" };
-}
-
 export function AreaAlignmentPanel({
   title,
   area,
@@ -56,7 +50,7 @@ export function AreaAlignmentPanel({
         <div>
           {sectionLabel(`${title} Alignment`, mutedColor)}
           <p className="mt-1 font-sans text-[13px]" style={{ color: textColor }}>
-            Side-by-side comparison of public baseline claims and uploaded internal evidence.
+            Comparison of public findings and uploaded company evidence for this area.
           </p>
         </div>
         <div className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ borderColor: lineColor, color: mutedColor }}>
@@ -203,21 +197,16 @@ export function AreaAlignmentPanel({
       </div>
 
       <div className="mt-4 rounded-[14px] border px-3 py-3" style={{ borderColor: lineColor, background: "#FFFFFF" }}>
-        {sectionLabel("Methodology Checks", mutedColor)}
-        <div className="mt-2 flex flex-wrap gap-2">
+        {sectionLabel("Quick Reminders", mutedColor)}
+        <div className="mt-2 space-y-2">
           {area.approach_checks.length === 0 ? (
-            <p className="font-sans text-[12px]" style={{ color: mutedColor }}>No checks available.</p>
+            <p className="font-sans text-[12px]" style={{ color: mutedColor }}>No reminders available yet.</p>
           ) : (
-            area.approach_checks.slice(0, 6).map((check, index) => {
-              const tone = checkTone(check.status);
-              return (
-                <div key={`${check.check}-${index}`} className="rounded-full border px-3 py-1" style={{ borderColor: tone.border, background: tone.bg }}>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: tone.fg }}>
-                    {check.status}: {check.check}
-                  </span>
-                </div>
-              );
-            })
+            area.approach_checks.slice(0, 6).map((check, index) => (
+              <p key={`${check.check}-${index}`} className="font-sans text-[12px] italic leading-[1.6]" style={{ color: mutedColor }}>
+                {check.check}{check.note ? ` — ${check.note}` : ""}
+              </p>
+            ))
           )}
         </div>
       </div>

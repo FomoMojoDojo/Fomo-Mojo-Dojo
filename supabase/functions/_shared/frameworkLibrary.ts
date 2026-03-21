@@ -43,7 +43,7 @@ const FRAMEWORK_LIBRARY: FrameworkReference[] = [
     priority: 50,
     summary:
       "Frames demand around the job the customer is trying to get done, the desired outcomes, and where outcomes are underserved or overserved.",
-    useCases: ["journeys", "opportunities", "routes", "positioning"],
+    useCases: ["inputs", "journeys", "opportunities", "routes", "positioning"],
     concepts: [
       "Separate the job from the solution.",
       "Use stable desired outcomes rather than feature wishlists.",
@@ -94,6 +94,10 @@ const FRAMEWORK_LIBRARY: FrameworkReference[] = [
       "underserved opportunities",
     ],
     promptRules: {
+      inputs: [
+        "Ensure input definitions include the core ODI structure: customer job context, desired outcomes, and a way to capture importance and satisfaction.",
+        "Do not use \"not applicable\" placeholders; translate each required input into the closest ODI-relevant signal for this company's business model.",
+      ],
       journeys: [
         "Describe the customer, revenue, and operations journeys as attempts to get important jobs done.",
         "Make each step correspond to a meaningful progress point in the job, not a generic business stage.",
@@ -554,7 +558,7 @@ export function buildFrameworkCatalog(): string {
 }
 
 const ARTIFACT_ROUTING: Record<FrameworkArtifact, FrameworkKey[]> = {
-  inputs: ["working_playbook", "positioning_first", "strategy_cascade", "april_dunford", "teresa_torres"],
+  inputs: ["working_playbook", "positioning_first", "strategy_cascade", "april_dunford", "odi", "teresa_torres"],
   journeys: ["working_playbook", "positioning_first", "odi"],
   opportunities: ["working_playbook", "positioning_first", "odi", "teresa_torres"],
   routes: ["working_playbook", "positioning_first", "strategy_cascade", "odi", "teresa_torres", "april_dunford", "heath_brothers"],
