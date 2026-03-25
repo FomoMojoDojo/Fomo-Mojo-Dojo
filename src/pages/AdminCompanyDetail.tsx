@@ -6,6 +6,7 @@ import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePane
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
 import CouncilRecommendationsPanel from "@/components/admin/CouncilRecommendationsPanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
+import TopNav from "@/components/layout/TopNav";
 import { ArrowLeft, ArrowRight, Building2, Globe } from "lucide-react";
 
 const c = {
@@ -40,9 +41,12 @@ export default function AdminCompanyDetail() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: c.bg }}>
-        <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-          Loading company…
+      <div className="min-h-screen" style={{ background: c.bg }}>
+        <TopNav />
+        <div className="flex items-center justify-center py-16">
+          <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+            Loading company…
+          </div>
         </div>
       </div>
     );
@@ -51,6 +55,7 @@ export default function AdminCompanyDetail() {
   if (!company) {
     return (
       <div className="min-h-screen" style={{ background: c.bg }}>
+        <TopNav />
         <div className="max-w-5xl mx-auto px-6 py-10">
           <Link
             to="/admin/companies"
@@ -75,6 +80,7 @@ export default function AdminCompanyDetail() {
 
   return (
     <div className="min-h-screen" style={{ background: c.bg }}>
+      <TopNav />
       <div
         className="border-b backdrop-blur-sm"
         style={{ borderColor: c.line, background: "rgba(255,255,255,0.88)" }}
@@ -125,7 +131,7 @@ export default function AdminCompanyDetail() {
         <AiBoundaryNote
           label="Public Research"
           tone="public"
-          detail="Baseline, Research, and Baseline + Research use the company website and public web evidence. They do not use uploaded client files or meeting notes."
+          detail="Baseline, Research, and Baseline + Research prioritize company website + public web evidence. When public evidence is weak, research now falls back to uploaded company files."
         />
 
         <section className="rounded-2xl p-5 shadow-sm" style={{ background: c.panel, border: `1px solid ${c.line}` }}>

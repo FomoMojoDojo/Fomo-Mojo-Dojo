@@ -5,6 +5,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useToast } from "@/hooks/use-toast";
+import TopNav from "@/components/layout/TopNav";
 import { Input } from "@/components/ui/input";
 import {
   Sheet,
@@ -148,13 +149,22 @@ function normalizeDisplayName(raw: string | null | undefined) {
 }
 
 async function describeResearchInvokeError(error: unknown) {
-  if (error instanceof FunctionsHttpError) {
-    const payloadText = await error.context.text().catch(() => "");
+  const maybeContext = (() => {
+    if (!error || typeof error !== "object") return null;
+    const candidate = (error as { context?: { status?: number; text?: () => Promise<string> } }).context;
+    if (!candidate || typeof candidate.text !== "function") return null;
+    return candidate;
+  })();
+
+  if (error instanceof FunctionsHttpError || maybeContext) {
+    const statusCode = maybeContext?.status ?? (error instanceof FunctionsHttpError ? error.context.status : 0);
+    const payloadText = await (maybeContext?.text?.() ?? Promise.resolve("")).catch(() => "");
     const payload = (() => {
       if (!payloadText) return null;
       try {
         return JSON.parse(payloadText) as {
           error?: string;
+          message?: string;
           status?: string;
           reason?: string;
           operation?: string;
@@ -166,6 +176,7 @@ async function describeResearchInvokeError(error: unknown) {
       }
     })() as {
       error?: string;
+      message?: string;
       status?: string;
       reason?: string;
       operation?: string;
@@ -173,10 +184,19 @@ async function describeResearchInvokeError(error: unknown) {
       reviews?: Array<{ key?: string; review?: { severity?: string; summary?: string } }>;
     } | null;
 
-    if (error.context.status === 422) {
-      const status = String(payload?.status || "");
-      const reason = String(payload?.reason || "");
+    const status = String(payload?.status || "");
+    const reason = String(payload?.reason || "");
 
+    if (status === "company_locked") {
+      const operation = String(payload?.operation || "another run");
+      const startedAt = payload?.started_at ? new Date(payload.started_at).toLocaleTimeString() : "";
+      return {
+        title: "Company Busy",
+        description: `${operation} is already running for this company${startedAt ? ` since ${startedAt}` : ""}. Wait for it to finish, then retry.`,
+      } satisfies InvokeErrorDetails;
+    }
+
+    if (statusCode === 422) {
       if (status === "ambiguous_public_evidence" || status === "insufficient_public_evidence") {
         return {
           title: "Baseline Review Needed",
@@ -212,19 +232,11 @@ async function describeResearchInvokeError(error: unknown) {
               : "Choose a job map in Job Steps before running full AI Research.",
         };
       }
-
-      if (status === "company_locked") {
-        const operation = String(payload?.operation || "another run");
-        const startedAt = payload?.started_at ? new Date(payload.started_at).toLocaleTimeString() : "";
-        return {
-          title: "Company Busy",
-          description: `${operation} is already running for this company${startedAt ? ` since ${startedAt}` : ""}. Wait for it to finish, then retry.`,
-        };
-      }
     }
 
     const rawText = [
       String(payload?.error || ""),
+      String(payload?.message || ""),
       String(payloadText || ""),
       String(error.message || ""),
     ]
@@ -232,7 +244,7 @@ async function describeResearchInvokeError(error: unknown) {
       .toLowerCase();
 
     if (
-      error.context.status === 504 ||
+      statusCode === 504 ||
       rawText.includes("upstream server is timing out") ||
       rawText.includes("gateway timeout") ||
       rawText.includes("timed out")
@@ -247,13 +259,29 @@ async function describeResearchInvokeError(error: unknown) {
 
     return {
       title: "Research Failed",
-      description: String(payload?.error || payloadText || error.message),
+      description: String(payload?.message || payload?.error || payloadText || error.message),
+    } satisfies InvokeErrorDetails;
+  }
+
+  const fallbackMessage = error instanceof Error ? error.message : String(error);
+  const fallbackRawText = fallbackMessage.toLowerCase();
+  if (
+    fallbackRawText.includes("failed to fetch") ||
+    fallbackRawText.includes("fetch failed") ||
+    fallbackRawText.includes("networkerror") ||
+    fallbackRawText.includes("econnrefused") ||
+    fallbackRawText.includes("connection refused")
+  ) {
+    return {
+      title: "Research Service Unavailable",
+      description:
+        "Could not reach the local research function runtime. Restart local Supabase services (especially edge runtime), then retry AI Research.",
     } satisfies InvokeErrorDetails;
   }
 
   return {
     title: "Research Failed",
-    description: error instanceof Error ? error.message : String(error),
+    description: fallbackMessage,
   } satisfies InvokeErrorDetails;
 }
 
@@ -868,6 +896,7 @@ export default function AdminCompanies() {
 
   return (
     <div className="min-h-screen" style={{ background: c.bg }}>
+      <TopNav />
       {/* Map-view-ish header (light) */}
       <div
         className="border-b backdrop-blur-sm"
@@ -992,7 +1021,7 @@ export default function AdminCompanies() {
         <AiBoundaryNote
           label="Public Research"
           tone="public"
-          detail="Baseline, Research, and Baseline + Research use the company website and public web evidence. They do not use uploaded client files or meeting notes."
+          detail="Baseline, Research, and Baseline + Research prioritize company website + public web evidence. When public evidence is weak, research now falls back to uploaded company files."
         />
 
         {/* Create modal */}

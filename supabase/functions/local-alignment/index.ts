@@ -12,9 +12,10 @@ const corsHeaders = {
 };
 
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
-const DEFAULT_AREAS = ["positioning", "strategy"] as const;
-const PROMPT_VERSION = "local-alignment-v1-2026-03-18";
+const DEFAULT_AREAS = ["positioning", "strategy", "market", "odi"] as const;
+const PROMPT_VERSION = "local-alignment-v2-2026-03-25";
 const OLLAMA_TIMEOUT_MS = 4_000;
+const COMPARISON_SIGNATURE_VERSION = "local-align-v2-2026-03-25";
 const PLAIN_LANGUAGE_RULES =
   "Use clear, plain language for all output. " +
   "Avoid consulting jargon, business cliches, and buzzwords. " +
@@ -26,6 +27,8 @@ const PLAIN_LANGUAGE_RULES =
 const INPUT_KEYS_BY_AREA: Record<string, string[]> = {
   positioning: ["comp-alt", "unique-attr", "val-prop", "target-aud", "market-cat", "brand-narrative"],
   strategy: ["program-model", "needs-assessment", "outcome-data", "referral-map", "channel-strat"],
+  market: ["market-cat", "target-aud", "comp-alt", "needs-assessment", "brand-narrative"],
+  odi: ["outcome-data", "needs-assessment", "program-model"],
 };
 
 function uniqueFrameworks(frameworks: FrameworkReference[]) {
@@ -38,6 +41,33 @@ function frameworkPlanForArea(areaKey: string) {
   if (areaKey === "positioning") {
     const artifact: FrameworkArtifact = "positioning";
     const frameworks = getFrameworkRoutingPlan(artifact);
+    return {
+      artifact,
+      frameworkKeys: frameworks.map((framework) => framework.key),
+      frameworkBrief: buildFrameworkBrief(artifact, frameworks),
+    };
+  }
+
+  if (areaKey === "market") {
+    const artifact: FrameworkArtifact = "positioning";
+    const frameworks = uniqueFrameworks([
+      ...getFrameworkRoutingPlan("positioning"),
+      ...getFrameworkRoutingPlan("inputs"),
+    ]);
+    return {
+      artifact,
+      frameworkKeys: frameworks.map((framework) => framework.key),
+      frameworkBrief: buildFrameworkBrief(artifact, frameworks),
+    };
+  }
+
+  if (areaKey === "odi") {
+    const artifact: FrameworkArtifact = "opportunities";
+    const frameworks = uniqueFrameworks([
+      ...getFrameworkRoutingPlan("journeys"),
+      ...getFrameworkRoutingPlan("opportunities"),
+      ...getFrameworkRoutingPlan("routes"),
+    ]);
     return {
       artifact,
       frameworkKeys: frameworks.map((framework) => framework.key),
@@ -139,6 +169,9 @@ function signatureForComparison(args: {
   positioningUpdatedAt: string | null;
   strategyId: string | null;
   strategyUpdatedAt: string | null;
+  marketDefinitionId: string | null;
+  marketDefinitionUpdatedAt: string | null;
+  odiNeedsSlice: string;
   inputs: Array<Record<string, unknown>>;
   files: Array<Record<string, unknown>>;
 }) {
@@ -169,11 +202,13 @@ function signatureForComparison(args: {
     `baseline:${args.baselineRunId || "-"}@${args.baselineRunAt || "-"}`,
     `positioning:${args.positioningId || "-"}@${args.positioningUpdatedAt || "-"}`,
     `strategy:${args.strategyId || "-"}@${args.strategyUpdatedAt || "-"}`,
+    `market:${args.marketDefinitionId || "-"}@${args.marketDefinitionUpdatedAt || "-"}`,
+    `odi:${args.odiNeedsSlice || "-"}`,
     `inputs:${inputSlice}`,
     `files:${fileSlice}`,
   ].join("||");
 
-  return `local-align-v1:${stableHash(raw)}`;
+  return `${COMPARISON_SIGNATURE_VERSION}:${stableHash(raw)}`;
 }
 
 function computePotentialProjected(mojoScore: number) {
@@ -211,8 +246,10 @@ function hasTag(tags: string[], expected: string[]) {
 function inferTierFromTags(tags: string[]) {
   if (hasTag(tags, ["implemented & tested", "implemented tested"])) return "implemented_tested";
   if (hasTag(tags, ["primary evidence", "evidence"])) return "evidence";
+  if (hasTag(tags, ["public"])) return "public";
   if (hasTag(tags, ["company"])) return "company";
-  return "public";
+  // Uploaded client files should default to company evidence unless explicitly marked otherwise.
+  return "company";
 }
 
 function asClaimList(value: unknown): Claim[] {
@@ -261,6 +298,17 @@ function deriveScoreImpact(args: {
     (internalTierCounts.company ?? 0) +
     2 * (internalTierCounts.evidence ?? 0) +
     3 * (internalTierCounts.implemented_tested ?? 0);
+
+  if (publicCount === 0 && internalCount > 0) {
+    const points = Math.min(4, Math.max(1, Math.round(validationDepth / 2)));
+    return {
+      should_change: true,
+      direction: "up" as const,
+      points,
+      reason:
+        `No reliable public baseline is available for ${areaKey}; uploaded company evidence now provides enough signal for a modest confidence increase.`,
+    };
+  }
 
   if (internalCount === 0 && gapSeverity >= 3) {
     const points = Math.min(7, 2 + gapSeverity);
@@ -368,28 +416,74 @@ function deterministicCompare(args: {
               : "No internal evidence is available yet.",
         },
       ]
-    : [
-        {
-          check: "Cascade coherence from aspiration to systems",
-          status: publicClaims.length >= 3 ? "pass" : "partial",
-          note: publicClaims.length >= 3
-            ? "Strategy structure appears present in current artifacts."
-            : "Strategy elements are present but not robustly documented.",
-        },
-        {
-          check: "Execution evidence supports strategic assumptions",
-          status: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
-            ? "pass"
-            : internalTierCounts.company > 0
-              ? "partial"
-              : "fail",
-          note: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
-            ? "Primary or implemented evidence is available."
-            : internalTierCounts.company > 0
-              ? "Company inputs exist but external validation is limited."
-              : "No internal evidence is attached for strategy validation.",
-        },
-      ];
+    : areaKey === "strategy"
+      ? [
+          {
+            check: "Cascade coherence from aspiration to systems",
+            status: publicClaims.length >= 3 ? "pass" : "partial",
+            note: publicClaims.length >= 3
+              ? "Strategy structure appears present in current artifacts."
+              : "Strategy elements are present but not robustly documented.",
+          },
+          {
+            check: "Execution evidence supports strategic assumptions",
+            status: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+              ? "pass"
+              : internalTierCounts.company > 0
+                ? "partial"
+                : "fail",
+            note: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+              ? "Primary or implemented evidence is available."
+              : internalTierCounts.company > 0
+                ? "Company inputs exist but external validation is limited."
+                : "No internal evidence is attached for strategy validation.",
+          },
+        ]
+      : areaKey === "market"
+        ? [
+            {
+              check: "Market context names category, executor, and chooser clearly",
+              status: publicClaims.length >= 3 ? "pass" : "partial",
+              note: publicClaims.length >= 3
+                ? "Market framing has enough structure to evaluate."
+                : "Market framing exists but is still thin or generic.",
+            },
+            {
+              check: "Uploaded evidence confirms market assumptions",
+              status: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+                ? "pass"
+                : internalTierCounts.company > 0
+                  ? "partial"
+                  : "fail",
+              note: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+                ? "Primary or implemented evidence supports market assumptions."
+                : internalTierCounts.company > 0
+                  ? "Company files exist but primary evidence is still limited."
+                  : "No uploaded internal evidence is mapped to market context yet.",
+            },
+          ]
+        : [
+            {
+              check: "ODI needs are expressed as outcome statements with score context",
+              status: publicClaims.length >= 3 ? "pass" : "partial",
+              note: publicClaims.length >= 3
+                ? "ODI-style outcome context is present."
+                : "ODI context exists but needs stronger structure and specificity.",
+            },
+            {
+              check: "Uploaded evidence validates ODI needs and priorities",
+              status: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+                ? "pass"
+                : internalTierCounts.company > 0
+                  ? "partial"
+                  : "fail",
+              note: internalTierCounts.evidence > 0 || internalTierCounts.implemented_tested > 0
+                ? "Primary or implemented evidence supports ODI needs."
+                : internalTierCounts.company > 0
+                  ? "Company uploads exist but stronger interview/survey evidence is still needed."
+                  : "No uploaded internal evidence is mapped to ODI needs yet.",
+            },
+          ];
 
   const derivedImpact = deriveScoreImpact({
     areaKey,
@@ -425,7 +519,14 @@ function deterministicCompare(args: {
             priority: "medium" as const,
           },
         ],
-    applies_to_areas: areaKey === "positioning" ? ["strategy", "marketing", "routes"] : ["positioning", "routes", "opportunities"],
+    applies_to_areas:
+      areaKey === "positioning"
+        ? ["strategy", "market", "routes"]
+        : areaKey === "strategy"
+          ? ["positioning", "market", "opportunities"]
+          : areaKey === "market"
+            ? ["positioning", "strategy", "opportunities"]
+            : ["journeys", "opportunities", "routes"],
     score_impact: derivedImpact,
   } as AreaComparison;
 }
@@ -661,7 +762,9 @@ Deno.serve(async (req) => {
     const areasRequested = Array.isArray(body?.areas)
       ? body.areas.map((entry: unknown) => String(entry || "").trim().toLowerCase()).filter(Boolean)
       : [...DEFAULT_AREAS];
-    const areas = Array.from(new Set(areasRequested.filter((area) => area === "positioning" || area === "strategy")));
+    const areas = Array.from(
+      new Set(areasRequested.filter((area) => area === "positioning" || area === "strategy" || area === "market" || area === "odi")),
+    );
     if (!companyId) return json({ error: "company_id is required" }, 400);
     if (areas.length === 0) return json({ error: "No valid areas requested" }, 400);
 
@@ -676,7 +779,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const [{ data: companyRow }, { data: baselineRun }, { data: positioningRow }, { data: strategyRow }, { data: inputRows }] =
+    const [{ data: companyRow }, { data: baselineRun }, { data: positioningRow }, { data: strategyRow }, { data: marketDefinitionRow }, { data: odiNeedRows }, { data: inputRows }] =
       await Promise.all([
         supabase
           .from("companies")
@@ -704,6 +807,19 @@ Deno.serve(async (req) => {
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
+        supabase
+          .from("odi_market_definitions")
+          .select("id,job_executor,chooser,jtbd,source_path,updated_at,created_at")
+          .eq("company_id", companyId)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("odi_needs")
+          .select("id,desired_outcome,importance,satisfaction,opportunity_score,journey_key,step_label,source_path,created_at")
+          .eq("company_id", companyId)
+          .order("opportunity_score", { ascending: false })
+          .limit(120),
         supabase
           .from("inputs")
           .select("id,input_key,input_label,sub_group,group_key,description,why_it_matters,status,completeness,updated_at")
@@ -750,6 +866,27 @@ Deno.serve(async (req) => {
       strategyUpdatedAt: (strategyRow as { updated_at?: unknown } | null)?.updated_at
         ? String((strategyRow as { updated_at?: unknown }).updated_at)
         : null,
+      marketDefinitionId: (marketDefinitionRow as { id?: unknown } | null)?.id
+        ? String((marketDefinitionRow as { id?: unknown }).id)
+        : null,
+      marketDefinitionUpdatedAt: (marketDefinitionRow as { updated_at?: unknown; created_at?: unknown } | null)?.updated_at
+        ? String((marketDefinitionRow as { updated_at?: unknown }).updated_at)
+        : (marketDefinitionRow as { created_at?: unknown } | null)?.created_at
+          ? String((marketDefinitionRow as { created_at?: unknown }).created_at)
+          : null,
+      odiNeedsSlice: Array.isArray(odiNeedRows)
+        ? odiNeedRows
+            .slice(0, 50)
+            .map((entry: any) =>
+              [
+                String(entry?.id || ""),
+                String(entry?.desired_outcome || "").slice(0, 80),
+                String(entry?.opportunity_score || ""),
+                String(entry?.source_path || ""),
+              ].join(":"),
+            )
+            .join("|")
+        : "",
       inputs: (inputs as Record<string, unknown>[]),
       files: (files as Record<string, unknown>[]),
     });
@@ -757,6 +894,12 @@ Deno.serve(async (req) => {
     const baselineJson = (baselineRun?.result_json && typeof baselineRun.result_json === "object")
       ? baselineRun.result_json as Record<string, unknown>
       : {};
+    const marketDefinition = (marketDefinitionRow && typeof marketDefinitionRow === "object")
+      ? marketDefinitionRow as Record<string, unknown>
+      : null;
+    const odiNeeds = Array.isArray(odiNeedRows)
+      ? (odiNeedRows as Array<Record<string, unknown>>)
+      : [];
     const baselineHypotheses = Array.isArray(baselineJson?.top_hypotheses)
       ? baselineJson.top_hypotheses.map((entry) => String(entry || "").trim()).filter(Boolean).slice(0, 6)
       : [];
@@ -774,10 +917,18 @@ Deno.serve(async (req) => {
         const inputKey = String(entry?.input_key || "").trim();
         if (keySet.has(inputKey)) return true;
         const subGroup = normalizeText(entry?.sub_group);
-        if (areaKey === "positioning") {
-          return subGroup.includes("position") || subGroup.includes("market") || subGroup.includes("story");
-        }
-        return subGroup.includes("strategy") || subGroup.includes("program") || subGroup.includes("delivery");
+        const groupKey = normalizeText(entry?.group_key);
+        if (areaKey === "positioning") return subGroup.includes("position") || subGroup.includes("market") || subGroup.includes("story");
+        if (areaKey === "strategy") return subGroup.includes("strategy") || subGroup.includes("program") || subGroup.includes("delivery");
+        if (areaKey === "market") return subGroup.includes("market") || subGroup.includes("audience") || groupKey.includes("market");
+        return (
+          subGroup.includes("odi") ||
+          subGroup.includes("journey") ||
+          subGroup.includes("outcome") ||
+          subGroup.includes("research") ||
+          inputKey.includes("outcome") ||
+          inputKey.includes("need")
+        );
       });
 
       const publicClaims: Claim[] = [];
@@ -798,7 +949,7 @@ Deno.serve(async (req) => {
         if (valueForCustomer) publicClaims.push({ claim: `Value statement: ${valueForCustomer}`, source: "positioning_canvas.value_for_customer", confidence: 65, tier: "public" });
         if (currentTagline) publicClaims.push({ claim: `Current tagline: ${currentTagline}`, source: "positioning_canvas.current_tagline", confidence: 60, tier: "public" });
         if (proposedTagline) publicClaims.push({ claim: `Proposed direction: ${proposedTagline}`, source: "positioning_canvas.proposed_tagline", confidence: 60, tier: "public" });
-      } else {
+      } else if (areaKey === "strategy") {
         const strategy = strategyRow as Record<string, unknown> | null;
         const aspiration = String(strategy?.winning_aspiration || "").trim();
         const whereToPlay = String(strategy?.where_to_play || "").trim();
@@ -806,6 +957,54 @@ Deno.serve(async (req) => {
         if (aspiration) publicClaims.push({ claim: `Winning aspiration: ${aspiration}`, source: "strategy_cascade.winning_aspiration", confidence: 68, tier: "public" });
         if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: 66, tier: "public" });
         if (howToWin) publicClaims.push({ claim: `How to win: ${howToWin}`, source: "strategy_cascade.how_to_win", confidence: 66, tier: "public" });
+      } else if (areaKey === "market") {
+        const positioning = positioningRow as Record<string, unknown> | null;
+        const strategy = strategyRow as Record<string, unknown> | null;
+        const baselineCategory = String(baselineJson?.category_archetype || "").trim();
+        const marketCategory = String(positioning?.market_category || "").trim();
+        const bestFitCustomers = String(positioning?.best_fit_customers || "").trim();
+        const whereToPlay = String(strategy?.where_to_play || "").trim();
+        const jobExecutor = String(marketDefinition?.job_executor || "").trim();
+        const chooser = String(marketDefinition?.chooser || "").trim();
+        const jtbd = String(marketDefinition?.jtbd || "").trim();
+        const marketSourcePath = String(marketDefinition?.source_path || "unknown");
+        if (baselineCategory) publicClaims.push({ claim: `Baseline archetype: ${baselineCategory}`, source: "public_baseline.category_archetype", confidence: 60, tier: "public" });
+        if (marketCategory) publicClaims.push({ claim: `Market category: ${marketCategory}`, source: "positioning_canvas.market_category", confidence: 70, tier: "public" });
+        if (bestFitCustomers) publicClaims.push({ claim: `Best-fit customers: ${bestFitCustomers}`, source: "positioning_canvas.best_fit_customers", confidence: 65, tier: "public" });
+        if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: 66, tier: "public" });
+        if (jobExecutor) publicClaims.push({ claim: `Job executor: ${jobExecutor}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 78, tier: marketSourcePath.includes("public") ? "public" : "company" });
+        if (chooser) publicClaims.push({ claim: `Chooser: ${chooser}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 78, tier: marketSourcePath.includes("public") ? "public" : "company" });
+        if (jtbd) publicClaims.push({ claim: `JTBD: ${jtbd}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 80, tier: marketSourcePath.includes("public") ? "public" : "company" });
+      } else if (areaKey === "odi") {
+        const marketSourcePath = String(marketDefinition?.source_path || "unknown");
+        const jtbd = String(marketDefinition?.jtbd || "").trim();
+        if (jtbd) {
+          publicClaims.push({
+            claim: `ODI job context: ${jtbd}`,
+            source: `odi_market_definitions.${marketSourcePath}`,
+            confidence: marketSourcePath.includes("public") ? 58 : 80,
+            tier: marketSourcePath.includes("public") ? "public" : "company",
+          });
+        }
+
+        const topNeeds = [...odiNeeds]
+          .sort((a, b) => Number(b?.opportunity_score || 0) - Number(a?.opportunity_score || 0))
+          .slice(0, 8);
+        for (const need of topNeeds) {
+          const outcome = String(need?.desired_outcome || "").trim();
+          if (!outcome) continue;
+          const sourcePath = String(need?.source_path || "unknown");
+          const importance = Number(need?.importance || 0);
+          const satisfaction = Number(need?.satisfaction || 0);
+          const opp = Number(need?.opportunity_score || 0);
+          const sourceTier = sourcePath.includes("public") ? "public" : "company";
+          publicClaims.push({
+            claim: `Need: ${outcome} (I:${importance || "?"}, S:${satisfaction || "?"}, Opp:${opp || "?"})`,
+            source: `odi_needs.${sourcePath}`,
+            confidence: sourceTier === "public" ? 56 : 82,
+            tier: sourceTier,
+          });
+        }
       }
 
       const internalClaims: Claim[] = [];
@@ -1075,6 +1274,8 @@ Deno.serve(async (req) => {
       framework_routing: {
         positioning: frameworkPlanForArea("positioning").frameworkKeys,
         strategy: frameworkPlanForArea("strategy").frameworkKeys,
+        market: frameworkPlanForArea("market").frameworkKeys,
+        odi: frameworkPlanForArea("odi").frameworkKeys,
       },
       areas: Object.values(areaResults).map((entry) => ({
         area_key: entry.area_key,
@@ -1090,11 +1291,13 @@ Deno.serve(async (req) => {
       baseline_run_id: baselineRun?.id ?? null,
       positioning_canvas_id: (positioningRow as { id?: unknown } | null)?.id ?? null,
       strategy_cascade_id: (strategyRow as { id?: unknown } | null)?.id ?? null,
+      market_definition_id: (marketDefinitionRow as { id?: unknown } | null)?.id ?? null,
       areas: areaResults,
       lineage: {
         company_id: companyId,
         uploaded_file_count: files.length,
         input_count: inputs.length,
+        odi_need_count: odiNeeds.length,
       },
     };
 

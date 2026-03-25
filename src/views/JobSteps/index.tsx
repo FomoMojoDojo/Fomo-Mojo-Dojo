@@ -6,7 +6,6 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -14,12 +13,12 @@ import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { useInputs } from "@/hooks/useInputs";
+import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
-import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import type { InputItem } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
-import { LlmTraceLegend, type LlmTraceItem } from "@/components/provenance/LlmTraceLegend";
+import PageContextStatus from "@/components/layout/PageContextStatus";
+import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 
 const c = {
   bg: "#faf7f6",
@@ -73,6 +72,16 @@ const JOURNEY_STYLE: Record<
 
 function safeText(value: string | null | undefined, fallback = "") {
   return value?.trim() || fallback;
+}
+
+function isPublicSourcePath(sourcePath?: string | null) {
+  return String(sourcePath || "").toLowerCase().includes("public");
+}
+
+function sourcePathLabel(sourcePath?: string | null) {
+  const value = String(sourcePath || "").trim();
+  if (!value) return "Unknown source";
+  return isPublicSourcePath(value) ? `Public: ${value}` : `Uploaded/company: ${value}`;
 }
 
 function audienceFromJourneyTitle(title: string | null | undefined) {
@@ -250,6 +259,15 @@ function shouldAttemptBaselineRetry(message: string) {
   );
 }
 
+function isMissingTableError(message: string, tableName: string) {
+  const text = String(message || "").toLowerCase();
+  const table = String(tableName || "").toLowerCase();
+  return (
+    (text.includes("could not find the table") && text.includes(table)) ||
+    (text.includes(table) && text.includes("schema cache"))
+  );
+}
+
 class InvokeTimeoutError extends Error {
   constructor(message: string) {
     super(message);
@@ -342,7 +360,7 @@ function inferRevenueMapTitle(economicEngine: string, publicSignalText: string, 
 }
 
 function inferSuggestedJourneyOptions(args: {
-  baselineRun: any | null;
+  baselineRun: { result_json?: unknown } | null;
   journeys: JourneyGroup[];
   inputs: InputItem[];
   strategicProblems: Array<{ statement: string; status?: string; source?: string }>;
@@ -748,14 +766,28 @@ function titleCaseJourney(key: string) {
 
 function OdiContextSection({
   marketDefinition,
+  needs,
   marketContext,
   activeCustomerJourneyTitle,
   activeCustomerJourneySubtitle,
+  onRemovePublicMarketContext,
+  onRemovePublicMarketContextAndRerun,
+  removingPublicMarketContextAction,
+  hasUploadedFiles,
+  onResetPublicResearchArtifacts,
+  resettingPublicResearchArtifacts,
 }: {
   marketDefinition: OdiMarketDefinitionRow | null;
+  needs: OdiNeedRow[];
   marketContext?: string;
   activeCustomerJourneyTitle?: string | null;
   activeCustomerJourneySubtitle?: string | null;
+  onRemovePublicMarketContext?: () => void;
+  onRemovePublicMarketContextAndRerun?: () => void;
+  removingPublicMarketContextAction?: "remove" | "remove_and_rerun" | null;
+  hasUploadedFiles?: boolean;
+  onResetPublicResearchArtifacts?: () => void;
+  resettingPublicResearchArtifacts?: boolean;
 }) {
   const derivedExecutor = audienceFromJourneyTitle(activeCustomerJourneyTitle);
   const derivedJtbd = jtbdFromJourneyTitle(activeCustomerJourneyTitle);
@@ -784,6 +816,10 @@ function OdiContextSection({
     }),
     "No market context captured yet.",
   );
+  const marketSource = sourcePathLabel(marketDefinition?.source_path);
+  const publicNeedCount = needs.filter((item) => isPublicSourcePath(item.source_path)).length;
+  const uploadedNeedCount = Math.max(0, needs.length - publicNeedCount);
+  const hasPublicMarketContext = Boolean(marketDefinition?.source_path) && isPublicSourcePath(marketDefinition?.source_path);
 
   return (
     <section
@@ -795,12 +831,56 @@ function OdiContextSection({
           <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
             ODI Needs & Market Context
           </h2>
-          <MetaBadge>Public only</MetaBadge>
+          <MetaBadge>{marketSource}</MetaBadge>
+          <MetaBadge>{`Needs: ${publicNeedCount} public / ${uploadedNeedCount} uploaded`}</MetaBadge>
         </div>
         <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
-          This is a first-pass ODI layer inferred from public evidence and generated opportunity data. Later it can absorb interviews,
-          meeting notes, and client documents to sharpen the needs structure.
+          Public and uploaded-company signals are shown side by side through local alignment. Use this panel to spot mismatches before trusting ODI priorities.
         </p>
+        {hasPublicMarketContext && onRemovePublicMarketContext ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {hasUploadedFiles && onRemovePublicMarketContextAndRerun ? (
+              <button
+                type="button"
+                onClick={onRemovePublicMarketContextAndRerun}
+                disabled={Boolean(removingPublicMarketContextAction)}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: c.line, color: c.charcoal, background: c.card }}
+              >
+                {removingPublicMarketContextAction === "remove_and_rerun"
+                  ? "Removing + Re-running…"
+                  : "Remove + Re-run Uploaded Files"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRemovePublicMarketContext}
+              disabled={Boolean(removingPublicMarketContextAction)}
+              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+            >
+              {removingPublicMarketContextAction === "remove"
+                ? "Removing…"
+                : hasUploadedFiles && onRemovePublicMarketContextAndRerun
+                  ? "Remove Only"
+                  : "Remove Public Market Context"}
+            </button>
+          </div>
+        ) : null}
+        {onResetPublicResearchArtifacts ? (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={onResetPublicResearchArtifacts}
+              disabled={Boolean(removingPublicMarketContextAction) || !!resettingPublicResearchArtifacts}
+              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: "#E6CFC2", color: "#915E46", background: "#FFF8F5" }}
+              title="Remove generated public-research artifacts (map, opportunities, routes, baseline snapshots) while keeping uploaded files"
+            >
+              {resettingPublicResearchArtifacts ? "Resetting…" : "Reset False Public Research Artifacts"}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -844,12 +924,25 @@ function OdiContextSection({
   );
 }
 
-function OdiNeedsListSection({ needs }: { needs: OdiNeedRow[] }) {
+function OdiNeedsListSection({
+  needs,
+  onRemoveNeed,
+  removingNeedId,
+  onRemovePublicNeeds,
+  removingPublicNeeds,
+}: {
+  needs: OdiNeedRow[];
+  onRemoveNeed?: (needId: string) => void;
+  removingNeedId?: string | null;
+  onRemovePublicNeeds?: () => void;
+  removingPublicNeeds?: boolean;
+}) {
   const needItems = [...needs].sort((a, b) => {
     const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
     if (scoreDiff !== 0) return scoreDiff;
     return (b.importance ?? 0) - (a.importance ?? 0);
   });
+  const publicNeedCount = needItems.filter((item) => isPublicSourcePath(item.source_path)).length;
 
   return (
     <section
@@ -867,8 +960,21 @@ function OdiNeedsListSection({ needs }: { needs: OdiNeedRow[] }) {
               Needs
             </h3>
             <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-              Desired outcome statements inferred from public evidence. These should follow ODI logic: solution-free, stable over time, and measurable in spirit. Importance and satisfaction below are estimated placeholders until interview or survey data exists.
+              Desired outcome statements from both public and uploaded evidence. Use source labels to remove inaccurate public rows and keep company-grounded needs.
             </p>
+            {publicNeedCount > 0 && onRemovePublicNeeds ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={onRemovePublicNeeds}
+                  disabled={!!removingPublicNeeds}
+                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                  style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+                >
+                  {removingPublicNeeds ? "Removing…" : `Remove Public Needs (${publicNeedCount})`}
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {needItems.length === 0 ? (
@@ -890,9 +996,23 @@ function OdiNeedsListSection({ needs }: { needs: OdiNeedRow[] }) {
                     <StateBadge tone={item.service_state} />
                     <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
                     <MetaBadge>{item.step_label || "Unassigned step"}</MetaBadge>
+                    <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
                     <ScoreChip label="Est. I" value={item.importance} />
                     <ScoreChip label="Est. S" value={item.satisfaction} />
                   </div>
+                  {onRemoveNeed ? (
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => onRemoveNeed(item.id)}
+                        disabled={removingNeedId === item.id}
+                        className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                        style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+                      >
+                        {removingNeedId === item.id ? "Removing…" : "Remove Need"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1133,8 +1253,6 @@ function SuggestedMapsSection({
 }
 
 export default function JobStepsView() {
-  const { isAdmin } = useAuth();
-  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
   const { activeCompany } = useCompany();
   const activeCompanyId = activeCompany?.id ?? null;
   const {
@@ -1149,7 +1267,10 @@ export default function JobStepsView() {
   const { item: strategyCascade } = useStrategyCascade(activeCompanyId ?? undefined);
   const { items: strategicProblems } = useStrategicProblems(activeCompanyId ?? undefined);
   const { query: inputsQuery } = useInputs(activeCompanyId ?? undefined);
-  const { marketDefinition, needs } = useOdiNeeds(activeCompanyId ?? undefined);
+  const [odiRefreshKey, setOdiRefreshKey] = useState(0);
+  const { marketDefinition, needs } = useOdiNeeds(activeCompanyId ?? undefined, odiRefreshKey);
+  const { data: localAlignment } = useLatestLocalAlignment(activeCompanyId ?? undefined);
+  const runLocalAlignment = useRunLocalAlignment(activeCompanyId ?? undefined);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompanyId ?? undefined,
     areaScoresJson: activeCompany?.area_scores_json,
@@ -1160,6 +1281,10 @@ export default function JobStepsView() {
   const [showChooseMaps, setShowChooseMaps] = useState(true);
   const [showCustomMapForm, setShowCustomMapForm] = useState(false);
   const [recentlyRemovedKeysByCompany, setRecentlyRemovedKeysByCompany] = useState<Record<string, string[]>>({});
+  const [removingNeedId, setRemovingNeedId] = useState<string | null>(null);
+  const [removingPublicNeeds, setRemovingPublicNeeds] = useState(false);
+  const [removingPublicMarketContextAction, setRemovingPublicMarketContextAction] = useState<"remove" | "remove_and_rerun" | null>(null);
+  const [resettingPublicResearchArtifacts, setResettingPublicResearchArtifacts] = useState(false);
 
   const scopedBaselineRun = useMemo(() => {
     if (!activeCompanyId || !baselineRun) return null;
@@ -1170,44 +1295,12 @@ export default function JobStepsView() {
     if (!activeCompanyId) return [];
     return recentlyRemovedKeysByCompany[activeCompanyId] ?? [];
   }, [activeCompanyId, recentlyRemovedKeysByCompany]);
-  const llmTraceItems = useMemo<LlmTraceItem[]>(() => {
-    if (!llmTraceEnabled || !isAdmin) return [];
-    const resultJson = scopedBaselineRun?.result_json as
-      | { run_ledger?: { provider?: string; model?: string; path?: string } }
-      | null
-      | undefined;
-    const publicProvider = String(resultJson?.run_ledger?.provider || "openai_public");
-    const publicModel = String(resultJson?.run_ledger?.model || "unknown");
-    const publicPath = String(resultJson?.run_ledger?.path || "public_web_research");
-    const hasLocalDraft = items.some((step) =>
-      String(step.evidence_basis || "").toLowerCase().includes("local draft step generated"),
-    );
-
-    const traces: LlmTraceItem[] = [
-      {
-        id: "jobsteps-public",
-        tier: "public",
-        label: `Public ${publicModel}`,
-        detail: `${publicProvider} · ${publicPath}`,
-      },
-      {
-        id: "jobsteps-research",
-        tier: "public",
-        label: "Research OpenAI",
-        detail: "job-step generation runs on research-company public AI flow.",
-      },
-    ];
-
-    if (hasLocalDraft) {
-      traces.push({
-        id: "jobsteps-fallback",
-        tier: "fallback",
-        label: "Local Draft Fallback",
-        detail: "Local draft steps were used where external generation was unavailable.",
-      });
-    }
-    return traces;
-  }, [isAdmin, items, llmTraceEnabled, scopedBaselineRun?.result_json]);
+  const marketAlignment = localAlignment?.areas?.market ?? null;
+  const odiAlignment = localAlignment?.areas?.odi ?? null;
+  const uploadedFileCount = useMemo(
+    () => (inputsQuery.data ?? []).reduce((sum, input) => sum + input.files.length, 0),
+    [inputsQuery.data],
+  );
 
   useEffect(() => {
     setJourneyDrafts({});
@@ -1394,11 +1487,14 @@ export default function JobStepsView() {
           90_000,
         );
 
-      let data: any;
+      let data: { error?: unknown; message?: unknown } | null = null;
       let invokeError: unknown;
       try {
         const first = await runResearchMap();
-        data = first?.data;
+        data =
+          first?.data && typeof first.data === "object"
+            ? (first.data as { error?: unknown; message?: unknown })
+            : null;
         invokeError = first?.error;
       } catch (err) {
         if (err instanceof InvokeTimeoutError) {
@@ -1423,7 +1519,10 @@ export default function JobStepsView() {
           await refetchBaseline();
           try {
             const retry = await runResearchMap();
-            data = retry?.data;
+            data =
+              retry?.data && typeof retry.data === "object"
+                ? (retry.data as { error?: unknown; message?: unknown })
+                : null;
             invokeError = retry?.error;
           } catch (retryErr) {
             if (retryErr instanceof InvokeTimeoutError) {
@@ -1537,6 +1636,289 @@ export default function JobStepsView() {
     }
   };
 
+  const refreshOdi = () => setOdiRefreshKey((current) => current + 1);
+
+  const runResearchFromUploadedEvidence = async () => {
+    if (!activeCompany?.id) {
+      throw new Error("Select a company before regenerating research artifacts.");
+    }
+
+    const { error: researchErr, data: researchData } = await supabase.functions.invoke("research-company", {
+      body: {
+        company_id: activeCompany.id,
+        company_name: activeCompany.name,
+        website: activeCompany.website ?? "",
+        review_mode: "advisory",
+        allow_review_block_save: true,
+      },
+    });
+
+    const researchPayload =
+      researchData && typeof researchData === "object"
+        ? (researchData as { error?: unknown; message?: unknown })
+        : null;
+    if (researchErr) {
+      throw new Error(await describeJobMapInvokeError(researchErr));
+    }
+    if (researchPayload?.error) {
+      throw new Error(String(researchPayload.message || researchPayload.error));
+    }
+  };
+
+  const handleRemoveNeed = async (needId: string) => {
+    if (!activeCompanyId) {
+      toast.error("Select a company before removing a need.");
+      return;
+    }
+    setRemovingNeedId(needId);
+    try {
+      const { error: deleteErr } = await supabase
+        .from("odi_needs")
+        .delete()
+        .eq("company_id", activeCompanyId)
+        .eq("id", needId);
+      if (deleteErr) throw new Error(deleteErr.message || "Failed to remove need.");
+      refreshOdi();
+      toast.success("Need removed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove need.");
+    } finally {
+      setRemovingNeedId(null);
+    }
+  };
+
+  const handleRemovePublicNeeds = async () => {
+    if (!activeCompanyId) {
+      toast.error("Select a company before removing public needs.");
+      return;
+    }
+    const publicNeedIds = needs.filter((item) => isPublicSourcePath(item.source_path)).map((item) => item.id);
+    if (publicNeedIds.length === 0) {
+      toast.message("No public-source needs to remove.");
+      return;
+    }
+    setRemovingPublicNeeds(true);
+    try {
+      const { error: deleteErr } = await supabase
+        .from("odi_needs")
+        .delete()
+        .eq("company_id", activeCompanyId)
+        .in("id", publicNeedIds);
+      if (deleteErr) throw new Error(deleteErr.message || "Failed to remove public needs.");
+      refreshOdi();
+      toast.success(`Removed ${publicNeedIds.length} public ODI need${publicNeedIds.length === 1 ? "" : "s"}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove public needs.");
+    } finally {
+      setRemovingPublicNeeds(false);
+    }
+  };
+
+  const removePublicMarketContextRecord = async () => {
+    if (!activeCompanyId) {
+      toast.error("Select a company before removing public market context.");
+      return false;
+    }
+    if (!marketDefinition?.id || !isPublicSourcePath(marketDefinition.source_path)) {
+      toast.message("No public-source market context row to remove.");
+      return false;
+    }
+    const { error: deleteErr } = await supabase
+      .from("odi_market_definitions")
+      .delete()
+      .eq("company_id", activeCompanyId)
+      .eq("id", marketDefinition.id);
+    if (deleteErr) {
+      throw new Error(deleteErr.message || "Failed to remove market context.");
+    }
+    refreshOdi();
+    return true;
+  };
+
+  const handleRemovePublicMarketContext = async () => {
+    setRemovingPublicMarketContextAction("remove");
+    try {
+      const removed = await removePublicMarketContextRecord();
+      if (!removed) return;
+      toast.success("Public market context removed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove market context.");
+    } finally {
+      setRemovingPublicMarketContextAction(null);
+    }
+  };
+
+  const handleRemovePublicMarketContextAndRerun = async () => {
+    setRemovingPublicMarketContextAction("remove_and_rerun");
+    let removed = false;
+    try {
+      removed = await removePublicMarketContextRecord();
+      if (!removed) return;
+
+      if (uploadedFileCount <= 0) {
+        toast.success("Public market context removed.");
+        toast.message("No uploaded files found, so rerun was skipped.");
+        return;
+      }
+
+      await runLocalAlignment.mutateAsync({
+        areas: ["positioning", "strategy", "market", "odi"],
+        trigger: "public_market_context_removed",
+        applyScoreUpdate: true,
+      });
+      await runResearchFromUploadedEvidence();
+      await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
+      refreshOdi();
+      toast.success("Public market context removed. Re-ran local comparison and regenerated artifacts from uploaded files.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Rerun failed.";
+      if (removed) {
+        toast.error(`Public market context was removed, but rerun failed: ${message}`);
+      } else {
+        toast.error(message);
+      }
+    } finally {
+      setRemovingPublicMarketContextAction(null);
+    }
+  };
+
+  const handleResetPublicResearchArtifacts = async () => {
+    if (!activeCompanyId) {
+      toast.error("Select a company before resetting public research artifacts.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Reset false public research artifacts for this company?\n\nThis removes generated job steps, opportunities, routes, strategy/positioning drafts, and public research snapshots.\nUploaded files stay in place.",
+    );
+    if (!confirmed) return;
+
+    setResettingPublicResearchArtifacts(true);
+    try {
+      const errors: string[] = [];
+      const captureError = (table: string, error: { message?: string } | null) => {
+        if (!error) return;
+        if (isMissingTableError(error.message || "", table)) return;
+        errors.push(`${table}: ${error.message || "unknown error"}`);
+      };
+
+      const runDelete = async (table: string) => {
+        const { error } = await supabase.from(table as never).delete().eq("company_id", activeCompanyId);
+        captureError(table, error);
+      };
+
+      await runDelete("job_steps");
+      await runDelete("opportunities");
+      await runDelete("routes");
+      await runDelete("strategy_cascades");
+      await runDelete("positioning_canvases");
+
+      const { error: needsError } = await supabase
+        .from("odi_needs")
+        .delete()
+        .eq("company_id", activeCompanyId)
+        .or("source_path.ilike.%public%");
+      captureError("odi_needs", needsError);
+
+      const { error: marketDefError } = await supabase
+        .from("odi_market_definitions")
+        .delete()
+        .eq("company_id", activeCompanyId)
+        .or("source_path.ilike.%public%");
+      captureError("odi_market_definitions", marketDefError);
+
+      const spClient = supabase as unknown as {
+        from: (table: string) => {
+          delete: () => {
+            eq: (
+              column: string,
+              value: string,
+            ) => {
+              in: (
+                column: string,
+                values: string[],
+              ) => Promise<{ error: { message?: string } | null }>;
+            };
+          };
+        };
+      };
+      const { error: strategicProblemsError } = await spClient
+        .from("strategy_problem_statements")
+        .delete()
+        .eq("company_id", activeCompanyId)
+        .in("source", ["public", "evidence"]);
+      captureError("strategy_problem_statements", strategicProblemsError);
+
+      const { error: reviewRunsError } = await supabase
+        .from("research_review_runs")
+        .delete()
+        .eq("company_id", activeCompanyId);
+      captureError("research_review_runs", reviewRunsError);
+
+      const { error: artifactRunsError } = await supabase
+        .from("research_artifact_runs")
+        .delete()
+        .eq("company_id", activeCompanyId);
+      captureError("research_artifact_runs", artifactRunsError);
+
+      const { error: baselineRunsError } = await supabase
+        .from("public_baseline_runs")
+        .delete()
+        .eq("company_id", activeCompanyId);
+      captureError("public_baseline_runs", baselineRunsError);
+
+      const { error: companyUpdateError } = await supabase
+        .from("companies")
+        .update({
+          mojo_score: 0,
+          potential_score: 0,
+          projected_score: 0,
+          evidence_status: "no_public_evidence",
+          evidence_note:
+            "Public research artifacts were reset because public evidence was inaccurate or too weak. Continue from uploaded company files.",
+        })
+        .eq("id", activeCompanyId);
+      captureError("companies", companyUpdateError);
+
+      if (errors.length > 0) {
+        throw new Error(`Reset completed with issues: ${errors.join(" | ")}`);
+      }
+
+      await Promise.all([
+        refetchJobSteps(),
+        refetchBaseline(),
+        inputsQuery.refetch(),
+      ]);
+      refreshOdi();
+
+      if (uploadedFileCount > 0) {
+        try {
+          await runLocalAlignment.mutateAsync({
+            areas: ["positioning", "strategy", "market", "odi"],
+            trigger: "public_artifacts_reset",
+            applyScoreUpdate: true,
+          });
+          await runResearchFromUploadedEvidence();
+          await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
+          refreshOdi();
+          toast.success("False public artifacts removed. Regenerated map, ODI, market context, and strategy from uploaded evidence.");
+        } catch (rerunError) {
+          toast.error(
+            `False public artifacts removed, but rerun failed: ${
+              rerunError instanceof Error ? rerunError.message : "unknown error"
+            }`,
+          );
+        }
+      } else {
+        toast.success("False public artifacts removed. Upload files to rebuild local evidence.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to reset public research artifacts.");
+    } finally {
+      setResettingPublicResearchArtifacts(false);
+    }
+  };
+
   return (
     <div
       className="min-h-screen"
@@ -1549,29 +1931,20 @@ export default function JobStepsView() {
       <TopNav />
 
       <main className="max-w-[1440px] mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-              {activeCompany?.name || "No company selected"}
+        <div className="mb-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                {activeCompany?.name || "No company selected"}
+              </div>
+              <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
+                Job Steps Map
+              </h1>
+              <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
+                Select and define ODI-style job maps first, then run research to generate steps and aligned opportunities.
+              </p>
             </div>
-          <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
-            Job Steps Map
-          </h1>
-          <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
-            Select and define ODI-style job maps first, then run research to generate steps and aligned opportunities.
-          </p>
-        </div>
 
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {activeCompany?.last_scored_at
-                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                  : "Awaiting research"}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-              {llmTraceEnabled && isAdmin ? <LlmTraceLegend items={llmTraceItems} /> : null}
-            </div>
             <Link
               to="/"
               className="rounded-full border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em]"
@@ -1580,6 +1953,7 @@ export default function JobStepsView() {
               Back to Map
             </Link>
           </div>
+          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
         </div>
 
         <AiBoundaryNote
@@ -1620,9 +1994,36 @@ export default function JobStepsView() {
           <div className="space-y-6">
             <OdiContextSection
               marketDefinition={marketDefinition}
+              needs={needs}
               marketContext={strategyCascade?.where_to_play}
               activeCustomerJourneyTitle={activeCustomerJourneyTitle}
               activeCustomerJourneySubtitle={activeCustomerJourneySubtitle}
+              onRemovePublicMarketContext={handleRemovePublicMarketContext}
+              onRemovePublicMarketContextAndRerun={handleRemovePublicMarketContextAndRerun}
+              removingPublicMarketContextAction={removingPublicMarketContextAction}
+              hasUploadedFiles={uploadedFileCount > 0}
+              onResetPublicResearchArtifacts={handleResetPublicResearchArtifacts}
+              resettingPublicResearchArtifacts={resettingPublicResearchArtifacts}
+            />
+
+            <AreaAlignmentPanel
+              title="Market Context"
+              area={marketAlignment}
+              run={localAlignment}
+              lineColor={c.line}
+              panelColor={c.panel}
+              textColor={c.charcoal}
+              mutedColor={c.muted}
+            />
+
+            <AreaAlignmentPanel
+              title="ODI Needs"
+              area={odiAlignment}
+              run={localAlignment}
+              lineColor={c.line}
+              panelColor={c.panel}
+              textColor={c.charcoal}
+              mutedColor={c.muted}
             />
 
             <section
@@ -1771,7 +2172,13 @@ export default function JobStepsView() {
               </>
             )}
 
-            <OdiNeedsListSection needs={needs} />
+            <OdiNeedsListSection
+              needs={needs}
+              onRemoveNeed={handleRemoveNeed}
+              removingNeedId={removingNeedId}
+              onRemovePublicNeeds={handleRemovePublicNeeds}
+              removingPublicNeeds={removingPublicNeeds}
+            />
           </div>
         )}
       </main>

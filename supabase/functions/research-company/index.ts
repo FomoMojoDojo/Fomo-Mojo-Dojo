@@ -233,6 +233,141 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
   ].join("\n");
 }
 
+type UploadedEvidenceInputRow = {
+  id?: string | null;
+  input_key?: string | null;
+  input_label?: string | null;
+  description?: string | null;
+  why_it_matters?: string | null;
+};
+
+type UploadedEvidenceFileRow = {
+  input_id?: string | null;
+  file_name?: string | null;
+  file_path?: string | null;
+  tags?: string[] | null;
+  uploaded_at?: string | null;
+};
+
+function compactSnippet(value: unknown, maxChars = 220) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trim()}…`;
+}
+
+async function buildUploadedEvidenceContext(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+}) {
+  const { supabase, companyId } = args;
+
+  const { data: inputRows, error: inputErr } = await supabase
+    .from("inputs")
+    .select("id,input_key,input_label,description,why_it_matters")
+    .eq("company_id", companyId)
+    .limit(240);
+
+  if (inputErr) {
+    console.log("[research-company] uploaded evidence input fetch error:", inputErr.message);
+  }
+
+  const inputs = (Array.isArray(inputRows) ? inputRows : []) as UploadedEvidenceInputRow[];
+  const inputById = new Map<string, UploadedEvidenceInputRow>();
+  for (const row of inputs) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    inputById.set(id, row);
+  }
+
+  const inputIds = Array.from(inputById.keys());
+  const { data: fileRows, error: filesErr } = inputIds.length > 0
+    ? await supabase
+        .from("input_files")
+        .select("input_id,file_name,file_path,tags,uploaded_at")
+        .in("input_id", inputIds)
+        .order("uploaded_at", { ascending: false })
+        .limit(120)
+    : { data: [] as UploadedEvidenceFileRow[], error: null as { message?: string } | null };
+
+  if (filesErr) {
+    console.log("[research-company] uploaded evidence file fetch error:", filesErr.message);
+  }
+
+  const files = (Array.isArray(fileRows) ? fileRows : []) as UploadedEvidenceFileRow[];
+  const fileCount = files.length;
+
+  const inputCoverage = new Set<string>();
+  const tagCounts = new Map<string, number>();
+  for (const file of files) {
+    const inputId = String(file?.input_id || "").trim();
+    if (inputId) inputCoverage.add(inputId);
+    const tags = Array.isArray(file?.tags) ? file.tags : [];
+    for (const tag of tags) {
+      const normalized = String(tag || "").trim();
+      if (!normalized) continue;
+      tagCounts.set(normalized, (tagCounts.get(normalized) ?? 0) + 1);
+    }
+  }
+
+  const topTags = Array.from(tagCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([tag]) => tag);
+
+  const sampleRows = files.slice(0, 6);
+  const sampleLines: string[] = [];
+  for (let index = 0; index < sampleRows.length; index++) {
+    const file = sampleRows[index];
+    const inputMeta = inputById.get(String(file?.input_id || "").trim());
+    const inputKey = String(inputMeta?.input_key || "").trim();
+    const inputLabel = String(inputMeta?.input_label || "").trim();
+    const inputHint = compactSnippet(inputMeta?.description || inputMeta?.why_it_matters || "", 90);
+    const tags = Array.isArray(file?.tags) ? file.tags.map((tag) => String(tag || "").trim()).filter(Boolean) : [];
+    let extractedSnippet = "";
+    const filePath = String(file?.file_path || "").trim();
+
+    if (filePath) {
+      const sidecarPath = `${filePath}.extracted.txt`;
+      const { data: sidecar, error: sidecarErr } = await supabase.storage.from("input-files").download(sidecarPath);
+      if (!sidecarErr && sidecar) {
+        try {
+          extractedSnippet = compactSnippet(await sidecar.text(), 210);
+        } catch {
+          extractedSnippet = "";
+        }
+      }
+    }
+
+    const row = [
+      `${index + 1}. ${String(file?.file_name || "uploaded_file")}`,
+      `input=${inputKey || inputLabel || "unknown"}`,
+      tags.length ? `tags=${tags.slice(0, 4).join(", ")}` : "tags=none",
+      inputHint ? `hint=${inputHint}` : "",
+      extractedSnippet ? `excerpt=${extractedSnippet}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    sampleLines.push(row);
+  }
+
+  const briefParts = [
+    fileCount > 0
+      ? `Uploaded company evidence: ${fileCount} file(s) mapped across ${inputCoverage.size} input area(s).`
+      : "Uploaded company evidence: none.",
+    topTags.length > 0 ? `Top uploaded tags: ${topTags.join(", ")}` : "",
+    sampleLines.length > 0 ? `Uploaded evidence samples:\n${sampleLines.join("\n")}` : "",
+  ].filter(Boolean);
+
+  return {
+    fileCount,
+    inputCoverageCount: inputCoverage.size,
+    brief: briefParts.join("\n\n").slice(0, 6000),
+  };
+}
+
 type StrategicProblemStatement = {
   id?: string;
   statement: string;
@@ -896,7 +1031,7 @@ async function repairWeakOpportunities(args: {
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
-    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Generated journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Current opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
@@ -944,7 +1079,7 @@ async function generateManagedOutcomes(args: {
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
-    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
@@ -1014,7 +1149,7 @@ async function repairManagedOutcomes(args: {
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
-    `Public baseline context:\n${args.baselineBrief}\n\n` +
+    `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
@@ -1280,7 +1415,7 @@ async function runConsistencyReview(opts: {
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
-    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Evidence context:\n${opts.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Derived ODI context:\n${opts.odiBrief}\n\n` +
     `Inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
@@ -1331,7 +1466,7 @@ async function runPositioningReview(opts: {
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
-    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Evidence context:\n${opts.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Positioning draft:\n${buildPositioningBrief(opts.positioning)}\n\n` +
     `Opportunity context:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
@@ -1378,7 +1513,7 @@ async function runEvidenceReview(opts: {
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
-    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Evidence context:\n${opts.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
@@ -1424,7 +1559,7 @@ async function runStrategyReview(opts: {
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
-    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Evidence context:\n${opts.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Strategy draft:\n${buildStrategyBrief(opts.strategy)}\n\n` +
     `Route context:\n${buildRouteBrief(opts.routes)}\n\n` +
@@ -3086,7 +3221,7 @@ async function runFinalizer(opts: {
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
-    `Public baseline context:\n${opts.baselineBrief}\n\n` +
+    `Evidence context:\n${opts.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${opts.strategicProblemBrief || "None provided"}\n\n` +
     `Derived ODI context:\n${opts.odiBrief}\n\n` +
     `Current inputs:\n${buildInputBrief(opts.inputs)}\n\n` +
@@ -3103,7 +3238,7 @@ async function runFinalizer(opts: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Revise only the areas identified by reviewer findings.\n` +
     `Do not rewrite unaffected areas for style alone.\n` +
-    `Stay strictly consistent with the public baseline and ODI context.\n` +
+    `Stay strictly consistent with the provided evidence context and ODI context.\n` +
     `Ensure revisions remain aligned to client-stated strategic problems.\n` +
     `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n`;
 
@@ -3227,8 +3362,17 @@ Deno.serve(async (req) => {
 
     const baselineStatus = baselineStatusFor(baselineRun);
     const baselineReason = baselineReasonFor(baselineRun);
+    const uploadedEvidenceContext = await buildUploadedEvidenceContext({
+      supabase,
+      companyId: company_id,
+    });
+    const hasWeakBaselineStatus =
+      baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence";
+    const hasUploadedEvidence = uploadedEvidenceContext.fileCount > 0;
+    let researchContextMode: "public_baseline" | "uploaded_evidence_fallback" = "public_baseline";
+    let effectiveBaselineResultJson: unknown = baselineRun?.result_json ?? null;
 
-    if (baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence") {
+    if (hasWeakBaselineStatus && !hasUploadedEvidence) {
       console.log("[research-company] blocked by baseline status", {
         company_id,
         baseline_run_id: baselineRun?.id ?? null,
@@ -3253,6 +3397,30 @@ Deno.serve(async (req) => {
         reason: baselineReason || "Latest public baseline does not have enough trustworthy evidence.",
         baseline_run_id: baselineRun?.id ?? null,
       }, 422);
+    }
+
+    if (hasWeakBaselineStatus && hasUploadedEvidence) {
+      researchContextMode = "uploaded_evidence_fallback";
+      effectiveBaselineResultJson = null;
+      console.log("[research-company] weak public baseline; continuing with uploaded evidence fallback", {
+        company_id,
+        baseline_run_id: baselineRun?.id ?? null,
+        baselineStatus,
+        uploaded_file_count: uploadedEvidenceContext.fileCount,
+      });
+
+      await persistResearchReviewRun({
+        supabase,
+        companyId: company_id,
+        userId: user.id,
+        baselineRunId: baselineRun?.id ?? null,
+        status: "uploaded_evidence_fallback",
+        reviewSummary:
+          (baselineReason || "Public evidence was weak or ambiguous.") +
+          ` Proceeding with uploaded company evidence (${uploadedEvidenceContext.fileCount} file(s)).`,
+        reviews: [],
+        finalizerApplied: false,
+      });
     }
 
     const { data: strategicProblemRows, error: strategicProblemErr } = await supabase
@@ -3286,7 +3454,7 @@ Deno.serve(async (req) => {
     ].join("\n\n");
     const suggestedJobMaps = inferSuggestedJobMapsFromBaseline({
       companyName: String(company_name),
-      baselineResultJson: baselineRun?.result_json ?? null,
+      baselineResultJson: effectiveBaselineResultJson,
     });
     const suggestedJobMapByKey = new Map<JourneyKey, (typeof suggestedJobMaps)[number]>(
       suggestedJobMaps.map((item) => [item.journey_key, item]),
@@ -3441,11 +3609,43 @@ Deno.serve(async (req) => {
       required: ["inputs"],
     };
 
-    const baselineBrief = buildBaselineBrief(baselineRun?.result_json ?? null);
+    const baselineContextIntro =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "Public baseline was weak or ambiguous. Use uploaded company evidence as primary context."
+        : "Public baseline context (augmented with uploaded files):";
+    const baselineBrief = [
+      baselineContextIntro,
+      buildBaselineBrief(effectiveBaselineResultJson),
+      uploadedEvidenceContext.brief,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const evidenceConsistencyConstraint =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "- Stay strictly consistent with uploaded company evidence, website, buyer context, and selected job maps\n"
+        : "- Stay strictly consistent with the public baseline, website, buyer context, and company category\n";
+    const noIndustrySwitchConstraint =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "- Never switch industries, populations, service models, or buyer types from uploaded evidence context\n"
+        : "- Never switch industries, populations, service models, or buyer types from the baseline evidence\n";
+    const evidencedDefinitionConstraint =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "- evidenced = directly supported by uploaded company evidence or explicit company context\n"
+        : "- evidenced = directly supported by public evidence\n";
+    const evidenceConfidenceConstraint =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "- evidence_confidence 0..100 based on how grounded the step is in uploaded/company evidence\n"
+        : "- evidence_confidence 0..100 based on how grounded the step is in public evidence\n";
+    const evidenceContextHeading =
+      researchContextMode === "uploaded_evidence_fallback" ? "Uploaded evidence context" : "Public baseline context";
+    const evidenceAlignmentConstraint =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "- market_category and best_fit_customers must align with uploaded/company evidence and website evidence\n"
+        : "- market_category and best_fit_customers must align with the public baseline and website evidence\n";
 
     const inputsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Return EXACTLY 14 input objects, one per input_key in this list.\n` +
       `Do not omit any.\n\n` +
@@ -3460,8 +3660,8 @@ Deno.serve(async (req) => {
       `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
       `Framework guidance:\n${buildFrameworkBrief("inputs", getFrameworkRoutingPlan("inputs"))}\n\n` +
       `Constraints:\n` +
-      `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
-      `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
+      evidenceConsistencyConstraint +
+      noIndustrySwitchConstraint +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
       `- For commercial businesses, translate nonprofit-style placeholders into category-relevant equivalents (customer retention, growth pipeline, customer satisfaction)\n` +
       `- Never output "not applicable", "N/A", or "not relevant" for required inputs; provide the closest category-specific signal instead\n` +
@@ -3501,12 +3701,12 @@ Deno.serve(async (req) => {
     const inputContextMode = inferInputContextMode({
       companyName: company_name,
       website,
-      baselineResultJson: baselineRun?.result_json ?? null,
+      baselineResultJson: effectiveBaselineResultJson,
     });
     const inputBusinessProfile = inferInputBusinessProfile({
       companyName: company_name,
       website,
-      baselineResultJson: baselineRun?.result_json ?? null,
+      baselineResultJson: effectiveBaselineResultJson,
       mode: inputContextMode,
     });
     inputs = inputs.map((input) =>
@@ -3593,17 +3793,17 @@ Deno.serve(async (req) => {
       `- Keep journey_title and journey_subtitle aligned with selected job maps\n` +
       `- Generate exactly these journey keys: ${targetJourneyKeys.join(", ")}\n` +
       `${journeyTypeGuidance}\n` +
-      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
+      noIndustrySwitchConstraint +
       `- Journey bottlenecks should connect to the client-stated strategic problems when provided\n` +
       `- Use ODI job map sequencing language (define, locate, prepare, confirm, execute, monitor, modify, conclude) as the structural spine\n` +
       `- step_label 2–5 words, action-oriented, no generic funnel labels\n` +
       `- description 18–40 words, concrete, sequential, and tied to the selected job performer context\n` +
       `- evidence_status must be one of evidenced, implied, or unclear\n` +
-      `- evidenced = directly supported by public evidence\n` +
+      evidencedDefinitionConstraint +
       `- implied = strongly suggested by the business model or multiple signals, but not directly proven\n` +
       `- unclear = weak, missing, or ambiguous evidence\n` +
       `- evidence_basis 8–24 words explaining the evidence or inference behind the step status\n` +
-      `- evidence_confidence 0..100 based on how grounded the step is in public evidence\n` +
+      evidenceConfidenceConstraint +
       `- gap_note 6–18 words and specific when there is a gap\n` +
       `- designed=true only when the step appears intentionally supported and evidence_status is evidenced or implied\n` +
       `- designed=false when evidence_status is unclear\n` +
@@ -3612,14 +3812,14 @@ Deno.serve(async (req) => {
 
     const journeysUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Create these journeys: ${targetJourneyKeys.join(", ")}.\n` +
       `For each journey: 6–8 ODI-style steps, numbered 1..N.\n` +
       `Make the sequence realistic for this exact company category and audience.\n` +
       `Do not use generic labels like "Engagement" or "Operations" unless they are qualified.\n` +
-      `Mark designed=false and has_gap=true when unclear from public info.\n`;
+      `Mark designed=false and has_gap=true when evidence remains unclear.\n`;
 
     const journeysResult = await callOpenAIJSON({
       apiKey: openaiKey,
@@ -3706,7 +3906,7 @@ Deno.serve(async (req) => {
       `- Good outcomes stay within the company's span of influence, rather than naming broad business goals with no customer mechanism\n` +
       `- Do not output initiatives, launches, campaigns, dashboards, websites, forms, workflows, programs, portals, tools, or features as outcomes\n` +
       `- Do not use vague outcome text like "Improve engagement" or "Increase awareness" without a concrete object and context\n` +
-      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
+      noIndustrySwitchConstraint +
       `- Good example style: "Minimize the time it takes to complete intake during a family crisis"\n` +
       `- Better example style: "Increase the likelihood that a referred family completes the first intake step after initial outreach"\n` +
       `- Bad example style: "Build a better intake form", "Add referral dashboard", or "Launch a new donor campaign"\n` +
@@ -3718,7 +3918,7 @@ Deno.serve(async (req) => {
 
     const oppsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated journeys and steps:\n${buildJourneyBrief(journeys)}\n\n` +
@@ -3838,13 +4038,13 @@ Deno.serve(async (req) => {
       `- short_description should be 16-32 words and mention why the route matters\n` +
       `- pts_value should be 1..10 and reflect likely score impact\n` +
       `- sort_order should rank strongest routes first within the whole set\n` +
-      `- Never switch industries, populations, service models, or buyer types from the public baseline\n` +
+      noIndustrySwitchConstraint +
       `- Fix = remove blockers/gaps, Improve = strengthen existing systems, Create = build net-new strategic assets\n` +
       `- type must match category in title case\n`;
 
     const routesUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
@@ -3940,7 +4140,7 @@ Deno.serve(async (req) => {
       `- value_for_customer should describe what customers can do or achieve that they could not before\n` +
       `- best_fit_customers should describe the clearest-fit audience in one paragraph\n` +
       `- market_category should be the category the company should claim or reshape\n` +
-      `- market_category and best_fit_customers must align with the public baseline and website evidence\n` +
+      evidenceAlignmentConstraint +
       `- positioning should directly address the client-stated strategic problem framing when provided\n` +
       `- category_rationale should explain why this category framing helps buyers understand the company\n` +
       `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
@@ -3949,7 +4149,7 @@ Deno.serve(async (req) => {
 
     const positioningCanvasUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
@@ -4048,9 +4248,9 @@ Deno.serve(async (req) => {
       `Use strong, executive-quality language, but stay tethered to the supplied evidence.\n` +
       `If evidence is thin, make the uncertainty explicit through status and assumptions rather than pretending certainty.\n\n` +
       `Rules:\n` +
-      `- Stay strictly consistent with the public baseline, website, buyer context, and company category\n` +
+      evidenceConsistencyConstraint +
       `- Strategy choices should directly resolve or reduce the client-stated strategic problem(s) when provided\n` +
-      `- Never switch industries, populations, service models, or buyer types from the baseline evidence\n` +
+      noIndustrySwitchConstraint +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
       `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +
       `- capabilities should be concrete operational or strategic abilities, not departments\n` +
@@ -4064,7 +4264,7 @@ Deno.serve(async (req) => {
 
     const strategyCascadeUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `Public baseline context:\n${baselineBrief}\n\n` +
+      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
@@ -4096,7 +4296,7 @@ Deno.serve(async (req) => {
 
     const customerJourneyDraft = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const odiBrief = buildODIBrief({
-      baselineResultJson: baselineRun?.result_json ?? null,
+      baselineResultJson: effectiveBaselineResultJson,
       customerJourneyTitle: String(customerJourneyDraft?.journey_title || ""),
       opportunities,
     });
@@ -4383,7 +4583,7 @@ Deno.serve(async (req) => {
         inputKey: key,
         description: String(input?.description || ""),
         whyItMatters: String(input?.why_it_matters || ""),
-        baselineResultJson: baselineRun?.result_json ?? null,
+        baselineResultJson: effectiveBaselineResultJson,
       });
       const derivedImpact = deriveInputScoreImpact({
         inputKey: key,
@@ -4418,6 +4618,7 @@ Deno.serve(async (req) => {
       }
 
       if (row?.id) {
+        let restoredFileCount = 0;
         if (!restoredFileKeys.has(key)) {
           const preservedFiles = preservedInputFilesByKey.get(key) || [];
           if (preservedFiles.length > 0) {
@@ -4436,6 +4637,8 @@ Deno.serve(async (req) => {
               const { error: restoreErr } = await supabase.from("input_files").insert(restorePayload);
               if (restoreErr) {
                 console.error("[research-company] restore input_files error:", restoreErr);
+              } else {
+                restoredFileCount = restorePayload.length;
               }
             }
           }
@@ -4453,20 +4656,22 @@ Deno.serve(async (req) => {
           console.error("[research-company] insert input_subitem error:", subitemErr);
         }
 
-        // The input_subitems trigger recalculates completeness from checklist/files.
-        // Re-apply the public baseline seed so newly generated inputs show non-zero progress from web research.
-        const { error: reseedErr } = await supabase
-          .from("inputs")
-          .update({
-            completeness: seededProgress.completeness,
-            status: seededProgress.status,
-            score_impact: derivedImpact.scoreImpact,
-            impact_tier: derivedImpact.impactTier,
-          })
-          .eq("id", row.id);
+        if (restoredFileCount <= 0) {
+          // Re-apply seeded progress only when no files were restored.
+          // If files exist, the input_files trigger already computes completeness/status from uploaded evidence.
+          const { error: reseedErr } = await supabase
+            .from("inputs")
+            .update({
+              completeness: seededProgress.completeness,
+              status: seededProgress.status,
+              score_impact: derivedImpact.scoreImpact,
+              impact_tier: derivedImpact.impactTier,
+            })
+            .eq("id", row.id);
 
-        if (reseedErr) {
-          console.error("[research-company] reseed input completeness error:", reseedErr);
+          if (reseedErr) {
+            console.error("[research-company] reseed input completeness error:", reseedErr);
+          }
         }
       }
 
@@ -4561,13 +4766,19 @@ Deno.serve(async (req) => {
     }
 
     const customerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
-    const baselineLens = (baselineRun?.result_json as {
+    const baselineLens = (effectiveBaselineResultJson as {
       lens_card?: {
         primary_buyer?: string;
         chooser?: string;
         user?: string;
       };
     } | null)?.lens_card ?? {};
+    const fallbackUnknownLabel =
+      researchContextMode === "uploaded_evidence_fallback"
+        ? "Unknown from uploaded evidence"
+        : "Unknown from public evidence";
+    const artifactSourcePath =
+      researchContextMode === "uploaded_evidence_fallback" ? "uploaded_file_research" : "public_research";
 
     const journeyDerivedExecutor = audienceFromJourneyTitle(customerJourney?.journey_title);
     const journeyDerivedJtbd = jtbdFromJourneyTitle(customerJourney?.journey_title);
@@ -4576,10 +4787,10 @@ Deno.serve(async (req) => {
         journeyDerivedExecutor ||
         baselineLens.user ||
         baselineLens.primary_buyer ||
-        "Unknown from public evidence"
+        fallbackUnknownLabel
       );
     const chooser =
-      String(baselineLens.chooser || "Unknown from public evidence");
+      String(baselineLens.chooser || fallbackUnknownLabel);
     const jtbd =
       journeyDerivedJtbd ||
       "Understand and complete the core job progress for this offering";
@@ -4590,7 +4801,7 @@ Deno.serve(async (req) => {
       job_executor,
       chooser,
       jtbd,
-      source_path: "public_research",
+      source_path: artifactSourcePath,
       frameworks_used: odiFrameworkKeys,
     });
     if (odiMarketErr) {
@@ -4620,7 +4831,7 @@ Deno.serve(async (req) => {
         satisfaction,
         opportunity_score,
         service_state: odiServiceState(importance, satisfaction),
-        source_path: "public_research",
+        source_path: artifactSourcePath,
         frameworks_used: odiFrameworkKeys,
       });
 
@@ -4839,7 +5050,7 @@ Deno.serve(async (req) => {
     const run = baselineRun ?? null;
 
     const scored = scoreCompanyMojo({
-      baselineResultJson: run?.result_json ?? null,
+      baselineResultJson: effectiveBaselineResultJson,
       inputs,
       jobSteps: journeys.flatMap((journey) => Array.isArray(journey?.steps) ? journey.steps.map((step: any) => ({
         journey_key: journey?.journey_key,
