@@ -217,14 +217,15 @@ export function useLatestLocalAlignment(companyId?: string) {
 export function useRunLocalAlignment(companyId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args?: { areas?: string[]; trigger?: string; applyScoreUpdate?: boolean }) => {
+    mutationFn: async (args?: { areas?: string[]; trigger?: string; applyScoreUpdate?: boolean; ignorePublicBaseline?: boolean }) => {
       if (!companyId) throw new Error("Select a company before running local alignment.");
       const { data, error } = await supabase.functions.invoke("local-alignment", {
         body: {
           company_id: companyId,
-          areas: args?.areas ?? ["positioning", "strategy"],
+          areas: args?.areas ?? ["positioning", "strategy", "market", "odi"],
           trigger: args?.trigger ?? "manual",
           apply_score_update: args?.applyScoreUpdate === true,
+          ignore_public_baseline: args?.ignorePublicBaseline === true,
         },
       });
       if (error) {

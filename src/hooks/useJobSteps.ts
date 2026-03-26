@@ -43,6 +43,7 @@ export function useJobSteps(companyId?: string) {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [removingJourneyKey, setRemovingJourneyKey] = useState<string | null>(null);
+  const [updatingStepId, setUpdatingStepId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -79,11 +80,12 @@ export function useJobSteps(companyId?: string) {
           .order("step_number", { ascending: true })
           .limit(400);
 
-        data = fallback.data as any[] | null;
+        data = fallback.data as unknown as JobStepRow[] | null;
         error = fallback.error;
 
         if (!fallback.error) {
-          data = ((fallback.data as any[]) ?? []).map((row) => ({
+          const fallbackRows = (fallback.data ?? []) as Array<Partial<JobStepRow>>;
+          data = fallbackRows.map((row) => ({
             ...row,
             evidence_status: row?.designed ? "implied" : "unclear",
             evidence_basis: row?.designed
@@ -116,6 +118,44 @@ export function useJobSteps(companyId?: string) {
     items,
     error,
     removingJourneyKey,
+    updatingStepId,
+    updateStepText: async (stepId: string, values: { step_label?: string; description?: string }) => {
+      if (!companyId) throw new Error("No active company selected.");
+      const id = String(stepId || "").trim();
+      if (!id) throw new Error("Missing step id.");
+
+      const nextLabel = typeof values.step_label === "string" ? values.step_label.trim() : "";
+      const nextDescription = typeof values.description === "string" ? values.description.trim() : "";
+      if (!nextLabel) throw new Error("Step label cannot be empty.");
+
+      setUpdatingStepId(id);
+      try {
+        const { error: updateError } = await supabase
+          .from("job_steps")
+          .update({
+            step_label: nextLabel,
+            description: nextDescription || null,
+          })
+          .eq("company_id", companyId)
+          .eq("id", id);
+
+        if (updateError) throw new Error(updateError.message || "Failed to update job step.");
+
+        setItems((current) =>
+          current.map((row) =>
+            row.id === id
+              ? {
+                  ...row,
+                  step_label: nextLabel,
+                  description: nextDescription || null,
+                }
+              : row,
+          ),
+        );
+      } finally {
+        setUpdatingStepId(null);
+      }
+    },
     removeJourneyMap: async (journeyKey: string) => {
       if (!companyId) {
         throw new Error("No active company selected.");

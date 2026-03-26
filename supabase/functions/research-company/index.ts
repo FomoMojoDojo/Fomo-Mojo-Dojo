@@ -1877,19 +1877,30 @@ function isCustomerJourneyKey(value: unknown) {
   return key === "customer" || key.startsWith("customer-");
 }
 
+function normalizeAudienceSignal(value: unknown) {
+  const normalized = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+    .trim();
+  if (!normalized) return "";
+  if (/^(unknown|n\/a|na|none|unset)$/i.test(normalized)) return "";
+  return normalized;
+}
+
 function audienceFromJourneyTitle(title: unknown) {
   const raw = String(title || "").trim();
   if (!raw) return "";
   const withoutMapPrefix = raw.replace(/^job\s*map\s*:\s*/i, "").trim();
   const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
   const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
-  return withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw;
+  const candidate = normalizeAudienceSignal(withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw);
+  return isGenericAudienceLabel(candidate) ? "" : candidate;
 }
 
 function jtbdFromJourneyTitle(title: unknown) {
   const audience = audienceFromJourneyTitle(title);
-  const lower = audience.toLowerCase();
   if (!audience) return "";
+  const lower = audience.toLowerCase();
 
   if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
     return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
@@ -1947,12 +1958,38 @@ function defaultJourneySubtitle(key: JourneyKey) {
 
 function sanitizeJobMapTitle(value: unknown, key: JourneyKey) {
   const title = String(value || "").trim();
-  return title || defaultJourneyTitle(key);
+  if (!title) return defaultJourneyTitle(key);
+  if (isCustomerJourneyKey(key) && isGenericAudienceLabel(audienceFromJourneyTitle(title))) {
+    return defaultJourneyTitle(key);
+  }
+  return title;
 }
 
 function sanitizeJobMapSubtitle(value: unknown, key: JourneyKey) {
   const subtitle = String(value || "").trim();
   return subtitle || defaultJourneySubtitle(key);
+}
+
+function isGenericAudienceLabel(value: unknown) {
+  const normalized = normalizeAudienceSignal(value).toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === "core audience" ||
+    normalized === "audience" ||
+    normalized === "target audience" ||
+    normalized === "customer" ||
+    normalized === "customers" ||
+    normalized === "primary customer" ||
+    normalized === "primary buyer" ||
+    normalized === "user" ||
+    normalized === "users" ||
+    normalized === "buyer" ||
+    normalized === "buyers" ||
+    normalized === "decision maker" ||
+    normalized === "decision-maker" ||
+    normalized === "unknown from public evidence" ||
+    normalized === "unknown from uploaded evidence"
+  );
 }
 
 function parseSelectedJobMaps(value: unknown): SelectedJobMap[] {
@@ -2045,8 +2082,9 @@ function inferSuggestedJobMapsFromBaseline(args: {
     normalizeSignal(lens.primary_buyer),
     normalizeSignal(lens.chooser),
   ].filter(Boolean);
-  const role = roleSignals[0] || "Core Audience";
-  const audienceLabel = role || "Core Audience";
+  const role = roleSignals[0] || "";
+  const companyAudienceFallback = normalizeSignal(args.companyName) || "Primary Customer";
+  const audienceLabel = !role || isGenericAudienceLabel(role) ? `${companyAudienceFallback} Customer` : role;
   const hasNonprofitFundingSignal = /\b(nonprofit|charity|foundation|mission|philanthrop|donor|grant|fundraising)\b/.test(publicSignalText);
   const hasCommercialMarketSignal = /\b(saas|software|telecom|enterprise|b2b|subscription|arr|contract|procurement|retail|cafe|restaurant|venue|manufacturing|logistics)\b/.test(publicSignalText);
   const allowDonorGrantRevenueMap = hasNonprofitFundingSignal && !hasCommercialMarketSignal;
@@ -3289,6 +3327,8 @@ Deno.serve(async (req) => {
     const website = typeof body?.website === "string" ? body.website : "";
     const reviewMode = String(body?.review_mode || "").trim().toLowerCase();
     const allowHighSeverityReviewSave = reviewMode === "advisory" || body?.allow_review_block_save === true;
+    const contextMode = String(body?.context_mode || "").trim().toLowerCase();
+    const forceUploadedOnlyContext = contextMode === "uploaded_only" || body?.prefer_uploaded_context === true;
     const requestedJourneyKeys = parseRequestedJourneyKeys(body?.journeys_to_generate);
     const submittedJobMaps = parseSelectedJobMaps(body?.job_maps);
 
@@ -3296,7 +3336,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
     }
 
-    const lockTtlMinutes = 45;
+    const lockTtlMinutes = 15;
     const lockResult = await acquireCompanyRunLock({
       supabase,
       companyId: company_id,
@@ -3372,7 +3412,24 @@ Deno.serve(async (req) => {
     let researchContextMode: "public_baseline" | "uploaded_evidence_fallback" = "public_baseline";
     let effectiveBaselineResultJson: unknown = baselineRun?.result_json ?? null;
 
-    if (hasWeakBaselineStatus && !hasUploadedEvidence) {
+    if (forceUploadedOnlyContext && !hasUploadedEvidence) {
+      return jsonResponse({
+        error: "Uploaded-only context was requested, but no uploaded files were found.",
+        status: "uploaded_context_requires_files",
+      }, 422);
+    }
+
+    if (forceUploadedOnlyContext && hasUploadedEvidence) {
+      researchContextMode = "uploaded_evidence_fallback";
+      effectiveBaselineResultJson = null;
+      console.log("[research-company] forcing uploaded-only context", {
+        company_id,
+        baseline_run_id: baselineRun?.id ?? null,
+        uploaded_file_count: uploadedEvidenceContext.fileCount,
+      });
+    }
+
+    if (!forceUploadedOnlyContext && hasWeakBaselineStatus && !hasUploadedEvidence) {
       console.log("[research-company] blocked by baseline status", {
         company_id,
         baseline_run_id: baselineRun?.id ?? null,
@@ -3399,7 +3456,7 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
-    if (hasWeakBaselineStatus && hasUploadedEvidence) {
+    if (!forceUploadedOnlyContext && hasWeakBaselineStatus && hasUploadedEvidence) {
       researchContextMode = "uploaded_evidence_fallback";
       effectiveBaselineResultJson = null;
       console.log("[research-company] weak public baseline; continuing with uploaded evidence fallback", {
@@ -3538,6 +3595,33 @@ Deno.serve(async (req) => {
       console.log("[research-company] auto-seeded default customer map for empty selection", {
         company_id,
       });
+    }
+
+    const selectedCustomerMap = selectedMapByKey.get("customer");
+    if (selectedCustomerMap) {
+      const customerAudience = audienceFromJourneyTitle(selectedCustomerMap.journey_title);
+      if (!customerAudience || isGenericAudienceLabel(customerAudience)) {
+        const suggestedCustomer = suggestedJobMapByKey.get("customer");
+        const normalizedCompanyName = normalizeAudienceSignal(company_name);
+        const companyCustomerLabel = normalizedCompanyName ? `${normalizedCompanyName} customer` : "Primary job performer";
+        selectedMapByKey.set("customer", {
+          ...selectedCustomerMap,
+          journey_title: sanitizeJobMapTitle(
+            suggestedCustomer?.journey_title || `Job Map: ${companyCustomerLabel}`,
+            "customer",
+          ),
+          journey_subtitle: sanitizeJobMapSubtitle(
+            suggestedCustomer?.journey_subtitle ||
+              `How ${companyCustomerLabel.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
+            "customer",
+          ),
+        });
+        console.log("[research-company] normalized generic customer job map title", {
+          company_id,
+          previous_title: selectedCustomerMap.journey_title,
+          updated_title: selectedMapByKey.get("customer")?.journey_title,
+        });
+      }
     }
 
     const selectedJobMaps: SelectedJobMap[] = Array.from(selectedMapByKey.values());
@@ -4564,6 +4648,7 @@ Deno.serve(async (req) => {
     let routesInserted = 0;
     let managedOutcomesInserted = 0;
     let odiNeedsInserted = 0;
+    let odiMarketDefinitionsInserted = 0;
     let positioningCanvasInserted = 0;
     let strategyCascadeInserted = 0;
     const restoredFileKeys = new Set<string>();
@@ -4782,18 +4867,40 @@ Deno.serve(async (req) => {
 
     const journeyDerivedExecutor = audienceFromJourneyTitle(customerJourney?.journey_title);
     const journeyDerivedJtbd = jtbdFromJourneyTitle(customerJourney?.journey_title);
+    const normalizedCompanyName = normalizeAudienceSignal(company_name);
+    const companyExecutorFallback = normalizedCompanyName ? `${normalizedCompanyName} customer` : "Primary job performer";
+    const lensUser = normalizeAudienceSignal(baselineLens.user);
+    const lensPrimaryBuyer = normalizeAudienceSignal(baselineLens.primary_buyer);
+    const lensChooser = normalizeAudienceSignal(baselineLens.chooser);
+    const normalizedJourneyExecutor = isGenericAudienceLabel(journeyDerivedExecutor)
+      ? ""
+      : journeyDerivedExecutor;
+    const baselineExecutor = !isGenericAudienceLabel(lensUser)
+      ? lensUser
+      : !isGenericAudienceLabel(lensPrimaryBuyer)
+        ? lensPrimaryBuyer
+        : "";
     const job_executor =
       String(
-        journeyDerivedExecutor ||
-        baselineLens.user ||
-        baselineLens.primary_buyer ||
-        fallbackUnknownLabel
+        normalizedJourneyExecutor ||
+        baselineExecutor ||
+        (researchContextMode === "uploaded_evidence_fallback" ? companyExecutorFallback : fallbackUnknownLabel)
       );
+    const chooserCandidate = !isGenericAudienceLabel(lensChooser)
+      ? lensChooser
+      : !isGenericAudienceLabel(lensPrimaryBuyer)
+        ? lensPrimaryBuyer
+        : !isGenericAudienceLabel(normalizedJourneyExecutor)
+          ? normalizedJourneyExecutor
+          : "";
     const chooser =
-      String(baselineLens.chooser || fallbackUnknownLabel);
+      String(chooserCandidate || (researchContextMode === "uploaded_evidence_fallback" ? "Buying/decision lead" : fallbackUnknownLabel));
+    const jtbdFallbackSubject = isGenericAudienceLabel(job_executor)
+      ? "the primary job performer"
+      : job_executor.toLowerCase();
     const jtbd =
       journeyDerivedJtbd ||
-      "Understand and complete the core job progress for this offering";
+      `When ${jtbdFallbackSubject} are trying to make progress, they need to define, execute, and validate outcomes with less risk and rework.`;
 
     const { error: odiMarketErr } = await supabase.from("odi_market_definitions").insert({
       company_id,
@@ -4806,9 +4913,12 @@ Deno.serve(async (req) => {
     });
     if (odiMarketErr) {
       console.error("[research-company] odi market definition insert error:", odiMarketErr);
+    } else {
+      odiMarketDefinitionsInserted++;
     }
 
-    for (const opp of opportunities) {
+    for (let needIndex = 0; needIndex < opportunities.length; needIndex += 1) {
+      const opp = opportunities[needIndex];
       const importance = clamp(Number(opp?.importance) || 5, 1, 10);
       const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
       const opportunity_score = clamp(
@@ -4830,6 +4940,7 @@ Deno.serve(async (req) => {
         importance,
         satisfaction,
         opportunity_score,
+        sort_order: needIndex + 1,
         service_state: odiServiceState(importance, satisfaction),
         source_path: artifactSourcePath,
         frameworks_used: odiFrameworkKeys,
@@ -5210,6 +5321,7 @@ Deno.serve(async (req) => {
       opportunities_inserted: oppsInserted,
       routes_inserted: routesInserted,
       managed_outcomes_inserted: managedOutcomesInserted,
+      odi_market_definitions_inserted: odiMarketDefinitionsInserted,
       odi_needs_inserted: odiNeedsInserted,
       positioning_canvas_inserted: positioningCanvasInserted,
       strategy_cascade_inserted: strategyCascadeInserted,

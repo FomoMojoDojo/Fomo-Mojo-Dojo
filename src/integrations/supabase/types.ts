@@ -547,6 +547,7 @@ export type Database = {
           importance: number
           journey_key: string
           opportunity_score: number
+          sort_order: number
           satisfaction: number
           service_state: string
           source_path: string
@@ -564,6 +565,7 @@ export type Database = {
           importance?: number
           journey_key?: string
           opportunity_score?: number
+          sort_order?: number
           satisfaction?: number
           service_state?: string
           source_path?: string
@@ -581,6 +583,7 @@ export type Database = {
           importance?: number
           journey_key?: string
           opportunity_score?: number
+          sort_order?: number
           satisfaction?: number
           service_state?: string
           source_path?: string

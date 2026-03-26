@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
-import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { useInputs } from "@/hooks/useInputs";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
@@ -9,9 +8,6 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useDynamicScoring } from "@/hooks/useDynamicScoring";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
-import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
-import { usePublicBaseline } from "@/hooks/usePublicBaseline";
-import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
@@ -19,8 +15,7 @@ import { useOpportunities } from "@/hooks/useOpportunities";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
-import { LlmTraceLegend, type LlmTraceItem } from "@/components/provenance/LlmTraceLegend";
+import PageContextStatus from "@/components/layout/PageContextStatus";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
@@ -30,7 +25,7 @@ import {
   deriveInitiativeContext,
 } from "@/lib/initiativeFocus";
 import AlignmentCircle from "@/components/ui/AlignmentCircle";
-import { toast } from "sonner";
+import { Info } from "lucide-react";
 
 /* ── Clean, sophisticated palette ── */
 const c = {
@@ -71,17 +66,17 @@ function formatEvidenceLabel(status: unknown) {
   switch (String(status || "")) {
     case "baseline_plus_artifacts":
     case "public_evidence_strong":
-      return "Evidence: Strong";
+      return "Strong";
     case "public_evidence_partial":
-      return "Evidence: Partial";
+      return "Partial";
     case "public_evidence_thin":
-      return "Evidence: Thin";
+      return "Thin";
     case "generated_no_baseline":
-      return "Evidence: Generated";
+      return "Generated";
     case "no_public_evidence":
-      return "Evidence: None";
+      return "None";
     default:
-      return "Evidence: Unknown";
+      return "Unknown";
   }
 }
 
@@ -136,10 +131,8 @@ export default function MapView() {
   const [deepDiveOpen, setDeepDiveOpen] = useState(false);
   const [deepDiveArea, setDeepDiveArea] = useState<string | null>(null);
 
-  const { user, isAdmin } = useAuth();
-  const { enabled: llmTraceEnabled } = useLlmTraceDebug();
-  const { activeCompany, refetch: refetchCompanies } = useCompany();
-  const { run: baselineRun } = usePublicBaseline(activeCompany?.id);
+  const { user } = useAuth();
+  const { activeCompany } = useCompany();
 
   const { query: inputsQuery } = useInputs();
   const inputs = useMemo<InputItem[]>(() => {
@@ -153,8 +146,6 @@ export default function MapView() {
   });
   const { items: strategicProblems } = useStrategicProblems(activeCompany?.id);
   const { items: jobSteps } = useJobSteps(activeCompany?.id);
-  const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
-  const applyLocalAlignment = useRunLocalAlignment(activeCompany?.id);
 
   const hasData = inputs.length > 0;
 
@@ -217,49 +208,6 @@ export default function MapView() {
     typeof activeCompany?.area_scores_json === "object" && activeCompany?.area_scores_json !== null
       ? activeCompany.area_scores_json
       : fallbackScores.area_scores_json;
-  const localScoreImpact = localAlignment?.score_impact ?? null;
-  const llmTraceItems = useMemo<LlmTraceItem[]>(() => {
-    if (!llmTraceEnabled || !isAdmin) return [];
-    const resultJson = baselineRun?.result_json as
-      | { run_ledger?: { provider?: string; model?: string; path?: string } }
-      | null
-      | undefined;
-    const publicProvider = String(resultJson?.run_ledger?.provider || "openai_public");
-    const publicModel = String(resultJson?.run_ledger?.model || "unknown");
-    const publicPath = String(resultJson?.run_ledger?.path || "public_web_research");
-
-    const items: LlmTraceItem[] = [
-      {
-        id: "public-baseline",
-        tier: "public",
-        label: `Public ${publicModel}`,
-        detail: `${publicProvider} · ${publicPath}`,
-      },
-    ];
-
-    if (localAlignment?.provider || localAlignment?.model) {
-      items.push({
-        id: "local-alignment",
-        tier: "local",
-        label: `Local ${localAlignment.model || "unknown"}`,
-        detail: `${localAlignment.provider || "ollama_local"} · local_comparison`,
-      });
-    }
-
-    const hasLocalDraftStep = jobSteps.some((step) =>
-      String(step.evidence_basis || "").toLowerCase().includes("local draft step generated"),
-    );
-    if (hasLocalDraftStep) {
-      items.push({
-        id: "local-fallback",
-        tier: "fallback",
-        label: "Local Draft Fallback",
-        detail: "Job steps include local draft placeholders (external model unavailable during generation).",
-      });
-    }
-
-    return items;
-  }, [baselineRun?.result_json, isAdmin, jobSteps, llmTraceEnabled, localAlignment?.model, localAlignment?.provider]);
 
   useEffect(() => {
     previousScoresRef.current = null;
@@ -383,42 +331,6 @@ export default function MapView() {
   function closeDeepDive() {
     setDeepDiveOpen(false);
     setTimeout(() => setDeepDiveArea(null), 300);
-  }
-
-  async function handleApplyScoreUpdate() {
-    if (!activeCompany?.id || applyLocalAlignment.isPending) return;
-    try {
-      const result = await applyLocalAlignment.mutateAsync({
-        areas: ["positioning", "strategy"],
-        trigger: "manual_apply",
-        applyScoreUpdate: true,
-      });
-      await refetchCompanies();
-      const applied = result?.applied_score_update;
-      if (applied?.applied) {
-        toast.success(
-          `Score updated: ${applied.previous_mojo ?? 0} → ${applied.updated_mojo ?? 0}`,
-        );
-      } else {
-        toast.message(applied?.reason || "No score change was applied.");
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to apply score update.");
-    }
-  }
-
-  async function handleRunLocalComparison() {
-    if (!activeCompany?.id || applyLocalAlignment.isPending) return;
-    try {
-      await applyLocalAlignment.mutateAsync({
-        areas: ["positioning", "strategy"],
-        trigger: "manual_refresh",
-        applyScoreUpdate: false,
-      });
-      toast.success("Local comparison updated.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to run local comparison.");
-    }
   }
 
   const weakestArea = useMemo(() => {
@@ -607,12 +519,13 @@ export default function MapView() {
           `url("data:image/svg+xml,%3Csvg width='6' height='6' viewBox='0 0 6 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='0.025'%3E%3Cpath d='M5 0h1L0 5V4zM6 5v1H5z'/%3E%3C/g%3E%3C/svg%3E")`,
       }}
     >
-      <TopNav onProcessClick={() => setProcessOpen(true)} />
+      <TopNav />
 
       <main className="max-w-content mx-auto pt-6 px-4 sm:px-6 md:px-9 pb-12">
         {/* Company bar */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
+        <div className="mb-8">
+          <div className="flex items-center justify-between gap-3">
+            <div>
             <h1
               className="font-sans text-[20px] font-bold tracking-tight"
               style={{ color: c.charcoal }}
@@ -625,19 +538,25 @@ export default function MapView() {
                 (activeCompany?.evidence_status || "not_scored")}
             </p>
           </div>
-
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {usingStoredScores
-                  ? `${evidenceLabel} · ${evidencePct}% confidence`
-                  : `Estimated from current artifacts · ${evidencePct}% confidence`}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-              {llmTraceEnabled && isAdmin ? (
-                <LlmTraceLegend items={llmTraceItems} />
-              ) : null}
-            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <PageContextStatus
+              lastScoredAt={activeCompany?.last_scored_at}
+              sourceSignals={sourceSignals}
+              evidenceLabel={usingStoredScores ? evidenceLabel : "Estimated from current artifacts"}
+              confidencePercent={evidencePct}
+              publicEvidenceStatus={String(activeCompany?.evidence_status || "")}
+              className="flex-1"
+            />
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border"
+              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              title="Map scores, journey steps, opportunities, and routes come from public baseline and company research. Uploaded client files are used in separate internal analysis flows."
+              aria-label="How source layers work"
+            >
+              <Info className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -650,13 +569,6 @@ export default function MapView() {
               "inset 0 2px 6px rgba(0,0,0,0.07), inset 0 0 0 1px rgba(0,0,0,0.04)",
           }}
         >
-          <AiBoundaryNote
-            label="Source Split"
-            tone="public"
-            className="mb-5"
-            detail="Map scores, journey steps, opportunities, and routes come from the public baseline and company research flow. Uploaded client files feed the deep-dive analysis separately on the local internal AI path."
-          />
-
           {!usingStoredScores ? (
             <div className="mb-5 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.lineFaint }}>
               <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
@@ -667,58 +579,6 @@ export default function MapView() {
               </p>
             </div>
           ) : null}
-
-          <div className="mb-5 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.lineFaint }}>
-            <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
-              Local Comparison Impact
-            </p>
-            {localAlignment ? (
-              <>
-                <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                  {localScoreImpact?.should_change
-                    ? `Local strategy/positioning comparison suggests a ${localScoreImpact.direction} adjustment of ${localScoreImpact.points} point${localScoreImpact.points === 1 ? "" : "s"} when reconciliation actions are completed.`
-                    : "Local strategy/positioning comparison did not recommend a score change from this run."}
-                </p>
-                <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                  {localScoreImpact?.reason || "No score-impact rationale returned."}
-                </p>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
-                  Run: {new Date(localAlignment.created_at).toLocaleString()} · {localAlignment.provider} · {localAlignment.model}
-                </p>
-                {localAlignment.applied_score_update?.applied ? (
-                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wider" style={{ color: c.teal }}>
-                    Applied: {localAlignment.applied_score_update.previous_mojo ?? 0} → {localAlignment.applied_score_update.updated_mojo ?? 0}
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                No local comparison has run for this company yet. Run it to generate side-by-side public vs company evidence and gap/overlap findings.
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleRunLocalComparison}
-                disabled={applyLocalAlignment.isPending}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
-                style={{ borderColor: c.line, color: c.charcoal, background: "#FFFFFF" }}
-              >
-                {applyLocalAlignment.isPending ? "Running..." : "Run Local Comparison"}
-              </button>
-              {localAlignment && localScoreImpact?.should_change ? (
-                <button
-                  type="button"
-                  onClick={handleApplyScoreUpdate}
-                  disabled={applyLocalAlignment.isPending}
-                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ borderColor: c.charcoal, color: "#ffffff", background: c.charcoal }}
-                >
-                  {applyLocalAlignment.isPending ? "Applying..." : "Apply Score Update"}
-                </button>
-              ) : null}
-            </div>
-          </div>
 
           {/* ── Hero stats ── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">

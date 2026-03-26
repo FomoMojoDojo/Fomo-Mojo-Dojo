@@ -119,6 +119,15 @@ function normalizeText(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isPublicEvidencePath(value: unknown) {
+  return normalizeText(value).includes("public");
+}
+
+function claimTierFromSourcePath(sourcePath: unknown, ignorePublicBaseline: boolean) {
+  if (ignorePublicBaseline) return "company" as const;
+  return isPublicEvidencePath(sourcePath) ? "public" as const : "company" as const;
+}
+
 function safeParseJsonObject(input: unknown): Record<string, unknown> | null {
   if (input && typeof input === "object") return input as Record<string, unknown>;
   if (typeof input !== "string") return null;
@@ -759,6 +768,7 @@ Deno.serve(async (req) => {
     const companyId = String(body?.company_id || "").trim();
     const trigger = String(body?.trigger || "manual").trim();
     const applyScoreUpdate = body?.apply_score_update === true;
+    const ignorePublicBaseline = body?.ignore_public_baseline === true;
     const areasRequested = Array.isArray(body?.areas)
       ? body.areas.map((entry: unknown) => String(entry || "").trim().toLowerCase()).filter(Boolean)
       : [...DEFAULT_AREAS];
@@ -830,6 +840,7 @@ Deno.serve(async (req) => {
     const fallbackUserId = String((companyRow as { created_by?: unknown })?.created_by || "").trim();
     const runUserId = requesterUserId || fallbackUserId;
     if (!runUserId) return json({ error: "Could not resolve user for local alignment run." }, 500);
+    const effectiveBaselineRun = ignorePublicBaseline ? null : baselineRun;
 
     const inputs = Array.isArray(inputRows) ? inputRows : [];
     const inputIds = inputs.map((entry: any) => entry.id).filter(Boolean);
@@ -852,8 +863,8 @@ Deno.serve(async (req) => {
     const comparisonSignature = signatureForComparison({
       companyId,
       areas,
-      baselineRunId: baselineRun?.id ? String(baselineRun.id) : null,
-      baselineRunAt: baselineRun?.created_at ? String(baselineRun.created_at) : null,
+      baselineRunId: effectiveBaselineRun?.id ? String(effectiveBaselineRun.id) : null,
+      baselineRunAt: effectiveBaselineRun?.created_at ? String(effectiveBaselineRun.created_at) : null,
       positioningId: (positioningRow as { id?: unknown } | null)?.id
         ? String((positioningRow as { id?: unknown }).id)
         : null,
@@ -891,8 +902,8 @@ Deno.serve(async (req) => {
       files: (files as Record<string, unknown>[]),
     });
 
-    const baselineJson = (baselineRun?.result_json && typeof baselineRun.result_json === "object")
-      ? baselineRun.result_json as Record<string, unknown>
+    const baselineJson = (effectiveBaselineRun?.result_json && typeof effectiveBaselineRun.result_json === "object")
+      ? effectiveBaselineRun.result_json as Record<string, unknown>
       : {};
     const marketDefinition = (marketDefinitionRow && typeof marketDefinitionRow === "object")
       ? marketDefinitionRow as Record<string, unknown>
@@ -904,6 +915,14 @@ Deno.serve(async (req) => {
       ? baselineJson.top_hypotheses.map((entry) => String(entry || "").trim()).filter(Boolean).slice(0, 6)
       : [];
     const alignmentSummary = String((baselineJson?.message_alignment as Record<string, unknown> | undefined)?.alignment_summary || "").trim();
+    const baselineLedgerCount = Array.isArray(baselineJson?.evidence_ledger)
+      ? baselineJson.evidence_ledger.length
+      : 0;
+    const hasPublicBaselineContext =
+      baselineHypotheses.length > 0 || alignmentSummary.length > 0 || baselineLedgerCount > 0;
+    const derivedClaimTier = hasPublicBaselineContext ? "public" : "company";
+    const confidenceForDerivedClaim = (publicConfidence: number, companyConfidence = 74) =>
+      hasPublicBaselineContext ? publicConfidence : companyConfidence;
 
     const areaResults: Record<string, AreaComparison> = {};
     let totalInternalClaims = 0;
@@ -945,18 +964,18 @@ Deno.serve(async (req) => {
         const valueForCustomer = String(positioning?.value_for_customer || "").trim();
         const currentTagline = String(positioning?.current_tagline || "").trim();
         const proposedTagline = String(positioning?.proposed_tagline || "").trim();
-        if (marketCategory) publicClaims.push({ claim: `Market category: ${marketCategory}`, source: "positioning_canvas.market_category", confidence: 68, tier: "public" });
-        if (valueForCustomer) publicClaims.push({ claim: `Value statement: ${valueForCustomer}`, source: "positioning_canvas.value_for_customer", confidence: 65, tier: "public" });
-        if (currentTagline) publicClaims.push({ claim: `Current tagline: ${currentTagline}`, source: "positioning_canvas.current_tagline", confidence: 60, tier: "public" });
-        if (proposedTagline) publicClaims.push({ claim: `Proposed direction: ${proposedTagline}`, source: "positioning_canvas.proposed_tagline", confidence: 60, tier: "public" });
+        if (marketCategory) publicClaims.push({ claim: `Market category: ${marketCategory}`, source: "positioning_canvas.market_category", confidence: confidenceForDerivedClaim(68), tier: derivedClaimTier });
+        if (valueForCustomer) publicClaims.push({ claim: `Value statement: ${valueForCustomer}`, source: "positioning_canvas.value_for_customer", confidence: confidenceForDerivedClaim(65), tier: derivedClaimTier });
+        if (currentTagline) publicClaims.push({ claim: `Current tagline: ${currentTagline}`, source: "positioning_canvas.current_tagline", confidence: confidenceForDerivedClaim(60), tier: derivedClaimTier });
+        if (proposedTagline) publicClaims.push({ claim: `Proposed direction: ${proposedTagline}`, source: "positioning_canvas.proposed_tagline", confidence: confidenceForDerivedClaim(60), tier: derivedClaimTier });
       } else if (areaKey === "strategy") {
         const strategy = strategyRow as Record<string, unknown> | null;
         const aspiration = String(strategy?.winning_aspiration || "").trim();
         const whereToPlay = String(strategy?.where_to_play || "").trim();
         const howToWin = String(strategy?.how_to_win || "").trim();
-        if (aspiration) publicClaims.push({ claim: `Winning aspiration: ${aspiration}`, source: "strategy_cascade.winning_aspiration", confidence: 68, tier: "public" });
-        if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: 66, tier: "public" });
-        if (howToWin) publicClaims.push({ claim: `How to win: ${howToWin}`, source: "strategy_cascade.how_to_win", confidence: 66, tier: "public" });
+        if (aspiration) publicClaims.push({ claim: `Winning aspiration: ${aspiration}`, source: "strategy_cascade.winning_aspiration", confidence: confidenceForDerivedClaim(68), tier: derivedClaimTier });
+        if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: confidenceForDerivedClaim(66), tier: derivedClaimTier });
+        if (howToWin) publicClaims.push({ claim: `How to win: ${howToWin}`, source: "strategy_cascade.how_to_win", confidence: confidenceForDerivedClaim(66), tier: derivedClaimTier });
       } else if (areaKey === "market") {
         const positioning = positioningRow as Record<string, unknown> | null;
         const strategy = strategyRow as Record<string, unknown> | null;
@@ -968,22 +987,24 @@ Deno.serve(async (req) => {
         const chooser = String(marketDefinition?.chooser || "").trim();
         const jtbd = String(marketDefinition?.jtbd || "").trim();
         const marketSourcePath = String(marketDefinition?.source_path || "unknown");
+        const marketSourceTier = claimTierFromSourcePath(marketSourcePath, ignorePublicBaseline);
         if (baselineCategory) publicClaims.push({ claim: `Baseline archetype: ${baselineCategory}`, source: "public_baseline.category_archetype", confidence: 60, tier: "public" });
-        if (marketCategory) publicClaims.push({ claim: `Market category: ${marketCategory}`, source: "positioning_canvas.market_category", confidence: 70, tier: "public" });
-        if (bestFitCustomers) publicClaims.push({ claim: `Best-fit customers: ${bestFitCustomers}`, source: "positioning_canvas.best_fit_customers", confidence: 65, tier: "public" });
-        if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: 66, tier: "public" });
-        if (jobExecutor) publicClaims.push({ claim: `Job executor: ${jobExecutor}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 78, tier: marketSourcePath.includes("public") ? "public" : "company" });
-        if (chooser) publicClaims.push({ claim: `Chooser: ${chooser}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 78, tier: marketSourcePath.includes("public") ? "public" : "company" });
-        if (jtbd) publicClaims.push({ claim: `JTBD: ${jtbd}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourcePath.includes("public") ? 58 : 80, tier: marketSourcePath.includes("public") ? "public" : "company" });
+        if (marketCategory) publicClaims.push({ claim: `Market category: ${marketCategory}`, source: "positioning_canvas.market_category", confidence: confidenceForDerivedClaim(70), tier: derivedClaimTier });
+        if (bestFitCustomers) publicClaims.push({ claim: `Best-fit customers: ${bestFitCustomers}`, source: "positioning_canvas.best_fit_customers", confidence: confidenceForDerivedClaim(65), tier: derivedClaimTier });
+        if (whereToPlay) publicClaims.push({ claim: `Where to play: ${whereToPlay}`, source: "strategy_cascade.where_to_play", confidence: confidenceForDerivedClaim(66), tier: derivedClaimTier });
+        if (jobExecutor) publicClaims.push({ claim: `Job executor: ${jobExecutor}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourceTier === "public" ? 58 : 78, tier: marketSourceTier });
+        if (chooser) publicClaims.push({ claim: `Chooser: ${chooser}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourceTier === "public" ? 58 : 78, tier: marketSourceTier });
+        if (jtbd) publicClaims.push({ claim: `JTBD: ${jtbd}`, source: `odi_market_definitions.${marketSourcePath}`, confidence: marketSourceTier === "public" ? 58 : 80, tier: marketSourceTier });
       } else if (areaKey === "odi") {
         const marketSourcePath = String(marketDefinition?.source_path || "unknown");
         const jtbd = String(marketDefinition?.jtbd || "").trim();
+        const marketSourceTier = claimTierFromSourcePath(marketSourcePath, ignorePublicBaseline);
         if (jtbd) {
           publicClaims.push({
             claim: `ODI job context: ${jtbd}`,
             source: `odi_market_definitions.${marketSourcePath}`,
-            confidence: marketSourcePath.includes("public") ? 58 : 80,
-            tier: marketSourcePath.includes("public") ? "public" : "company",
+            confidence: marketSourceTier === "public" ? 58 : 80,
+            tier: marketSourceTier,
           });
         }
 
@@ -997,7 +1018,7 @@ Deno.serve(async (req) => {
           const importance = Number(need?.importance || 0);
           const satisfaction = Number(need?.satisfaction || 0);
           const opp = Number(need?.opportunity_score || 0);
-          const sourceTier = sourcePath.includes("public") ? "public" : "company";
+          const sourceTier = claimTierFromSourcePath(sourcePath, ignorePublicBaseline);
           publicClaims.push({
             claim: `Need: ${outcome} (I:${importance || "?"}, S:${satisfaction || "?"}, Opp:${opp || "?"})`,
             source: `odi_needs.${sourcePath}`,
@@ -1007,8 +1028,28 @@ Deno.serve(async (req) => {
         }
       }
 
-      const internalClaims: Claim[] = [];
+      const strictPublicClaims = publicClaims
+        .filter((claim) => normalizeText(claim.tier || "public") === "public")
+        .slice(0, 10);
+      const derivedCompanyClaims = publicClaims
+        .filter((claim) => normalizeText(claim.tier || "public") !== "public")
+        .slice(0, 8);
+
+      const internalClaims: Claim[] = derivedCompanyClaims.map((claim) => ({
+        claim: claim.claim,
+        source: claim.source,
+        confidence: clampInt(Number(claim.confidence || 72), 0, 100),
+        tier: String(claim.tier || "company"),
+      }));
       const internalTierCounts = { public: 0, company: 0, evidence: 0, implemented_tested: 0 };
+      for (const claim of derivedCompanyClaims) {
+        const tier = normalizeText(claim.tier || "company");
+        if (tier === "public" || tier === "company" || tier === "evidence" || tier === "implemented_tested") {
+          internalTierCounts[tier as keyof typeof internalTierCounts] += 1;
+        } else {
+          internalTierCounts.company += 1;
+        }
+      }
       for (const input of areaInputs as any[]) {
         const inputFiles = filesByInput.get(String(input?.id || "")) || [];
         if (inputFiles.length === 0) continue;
@@ -1035,7 +1076,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      totalPublicClaims += publicClaims.length;
+      totalPublicClaims += strictPublicClaims.length;
       totalInternalClaims += internalClaims.length;
       tierTotals.public += internalTierCounts.public;
       tierTotals.company += internalTierCounts.company;
@@ -1044,7 +1085,7 @@ Deno.serve(async (req) => {
 
       const deterministic = deterministicCompare({
         areaKey,
-        publicClaims: publicClaims.slice(0, 10),
+        publicClaims: strictPublicClaims,
         internalClaims: internalClaims.slice(0, 10),
         internalTierCounts,
       });
@@ -1061,7 +1102,7 @@ Deno.serve(async (req) => {
         public_claims: deterministic.public_claims,
         internal_claims: deterministic.internal_claims,
         internal_tier_counts: internalTierCounts,
-        baseline_run_at: baselineRun?.created_at ?? null,
+        baseline_run_at: effectiveBaselineRun?.created_at ?? null,
       };
 
       const frameworkPlan = frameworkPlanForArea(areaKey);
@@ -1095,23 +1136,31 @@ Deno.serve(async (req) => {
       }
 
       const sanitized = sanitizeAreaComparison(areaKey, aiRaw, deterministic);
+      const uploadedOnlySanitized = ignorePublicBaseline
+        ? {
+            ...sanitized,
+            public_claims: [] as Claim[],
+            overlaps: [],
+            gaps: sanitized.gaps.filter((gap) => gap.gap_type !== "missing_public"),
+          }
+        : sanitized;
       const derivedImpact = deriveScoreImpact({
         areaKey,
-        publicClaims: sanitized.public_claims,
-        internalClaims: sanitized.internal_claims,
-        overlaps: sanitized.overlaps,
-        gaps: sanitized.gaps,
+        publicClaims: uploadedOnlySanitized.public_claims,
+        internalClaims: uploadedOnlySanitized.internal_claims,
+        overlaps: uploadedOnlySanitized.overlaps,
+        gaps: uploadedOnlySanitized.gaps,
         internalTierCounts,
       });
 
       const shouldOverrideScoreImpact =
-        !sanitized.score_impact.should_change ||
-        sanitized.score_impact.direction === "none" ||
-        sanitized.score_impact.points <= 0;
+        !uploadedOnlySanitized.score_impact.should_change ||
+        uploadedOnlySanitized.score_impact.direction === "none" ||
+        uploadedOnlySanitized.score_impact.points <= 0;
 
       areaResults[areaKey] = shouldOverrideScoreImpact
-        ? { ...sanitized, score_impact: derivedImpact }
-        : sanitized;
+        ? { ...uploadedOnlySanitized, score_impact: derivedImpact }
+        : uploadedOnlySanitized;
     }
 
     let delta = 0;
@@ -1288,7 +1337,7 @@ Deno.serve(async (req) => {
     };
 
     const artifactsJson = {
-      baseline_run_id: baselineRun?.id ?? null,
+      baseline_run_id: effectiveBaselineRun?.id ?? null,
       positioning_canvas_id: (positioningRow as { id?: unknown } | null)?.id ?? null,
       strategy_cascade_id: (strategyRow as { id?: unknown } | null)?.id ?? null,
       market_definition_id: (marketDefinitionRow as { id?: unknown } | null)?.id ?? null,
@@ -1306,7 +1355,7 @@ Deno.serve(async (req) => {
       .insert({
         company_id: companyId,
         user_id: runUserId,
-        baseline_run_id: baselineRun?.id ?? null,
+        baseline_run_id: effectiveBaselineRun?.id ?? null,
         status: "local_alignment",
         mojo_score: effectiveMojoForRun,
         evidence_status: String(companyRow.evidence_status || "") || null,

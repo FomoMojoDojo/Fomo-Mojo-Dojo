@@ -84,19 +84,71 @@ function sourcePathLabel(sourcePath?: string | null) {
   return isPublicSourcePath(value) ? `Public: ${value}` : `Uploaded/company: ${value}`;
 }
 
+function normalizeAudienceSignal(value: string | null | undefined) {
+  const normalized = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+    .trim();
+  if (!normalized) return "";
+  if (/^(unknown|n\/a|na|none|unset)$/i.test(normalized)) return "";
+  return normalized;
+}
+
+function isGenericAudienceLabel(value: string | null | undefined) {
+  const normalized = normalizeAudienceSignal(value).toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === "core audience" ||
+    normalized === "audience" ||
+    normalized === "target audience" ||
+    normalized === "customer" ||
+    normalized === "customers" ||
+    normalized === "primary customer" ||
+    normalized === "primary buyer" ||
+    normalized === "user" ||
+    normalized === "users" ||
+    normalized === "buyer" ||
+    normalized === "buyers" ||
+    normalized === "decision maker" ||
+    normalized === "decision-maker" ||
+    normalized === "unknown from public evidence" ||
+    normalized === "unknown from uploaded evidence"
+  );
+}
+
+function isGenericJtbdStatement(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized.includes("when trying to complete this job") ||
+    normalized.includes("move from defining outcomes to executing and monitoring progress") ||
+    normalized === "understand and complete the core job progress for this offering"
+  );
+}
+
+function isGenericJourneySubtitle(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized.includes("how the primary job performer") ||
+    normalized.includes("define, locate, prepare, execute, monitor, and conclude progress")
+  );
+}
+
 function audienceFromJourneyTitle(title: string | null | undefined) {
   const raw = safeText(title, "");
   if (!raw) return "";
   const withoutMapPrefix = raw.replace(/^job\s*map\s*:\s*/i, "").trim();
   const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
   const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
-  return withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw;
+  const candidate = normalizeAudienceSignal(withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw);
+  return isGenericAudienceLabel(candidate) ? "" : candidate;
 }
 
 function jtbdFromJourneyTitle(title: string | null | undefined) {
   const audience = audienceFromJourneyTitle(title);
-  const lower = audience.toLowerCase();
   if (!audience) return "";
+  const lower = audience.toLowerCase();
 
   if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
     return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
@@ -134,7 +186,8 @@ function marketContextFromJourney(args: {
   fallback?: string | null;
 }) {
   const title = audienceFromJourneyTitle(args.title);
-  const subtitle = safeText(args.subtitle, "");
+  const subtitleRaw = safeText(args.subtitle, "");
+  const subtitle = isGenericJourneySubtitle(subtitleRaw) ? "" : subtitleRaw;
   const fallback = safeText(args.fallback, "");
 
   if (title && subtitle) return `${title}: ${subtitle}`;
@@ -341,7 +394,7 @@ function normalizeRoleLabel(value: string) {
     .replace(/\s+/g, " ")
     .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
     .trim();
-  if (!cleaned) return "Core Audience";
+  if (!cleaned) return "Primary Job Performer";
   return cleaned.length > 48 ? `${cleaned.slice(0, 45).trim()}…` : cleaned;
 }
 
@@ -471,14 +524,17 @@ function inferSuggestedJourneyOptions(args: {
 
   if (!existingJourneyKeys.has("customer")) {
     const customerSignalRaw = safeText(lens.user || lens.primary_buyer || lens.chooser, "");
-    const customerSignal = normalizeRoleLabel(customerSignalRaw || "Core Audience");
+    const normalizedCustomerSignal = normalizeAudienceSignal(customerSignalRaw);
+    const customerSignal = normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal)
+      ? normalizeRoleLabel(normalizedCustomerSignal)
+      : "Primary Job Performer";
     addOption({
       key: "customer",
       title: `Job Map: ${customerSignal}`,
       subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
-      confidence: customerSignalRaw ? 95 : 80,
-      rationale: customerSignalRaw
-        ? `Public signal identifies primary job performer context: ${customerSignalRaw}`
+      confidence: normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
+      rationale: normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal)
+        ? `Public signal identifies primary job performer context: ${normalizedCustomerSignal}`
         : "Customer job map is required first and should define the core functional job performer.",
     });
   }
@@ -552,16 +608,9 @@ function inferSuggestedJourneyOptions(args: {
 
   const audienceCandidates = new Set<string>();
   const baselineRoleCandidates = [lens.user, lens.primary_buyer, lens.chooser]
-    .map((value) => normalizeRoleLabel(String(value || "")))
-    .filter((value) => {
-      const lower = value.toLowerCase();
-      return (
-        Boolean(value) &&
-        lower !== "core audience" &&
-        lower !== "unknown" &&
-        lower !== "unknown from public evidence"
-      );
-    });
+    .map((value) => normalizeAudienceSignal(String(value || "")))
+    .filter((value) => Boolean(value) && !isGenericAudienceLabel(value))
+    .map((value) => normalizeRoleLabel(value));
   for (const role of baselineRoleCandidates) {
     audienceCandidates.add(role);
   }
@@ -633,9 +682,49 @@ function TimelineRow({
   );
 }
 
-function StepCard({ step }: { step: JobStepRow }) {
+function StepCard({
+  step,
+  onSaveText,
+  saving,
+}: {
+  step: JobStepRow;
+  onSaveText?: (stepId: string, values: { step_label: string; description: string }) => Promise<void>;
+  saving?: boolean;
+}) {
   const draftPlaceholder = isDraftPlaceholderStep(step);
   const assessedGap = hasAssessedGap(step);
+  const [isEditing, setIsEditing] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(safeText(step.step_label, "Untitled step"));
+  const [descriptionDraft, setDescriptionDraft] = useState(safeText(step.description, ""));
+
+  useEffect(() => {
+    if (isEditing) return;
+    setLabelDraft(safeText(step.step_label, "Untitled step"));
+    setDescriptionDraft(safeText(step.description, ""));
+  }, [step.step_label, step.description, isEditing]);
+
+  const handleSaveEdit = async () => {
+    if (!onSaveText) {
+      setIsEditing(false);
+      return;
+    }
+    const nextLabel = labelDraft.trim();
+    if (!nextLabel) {
+      toast.error("Step label cannot be empty.");
+      return;
+    }
+    try {
+      await onSaveText(step.id, {
+        step_label: nextLabel,
+        description: descriptionDraft.trim(),
+      });
+      setIsEditing(false);
+      toast.success("Step updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update step.");
+    }
+  };
+
   const evidenceTone =
     draftPlaceholder
       ? { label: "Not Assessed", color: c.muted, bg: "#F3F4EF", border: c.line }
@@ -657,15 +746,74 @@ function StepCard({ step }: { step: JobStepRow }) {
     >
       <div className="flex min-h-[440px] flex-1 flex-col p-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-            Step {step.step_number ?? "—"}
-          </p>
-          <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
-            {safeText(step.step_label, "Untitled step")}
-          </p>
-          <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-            {safeText(step.description, "No description yet.")}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+              Step {step.step_number ?? "—"}
+            </p>
+            {!isEditing ? (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                disabled={!!saving}
+                className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              >
+                Edit
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setLabelDraft(safeText(step.step_label, "Untitled step"));
+                    setDescriptionDraft(safeText(step.description, ""));
+                  }}
+                  disabled={!!saving}
+                  className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
+                  style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  disabled={!!saving}
+                  className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
+                  style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            )}
+          </div>
+          {!isEditing ? (
+            <>
+              <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
+                {safeText(step.step_label, "Untitled step")}
+              </p>
+              <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+                {safeText(step.description, "No description yet.")}
+              </p>
+            </>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <input
+                value={labelDraft}
+                onChange={(event) => setLabelDraft(event.target.value)}
+                className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                placeholder="Step title"
+              />
+              <textarea
+                value={descriptionDraft}
+                onChange={(event) => setDescriptionDraft(event.target.value)}
+                className="min-h-[74px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
+                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                placeholder="Step description"
+              />
+            </div>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -765,7 +913,9 @@ function titleCaseJourney(key: string) {
 }
 
 function OdiContextSection({
+  companyName,
   marketDefinition,
+  odiError,
   needs,
   marketContext,
   activeCustomerJourneyTitle,
@@ -777,7 +927,9 @@ function OdiContextSection({
   onResetPublicResearchArtifacts,
   resettingPublicResearchArtifacts,
 }: {
+  companyName?: string | null;
   marketDefinition: OdiMarketDefinitionRow | null;
+  odiError?: string | null;
   needs: OdiNeedRow[];
   marketContext?: string;
   activeCustomerJourneyTitle?: string | null;
@@ -792,27 +944,33 @@ function OdiContextSection({
   const derivedExecutor = audienceFromJourneyTitle(activeCustomerJourneyTitle);
   const derivedJtbd = jtbdFromJourneyTitle(activeCustomerJourneyTitle);
   const derivedChooser = chooserFromJourneyTitle(activeCustomerJourneyTitle);
+  const storedExecutor = safeText(marketDefinition?.job_executor, "");
+  const storedChooser = safeText(marketDefinition?.chooser, "");
+  const storedJtbd = safeText(marketDefinition?.jtbd, "");
+  const companyExecutorFallback = safeText(companyName, "")
+    ? `${safeText(companyName, "")} customer`
+    : "Primary job performer";
 
   const jobExecutor = safeText(
     derivedExecutor,
-    safeText(marketDefinition?.job_executor, "Unknown from stored ODI definition"),
+    safeText(isGenericAudienceLabel(storedExecutor) ? "" : storedExecutor, companyExecutorFallback),
   );
   const chooser = safeText(
     derivedChooser,
-    safeText(marketDefinition?.chooser, "Unknown from stored ODI definition"),
+    safeText(isGenericAudienceLabel(storedChooser) ? "" : storedChooser, "Buying/decision lead"),
   );
   const jtbd = safeText(
     derivedJtbd,
     safeText(
-      marketDefinition?.jtbd,
-    "Understand and complete the core job progress for this offering"
+      isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd,
+      "Complete the end-to-end customer job with reliable outcomes."
     ),
   );
   const market = safeText(
     marketContextFromJourney({
       title: activeCustomerJourneyTitle,
       subtitle: activeCustomerJourneySubtitle,
-      fallback: marketContext,
+      fallback: marketContext || marketDefinition?.jtbd,
     }),
     "No market context captured yet.",
   );
@@ -837,6 +995,11 @@ function OdiContextSection({
         <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
           Public and uploaded-company signals are shown side by side through local alignment. Use this panel to spot mismatches before trusting ODI priorities.
         </p>
+        {odiError ? (
+          <p className="mt-2 font-sans text-[13px]" style={{ color: c.gap }}>
+            ODI data load warning: {odiError}
+          </p>
+        ) : null}
         {hasPublicMarketContext && onRemovePublicMarketContext ? (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {hasUploadedFiles && onRemovePublicMarketContextAndRerun ? (
@@ -916,7 +1079,7 @@ function OdiContextSection({
             {jtbd}
           </p>
           <p className="mt-2 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
-            Note: ODI needs should be written as stable, solution-free desired outcome statements. The current set and its scores are inferred from public evidence and generated opportunity data, not from validated ODI survey responses.
+            Note: ODI needs should be written as stable, solution-free desired outcome statements. The current set and its scores are inferred from generated opportunities plus available public/uploaded evidence, not from validated ODI survey responses.
           </p>
         </div>
       </div>
@@ -930,19 +1093,71 @@ function OdiNeedsListSection({
   removingNeedId,
   onRemovePublicNeeds,
   removingPublicNeeds,
+  onReorderNeeds,
+  reorderingNeeds,
 }: {
   needs: OdiNeedRow[];
   onRemoveNeed?: (needId: string) => void;
   removingNeedId?: string | null;
   onRemovePublicNeeds?: () => void;
   removingPublicNeeds?: boolean;
+  onReorderNeeds?: (orderedNeedIds: string[]) => Promise<void>;
+  reorderingNeeds?: boolean;
 }) {
-  const needItems = [...needs].sort((a, b) => {
+  type NeedOrderMode = "suggested" | "custom";
+  const sortNeedItems = (rows: OdiNeedRow[]) => [...rows].sort((a, b) => {
+    const aSort = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : Number.MAX_SAFE_INTEGER;
+    const bSort = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : Number.MAX_SAFE_INTEGER;
+    if (aSort !== bSort) return aSort - bSort;
     const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
     if (scoreDiff !== 0) return scoreDiff;
     return (b.importance ?? 0) - (a.importance ?? 0);
   });
-  const publicNeedCount = needItems.filter((item) => isPublicSourcePath(item.source_path)).length;
+  const sortSuggestedItems = (rows: OdiNeedRow[]) => [...rows].sort((a, b) => {
+    const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const importanceDiff = (b.importance ?? 0) - (a.importance ?? 0);
+    if (importanceDiff !== 0) return importanceDiff;
+    const satisfactionDiff = (a.satisfaction ?? 0) - (b.satisfaction ?? 0);
+    if (satisfactionDiff !== 0) return satisfactionDiff;
+    return String(a.id).localeCompare(String(b.id));
+  });
+  const [needItems, setNeedItems] = useState<OdiNeedRow[]>(() => sortNeedItems(needs));
+  const [orderMode, setOrderMode] = useState<NeedOrderMode>("custom");
+  const [draggingNeedId, setDraggingNeedId] = useState<string | null>(null);
+  const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
+  const reorderNeedItems = (items: OdiNeedRow[], fromId: string, toId: string) => {
+    const fromIndex = items.findIndex((item) => item.id === fromId);
+    const toIndex = items.findIndex((item) => item.id === toId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return items;
+    const next = [...items];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    return next.map((item, index) => ({ ...item, sort_order: index + 1 }));
+  };
+
+  useEffect(() => {
+    setNeedItems(sortNeedItems(needs));
+    setDraggingNeedId(null);
+    setDragOverNeedId(null);
+  }, [needs]);
+
+  const suggestedItems = useMemo(() => sortSuggestedItems(needs), [needs]);
+  const suggestedOrderIds = suggestedItems.map((item) => item.id);
+  const customOrderIds = needItems.map((item) => item.id);
+  const needNumberById = useMemo(
+    () =>
+      new Map<string, string>(
+        suggestedItems.map((item, index) => [item.id, String(index + 1).padStart(3, "0")]),
+      ),
+    [suggestedItems],
+  );
+  const hasCustomOrder =
+    suggestedOrderIds.length === customOrderIds.length &&
+    suggestedOrderIds.some((id, index) => customOrderIds[index] !== id);
+  const visibleNeedItems = orderMode === "suggested" ? suggestedItems : needItems;
+
+  const publicNeedCount = visibleNeedItems.filter((item) => isPublicSourcePath(item.source_path)).length;
 
   return (
     <section
@@ -962,6 +1177,44 @@ function OdiNeedsListSection({
             <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
               Desired outcome statements from both public and uploaded evidence. Use source labels to remove inaccurate public rows and keep company-grounded needs.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOrderMode("suggested")}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                style={{
+                  borderColor: orderMode === "suggested" ? "#E6CFC2" : c.line,
+                  color: orderMode === "suggested" ? c.charcoal : c.secondary,
+                  background: orderMode === "suggested" ? "#FFF4EC" : c.card,
+                }}
+              >
+                Suggested Priority
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderMode("custom")}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                style={{
+                  borderColor: orderMode === "custom" ? "#D8E4D6" : c.line,
+                  color: orderMode === "custom" ? c.charcoal : c.secondary,
+                  background: orderMode === "custom" ? "#EEF6E7" : c.card,
+                }}
+              >
+                Your Priority
+              </button>
+              {hasCustomOrder ? (
+                <MetaBadge>Custom order saved</MetaBadge>
+              ) : (
+                <MetaBadge>Using suggested order</MetaBadge>
+              )}
+            </div>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              {orderMode === "suggested"
+                ? "Viewing system-suggested rank"
+                : reorderingNeeds
+                  ? "Saving your order…"
+                  : "Drag needs to reorder your priority"}
+            </p>
             {publicNeedCount > 0 && onRemovePublicNeeds ? (
               <div className="mt-3">
                 <button
@@ -977,21 +1230,67 @@ function OdiNeedsListSection({
             ) : null}
           </div>
 
-          {needItems.length === 0 ? (
+          {visibleNeedItems.length === 0 ? (
             <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
-              No ODI needs identified yet from public evidence.
+              No ODI needs identified yet from current evidence.
             </p>
           ) : (
             <div className="space-y-3">
-              {needItems.map((item) => (
+              {visibleNeedItems.map((item) => (
                 <div
                   key={item.id}
+                  draggable={orderMode === "custom" && !reorderingNeeds}
+                  onDragStart={() => {
+                    if (orderMode !== "custom" || reorderingNeeds) return;
+                    setDraggingNeedId(item.id);
+                  }}
+                  onDragOver={(event) => {
+                    if (orderMode !== "custom" || reorderingNeeds || !draggingNeedId || draggingNeedId === item.id) return;
+                    event.preventDefault();
+                    setDragOverNeedId(item.id);
+                  }}
+                  onDrop={async (event) => {
+                    event.preventDefault();
+                    if (orderMode !== "custom" || !onReorderNeeds || reorderingNeeds || !draggingNeedId || draggingNeedId === item.id) {
+                      setDragOverNeedId(null);
+                      return;
+                    }
+                    const next = reorderNeedItems(needItems, draggingNeedId, item.id);
+                    setNeedItems(next);
+                    setDraggingNeedId(null);
+                    setDragOverNeedId(null);
+                    try {
+                      await onReorderNeeds(next.map((entry) => entry.id));
+                    } catch (err) {
+                      setNeedItems(sortNeedItems(needs));
+                      toast.error(err instanceof Error ? err.message : "Failed to reorder needs.");
+                    }
+                  }}
+                  onDragEnd={() => {
+                    setDraggingNeedId(null);
+                    setDragOverNeedId(null);
+                  }}
                   className="rounded-xl border p-3"
-                  style={{ borderColor: c.line, background: c.card }}
+                  style={{
+                    borderColor: c.line,
+                    background: c.card,
+                    cursor: orderMode !== "custom" || reorderingNeeds ? "default" : "grab",
+                    boxShadow: dragOverNeedId === item.id ? "0 0 0 2px rgba(255,125,45,0.32) inset" : "none",
+                    opacity: draggingNeedId === item.id ? 0.72 : 1,
+                  }}
                 >
-                  <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {item.desired_outcome}
-                  </p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                      {item.desired_outcome}
+                    </p>
+                    <span
+                      className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                      style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                      title="Stable need number based on suggested priority"
+                    >
+                      {needNumberById.get(item.id) || "—"}
+                    </span>
+                  </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <StateBadge tone={item.service_state} />
                     <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
@@ -1027,10 +1326,14 @@ function JourneySection({
   journey,
   onRemove,
   removing,
+  onUpdateStepText,
+  updatingStepId,
 }: {
   journey: JourneyGroup;
   onRemove: (key: JourneyKey) => void;
   removing: boolean;
+  onUpdateStepText: (stepId: string, values: { step_label: string; description: string }) => Promise<void>;
+  updatingStepId: string | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -1143,7 +1446,12 @@ function JourneySection({
 
               <div className="flex gap-3 px-5">
               {journey.steps.map((step) => (
-                <StepCard key={step.id} step={step} />
+                <StepCard
+                  key={step.id}
+                  step={step}
+                  onSaveText={onUpdateStepText}
+                  saving={updatingStepId === step.id}
+                />
               ))}
               </div>
             </div>
@@ -1259,6 +1567,8 @@ export default function JobStepsView() {
     loading,
     items,
     error,
+    updatingStepId,
+    updateStepText,
     removingJourneyKey,
     removeJourneyMap,
     refetch: refetchJobSteps,
@@ -1268,7 +1578,7 @@ export default function JobStepsView() {
   const { items: strategicProblems } = useStrategicProblems(activeCompanyId ?? undefined);
   const { query: inputsQuery } = useInputs(activeCompanyId ?? undefined);
   const [odiRefreshKey, setOdiRefreshKey] = useState(0);
-  const { marketDefinition, needs } = useOdiNeeds(activeCompanyId ?? undefined, odiRefreshKey);
+  const { marketDefinition, needs, error: odiError } = useOdiNeeds(activeCompanyId ?? undefined, odiRefreshKey);
   const { data: localAlignment } = useLatestLocalAlignment(activeCompanyId ?? undefined);
   const runLocalAlignment = useRunLocalAlignment(activeCompanyId ?? undefined);
   const { signals: sourceSignals } = useSourceConfidence({
@@ -1282,6 +1592,7 @@ export default function JobStepsView() {
   const [showCustomMapForm, setShowCustomMapForm] = useState(false);
   const [recentlyRemovedKeysByCompany, setRecentlyRemovedKeysByCompany] = useState<Record<string, string[]>>({});
   const [removingNeedId, setRemovingNeedId] = useState<string | null>(null);
+  const [reorderingNeeds, setReorderingNeeds] = useState(false);
   const [removingPublicNeeds, setRemovingPublicNeeds] = useState(false);
   const [removingPublicMarketContextAction, setRemovingPublicMarketContextAction] = useState<"remove" | "remove_and_rerun" | null>(null);
   const [resettingPublicResearchArtifacts, setResettingPublicResearchArtifacts] = useState(false);
@@ -1604,6 +1915,50 @@ export default function JobStepsView() {
     setCustomMapDraft({ key: "", title: "", subtitle: "" });
   };
 
+  const handleUpdateStepText = async (
+    stepId: string,
+    values: { step_label: string; description: string },
+  ) => {
+    await updateStepText(stepId, values);
+  };
+
+  const handleReorderNeeds = async (orderedNeedIds: string[]) => {
+    if (!activeCompanyId) throw new Error("Select a company before reordering needs.");
+    const ids = Array.isArray(orderedNeedIds)
+      ? orderedNeedIds.map((entry) => String(entry || "").trim()).filter(Boolean)
+      : [];
+    if (ids.length === 0) return;
+
+    const expectedNeedIds = needs.map((item) => item.id).sort();
+    const sortedIds = [...ids].sort();
+    if (
+      expectedNeedIds.length !== sortedIds.length ||
+      expectedNeedIds.some((id, index) => id !== sortedIds[index])
+    ) {
+      throw new Error("Need reorder payload did not match current needs.");
+    }
+
+    setReorderingNeeds(true);
+    try {
+      const updateCalls = ids.map((id, index) =>
+        supabase
+          .from("odi_needs")
+          .update({ sort_order: index + 1 })
+          .eq("company_id", activeCompanyId)
+          .eq("id", id),
+      );
+      const results = await Promise.all(updateCalls);
+      const errors = results
+        .map((result) => result.error?.message)
+        .filter((message): message is string => Boolean(message));
+      if (errors.length > 0) {
+        throw new Error(errors.join(" | "));
+      }
+    } finally {
+      setReorderingNeeds(false);
+    }
+  };
+
   const handleRemoveJourneyMap = async (key: string) => {
     if (!activeCompany?.id) {
       toast.error("Select a company before removing a job map.");
@@ -1643,15 +1998,61 @@ export default function JobStepsView() {
       throw new Error("Select a company before regenerating research artifacts.");
     }
 
-    const { error: researchErr, data: researchData } = await supabase.functions.invoke("research-company", {
-      body: {
-        company_id: activeCompany.id,
-        company_name: activeCompany.name,
-        website: activeCompany.website ?? "",
-        review_mode: "advisory",
-        allow_review_block_save: true,
-      },
-    });
+    const formatLockTime = (value?: string | null) => {
+      if (!value) return "soon";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    };
+
+    const { data: existingLock } = await supabase
+      .from("company_run_locks")
+      .select("operation,started_at,expires_at")
+      .eq("company_id", activeCompany.id)
+      .maybeSingle();
+    if (existingLock?.operation === "research") {
+      throw new Error(
+        `Artifact regeneration is already running (started ${formatLockTime(existingLock.started_at)}; lock expires ${formatLockTime(existingLock.expires_at)}).`,
+      );
+    }
+
+    let invokeRes:
+      | { error: unknown; data: unknown }
+      | null = null;
+
+    try {
+      invokeRes = await invokeFunctionWithTimeout(
+        () =>
+          supabase.functions.invoke("research-company", {
+            body: {
+              company_id: activeCompany.id,
+              company_name: activeCompany.name,
+              website: activeCompany.website ?? "",
+              review_mode: "advisory",
+              allow_review_block_save: true,
+              context_mode: "uploaded_only",
+            },
+          }),
+        95_000,
+      );
+    } catch (error) {
+      if (error instanceof InvokeTimeoutError) {
+        const { data: lockAfterTimeout } = await supabase
+          .from("company_run_locks")
+          .select("operation,started_at,expires_at")
+          .eq("company_id", activeCompany.id)
+          .maybeSingle();
+        if (lockAfterTimeout?.operation === "research") {
+          throw new Error(
+            `Artifact regeneration is still running (started ${formatLockTime(lockAfterTimeout.started_at)}; lock expires ${formatLockTime(lockAfterTimeout.expires_at)}).`,
+          );
+        }
+      }
+      throw error;
+    }
+
+    const researchErr = invokeRes?.error;
+    const researchData = invokeRes?.data;
 
     const researchPayload =
       researchData && typeof researchData === "object"
@@ -1765,6 +2166,7 @@ export default function JobStepsView() {
         areas: ["positioning", "strategy", "market", "odi"],
         trigger: "public_market_context_removed",
         applyScoreUpdate: true,
+        ignorePublicBaseline: true,
       });
       await runResearchFromUploadedEvidence();
       await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
@@ -1773,7 +2175,11 @@ export default function JobStepsView() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Rerun failed.";
       if (removed) {
-        toast.error(`Public market context was removed, but rerun failed: ${message}`);
+        if (/still running|already running/i.test(message)) {
+          toast.message(`Public market context was removed. ${message}`);
+        } else {
+          toast.error(`Public market context was removed, but rerun failed: ${message}`);
+        }
       } else {
         toast.error(message);
       }
@@ -1897,15 +2303,21 @@ export default function JobStepsView() {
             areas: ["positioning", "strategy", "market", "odi"],
             trigger: "public_artifacts_reset",
             applyScoreUpdate: true,
+            ignorePublicBaseline: true,
           });
           await runResearchFromUploadedEvidence();
           await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
           refreshOdi();
           toast.success("False public artifacts removed. Regenerated map, ODI, market context, and strategy from uploaded evidence.");
         } catch (rerunError) {
+          const rerunMessage = rerunError instanceof Error ? rerunError.message : "unknown error";
+          if (/still running|already running/i.test(rerunMessage)) {
+            toast.message(`False public artifacts removed. ${rerunMessage}`);
+            return;
+          }
           toast.error(
             `False public artifacts removed, but rerun failed: ${
-              rerunError instanceof Error ? rerunError.message : "unknown error"
+              rerunMessage
             }`,
           );
         }
@@ -1993,7 +2405,9 @@ export default function JobStepsView() {
         ) : (
           <div className="space-y-6">
             <OdiContextSection
+              companyName={activeCompany?.name}
               marketDefinition={marketDefinition}
+              odiError={odiError}
               needs={needs}
               marketContext={strategyCascade?.where_to_play}
               activeCustomerJourneyTitle={activeCustomerJourneyTitle}
@@ -2155,6 +2569,8 @@ export default function JobStepsView() {
                     journey={journey}
                     onRemove={handleRemoveJourneyMap}
                     removing={removingJourneyKey === journey.key}
+                    onUpdateStepText={handleUpdateStepText}
+                    updatingStepId={updatingStepId}
                   />
                 ))}
 
@@ -2178,6 +2594,8 @@ export default function JobStepsView() {
               removingNeedId={removingNeedId}
               onRemovePublicNeeds={handleRemovePublicNeeds}
               removingPublicNeeds={removingPublicNeeds}
+              onReorderNeeds={handleReorderNeeds}
+              reorderingNeeds={reorderingNeeds}
             />
           </div>
         )}

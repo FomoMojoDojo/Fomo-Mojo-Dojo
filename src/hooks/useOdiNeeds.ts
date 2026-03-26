@@ -24,13 +24,14 @@ export type OdiNeedRow = {
   importance: number;
   satisfaction: number;
   opportunity_score: number;
+  sort_order?: number | null;
   service_state: "underserved" | "served" | "overserved" | string;
   source_path: string;
   frameworks_used: string[];
   created_at: string;
 };
 
-export function useOdiNeeds(companyId?: string) {
+export function useOdiNeeds(companyId?: string, refreshKey = 0) {
   const [loading, setLoading] = useState(false);
   const [marketDefinition, setMarketDefinition] = useState<OdiMarketDefinitionRow | null>(null);
   const [needs, setNeeds] = useState<OdiNeedRow[]>([]);
@@ -58,12 +59,16 @@ export function useOdiNeeds(companyId?: string) {
           .from("odi_market_definitions")
           .select("*")
           .eq("company_id", companyId)
+          .order("updated_at", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from("odi_needs")
           .select("*")
           .eq("company_id", companyId)
           .order("tier", { ascending: true })
+          .order("sort_order", { ascending: true, nullsFirst: false })
           .order("opportunity_score", { ascending: false }),
       ]);
 
@@ -83,7 +88,7 @@ export function useOdiNeeds(companyId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
   return { loading, marketDefinition, needs, error };
 }

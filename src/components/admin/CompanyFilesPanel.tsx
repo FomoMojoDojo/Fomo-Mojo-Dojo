@@ -84,6 +84,11 @@ type LocalAlignmentInvokeResult = {
 type ResearchInvokeResult = {
   error?: string;
   message?: string;
+  status?: string;
+  started_at?: string;
+  expires_at?: string;
+  odi_needs_inserted?: number;
+  odi_market_definitions_inserted?: number;
 };
 
 type FileSystemDirectoryHandleLike = {
@@ -111,6 +116,34 @@ async function describeInvokeError(error: unknown) {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+class InvokeTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvokeTimeoutError";
+  }
+}
+
+async function invokeWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new InvokeTimeoutError(`Request timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function formatLockTime(value?: string) {
+  if (!value) return "soon";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 type FileSystemFileHandleLike = {
@@ -444,6 +477,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
             areas: areasToRun,
             trigger: "existing_file_rerun",
             apply_score_update: true,
+            ignore_public_baseline: true,
           },
         });
         if (localAlignmentErr || (localAlignmentData as LocalAlignmentInvokeResult | null)?.error) {
@@ -462,6 +496,15 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
         }
 
         try {
+          const { data: activeLock } = await supabase
+            .from("company_run_locks")
+            .select("operation, started_at, expires_at")
+            .eq("company_id", companyId)
+            .maybeSingle();
+
+          if (activeLock?.operation === "research") {
+            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(activeLock.started_at)}; lock expires ${formatLockTime(activeLock.expires_at)}).`;
+          } else {
           const { data: companyRow, error: companyFetchErr } = await supabase
             .from("companies")
             .select("website")
@@ -469,33 +512,62 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
             .maybeSingle();
           if (companyFetchErr) throw companyFetchErr;
 
-          const { error: researchErr, data: researchData } = await supabase.functions.invoke("research-company", {
-            body: {
-              company_id: companyId,
-              company_name: companyName,
-              website: String((companyRow as { website?: unknown } | null)?.website || ""),
-              review_mode: "advisory",
-              allow_review_block_save: true,
-            },
-          });
+          const { error: researchErr, data: researchData } = await invokeWithTimeout(
+            () =>
+              supabase.functions.invoke("research-company", {
+                body: {
+                  company_id: companyId,
+                  company_name: companyName,
+                  website: String((companyRow as { website?: unknown } | null)?.website || ""),
+                  review_mode: "advisory",
+                  allow_review_block_save: true,
+                  context_mode: "uploaded_only",
+                },
+              }),
+            95_000,
+          );
 
           const researchResult =
             researchData && typeof researchData === "object"
               ? (researchData as ResearchInvokeResult)
               : null;
-          if (researchErr || researchResult?.error) {
+          const companyLocked =
+            researchResult?.status === "company_locked" ||
+            /already running|company_locked/i.test(String(researchResult?.message || "")) ||
+            /already running|company_locked/i.test(String(researchResult?.error || ""));
+
+          if (companyLocked) {
+            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(researchResult?.started_at)}; lock expires ${formatLockTime(researchResult?.expires_at)}).`;
+          } else if (researchErr || researchResult?.error) {
             const message = researchErr
               ? await describeInvokeError(researchErr)
               : String(researchResult?.message || researchResult?.error || "Research regeneration failed.");
             alignmentSummary += ` Artifact regeneration failed (${message}).`;
           } else {
+            const researchNeeds = Number(researchResult?.odi_needs_inserted ?? 0);
+            const researchMarketDefs = Number(researchResult?.odi_market_definitions_inserted ?? 0);
             alignmentSummary += " Regenerated map, opportunities, routes, ODI context, positioning, and strategy.";
+            alignmentSummary += ` ODI: ${researchNeeds} need${researchNeeds === 1 ? "" : "s"}, ${researchMarketDefs} market context row${researchMarketDefs === 1 ? "" : "s"}.`;
             await query.refetch();
             await refetchCompanies().catch(() => undefined);
           }
+          }
         } catch (error) {
-          const message = await describeInvokeError(error);
-          alignmentSummary += ` Artifact regeneration failed (${message}).`;
+          if (error instanceof InvokeTimeoutError) {
+            const { data: lockAfterTimeout } = await supabase
+              .from("company_run_locks")
+              .select("operation, started_at, expires_at")
+              .eq("company_id", companyId)
+              .maybeSingle();
+            if (lockAfterTimeout?.operation === "research") {
+              alignmentSummary += ` Artifact regeneration is still running (started ${formatLockTime(lockAfterTimeout.started_at)}; lock expires ${formatLockTime(lockAfterTimeout.expires_at)}).`;
+            } else {
+              alignmentSummary += ` Artifact regeneration timed out (${error.message}).`;
+            }
+          } else {
+            const message = await describeInvokeError(error);
+            alignmentSummary += ` Artifact regeneration failed (${message}).`;
+          }
         }
       }
 
