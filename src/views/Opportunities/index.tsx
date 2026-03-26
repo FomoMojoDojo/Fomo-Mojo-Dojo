@@ -8,7 +8,7 @@ import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities"
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { MetaBadge, ScoreChip, StateBadge, TierBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
+import PageContextStatus from "@/components/layout/PageContextStatus";
 import {
   alignmentLevelFromFocus,
   classifyOpportunityFocus,
@@ -698,7 +698,7 @@ export default function OpportunitiesView() {
               <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
                 Opportunities
               </h1>
-              <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
+              <p className="mojo-under-title max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
                 Focus on the product outcomes and leading indicators behind the jobs customers, buyers, and operators are trying to get done. The top of the tree should represent a result to manage toward. The branches below should capture the opportunity space, not outputs, initiatives, or deliverables. Prioritize underserved opportunities first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -706,16 +706,8 @@ export default function OpportunitiesView() {
                 <AlignmentIcon focus={{ level: "related", overlap: 1 }} />
               </div>
             </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {activeCompany?.last_scored_at
-                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                  : "Awaiting research"}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-            </div>
           </div>
+          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
           {items.length > 0 ? (
             <div className="mt-4">
               <ViewToggle mode={viewMode} onChange={setViewMode} />

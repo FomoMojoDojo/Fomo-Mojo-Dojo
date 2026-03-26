@@ -8,7 +8,7 @@ import { useOpportunities } from "@/hooks/useOpportunities";
 import { useInputs } from "@/hooks/useInputs";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { MetaBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
+import PageContextStatus from "@/components/layout/PageContextStatus";
 import RouteCard from "./RouteCard";
 import type { RouteRow } from "./useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
@@ -419,7 +419,7 @@ export default function RoutesView() {
 
       <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
         <div className="mb-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start gap-3">
             <div>
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
@@ -427,22 +427,15 @@ export default function RoutesView() {
               <h1 className="mt-1 font-sans text-[34px] font-semibold leading-[1.1]" style={{ color: c.charcoal }}>
                 Routes
               </h1>
-              <p className="mt-2 font-sans text-[15px] leading-[1.65]" style={{ color: c.secondary }}>
+              <p className="mojo-under-title font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
                 Click any route to expand steps, evidence needed, and why this matters.
               </p>
               <div className="mt-3">
                 <MetaBadge>{`Initiative: ${initiativeContext.primaryJourneyTitle}`}</MetaBadge>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {activeCompany?.last_scored_at
-                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                  : "Awaiting research"}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-            </div>
           </div>
+          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
         </div>
 
         {!activeCompany?.id ? (

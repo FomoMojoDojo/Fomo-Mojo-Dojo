@@ -7,8 +7,8 @@ import { useLatestLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
+import PageContextStatus from "@/components/layout/PageContextStatus";
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import {
@@ -302,7 +302,7 @@ function OptionCard({
       <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
         {title}
       </p>
-      <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+      <p className="mojo-under-title font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
         {parsedDetail.primary || detail}
       </p>
       <SuggestionActions
@@ -728,7 +728,7 @@ function CanvasSection({
       <h2 className="mt-3 font-sans text-[30px] font-semibold" style={{ color: c.charcoal }}>
         {meta.title}
       </h2>
-      <p className="mt-2 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+      <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
         {meta.subtitle}
       </p>
 
@@ -738,7 +738,7 @@ function CanvasSection({
             <p className="font-sans text-[17px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
               {input?.input_label || "Not set"}
             </p>
-            <p className="mt-3 font-sans text-[14px] leading-[1.8]" style={{ color: c.secondary }}>
+            <p className="mt-2.5 font-sans text-[14px] leading-[1.5]" style={{ color: c.secondary }}>
               {input?.description || `No ${meta.title.toLowerCase()} detail has been generated yet.`}
             </p>
           </>
@@ -900,7 +900,7 @@ export default function PositioningView() {
 
       <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div>
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
@@ -908,21 +908,13 @@ export default function PositioningView() {
               <h1 className="mt-2 font-sans text-[34px] font-semibold" style={{ color: c.charcoal }}>
                 Positioning Canvas
               </h1>
-              <p className="mt-2 max-w-3xl font-sans text-[15px] leading-[1.7]" style={{ color: c.secondary }}>
+              <p className="mojo-under-title max-w-3xl font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
                 Positioning is the foundation for go-to-market clarity. This canvas now shows source
                 confidence so we can distinguish public-source drafts from validated and tested positioning.
               </p>
             </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {activeCompany?.last_scored_at
-                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                  : "Awaiting research"}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-            </div>
           </div>
+          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
         </div>
 
         {!activeCompany?.id ? (
@@ -1049,7 +1041,7 @@ export default function PositioningView() {
                   <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
                     {hasStoredCanvas ? "Value Statement" : valueProposition?.input_label || "Value statement not set"}
                   </p>
-                  <p className="mt-4 font-sans text-[15px] leading-[1.85]" style={{ color: c.secondary }}>
+                  <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
                     {valueForCustomerText.primary || "No value proposition has been generated yet."}
                   </p>
                   <SuggestionActions
@@ -1067,7 +1059,7 @@ export default function PositioningView() {
                     }
                   />
                   {bestFitCustomersText.primary || bestFitCustomersText.suggested ? (
-                    <p className="mt-4 font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
+                    <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
                       Best-fit audience: {bestFitCustomersText.primary || "Not set yet."}
                     </p>
                   ) : null}
@@ -1109,7 +1101,7 @@ export default function PositioningView() {
                         : undefined
                     }
                   />
-                  <p className="mt-4 font-sans text-[15px] leading-[1.85]" style={{ color: c.secondary }}>
+                  <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
                     {categoryRationaleText.primary || "No market category framing has been generated yet."}
                   </p>
                   <SuggestionActions
@@ -1139,7 +1131,7 @@ export default function PositioningView() {
                   {sectionLabel("Current Tagline")}
                   <SourcePill tier={sectionTiers.current_tagline} compact />
                 </div>
-                <p className="mt-4 font-sans text-[16px] leading-[1.8]" style={{ color: c.charcoal }}>
+                <p className="mt-3 font-sans text-[16px] leading-[1.5]" style={{ color: c.charcoal }}>
                   {currentTaglineText.primary ||
                     "No current tagline or brand line has been mapped yet."}
                 </p>
@@ -1185,7 +1177,7 @@ export default function PositioningView() {
                       : undefined
                   }
                 />
-                <p className="mt-3 font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
+                <p className="mt-2.5 font-sans text-[13px] mojo-desc" style={{ color: c.secondary }}>
                   The next strategist pass should pressure-test alternatives, sharpen the differentiated claim,
                   and make the market category easier to repeat in real buyer conversations.
                 </p>

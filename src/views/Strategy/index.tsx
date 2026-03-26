@@ -7,8 +7,8 @@ import { useStrategicAssumptions, type StrategicAssumption } from "@/hooks/useSt
 import { useLatestLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
-import { SourceLegend } from "@/components/provenance/SourceLegend";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
+import PageContextStatus from "@/components/layout/PageContextStatus";
 import type { CascadeItem } from "@/lib/types";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import { toast } from "sonner";
@@ -817,7 +817,7 @@ export default function StrategyView() {
 
       <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div>
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
@@ -825,22 +825,14 @@ export default function StrategyView() {
               <h1 className="mt-2 font-sans text-[34px] font-semibold" style={{ color: c.charcoal }}>
                 Strategy Cascade
               </h1>
-              <p className="mt-2 max-w-3xl font-sans text-[15px] leading-[1.7]" style={{ color: c.secondary }}>
+              <p className="mojo-under-title max-w-3xl font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
                 A good strategy is a set of reinforcing choices. This cascade shows the current
                 strategic logic from aspiration through capabilities, management systems, and the
                 assumptions that still need proof.
               </p>
             </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <MetaBadge>
-                {activeCompany?.last_scored_at
-                  ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                  : "Awaiting research"}
-              </MetaBadge>
-              <SourceLegend signals={sourceSignals} />
-            </div>
           </div>
+          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
         </div>
 
         {!activeCompany?.id ? (
@@ -854,7 +846,7 @@ export default function StrategyView() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   {sectionLabel("Client-Stated Strategic Problem(s)")}
-                  <p className="mt-3 max-w-4xl font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+                  <p className="mt-2.5 max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
                     Capture what the client says the strategic problem is. Multiple statements are expected, especially early.
                     Reconcile them before locking strategic choices in the cascade below.
                   </p>

@@ -1095,6 +1095,8 @@ function OdiNeedsListSection({
   removingPublicNeeds,
   onReorderNeeds,
   reorderingNeeds,
+  onUpdateNeedText,
+  updatingNeedId,
 }: {
   needs: OdiNeedRow[];
   onRemoveNeed?: (needId: string) => void;
@@ -1103,6 +1105,8 @@ function OdiNeedsListSection({
   removingPublicNeeds?: boolean;
   onReorderNeeds?: (orderedNeedIds: string[]) => Promise<void>;
   reorderingNeeds?: boolean;
+  onUpdateNeedText?: (needId: string, values: { desired_outcome: string }) => Promise<void>;
+  updatingNeedId?: string | null;
 }) {
   type NeedOrderMode = "suggested" | "custom";
   const sortNeedItems = (rows: OdiNeedRow[]) => [...rows].sort((a, b) => {
@@ -1126,6 +1130,8 @@ function OdiNeedsListSection({
   const [orderMode, setOrderMode] = useState<NeedOrderMode>("custom");
   const [draggingNeedId, setDraggingNeedId] = useState<string | null>(null);
   const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
+  const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
+  const [needDrafts, setNeedDrafts] = useState<Record<string, string>>({});
   const reorderNeedItems = (items: OdiNeedRow[], fromId: string, toId: string) => {
     const fromIndex = items.findIndex((item) => item.id === fromId);
     const toIndex = items.findIndex((item) => item.id === toId);
@@ -1140,6 +1146,7 @@ function OdiNeedsListSection({
     setNeedItems(sortNeedItems(needs));
     setDraggingNeedId(null);
     setDragOverNeedId(null);
+    setEditingNeedId(null);
   }, [needs]);
 
   const suggestedItems = useMemo(() => sortSuggestedItems(needs), [needs]);
@@ -1239,9 +1246,9 @@ function OdiNeedsListSection({
               {visibleNeedItems.map((item) => (
                 <div
                   key={item.id}
-                  draggable={orderMode === "custom" && !reorderingNeeds}
+                  draggable={orderMode === "custom" && !reorderingNeeds && editingNeedId !== item.id}
                   onDragStart={() => {
-                    if (orderMode !== "custom" || reorderingNeeds) return;
+                    if (orderMode !== "custom" || reorderingNeeds || editingNeedId === item.id) return;
                     setDraggingNeedId(item.id);
                   }}
                   onDragOver={(event) => {
@@ -1280,9 +1287,21 @@ function OdiNeedsListSection({
                   }}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                      {item.desired_outcome}
-                    </p>
+                    {editingNeedId === item.id ? (
+                      <textarea
+                        value={needDrafts[item.id] ?? item.desired_outcome}
+                        onChange={(event) =>
+                          setNeedDrafts((current) => ({ ...current, [item.id]: event.target.value }))
+                        }
+                        className="min-h-[78px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
+                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                        placeholder="Desired outcome"
+                      />
+                    ) : (
+                      <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                        {item.desired_outcome}
+                      </p>
+                    )}
                     <span
                       className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em]"
                       style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
@@ -1300,11 +1319,80 @@ function OdiNeedsListSection({
                     <ScoreChip label="Est. S" value={item.satisfaction} />
                   </div>
                   {onRemoveNeed ? (
-                    <div className="mt-3 flex justify-end">
+                    <div className="mt-3 flex justify-end gap-2">
+                      {editingNeedId === item.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNeedId(null);
+                              setNeedDrafts((current) => {
+                                const next = { ...current };
+                                delete next[item.id];
+                                return next;
+                              });
+                            }}
+                            disabled={updatingNeedId === item.id}
+                            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                            style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!onUpdateNeedText) return;
+                              const draftValue = String(needDrafts[item.id] ?? item.desired_outcome).trim();
+                              if (!draftValue) {
+                                toast.error("Need text cannot be empty.");
+                                return;
+                              }
+                              try {
+                                await onUpdateNeedText(item.id, { desired_outcome: draftValue });
+                                setNeedItems((current) =>
+                                  current.map((row) =>
+                                    row.id === item.id ? { ...row, desired_outcome: draftValue } : row,
+                                  ),
+                                );
+                                setEditingNeedId(null);
+                                setNeedDrafts((current) => {
+                                  const next = { ...current };
+                                  delete next[item.id];
+                                  return next;
+                                });
+                                toast.success("Need updated.");
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "Failed to update need.");
+                              }
+                            }}
+                            disabled={updatingNeedId === item.id}
+                            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                            style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                          >
+                            {updatingNeedId === item.id ? "Saving…" : "Save"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNeedId(item.id);
+                            setNeedDrafts((current) => ({
+                              ...current,
+                              [item.id]: current[item.id] ?? item.desired_outcome,
+                            }));
+                          }}
+                          disabled={updatingNeedId === item.id}
+                          className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                          style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                        >
+                          Edit
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onRemoveNeed(item.id)}
-                        disabled={removingNeedId === item.id}
+                        disabled={removingNeedId === item.id || updatingNeedId === item.id}
                         className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                         style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
                       >
@@ -1592,6 +1680,7 @@ export default function JobStepsView() {
   const [showCustomMapForm, setShowCustomMapForm] = useState(false);
   const [recentlyRemovedKeysByCompany, setRecentlyRemovedKeysByCompany] = useState<Record<string, string[]>>({});
   const [removingNeedId, setRemovingNeedId] = useState<string | null>(null);
+  const [updatingNeedId, setUpdatingNeedId] = useState<string | null>(null);
   const [reorderingNeeds, setReorderingNeeds] = useState(false);
   const [removingPublicNeeds, setRemovingPublicNeeds] = useState(false);
   const [removingPublicMarketContextAction, setRemovingPublicMarketContextAction] = useState<"remove" | "remove_and_rerun" | null>(null);
@@ -1956,6 +2045,31 @@ export default function JobStepsView() {
       }
     } finally {
       setReorderingNeeds(false);
+    }
+  };
+
+  const handleUpdateNeedText = async (
+    needId: string,
+    values: { desired_outcome: string },
+  ) => {
+    if (!activeCompanyId) throw new Error("Select a company before editing needs.");
+    const id = String(needId || "").trim();
+    if (!id) throw new Error("Missing need id.");
+    const desiredOutcome = String(values.desired_outcome || "").trim();
+    if (!desiredOutcome) throw new Error("Need text cannot be empty.");
+
+    setUpdatingNeedId(id);
+    try {
+      const { error: updateError } = await supabase
+        .from("odi_needs")
+        .update({ desired_outcome: desiredOutcome })
+        .eq("company_id", activeCompanyId)
+        .eq("id", id);
+      if (updateError) {
+        throw new Error(updateError.message || "Failed to update need.");
+      }
+    } finally {
+      setUpdatingNeedId(null);
     }
   };
 
@@ -2352,7 +2466,7 @@ export default function JobStepsView() {
               <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
                 Job Steps Map
               </h1>
-              <p className="mt-1 font-sans text-[14px]" style={{ color: c.secondary }}>
+              <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
                 Select and define ODI-style job maps first, then run research to generate steps and aligned opportunities.
               </p>
             </div>
@@ -2596,6 +2710,8 @@ export default function JobStepsView() {
               removingPublicNeeds={removingPublicNeeds}
               onReorderNeeds={handleReorderNeeds}
               reorderingNeeds={reorderingNeeds}
+              onUpdateNeedText={handleUpdateNeedText}
+              updatingNeedId={updatingNeedId}
             />
           </div>
         )}
