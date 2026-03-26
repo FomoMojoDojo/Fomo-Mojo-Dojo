@@ -495,12 +495,13 @@ export default function MapView() {
       computeWorkflowGuidance({
         inputs,
         sourceSignals,
+        publicEvidenceStatus: activeCompany?.evidence_status ?? null,
         focusOpportunityCount: focusOpps.length,
         routeCount: mapRoutes.length,
         strategicProblemCount: strategicProblems.length,
         reconciledStrategicProblemCount: strategicProblems.filter((item) => item.status === "reconciled").length,
       }),
-    [inputs, sourceSignals, focusOpps.length, mapRoutes.length, strategicProblems],
+    [inputs, sourceSignals, activeCompany?.evidence_status, focusOpps.length, mapRoutes.length, strategicProblems],
   );
   const headedPlan = workflow.steps;
   const currentHeadedIndex = Math.max(

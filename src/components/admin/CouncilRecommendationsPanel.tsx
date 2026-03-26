@@ -81,6 +81,31 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function formatRunPickerDate(value?: string | null) {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function runPickerOptionLabel(run: CouncilRunRow, index: number) {
+  const runLabel = index === 0 ? "Latest Run" : `Run ${index + 1}`;
+  const statusLabel = run.status.charAt(0).toUpperCase() + run.status.slice(1);
+  const recLabel = `${run.recommendation_count} recommendation${run.recommendation_count === 1 ? "" : "s"}`;
+  const dateLabel = formatRunPickerDate(run.created_at);
+  return `${runLabel} • ${statusLabel} • ${recLabel} • ${dateLabel}`;
+}
+
+function runStatusLabel(status: CouncilRunRow["status"]) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 function statusStyle(status: RecommendationStatus) {
   if (status === "accepted") return "bg-[#E8F5E9] text-[#2E7D32] border-[#CDE8CF]";
   if (status === "ignored") return "bg-[#F6F6F6] text-[#616161] border-[#E0E0E0]";
@@ -132,10 +157,10 @@ export default function CouncilRecommendationsPanel({
 }) {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [councilKey, setCouncilKey] = useState<CouncilKey>("strategy_council");
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<CouncilRecommendationRow[]>([]);
   const [runs, setRuns] = useState<CouncilRunRow[]>([]);
   const [decisionBusyId, setDecisionBusyId] = useState<string | null>(null);
@@ -153,20 +178,8 @@ export default function CouncilRecommendationsPanel({
     () => recommendations.filter((item) => councilKeyFromRecommendation(item) === councilKey),
     [recommendations, councilKey]
   );
-
-  useEffect(() => {
-    if (scopedRuns.length === 0) {
-      setSelectedRunId(null);
-      return;
-    }
-    const hasSelected = selectedRunId && scopedRuns.some((run) => run.id === selectedRunId);
-    if (!hasSelected) setSelectedRunId(scopedRuns[0].id);
-  }, [scopedRuns, selectedRunId]);
-
-  const selectedRun = useMemo(() => {
-    if (!selectedRunId) return scopedRuns[0] ?? null;
-    return scopedRuns.find((run) => run.id === selectedRunId) ?? scopedRuns[0] ?? null;
-  }, [scopedRuns, selectedRunId]);
+  const selectedRun = scopedRuns[0] ?? null;
+  const historicalRuns = scopedRuns.slice(1);
   const selectedPanelDiscussion = useMemo(() => panelDiscussionFromRun(selectedRun), [selectedRun]);
 
   async function loadData() {
@@ -270,6 +283,16 @@ export default function CouncilRecommendationsPanel({
     }
   }
 
+  async function refreshPanel() {
+    setRefreshing(true);
+    try {
+      await loadData();
+      toast.success(`Refreshed ${councilMeta.label} data for ${companyName}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function decideRecommendation(id: string, status: RecommendationStatus) {
     const busyKey = `${id}:${status}`;
     setDecisionBusyId(busyKey);
@@ -342,14 +365,24 @@ export default function CouncilRecommendationsPanel({
             ))}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={runCouncilReview}
-          disabled={running}
-          className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
-        >
-          {running ? `Running ${councilMeta.label}…` : councilMeta.runLabel}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={refreshPanel}
+            disabled={refreshing || running}
+            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+          <button
+            type="button"
+            onClick={runCouncilReview}
+            disabled={running || refreshing}
+            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"
+          >
+            {running ? `Running ${councilMeta.label}…` : councilMeta.runLabel}
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -369,45 +402,46 @@ export default function CouncilRecommendationsPanel({
 
       {selectedRun ? (
         <div className="mt-3 rounded-xl border border-border bg-muted/10 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Run Details
-            </span>
-            <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {councilMeta.label}
-            </span>
-            <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {selectedRun.status}
-            </span>
-            <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {selectedRun.recommendation_count} recommendation{selectedRun.recommendation_count === 1 ? "" : "s"}
-            </span>
-            <span className="rounded-full border border-border bg-white px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {formatDate(selectedRun.created_at)}
-            </span>
+          <div className="rounded-lg border border-border bg-white/90 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">Latest Run</p>
+            <p className="mt-1 font-sans text-[13px] leading-relaxed text-foreground">
+              {councilMeta.label} · {runStatusLabel(selectedRun.status)} ·{" "}
+              {selectedRun.recommendation_count} recommendation{selectedRun.recommendation_count === 1 ? "" : "s"} ·{" "}
+              {formatRunPickerDate(selectedRun.created_at)}
+            </p>
           </div>
 
-          {scopedRuns.length > 1 ? (
-            <div className="mt-3">
-              <label
-                htmlFor="council-run-picker"
-                className="mb-1 block font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
-              >
-                Select Historical Run
-              </label>
-              <select
-                id="council-run-picker"
-                value={selectedRun.id}
-                onChange={(event) => setSelectedRunId(event.target.value)}
-                className="w-full rounded-lg border border-border bg-white px-2 py-1.5 font-sans text-[12px] text-foreground"
-              >
-                {scopedRuns.map((run, index) => (
-                  <option key={run.id} value={run.id}>
-                    {index === 0 ? "Latest" : `Run ${index + 1}`} · {run.status} · {formatDate(run.created_at)}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {historicalRuns.length > 0 ? (
+            <details className="mt-3 rounded-lg border border-border bg-white/90 p-3">
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                Historical Runs
+              </summary>
+              <div className="mt-2">
+                <p className="font-sans text-[12px] leading-relaxed text-muted-foreground">
+                  Open any run below to inspect its summary and panel discussion without replacing the latest run view.
+                </p>
+                <div className="mt-2 space-y-2">
+                  {historicalRuns.map((run, index) => {
+                    const discussion = panelDiscussionFromRun(run);
+                    return (
+                      <details key={run.id} className="rounded-lg border border-border bg-white p-2.5">
+                        <summary className="cursor-pointer font-sans text-[12px] leading-relaxed text-foreground">
+                          {runPickerOptionLabel(run, index + 1)}
+                        </summary>
+                        {run.summary ? (
+                          <p className="mt-2 font-sans text-[12px] leading-relaxed text-foreground">{run.summary}</p>
+                        ) : null}
+                        {discussion ? (
+                          <pre className="mt-2 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                            {discussion}
+                          </pre>
+                        ) : null}
+                      </details>
+                    );
+                  })}
+                </div>
+              </div>
+            </details>
           ) : null}
 
           {selectedRun.summary ? (
@@ -474,14 +508,11 @@ export default function CouncilRecommendationsPanel({
                     <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${statusStyle(item.status)}`}>
                       {item.status}
                     </span>
-                    <span className="rounded-full border border-border bg-muted/20 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {item.confidence}% confidence
-                    </span>
-                    <span className="rounded-full border border-border bg-muted/20 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {item.category}
-                    </span>
                   </div>
                 </div>
+                <p className="mt-1 font-sans text-[12px] leading-relaxed text-muted-foreground">
+                  Confidence {item.confidence}% · {item.category}
+                </p>
 
                 <p className="mt-2 font-sans text-[13px] text-foreground">{item.recommendation}</p>
                 {item.rationale ? (

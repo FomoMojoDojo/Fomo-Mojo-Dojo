@@ -29,6 +29,7 @@ function firstIncompleteStep(steps: WorkflowStep[]) {
 export function computeWorkflowGuidance(args: {
   inputs: InputItem[];
   sourceSignals: SourceConfidenceSignals;
+  publicEvidenceStatus?: string | null;
   focusOpportunityCount: number;
   routeCount: number;
   strategicProblemCount?: number;
@@ -36,7 +37,12 @@ export function computeWorkflowGuidance(args: {
 }): WorkflowGuidance {
   const inputs = Array.isArray(args.inputs) ? args.inputs : [];
   const completePct = percentComplete(inputs);
-  const hasPublicResearch = completePct > 0;
+  const publicEvidenceStatus = String(args.publicEvidenceStatus || "").trim().toLowerCase();
+  const hasPublicResearch =
+    publicEvidenceStatus === "baseline_plus_artifacts" ||
+    publicEvidenceStatus === "public_evidence_strong" ||
+    publicEvidenceStatus === "public_evidence_partial" ||
+    publicEvidenceStatus === "public_evidence_thin";
   const hasCompanyResearch = args.sourceSignals.hasCompanyEvidence;
   const hasPrimaryResearch = args.sourceSignals.hasPrimaryEvidence;
   const strategicProblemCount = Math.max(0, Number(args.strategicProblemCount || 0));

@@ -27,14 +27,30 @@ function evidenceStage(signals: SourceConfidenceSignals) {
   return "Public baseline only";
 }
 
-function confidenceScore(signals: SourceConfidenceSignals, confidencePercent?: number | null) {
-  if (typeof confidencePercent === "number" && Number.isFinite(confidencePercent)) {
+function confidenceScore(
+  signals: SourceConfidenceSignals,
+  confidencePercent?: number | null,
+  publicEvidenceStatus?: string | null,
+) {
+  if (
+    typeof confidencePercent === "number" &&
+    Number.isFinite(confidencePercent) &&
+    confidencePercent > 0
+  ) {
     return Math.max(0, Math.min(100, Math.round(confidencePercent)));
   }
-  if (signals.hasImplementedTested) return 88;
-  if (signals.hasPrimaryEvidence && signals.hasCompanyEvidence) return 68;
-  if (signals.hasCompanyEvidence) return 38;
-  return 0;
+  let fallback = 0;
+  if (signals.hasImplementedTested) fallback = 88;
+  else if (signals.hasPrimaryEvidence && signals.hasCompanyEvidence) fallback = 68;
+  else if (signals.hasCompanyEvidence) fallback = 38;
+
+  const normalized = String(publicEvidenceStatus || "").trim().toLowerCase();
+  if (normalized === "generated_no_baseline") return Math.min(fallback, 55);
+  if (normalized === "no_public_evidence") return Math.min(fallback, 45);
+  if (normalized === "public_evidence_thin") return Math.min(fallback, 60);
+  if (normalized === "public_evidence_partial") return Math.min(fallback, 72);
+
+  return fallback;
 }
 
 function Box({
@@ -118,7 +134,7 @@ export default function PageContextStatus({
     { label: "Primary Evidence", state: sourceSignals.hasPrimaryEvidence ? ("on" as const) : ("off" as const) },
     { label: "Implemented + Tested", state: sourceSignals.hasImplementedTested ? ("on" as const) : ("off" as const) },
   ];
-  const confidence = confidenceScore(sourceSignals, confidencePercent);
+  const confidence = confidenceScore(sourceSignals, confidencePercent, publicEvidenceStatus);
 
   return (
     <div
@@ -143,13 +159,14 @@ export default function PageContextStatus({
 
         <Box label="Confidence">
           <div className="pt-1">
-            <div className="h-2.5 w-full rounded-full border border-[#d7ddd9] bg-[#ecefed]">
+            <div className="relative h-2.5 w-full overflow-hidden rounded-full border border-[#d7ddd9] bg-[#ecefed]">
               <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${confidence}%`,
-                  background: "linear-gradient(90deg, #d84c42 0%, #f2c649 48%, #34c37a 100%)",
-                }}
+                className="absolute inset-0"
+                style={{ background: "linear-gradient(90deg, #d84c42 0%, #f2c649 48%, #34c37a 100%)" }}
+              />
+              <div
+                className="absolute right-0 top-0 h-full bg-[#ecefed]"
+                style={{ width: `${Math.max(0, 100 - confidence)}%` }}
               />
             </div>
           </div>
