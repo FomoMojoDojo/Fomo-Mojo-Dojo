@@ -37,6 +37,11 @@ const JOURNEY_ACCENT: Record<string, string> = {
   operations: "#233C4B",
 };
 
+const UNVALIDATED_OUTCOME_TOOLTIP =
+  "Unvalidated: this desired outcome is currently estimated from uploaded/public evidence and generated research. It has not yet been validated with ODI survey data or direct customer interviews.";
+const PUBLIC_INFERRED_TOOLTIP =
+  "Public inferred: this label is estimated from public web signals only because no uploaded company evidence is attached yet.";
+
 function focusSortValue(focus: FocusClassification | undefined) {
   if (!focus) return 0;
   if (focus.level === "initiative") return 2;
@@ -111,12 +116,30 @@ function evidenceNeeded(item: OpportunityRow) {
   ];
 }
 
+function UnvalidatedOutcomeBadge() {
+  return (
+    <span title={UNVALIDATED_OUTCOME_TOOLTIP}>
+      <MetaBadge>Unvalidated</MetaBadge>
+    </span>
+  );
+}
+
+function PublicInferredBadge() {
+  return (
+    <span title={PUBLIC_INFERRED_TOOLTIP}>
+      <MetaBadge>Public inferred</MetaBadge>
+    </span>
+  );
+}
+
 function OpportunityHoverDetail({
   item,
   focus,
+  publicOnly = false,
 }: {
   item: OpportunityRow;
   focus?: FocusClassification;
+  publicOnly?: boolean;
 }) {
   return (
     <div className="w-[320px] rounded-[20px] border p-4" style={{ borderColor: c.line, background: "#FBFAF7" }}>
@@ -133,7 +156,13 @@ function OpportunityHoverDetail({
 
       <div className="mt-2 flex flex-wrap gap-2">
         <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-        {item.step_number ? <MetaBadge>Step {item.step_number}</MetaBadge> : null}
+        {item.step_number ? (
+          <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
+            <MetaBadge>Step {item.step_number}</MetaBadge>
+          </span>
+        ) : null}
+        {publicOnly ? <PublicInferredBadge /> : null}
+        <UnvalidatedOutcomeBadge />
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
@@ -179,9 +208,6 @@ function OpportunityHoverDetail({
         </ul>
       </div>
 
-      <div className="mt-4 font-sans text-[11px] italic leading-[1.6]" style={{ color: c.muted }}>
-        Estimated from public evidence and generated research, not validated ODI survey data or customer interviews.
-      </div>
     </div>
   );
 }
@@ -189,9 +215,11 @@ function OpportunityHoverDetail({
 function OpportunityCard({
   item,
   focus,
+  publicOnly = false,
 }: {
   item: OpportunityRow;
   focus?: FocusClassification;
+  publicOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const accent = JOURNEY_ACCENT[item.journey_key] || c.monitor;
@@ -223,7 +251,12 @@ function OpportunityCard({
             <div className="mb-2 flex items-center gap-2">
               <TierBadge tone={item.priority_tier} />
               <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-              {item.step_number ? <MetaBadge>Step {item.step_number}</MetaBadge> : null}
+              {item.step_number ? (
+                <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
+                  <MetaBadge>Step {item.step_number}</MetaBadge>
+                </span>
+              ) : null}
+              {publicOnly ? <PublicInferredBadge /> : null}
               <AlignmentIcon focus={focus} />
             </div>
 
@@ -252,18 +285,9 @@ function OpportunityCard({
           <StateBadge tone={servingLabel(item)} />
           <ScoreChip label="Est. I" value={item.importance} />
           <ScoreChip label="Est. S" value={item.satisfaction} />
+          <UnvalidatedOutcomeBadge />
         </div>
 
-        <p className="mt-4 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-          {item.priority_tier === "focus"
-            ? "This desired outcome looks underserved enough to prioritize before choosing a specific solution direction."
-            : item.priority_tier === "monitor"
-              ? "This desired outcome likely matters, but the next move is to improve evidence and test assumptions."
-              : "Keep this desired outcome visible, but defer solution work until higher-leverage underserved outcomes are clearer."}
-        </p>
-        <p className="mt-2 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-          Importance, satisfaction, and opportunity values are estimated from public evidence and generated research, not validated ODI survey results.
-        </p>
       </button>
 
       {expanded ? (
@@ -307,11 +331,15 @@ function OpportunitySection({
   subtitle,
   items,
   focusById,
+  subtitleItalic = false,
+  publicOnly = false,
 }: {
   title: string;
   subtitle: string;
   items: OpportunityRow[];
   focusById: Map<string, FocusClassification>;
+  subtitleItalic?: boolean;
+  publicOnly?: boolean;
 }) {
   if (items.length === 0) return null;
 
@@ -322,7 +350,7 @@ function OpportunitySection({
           <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
             {title}
           </h2>
-          <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
+          <p className={`font-sans text-[13px] ${subtitleItalic ? "italic" : ""}`} style={{ color: c.secondary }}>
             {subtitle}
           </p>
         </div>
@@ -332,7 +360,7 @@ function OpportunitySection({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {items.map((item) => (
-          <OpportunityCard key={item.id} item={item} focus={focusById.get(item.id)} />
+          <OpportunityCard key={item.id} item={item} focus={focusById.get(item.id)} publicOnly={publicOnly} />
         ))}
       </div>
     </section>
@@ -379,6 +407,7 @@ function OpportunityTreeView({
   items,
   managedOutcomes,
   focusById,
+  publicOnly = false,
 }: {
   items: OpportunityRow[];
   managedOutcomes: Array<{
@@ -391,6 +420,7 @@ function OpportunityTreeView({
     confidence: number;
   }>;
   focusById: Map<string, FocusClassification>;
+  publicOnly?: boolean;
 }) {
   const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
   const orderedJourneyKeys = [
@@ -540,6 +570,7 @@ function OpportunityTreeView({
                                 type="button"
                                 className="w-full rounded-[22px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
                                 style={{ borderColor: c.line, background: c.card }}
+                                title={step.stepLabel ? `Step ${step.stepNumber}: ${step.stepLabel}` : `Step ${step.stepNumber}`}
                               >
                                 <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                                   Job Step {step.stepNumber}
@@ -605,7 +636,7 @@ function OpportunityTreeView({
                                       </button>
                                     </HoverCardTrigger>
                                     <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
-                                      <OpportunityHoverDetail item={item} focus={focus} />
+                                      <OpportunityHoverDetail item={item} focus={focus} publicOnly={publicOnly} />
                                     </HoverCardContent>
                                   </HoverCard>
                                 </div>
@@ -636,6 +667,7 @@ export default function OpportunitiesView() {
     areaScoresJson: activeCompany?.area_scores_json,
   });
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const publicOnly = !sourceSignals.hasCompanyEvidence;
   const initiativeContext = useMemo(
     () =>
       deriveInitiativeContext({
@@ -708,6 +740,11 @@ export default function OpportunitiesView() {
             </div>
           </div>
           <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          {publicOnly ? (
+            <div className="mt-3">
+              <PublicInferredBadge />
+            </div>
+          ) : null}
           {items.length > 0 ? (
             <div className="mt-4">
               <ViewToggle mode={viewMode} onChange={setViewMode} />
@@ -740,7 +777,7 @@ export default function OpportunitiesView() {
             </p>
           </div>
         ) : viewMode === "map" ? (
-          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} focusById={focusById} />
+          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} focusById={focusById} publicOnly={publicOnly} />
         ) : (
           <div className="space-y-8">
             <OpportunitySection
@@ -748,18 +785,23 @@ export default function OpportunitiesView() {
               subtitle="Strong opportunities that deserve attention before you commit to a solution."
               items={prioritizeNow}
               focusById={focusById}
+              subtitleItalic
+              publicOnly={publicOnly}
             />
             <OpportunitySection
               title="Investigate Next"
               subtitle="Promising opportunities where the next move is better evidence, sharper assumptions, or smaller tests."
               items={investigateNext}
               focusById={focusById}
+              subtitleItalic
+              publicOnly={publicOnly}
             />
             <OpportunitySection
               title="Later Opportunities"
               subtitle="Keep these visible, but sequence them after higher-leverage opportunity work."
               items={laterOpportunities}
               focusById={focusById}
+              publicOnly={publicOnly}
             />
           </div>
         )}
