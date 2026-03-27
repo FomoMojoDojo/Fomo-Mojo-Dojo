@@ -1454,37 +1454,42 @@ function OdiNeedsListSection({
                     opacity: draggingNeedId === item.id ? 0.72 : 1,
                   }}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    {editingNeedId === item.id ? (
-                      <textarea
-                        value={needDrafts[item.id] ?? item.desired_outcome}
-                        onChange={(event) =>
-                          setNeedDrafts((current) => ({ ...current, [item.id]: event.target.value }))
-                        }
-                        className="min-h-[78px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
-                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
-                        placeholder="Desired outcome"
-                      />
-                    ) : (
-                      <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                        {item.desired_outcome}
-                      </p>
-                    )}
+                  <div className="flex items-start gap-2">
                     <span
-                      className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em]"
-                      style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                      className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
+                      style={{ color: c.secondary }}
                       title="Stable need number based on suggested priority"
                     >
                       {needNumberById.get(item.id) || "—"}
                     </span>
+                    <div className="min-w-0 flex-1">
+                      {editingNeedId === item.id ? (
+                        <textarea
+                          value={needDrafts[item.id] ?? item.desired_outcome}
+                          onChange={(event) =>
+                            setNeedDrafts((current) => ({ ...current, [item.id]: event.target.value }))
+                          }
+                          className="min-h-[78px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
+                          style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                          placeholder="Desired outcome"
+                        />
+                      ) : (
+                        <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                          {item.desired_outcome}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <StateBadge tone={item.service_state} />
-                    <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-                    <MetaBadge>{item.step_label || "Unassigned step"}</MetaBadge>
-                    <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
-                    <ScoreChip label="Est. I" value={item.importance} />
-                    <ScoreChip label="Est. S" value={item.satisfaction} />
+                  <div className="mt-3 flex items-start gap-2">
+                    <span className="shrink-0 w-9" aria-hidden />
+                    <div className="min-w-0 flex flex-wrap gap-2">
+                      <StateBadge tone={item.service_state} />
+                      <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
+                      <MetaBadge>{item.step_label || "Unassigned step"}</MetaBadge>
+                      <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
+                      <ScoreChip label="Est. I" value={item.importance} />
+                      <ScoreChip label="Est. S" value={item.satisfaction} />
+                    </div>
                   </div>
                   {onRemoveNeed ? (
                     <div className="mt-3 flex justify-end gap-2">

@@ -37,16 +37,36 @@ const JOURNEY_ACCENT: Record<string, string> = {
   operations: "#233C4B",
 };
 
-const UNVALIDATED_OUTCOME_TOOLTIP =
-  "Unvalidated: this desired outcome is currently estimated from uploaded/public evidence and generated research. It has not yet been validated with ODI survey data or direct customer interviews.";
-const PUBLIC_INFERRED_TOOLTIP =
-  "Public inferred: this label is estimated from public web signals only because no uploaded company evidence is attached yet.";
+const EVIDENCE_DOT_STYLES = {
+  active: { border: "#233C4B", background: "#233C4B", text: "#233C4B" },
+  inactive: { border: "#B9C8C3", background: "transparent", text: "#7B8F89" },
+};
 
 function focusSortValue(focus: FocusClassification | undefined) {
   if (!focus) return 0;
   if (focus.level === "initiative") return 2;
   if (focus.level === "related") return 1;
   return 0;
+}
+
+function priorityTierSortValue(tier: string | null | undefined) {
+  if (tier === "focus") return 0;
+  if (tier === "monitor") return 1;
+  if (tier === "defer") return 2;
+  return 3;
+}
+
+function OpportunityNumberBadge({ value }: { value?: string }) {
+  if (!value) return null;
+  return (
+    <span
+      className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
+      style={{ color: c.secondary }}
+      title="Stable opportunity number based on suggested priority"
+    >
+      {value}
+    </span>
+  );
 }
 
 function AlignmentIcon({ focus }: { focus?: FocusClassification }) {
@@ -116,53 +136,92 @@ function evidenceNeeded(item: OpportunityRow) {
   ];
 }
 
-function UnvalidatedOutcomeBadge() {
-  return (
-    <span title={UNVALIDATED_OUTCOME_TOOLTIP}>
-      <MetaBadge>Unvalidated</MetaBadge>
-    </span>
-  );
-}
+function EvidenceDots({
+  hasPublic,
+  hasCustomer,
+  hasValidated,
+  hasTested,
+}: {
+  hasPublic: boolean;
+  hasCustomer: boolean;
+  hasValidated: boolean;
+  hasTested: boolean;
+}) {
+  const items = [
+    { key: "P", label: "Public evidence", active: hasPublic },
+    { key: "C", label: "Customer evidence", active: hasCustomer },
+    { key: "V", label: "Validated evidence", active: hasValidated },
+    { key: "T", label: "Tested evidence", active: hasTested },
+  ];
 
-function PublicInferredBadge() {
   return (
-    <span title={PUBLIC_INFERRED_TOOLTIP}>
-      <MetaBadge>Public inferred</MetaBadge>
-    </span>
+    <div className="inline-flex items-center gap-2">
+      {items.map((item) => {
+        const style = item.active ? EVIDENCE_DOT_STYLES.active : EVIDENCE_DOT_STYLES.inactive;
+        return (
+          <span
+            key={item.key}
+            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+            style={{ color: style.text }}
+            title={`${item.label}: ${item.active ? "in use" : "not in use"}`}
+          >
+            <span
+              className="h-2.5 w-2.5 rounded-full border"
+              style={{ borderColor: style.border, background: style.background }}
+            />
+            {item.key}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
 function OpportunityHoverDetail({
   item,
+  opportunityNumber,
   focus,
-  publicOnly = false,
+  hasPublic,
+  hasCustomer,
+  hasValidated,
+  hasTested,
+  showJourneyBadge = true,
 }: {
   item: OpportunityRow;
+  opportunityNumber?: string;
   focus?: FocusClassification;
-  publicOnly?: boolean;
+  hasPublic: boolean;
+  hasCustomer: boolean;
+  hasValidated: boolean;
+  hasTested: boolean;
+  showJourneyBadge?: boolean;
 }) {
   return (
     <div className="w-[320px] rounded-[20px] border p-4" style={{ borderColor: c.line, background: "#FBFAF7" }}>
-      <div className="flex flex-wrap items-center gap-2">
-        <TierBadge tone={item.priority_tier} />
-        <StateBadge tone={servingLabel(item)} />
-        <AlignmentIcon focus={focus} />
-        <ScoreChip label="Opp" value={item.opportunity_score} />
-      </div>
+      <div className="flex items-start gap-2">
+        <OpportunityNumberBadge value={opportunityNumber} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <TierBadge tone={item.priority_tier} />
+            <StateBadge tone={servingLabel(item)} />
+            <AlignmentIcon focus={focus} />
+            <ScoreChip label="Opp" value={item.opportunity_score} />
+          </div>
 
-      <div className="mt-3 font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
-        {item.outcome}
-      </div>
+          <div className="mt-3 font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+            {item.outcome}
+          </div>
 
-      <div className="mt-2 flex flex-wrap gap-2">
-        <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-        {item.step_number ? (
-          <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
-            <MetaBadge>Step {item.step_number}</MetaBadge>
-          </span>
-        ) : null}
-        {publicOnly ? <PublicInferredBadge /> : null}
-        <UnvalidatedOutcomeBadge />
+          <div className="mt-2 flex flex-wrap gap-2">
+            {showJourneyBadge ? <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge> : null}
+            {item.step_number ? (
+              <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
+                <MetaBadge>Step {item.step_number}</MetaBadge>
+              </span>
+            ) : null}
+            <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
@@ -214,12 +273,22 @@ function OpportunityHoverDetail({
 
 function OpportunityCard({
   item,
+  opportunityNumber,
   focus,
-  publicOnly = false,
+  hasPublic,
+  hasCustomer,
+  hasValidated,
+  hasTested,
+  showJourneyBadge = true,
 }: {
   item: OpportunityRow;
+  opportunityNumber?: string;
   focus?: FocusClassification;
-  publicOnly?: boolean;
+  hasPublic: boolean;
+  hasCustomer: boolean;
+  hasValidated: boolean;
+  hasTested: boolean;
+  showJourneyBadge?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const accent = JOURNEY_ACCENT[item.journey_key] || c.monitor;
@@ -247,32 +316,35 @@ function OpportunityCard({
       <div className="h-[5px] w-full" style={{ background: accent }} />
       <button type="button" onClick={() => setExpanded((value) => !value)} className="w-full cursor-pointer p-5 text-left">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <TierBadge tone={item.priority_tier} />
-              <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-              {item.step_number ? (
-                <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
-                  <MetaBadge>Step {item.step_number}</MetaBadge>
-                </span>
-              ) : null}
-              {publicOnly ? <PublicInferredBadge /> : null}
-              <AlignmentIcon focus={focus} />
+          <div className="flex min-w-0 items-start gap-2">
+            <OpportunityNumberBadge value={opportunityNumber} />
+            <div className="min-w-0">
+              <div className="mb-2 flex items-center gap-2">
+                <TierBadge tone={item.priority_tier} />
+                {showJourneyBadge ? <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge> : null}
+                {item.step_number ? (
+                  <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
+                    <MetaBadge>Step {item.step_number}</MetaBadge>
+                  </span>
+                ) : null}
+                <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
+                <AlignmentIcon focus={focus} />
+              </div>
+
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                Desired Outcome Opportunity
+              </p>
+              <h3 className="mt-1 font-sans text-[16px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+                {item.outcome || "Untitled opportunity"}
+              </h3>
+
+              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                Job step context
+              </p>
+              <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+                {item.step_label || "Unassigned step"}
+              </p>
             </div>
-
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-              Desired Outcome Opportunity
-            </p>
-            <h3 className="mt-1 font-sans text-[16px] font-semibold leading-tight" style={{ color: c.charcoal }}>
-              {item.outcome || "Untitled opportunity"}
-            </h3>
-
-            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-              Job step context
-            </p>
-            <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-              {item.step_label || "Unassigned step"}
-            </p>
           </div>
 
           <div className="flex items-start gap-3">
@@ -285,7 +357,6 @@ function OpportunityCard({
           <StateBadge tone={servingLabel(item)} />
           <ScoreChip label="Est. I" value={item.importance} />
           <ScoreChip label="Est. S" value={item.satisfaction} />
-          <UnvalidatedOutcomeBadge />
         </div>
 
       </button>
@@ -331,15 +402,25 @@ function OpportunitySection({
   subtitle,
   items,
   focusById,
+  opportunityNumberById,
   subtitleItalic = false,
-  publicOnly = false,
+  hasPublic,
+  hasCustomer,
+  hasValidated,
+  hasTested,
+  showJourneyBadge = true,
 }: {
   title: string;
   subtitle: string;
   items: OpportunityRow[];
   focusById: Map<string, FocusClassification>;
+  opportunityNumberById: Map<string, string>;
   subtitleItalic?: boolean;
-  publicOnly?: boolean;
+  hasPublic: boolean;
+  hasCustomer: boolean;
+  hasValidated: boolean;
+  hasTested: boolean;
+  showJourneyBadge?: boolean;
 }) {
   if (items.length === 0) return null;
 
@@ -360,7 +441,17 @@ function OpportunitySection({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {items.map((item) => (
-          <OpportunityCard key={item.id} item={item} focus={focusById.get(item.id)} publicOnly={publicOnly} />
+          <OpportunityCard
+            key={item.id}
+            item={item}
+            opportunityNumber={opportunityNumberById.get(item.id)}
+            focus={focusById.get(item.id)}
+            hasPublic={hasPublic}
+            hasCustomer={hasCustomer}
+            hasValidated={hasValidated}
+            hasTested={hasTested}
+            showJourneyBadge={showJourneyBadge}
+          />
         ))}
       </div>
     </section>
@@ -407,7 +498,12 @@ function OpportunityTreeView({
   items,
   managedOutcomes,
   focusById,
-  publicOnly = false,
+  opportunityNumberById,
+  hasPublic,
+  hasCustomer,
+  hasValidated,
+  hasTested,
+  showJourneyBadge = true,
 }: {
   items: OpportunityRow[];
   managedOutcomes: Array<{
@@ -420,7 +516,12 @@ function OpportunityTreeView({
     confidence: number;
   }>;
   focusById: Map<string, FocusClassification>;
-  publicOnly?: boolean;
+  opportunityNumberById: Map<string, string>;
+  hasPublic: boolean;
+  hasCustomer: boolean;
+  hasValidated: boolean;
+  hasTested: boolean;
+  showJourneyBadge?: boolean;
 }) {
   const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
   const orderedJourneyKeys = [
@@ -601,6 +702,7 @@ function OpportunityTreeView({
                           <div className="w-full space-y-3">
                             {step.items.map((item) => {
                               const focus = focusById.get(item.id);
+                              const opportunityNumber = opportunityNumberById.get(item.id);
                               return (
                                 <div key={item.id} className="flex justify-center">
                                   <HoverCard openDelay={80}>
@@ -611,15 +713,18 @@ function OpportunityTreeView({
                                         style={{ borderColor: c.line, background: c.paper }}
                                       >
                                         <div className="flex items-start justify-between gap-3">
-                                          <div className="min-w-0">
-                                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                                              <TierBadge tone={item.priority_tier} />
-                                              <StateBadge tone={servingLabel(item)} />
-                                              <AlignmentIcon focus={focus} />
+                                          <div className="min-w-0 flex items-start gap-2">
+                                            <OpportunityNumberBadge value={opportunityNumber} />
+                                            <div className="min-w-0">
+                                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                                <TierBadge tone={item.priority_tier} />
+                                                <StateBadge tone={servingLabel(item)} />
+                                                <AlignmentIcon focus={focus} />
+                                              </div>
+                                              <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                                {item.outcome}
+                                              </p>
                                             </div>
-                                            <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                                              {item.outcome}
-                                            </p>
                                           </div>
                                           <div className="shrink-0">
                                             <ScoreChip label="Opp" value={item.opportunity_score} />
@@ -636,7 +741,16 @@ function OpportunityTreeView({
                                       </button>
                                     </HoverCardTrigger>
                                     <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
-                                      <OpportunityHoverDetail item={item} focus={focus} publicOnly={publicOnly} />
+                                      <OpportunityHoverDetail
+                                        item={item}
+                                        opportunityNumber={opportunityNumber}
+                                        focus={focus}
+                                        hasPublic={hasPublic}
+                                        hasCustomer={hasCustomer}
+                                        hasValidated={hasValidated}
+                                        hasTested={hasTested}
+                                        showJourneyBadge={showJourneyBadge}
+                                      />
                                     </HoverCardContent>
                                   </HoverCard>
                                 </div>
@@ -667,7 +781,11 @@ export default function OpportunitiesView() {
     areaScoresJson: activeCompany?.area_scores_json,
   });
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
-  const publicOnly = !sourceSignals.hasCompanyEvidence;
+  const publicEvidenceStatus = String(activeCompany?.evidence_status || "").trim().toLowerCase();
+  const hasPublic = !["", "not_scored", "no_public_evidence", "generated_no_baseline"].includes(publicEvidenceStatus);
+  const hasCustomer = sourceSignals.hasCompanyEvidence;
+  const hasValidated = sourceSignals.hasPrimaryEvidence;
+  const hasTested = sourceSignals.hasImplementedTested;
   const initiativeContext = useMemo(
     () =>
       deriveInitiativeContext({
@@ -704,10 +822,45 @@ export default function OpportunitiesView() {
       if (focusRank !== 0) return focusRank;
       return (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
     });
+  const suggestedOpportunityItems = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const tierRank = priorityTierSortValue(a.priority_tier) - priorityTierSortValue(b.priority_tier);
+        if (tierRank !== 0) return tierRank;
+        const focusRank = focusSortValue(focusById.get(b.id)) - focusSortValue(focusById.get(a.id));
+        if (focusRank !== 0) return focusRank;
+        const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        const importanceDiff = (b.importance ?? 0) - (a.importance ?? 0);
+        if (importanceDiff !== 0) return importanceDiff;
+        const satisfactionDiff = (a.satisfaction ?? 0) - (b.satisfaction ?? 0);
+        if (satisfactionDiff !== 0) return satisfactionDiff;
+        return String(a.id).localeCompare(String(b.id));
+      }),
+    [focusById, items],
+  );
+  const opportunityNumberById = useMemo(
+    () =>
+      new Map<string, string>(
+        suggestedOpportunityItems.map((item, index) => [item.id, String(index + 1).padStart(3, "0")]),
+      ),
+    [suggestedOpportunityItems],
+  );
 
   const prioritizeNow = sortByFocus(items.filter((item) => item.priority_tier === "focus"));
   const investigateNext = sortByFocus(items.filter((item) => item.priority_tier === "monitor"));
   const laterOpportunities = sortByFocus(items.filter((item) => item.priority_tier === "defer"));
+  const showJourneyBadge = useMemo(() => {
+    const keys = Array.from(
+      new Set(
+        items
+          .map((item) => String(item.journey_key || "").trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    if (keys.length === 0) return true;
+    return !(keys.length === 1 && keys[0] === "customer");
+  }, [items]);
 
   return (
     <div
@@ -740,11 +893,9 @@ export default function OpportunitiesView() {
             </div>
           </div>
           <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
-          {publicOnly ? (
-            <div className="mt-3">
-              <PublicInferredBadge />
-            </div>
-          ) : null}
+          <div className="mt-3">
+            <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
+          </div>
           {items.length > 0 ? (
             <div className="mt-4">
               <ViewToggle mode={viewMode} onChange={setViewMode} />
@@ -777,7 +928,17 @@ export default function OpportunitiesView() {
             </p>
           </div>
         ) : viewMode === "map" ? (
-          <OpportunityTreeView items={sortedForTree} managedOutcomes={managedOutcomes} focusById={focusById} publicOnly={publicOnly} />
+          <OpportunityTreeView
+            items={sortedForTree}
+            managedOutcomes={managedOutcomes}
+            focusById={focusById}
+            opportunityNumberById={opportunityNumberById}
+            hasPublic={hasPublic}
+            hasCustomer={hasCustomer}
+            hasValidated={hasValidated}
+            hasTested={hasTested}
+            showJourneyBadge={showJourneyBadge}
+          />
         ) : (
           <div className="space-y-8">
             <OpportunitySection
@@ -785,23 +946,38 @@ export default function OpportunitiesView() {
               subtitle="Strong opportunities that deserve attention before you commit to a solution."
               items={prioritizeNow}
               focusById={focusById}
+              opportunityNumberById={opportunityNumberById}
               subtitleItalic
-              publicOnly={publicOnly}
+              hasPublic={hasPublic}
+              hasCustomer={hasCustomer}
+              hasValidated={hasValidated}
+              hasTested={hasTested}
+              showJourneyBadge={showJourneyBadge}
             />
             <OpportunitySection
               title="Investigate Next"
               subtitle="Promising opportunities where the next move is better evidence, sharper assumptions, or smaller tests."
               items={investigateNext}
               focusById={focusById}
+              opportunityNumberById={opportunityNumberById}
               subtitleItalic
-              publicOnly={publicOnly}
+              hasPublic={hasPublic}
+              hasCustomer={hasCustomer}
+              hasValidated={hasValidated}
+              hasTested={hasTested}
+              showJourneyBadge={showJourneyBadge}
             />
             <OpportunitySection
               title="Later Opportunities"
               subtitle="Keep these visible, but sequence them after higher-leverage opportunity work."
               items={laterOpportunities}
               focusById={focusById}
-              publicOnly={publicOnly}
+              opportunityNumberById={opportunityNumberById}
+              hasPublic={hasPublic}
+              hasCustomer={hasCustomer}
+              hasValidated={hasValidated}
+              hasTested={hasTested}
+              showJourneyBadge={showJourneyBadge}
             />
           </div>
         )}

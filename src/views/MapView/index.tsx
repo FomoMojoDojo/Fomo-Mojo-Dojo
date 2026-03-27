@@ -54,6 +54,32 @@ function safeNumber(n: unknown, fallback = 0) {
   return typeof n === "number" && Number.isFinite(n) ? n : fallback;
 }
 
+function focusSortValue(level: number, overlap: number) {
+  if (level >= 3 || overlap >= 2) return 2;
+  if (level >= 1 || overlap >= 1) return 1;
+  return 0;
+}
+
+function priorityTierSortValue(tier: string | null | undefined) {
+  if (tier === "focus") return 0;
+  if (tier === "monitor") return 1;
+  if (tier === "defer") return 2;
+  return 3;
+}
+
+function OpportunityNumberBadge({ value }: { value?: string }) {
+  if (!value) return null;
+  return (
+    <span
+      className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
+      style={{ color: c.secondary }}
+      title="Stable opportunity number based on suggested priority"
+    >
+      {value}
+    </span>
+  );
+}
+
 function isClientSummary(value: unknown): value is ClientSummary {
   return typeof value === "object" && value !== null && Array.isArray((value as ClientSummary).key_insights);
 }
@@ -306,11 +332,14 @@ export default function MapView() {
 
   const focusOpps = useMemo(() => {
     const items = Array.isArray(oppItems) ? oppItems : [];
+    const focusById = new Map(
+      items.map((item) => [item.id, classifyOpportunityFocus(item, initiativeContext)]),
+    );
     const ranked = items
       .filter((o) => o.priority_tier === "focus")
       .map((item) => ({
         item,
-        focus: classifyOpportunityFocus(item, initiativeContext),
+        focus: focusById.get(item.id) ?? classifyOpportunityFocus(item, initiativeContext),
       }))
       .sort((a, b) => {
         const alignA = alignmentLevelFromFocus(a.focus);
@@ -321,6 +350,39 @@ export default function MapView() {
       })
       .slice(0, 8);
     return ranked;
+  }, [oppItems, initiativeContext]);
+
+  const opportunityNumberById = useMemo(() => {
+    const items = Array.isArray(oppItems) ? oppItems : [];
+    const focusById = new Map(
+      items.map((item) => [item.id, classifyOpportunityFocus(item, initiativeContext)]),
+    );
+    const suggested = [...items].sort((a, b) => {
+      const tierRank = priorityTierSortValue(a.priority_tier) - priorityTierSortValue(b.priority_tier);
+      if (tierRank !== 0) return tierRank;
+      const focusA = focusById.get(a.id);
+      const focusB = focusById.get(b.id);
+      const focusRank =
+        focusSortValue(
+          alignmentLevelFromFocus(focusB ?? { level: "other", overlap: 0 }),
+          focusB?.overlap ?? 0,
+        ) -
+        focusSortValue(
+          alignmentLevelFromFocus(focusA ?? { level: "other", overlap: 0 }),
+          focusA?.overlap ?? 0,
+        );
+      if (focusRank !== 0) return focusRank;
+      const scoreDiff = safeNumber(b.opportunity_score, 0) - safeNumber(a.opportunity_score, 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      const importanceDiff = safeNumber(b.importance, 0) - safeNumber(a.importance, 0);
+      if (importanceDiff !== 0) return importanceDiff;
+      const satisfactionDiff = safeNumber(a.satisfaction, 0) - safeNumber(b.satisfaction, 0);
+      if (satisfactionDiff !== 0) return satisfactionDiff;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return new Map<string, string>(
+      suggested.map((item, index) => [item.id, String(index + 1).padStart(3, "0")]),
+    );
   }, [oppItems, initiativeContext]);
 
   function openDeepDive(areaKey: string) {
@@ -767,15 +829,18 @@ export default function MapView() {
                       style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
-                            {o.outcome || "Untitled opportunity"}
-                          </p>
-                          <p className="font-sans text-[12px] mt-0.5" style={{ color: c.secondary }}>
-                            {o.journey_key}
-                            {o.step_label ? ` • ${o.step_label}` : ""}
-                            {o.step_number ? ` (Step ${o.step_number})` : ""}
-                          </p>
+                        <div className="flex min-w-0 items-start gap-2">
+                          <OpportunityNumberBadge value={opportunityNumberById.get(o.id)} />
+                          <div className="min-w-0">
+                            <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
+                              {o.outcome || "Untitled opportunity"}
+                            </p>
+                            <p className="font-sans text-[12px] mt-0.5" style={{ color: c.secondary }}>
+                              {o.journey_key}
+                              {o.step_label ? ` • ${o.step_label}` : ""}
+                              {o.step_number ? ` (Step ${o.step_number})` : ""}
+                            </p>
+                          </div>
                         </div>
 
                         <div className="shrink-0 flex items-center gap-2">
