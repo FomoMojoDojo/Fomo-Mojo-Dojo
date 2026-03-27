@@ -105,7 +105,7 @@ function roundInt(n: number) {
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
-  timeoutMs = 180_000,
+  timeoutMs = 240_000,
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -120,6 +120,72 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseModelList(raw: string) {
+  return Array.from(
+    new Set(
+      String(raw || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function buildOpenAIModelCandidates(primaryModel: string, extraFallbacks: string[] = []) {
+  const envFallbacks = parseModelList(
+    Deno.env.get("OPENAI_FALLBACK_MODELS") ||
+    Deno.env.get("OPENAI_FALLBACK_MODEL") ||
+    "",
+  );
+  const defaultFallbacks = ["gpt-4.1-mini", "gpt-4.1-nano"];
+  return Array.from(
+    new Set(
+      [primaryModel, ...extraFallbacks, ...envFallbacks, ...defaultFallbacks]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isTransientOpenAIHttpStatus(status: number, errText: string) {
+  if ([408, 409, 429, 500, 502, 503, 504].includes(status)) return true;
+  const text = String(errText || "").toLowerCase();
+  return text.includes("upstream server is timing out") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("request timed out") ||
+    text.includes("timeout");
+}
+
+function isTransientOpenAIError(error: unknown) {
+  const message = String(error instanceof Error ? error.message : error).toLowerCase();
+  return message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("capacity") ||
+    message.includes("overloaded") ||
+    message.includes("rate limit") ||
+    message.includes("429") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("unterminated string in json") ||
+    message.includes("unexpected end of json input");
+}
+
+function isModelFailoverEligibleError(error: unknown) {
+  const message = String(error instanceof Error ? error.message : error).toLowerCase();
+  return message.includes("429") ||
+    message.includes("rate limit") ||
+    message.includes("capacity") ||
+    message.includes("overloaded") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("service unavailable") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("upstream");
 }
 
 function extractResponsesOutputText(data: any): string | null {
@@ -1684,26 +1750,37 @@ function odiServiceState(importance: number, satisfaction: number) {
 async function callOpenAIJSON(opts: {
   apiKey: string;
   model: string;
+  fallbackModels?: string[];
   schemaName: string;
   schema: any;
   systemText: string;
   userText: string;
   maxOutputTokens?: number;
   temperature?: number;
+  requestTimeoutMs?: number;
+  transientRetries?: number;
 }) {
   const {
     apiKey,
     model,
+    fallbackModels = [],
     schemaName,
     schema,
     systemText,
     userText,
     maxOutputTokens = 2000,
     temperature = 0.2,
+    requestTimeoutMs = 240_000,
+    transientRetries = 2,
   } = opts;
+  const withSchemaContext = (error: unknown) => {
+    const message = String(error instanceof Error ? error.message : error);
+    if (message.startsWith(`[${schemaName}]`)) return new Error(message);
+    return new Error(`[${schemaName}] ${message}`);
+  };
 
-  const buildBody = (outputBudget: number, retryNote = "") => ({
-    model,
+  const buildBody = (activeModel: string, outputBudget: number, retryNote = "") => ({
+    model: activeModel,
     temperature,
     max_output_tokens: outputBudget,
     input: [
@@ -1726,61 +1803,131 @@ async function callOpenAIJSON(opts: {
     },
   });
 
-  const budgets = [maxOutputTokens, Math.round(maxOutputTokens * 1.75)];
+  const budgets = [
+    maxOutputTokens,
+    Math.round(maxOutputTokens * 1.75),
+    Math.round(maxOutputTokens * 2.5),
+  ].filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index);
 
-  for (let attempt = 0; attempt < budgets.length; attempt++) {
-    const retryNote =
-      attempt === 0
-        ? ""
-        : "Your previous response was truncated or invalid JSON. Return the full JSON object in one complete response that exactly matches the schema.";
+  const modelCandidates = buildOpenAIModelCandidates(model, fallbackModels);
+  let lastModelError: unknown = null;
 
-    const resp = await fetchWithTimeout("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(buildBody(budgets[attempt], retryNote)),
-    }, 180_000);
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`OpenAI error ${resp.status}: ${errText}`);
-    }
-
-    const data = await resp.json();
-    const text = extractResponsesOutputText(data);
-    if (!text) {
-      console.log("[research-company] OpenAI response missing output_text. keys=", Object.keys(data || {}));
-      throw new Error("OpenAI response missing output_text");
-    }
-
+  for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex++) {
+    const activeModel = modelCandidates[modelIndex];
+    let modelError: unknown = null;
     try {
-      return JSON.parse(text);
-    } catch (e) {
-      console.log("[research-company] OpenAI JSON parse failed. first200=", text.slice(0, 200));
-      console.log("[research-company] OpenAI JSON parse failed. last200=", text.slice(-200));
+      for (let attempt = 0; attempt < budgets.length; attempt++) {
+        const retryNote =
+          attempt === 0
+            ? ""
+            : "Your previous response was truncated or invalid JSON. Return the full JSON object in one complete response that exactly matches the schema.";
 
-      const parseMessage = e instanceof Error ? e.message : String(e);
-      const looksTruncated =
-        parseMessage.toLowerCase().includes("unterminated") ||
-        parseMessage.toLowerCase().includes("unexpected end") ||
-        text.trim().length > 0 && !text.trim().endsWith("}");
+        let lastError: unknown = null;
+        for (let transientAttempt = 0; transientAttempt <= transientRetries; transientAttempt++) {
+          try {
+            const resp = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify(buildBody(activeModel, budgets[attempt], retryNote)),
+            }, requestTimeoutMs);
 
-      if (attempt < budgets.length - 1 && looksTruncated) {
-        console.log("[research-company] retrying OpenAI JSON parse with larger token budget", {
-          schemaName,
-          previousBudget: budgets[attempt],
-          nextBudget: budgets[attempt + 1],
-        });
-        continue;
+            if (!resp.ok) {
+              const errText = await resp.text();
+              if (transientAttempt < transientRetries && isTransientOpenAIHttpStatus(resp.status, errText)) {
+                const backoffMs = 1200 * (transientAttempt + 1);
+                console.log("[research-company] transient OpenAI HTTP error; retrying", {
+                  schemaName,
+                  model: activeModel,
+                  status: resp.status,
+                  attempt: transientAttempt + 1,
+                  retries: transientRetries,
+                  backoffMs,
+                });
+                await sleep(backoffMs);
+                continue;
+              }
+              throw withSchemaContext(`OpenAI error ${resp.status}: ${errText}`);
+            }
+
+            const data = await resp.json();
+            const text = extractResponsesOutputText(data);
+            if (!text) {
+              console.log("[research-company] OpenAI response missing output_text. keys=", Object.keys(data || {}));
+              throw withSchemaContext("OpenAI response missing output_text");
+            }
+
+            try {
+              return JSON.parse(text);
+            } catch (e) {
+              console.log("[research-company] OpenAI JSON parse failed. first200=", text.slice(0, 200));
+              console.log("[research-company] OpenAI JSON parse failed. last200=", text.slice(-200));
+
+              const parseMessage = e instanceof Error ? e.message : String(e);
+              const looksTruncated =
+                parseMessage.toLowerCase().includes("unterminated") ||
+                parseMessage.toLowerCase().includes("unexpected end") ||
+                text.trim().length > 0 && !text.trim().endsWith("}");
+
+              if (attempt < budgets.length - 1 && looksTruncated) {
+                console.log("[research-company] retrying OpenAI JSON parse with larger token budget", {
+                  schemaName,
+                  model: activeModel,
+                  previousBudget: budgets[attempt],
+                  nextBudget: budgets[attempt + 1],
+                });
+                lastError = e;
+                break;
+              }
+
+              throw withSchemaContext(e);
+            }
+          } catch (error) {
+            lastError = error;
+            if (transientAttempt < transientRetries && isTransientOpenAIError(error)) {
+              const backoffMs = 1200 * (transientAttempt + 1);
+              console.log("[research-company] transient OpenAI request failure; retrying", {
+                schemaName,
+                model: activeModel,
+                attempt: transientAttempt + 1,
+                retries: transientRetries,
+                backoffMs,
+                message: String(error instanceof Error ? error.message : error),
+              });
+              await sleep(backoffMs);
+              continue;
+            }
+            throw withSchemaContext(error);
+          }
+        }
+
+        if (lastError) throw withSchemaContext(lastError);
       }
-
-      throw e;
+    } catch (error) {
+      modelError = error;
     }
+
+    if (!modelError) {
+      throw new Error(`[${schemaName}] OpenAI JSON generation failed without a concrete error.`);
+    }
+
+    lastModelError = modelError;
+    const canFailover = modelIndex < modelCandidates.length - 1 && isModelFailoverEligibleError(modelError);
+    if (canFailover) {
+      console.log("[research-company] switching OpenAI model after transient capacity-like failure", {
+        schemaName,
+        fromModel: activeModel,
+        toModel: modelCandidates[modelIndex + 1],
+        message: String(modelError instanceof Error ? modelError.message : modelError),
+      });
+      continue;
+    }
+    throw withSchemaContext(modelError);
   }
 
-  throw new Error("OpenAI JSON generation failed after retries");
+  throw withSchemaContext(lastModelError || "OpenAI JSON generation failed after retries and model fallback.");
 }
 
 const POSITIONING_KEYS = new Set([
@@ -1894,7 +2041,7 @@ function audienceFromJourneyTitle(title: unknown) {
   const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
   const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
   const candidate = normalizeAudienceSignal(withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw);
-  return isGenericAudienceLabel(candidate) ? "" : candidate;
+  return isInvalidAudienceLabel(candidate) ? "" : candidate;
 }
 
 function jtbdFromJourneyTitle(title: unknown) {
@@ -1904,6 +2051,9 @@ function jtbdFromJourneyTitle(title: unknown) {
 
   if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
     return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
+  }
+  if (/(debt|collection|debtor|repayment|arrears|delinquen|past due)/.test(lower)) {
+    return "When resolving outstanding debt, consumers want to understand options, choose a workable repayment path, and complete payments with confidence, so they can regain financial control with minimal stress.";
   }
   if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
     return `When seeking growth capital, ${lower} want to identify, evaluate, and win the right funding partner, so they can execute their strategy on workable terms.`;
@@ -1959,7 +2109,7 @@ function defaultJourneySubtitle(key: JourneyKey) {
 function sanitizeJobMapTitle(value: unknown, key: JourneyKey) {
   const title = String(value || "").trim();
   if (!title) return defaultJourneyTitle(key);
-  if (isCustomerJourneyKey(key) && isGenericAudienceLabel(audienceFromJourneyTitle(title))) {
+  if (isCustomerJourneyKey(key) && isInvalidAudienceLabel(audienceFromJourneyTitle(title))) {
     return defaultJourneyTitle(key);
   }
   return title;
@@ -1990,6 +2140,24 @@ function isGenericAudienceLabel(value: unknown) {
     normalized === "unknown from public evidence" ||
     normalized === "unknown from uploaded evidence"
   );
+}
+
+function isLikelyJobActionLabel(value: unknown) {
+  const normalized = normalizeAudienceSignal(value).toLowerCase();
+  if (!normalized) return false;
+  const hasRoleNoun = /\b(owner|manager|director|lead|officer|team|department|specialist|buyer|user|customer|consumer|operator|administrator|executive|committee|sponsor|partner|staff|organization|organisation|enterprise|company|client|debtor|creditor|collector|agent|analyst|founder|ceo|cfo|coo|vp|head)\b/.test(normalized);
+  if (hasRoleNoun) return false;
+  if (/^(getting|securing|converting|delivering|improving|optimizing|building|driving|increasing|reducing|achieving|executing|obtaining|winning|raising|funding|acquiring)\b/.test(normalized)) {
+    return true;
+  }
+  if (/(financial investment|revenue outcomes|qualified demand|recurring economic outcomes)/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function isInvalidAudienceLabel(value: unknown) {
+  return isGenericAudienceLabel(value) || isLikelyJobActionLabel(value);
 }
 
 function parseSelectedJobMaps(value: unknown): SelectedJobMap[] {
@@ -2084,7 +2252,7 @@ function inferSuggestedJobMapsFromBaseline(args: {
   ].filter(Boolean);
   const role = roleSignals[0] || "";
   const companyAudienceFallback = normalizeSignal(args.companyName) || "Primary Customer";
-  const audienceLabel = !role || isGenericAudienceLabel(role) ? `${companyAudienceFallback} Customer` : role;
+  const audienceLabel = !role || isInvalidAudienceLabel(role) ? `${companyAudienceFallback} Customer` : role;
   const hasNonprofitFundingSignal = /\b(nonprofit|charity|foundation|mission|philanthrop|donor|grant|fundraising)\b/.test(publicSignalText);
   const hasCommercialMarketSignal = /\b(saas|software|telecom|enterprise|b2b|subscription|arr|contract|procurement|retail|cafe|restaurant|venue|manufacturing|logistics)\b/.test(publicSignalText);
   const allowDonorGrantRevenueMap = hasNonprofitFundingSignal && !hasCommercialMarketSignal;
@@ -3567,11 +3735,11 @@ Deno.serve(async (req) => {
       selectedMapByKey.set("customer", {
         journey_key: "customer",
         journey_title: sanitizeJobMapTitle(
-          primaryMap?.journey_title || suggestedCustomer?.journey_title,
+          suggestedCustomer?.journey_title || primaryMap?.journey_title,
           "customer",
         ),
         journey_subtitle: sanitizeJobMapSubtitle(
-          primaryMap?.journey_subtitle || suggestedCustomer?.journey_subtitle,
+          suggestedCustomer?.journey_subtitle || primaryMap?.journey_subtitle,
           "customer",
         ),
         source: "existing",
@@ -3600,7 +3768,7 @@ Deno.serve(async (req) => {
     const selectedCustomerMap = selectedMapByKey.get("customer");
     if (selectedCustomerMap) {
       const customerAudience = audienceFromJourneyTitle(selectedCustomerMap.journey_title);
-      if (!customerAudience || isGenericAudienceLabel(customerAudience)) {
+      if (!customerAudience || isInvalidAudienceLabel(customerAudience)) {
         const suggestedCustomer = suggestedJobMapByKey.get("customer");
         const normalizedCompanyName = normalizeAudienceSignal(company_name);
         const companyCustomerLabel = normalizedCompanyName ? `${normalizedCompanyName} customer` : "Primary job performer";
@@ -4421,84 +4589,91 @@ Deno.serve(async (req) => {
       (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
     );
 
-    const finalizerApplied = highSeverityReviews.length > 0;
+    let finalizerApplied = false;
 
     if (highSeverityReviews.length > 0) {
-      const repairedBundle = await runFinalizer({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        strategicProblemBrief,
-        odiBrief,
-        inputs,
-        journeys,
-        opportunities,
-        routes,
-        positioning: positioningCanvasResult,
-        strategy: strategyCascadeResult,
-        reviews: reviewResults,
-      });
+      try {
+        const repairedBundle = await runFinalizer({
+          apiKey: openaiKey,
+          model: openaiModel,
+          companyName: company_name,
+          website,
+          baselineBrief,
+          strategicProblemBrief,
+          odiBrief,
+          inputs,
+          journeys,
+          opportunities,
+          routes,
+          positioning: positioningCanvasResult,
+          strategy: strategyCascadeResult,
+          reviews: reviewResults,
+        });
 
-      inputs = Array.isArray(repairedBundle?.inputs) ? repairedBundle.inputs : inputs;
-      journeys = Array.isArray(repairedBundle?.journeys) ? repairedBundle.journeys : journeys;
-      if (Array.isArray(repairedBundle?.opportunities) && repairedBundle.opportunities.length > 0) {
-        opportunities = repairedBundle.opportunities;
-      }
-      if (Array.isArray(repairedBundle?.routes) && repairedBundle.routes.length > 0) {
-        routes = repairedBundle.routes;
-      }
-      positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
-      strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
-
-      const repairedJourneyByKey = new Map<string, any>();
-      for (const journey of journeys) {
-        const key = normalizeJourneyKey(journey?.journey_key);
-        if (!targetJourneyKeySet.has(key)) continue;
-        if (!repairedJourneyByKey.has(key)) {
-          repairedJourneyByKey.set(key, { ...journey, journey_key: key });
+        finalizerApplied = true;
+        inputs = Array.isArray(repairedBundle?.inputs) ? repairedBundle.inputs : inputs;
+        journeys = Array.isArray(repairedBundle?.journeys) ? repairedBundle.journeys : journeys;
+        if (Array.isArray(repairedBundle?.opportunities) && repairedBundle.opportunities.length > 0) {
+          opportunities = repairedBundle.opportunities;
         }
+        if (Array.isArray(repairedBundle?.routes) && repairedBundle.routes.length > 0) {
+          routes = repairedBundle.routes;
+        }
+        positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
+        strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
+
+        const repairedJourneyByKey = new Map<string, any>();
+        for (const journey of journeys) {
+          const key = normalizeJourneyKey(journey?.journey_key);
+          if (!targetJourneyKeySet.has(key)) continue;
+          if (!repairedJourneyByKey.has(key)) {
+            repairedJourneyByKey.set(key, { ...journey, journey_key: key });
+          }
+        }
+        journeys = targetJourneyKeys
+          .map((key) => repairedJourneyByKey.get(key))
+          .filter(Boolean);
+
+        ({
+          consistencyReview,
+          positioningReview,
+          evidenceReview,
+          strategyReview,
+        } = await runAllDraftReviews({
+          apiKey: openaiKey,
+          model: openaiModel,
+          companyName: company_name,
+          website,
+          baselineBrief,
+          strategicProblemBrief,
+          odiBrief,
+          inputs,
+          journeys,
+          opportunities,
+          routes,
+          positioning: positioningCanvasResult,
+          strategy: strategyCascadeResult,
+        }));
+
+        reviewResults = [
+          { key: "consistency", review: consistencyReview },
+          { key: "positioning", review: positioningReview },
+          { key: "evidence", review: evidenceReview },
+          { key: "strategy", review: strategyReview },
+        ];
+        actionableReviews = reviewResults.filter(
+          (entry) =>
+            String(entry.review?.severity || "low").toLowerCase() !== "low" ||
+            entry.review?.pass === false,
+        );
+        highSeverityReviews = reviewResults.filter(
+          (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
+        );
+      } catch (error) {
+        console.log("[research-company] finalizer failed; preserving pre-finalizer artifacts", {
+          message: String(error instanceof Error ? error.message : error),
+        });
       }
-      journeys = targetJourneyKeys
-        .map((key) => repairedJourneyByKey.get(key))
-        .filter(Boolean);
-
-      ({
-        consistencyReview,
-        positioningReview,
-        evidenceReview,
-        strategyReview,
-      } = await runAllDraftReviews({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        strategicProblemBrief,
-        odiBrief,
-        inputs,
-        journeys,
-        opportunities,
-        routes,
-        positioning: positioningCanvasResult,
-        strategy: strategyCascadeResult,
-      }));
-
-      reviewResults = [
-        { key: "consistency", review: consistencyReview },
-        { key: "positioning", review: positioningReview },
-        { key: "evidence", review: evidenceReview },
-        { key: "strategy", review: strategyReview },
-      ];
-      actionableReviews = reviewResults.filter(
-        (entry) =>
-          String(entry.review?.severity || "low").toLowerCase() !== "low" ||
-          entry.review?.pass === false,
-      );
-      highSeverityReviews = reviewResults.filter(
-        (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
-      );
     }
 
     if (highSeverityReviews.length > 0 && !allowHighSeverityReviewSave) {
@@ -4872,13 +5047,15 @@ Deno.serve(async (req) => {
     const lensUser = normalizeAudienceSignal(baselineLens.user);
     const lensPrimaryBuyer = normalizeAudienceSignal(baselineLens.primary_buyer);
     const lensChooser = normalizeAudienceSignal(baselineLens.chooser);
-    const normalizedJourneyExecutor = isGenericAudienceLabel(journeyDerivedExecutor)
+    const normalizedJourneyExecutor = isInvalidAudienceLabel(journeyDerivedExecutor)
       ? ""
       : journeyDerivedExecutor;
-    const baselineExecutor = !isGenericAudienceLabel(lensUser)
+    const baselineExecutor = !isInvalidAudienceLabel(lensUser)
       ? lensUser
-      : !isGenericAudienceLabel(lensPrimaryBuyer)
+      : !isInvalidAudienceLabel(lensPrimaryBuyer)
         ? lensPrimaryBuyer
+        : !isInvalidAudienceLabel(lensChooser)
+          ? lensChooser
         : "";
     const job_executor =
       String(
@@ -4886,16 +5063,16 @@ Deno.serve(async (req) => {
         baselineExecutor ||
         (researchContextMode === "uploaded_evidence_fallback" ? companyExecutorFallback : fallbackUnknownLabel)
       );
-    const chooserCandidate = !isGenericAudienceLabel(lensChooser)
+    const chooserCandidate = !isInvalidAudienceLabel(lensChooser)
       ? lensChooser
-      : !isGenericAudienceLabel(lensPrimaryBuyer)
+      : !isInvalidAudienceLabel(lensPrimaryBuyer)
         ? lensPrimaryBuyer
-        : !isGenericAudienceLabel(normalizedJourneyExecutor)
+        : !isInvalidAudienceLabel(normalizedJourneyExecutor)
           ? normalizedJourneyExecutor
           : "";
     const chooser =
       String(chooserCandidate || (researchContextMode === "uploaded_evidence_fallback" ? "Buying/decision lead" : fallbackUnknownLabel));
-    const jtbdFallbackSubject = isGenericAudienceLabel(job_executor)
+    const jtbdFallbackSubject = isInvalidAudienceLabel(job_executor)
       ? "the primary job performer"
       : job_executor.toLowerCase();
     const jtbd =

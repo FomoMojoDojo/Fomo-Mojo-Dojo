@@ -1,3 +1,4 @@
+import { Building2, CheckCircle2, FlaskConical, Globe, type LucideIcon } from "lucide-react";
 import type { SourceConfidenceSignals } from "@/lib/sourceConfidence";
 
 interface PageContextStatusProps {
@@ -53,6 +54,12 @@ function confidenceScore(
   return fallback;
 }
 
+function confidenceLevel(score: number) {
+  if (score >= 70) return "High";
+  if (score >= 40) return "Moderate";
+  return "Low";
+}
+
 function Box({
   label,
   children,
@@ -63,34 +70,37 @@ function Box({
   className?: string;
 }) {
   return (
-    <div className={`rounded-md border border-[#e1e6e2] bg-white px-2.5 py-2 ${className ?? ""}`.trim()}>
+    <div className={`rounded-md border border-[#e1e6e2] bg-white px-2 py-1.5 ${className ?? ""}`.trim()}>
       <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-[#8c938f]">{label}</span>
       <div className="mt-1">{children}</div>
     </div>
   );
 }
 
-function SourceLight({
-  label,
+function SourceIconPill({
+  shortLabel,
   state,
+  icon: Icon,
 }: {
-  label: string;
+  shortLabel: string;
   state: "on" | "warning" | "off";
+  icon: LucideIcon;
 }) {
-  const dotClassName =
+  const className =
     state === "on"
-      ? "bg-[#34d399] border-[#34d399]"
+      ? "bg-[#EEF6E7] text-[#2E6B52] border-[#BDD8CF]"
       : state === "warning"
-        ? "bg-[#f59e0b] border-[#f59e0b]"
-        : "bg-transparent border-white/30";
+        ? "bg-[#FFF4EC] text-[#915E46] border-[#F1C3AC]"
+        : "bg-[#F6F8FA] text-[#9AA8B0] border-[#D9E2E8]";
 
   return (
-    <div className="flex items-center gap-2 py-0.5">
-      <span
-        className={`h-2 w-2 rounded-full border ${dotClassName}`}
-      />
-      <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#6b7570]">{label}</span>
-    </div>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${className}`}
+      title={`${shortLabel} source`}
+    >
+      <Icon className="h-3 w-3" />
+      <span className="font-mono text-[9px] uppercase tracking-[0.08em]">{shortLabel}</span>
+    </span>
   );
 }
 
@@ -128,38 +138,40 @@ export default function PageContextStatus({
   className,
 }: PageContextStatusProps) {
   const publicState = publicSourceState(publicEvidenceStatus, confidencePercent);
+  const evidenceSummary = evidenceLabel || evidenceStage(sourceSignals);
   const sourceRows = [
-    { label: "Public", state: publicState },
-    { label: "Company", state: sourceSignals.hasCompanyEvidence ? ("on" as const) : ("off" as const) },
-    { label: "Primary Evidence", state: sourceSignals.hasPrimaryEvidence ? ("on" as const) : ("off" as const) },
-    { label: "Implemented + Tested", state: sourceSignals.hasImplementedTested ? ("on" as const) : ("off" as const) },
+    { shortLabel: "Public", state: publicState, icon: Globe },
+    { shortLabel: "Company", state: sourceSignals.hasCompanyEvidence ? ("on" as const) : ("off" as const), icon: Building2 },
+    { shortLabel: "Primary", state: sourceSignals.hasPrimaryEvidence ? ("on" as const) : ("off" as const), icon: FlaskConical },
+    { shortLabel: "Tested", state: sourceSignals.hasImplementedTested ? ("on" as const) : ("off" as const), icon: CheckCircle2 },
   ];
   const confidence = confidenceScore(sourceSignals, confidencePercent, publicEvidenceStatus);
 
   return (
     <div
-      className={`w-full rounded-xl border border-[#d8ddd7] bg-[#fbfcfb] px-2.5 py-2 ${className ?? ""}`.trim()}
+      className={`w-full rounded-xl border border-[#d8ddd7] bg-[#fbfcfb] px-2 py-1.5 ${className ?? ""}`.trim()}
     >
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         <Box label="Updated">
-          <span className="font-sans text-[12px] text-[#2f3431]">{formatUpdatedDate(lastScoredAt)}</span>
+          <span className="font-sans text-[11px] text-[#2f3431]">{formatUpdatedDate(lastScoredAt)}</span>
         </Box>
 
-        <Box label="Evidence">
-          <span className="font-sans text-[12px] text-[#2f3431]">{evidenceLabel || evidenceStage(sourceSignals)}</span>
-        </Box>
-
-        <Box label="Sources">
-          <div className="space-y-0.5">
+        <Box label="Sources" className="min-h-[62px]">
+          <div className="flex flex-wrap items-center gap-1.5" title={evidenceSummary}>
             {sourceRows.map((row) => (
-              <SourceLight key={row.label} label={row.label} state={row.state} />
+              <SourceIconPill key={row.shortLabel} shortLabel={row.shortLabel} state={row.state} icon={row.icon} />
             ))}
           </div>
         </Box>
 
-        <Box label="Confidence">
-          <div className="pt-1">
-            <div className="relative h-2.5 w-full overflow-hidden rounded-full border border-[#d7ddd9] bg-[#ecefed]">
+        <Box label="Confidence" className="min-h-[62px]">
+          <div className="pt-0.5">
+            <div className="mb-1 flex items-center">
+              <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#6b7570]">
+                {confidenceLevel(confidence)} confidence
+              </span>
+            </div>
+            <div className="relative h-2 w-full overflow-hidden rounded-full border border-[#d7ddd9] bg-[#ecefed]">
               <div
                 className="absolute inset-0"
                 style={{ background: "linear-gradient(90deg, #d84c42 0%, #f2c649 48%, #34c37a 100%)" }}
@@ -167,6 +179,11 @@ export default function PageContextStatus({
               <div
                 className="absolute right-0 top-0 h-full bg-[#ecefed]"
                 style={{ width: `${Math.max(0, 100 - confidence)}%` }}
+              />
+              <div
+                className="absolute top-1/2 h-4 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#233c4b]"
+                style={{ left: `${Math.max(0, Math.min(100, confidence))}%` }}
+                aria-hidden
               />
             </div>
           </div>

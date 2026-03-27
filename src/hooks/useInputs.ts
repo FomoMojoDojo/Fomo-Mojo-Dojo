@@ -394,7 +394,15 @@ export function useUploadInputFile() {
         })
         .select('id, file_path, uploaded_at')
         .single();
-      if (dbError) throw dbError;
+      if (dbError || !insertedRow?.id) {
+        // Guardrail: never allow a storage upload to look successful if DB linkage failed.
+        const { error: rollbackError } = await supabase.storage.from('input-files').remove([filePath]);
+        const baseMessage = dbError?.message || 'Missing inserted input_files row id';
+        const rollbackMessage = rollbackError?.message ? ` Rollback remove failed: ${rollbackError.message}` : '';
+        throw new Error(
+          `Upload aborted: file reached storage but database link failed (${baseMessage}).${rollbackMessage}`
+        );
+      }
 
       // If this input uses a single checklist item, treat first uploaded evidence as satisfying it.
       const { data: subitems, error: subitemsError } = await supabase

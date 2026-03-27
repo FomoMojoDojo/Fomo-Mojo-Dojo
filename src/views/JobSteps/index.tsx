@@ -116,6 +116,24 @@ function isGenericAudienceLabel(value: string | null | undefined) {
   );
 }
 
+function isLikelyJobActionLabel(value: string | null | undefined) {
+  const normalized = normalizeAudienceSignal(value).toLowerCase();
+  if (!normalized) return false;
+  const hasRoleNoun = /\b(owner|manager|director|lead|officer|team|department|specialist|buyer|user|customer|consumer|operator|administrator|executive|committee|sponsor|partner|staff|organization|organisation|enterprise|company|client|debtor|creditor|collector|agent|analyst|founder|ceo|cfo|coo|vp|head)\b/.test(normalized);
+  if (hasRoleNoun) return false;
+  if (/^(getting|securing|converting|delivering|improving|optimizing|building|driving|increasing|reducing|achieving|executing|obtaining|winning|raising|funding|acquiring)\b/.test(normalized)) {
+    return true;
+  }
+  if (/(financial investment|revenue outcomes|qualified demand|recurring economic outcomes)/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function isInvalidAudienceLabel(value: string | null | undefined) {
+  return isGenericAudienceLabel(value) || isLikelyJobActionLabel(value);
+}
+
 function isGenericJtbdStatement(value: string | null | undefined) {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return true;
@@ -131,7 +149,9 @@ function isGenericJourneySubtitle(value: string | null | undefined) {
   if (!normalized) return true;
   return (
     normalized.includes("how the primary job performer") ||
-    normalized.includes("define, locate, prepare, execute, monitor, and conclude progress")
+    normalized.includes("define, locate, prepare, execute, monitor, and conclude progress") ||
+    normalized.includes("secures, converts, and retains economic value") ||
+    normalized.includes("demand converts into sustained economic outcomes")
   );
 }
 
@@ -142,7 +162,7 @@ function audienceFromJourneyTitle(title: string | null | undefined) {
   const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
   const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
   const candidate = normalizeAudienceSignal(withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw);
-  return isGenericAudienceLabel(candidate) ? "" : candidate;
+  return isInvalidAudienceLabel(candidate) ? "" : candidate;
 }
 
 function jtbdFromJourneyTitle(title: string | null | undefined) {
@@ -152,6 +172,9 @@ function jtbdFromJourneyTitle(title: string | null | undefined) {
 
   if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
     return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
+  }
+  if (/(debt|collection|debtor|repayment|arrears|delinquen|past due)/.test(lower)) {
+    return "When resolving outstanding debt, consumers want to understand options, choose a workable repayment path, and complete payments with confidence, so they can regain financial control with minimal stress.";
   }
   if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
     return `When seeking growth capital, ${lower} want to identify, evaluate, and win the right funding partner, so they can execute their strategy on workable terms.`;
@@ -525,15 +548,15 @@ function inferSuggestedJourneyOptions(args: {
   if (!existingJourneyKeys.has("customer")) {
     const customerSignalRaw = safeText(lens.user || lens.primary_buyer || lens.chooser, "");
     const normalizedCustomerSignal = normalizeAudienceSignal(customerSignalRaw);
-    const customerSignal = normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal)
+    const customerSignal = normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
       ? normalizeRoleLabel(normalizedCustomerSignal)
       : "Primary Job Performer";
     addOption({
       key: "customer",
       title: `Job Map: ${customerSignal}`,
       subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
-      confidence: normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
-      rationale: normalizedCustomerSignal && !isGenericAudienceLabel(normalizedCustomerSignal)
+      confidence: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
+      rationale: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
         ? `Public signal identifies primary job performer context: ${normalizedCustomerSignal}`
         : "Customer job map is required first and should define the core functional job performer.",
     });
@@ -609,7 +632,7 @@ function inferSuggestedJourneyOptions(args: {
   const audienceCandidates = new Set<string>();
   const baselineRoleCandidates = [lens.user, lens.primary_buyer, lens.chooser]
     .map((value) => normalizeAudienceSignal(String(value || "")))
-    .filter((value) => Boolean(value) && !isGenericAudienceLabel(value))
+    .filter((value) => Boolean(value) && !isInvalidAudienceLabel(value))
     .map((value) => normalizeRoleLabel(value));
   for (const role of baselineRoleCandidates) {
     audienceCandidates.add(role);
@@ -923,6 +946,8 @@ function OdiContextSection({
   onRemovePublicMarketContext,
   onRemovePublicMarketContextAndRerun,
   removingPublicMarketContextAction,
+  onSaveContextEdits,
+  savingContextEdits,
   hasUploadedFiles,
   onResetPublicResearchArtifacts,
   resettingPublicResearchArtifacts,
@@ -937,6 +962,13 @@ function OdiContextSection({
   onRemovePublicMarketContext?: () => void;
   onRemovePublicMarketContextAndRerun?: () => void;
   removingPublicMarketContextAction?: "remove" | "remove_and_rerun" | null;
+  onSaveContextEdits?: (values: {
+    marketContext: string;
+    jobExecutor: string;
+    chooser: string;
+    jtbd: string;
+  }) => Promise<void>;
+  savingContextEdits?: boolean;
   hasUploadedFiles?: boolean;
   onResetPublicResearchArtifacts?: () => void;
   resettingPublicResearchArtifacts?: boolean;
@@ -953,24 +985,29 @@ function OdiContextSection({
 
   const jobExecutor = safeText(
     derivedExecutor,
-    safeText(isGenericAudienceLabel(storedExecutor) ? "" : storedExecutor, companyExecutorFallback),
+    safeText(
+      isInvalidAudienceLabel(storedExecutor) ? "" : storedExecutor,
+      safeText(isInvalidAudienceLabel(storedChooser) ? "" : storedChooser, companyExecutorFallback),
+    ),
   );
   const chooser = safeText(
     derivedChooser,
-    safeText(isGenericAudienceLabel(storedChooser) ? "" : storedChooser, "Buying/decision lead"),
+    safeText(isInvalidAudienceLabel(storedChooser) ? "" : storedChooser, "Buying/decision lead"),
   );
+  const shouldIgnoreStoredJtbd = isInvalidAudienceLabel(storedExecutor);
   const jtbd = safeText(
     derivedJtbd,
     safeText(
-      isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd,
+      shouldIgnoreStoredJtbd || isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd,
       "Complete the end-to-end customer job with reliable outcomes."
     ),
   );
+  const marketFallback = safeText(marketContext, shouldIgnoreStoredJtbd ? "" : storedJtbd);
   const market = safeText(
     marketContextFromJourney({
       title: activeCustomerJourneyTitle,
       subtitle: activeCustomerJourneySubtitle,
-      fallback: marketContext || marketDefinition?.jtbd,
+      fallback: marketFallback,
     }),
     "No market context captured yet.",
   );
@@ -978,6 +1015,46 @@ function OdiContextSection({
   const publicNeedCount = needs.filter((item) => isPublicSourcePath(item.source_path)).length;
   const uploadedNeedCount = Math.max(0, needs.length - publicNeedCount);
   const hasPublicMarketContext = Boolean(marketDefinition?.source_path) && isPublicSourcePath(marketDefinition?.source_path);
+  const [editingContext, setEditingContext] = useState(false);
+  const [marketDraft, setMarketDraft] = useState(market);
+  const [jobExecutorDraft, setJobExecutorDraft] = useState(jobExecutor);
+  const [chooserDraft, setChooserDraft] = useState(chooser);
+  const [jtbdDraft, setJtbdDraft] = useState(jtbd);
+
+  useEffect(() => {
+    if (editingContext) return;
+    setMarketDraft(market);
+    setJobExecutorDraft(jobExecutor);
+    setChooserDraft(chooser);
+    setJtbdDraft(jtbd);
+  }, [editingContext, market, jobExecutor, chooser, jtbd]);
+
+  const handleSaveContext = async () => {
+    if (!onSaveContextEdits) return;
+    const nextMarket = marketDraft.trim();
+    const nextExecutor = jobExecutorDraft.trim();
+    const nextChooser = chooserDraft.trim();
+    const nextJtbd = jtbdDraft.trim();
+    if (!nextMarket || !nextExecutor || !nextChooser || !nextJtbd) {
+      toast.error("Market context, job executor, chooser, and JTBD are all required.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Save these market context edits?\n\nThis will update ODI market context (executor, chooser, JTBD) and then regenerate downstream strategy artifacts (job steps, opportunities, routes, and related strategy outputs).",
+    );
+    if (!confirmed) return;
+    try {
+      await onSaveContextEdits({
+        marketContext: nextMarket,
+        jobExecutor: nextExecutor,
+        chooser: nextChooser,
+        jtbd: nextJtbd,
+      });
+      setEditingContext(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save market context edits.");
+    }
+  };
 
   return (
     <section
@@ -991,6 +1068,27 @@ function OdiContextSection({
           </h2>
           <MetaBadge>{marketSource}</MetaBadge>
           <MetaBadge>{`Needs: ${publicNeedCount} public / ${uploadedNeedCount} uploaded`}</MetaBadge>
+          {onSaveContextEdits ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (editingContext) {
+                  setEditingContext(false);
+                  return;
+                }
+                setMarketDraft(market);
+                setJobExecutorDraft(jobExecutor);
+                setChooserDraft(chooser);
+                setJtbdDraft(jtbd);
+                setEditingContext(true);
+              }}
+              disabled={!!savingContextEdits}
+              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+            >
+              {editingContext ? "Cancel Edit" : "Edit Context"}
+            </button>
+          ) : null}
         </div>
         <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
           Public and uploaded-company signals are shown side by side through local alignment. Use this panel to spot mismatches before trusting ODI priorities.
@@ -1051,38 +1149,108 @@ function OdiContextSection({
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Market Context
           </p>
-          <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
-            {market}
-          </p>
+          {editingContext ? (
+            <textarea
+              value={marketDraft}
+              onChange={(event) => setMarketDraft(event.target.value)}
+              className="mt-2 min-h-[126px] w-full rounded-lg border px-2.5 py-2 font-sans text-[13px] leading-[1.55] outline-none"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              placeholder="Define the specific market context for this company."
+            />
+          ) : (
+            <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+              {market}
+            </p>
+          )}
         </div>
 
         <div className="rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job Executor
           </p>
-          <p className="mt-2 font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
-            {jobExecutor}
-          </p>
+          {editingContext ? (
+            <input
+              value={jobExecutorDraft}
+              onChange={(event) => setJobExecutorDraft(event.target.value)}
+              className="mt-2 w-full rounded-lg border px-2.5 py-2 font-sans text-[14px] font-semibold outline-none"
+              style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+              placeholder="Who performs the core job?"
+            />
+          ) : (
+            <p className="mt-2 font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
+              {jobExecutor}
+            </p>
+          )}
           <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Chooser
           </p>
-          <p className="mt-2 font-sans text-[13px]" style={{ color: c.secondary }}>
-            {chooser}
-          </p>
+          {editingContext ? (
+            <input
+              value={chooserDraft}
+              onChange={(event) => setChooserDraft(event.target.value)}
+              className="mt-2 w-full rounded-lg border px-2.5 py-2 font-sans text-[13px] outline-none"
+              style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+              placeholder="Who chooses/approves the solution?"
+            />
+          ) : (
+            <p className="mt-2 font-sans text-[13px]" style={{ color: c.secondary }}>
+              {chooser}
+            </p>
+          )}
         </div>
 
         <div className="rounded-2xl border p-4 lg:col-span-1" style={{ borderColor: c.line, background: c.paper }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job to Be Done
           </p>
-          <p className="mt-2 font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-            {jtbd}
-          </p>
-          <p className="mt-2 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
-            Note: ODI needs should be written as stable, solution-free desired outcome statements. The current set and its scores are inferred from generated opportunities plus available public/uploaded evidence, not from validated ODI survey responses.
-          </p>
+          {editingContext ? (
+            <>
+              <textarea
+                value={jtbdDraft}
+                onChange={(event) => setJtbdDraft(event.target.value)}
+                className="mt-2 min-h-[126px] w-full rounded-lg border px-2.5 py-2 font-sans text-[14px] font-semibold leading-[1.45] outline-none"
+                style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                placeholder="When [job executor] is trying to..., they want to..., so they can..."
+              />
+              <p className="mt-2 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
+                Keep JTBD stable and solution-agnostic. Focus on enduring progress, not a specific product flow.
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+              {jtbd}
+            </p>
+          )}
         </div>
       </div>
+      {editingContext ? (
+        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="lg:col-start-3">
+            <div
+              className="mb-2 rounded-xl border px-3 py-2.5"
+              style={{ borderColor: "#F1C3AC", background: "#FFF4EC" }}
+            >
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#915E46" }}>
+                Save Impact
+              </p>
+              <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: "#6C4638" }}>
+                Saving updates market context plus ODI executor/chooser/JTBD, then regenerates downstream strategy artifacts (job steps, opportunities, routes, and strategy outputs).
+              </p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveContext}
+                disabled={!!savingContextEdits}
+                className="rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                style={{ borderColor: "#D46A2D", color: "#FFFFFF", background: "#D46A2D" }}
+              >
+                {savingContextEdits ? "Saving + Refreshing…" : "Save Context"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1685,6 +1853,7 @@ export default function JobStepsView() {
   const [removingPublicNeeds, setRemovingPublicNeeds] = useState(false);
   const [removingPublicMarketContextAction, setRemovingPublicMarketContextAction] = useState<"remove" | "remove_and_rerun" | null>(null);
   const [resettingPublicResearchArtifacts, setResettingPublicResearchArtifacts] = useState(false);
+  const [savingOdiContext, setSavingOdiContext] = useState(false);
 
   const scopedBaselineRun = useMemo(() => {
     if (!activeCompanyId || !baselineRun) return null;
@@ -2073,6 +2242,117 @@ export default function JobStepsView() {
     }
   };
 
+  const handleSaveOdiContextEdits = async (values: {
+    marketContext: string;
+    jobExecutor: string;
+    chooser: string;
+    jtbd: string;
+  }) => {
+    if (!activeCompanyId || !activeCompany?.id) {
+      throw new Error("Select a company before editing market context.");
+    }
+
+    const marketContextValue = String(values.marketContext || "").trim();
+    const jobExecutorValue = String(values.jobExecutor || "").trim();
+    const chooserValue = String(values.chooser || "").trim();
+    const jtbdValue = String(values.jtbd || "").trim();
+
+    if (!marketContextValue || !jobExecutorValue || !chooserValue || !jtbdValue) {
+      throw new Error("Market context, job executor, chooser, and JTBD are required.");
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData?.user) {
+      throw new Error("Sign in required to save market context edits.");
+    }
+    const userId = authData.user.id;
+
+    setSavingOdiContext(true);
+    try {
+      const marketFrameworks = Array.from(
+        new Set([...(marketDefinition?.frameworks_used ?? []), "odi", "manual_override"]),
+      );
+      const nowIso = new Date().toISOString();
+
+      const { data: updatedMarket, error: updateMarketError } = await supabase
+        .from("odi_market_definitions")
+        .update({
+          job_executor: jobExecutorValue,
+          chooser: chooserValue,
+          jtbd: jtbdValue,
+          source_path: "manual_context_edit",
+          frameworks_used: marketFrameworks,
+          updated_at: nowIso,
+        })
+        .eq("company_id", activeCompanyId)
+        .select("id")
+        .maybeSingle();
+      if (updateMarketError) {
+        throw new Error(updateMarketError.message || "Failed to update ODI market context.");
+      }
+      if (!updatedMarket?.id) {
+        const { error: insertMarketError } = await supabase.from("odi_market_definitions").insert({
+          company_id: activeCompanyId,
+          user_id: userId,
+          job_executor: jobExecutorValue,
+          chooser: chooserValue,
+          jtbd: jtbdValue,
+          source_path: "manual_context_edit",
+          frameworks_used: marketFrameworks,
+        });
+        if (insertMarketError) {
+          throw new Error(insertMarketError.message || "Failed to insert ODI market context.");
+        }
+      }
+
+      const { data: updatedCascade, error: updateCascadeError } = await supabase
+        .from("strategy_cascades")
+        .update({
+          where_to_play: marketContextValue,
+          updated_at: nowIso,
+        })
+        .eq("company_id", activeCompanyId)
+        .select("id")
+        .maybeSingle();
+      if (updateCascadeError) {
+        throw new Error(updateCascadeError.message || "Failed to update strategy market context.");
+      }
+      if (!updatedCascade?.id) {
+        const { error: insertCascadeError } = await supabase.from("strategy_cascades").insert({
+          company_id: activeCompanyId,
+          user_id: userId,
+          where_to_play: marketContextValue,
+          frameworks_used: ["manual_override"],
+        });
+        if (insertCascadeError) {
+          throw new Error(insertCascadeError.message || "Failed to insert strategy market context.");
+        }
+      }
+
+      await runLocalAlignment.mutateAsync({
+        areas: ["positioning", "strategy", "market", "odi"],
+        trigger: "manual_market_context_saved",
+        applyScoreUpdate: true,
+        ignorePublicBaseline: true,
+      });
+
+      if (uploadedFileCount > 0) {
+        await runResearchFromUploadedEvidence();
+      }
+
+      await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
+      refreshOdi();
+
+      if (uploadedFileCount > 0) {
+        toast.success("Saved context edits and regenerated downstream artifacts.");
+      } else {
+        toast.success("Saved context edits and refreshed alignment. Upload files to regenerate full artifacts.");
+      }
+    } finally {
+      setSavingOdiContext(false);
+    }
+  };
+
   const handleRemoveJourneyMap = async (key: string) => {
     if (!activeCompany?.id) {
       toast.error("Select a company before removing a job map.");
@@ -2137,14 +2417,18 @@ export default function JobStepsView() {
     try {
       invokeRes = await invokeFunctionWithTimeout(
         () =>
-          supabase.functions.invoke("research-company", {
+          supabase.functions.invoke("run-agent-flow", {
             body: {
               company_id: activeCompany.id,
               company_name: activeCompany.name,
               website: activeCompany.website ?? "",
+              mode: "uploaded_only",
+              include_public_collection: false,
+              include_local_alignment: false,
+              apply_score_update: false,
+              trigger: "jobsteps_uploaded_rerun",
               review_mode: "advisory",
               allow_review_block_save: true,
-              context_mode: "uploaded_only",
             },
           }),
         95_000,
@@ -2529,6 +2813,8 @@ export default function JobStepsView() {
               onRemovePublicMarketContext={handleRemovePublicMarketContext}
               onRemovePublicMarketContextAndRerun={handleRemovePublicMarketContextAndRerun}
               removingPublicMarketContextAction={removingPublicMarketContextAction}
+              onSaveContextEdits={handleSaveOdiContextEdits}
+              savingContextEdits={savingOdiContext}
               hasUploadedFiles={uploadedFileCount > 0}
               onResetPublicResearchArtifacts={handleResetPublicResearchArtifacts}
               resettingPublicResearchArtifacts={resettingPublicResearchArtifacts}
