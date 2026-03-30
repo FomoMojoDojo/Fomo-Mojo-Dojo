@@ -1,5 +1,11 @@
 import Image from "next/image";
-import { MojoMapVisual } from "@/components/MojoMapVisual";
+import { BrandReveal } from "@/components/BrandReveal";
+import { DifferentiationSequence } from "@/components/DifferentiationSequence";
+import { HeroMapVideo } from "@/components/HeroMapVideo";
+import { LegalOverlay } from "@/components/LegalOverlay";
+import { MapDetailGallery } from "@/components/MapDetailGallery";
+import { MojoMapQuiz } from "@/components/MojoMapQuiz";
+import { MojoMapSequence } from "@/components/MojoMapSequence";
 import { ProblemSequence } from "@/components/ProblemSequence";
 import { Reveal } from "@/components/Reveal";
 import { siteConfig } from "@/config/site";
@@ -24,24 +30,34 @@ const outcomes = [
   "Teams stop re-litigating",
   "Work connects to outcomes",
   "Progress becomes visible",
+  "Alignment stops requiring effort",
+  "Momentum becomes the default",
 ];
 
 const mapDetailCards = [
   {
     title: "Current Position",
     body: "See where you are now based on evidence, not assumptions.",
+    image: {
+      src: "/mojomap/current-position.png",
+      alt: "MojoMap current position screenshot",
+    },
   },
   {
     title: "Biggest Constraint",
     body: "Surface the one thing creating drag across strategy and execution.",
+    image: {
+      src: "/mojomap/biggest-constraint.png",
+      alt: "MojoMap biggest constraint screenshot",
+    },
   },
   {
     title: "Next Move",
     body: "Get a clear next action: fix, improve, or create.",
-  },
-  {
-    title: "What to Ignore",
-    body: "Remove noise so your team can commit with confidence.",
+    image: {
+      src: "/mojomap/next-move.png",
+      alt: "MojoMap next move screenshot",
+    },
   },
 ];
 
@@ -50,15 +66,17 @@ function SectionShell({
   children,
   compact = false,
   className = "",
+  containerClassName = "max-w-narrative",
 }: {
   id: string;
   children: React.ReactNode;
   compact?: boolean;
   className?: string;
+  containerClassName?: string;
 }) {
   return (
     <section id={id} className={`section-shell ${compact ? "section-compact" : ""} ${className}`.trim()}>
-      <div className="mx-auto w-full max-w-narrative px-5 sm:px-8">{children}</div>
+      <div className={`mx-auto w-full px-5 sm:px-8 ${containerClassName}`.trim()}>{children}</div>
     </section>
   );
 }
@@ -66,78 +84,124 @@ function SectionShell({
 function CTAButtons({ centered = false }: { centered?: boolean }) {
   return (
     <div className={centered ? "cta-wrap cta-center" : "cta-wrap"}>
-      <a href={siteConfig.cta.primaryUrl} className="btn btn-primary">
-        {siteConfig.cta.primaryLabel}
-      </a>
-      <a href={siteConfig.cta.secondaryUrl} className="btn btn-secondary">
-        {siteConfig.cta.secondaryLabel}
-      </a>
+      <MojoMapQuiz
+        triggerLabel={siteConfig.cta.primaryLabel}
+        triggerClassName="btn btn-primary"
+        calendlyBaseUrl={siteConfig.cta.secondaryUrl}
+      />
     </div>
   );
 }
 
+function HowStepIcon({ title }: { title: string }) {
+  if (title === "Diagnose") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="6.2" />
+        <path d="M16 16L21 21" />
+      </svg>
+    );
+  }
+
+  if (title === "Focus") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="7.2" />
+        <circle cx="12" cy="12" r="3.3" />
+      </svg>
+    );
+  }
+
+  if (title === "Flow") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7c2.4 0 2.4-2 4.8-2s2.4 2 4.8 2 2.4-2 4.8-2 2.4 2 4.8 2" />
+        <path d="M3 12c2.4 0 2.4-2 4.8-2s2.4 2 4.8 2 2.4-2 4.8-2 2.4 2 4.8 2" />
+        <path d="M3 17c2.4 0 2.4-2 4.8-2s2.4 2 4.8 2 2.4-2 4.8-2 2.4 2 4.8 2" />
+      </svg>
+    );
+  }
+
+  return null;
+}
+
+type SocialName = "linkedin" | "medium" | "substack" | "tiktok" | "youtube" | "bluesky";
+
+function SocialIcon({ name }: { name: SocialName }) {
+  if (name === "linkedin") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.2" y="8" width="4.2" height="12.8" rx="0.7" />
+        <circle cx="5.3" cy="4.9" r="1.9" />
+        <path d="M10.6 8h4v1.9c.7-1.2 1.9-2.4 4.1-2.4 3.1 0 4.1 2 4.1 5.2v8.1h-4.1v-7c0-1.7-.5-2.6-1.9-2.6-1.4 0-2.1 1-2.1 2.6v7h-4V8z" />
+      </svg>
+    );
+  }
+
+  if (name === "medium") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="7.2" cy="12.1" r="4.2" />
+        <ellipse cx="14.7" cy="12.1" rx="3.2" ry="4.2" />
+        <ellipse cx="20.3" cy="12.1" rx="1.6" ry="4.2" />
+      </svg>
+    );
+  }
+
+  if (name === "substack") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 5.2h16" />
+        <path d="M4 8.6h16" />
+        <path d="M4 12h16" />
+        <path d="M6 12v6.8h12V12" />
+      </svg>
+    );
+  }
+
+  if (name === "tiktok") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M14.4 4.2v8.6a3.7 3.7 0 1 1-3.7-3.7" />
+        <path d="M14.4 4.2c.8 1.5 2.2 2.6 4 3v3c-1.7-.2-3.2-.9-4.5-2.1" />
+      </svg>
+    );
+  }
+
+  if (name === "youtube") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.7" y="6.1" width="18.6" height="11.8" rx="3.2" />
+        <path d="M10.1 9.4l5.4 2.6-5.4 2.6z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 11.7c2.3-3.2 4.7-4.8 7.1-4.8-1 3.9-3.3 6.5-7.1 7.9-3.8-1.4-6.1-4-7.1-7.9 2.4 0 4.8 1.6 7.1 4.8z" />
+      <path d="M12 12.3c2 2.7 4.2 4.1 6.5 4.1-1 2-3.2 3.3-6.5 4-3.3-.7-5.5-2-6.5-4 2.3 0 4.5-1.4 6.5-4.1z" />
+    </svg>
+  );
+}
+
 export default function Home() {
+  const socialLinks = [
+    { name: "linkedin" as const, label: "LinkedIn", url: siteConfig.social.linkedIn },
+    { name: "medium" as const, label: "Medium", url: siteConfig.social.medium },
+    { name: "substack" as const, label: "Substack", url: siteConfig.social.substack },
+    { name: "tiktok" as const, label: "TikTok", url: siteConfig.social.tiktok },
+    { name: "youtube" as const, label: "YouTube", url: siteConfig.social.youtube },
+    { name: "bluesky" as const, label: "Bluesky", url: siteConfig.social.bluesky },
+  ];
+
   return (
     <main className="launch-page">
       <div className="ambient-grid" aria-hidden="true" />
 
-      <header className="brand-reveal-shell">
-        <div className="brand-reveal-panel">
-          <article className="brand-column">
-            <h3 className="brand-column-title">FOMO: The Focus Killer</h3>
-            <p>
-              Feeling pulled in a million directions? That's FOMO. It's the nagging anxiety that you're not working
-              on the <em>right</em> thing, a direct symptom of an unclear strategy. It kills your focus and momentum.
-            </p>
-            <p>
-              <strong>
-                We diagnose the chaos and simplify it down to what actually matters, making the complex feel simple.
-              </strong>
-            </p>
-          </article>
+      <BrandReveal />
 
-          <article className="brand-column">
-            <h3 className="brand-column-title">MOJO: Your Unfair Advantage</h3>
-            <p>
-              MOJO is that feeling of flow your team gets from having absolute clarity and confidence in your
-              strategy. It's the powerful, persuasive energy that comes from knowing exactly where you're going and
-              why.
-            </p>
-            <p>
-              <strong>
-                We guide you to this state of clarity, creating the path for your MOJO to emerge.
-              </strong>
-            </p>
-          </article>
-
-          <article className="brand-column">
-            <h3 className="brand-column-title">DOJO: Your Path to Mastery</h3>
-            <p>
-              The DOJO isn't a place; it's our method for helping you achieve strategic independence. We provide the
-              framework, tools, and guided practice you need to build the internal muscle for lasting clarity.
-            </p>
-            <p>
-              <strong>
-                Our goal is to empower you to find the answers yourselves, so you can keep your MOJO long after our
-                work together is done.
-              </strong>
-            </p>
-          </article>
-        </div>
-
-        <a href="#hero" className="brand-logo-link" aria-label="FomoMojoDojo">
-          <Image
-            src="/fomomojodojo-logo.png"
-            alt="FomoMojoDojo"
-            className="brand-logo"
-            width={406}
-            height={118}
-            priority
-          />
-        </a>
-      </header>
-
-      <SectionShell id="hero">
+      <SectionShell id="hero" containerClassName="max-w-[120rem]">
         <div className="hero-grid">
           <div className="space-y-6">
             <Reveal delay={20} className="space-y-4">
@@ -161,29 +225,23 @@ export default function Home() {
             <Reveal delay={320}>
               <CTAButtons />
             </Reveal>
-
-            <Reveal delay={420}>
-              <p className="support-line">We'll come to the first call with your initial MojoMap.</p>
-            </Reveal>
           </div>
 
           <Reveal delay={220} className="visual-wrap hero-visual-lower">
-            <MojoMapVisual variant="hero" />
+            <div className="hero-map-frame">
+              <HeroMapVideo />
+            </div>
           </Reveal>
         </div>
       </SectionShell>
 
       <SectionShell id="problem" className="problem-shell">
-        <div className="mx-auto max-w-4xl space-y-8 text-center">
-          <Reveal delay={0} className="space-y-3">
-            <h2 className="display-lg">You're working hard. But something isn't clicking.</h2>
-          </Reveal>
-
+        <div className="mx-auto max-w-4xl text-center">
           <ProblemSequence />
         </div>
       </SectionShell>
 
-      <SectionShell id="mojomap">
+      <SectionShell id="mojomap" className="mojomap-shell">
         <div className="space-y-12">
           <div className="hero-grid mojomap-hero-grid">
             <div className="space-y-6">
@@ -195,69 +253,87 @@ export default function Home() {
                 </h2>
                 <p className="copy">Move forward with confidence.</p>
               </Reveal>
-
-              <Reveal delay={140} className="space-y-3">
-                <p className="copy">Most companies track what happened.</p>
-                <p className="copy">Dashboards. Reports. Metrics.</p>
-                <p className="copy emphasis">A map shows you where to go.</p>
-              </Reveal>
             </div>
 
             <Reveal delay={240} className="visual-wrap">
-              <MojoMapVisual variant="core" />
+              <div className="mojomap-core-shot">
+                <Image
+                  src="/mojomap/mojomap-core.jpeg"
+                  alt="MojoMap projected outcome and next move view"
+                  className="mojomap-core-image"
+                  fill
+                  sizes="(min-width: 980px) 42vw, 100vw"
+                />
+              </div>
             </Reveal>
           </div>
 
-          <Reveal delay={320}>
-            <div className="mojomap-detail-grid">
-              {mapDetailCards.map((detail, index) => (
-                <article key={detail.title} className="mojomap-detail-card" data-variant={index + 1}>
-                  <div className="mojomap-preview" aria-hidden="true">
-                    <span className="preview-path" />
-                    <span className="preview-node preview-node-a" />
-                    <span className="preview-node preview-node-b" />
-                    <span className="preview-node preview-node-c" />
-                  </div>
-                  <h3 className="mojomap-detail-title">{detail.title}</h3>
-                  <p className="mojomap-detail-body">{detail.body}</p>
-                </article>
-              ))}
-            </div>
-          </Reveal>
+          <div className="mx-auto max-w-4xl">
+            <MojoMapSequence />
+          </div>
+
+          <div className="map-screens-wrap map-screens-overlap">
+            <Reveal delay={360}>
+              <MapDetailGallery items={mapDetailCards} />
+            </Reveal>
+          </div>
 
           <div className="mx-auto max-w-3xl space-y-4 text-center">
             <Reveal delay={460} className="space-y-2">
               <p className="copy">This isn't a static plan.</p>
-              <p className="copy">New insights update the map. Decisions reshape priorities.</p>
+              <p className="copy">New insights update the map.</p>
+              <p className="copy">Decisions reshape priorities.</p>
             </Reveal>
 
-            <Reveal delay={560} className="space-y-1">
-              <p className="quote-line">"Oh... that's why we're stuck."</p>
-              <p className="quote-line">"Now we know what to do."</p>
-            </Reveal>
-
-            <Reveal delay={660} className="space-y-3">
-              <a href={siteConfig.cta.primaryUrl} className="btn btn-primary btn-mojomap-cta">
-                See what your MojoMap could look like
-              </a>
-              <p className="support-line">We'll build your initial map before we talk.</p>
-            </Reveal>
+            <div className="mojomap-cta-stage">
+              <Reveal as="p" delay={620} className="mojomap-ambient-quote quote-left" aria-hidden="true">
+                "Oh... that's why we're stuck."
+              </Reveal>
+              <Reveal delay={760}>
+                <MojoMapQuiz
+                  triggerLabel={siteConfig.cta.primaryLabel}
+                  triggerClassName="btn btn-primary btn-mojomap-cta"
+                  calendlyBaseUrl={siteConfig.cta.secondaryUrl}
+                />
+              </Reveal>
+              <Reveal as="p" delay={920} className="mojomap-ambient-quote quote-right" aria-hidden="true">
+                "Now we know what to do."
+              </Reveal>
+            </div>
           </div>
         </div>
       </SectionShell>
 
-      <SectionShell id="how-it-works" compact>
+      <SectionShell id="how-it-works" compact className="how-it-works-shell">
         <div className="space-y-10">
-          <Reveal delay={0} className="space-y-3 text-center">
+          <Reveal
+            delay={0}
+            threshold={0.9}
+            rootMargin="0px 0px -48% 0px"
+            className="space-y-3 text-center"
+          >
             <h2 className="display-lg">A simple path to clarity</h2>
           </Reveal>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="how-steps-stack">
             {cards.map((card, index) => (
-              <Reveal key={card.title} delay={140 + index * 120}>
-                <article className="panel">
-                  <h3 className="panel-title">{card.title}</h3>
-                  <p className="panel-copy">{card.body}</p>
+              <Reveal
+                key={card.title}
+                delay={140 + index * 120}
+                threshold={0.72}
+                rootMargin="0px 0px -40% 0px"
+                className="how-step-reveal"
+              >
+                <article className="panel how-step">
+                  <div className="how-step-inner">
+                    <span className="how-step-icon">
+                      <HowStepIcon title={card.title} />
+                    </span>
+                    <div className="how-step-copy">
+                      <h3 className="panel-title">{card.title}</h3>
+                      <p className="panel-copy">{card.body}</p>
+                    </div>
+                  </div>
                 </article>
               </Reveal>
             ))}
@@ -265,10 +341,15 @@ export default function Home() {
         </div>
       </SectionShell>
 
-      <SectionShell id="outcomes" compact>
+      <SectionShell id="outcomes" compact className="outcomes-shell">
         <div className="space-y-10">
-          <Reveal delay={0} className="space-y-3">
-            <h2 className="display-lg text-center">What changes</h2>
+          <Reveal
+            delay={0}
+            threshold={0.9}
+            rootMargin="0px 0px -48% 0px"
+            className="space-y-3"
+          >
+            <h2 className="display-lg outcomes-title-left">What changes</h2>
           </Reveal>
 
           <ul className="outcomes-checklist">
@@ -279,82 +360,83 @@ export default function Home() {
               </Reveal>
             ))}
           </ul>
-
-          <Reveal delay={520} className="space-y-2">
-            <p className="copy text-center">Alignment stops requiring effort.</p>
-            <p className="copy text-center">Momentum becomes the default.</p>
-          </Reveal>
         </div>
       </SectionShell>
 
       <SectionShell id="differentiation" compact>
-        <div className="mx-auto max-w-3xl space-y-6 text-center">
-          <Reveal delay={0} className="space-y-3">
-            <h2 className="display-lg">This isn't consulting</h2>
-          </Reveal>
-
-          <Reveal delay={130} className="space-y-3">
-            <p className="copy">We don't hand you a deck and disappear.</p>
-            <p className="copy">We build a system your team actually uses.</p>
-          </Reveal>
-
-          <Reveal delay={260} className="space-y-1 text-[1.02rem] text-fm-text/94">
-            <p>Not presentations.</p>
-            <p>Not theory.</p>
-            <p>Not one-off workshops.</p>
-          </Reveal>
-
-          <Reveal delay={380}>
-            <p className="copy">A shared map for making better decisions, every week.</p>
-          </Reveal>
+        <div className="mx-auto max-w-4xl">
+          <DifferentiationSequence />
         </div>
       </SectionShell>
 
       <SectionShell id="final-cta" compact>
-        <Reveal delay={0} className="final-cta">
+        <Reveal delay={0} className="final-cta final-cta-slide">
           <h2 className="display-lg">Start with clarity</h2>
-          <p className="copy">See what's actually blocking your momentum</p>
-
-          <Reveal delay={220}>
-            <CTAButtons centered />
-          </Reveal>
-
-          <Reveal delay={320} className="space-y-1">
-            <p className="support-line">No prep. No pressure.</p>
-            <p className="support-line">You'll leave the first conversation with a clearer view of what matters.</p>
-          </Reveal>
+          <div className="final-cta-intro">
+            <p className="copy final-cta-intro-line">No prep. No pressure.</p>
+            <p className="copy final-cta-intro-line">
+              You'll leave the first conversation with a clearer view of what matters.
+            </p>
+          </div>
+          <MojoMapQuiz
+            triggerLabel={siteConfig.cta.primaryLabel}
+            triggerClassName="btn btn-primary"
+            calendlyBaseUrl={siteConfig.cta.secondaryUrl}
+          />
+          <div className="final-cta-process">
+            <p className="support-line final-cta-process-line">
+              <span className="process-label-orange">You</span> take the quiz, book a call
+            </p>
+            <p className="support-line final-cta-process-line">
+              <span className="process-label-orange">We</span> create your initial map
+            </p>
+            <p className="support-line final-cta-process-line">
+              <span className="process-label-orange">Together</span> we see if there is a fit
+            </p>
+          </div>
         </Reveal>
       </SectionShell>
 
       <footer className="footer-shell">
-        <div className="mx-auto flex w-full max-w-narrative flex-col gap-8 px-5 py-10 sm:px-8 sm:py-14">
+        <div className="mx-auto flex w-full max-w-narrative flex-col items-center gap-8 px-5 py-10 text-center sm:px-8 sm:py-14">
           <Reveal delay={0}>
-            <div>
-              <p className="font-display text-2xl tracking-tight text-fm-text">{siteConfig.companyName}</p>
+            <div className="footer-brand">
+              <div className="footer-brand-logo-wrap" role="img" aria-label="FomoMojoDojo">
+                <Image
+                  src="/fomomojodojo-logo-white.svg"
+                  alt=""
+                  className="footer-brand-logo-base"
+                  width={121}
+                  height={112}
+                />
+                <span className="footer-brand-logo-ramp" aria-hidden="true" />
+              </div>
               <p className="mt-2 text-sm text-fm-muted">Build clarity. Create momentum. Win.</p>
             </div>
           </Reveal>
 
           <Reveal delay={120}>
-            <div className="flex flex-wrap items-center gap-4 text-sm text-fm-text/90">
-              <a href={siteConfig.social.linkedIn} className="footer-link">
-                LinkedIn
-              </a>
-              <a href={siteConfig.social.substack} className="footer-link">
-                Substack
-              </a>
-              <a href={siteConfig.social.youtube} className="footer-link">
-                YouTube
-              </a>
+            <div className="footer-socials">
+              {socialLinks.map((social) => (
+                <a
+                  key={social.label}
+                  href={social.url}
+                  className="footer-social-link"
+                  aria-label={social.label}
+                  title={social.label}
+                >
+                  <SocialIcon name={social.name} />
+                  <span className="sr-only">{social.label}</span>
+                </a>
+              ))}
             </div>
           </Reveal>
 
-          <Reveal delay={220}>
-            <div className="space-y-1 text-xs text-fm-muted">
-              <p>{siteConfig.legal.copyright}</p>
-              <p>{siteConfig.legal.trademarks}</p>
-            </div>
-          </Reveal>
+          <div className="footer-legal">
+            <p>{siteConfig.legal.copyright}</p>
+            <LegalOverlay variant="compact" />
+            <p>{siteConfig.legal.trademarks}</p>
+          </div>
         </div>
       </footer>
     </main>

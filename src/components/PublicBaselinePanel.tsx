@@ -46,10 +46,73 @@ type PublicBaselineResult = {
   }>;
 };
 
+type BaselineDiagnostics = {
+  query_runs?: Array<{
+    key?: string;
+    label?: string;
+    query?: string;
+    raw_count?: number;
+    sample_urls?: string[];
+  }>;
+  source_type_coverage?: Array<{
+    source_type?: string;
+    enabled?: boolean;
+    excluded?: boolean;
+    annotated_count?: number;
+    policy_allowed_count?: number;
+    candidate_count?: number;
+    direct_evidence_count?: number;
+    extracted_count?: number;
+    final_evidence_count?: number;
+  }>;
+};
+
+function diagnosticsFromSourcesJson(value: unknown): BaselineDiagnostics | null {
+  if (!value || typeof value !== "object") return null;
+  const diagnostics = (value as Record<string, unknown>).diagnostics;
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+  return diagnostics as BaselineDiagnostics;
+}
+
+function prettySourceTypeLabel(value: string) {
+  switch (value) {
+    case "profile_or_company_page":
+      return "Profile/company";
+    case "third_party_profile":
+      return "Third-party profile";
+    case "employee_review":
+      return "Employee review";
+    case "customer_review":
+      return "Customer review";
+    case "community_discussion":
+      return "Community discussion";
+    case "review_signal":
+      return "Review signal";
+    case "news_signal":
+      return "News signal";
+    case "public_web":
+      return "Public web";
+    default:
+      return value.replaceAll("_", " ");
+  }
+}
+
+function evidenceCandidateCountFromSourcesJson(value: unknown) {
+  if (!value || typeof value !== "object") return 0;
+  const record = value as Record<string, unknown>;
+  const selected = Array.isArray(record.selected_sources) ? record.selected_sources.length : 0;
+  const annotated = Array.isArray(record.annotated_sources) ? record.annotated_sources.length : 0;
+  const top = Array.isArray(record.annotated_top) ? record.annotated_top.length : 0;
+  if (selected > 0) return selected;
+  if (annotated > 0) return annotated;
+  return top;
+}
+
 export function PublicBaselinePanel({ companyId }: { companyId: string }) {
   const { isAdmin } = useAuth();
   const { enabled: llmTraceEnabled } = useLlmTraceDebug();
-  const { loading, run, error } = usePublicBaseline(companyId);
+  const { loading, run, preferredRun, error } = usePublicBaseline(companyId);
+  const displayRun = preferredRun ?? run;
 
   if (loading) {
     return (
@@ -71,7 +134,7 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
     );
   }
 
-  if (!run) {
+  if (!displayRun) {
     return (
       <div className="bg-white border border-border rounded-2xl p-4 shadow-sm">
         <div className="font-sans text-[14px] font-semibold text-foreground">
@@ -84,10 +147,14 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
     );
   }
 
-  const r = (run.result_json ?? {}) as PublicBaselineResult;
+  const showingPriorRun = Boolean(run && displayRun && run.id !== displayRun.id);
+  const r = (displayRun.result_json ?? {}) as PublicBaselineResult;
   const lens = r.lens_card ?? {};
   const ledger = Array.isArray(r.evidence_ledger) ? r.evidence_ledger : [];
-  const sources = Array.isArray(run.sources_json) ? run.sources_json : [];
+  const evidenceCandidates = evidenceCandidateCountFromSourcesJson(displayRun.sources_json);
+  const diagnostics = diagnosticsFromSourcesJson(displayRun.sources_json);
+  const queryRuns = Array.isArray(diagnostics?.query_runs) ? diagnostics.query_runs : [];
+  const sourceCoverage = Array.isArray(diagnostics?.source_type_coverage) ? diagnostics.source_type_coverage : [];
   const topLedger = ledger.slice(0, 6);
   const confidences = ledger
     .map((item) => (typeof item?.confidence === "number" ? item.confidence : null))
@@ -135,8 +202,9 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
             Public Baseline
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <MetaBadge>Run #{run.id}</MetaBadge>
-            <MetaBadge>{new Date(run.created_at).toLocaleString()}</MetaBadge>
+            <MetaBadge>Run #{displayRun.id}</MetaBadge>
+            <MetaBadge>{new Date(displayRun.created_at).toLocaleString()}</MetaBadge>
+            {showingPriorRun ? <MetaBadge>Showing latest usable baseline</MetaBadge> : null}
           </div>
         </div>
 
@@ -151,6 +219,17 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+        {showingPriorRun ? (
+          <div className="md:col-span-2 rounded-xl border border-[#F1C3AC] bg-[#FFF7F2] p-3">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-[#9a4f27]">
+              Latest run was weak
+            </div>
+            <div className="mt-1 font-sans text-[12px] text-[#7a4f36]">
+              Showing run #{displayRun.id} because it contains richer baseline context than the latest run.
+            </div>
+          </div>
+        ) : null}
+
         <div className="border border-border rounded-xl p-3 bg-muted/10">
           <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
             Source Path
@@ -179,7 +258,7 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
           </div>
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <ScoreChip label="Ledger" value={ledger.length} />
-            <ScoreChip label="Sources" value={sources.length} />
+            <ScoreChip label="Evidence" value={evidenceCandidates} />
             <ScoreChip label="Conf" value={avgConfidence} />
           </div>
         </div>
@@ -292,6 +371,64 @@ export function PublicBaselinePanel({ companyId }: { companyId: string }) {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border border-border rounded-xl p-3 bg-muted/10 md:col-span-2">
+          <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
+            Source Run Diagnostics
+          </div>
+          {queryRuns.length === 0 && sourceCoverage.length === 0 ? (
+            <div className="font-sans text-[12px] text-muted-foreground mt-2">
+              No diagnostics recorded for this run.
+            </div>
+          ) : (
+            <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div className="space-y-2">
+                <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Queries Attempted
+                </div>
+                {queryRuns.slice(0, 10).map((entry, index) => (
+                  <div key={`${entry.key || "q"}-${index}`} className="rounded-lg border border-border bg-white p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-sans text-[12px] font-medium text-foreground">
+                        {entry.label || entry.key || `Query ${index + 1}`}
+                      </div>
+                      <ScoreChip label="Hits" value={entry.raw_count ?? 0} />
+                    </div>
+                    <div className="mt-1 font-mono text-[10px] text-muted-foreground break-all">
+                      {entry.query || "n/a"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Source Type Coverage
+                </div>
+                {sourceCoverage.slice(0, 12).map((entry, index) => {
+                  const sourceType = String(entry.source_type || "public_web");
+                  return (
+                    <div key={`${sourceType}-${index}`} className="rounded-lg border border-border bg-white p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-sans text-[12px] font-medium text-foreground">
+                          {prettySourceTypeLabel(sourceType)}
+                        </div>
+                        <MetaBadge>{entry.enabled === false ? "excluded" : "active"}</MetaBadge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <ScoreChip label="Search" value={entry.annotated_count ?? 0} />
+                        <ScoreChip label="Allowed" value={entry.policy_allowed_count ?? 0} />
+                        <ScoreChip label="Cand" value={entry.candidate_count ?? 0} />
+                        <ScoreChip label="Extracted" value={entry.extracted_count ?? 0} />
+                        <ScoreChip label="Final" value={entry.final_evidence_count ?? 0} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

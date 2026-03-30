@@ -81,6 +81,67 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function readableLines(value: unknown) {
+  const raw = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return [] as string[];
+
+  const normalized = raw
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+(?=\d+[.)]\s)/g, "\n")
+    .replace(/\s+[•-]\s+/g, "\n- ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
+  const explicitLines = normalized
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (explicitLines.length > 1) {
+    return explicitLines.map((line) => line.replace(/^[-•]\s*/, ""));
+  }
+
+  const sentenceLines = normalized
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (sentenceLines.length > 1 && normalized.length >= 140) {
+    return sentenceLines;
+  }
+
+  return [normalized];
+}
+
+function ReadableContent({
+  text,
+  className,
+}: {
+  text: unknown;
+  className?: string;
+}) {
+  const lines = readableLines(text);
+  if (lines.length === 0) return null;
+  if (lines.length <= 1) {
+    return <p className={className}>{lines[0]}</p>;
+  }
+  const hasNumberedLines = lines.every((line) => /^\d+[.)]\s+/.test(line));
+  if (hasNumberedLines) {
+    return (
+      <div className={`space-y-1.5 ${className ?? ""}`.trim()}>
+        {lines.map((line, index) => (
+          <p key={`${String(text).slice(0, 24)}:${index}`}>{line}</p>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <ul className={`list-disc space-y-1.5 pl-5 ${className ?? ""}`.trim()}>
+      {lines.map((line, index) => (
+        <li key={`${String(text).slice(0, 24)}:${index}`}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
 function formatRunPickerDate(value?: string | null) {
   if (!value) return "Unknown date";
   const date = new Date(value);
@@ -429,12 +490,14 @@ export default function CouncilRecommendationsPanel({
                           {runPickerOptionLabel(run, index + 1)}
                         </summary>
                         {run.summary ? (
-                          <p className="mt-2 font-sans text-[12px] leading-relaxed text-foreground">{run.summary}</p>
+                          <div className="mt-2">
+                            <ReadableContent text={run.summary} className="font-sans text-[12px] leading-relaxed text-foreground" />
+                          </div>
                         ) : null}
                         {discussion ? (
-                          <pre className="mt-2 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
-                            {discussion}
-                          </pre>
+                          <div className="mt-2">
+                            <ReadableContent text={discussion} className="font-sans text-[12px] leading-relaxed text-foreground" />
+                          </div>
                         ) : null}
                       </details>
                     );
@@ -445,16 +508,18 @@ export default function CouncilRecommendationsPanel({
           ) : null}
 
           {selectedRun.summary ? (
-            <p className="mt-2 font-sans text-[13px] text-foreground">{selectedRun.summary}</p>
+            <div className="mt-2">
+              <ReadableContent text={selectedRun.summary} className="font-sans text-[13px] leading-relaxed text-foreground" />
+            </div>
           ) : null}
           {selectedPanelDiscussion ? (
             <details className="mt-3 rounded-lg border border-border bg-white/90 p-3">
               <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
                 Panel Discussion
               </summary>
-              <pre className="mt-2 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
-                {selectedPanelDiscussion}
-              </pre>
+              <div className="mt-2">
+                <ReadableContent text={selectedPanelDiscussion} className="font-sans text-[12px] leading-relaxed text-foreground" />
+              </div>
             </details>
           ) : null}
         </div>
@@ -497,6 +562,8 @@ export default function CouncilRecommendationsPanel({
             const references = Array.isArray(sourceContext.references)
               ? sourceContext.references.map((value) => String(value)).filter(Boolean).slice(0, 5)
               : [];
+            const recommendationLines = readableLines(item.recommendation);
+            const rationaleLines = readableLines(item.rationale);
             return (
               <article key={item.id} className="rounded-xl border border-border bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -514,11 +581,34 @@ export default function CouncilRecommendationsPanel({
                   Confidence {item.confidence}% · {item.category}
                 </p>
 
-                <p className="mt-2 font-sans text-[13px] text-foreground">{item.recommendation}</p>
-                {item.rationale ? (
-                  <p className="mt-2 font-sans text-[12px] text-muted-foreground">
-                    Why this matters: {item.rationale}
+                {recommendationLines.length <= 1 ? (
+                  <p className="mt-2 font-sans text-[13px] leading-relaxed text-foreground">
+                    {recommendationLines[0] || item.recommendation}
                   </p>
+                ) : (
+                  <ul className="mt-2 list-disc space-y-1.5 pl-5 font-sans text-[13px] leading-relaxed text-foreground">
+                    {recommendationLines.map((line, index) => (
+                      <li key={`${item.id}:recommendation:${index}`}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+                {rationaleLines.length > 0 ? (
+                  <div className="mt-2 rounded-lg border border-[#E6ECE8] bg-[#F8FBF9] px-2.5 py-2">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Why This Matters
+                    </p>
+                    {rationaleLines.length <= 1 ? (
+                      <p className="mt-1 font-sans text-[12px] leading-relaxed text-muted-foreground">
+                        {rationaleLines[0]}
+                      </p>
+                    ) : (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 font-sans text-[12px] leading-relaxed text-muted-foreground">
+                        {rationaleLines.map((line, index) => (
+                          <li key={`${item.id}:rationale:${index}`}>{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 ) : null}
 
                 {references.length > 0 ? (

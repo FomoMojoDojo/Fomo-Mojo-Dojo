@@ -85,10 +85,20 @@ type ResearchInvokeResult = {
   error?: string;
   message?: string;
   status?: string;
+  stage?: string;
   started_at?: string;
   expires_at?: string;
   odi_needs_inserted?: number;
   odi_market_definitions_inserted?: number;
+  research_result?: {
+    error?: string;
+    message?: string;
+    status?: string;
+    started_at?: string;
+    expires_at?: string;
+    odi_needs_inserted?: number;
+    odi_market_definitions_inserted?: number;
+  };
 };
 
 type FileSystemDirectoryHandleLike = {
@@ -514,14 +524,18 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
 
           const { error: researchErr, data: researchData } = await invokeWithTimeout(
             () =>
-              supabase.functions.invoke("research-company", {
+              supabase.functions.invoke("run-agent-flow", {
                 body: {
                   company_id: companyId,
                   company_name: companyName,
                   website: String((companyRow as { website?: unknown } | null)?.website || ""),
+                  mode: "uploaded_only",
+                  include_public_collection: false,
+                  include_local_alignment: false,
+                  apply_score_update: false,
+                  trigger: "existing_file_rerun",
                   review_mode: "advisory",
                   allow_review_block_save: true,
-                  context_mode: "uploaded_only",
                 },
               }),
             95_000,
@@ -531,21 +545,26 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
             researchData && typeof researchData === "object"
               ? (researchData as ResearchInvokeResult)
               : null;
+          const nestedResearch =
+            researchResult?.research_result && typeof researchResult.research_result === "object"
+              ? researchResult.research_result
+              : null;
+          const effectiveResearch = nestedResearch ?? researchResult;
           const companyLocked =
-            researchResult?.status === "company_locked" ||
-            /already running|company_locked/i.test(String(researchResult?.message || "")) ||
-            /already running|company_locked/i.test(String(researchResult?.error || ""));
+            effectiveResearch?.status === "company_locked" ||
+            /already running|company_locked/i.test(String(effectiveResearch?.message || "")) ||
+            /already running|company_locked/i.test(String(effectiveResearch?.error || ""));
 
           if (companyLocked) {
-            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(researchResult?.started_at)}; lock expires ${formatLockTime(researchResult?.expires_at)}).`;
-          } else if (researchErr || researchResult?.error) {
+            alignmentSummary += ` Artifact regeneration already running (started ${formatLockTime(effectiveResearch?.started_at)}; lock expires ${formatLockTime(effectiveResearch?.expires_at)}).`;
+          } else if (researchErr || effectiveResearch?.error) {
             const message = researchErr
               ? await describeInvokeError(researchErr)
-              : String(researchResult?.message || researchResult?.error || "Research regeneration failed.");
+              : String(effectiveResearch?.message || effectiveResearch?.error || "Research regeneration failed.");
             alignmentSummary += ` Artifact regeneration failed (${message}).`;
           } else {
-            const researchNeeds = Number(researchResult?.odi_needs_inserted ?? 0);
-            const researchMarketDefs = Number(researchResult?.odi_market_definitions_inserted ?? 0);
+            const researchNeeds = Number(effectiveResearch?.odi_needs_inserted ?? 0);
+            const researchMarketDefs = Number(effectiveResearch?.odi_market_definitions_inserted ?? 0);
             alignmentSummary += " Regenerated map, opportunities, routes, ODI context, positioning, and strategy.";
             alignmentSummary += ` ODI: ${researchNeeds} need${researchNeeds === 1 ? "" : "s"}, ${researchMarketDefs} market context row${researchMarketDefs === 1 ? "" : "s"}.`;
             await query.refetch();

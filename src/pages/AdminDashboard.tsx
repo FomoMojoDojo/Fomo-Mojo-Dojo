@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import TopNav from '@/components/layout/TopNav';
 
 interface PageRow {
   id: string;
@@ -51,6 +52,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-cream">
+      <TopNav />
       {/* Header */}
       <div className="bg-ink border-b border-[#2a2618] px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">

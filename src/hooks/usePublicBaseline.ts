@@ -1,9 +1,63 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
+const WEAK_BASELINE_STATUSES = new Set(["ambiguous_public_evidence", "insufficient_public_evidence"]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function listCount(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function baselineQualityScore(run: any) {
+  const result = asRecord(run?.result_json);
+  if (!result) return 0;
+
+  const status = stringValue(result.status).toLowerCase();
+  const weakPenalty = WEAK_BASELINE_STATUSES.has(status) ? -50 : 0;
+
+  const category = stringValue(result.category_archetype).toLowerCase();
+  const lens = asRecord(result.lens_card);
+  const economic = stringValue(lens?.economic_engine).toLowerCase();
+  const hypotheses = listCount(result.top_hypotheses);
+  const questions = listCount(result.open_questions);
+  const outsideSignals = listCount(result.outside_voice_signals);
+  const ledger = listCount(result.evidence_ledger);
+
+  const categoryScore = category && category !== "unknown" ? 15 : 0;
+  const economicScore = economic && economic !== "unknown" ? 15 : 0;
+  return weakPenalty + categoryScore + economicScore + hypotheses * 4 + questions + outsideSignals * 3 + ledger * 2;
+}
+
+function pickPreferredRun(runs: any[]) {
+  if (!Array.isArray(runs) || runs.length === 0) return null;
+  const latest = runs[0] ?? null;
+  if (!latest) return null;
+
+  const latestScore = baselineQualityScore(latest);
+  if (latestScore >= 0) return latest;
+
+  const best = [...runs]
+    .map((run) => ({ run, score: baselineQualityScore(run) }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  if (!best) return latest;
+  if (best.score <= latestScore) return latest;
+  return best.run;
+}
+
 export function usePublicBaseline(companyId?: string) {
   const [loading, setLoading] = useState(false);
   const [run, setRun] = useState<any | null>(null);
+  const [preferredRun, setPreferredRun] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const companyIdRef = useRef<string | undefined>(companyId);
@@ -13,6 +67,7 @@ export function usePublicBaseline(companyId?: string) {
     const cid = companyIdRef.current;
     if (!cid) {
       setRun(null);
+      setPreferredRun(null);
       setError(null);
       setLoading(false);
       return;
@@ -28,14 +83,16 @@ export function usePublicBaseline(companyId?: string) {
       )
       .eq("company_id", cid)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(12);
 
     if (error) {
       setError(error.message);
       setRun(null);
+      setPreferredRun(null);
     } else {
-      setRun(data ?? null);
+      const rows = Array.isArray(data) ? data : [];
+      setRun(rows[0] ?? null);
+      setPreferredRun(pickPreferredRun(rows));
     }
 
     setLoading(false);
@@ -44,6 +101,7 @@ export function usePublicBaseline(companyId?: string) {
   useEffect(() => {
     if (!companyId) {
       setRun(null);
+      setPreferredRun(null);
       setError(null);
       setLoading(false);
       return;
@@ -78,5 +136,5 @@ export function usePublicBaseline(companyId?: string) {
     };
   }, [companyId, fetchLatest]);
 
-  return { loading, run, error, refetch: fetchLatest };
+  return { loading, run, preferredRun, error, refetch: fetchLatest };
 }

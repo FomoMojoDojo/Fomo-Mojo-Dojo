@@ -10,6 +10,10 @@ DROP POLICY IF EXISTS "Users can view own opportunities" ON public.opportunities
 DROP POLICY IF EXISTS "Users can insert own opportunities" ON public.opportunities;
 DROP POLICY IF EXISTS "Users can update own opportunities" ON public.opportunities;
 DROP POLICY IF EXISTS "Users can delete own opportunities" ON public.opportunities;
+DROP POLICY IF EXISTS "Users can view company opportunities" ON public.opportunities;
+DROP POLICY IF EXISTS "Users can insert company opportunities" ON public.opportunities;
+DROP POLICY IF EXISTS "Users can update company opportunities" ON public.opportunities;
+DROP POLICY IF EXISTS "Users can delete company opportunities" ON public.opportunities;
 
 CREATE POLICY "Admins can manage all opportunities"
 ON public.opportunities

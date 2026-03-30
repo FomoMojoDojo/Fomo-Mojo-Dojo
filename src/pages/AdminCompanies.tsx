@@ -197,6 +197,21 @@ async function describeResearchInvokeError(error: unknown) {
     }
 
     if (statusCode === 422) {
+      if (
+        status === "adjudication_blocked" ||
+        status === "public_baseline_not_ready" ||
+        status === "missing_evidence_context" ||
+        status === "uploaded_context_requires_files" ||
+        status === "website_required"
+      ) {
+        return {
+          title: "Evidence Check Blocked",
+          description:
+            reason ||
+            String(payload?.message || payload?.error || "The run stopped during adjudication because required evidence checks failed."),
+        };
+      }
+
       if (status === "ambiguous_public_evidence" || status === "insufficient_public_evidence") {
         return {
           title: "Baseline Review Needed",
@@ -660,11 +675,18 @@ export default function AdminCompanies() {
       description: `Analyzing ${companyName}…`,
     });
 
-    const { error } = await supabase.functions.invoke("research-company", {
+    const { error, data } = await supabase.functions.invoke("run-agent-flow", {
       body: {
         company_id: companyId,
         company_name: companyName,
         website: companyWebsite,
+        mode: "hybrid",
+        include_public_collection: false,
+        include_local_alignment: true,
+        apply_score_update: true,
+        trigger: "admin_research",
+        review_mode: "advisory",
+        allow_review_block_save: true,
       },
     });
 
@@ -682,9 +704,15 @@ export default function AdminCompanies() {
         showPersistentError(details.title, details.description);
       }
     } else {
+      const flowResult = data && typeof data === "object"
+        ? (data as { status?: string; local_alignment_error?: string | null })
+        : null;
       toast({
-        title: "Research Complete",
-        description: `Strategic inputs generated for ${companyName}`,
+        title: flowResult?.status === "partial" ? "Research Complete (With Warnings)" : "Research Complete",
+        description:
+          flowResult?.status === "partial"
+            ? `Strategic outputs generated for ${companyName}. Output checks had warnings.`
+            : `Strategic inputs generated for ${companyName}`,
       });
       await refetch();
     }
@@ -746,23 +774,25 @@ export default function AdminCompanies() {
     });
 
     try {
-      // 1) Baseline
-      const ok = await runPublicBaseline(companyId, companyName, companyWebsite);
-      if (!ok) {
-        setComboId(null);
-        return;
-      }
-
-      // 2) Research
       setResearchingId(companyId);
-      const { error } = await supabase.functions.invoke("research-company", {
+      setBaselineId(companyId);
+      const { error, data } = await supabase.functions.invoke("run-agent-flow", {
         body: {
           company_id: companyId,
           company_name: companyName,
           website: companyWebsite,
+          mode: "hybrid",
+          include_public_collection: true,
+          include_local_alignment: true,
+          apply_score_update: true,
+          trigger: "admin_baseline_research",
+          review_mode: "advisory",
+          allow_review_block_save: true,
         },
       });
+
       setResearchingId(null);
+      setBaselineId(null);
 
       if (error) {
         const details = await describeResearchInvokeError(error);
@@ -780,12 +810,18 @@ export default function AdminCompanies() {
         return;
       }
 
-      // 3) Refresh + done
       await refetch();
+      const flowResult = data && typeof data === "object"
+        ? (data as { status?: string; local_alignment_error?: string | null })
+        : null;
 
       toast({
-        title: "Baseline + Research Complete",
-        description: `Mojo Map data + scores updated for ${companyName}`,
+        title: flowResult?.status === "partial"
+          ? "Baseline + Research Complete (With Warnings)"
+          : "Baseline + Research Complete",
+        description: flowResult?.status === "partial"
+          ? `Mojo Map data updated for ${companyName}. Output checks had warnings.`
+          : `Mojo Map data + scores updated for ${companyName}`,
       });
       setReviewRefreshKey((current) => current + 1);
     } catch (e: unknown) {

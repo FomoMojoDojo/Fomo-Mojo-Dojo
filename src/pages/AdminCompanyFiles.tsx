@@ -4,6 +4,7 @@ import { ArrowLeft, Building2, Globe } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
+import TopNav from "@/components/layout/TopNav";
 
 const c = {
   bg: "#faf7f6",
@@ -37,9 +38,12 @@ export default function AdminCompanyFiles() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: c.bg }}>
-        <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-          Loading files…
+      <div className="min-h-screen" style={{ background: c.bg }}>
+        <TopNav />
+        <div className="flex items-center justify-center py-16">
+          <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+            Loading files…
+          </div>
         </div>
       </div>
     );
@@ -48,6 +52,7 @@ export default function AdminCompanyFiles() {
   if (!company) {
     return (
       <div className="min-h-screen" style={{ background: c.bg }}>
+        <TopNav />
         <div className="max-w-5xl mx-auto px-6 py-10">
           <Link
             to="/admin/companies"
@@ -69,6 +74,7 @@ export default function AdminCompanyFiles() {
 
   return (
     <div className="min-h-screen" style={{ background: c.bg }}>
+      <TopNav />
       <div
         className="border-b backdrop-blur-sm"
         style={{ borderColor: c.line, background: "rgba(255,255,255,0.88)" }}

@@ -94,14 +94,96 @@ function extractTextBasic(html: string): string {
     .trim();
 }
 
-async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
+async function fetchWithTimeout(url: string, ms: number, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { signal: controller.signal, redirect: "follow" });
+    const headers = new Headers(init.headers || {});
+    if (!headers.has("User-Agent")) {
+      headers.set("User-Agent", "Mozilla/5.0 (compatible; MojoBaselineBot/1.0; +https://fomomojodojo.com)");
+    }
+    if (!headers.has("Accept")) {
+      headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    }
+    if (!headers.has("Accept-Language")) {
+      headers.set("Accept-Language", "en-US,en;q=0.8");
+    }
+
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      redirect: init.redirect || "follow",
+      headers,
+    });
   } finally {
     clearTimeout(t);
   }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseModelList(raw: string) {
+  return Array.from(
+    new Set(
+      String(raw || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function buildOpenAIModelCandidates(primaryModel: string, extraFallbacks: string[] = []) {
+  const envFallbacks = parseModelList(
+    Deno.env.get("OPENAI_FALLBACK_MODELS") ||
+    Deno.env.get("OPENAI_FALLBACK_MODEL") ||
+    "",
+  );
+  const defaultFallbacks = ["gpt-4.1-mini", "gpt-4.1-nano"];
+  return Array.from(
+    new Set(
+      [primaryModel, ...extraFallbacks, ...envFallbacks, ...defaultFallbacks]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isTransientOpenAIHttpStatus(status: number, errText: string) {
+  if ([408, 409, 429, 500, 502, 503, 504].includes(status)) return true;
+  const text = String(errText || "").toLowerCase();
+  return text.includes("temporarily unavailable") ||
+    text.includes("request timed out") ||
+    text.includes("timeout") ||
+    text.includes("capacity") ||
+    text.includes("overloaded") ||
+    text.includes("rate limit");
+}
+
+function isTransientOpenAIError(error: unknown) {
+  const message = String(error instanceof Error ? error.message : error).toLowerCase();
+  return message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("capacity") ||
+    message.includes("overloaded") ||
+    message.includes("rate limit") ||
+    message.includes("429");
+}
+
+function isModelFailoverEligibleError(error: unknown) {
+  const message = String(error instanceof Error ? error.message : error).toLowerCase();
+  return message.includes("429") ||
+    message.includes("rate limit") ||
+    message.includes("capacity") ||
+    message.includes("overloaded") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("service unavailable") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("upstream");
 }
 
 function getDomain(rawUrl: string): string {
@@ -111,6 +193,16 @@ function getDomain(rawUrl: string): string {
   } catch {
     return "";
   }
+}
+
+function hostMatchesAnyDomain(host: string, domains: string[]) {
+  const normalizedHost = String(host || "").trim().toLowerCase().replace(/^www\./, "");
+  if (!normalizedHost) return false;
+  return domains.some((domain) => {
+    const d = String(domain || "").trim().toLowerCase().replace(/^www\./, "");
+    if (!d) return false;
+    return normalizedHost === d || normalizedHost.endsWith(`.${d}`);
+  });
 }
 
 function domainStem(domain: string): string {
@@ -139,6 +231,41 @@ function splitCamelCase(name: string): string {
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function toSlug(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .trim();
+}
+
+function inferLinkedInCompanyUrls(companyName: string, website: string) {
+  const generic = new Set(["inc", "llc", "ltd", "co", "company", "corp", "corporation"]);
+  const stem = domainStem(getDomain(website));
+  const nameTokens = splitCamelCase(companyName)
+    .split(/\s+/)
+    .map((t) => t.toLowerCase().trim())
+    .filter(Boolean)
+    .filter((t) => !generic.has(t));
+  const nameSlug = toSlug(nameTokens.join("-"));
+  const candidates = Array.from(
+    new Set(
+      [
+        nameSlug,
+        stem ? toSlug(stem) : "",
+        nameSlug ? `${nameSlug}-technology` : "",
+        nameSlug ? `${nameSlug}-tech` : "",
+        stem ? `${toSlug(stem)}-technology` : "",
+      ].filter(Boolean),
+    ),
+  )
+    .slice(0, 6)
+    .map((slug) => `https://www.linkedin.com/company/${slug}/`);
+
+  return candidates;
 }
 
 function buildNameVariants(companyName: string, website: string): string[] {
@@ -189,6 +316,20 @@ const GENERIC_TOKENS = new Set([
   "and",
   "for",
 ]);
+
+const EDUCATION_MISMATCH_TERMS = [
+  "school",
+  "teacher",
+  "teaching",
+  "classroom",
+  "curriculum",
+  "students",
+  "academy",
+  "k-12",
+  "kindergarten",
+  "college",
+  "university",
+];
 
 /**
  * Soft-match scoring:
@@ -256,9 +397,21 @@ function scoreCompanyMatch(args: {
     reasons.push("rare_token");
   }
 
+  // 4) Mismatch penalty for likely education-focused results unless evidence strongly matches domain/name.
+  const educationHit = EDUCATION_MISMATCH_TERMS.some((term) => hay.includes(term));
+  const strongIdentityMatch =
+    (domain && u.includes(domain)) ||
+    (stem && (u.includes(stem) || hay.includes(stem))) ||
+    hits >= 2;
+  if (educationHit && !strongIdentityMatch) {
+    score -= 35;
+    reasons.push("possible_education_mismatch");
+  }
+
   if (nameTokens.size === 0) reasons.push("no_name_tokens");
 
   score = Math.min(100, score);
+  score = Math.max(0, score);
   return { score, reasons, variants, domain, stem };
 }
 
@@ -318,18 +471,544 @@ async function fetchAndExtract(url: string) {
   }
 }
 
+function decodeHtmlEntities(text: string) {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function normalizeCandidateUrl(value: string, baseUrl: string) {
+  try {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+    if (
+      raw.startsWith("mailto:") ||
+      raw.startsWith("tel:") ||
+      raw.startsWith("javascript:") ||
+      raw.startsWith("#")
+    ) {
+      return null;
+    }
+
+    const url = new URL(raw, baseUrl);
+    url.hash = "";
+    url.search = "";
+
+    const path = url.pathname.toLowerCase();
+    if (
+      path.endsWith(".png") ||
+      path.endsWith(".jpg") ||
+      path.endsWith(".jpeg") ||
+      path.endsWith(".gif") ||
+      path.endsWith(".svg") ||
+      path.endsWith(".webp") ||
+      path.endsWith(".css") ||
+      path.endsWith(".js") ||
+      path.endsWith(".json") ||
+      path.endsWith(".xml") ||
+      path.endsWith(".pdf") ||
+      path.endsWith(".zip")
+    ) {
+      return null;
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractTitleFromHtml(html: string) {
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!match) return "";
+  return decodeHtmlEntities(match[1].replace(/\s+/g, " ").trim());
+}
+
+function extractMetaDescriptionFromHtml(html: string) {
+  const candidates = [
+    /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:description["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+  ];
+  for (const regex of candidates) {
+    const match = html.match(regex);
+    if (!match) continue;
+    const text = decodeHtmlEntities(String(match[1] || "").replace(/\s+/g, " ").trim());
+    if (text) return text;
+  }
+  return "";
+}
+
+function extractSocialLinksFromHtmlMetadata(html: string, baseUrl: string) {
+  const out: string[] = [];
+  const pushUrl = (candidate: string) => {
+    const normalized = normalizeCandidateUrl(candidate, baseUrl);
+    if (!normalized) return;
+    const host = getDomain(normalized);
+    if (!isKnownSocialHost(host)) return;
+    out.push(normalized);
+  };
+
+  const twitterSiteMatch = html.match(/<meta[^>]+name=["']twitter:site["'][^>]+content=["']([^"']+)["'][^>]*>/i);
+  const twitterSite = String(twitterSiteMatch?.[1] || "").trim();
+  if (twitterSite.startsWith("@") && twitterSite.length > 1) {
+    pushUrl(`https://x.com/${twitterSite.slice(1)}`);
+  } else if (twitterSite.startsWith("http")) {
+    pushUrl(twitterSite);
+  }
+
+  const metaContentRegex = /<meta[^>]+content=["']([^"']+)["'][^>]*>/gi;
+  let metaMatch: RegExpExecArray | null = null;
+  while ((metaMatch = metaContentRegex.exec(html)) !== null) {
+    const content = String(metaMatch[1] || "").trim();
+    if (!content.startsWith("http")) continue;
+    pushUrl(content);
+  }
+
+  const jsonLdRegex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let jsonMatch: RegExpExecArray | null = null;
+  while ((jsonMatch = jsonLdRegex.exec(html)) !== null) {
+    const raw = String(jsonMatch[1] || "").trim();
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      const visit = (node: unknown) => {
+        if (!node) return;
+        if (Array.isArray(node)) {
+          for (const item of node) visit(item);
+          return;
+        }
+        if (typeof node !== "object") return;
+        const record = node as Record<string, unknown>;
+        const sameAs = record.sameAs;
+        if (Array.isArray(sameAs)) {
+          for (const value of sameAs) {
+            pushUrl(String(value || ""));
+          }
+        } else if (typeof sameAs === "string") {
+          pushUrl(sameAs);
+        }
+        for (const value of Object.values(record)) {
+          if (value && typeof value === "object") visit(value);
+        }
+      };
+      visit(parsed);
+    } catch {
+      // ignore malformed JSON-LD blobs
+    }
+  }
+
+  return Array.from(new Set(out));
+}
+
+function extractLinksFromHtml(html: string, baseUrl: string) {
+  const links: string[] = [];
+  const regex = /href\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(html)) !== null) {
+    const normalized = normalizeCandidateUrl(match[1], baseUrl);
+    if (!normalized) continue;
+    links.push(normalized);
+  }
+  return links;
+}
+
+function extractScriptUrlsFromHtml(html: string, baseUrl: string) {
+  const links: string[] = [];
+  const regex = /<script[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(html)) !== null) {
+    try {
+      const raw = String(match[1] || "").trim();
+      if (!raw || raw.startsWith("data:")) continue;
+      const url = new URL(raw, baseUrl);
+      url.hash = "";
+      links.push(url.toString());
+    } catch {
+      // ignore malformed script src
+    }
+  }
+  return Array.from(new Set(links));
+}
+
+function extractSocialUrlsFromText(value: string, baseUrl: string) {
+  const out: string[] = [];
+  const push = (candidate: string) => {
+    const normalized = normalizeCandidateUrl(candidate, baseUrl);
+    if (!normalized) return;
+    if (!isKnownSocialHost(getDomain(normalized))) return;
+    out.push(normalized);
+  };
+
+  const text = String(value || "");
+  const plainMatches = text.match(/https?:\/\/[^\s"'<>\\)]+/gi) || [];
+  for (const match of plainMatches) push(match);
+
+  const escapedMatches = text.match(/https?:\\\/\\\/[^\s"'<>\\)]+/gi) || [];
+  for (const match of escapedMatches) {
+    push(match.replace(/\\\//g, "/"));
+  }
+
+  return Array.from(new Set(out));
+}
+
+function extractHttpUrlsFromText(value: string, baseUrl: string) {
+  const out: string[] = [];
+  const push = (candidate: string) => {
+    const normalized = normalizeCandidateUrl(candidate, baseUrl);
+    if (!normalized) return;
+    out.push(normalized);
+  };
+
+  const text = String(value || "");
+  const plainMatches = text.match(/https?:\/\/[^\s"'<>\\)]+/gi) || [];
+  for (const match of plainMatches) push(match);
+
+  const escapedMatches = text.match(/https?:\\\/\\\/[^\s"'<>\\)]+/gi) || [];
+  for (const match of escapedMatches) {
+    push(match.replace(/\\\//g, "/"));
+  }
+
+  return Array.from(new Set(out));
+}
+
+function isKnownSocialHost(host: string) {
+  return hostMatchesAnyDomain(host, [
+    "linkedin.com",
+    "x.com",
+    "twitter.com",
+    "facebook.com",
+    "instagram.com",
+    "youtube.com",
+    "youtu.be",
+    "tiktok.com",
+    "threads.net",
+  ]);
+}
+
+function socialSourceTypeForHost(host: string) {
+  if (hostMatchesAnyDomain(host, ["linkedin.com"])) return "profile_or_company_page";
+  if (hostMatchesAnyDomain(host, ["reddit.com", "quora.com"])) return "community_discussion";
+  return "profile_or_company_page";
+}
+
+async function crawlWebsiteEvidence(args: {
+  startUrl: string;
+  baseDomain: string;
+  maxPages?: number;
+  maxDepth?: number;
+}) {
+  const maxPages = Math.max(1, Number(args.maxPages || 8));
+  const maxDepth = Math.max(0, Number(args.maxDepth || 2));
+  const start = new URL(args.startUrl);
+  const COMMON_PATHS = [
+    "/",
+    "/about",
+    "/about-us",
+    "/company",
+    "/solutions",
+    "/services",
+    "/products",
+    "/pricing",
+    "/contact",
+    "/blog",
+    "/news",
+    "/faq",
+    "/team",
+    "/careers",
+  ];
+  const seededUrls = Array.from(
+    new Set(
+      COMMON_PATHS.map((path) => {
+        const next = new URL(start.toString());
+        next.pathname = path;
+        next.search = "";
+        next.hash = "";
+        return next.toString();
+      }),
+    ),
+  );
+  const queue: Array<{ url: string; depth: number }> = [
+    { url: args.startUrl, depth: 0 },
+    ...seededUrls.filter((url) => url !== args.startUrl).map((url) => ({ url, depth: 1 })),
+  ];
+  const visited = new Set<string>();
+  const evidence: Array<{ url: string; title: string; snippet: string; extracted: string; source_type: string }> = [];
+  const socialSources: Array<{ url: string; title: string; snippet: string; source_type: string; discovered_from: string }> = [];
+  const seenSocial = new Set<string>();
+
+  while (queue.length > 0 && visited.size < maxPages) {
+    const next = queue.shift();
+    if (!next) break;
+    if (visited.has(next.url)) continue;
+    visited.add(next.url);
+
+    try {
+      const resp = await fetchWithTimeout(next.url, 8_000);
+      if (!resp.ok) continue;
+      const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("text/html")) continue;
+
+      const finalUrl = String(resp.url || next.url);
+      const finalHost = getDomain(finalUrl);
+      if (!domainMatches(finalHost, args.baseDomain)) continue;
+
+      const html = await resp.text();
+      const text = extractTextBasic(html);
+      const title = extractTitleFromHtml(html);
+      const metaDescription = extractMetaDescriptionFromHtml(html);
+      const metadataSocialLinks = extractSocialLinksFromHtmlMetadata(html, finalUrl);
+      const inlineSocialLinks = extractSocialUrlsFromText(html, finalUrl);
+      const mergedStaticSocialLinks = Array.from(new Set([...metadataSocialLinks, ...inlineSocialLinks]));
+      for (const link of mergedStaticSocialLinks) {
+        if (seenSocial.has(link)) continue;
+        seenSocial.add(link);
+        const host = getDomain(link);
+        socialSources.push({
+          url: link,
+          title: `Social profile metadata (${host})`,
+          snippet: `Declared in page metadata (${new URL(finalUrl).pathname || "/"})`,
+          source_type: socialSourceTypeForHost(host),
+          discovered_from: finalUrl,
+        });
+      }
+
+      // Some sites render footer/social links via JS bundles only; inspect a few same-domain scripts on the home page.
+      if (next.depth === 0 && socialSources.length < 8) {
+        const scriptUrls = extractScriptUrlsFromHtml(html, finalUrl)
+          .filter((scriptUrl) => domainMatches(getDomain(scriptUrl), args.baseDomain))
+          .slice(0, 4);
+
+        for (const scriptUrl of scriptUrls) {
+          try {
+            const scriptResp = await fetchWithTimeout(scriptUrl, 6_000);
+            if (!scriptResp.ok) continue;
+            const scriptContentType = String(scriptResp.headers.get("content-type") || "").toLowerCase();
+            if (!scriptContentType.includes("javascript") && !scriptContentType.includes("text/plain")) continue;
+            const scriptText = (await scriptResp.text()).slice(0, 600_000);
+            const discoveredFromScript = extractSocialUrlsFromText(scriptText, finalUrl);
+            for (const link of discoveredFromScript) {
+              if (seenSocial.has(link)) continue;
+              seenSocial.add(link);
+              const host = getDomain(link);
+              socialSources.push({
+                url: link,
+                title: `Social profile in script (${host})`,
+                snippet: `Referenced in script asset from company site`,
+                source_type: socialSourceTypeForHost(host),
+                discovered_from: scriptUrl,
+              });
+            }
+          } catch {
+            // ignore script fetch failures
+          }
+        }
+      }
+
+      const pageSignal = [title, metaDescription, text]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join("\n");
+      const capped = pageSignal.slice(0, 12_000);
+
+      if (capped.length >= 80) {
+        const path = new URL(finalUrl).pathname || "/";
+        evidence.push({
+          url: finalUrl,
+          title: title || `Site page ${path}`,
+          snippet: `Site crawl (${path})`,
+          extracted: capped,
+          source_type: "public_web",
+        });
+      }
+
+      if (next.depth < maxDepth) {
+        const links = extractLinksFromHtml(html, finalUrl);
+        for (const link of links) {
+          const host = getDomain(link);
+          if (isKnownSocialHost(host) && !seenSocial.has(link)) {
+            seenSocial.add(link);
+            socialSources.push({
+              url: link,
+              title: `Social profile link (${host})`,
+              snippet: `Linked from company website (${new URL(finalUrl).pathname || "/"})`,
+              source_type: socialSourceTypeForHost(host),
+              discovered_from: finalUrl,
+            });
+          }
+          if (visited.has(link)) continue;
+          if (!domainMatches(host, args.baseDomain)) continue;
+          if (queue.length >= maxPages * 6) break;
+          queue.push({ url: link, depth: next.depth + 1 });
+        }
+      }
+    } catch {
+      // skip transient crawl failures
+    }
+  }
+
+  return {
+    siteEvidence: evidence.slice(0, maxPages),
+    socialSources: socialSources.slice(0, 20),
+  };
+}
+
 function inferSourceType(url: string, title = "", snippet = ""): string {
   const host = getDomain(url);
   const text = `${title} ${snippet}`.toLowerCase();
 
-  if (/(glassdoor|indeed)\./.test(host)) return "employee_review";
-  if (/(g2|capterra|trustpilot|yelp)\./.test(host)) return "customer_review";
-  if (/(reddit|quora)\./.test(host)) return "community_discussion";
-  if (/(linkedin)\./.test(host)) return "profile_or_company_page";
-  if (/(crunchbase|pitchbook|zoominfo|guidestar|charitynavigator)\./.test(host)) return "third_party_profile";
+  if (hostMatchesAnyDomain(host, ["glassdoor.com", "indeed.com"])) return "employee_review";
+  if (hostMatchesAnyDomain(host, ["g2.com", "capterra.com", "trustpilot.com", "yelp.com"])) return "customer_review";
+  if (hostMatchesAnyDomain(host, ["reddit.com", "quora.com"])) return "community_discussion";
+  if (hostMatchesAnyDomain(host, ["linkedin.com"])) return "profile_or_company_page";
+  if (hostMatchesAnyDomain(host, ["x.com", "twitter.com", "facebook.com", "instagram.com", "youtube.com", "youtu.be", "tiktok.com", "threads.net"])) return "profile_or_company_page";
+  if (hostMatchesAnyDomain(host, ["crunchbase.com", "pitchbook.com", "zoominfo.com", "guidestar.org", "charitynavigator.org"])) return "third_party_profile";
   if (text.includes("review") || text.includes("rating")) return "review_signal";
   if (text.includes("news") || text.includes("press")) return "news_signal";
   return "public_web";
+}
+
+const TRACKED_SOURCE_TYPES = [
+  "public_web",
+  "employee_review",
+  "customer_review",
+  "community_discussion",
+  "profile_or_company_page",
+  "third_party_profile",
+  "review_signal",
+  "news_signal",
+] as const;
+
+function countBySourceType(items: Array<{ source_type?: unknown }>) {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const key = String(item?.source_type || "public_web").trim().toLowerCase() || "public_web";
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function mergeEvidenceByUrl<T extends { url?: string }>(items: T[]) {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = normalizeUrlForMatch(item?.url);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+type PublicSourceFilters = {
+  exclude_source_types: string[];
+  exclude_domains: string[];
+  include_domains: string[];
+  seed_urls: string[];
+};
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function normalizeDomainValue(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .split("?")[0]
+    .split("#")[0]
+    .trim();
+}
+
+function normalizeSeedUrlValue(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizePublicSourceFilters(value: unknown): PublicSourceFilters {
+  const record = asObject(value) ?? {};
+  const excludeTypesRaw = Array.isArray(record.exclude_source_types) ? record.exclude_source_types : [];
+  const excludeDomainsRaw = Array.isArray(record.exclude_domains) ? record.exclude_domains : [];
+  const includeDomainsRaw = Array.isArray(record.include_domains) ? record.include_domains : [];
+  const seedUrlsRaw = Array.isArray(record.seed_urls) ? record.seed_urls : [];
+
+  const exclude_source_types = Array.from(
+    new Set(
+      excludeTypesRaw
+        .map((item) => String(item || "").trim().toLowerCase())
+        .filter((item) => Boolean(item) && item !== "public_web"),
+    ),
+  );
+  const exclude_domains = Array.from(
+    new Set(
+      excludeDomainsRaw
+        .map((item) => normalizeDomainValue(String(item || "")))
+        .filter(Boolean),
+    ),
+  );
+  const include_domains = Array.from(
+    new Set(
+      includeDomainsRaw
+        .map((item) => normalizeDomainValue(String(item || "")))
+        .filter(Boolean),
+    ),
+  );
+  const seed_urls = Array.from(
+    new Set(
+      seedUrlsRaw
+        .map((item) => normalizeSeedUrlValue(String(item || "")))
+        .filter(Boolean),
+    ),
+  );
+
+  return {
+    exclude_source_types,
+    exclude_domains,
+    include_domains,
+    seed_urls,
+  };
+}
+
+function domainMatches(host: string, domain: string) {
+  if (!host || !domain) return false;
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+function isSourceAllowedByPolicy(args: {
+  url: string;
+  sourceType: string;
+  companyDomain: string;
+  filters: PublicSourceFilters;
+}) {
+  const host = getDomain(args.url);
+  const sourceType = String(args.sourceType || "").trim().toLowerCase();
+  const companyDomain = normalizeDomainValue(args.companyDomain || "");
+  const inExcludeDomains = args.filters.exclude_domains.some((domain) => domainMatches(host, domain));
+  const inIncludeDomains = args.filters.include_domains.some((domain) => domainMatches(host, domain));
+  const includeWhitelistEnabled = args.filters.include_domains.length > 0;
+  const isCompanyDomain = companyDomain ? domainMatches(host, companyDomain) : false;
+
+  if (inExcludeDomains) return false;
+  if (args.filters.exclude_source_types.includes(sourceType)) return false;
+  if (includeWhitelistEnabled && !inIncludeDomains && !isCompanyDomain) return false;
+  return true;
 }
 
 function extractResponsesOutputText(data: any): string | null {
@@ -349,13 +1028,30 @@ function extractResponsesOutputText(data: any): string | null {
 async function callOpenAI(opts: {
   apiKey: string;
   model: string;
+  fallbackModels?: string[];
   companyName: string;
   companyUrl: string;
   evidence: { url: string; title: string; snippet: string; extracted: string; source_type?: string }[];
+  requestTimeoutMs?: number;
+  transientRetries?: number;
 }) {
-  const { apiKey, model, companyName, companyUrl, evidence } = opts;
+  const {
+    apiKey,
+    model,
+    fallbackModels = [],
+    companyName,
+    companyUrl,
+    evidence,
+    requestTimeoutMs = 180_000,
+    transientRetries = 2,
+  } = opts;
 
-  console.log("[baseline] calling openai", { model, evidenceCount: evidence.length });
+  const modelCandidates = buildOpenAIModelCandidates(model, fallbackModels);
+  console.log("[baseline] calling openai", {
+    primaryModel: model,
+    modelCandidates,
+    evidenceCount: evidence.length,
+  });
 
   const format = {
     type: "json_schema",
@@ -483,8 +1179,8 @@ async function callOpenAI(opts: {
     },
   };
 
-  const body = {
-    model,
+  const buildBody = (activeModel: string) => ({
+    model: activeModel,
     input: [
       {
         role: "system",
@@ -499,6 +1195,7 @@ async function callOpenAI(opts: {
               "If not proven, use low_pct=0, typical_pct=12, high_pct=20 and source='unproven'. " +
               "When proven=true, include source name plus evidence_urls and short evidence_snippets that support the numbers. " +
               "Use clear, plain language. Avoid consulting jargon, business cliches, and buzzwords unless the source evidence explicitly uses those terms. " +
+              "Do not infer company type from name alone (for example, do not assume education/school context unless evidence explicitly supports it). " +
               "If the evidence includes direct quotes, preserve them verbatim. " +
               "If clearer wording is helpful, keep the original wording and add a separate optional line starting with 'Suggested clearer version:'.",
           },
@@ -521,24 +1218,79 @@ async function callOpenAI(opts: {
       },
     ],
     text: { format },
-  };
-
-  const resp = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
   });
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`OpenAI error ${resp.status}: ${errText}`);
+  let lastModelError: unknown = null;
+  for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex++) {
+    const activeModel = modelCandidates[modelIndex];
+    let modelError: unknown = null;
+
+    for (let transientAttempt = 0; transientAttempt <= transientRetries; transientAttempt++) {
+      try {
+        const resp = await fetchWithTimeout(
+          "https://api.openai.com/v1/responses",
+          requestTimeoutMs,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(buildBody(activeModel)),
+          },
+        );
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          if (transientAttempt < transientRetries && isTransientOpenAIHttpStatus(resp.status, errText)) {
+            const backoffMs = 1200 * (transientAttempt + 1);
+            console.log("[baseline] transient OpenAI HTTP error; retrying", {
+              model: activeModel,
+              status: resp.status,
+              attempt: transientAttempt + 1,
+              retries: transientRetries,
+              backoffMs,
+            });
+            await sleep(backoffMs);
+            continue;
+          }
+          throw new Error(`OpenAI error ${resp.status}: ${errText}`);
+        }
+
+        const data = await resp.json();
+        const text = extractResponsesOutputText(data);
+        if (!text) throw new Error("OpenAI response missing output_text");
+        return JSON.parse(text);
+      } catch (error) {
+        modelError = error;
+        if (transientAttempt < transientRetries && isTransientOpenAIError(error)) {
+          const backoffMs = 1200 * (transientAttempt + 1);
+          console.log("[baseline] transient OpenAI request failure; retrying", {
+            model: activeModel,
+            attempt: transientAttempt + 1,
+            retries: transientRetries,
+            backoffMs,
+            message: String(error instanceof Error ? error.message : error),
+          });
+          await sleep(backoffMs);
+          continue;
+        }
+        break;
+      }
+    }
+
+    lastModelError = modelError;
+    if (modelIndex < modelCandidates.length - 1 && isModelFailoverEligibleError(modelError)) {
+      console.log("[baseline] switching OpenAI model after capacity-like failure", {
+        fromModel: activeModel,
+        toModel: modelCandidates[modelIndex + 1],
+        message: String(modelError instanceof Error ? modelError.message : modelError),
+      });
+      continue;
+    }
+    throw modelError instanceof Error ? modelError : new Error(String(modelError || "Unknown OpenAI error"));
   }
 
-  const data = await resp.json();
-  const text = extractResponsesOutputText(data);
-  if (!text) throw new Error("OpenAI response missing output_text");
-
-  return JSON.parse(text);
+  throw lastModelError instanceof Error
+    ? lastModelError
+    : new Error(String(lastModelError || "OpenAI call failed after retries and model fallback."));
 }
 
 function buildInsufficientResult(args: {
@@ -663,6 +1415,61 @@ function withRunLedger(
   };
 }
 
+function normalizeUrlForMatch(value: unknown) {
+  try {
+    const url = new URL(String(value || "").trim());
+    url.hash = "";
+    if ((url.pathname || "") !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+    return url.toString();
+  } catch {
+    return String(value || "").trim();
+  }
+}
+
+function mergeDiscoveredEvidenceIntoLedger(args: {
+  result: Record<string, unknown>;
+  discoveredEvidence: Array<{ url?: string; source_type?: string; snippet?: string }>;
+}) {
+  const result = { ...(args.result || {}) };
+  const existingLedger = Array.isArray(result.evidence_ledger) ? [...result.evidence_ledger] : [];
+  const existingUrls = new Set(
+    existingLedger
+      .map((entry: any) => normalizeUrlForMatch(entry?.url))
+      .filter(Boolean),
+  );
+
+  let appended = 0;
+  for (const source of args.discoveredEvidence) {
+    const url = normalizeUrlForMatch(source?.url);
+    if (!url || existingUrls.has(url)) continue;
+    existingUrls.add(url);
+    existingLedger.push({
+      url,
+      source_type: String(source?.source_type || "public_web"),
+      date: new Date().toISOString().slice(0, 10),
+      snippet:
+        String(source?.snippet || "").trim() ||
+        "Discovered public profile/source. Direct content extraction may be restricted by platform controls.",
+      bucket: "outside_voice_signal",
+      signal_strength: "weak",
+      confidence: 35,
+    });
+    appended++;
+  }
+
+  result.evidence_ledger = existingLedger.slice(0, 24);
+  const openQuestions = Array.isArray(result.open_questions) ? [...result.open_questions] : [];
+  if (appended > 0) {
+    openQuestions.unshift(
+      `Auto-discovered ${appended} public profile/social source(s); some may need manual verification if platform access is restricted.`,
+    );
+  }
+  result.open_questions = Array.from(new Set(openQuestions)).slice(0, 10);
+  return result;
+}
+
 Deno.serve(async (req) => {
   console.log(`[baseline] HIT method=${req.method} url=${req.url}`);
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -675,9 +1482,15 @@ Deno.serve(async (req) => {
     const searxUrl = Deno.env.get("SEARXNG_URL") || "http://host.docker.internal:8888";
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     const openaiModel = Deno.env.get("OPENAI_MODEL") || "gpt-4.1-mini";
+    const openaiFallbackModels = parseModelList(
+      Deno.env.get("OPENAI_FALLBACK_MODELS") ||
+      Deno.env.get("OPENAI_FALLBACK_MODEL") ||
+      "",
+    );
     const runLedger = {
       provider: "openai_public",
       model: openaiModel,
+      fallback_models: openaiFallbackModels,
       endpoint: "https://api.openai.com/v1/responses",
       path: "public_web_research",
       local_only: false,
@@ -685,7 +1498,7 @@ Deno.serve(async (req) => {
     };
 
     console.log(
-      `[baseline] env supabaseUrl=${!!supabaseUrl} serviceRole=${!!serviceRoleKey} anonKey=${!!anonKey} searxUrl=${searxUrl} openaiKey=${!!openaiKey} model=${openaiModel}`,
+      `[baseline] env supabaseUrl=${!!supabaseUrl} serviceRole=${!!serviceRoleKey} anonKey=${!!anonKey} searxUrl=${searxUrl} openaiKey=${!!openaiKey} model=${openaiModel} fallbacks=${openaiFallbackModels.join(",") || "default"}`,
     );
 
     if (!supabaseUrl || !serviceRoleKey || !anonKey) return json({ error: "Missing Supabase env vars" }, 500);
@@ -703,13 +1516,30 @@ Deno.serve(async (req) => {
     const { data: userRes, error: authError } = await anonClient.auth.getUser();
     if (authError || !userRes?.user) return json({ error: "Unauthorized" }, 401);
 
-    const body = await req.json().catch(() => ({}));
-    const company_id = body?.company_id;
-    const company_name = body?.company_name;
-    const website = body?.website ?? "";
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const company_id = String(body?.company_id || "").trim();
+    if (!company_id) {
+      return json({ error: "company_id required" }, 400);
+    }
 
-    if (!company_id || !company_name || !website) {
-      return json({ error: "company_id, company_name, website required" }, 400);
+    const { data: companyRow, error: companyFetchError } = await supabase
+      .from("companies")
+      .select("name,website,public_source_filters_json")
+      .eq("id", company_id)
+      .maybeSingle();
+
+    if (companyFetchError) {
+      console.log("[baseline] company fetch error:", companyFetchError.message);
+    }
+
+    const company_name = String(body?.company_name || companyRow?.name || "").trim();
+    const website = String(body?.website || companyRow?.website || "").trim();
+    const sourceFilters = normalizePublicSourceFilters(
+      body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
+    );
+
+    if (!company_name || !website) {
+      return json({ error: "company_name and website are required (via request or company record)" }, 400);
     }
 
     const lockTtlMinutes = 30;
@@ -759,6 +1589,12 @@ Deno.serve(async (req) => {
       `"${spaced}" "${domain}" (glassdoor OR indeed OR g2 OR capterra OR trustpilot OR reddit OR forum OR complaints)`;
     const queryE =
       `${quoted} "${domain}" (customer reviews OR employee reviews OR testimonials OR ratings OR reddit OR community OR nonprofit)`;
+    const queryF =
+      `site:linkedin.com/company ("${company_name}" OR "${spaced}" OR "${domain}" OR "${stem}")`;
+    const queryG =
+      `site:linkedin.com/posts ("${company_name}" OR "${spaced}" OR "${domain}" OR "${stem}")`;
+    const queryH =
+      `"${spaced}" ("${company_name}" OR "${stem}") (company OR platform OR product OR services OR leadership OR funding OR linkedin OR crunchbase OR newsroom)`;
 
     const mergeUnique = (a: any[], b: any[]) => {
       const seen = new Set<string>();
@@ -776,11 +1612,86 @@ Deno.serve(async (req) => {
     const sourcesC = await searxSearch(searxUrl, queryC, 20);
     const sourcesD = await searxSearch(searxUrl, queryD, 16);
     const sourcesE = await searxSearch(searxUrl, queryE, 16);
+    const sourcesF = await searxSearch(searxUrl, queryF, 16);
+    const sourcesG = await searxSearch(searxUrl, queryG, 16);
+    const sourcesH = await searxSearch(searxUrl, queryH, 20);
+    const inferredLinkedInUrls = inferLinkedInCompanyUrls(company_name, website);
+    const inferredLinkedInSources = inferredLinkedInUrls.map((url) => ({
+      url,
+      title: "Inferred LinkedIn company URL",
+      snippet: "Generated from company name/domain because search engines can miss or block LinkedIn results.",
+      engine: "linkedin_slug_guess",
+      source_type: "profile_or_company_page",
+    }));
+
+    const rawSearchSources = mergeUnique(
+      mergeUnique(
+        mergeUnique(mergeUnique(sourcesA, sourcesB), mergeUnique(sourcesC, sourcesD)),
+        mergeUnique(sourcesE, sourcesF),
+      ),
+      mergeUnique(sourcesG, sourcesH),
+    );
+    // Always attempt same-domain website crawl (helps tiny footprints / thin homepages)
+    const directUrl = website.startsWith("http") ? website : `https://${website}`;
+    const crawlResult = await crawlWebsiteEvidence({
+      startUrl: directUrl,
+      baseDomain: domain,
+      maxPages: 14,
+      maxDepth: 2,
+    });
+    const crawledSiteEvidence = Array.isArray(crawlResult?.siteEvidence) ? crawlResult.siteEvidence : [];
+    const discoveredSocialSources = Array.isArray(crawlResult?.socialSources) ? crawlResult.socialSources : [];
+
+    const socialCandidatesFromSite = discoveredSocialSources.map((source) => ({
+      url: source.url,
+      title: source.title,
+      snippet: source.snippet,
+      engine: "site_social_link",
+      source_type: source.source_type,
+    }));
+    const manualSeedSources = (sourceFilters.seed_urls || []).map((url) => ({
+      url,
+      title: "Manual public source URL",
+      snippet: "Added manually from Public Source Controls.",
+      engine: "manual_seed_url",
+      source_type: inferSourceType(url, "manual source", "manual seed"),
+    }));
 
     const rawSources = mergeUnique(
-      mergeUnique(mergeUnique(sourcesA, sourcesB), mergeUnique(sourcesC, sourcesD)),
-      sourcesE,
+      mergeUnique(mergeUnique(rawSearchSources, socialCandidatesFromSite), manualSeedSources),
+      inferredLinkedInSources,
     );
+    const queryRuns = [
+      { key: "queryA", label: "domain identity", query: queryA, raw_count: sourcesA.length, sample_urls: sourcesA.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryB", label: "market + alternatives", query: queryB, raw_count: sourcesB.length, sample_urls: sourcesB.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryC", label: "domain variants", query: queryC, raw_count: sourcesC.length, sample_urls: sourcesC.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryD", label: "outside voice", query: queryD, raw_count: sourcesD.length, sample_urls: sourcesD.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryE", label: "reviews + community", query: queryE, raw_count: sourcesE.length, sample_urls: sourcesE.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryF", label: "linkedin company", query: queryF, raw_count: sourcesF.length, sample_urls: sourcesF.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryG", label: "linkedin posts", query: queryG, raw_count: sourcesG.length, sample_urls: sourcesG.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      { key: "queryH", label: "broad company web", query: queryH, raw_count: sourcesH.length, sample_urls: sourcesH.slice(0, 3).map((x: any) => String(x?.url || "")).filter(Boolean) },
+      {
+        key: "site_social_links",
+        label: "social links from company site",
+        query: "outbound social/profile URLs discovered while crawling company pages",
+        raw_count: socialCandidatesFromSite.length,
+        sample_urls: socialCandidatesFromSite.slice(0, 5).map((x) => String(x?.url || "")).filter(Boolean),
+      },
+      {
+        key: "manual_seed_urls",
+        label: "manual seeded URLs",
+        query: "public source URLs provided in source controls",
+        raw_count: manualSeedSources.length,
+        sample_urls: manualSeedSources.slice(0, 8).map((x) => String(x?.url || "")).filter(Boolean),
+      },
+      {
+        key: "inferred_linkedin_urls",
+        label: "inferred linkedin URLs",
+        query: "heuristic LinkedIn company URLs generated from company name/domain",
+        raw_count: inferredLinkedInSources.length,
+        sample_urls: inferredLinkedInSources.slice(0, 8).map((x) => String(x?.url || "")).filter(Boolean),
+      },
+    ];
 
     // Annotate ALL sources with soft match scores (keep even if wrong — useful for review)
     const annotated = rawSources
@@ -795,41 +1706,143 @@ Deno.serve(async (req) => {
         return {
           ...r,
           source_type: inferSourceType(r?.url, r?.title, r?.snippet),
-          match_score: m.score,
-          match_reason: m.reasons,
+          match_score:
+            r?.engine === "manual_seed_url"
+              ? Math.max(88, m.score)
+              : r?.engine === "linkedin_slug_guess"
+                ? Math.max(68, m.score)
+              : r?.engine === "site_social_link"
+                ? Math.max(70, m.score)
+                : m.score,
+          match_reason:
+            r?.engine === "manual_seed_url"
+              ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "manual_seed_url"]))
+              : r?.engine === "linkedin_slug_guess"
+                ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "linkedin_slug_guess"]))
+              : r?.engine === "site_social_link"
+                ? Array.from(new Set([...(Array.isArray(m.reasons) ? m.reasons : []), "linked_from_company_site"]))
+                : m.reasons,
         };
       })
       .sort((a: any, b: any) => (b.match_score ?? 0) - (a.match_score ?? 0));
 
-    const strong = annotated.filter((x: any) => (x.match_score ?? 0) >= 80);
-    const medium = annotated.filter((x: any) => (x.match_score ?? 0) >= 50 && (x.match_score ?? 0) < 80);
+    const filteredAnnotated = annotated.filter((x: any) =>
+      isSourceAllowedByPolicy({
+        url: String(x?.url || ""),
+        sourceType: String(x?.source_type || "public_web"),
+        companyDomain: domain,
+        filters: sourceFilters,
+      }),
+    );
+
+    const strong = filteredAnnotated.filter((x: any) => (x.match_score ?? 0) >= 80);
+    const medium = filteredAnnotated.filter((x: any) => (x.match_score ?? 0) >= 50 && (x.match_score ?? 0) < 80);
 
     // Candidates: best matches first. If nothing strong, we still keep a few “closest” for an ambiguous run.
     const candidates =
       strong.length ? strong.slice(0, 12) :
       medium.length ? medium.slice(0, 10) :
-      annotated.slice(0, 6);
+      filteredAnnotated.slice(0, 6);
 
-    // Always attempt direct website fetch (helps tiny footprints)
-    const directUrl = website.startsWith("http") ? website : `https://${website}`;
-    const direct = await fetchAndExtract(directUrl);
-    const directEvidence =
-      direct.ok && direct.text && direct.text.length > 500
-        ? [{ url: directUrl, title: company_name, snippet: "Direct website fetch", extracted: direct.text }]
-        : [];
+    const excludedTypeSet = new Set(
+      sourceFilters.exclude_source_types.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean),
+    );
+    const annotatedByType = countBySourceType(annotated);
+    const filteredByType = countBySourceType(filteredAnnotated);
+    const candidateByType = countBySourceType(candidates);
+
+    const directEvidence = crawledSiteEvidence.filter((item) =>
+      isSourceAllowedByPolicy({
+        url: item.url,
+        sourceType: item.source_type,
+        companyDomain: domain,
+        filters: sourceFilters,
+      }),
+    );
+    const socialLinkEvidence = discoveredSocialSources
+      .filter((item) =>
+        isSourceAllowedByPolicy({
+          url: item.url,
+          sourceType: item.source_type,
+          companyDomain: domain,
+          filters: sourceFilters,
+        })
+      )
+      .slice(0, 6)
+      .map((item) => ({
+        url: item.url,
+        title: item.title,
+        snippet: item.snippet,
+        source_type: item.source_type,
+        extracted: `Social/profile source linked from company website: ${item.url}\nDiscovered on: ${item.discovered_from}\nDirect scraping may be limited due to platform anti-bot or login controls.`,
+      }));
+    const manualSeedEvidence = manualSeedSources
+      .filter((item) =>
+        isSourceAllowedByPolicy({
+          url: item.url,
+          sourceType: item.source_type,
+          companyDomain: domain,
+          filters: sourceFilters,
+        })
+      )
+      .slice(0, 8)
+      .map((item) => ({
+        url: item.url,
+        title: item.title,
+        snippet: item.snippet,
+        source_type: item.source_type,
+        extracted: `Manual public source URL provided by user: ${item.url}\nDirect scraping may be unavailable due to platform anti-bot/login restrictions.`,
+      }));
+    const directByType = countBySourceType(directEvidence);
+    const baseSourceCoverage = TRACKED_SOURCE_TYPES.map((sourceType) => ({
+      source_type: sourceType,
+      enabled: !excludedTypeSet.has(sourceType),
+      excluded: excludedTypeSet.has(sourceType),
+      annotated_count: annotatedByType[sourceType] || 0,
+      policy_allowed_count: filteredByType[sourceType] || 0,
+      candidate_count: candidateByType[sourceType] || 0,
+      direct_evidence_count: directByType[sourceType] || 0,
+      extracted_count: 0,
+      final_evidence_count: directByType[sourceType] || 0,
+    }));
+    const baseDiagnostics = {
+      query_runs: queryRuns,
+      search: {
+        total_results: queryRuns.reduce((sum, run) => sum + Number(run.raw_count || 0), 0),
+        unique_search_results: rawSearchSources.length,
+        unique_results_including_site_social: rawSources.length,
+      },
+      policy: {
+        include_domains: sourceFilters.include_domains,
+        exclude_domains: sourceFilters.exclude_domains,
+        exclude_source_types: sourceFilters.exclude_source_types,
+      },
+      crawl: {
+        attempted: true,
+        site_pages_found: crawledSiteEvidence.length,
+        site_pages_eligible: directEvidence.length,
+        site_social_links_found: discoveredSocialSources.length,
+        site_social_links_eligible: socialLinkEvidence.length,
+        manual_seed_urls: manualSeedSources.length,
+        manual_seed_urls_eligible: manualSeedEvidence.length,
+      },
+      source_type_coverage: baseSourceCoverage,
+    };
 
     console.log("[baseline] source scoring", {
       domain,
       variants,
       rawCount: rawSources.length,
       annotatedCount: annotated.length,
+      policyFilteredCount: filteredAnnotated.length,
       top1: annotated[0]?.url ?? null,
       top1Score: annotated[0]?.match_score ?? null,
       strong: strong.length,
       medium: medium.length,
       candidates: candidates.length,
-      directOk: direct.ok,
-      directLen: direct.text?.length ?? 0,
+      directCrawlPages: crawledSiteEvidence.length,
+      directEvidencePages: directEvidence.length,
+      sourceFilters,
     });
 
     // If nothing at all and no direct evidence -> insufficient (200, not 500)
@@ -839,19 +1852,26 @@ Deno.serve(async (req) => {
         website,
         domain,
         variants,
-        reason: "No public sources returned by search; direct website fetch also failed or too thin.",
+        reason: "No public sources returned by search; website crawl also failed or too thin.",
         debug: {
           queryA,
           queryB,
           queryC,
           queryD,
           queryE,
+          queryF,
+          queryG,
+          queryH,
           rawA: sourcesA.length,
           rawB: sourcesB.length,
           rawC: sourcesC.length,
           rawD: sourcesD.length,
           rawE: sourcesE.length,
-          directOk: direct.ok,
+          rawF: sourcesF.length,
+          rawG: sourcesG.length,
+          rawH: sourcesH.length,
+          crawled_site_pages: crawledSiteEvidence.length,
+          source_filters: sourceFilters,
         },
       });
 
@@ -861,7 +1881,88 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
-          sources_json: { note: "no-results", queryA, queryB, queryC, queryD, queryE, raw_sources: rawSources },
+          sources_json: {
+            note: "no-results",
+            queryA,
+            queryB,
+            queryC,
+            queryD,
+            queryE,
+            queryF,
+            queryG,
+            queryH,
+            raw_sources: rawSources,
+            source_filters: sourceFilters,
+            diagnostics: baseDiagnostics,
+          },
+          result_json: withRunLedger(resultJson, runLedger),
+        })
+        .select("id")
+        .single();
+
+      if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+
+      return json({
+        message: "Public baseline: insufficient public evidence",
+        status: "insufficient_public_evidence",
+        run_id: inserted?.id,
+      });
+    }
+
+    if (filteredAnnotated.length === 0 && annotated.length > 0 && directEvidence.length === 0) {
+      const closest = annotated.slice(0, 10).map((x: any) => ({
+        url: x.url,
+        title: x.title,
+        snippet: x.snippet,
+        engine: x.engine,
+        source_type: x.source_type,
+        match_score: x.match_score,
+        match_reason: x.match_reason,
+      }));
+
+      const resultJson = buildInsufficientResult({
+        companyName: company_name,
+        website,
+        domain,
+        variants,
+        reason: "All matching public sources were filtered out by source controls.",
+        debug: {
+          queryA,
+          queryB,
+          queryC,
+          queryD,
+          queryE,
+          queryF,
+          queryG,
+          queryH,
+          rawCount: rawSources.length,
+          annotatedCount: annotated.length,
+          filteredCount: filteredAnnotated.length,
+          source_filters: sourceFilters,
+          closest_sources: closest,
+        },
+      });
+
+      const { data: inserted, error: insErr } = await supabase
+        .from("public_baseline_runs")
+        .insert({
+          company_id,
+          company_name,
+          website,
+          sources_json: {
+            note: "filtered-by-policy",
+            queryA,
+            queryB,
+            queryC,
+            queryD,
+            queryE,
+            queryF,
+            queryG,
+            queryH,
+            source_filters: sourceFilters,
+            annotated_top: closest,
+            diagnostics: baseDiagnostics,
+          },
           result_json: withRunLedger(resultJson, runLedger),
         })
         .select("id")
@@ -878,11 +1979,12 @@ Deno.serve(async (req) => {
 
     // If there are results but none match well (and no direct site), record ambiguous (200) and include closest sources
     if (strong.length === 0 && medium.length === 0 && directEvidence.length === 0) {
-      const closest = annotated.slice(0, 10).map((x: any) => ({
+      const closest = filteredAnnotated.slice(0, 10).map((x: any) => ({
         url: x.url,
         title: x.title,
         snippet: x.snippet,
         engine: x.engine,
+        source_type: x.source_type,
         match_score: x.match_score,
         match_reason: x.match_reason,
       }));
@@ -893,7 +1995,22 @@ Deno.serve(async (req) => {
         domain,
         variants,
         reason: "Search results did not strongly match provided company/domain.",
-        debug: { queryA, queryB, queryC, queryD, queryE, rawCount: rawSources.length, strong: strong.length, medium: medium.length },
+        debug: {
+          queryA,
+          queryB,
+          queryC,
+          queryD,
+          queryE,
+          queryF,
+          queryG,
+          queryH,
+          rawCount: rawSources.length,
+          annotatedCount: annotated.length,
+          filteredCount: filteredAnnotated.length,
+          strong: strong.length,
+          medium: medium.length,
+          source_filters: sourceFilters,
+        },
         closest_sources: closest,
       });
 
@@ -903,7 +2020,20 @@ Deno.serve(async (req) => {
           company_id,
           company_name,
           website,
-          sources_json: { note: "ambiguous", queryA, queryB, queryC, queryD, queryE, annotated_top: closest },
+          sources_json: {
+            note: "ambiguous",
+            queryA,
+            queryB,
+            queryC,
+            queryD,
+            queryE,
+            queryF,
+            queryG,
+            queryH,
+            source_filters: sourceFilters,
+            annotated_top: closest,
+            diagnostics: baseDiagnostics,
+          },
           result_json: withRunLedger(resultJson, runLedger),
         })
         .select("id")
@@ -935,6 +2065,69 @@ Deno.serve(async (req) => {
       });
     }
 
+    const discoveredFallbackOrigins = Array.from(
+      new Set(
+        extracted
+          .flatMap((entry) => extractHttpUrlsFromText(String(entry?.extracted || ""), String(entry?.url || directUrl)))
+          .map((candidateUrl) => {
+            const host = getDomain(candidateUrl);
+            if (!host) return "";
+            if (isKnownSocialHost(host)) return "";
+            if (domainMatches(host, domain)) return "";
+            const hasStemMatch = stem ? host.includes(stem) : false;
+            const variantMatches = variants.some((variant) => {
+              const token = toSlug(variant);
+              return token.length >= 4 && host.includes(token);
+            });
+            if (!hasStemMatch && !variantMatches) return "";
+            try {
+              const candidate = new URL(candidateUrl);
+              return `${candidate.protocol}//${candidate.host}/`;
+            } catch {
+              return "";
+            }
+          })
+          .filter(Boolean),
+      ),
+    ).slice(0, 3);
+
+    const fallbackSiteEvidence: Array<{ url: string; title: string; snippet: string; extracted: string; source_type: string }> = [];
+    const fallbackSocialEvidence: Array<{ url: string; title: string; snippet: string; source_type: string; extracted: string }> = [];
+    for (const originUrl of discoveredFallbackOrigins) {
+      try {
+        const fallbackDomain = getDomain(originUrl);
+        if (!fallbackDomain) continue;
+        const fallbackCrawl = await crawlWebsiteEvidence({
+          startUrl: originUrl,
+          baseDomain: fallbackDomain,
+          maxPages: 10,
+          maxDepth: 2,
+        });
+        const fallbackSitePages = Array.isArray(fallbackCrawl?.siteEvidence) ? fallbackCrawl.siteEvidence : [];
+        const fallbackSocial = Array.isArray(fallbackCrawl?.socialSources) ? fallbackCrawl.socialSources : [];
+
+        for (const page of fallbackSitePages) {
+          fallbackSiteEvidence.push({
+            ...page,
+            snippet: `Fallback site crawl (${fallbackDomain})`,
+            source_type: "public_web",
+          });
+        }
+
+        for (const social of fallbackSocial.slice(0, 6)) {
+          fallbackSocialEvidence.push({
+            url: social.url,
+            title: social.title,
+            snippet: `Fallback social link discovered from ${originUrl}`,
+            source_type: social.source_type,
+            extracted: `Social/profile source linked from fallback site crawl: ${social.url}\nDiscovered from: ${originUrl}\nDirect scraping may be limited due to platform controls.`,
+          });
+        }
+      } catch {
+        // ignore fallback crawl failures
+      }
+    }
+
     const evidenceFromSearch = extracted
       .filter((e) => e.ok && e.extracted && e.extracted.length > 500)
       .slice(0, 12)
@@ -946,23 +2139,61 @@ Deno.serve(async (req) => {
         extracted: e.extracted,
       }));
 
-    // Combine (direct first so it’s always included)
-    const evidence = [...directEvidence, ...evidenceFromSearch].slice(0, 12);
+    const directEvidenceMerged = mergeEvidenceByUrl([...directEvidence, ...fallbackSiteEvidence]).slice(0, 12);
+    const socialEvidenceMerged = mergeEvidenceByUrl([...socialLinkEvidence, ...fallbackSocialEvidence]).slice(0, 8);
+    // Combine (direct + website/social/manual evidence first so they are represented)
+    const evidence = [...directEvidenceMerged, ...socialEvidenceMerged, ...manualSeedEvidence, ...evidenceFromSearch].slice(0, 14);
+    const extractedByType = countBySourceType(evidenceFromSearch);
+    const socialByType = countBySourceType(socialEvidenceMerged);
+    const manualByType = countBySourceType(manualSeedEvidence);
+    const finalByType = countBySourceType(evidence);
+    const diagnosticsWithExtraction = {
+      ...baseDiagnostics,
+      extraction: {
+        candidates: candidates.length,
+        extracted_ok: evidenceFromSearch.length,
+        direct_evidence: directEvidenceMerged.length,
+        social_link_evidence: socialEvidenceMerged.length,
+        manual_seed_evidence: manualSeedEvidence.length,
+        fallback_site_origins: discoveredFallbackOrigins.length,
+        fallback_site_evidence: fallbackSiteEvidence.length,
+        final_evidence: evidence.length,
+      },
+      fallback_crawl: {
+        discovered_origins: discoveredFallbackOrigins,
+      },
+      source_type_coverage: baseSourceCoverage.map((entry) => ({
+        ...entry,
+        extracted_count:
+          (extractedByType[entry.source_type] || 0) +
+          (socialByType[entry.source_type] || 0) +
+          (manualByType[entry.source_type] || 0),
+        final_evidence_count: finalByType[entry.source_type] || 0,
+      })),
+    };
 
     console.log("[baseline] evidence ready", {
       evidenceCount: evidence.length,
-      fromDirect: directEvidence.length,
+      fromDirect: directEvidenceMerged.length,
+      fromSiteSocial: socialEvidenceMerged.length,
+      fromManualSeed: manualSeedEvidence.length,
       fromSearchOk: evidenceFromSearch.length,
+      fromFallbackSite: fallbackSiteEvidence.length,
+      fallbackOrigins: discoveredFallbackOrigins.length,
       candidateCount: candidates.length,
     });
 
     // If evidence is too thin, record insufficient (200) and include top sources for debugging
-    if (evidence.length < 2) {
-      const closest = annotated.slice(0, 10).map((x: any) => ({
+    const hasBootstrapEvidence =
+      (directEvidenceMerged.length + socialEvidenceMerged.length + manualSeedEvidence.length) >= 1 &&
+      evidenceFromSearch.length === 0;
+    if (evidence.length < 2 && !hasBootstrapEvidence) {
+      const closest = filteredAnnotated.slice(0, 10).map((x: any) => ({
         url: x.url,
         title: x.title,
         snippet: x.snippet,
         engine: x.engine,
+        source_type: x.source_type,
         match_score: x.match_score,
         match_reason: x.match_reason,
       }));
@@ -974,11 +2205,20 @@ Deno.serve(async (req) => {
         variants,
         reason: "Not enough extractable evidence (need at least 2 sources with meaningful text).",
         debug: {
+          queryA,
+          queryB,
+          queryC,
+          queryD,
+          queryE,
+          queryF,
+          queryG,
+          queryH,
           filteredStrong: strong.length,
           filteredMedium: medium.length,
           candidates: candidates.length,
           extractedOk: evidenceFromSearch.length,
           directIncluded: directEvidence.length,
+          source_filters: sourceFilters,
           closest_sources: closest,
         },
       });
@@ -996,6 +2236,10 @@ Deno.serve(async (req) => {
             queryC,
             queryD,
             queryE,
+            queryF,
+            queryG,
+            queryH,
+            source_filters: sourceFilters,
             annotated_top: closest,
             extracted_meta: extracted.map((x) => ({
               url: x.url,
@@ -1004,6 +2248,7 @@ Deno.serve(async (req) => {
               match_score: x.match_score,
               source_type: x.source_type,
             })),
+            diagnostics: diagnosticsWithExtraction,
           },
           result_json: withRunLedger(resultJson, runLedger),
         })
@@ -1023,9 +2268,21 @@ Deno.serve(async (req) => {
     const result = await callOpenAI({
       apiKey: openaiKey,
       model: openaiModel,
+      fallbackModels: openaiFallbackModels,
       companyName: company_name,
       companyUrl: website,
       evidence,
+    });
+    const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
+      .filter((entry) => String(entry?.url || "").trim().length > 0)
+      .map((entry) => ({
+        url: String(entry.url || "").trim(),
+        source_type: String(entry.source_type || "profile_or_company_page").trim(),
+        snippet: String(entry.snippet || "").trim(),
+      }));
+    const resultWithDiscoveredSources = mergeDiscoveredEvidenceIntoLedger({
+      result: typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {},
+      discoveredEvidence: discoveredProfileEvidence,
     });
 
     const { data: inserted, error: insErr } = await supabase
@@ -1035,11 +2292,17 @@ Deno.serve(async (req) => {
         company_name,
         website,
         // Save full annotated sources for later review (includes “wrong company” candidates like CiboGlobal)
-        sources_json: { queries: { queryA, queryB, queryC, queryD, queryE }, annotated_sources: annotated.slice(0, 60) },
+        sources_json: {
+          queries: { queryA, queryB, queryC, queryD, queryE, queryF, queryG },
+          // queryH is a broad fallback query not constrained by the submitted domain.
+          queries_fallback: { queryH },
+          source_filters: sourceFilters,
+          annotated_sources: annotated.slice(0, 60),
+          selected_sources: filteredAnnotated.slice(0, 40),
+          diagnostics: diagnosticsWithExtraction,
+        },
         result_json: withRunLedger(
-          typeof result === "object" && result !== null
-            ? (result as Record<string, unknown>)
-            : {},
+          resultWithDiscoveredSources,
           runLedger,
         ),
       })
@@ -1048,13 +2311,14 @@ Deno.serve(async (req) => {
 
     if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
 
-    console.log("[baseline] DONE", { run_id: inserted?.id, sources: annotated.length });
+    console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
 
     return json({
       message: "Public baseline complete",
       status: "ok",
       run_id: inserted?.id,
-      sources: annotated.length,
+      sources: filteredAnnotated.length,
+      raw_sources: annotated.length,
       strong_matches: strong.length,
       medium_matches: medium.length,
     });

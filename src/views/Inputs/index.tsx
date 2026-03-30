@@ -10,7 +10,7 @@ import { useCompany } from '@/hooks/useCompany';
 import FileUploadDialog from '@/components/FileUploadDialog';
 import { useSourceConfidence } from '@/hooks/useSourceConfidence';
 import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badges';
-import { SourceLegend } from '@/components/provenance/SourceLegend';
+import PageContextStatus from '@/components/layout/PageContextStatus';
 
 const c = {
   bg: '#faf7f6',
@@ -84,7 +84,8 @@ export default function InputsView() {
           <div className="max-w-content mx-auto pt-6 px-4 sm:px-0">
 
             {/* Page header — matching map view */}
-            <div className="flex items-center justify-between mb-8">
+            <div className="mb-8">
+              <div className="flex items-center justify-between gap-3">
               <div>
                 <h1 className="font-sans text-[34px] font-semibold leading-[1] tracking-tight" style={{ color: c.charcoal }}>
                   Diagnostic Inputs
@@ -98,14 +99,8 @@ export default function InputsView() {
                   </StateBadge>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <MetaBadge>
-                  {activeCompany?.last_scored_at
-                    ? `Updated ${new Date(activeCompany.last_scored_at).toLocaleDateString()}`
-                    : "Awaiting research"}
-                </MetaBadge>
-                <SourceLegend signals={sourceSignals} />
               </div>
+              <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
             </div>
 
             {/* Recessed field */}

@@ -29,6 +29,7 @@ type RecommendationRow = {
 };
 
 type CouncilKey = "strategy_council" | "mojo_council";
+type ProcessStage = "diagnose" | "focus" | "flow";
 
 type CouncilProfile = {
   key: CouncilKey;
@@ -378,10 +379,158 @@ function inferSourceTierLabel(inputFiles: Array<Record<string, unknown>>) {
   return "public";
 }
 
+function sourceTierCountsFromInputs(inputs: Array<Record<string, unknown>>) {
+  const counts = {
+    public: 0,
+    company: 0,
+    evidence: 0,
+    implemented_tested: 0,
+  };
+
+  for (const input of inputs) {
+    const files = sliceArray<Record<string, unknown>>(input.input_files, 100);
+    for (const file of files) {
+      const tier = inferSourceTierLabel([file]) as keyof typeof counts;
+      counts[tier] += 1;
+    }
+  }
+
+  return counts;
+}
+
+function nestedNumber(value: unknown, path: string[]) {
+  let cursor: unknown = value;
+  for (const key of path) {
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return null;
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : null;
+}
+
+function detectTestedSignal(areaScoresJson: unknown) {
+  return (
+    nestedNumber(areaScoresJson, ["evidence", "implementation_tested"]) ??
+    nestedNumber(areaScoresJson, ["implementation", "tested"]) ??
+    nestedNumber(areaScoresJson, ["execution", "tested"]) ??
+    0
+  );
+}
+
+function stageLabel(stage: ProcessStage) {
+  if (stage === "diagnose") return "Diagnose";
+  if (stage === "focus") return "Focus";
+  return "Flow";
+}
+
+function buildProcessStageProfile(args: {
+  company: Record<string, unknown>;
+  contextPayload: Record<string, unknown>;
+}) {
+  const strategicProblems = sliceArray<Record<string, unknown>>(args.contextPayload.strategic_problems, 400);
+  const assumptions = sliceArray<Record<string, unknown>>(args.contextPayload.strategy_assumptions, 400);
+  const inputs = sliceArray<Record<string, unknown>>(args.contextPayload.inputs, 800);
+  const jobSteps = sliceArray<Record<string, unknown>>(args.contextPayload.job_steps, 1000);
+  const odiNeeds = sliceArray<Record<string, unknown>>(args.contextPayload.odi_needs, 1200);
+  const opportunities = sliceArray<Record<string, unknown>>(args.contextPayload.opportunities, 800);
+  const routes = sliceArray<Record<string, unknown>>(args.contextPayload.routes, 800);
+  const sourceCounts = sourceTierCountsFromInputs(inputs);
+  const testedSignal = detectTestedSignal(args.company.area_scores_json);
+
+  const hasDiagnosisCore = strategicProblems.length > 0 || inputs.length > 0 || assumptions.length > 0;
+  const hasCompanyInfo = sourceCounts.company + sourceCounts.evidence + sourceCounts.implemented_tested > 0;
+  const hasPrimaryEvidence = sourceCounts.evidence + sourceCounts.implemented_tested > 0;
+  const hasTestingEvidence = sourceCounts.implemented_tested > 0 || testedSignal >= 60;
+  const hasFocusArtifacts = (jobSteps.length > 0 && odiNeeds.length > 0) || opportunities.length > 0;
+  const hasFlowArtifacts = routes.length > 0 || hasTestingEvidence;
+
+  let stage: ProcessStage = "diagnose";
+  if (hasFlowArtifacts && hasFocusArtifacts && hasDiagnosisCore && hasPrimaryEvidence) {
+    stage = "flow";
+  } else if (hasFocusArtifacts || (hasDiagnosisCore && hasCompanyInfo)) {
+    stage = "focus";
+  }
+
+  const objective =
+    stage === "diagnose"
+      ? "Find the right strategic problem and highest-risk evidence gaps."
+      : stage === "focus"
+        ? "Define and prioritize the best opportunities to achieve desired outcomes."
+        : "Guide implementation with measurable learning loops, coaching, and execution support.";
+
+  const nextGate =
+    stage === "diagnose"
+      ? "Agree one decision-level strategic problem and top evidence gaps before solution commitments."
+      : stage === "focus"
+        ? "Commit one prioritized route tied to ODI outcomes and explicit success metrics."
+        : "Run implementation with owner checkpoints and convert testing evidence into score and route updates.";
+
+  const stageGuidance =
+    stage === "diagnose"
+      ? [
+          "Prioritize recommendations that sharpen problem framing and expose weak evidence quickly.",
+          "Convert public findings into concrete next evidence actions (interviews, company docs, direct proof).",
+          "Avoid premature implementation plans when diagnosis is still weak.",
+        ]
+      : stage === "focus"
+        ? [
+            "Prioritize recommendations that rank opportunities against ODI outcomes and strategic choices.",
+            "Integrate public and uploaded company evidence before route selection.",
+            "Produce one clear next route with rationale, expected outcome movement, and validation plan.",
+          ]
+        : [
+            "Prioritize recommendations that improve implementation sequencing, enablement, and adoption.",
+            "Use tested evidence signals to refine routes and de-risk execution.",
+            "Highlight coaching/training actions and measurable checkpoints for sustained execution quality.",
+          ];
+
+  const evidenceSummary =
+    `public:${sourceCounts.public}, company:${sourceCounts.company}, ` +
+    `primary:${sourceCounts.evidence}, tested:${sourceCounts.implemented_tested}, tested_signal:${Math.round(testedSignal)}`;
+
+  const rationale =
+    stage === "diagnose"
+      ? "Current context is still weighted toward early evidence and unresolved framing."
+      : stage === "focus"
+        ? "There is enough context to prioritize opportunities, but route commitment still needs tighter evidence alignment."
+        : "Evidence and execution artifacts indicate readiness to optimize implementation and learning loops.";
+
+  return {
+    stage,
+    label: stageLabel(stage),
+    objective,
+    nextGate,
+    stageGuidance,
+    evidenceSummary,
+    rationale,
+    sourceCounts,
+    testedSignal,
+    hasPrimaryEvidence,
+    hasTestingEvidence,
+  };
+}
+
 function buildDeterministicCouncilOutput(args: {
   councilProfile: CouncilProfile;
   company: Record<string, unknown>;
   contextPayload: Record<string, unknown>;
+  stageProfile: {
+    stage: ProcessStage;
+    label: string;
+    objective: string;
+    nextGate: string;
+    stageGuidance: string[];
+    evidenceSummary: string;
+    rationale: string;
+    sourceCounts: {
+      public: number;
+      company: number;
+      evidence: number;
+      implemented_tested: number;
+    };
+    testedSignal: number;
+    hasPrimaryEvidence: boolean;
+    hasTestingEvidence: boolean;
+  };
   modelFailure?: string;
 }) {
   const companyName = asText(args.company.name, "Company");
@@ -400,19 +549,7 @@ function buildDeterministicCouncilOutput(args: {
     recommendations.push(row);
   };
 
-  const allInputFiles = inputs.flatMap((input) =>
-    sliceArray<Record<string, unknown>>(input.input_files, 50)
-  );
-  const sourceCounts = {
-    public: 0,
-    company: 0,
-    evidence: 0,
-    implemented_tested: 0,
-  };
-  for (const file of allInputFiles) {
-    const tier = inferSourceTierLabel([file]);
-    sourceCounts[tier as keyof typeof sourceCounts] += 1;
-  }
+  const sourceCounts = args.stageProfile.sourceCounts;
 
   if (args.councilProfile.key === "mojo_council") {
     const openAssumptions = assumptions.filter((row) => asText(row.status, "open").toLowerCase() !== "reconciled");
@@ -424,6 +561,47 @@ function buildDeterministicCouncilOutput(args: {
       })
       .filter((row) => row.completion < 70)
       .sort((a, b) => a.completion - b.completion);
+
+    if (args.stageProfile.stage === "diagnose") {
+      addRecommendation({
+        title: "Diagnose first: lock the real problem and evidence gaps",
+        recommendation:
+          "Use this cycle to confirm one decision-level strategic problem, list the top evidence gaps, and define the fastest evidence actions before committing solution routes.",
+        rationale:
+          "The process is in Diagnose mode, so clarity and evidence quality should lead before execution planning.",
+        category: "diagnosis",
+        priority: "high",
+        confidence: 84,
+        source_basis: "process_stage.diagnose",
+        references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+      });
+    } else if (args.stageProfile.stage === "focus") {
+      addRecommendation({
+        title: "Focus now: prioritize opportunities tied to outcomes",
+        recommendation:
+          "Rank opportunities against ODI outcomes and strategic fit, then commit one route with explicit expected outcome movement and validation criteria.",
+        rationale:
+          "The process is in Focus mode, so decision quality depends on disciplined prioritization, not broad execution.",
+        category: "focus",
+        priority: "high",
+        confidence: 82,
+        source_basis: "process_stage.focus",
+        references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+      });
+    } else {
+      addRecommendation({
+        title: "Flow now: improve implementation quality and learning cadence",
+        recommendation:
+          "Run the active route with owner checkpoints, coaching/training support, and test-and-learn loops that feed evidence back into score updates.",
+        rationale:
+          "The process is in Flow mode, so the highest leverage is execution quality and measurable learning, not re-diagnosis.",
+        category: "execution",
+        priority: "high",
+        confidence: 83,
+        source_basis: "process_stage.flow",
+        references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+      });
+    }
 
     if (strategicProblems.length === 0) {
       addRecommendation({
@@ -565,13 +743,13 @@ function buildDeterministicCouncilOutput(args: {
 
     const summarySections = [
       "1. What the panel thinks is really going on",
-      `The company has directional momentum but still has core ambiguity between strategic focus, customer-job proof, and execution sequencing.`,
+      `The company is currently in ${args.stageProfile.label} with objective: ${args.stageProfile.objective}`,
       "",
       "2. Panel discussion",
       "See panel_discussion for the full seven-voice debate and convergence.",
       "",
       "3. Core diagnosis",
-      `The current state is weighted toward assumptions/public signals (${sourceCounts.public}) and limited primary evidence (${sourceCounts.evidence}), which increases risk in route selection.`,
+      `Evidence profile: ${args.stageProfile.evidenceSummary}. ${args.stageProfile.rationale}`,
       "",
       "4. Key strategic issue",
       strategicProblems.length > 0
@@ -627,6 +805,47 @@ function buildDeterministicCouncilOutput(args: {
       confidence: 80,
       source_basis: "strategic_problems_missing",
       references: ["strategy_problem_statements"],
+    });
+  }
+
+  if (args.stageProfile.stage === "diagnose") {
+    addRecommendation({
+      title: "Stage guardrail: Diagnose before route commitment",
+      recommendation:
+        "Prioritize problem framing and evidence-gap closure this cycle; avoid committing large execution plans until the core diagnosis is evidence-backed.",
+      rationale:
+        "In Diagnose mode, early execution without evidence alignment often creates rework and weak score movement.",
+      category: "diagnosis",
+      priority: "high",
+      confidence: 81,
+      source_basis: "process_stage.diagnose",
+      references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+    });
+  } else if (args.stageProfile.stage === "focus") {
+    addRecommendation({
+      title: "Stage guardrail: Focus decisions before scaling work",
+      recommendation:
+        "Use public plus uploaded company evidence to select one opportunity cluster and one route with clear expected impact before wider rollout.",
+      rationale:
+        "In Focus mode, disciplined prioritization improves implementation quality and avoids fragmented execution.",
+      category: "focus",
+      priority: "high",
+      confidence: 80,
+      source_basis: "process_stage.focus",
+      references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+    });
+  } else {
+    addRecommendation({
+      title: "Stage guardrail: Flow with measured implementation",
+      recommendation:
+        "Drive execution through owner checkpoints, enablement/training actions, and testing evidence that updates priorities and score assumptions.",
+      rationale:
+        "In Flow mode, sustained progress depends on execution cadence and learning loops from real evidence.",
+      category: "execution",
+      priority: "high",
+      confidence: 82,
+      source_basis: "process_stage.flow",
+      references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
     });
   }
 
@@ -725,6 +944,8 @@ function buildDeterministicCouncilOutput(args: {
 
   const summaryParts = [
     `${args.councilProfile.label} completed for ${companyName} from available company context.`,
+    `Current process stage: ${args.stageProfile.label}. Objective: ${args.stageProfile.objective}`,
+    `Evidence profile: ${args.stageProfile.evidenceSummary}`,
     `Generated ${recommendations.length} recommendation${recommendations.length === 1 ? "" : "s"} without waiting for follow-up answers.`,
   ];
   if (args.modelFailure) {
@@ -1101,11 +1322,25 @@ Deno.serve(async (req) => {
       ),
     };
 
+    const processStageProfile = buildProcessStageProfile({
+      company: company as Record<string, unknown>,
+      contextPayload: contextPayload as Record<string, unknown>,
+    });
+
     sourceSnapshot = {
       started_at: startedAtIso,
       company_id: companyId,
       council_key: councilProfile.key,
       council_label: councilProfile.label,
+      process_stage: {
+        key: processStageProfile.stage,
+        label: processStageProfile.label,
+        objective: processStageProfile.objective,
+        next_gate: processStageProfile.nextGate,
+        guidance: processStageProfile.stageGuidance,
+        rationale: processStageProfile.rationale,
+        evidence_summary: processStageProfile.evidenceSummary,
+      },
       llm_path: {
         provider: "openai_api",
         model: openaiModel,
@@ -1140,9 +1375,19 @@ Deno.serve(async (req) => {
     const sourceSnapshotJson = JSON.stringify(sourceSnapshot, null, 2);
 
     const systemText = councilProfile.systemText;
+    const stageGuidanceText = [
+      `Process stage: ${processStageProfile.label} (${processStageProfile.stage})`,
+      `Stage objective: ${processStageProfile.objective}`,
+      `Stage next gate: ${processStageProfile.nextGate}`,
+      `Evidence profile: ${processStageProfile.evidenceSummary}`,
+      "Stage-specific recommendation rules:",
+      ...processStageProfile.stageGuidance.map((rule, index) => `${index + 1}. ${rule}`),
+      "Always drive decisions toward evidence-based progression: Diagnose -> Focus -> Flow.",
+    ].join("\n");
 
     const userText =
       `Company context snapshot:\n${sourceSnapshotJson}\n\n` +
+      `Current process stage guidance:\n${stageGuidanceText}\n\n` +
       `Applied framework guidance:\n${frameworkGuidance}\n\n` +
       `Full company context JSON:\n${contextJson}\n\n` +
       councilProfile.userTextTail;
@@ -1166,6 +1411,7 @@ Deno.serve(async (req) => {
         councilProfile,
         company: company as Record<string, unknown>,
         contextPayload: contextPayload as Record<string, unknown>,
+        stageProfile: processStageProfile,
         modelFailure,
       });
     }
@@ -1178,6 +1424,7 @@ Deno.serve(async (req) => {
         councilProfile,
         company: company as Record<string, unknown>,
         contextPayload: contextPayload as Record<string, unknown>,
+        stageProfile: processStageProfile,
         modelFailure: "Model returned empty recommendations.",
       });
       summary = asText(fallbackOutput.summary, summary);

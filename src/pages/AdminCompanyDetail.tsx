@@ -5,6 +5,7 @@ import { PublicBaselinePanel } from "@/components/PublicBaselinePanel";
 import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePanel";
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
 import CouncilRecommendationsPanel from "@/components/admin/CouncilRecommendationsPanel";
+import PublicSourceFiltersPanel from "@/components/admin/PublicSourceFiltersPanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import TopNav from "@/components/layout/TopNav";
 import { ArrowLeft, ArrowRight, Building2, Globe } from "lucide-react";
@@ -29,7 +30,7 @@ function normalizeUrl(url?: string) {
 export default function AdminCompanyDetail() {
   const { companyId } = useParams();
   const navigate = useNavigate();
-  const { companies, activeCompany, setActiveCompanyId, loading } = useCompany();
+  const { companies, activeCompany, setActiveCompanyId, loading, refetch } = useCompany();
 
   const company = companies.find((entry) => entry.id === companyId) ?? null;
 
@@ -176,6 +177,12 @@ export default function AdminCompanyDetail() {
         </section>
 
         <PublicBaselinePanel companyId={company.id} />
+
+        <PublicSourceFiltersPanel
+          companyId={company.id}
+          initialFiltersJson={company.public_source_filters_json}
+          onSaved={refetch}
+        />
 
         <CompanyFilesPanel companyId={company.id} companyName={company.name} mode="preview" />
 

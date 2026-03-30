@@ -19,6 +19,7 @@ export interface Company {
   evidence_note: string | null;
   last_scored_at: string | null;
   area_scores_json: AreaScoresJson;
+  public_source_filters_json?: Record<string, unknown> | null;
 }
 
 interface CompanyCtx {
@@ -52,12 +53,35 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    const { data, error } = await supabase
+    const baseSelect =
+      "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
+    const extendedSelect = `${baseSelect},public_source_filters_json`;
+
+    let { data, error } = await supabase
       .from("companies")
-      .select(
-        "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json"
-      )
+      .select(extendedSelect)
       .order("created_at", { ascending: true });
+
+    const missingColumn =
+      !!error &&
+      /public_source_filters_json|column .* does not exist|schema cache/i.test(
+        String((error as { message?: string } | null)?.message || ""),
+      );
+
+    if (missingColumn) {
+      const fallback = await supabase
+        .from("companies")
+        .select(baseSelect)
+        .order("created_at", { ascending: true });
+      data = (fallback.data ?? []) as any[];
+      error = fallback.error;
+      if (!error) {
+        data = (data ?? []).map((row) => ({
+          ...row,
+          public_source_filters_json: null,
+        }));
+      }
+    }
 
     if (error) {
       console.error("[companies] fetch error:", error);

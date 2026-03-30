@@ -10,6 +10,7 @@ type RevealProps<T extends ElementType> = {
   delay?: number;
   once?: boolean;
   threshold?: number;
+  rootMargin?: string;
 };
 
 export function Reveal<T extends ElementType = "div">({
@@ -19,6 +20,7 @@ export function Reveal<T extends ElementType = "div">({
   delay = 0,
   once = true,
   threshold = 0.24,
+  rootMargin = "0px 0px -12% 0px",
 }: RevealProps<T>) {
   const Component = (as ?? "div") as ElementType;
   const ref = useRef<HTMLElement | null>(null);
@@ -42,13 +44,13 @@ export function Reveal<T extends ElementType = "div">({
       },
       {
         threshold,
-        rootMargin: "0px 0px -12% 0px",
+        rootMargin,
       },
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [once, threshold]);
+  }, [once, threshold, rootMargin]);
 
   return (
     <Component
@@ -60,4 +62,3 @@ export function Reveal<T extends ElementType = "div">({
     </Component>
   );
 }
-

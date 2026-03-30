@@ -29,6 +29,7 @@ export type Database = {
           name: string
           potential_score: number | null
           projected_score: number | null
+          public_source_filters_json: Json | null
           quarter: string
           tier: number
           website: string | null
@@ -47,6 +48,7 @@ export type Database = {
           name: string
           potential_score?: number | null
           projected_score?: number | null
+          public_source_filters_json?: Json | null
           quarter?: string
           tier?: number
           website?: string | null
@@ -65,6 +67,7 @@ export type Database = {
           name?: string
           potential_score?: number | null
           projected_score?: number | null
+          public_source_filters_json?: Json | null
           quarter?: string
           tier?: number
           website?: string | null

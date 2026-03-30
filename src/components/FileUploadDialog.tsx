@@ -696,20 +696,20 @@ export default function FileUploadDialog({
         .invoke("local-alignment", {
           body: {
             company_id: selectedCompanyId,
-            areas: ["positioning", "strategy"],
+            areas: ["positioning", "strategy", "market", "odi"],
             trigger: "upload_batch",
           },
         })
         .then(({ error, data }) => {
           if (error || data?.error) {
-            toast.error("Local strategy/positioning comparison failed. Uploads were saved.");
+            toast.error("Local comparison failed (positioning, strategy, market, ODI). Uploads were saved.");
             return;
           }
           void queryClient.invalidateQueries({ queryKey: ["local-alignment", selectedCompanyId] });
-          toast.success("Local strategy/positioning comparison updated.");
+          toast.success("Local comparison updated (positioning, strategy, market, ODI).");
         })
         .catch(() => {
-          toast.error("Local strategy/positioning comparison failed. Uploads were saved.");
+          toast.error("Local comparison failed (positioning, strategy, market, ODI). Uploads were saved.");
         })
         .finally(() => {
           setAlignmentRunning(false);
