@@ -1,7 +1,19 @@
 {
   "version": 1,
-  "accepted_at": "2026-03-17T22:36:39.538Z",
+  "accepted_at": "2026-03-30T23:35:52.508Z",
   "files": [
+    {
+      "path": "20-global-cx-blindspots-uncovered.pdf",
+      "tags": [
+        "general_framework"
+      ],
+      "impacts": [
+        "General methodology interpretation"
+      ],
+      "summary_path": "summaries/20-global-cx-blindspots-uncovered.pdf.md",
+      "summary_exists": false,
+      "sha256": "351b9eee0e1747725a3b7c94c0e4c00244f00a1d6c31d1f0967bf6e65f6947e7"
+    },
     {
       "path": "5-Things-Your-Website-Should-Include.pdf",
       "tags": [
@@ -61,6 +73,18 @@
       "summary_path": "summaries/BK_TNWD_001704.pdf.md",
       "summary_exists": false,
       "sha256": "345d53392db84ea54149bb9ef75c1a518ba7f75ce70c0e3971c54a2c4bc2d4f5"
+    },
+    {
+      "path": "cards_prototype.pdf",
+      "tags": [
+        "strategic_goal_cards"
+      ],
+      "impacts": [
+        "Focus prioritization: defend/grow/expand strategic goal card coherence"
+      ],
+      "summary_path": "summaries/cards_prototype.pdf.md",
+      "summary_exists": true,
+      "sha256": "62b4860cdd8a2a219a905f147ccb156b42718ce67ef8db3e5e5a5dcae9f8ef59"
     },
     {
       "path": "Crafting-Contagious-Workbook.pdf",
@@ -255,6 +279,20 @@
       "sha256": "dd3dbf0d68266bbe208618124febcbeec3bfcd649aa4ac90a535c42ef4d05b64"
     },
     {
+      "path": "Strategy by Design Framework (SxD).pdf",
+      "tags": [
+        "sxd_playbook",
+        "strategy_choices"
+      ],
+      "impacts": [
+        "Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals",
+        "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+      ],
+      "summary_path": "summaries/Strategy by Design Framework (SxD).pdf.md",
+      "summary_exists": true,
+      "sha256": "348fd59b60de4c039bd9f9493953d9472ca952eed99cd5de1b0d07336c2a1ef1"
+    },
+    {
       "path": "UNITE-Innovation_Approach-Stage_2-Overview.pdf",
       "tags": [
         "unite_playbook"
@@ -307,6 +345,18 @@
       "summary_path": "summaries/UNITE-JTBD_Statement+Map-Presentation.pdf.md",
       "summary_exists": false,
       "sha256": "953cbc29c29404975773be249471d9d9a00a00ed184b1b5da242f73b416ae147"
+    },
+    {
+      "path": "Unlocking Product Innovation From The Inside.pdf",
+      "tags": [
+        "market_validation"
+      ],
+      "impacts": [
+        "Routes/opportunities: interest vs commitment validation and decision pathways"
+      ],
+      "summary_path": "summaries/Unlocking Product Innovation From The Inside.pdf.md",
+      "summary_exists": true,
+      "sha256": "aae1c06ff464418e8ff6008563891737809c2368e91d0395f463210c4c3ff786"
     }
   ]
 }

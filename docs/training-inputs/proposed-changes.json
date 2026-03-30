@@ -1,14 +1,494 @@
 {
   "version": 1,
-  "generated_at": "2026-03-17T22:35:53.994Z",
+  "generated_at": "2026-03-30T23:35:46.808Z",
   "training_root": "Training_Inputs",
   "previous": {
-    "digest": null,
-    "generated_at": null
+    "digest": "4ea850df03d954d481f30bbb8ca690a0f88b4959be10c9169f7036ef5de20094",
+    "generated_at": "2026-03-17T22:35:53.994Z"
   },
   "current": {
-    "digest": "4ea850df03d954d481f30bbb8ca690a0f88b4959be10c9169f7036ef5de20094",
+    "digest": "3f55ae98591e58ddeef8b03e583997971972d0d2fabf15f8cecabd949a34df13",
     "files": [
+      {
+        "path": "20-global-cx-blindspots-uncovered.pdf",
+        "size_bytes": 3673092,
+        "mtime_ms": 1773788820184.5322,
+        "sha256": "351b9eee0e1747725a3b7c94c0e4c00244f00a1d6c31d1f0967bf6e65f6947e7",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/20-global-cx-blindspots-uncovered.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "5-Things-Your-Website-Should-Include.pdf",
+        "size_bytes": 2463021,
+        "mtime_ms": 1568225307000,
+        "sha256": "1ec3a34fa3a27ac4e8bcbb306aab64edc27e4c66fa372368805f6fe8f3838e2f",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/5-Things-Your-Website-Should-Include.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "AJ&Smart Design Sprint Checklist.pdf",
+        "size_bytes": 294082,
+        "mtime_ms": 1669246693960,
+        "sha256": "ed10f03a446b4941389c83c5d8383c741bea417c44ebfab57218952c2a48f1d1",
+        "tags": [
+          "facilitation"
+        ],
+        "impacts": [
+          "Process playbooks: interview/sprint cadence and workshop structure"
+        ],
+        "summary_path": "summaries/AJ&Smart Design Sprint Checklist.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "AJS_DesignSprint_Workshop_Presentation.pdf",
+        "size_bytes": 33477870,
+        "mtime_ms": 1669246549380,
+        "sha256": "31ff571cbce571e08a0a861e3e06720753b87c2f70ffcb3825718bbe04f28383",
+        "tags": [
+          "facilitation"
+        ],
+        "impacts": [
+          "Process playbooks: interview/sprint cadence and workshop structure"
+        ],
+        "summary_path": "summaries/AJS_DesignSprint_Workshop_Presentation.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "BK_SANS_007366.pdf",
+        "size_bytes": 2260320,
+        "mtime_ms": 1591823439000,
+        "sha256": "2abe58c6a547fc6d10d6125f5d76f9d0debe7ea8d71fe916f0a7495dcfea543b",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/BK_SANS_007366.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "BK_TNWD_001704.pdf",
+        "size_bytes": 3113314,
+        "mtime_ms": 1584462522000,
+        "sha256": "345d53392db84ea54149bb9ef75c1a518ba7f75ce70c0e3971c54a2c4bc2d4f5",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/BK_TNWD_001704.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "cards_prototype.pdf",
+        "size_bytes": 933127,
+        "mtime_ms": 1774913497938.6074,
+        "sha256": "62b4860cdd8a2a219a905f147ccb156b42718ce67ef8db3e5e5a5dcae9f8ef59",
+        "tags": [
+          "strategic_goal_cards"
+        ],
+        "impacts": [
+          "Focus prioritization: defend/grow/expand strategic goal card coherence"
+        ],
+        "summary_path": "summaries/cards_prototype.pdf.md",
+        "summary_exists": true
+      },
+      {
+        "path": "Crafting-Contagious-Workbook.pdf",
+        "size_bytes": 95380,
+        "mtime_ms": 1622845840000,
+        "sha256": "eee0f1c0afef794222a338d0b65cab0d2fa0c67d48c872e4cf9055bd45c92c93",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/Crafting-Contagious-Workbook.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "HBR_P2W_Deck 1.ppt",
+        "size_bytes": 2791936,
+        "mtime_ms": 1399467887000,
+        "sha256": "c187aa1a9eb7e2f40f70a485a86edd9f7010992971ac70aa16ab37bc7ecb0352",
+        "tags": [
+          "strategy_choices"
+        ],
+        "impacts": [
+          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+        ],
+        "summary_path": "summaries/HBR_P2W_Deck 1.ppt.md",
+        "summary_exists": false
+      },
+      {
+        "path": "HBR_P2W_Deck 2.ppt",
+        "size_bytes": 2780672,
+        "mtime_ms": 1399467948000,
+        "sha256": "fdc520a8466d359d8652db0667148bec4b1410f0ffb61938ae406ccd6e76a3bb",
+        "tags": [
+          "strategy_choices"
+        ],
+        "impacts": [
+          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+        ],
+        "summary_path": "summaries/HBR_P2W_Deck 2.ppt.md",
+        "summary_exists": false
+      },
+      {
+        "path": "HBR_P2W_Deck 3.ppt",
+        "size_bytes": 759808,
+        "mtime_ms": 1399467975000,
+        "sha256": "23d835b62643946cb576eaef3866cf0ddc10f594de50df6d350d117dcbd795b0",
+        "tags": [
+          "strategy_choices"
+        ],
+        "impacts": [
+          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+        ],
+        "summary_path": "summaries/HBR_P2W_Deck 3.ppt.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-1-page-summary-of-the-wrap-model.pdf",
+        "size_bytes": 653890,
+        "mtime_ms": 1598114581000,
+        "sha256": "7aaddc8f1800410a96617b5d2194a8cafbcb531845c91257479f8274a7fc112e",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-1-page-summary-of-the-wrap-model.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-4-strategies-motivating-team.pdf",
+        "size_bytes": 106669,
+        "mtime_ms": 1592838503000,
+        "sha256": "97b5ff37b311b1acf6430825be91bd816d2b756b93b1872492f9314b73c66551",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-4-strategies-motivating-team.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-6-tips-giving-great-elevator-pitch.pdf",
+        "size_bytes": 93835,
+        "mtime_ms": 1614991092000,
+        "sha256": "f252c8a597dc9f3722af0447d3584166c22a491cfec999215be799c4f08e32a1",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-6-tips-giving-great-elevator-pitch.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-decisive-workbook.pdf",
+        "size_bytes": 301485,
+        "mtime_ms": 1598114827000,
+        "sha256": "17a8a09e6274f0fc0cee14db6335cf00c6d265d363a412145a74e2fa5e0525e6",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-decisive-workbook.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-made-to-stick-model.pdf",
+        "size_bytes": 2045920,
+        "mtime_ms": 1614991002000,
+        "sha256": "cda266bfd7e04d32b1fa8f96b38c02dbea4ede5d7e954c6fd0ecfe0843f26ed0",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-made-to-stick-model.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-power-moments-1-page-summary-epic.pdf",
+        "size_bytes": 773765,
+        "mtime_ms": 1591805744000,
+        "sha256": "4321d084f2b19d28bb74033d627f70f9557c7d33c4995f757549e5ae79593856",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-power-moments-1-page-summary-epic.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-six-simple-questions-yield-better-decisions.pdf",
+        "size_bytes": 113576,
+        "mtime_ms": 1598114103000,
+        "sha256": "73ebcc867ae4b12dbcd182f156634dd8ab63cd10cc0a7cd76e1e83f6923d4c1e",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-six-simple-questions-yield-better-decisions.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-the-switch-framework.pdf",
+        "size_bytes": 31088,
+        "mtime_ms": 1592838538000,
+        "sha256": "aba17d5ec46f35e800ebf86fc899b01ce82339aa5f6823b688bc050f9b11e159",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-the-switch-framework.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "heathbrothers-upstream-1-page-summary.pdf",
+        "size_bytes": 354861,
+        "mtime_ms": 1591805720000,
+        "sha256": "c27f3181e8982fcdf8e81e872643833dd377323a481e1d3280b02093c4845a78",
+        "tags": [
+          "behavior_change"
+        ],
+        "impacts": [
+          "Routes / messaging: clarity, decision framing, action language"
+        ],
+        "summary_path": "summaries/heathbrothers-upstream-1-page-summary.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "JTBD_Frameworks.pdf",
+        "size_bytes": 147770,
+        "mtime_ms": 1707522097250,
+        "sha256": "b2a35b785547d22da4c5e2a7d7fd22e7b333d91aa197e100b154d85f8948848d",
+        "tags": [
+          "jtbd_odi"
+        ],
+        "impacts": [
+          "Job Steps / Opportunities: ODI wording and evidence expectations"
+        ],
+        "summary_path": "summaries/JTBD_Frameworks.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "Sprint Preparation Guide.pdf",
+        "size_bytes": 78216,
+        "mtime_ms": 1669246532890,
+        "sha256": "096f1c2ce3e1f3edbe04ac07a7c77e5a6220d3c36b8ff00f85458e6fbf2b6627",
+        "tags": [
+          "facilitation"
+        ],
+        "impacts": [
+          "Process playbooks: interview/sprint cadence and workshop structure"
+        ],
+        "summary_path": "summaries/Sprint Preparation Guide.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "Sprint+checklists.pdf",
+        "size_bytes": 938165,
+        "mtime_ms": 1591805870000,
+        "sha256": "dd3dbf0d68266bbe208618124febcbeec3bfcd649aa4ac90a535c42ef4d05b64",
+        "tags": [
+          "facilitation"
+        ],
+        "impacts": [
+          "Process playbooks: interview/sprint cadence and workshop structure"
+        ],
+        "summary_path": "summaries/Sprint+checklists.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "Strategy by Design Framework (SxD).pdf",
+        "size_bytes": 6169150,
+        "mtime_ms": 1774913497936.3372,
+        "sha256": "348fd59b60de4c039bd9f9493953d9472ca952eed99cd5de1b0d07336c2a1ef1",
+        "tags": [
+          "sxd_playbook",
+          "strategy_choices"
+        ],
+        "impacts": [
+          "Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals",
+          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+        ],
+        "summary_path": "summaries/Strategy by Design Framework (SxD).pdf.md",
+        "summary_exists": true
+      },
+      {
+        "path": "UNITE-Innovation_Approach-Stage_2-Overview.pdf",
+        "size_bytes": 88313,
+        "mtime_ms": 1637708066000,
+        "sha256": "a32d9563ec07921fc040098e94d7628f52e8e45aac14b2bb0e6fc89f218b78ce",
+        "tags": [
+          "unite_playbook"
+        ],
+        "impacts": [
+          "Methodology docs: stage definitions and operating standards"
+        ],
+        "summary_path": "summaries/UNITE-Innovation_Approach-Stage_2-Overview.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "UNITE-Innovation_Approach-Stage_2a-JTBD.pdf",
+        "size_bytes": 66336,
+        "mtime_ms": 1638564064000,
+        "sha256": "16d0bf65f768864a89f04b328f9c271c5e6471975cd759d946b3686888d03504",
+        "tags": [
+          "jtbd_odi",
+          "unite_playbook"
+        ],
+        "impacts": [
+          "Job Steps / Opportunities: ODI wording and evidence expectations",
+          "Methodology docs: stage definitions and operating standards"
+        ],
+        "summary_path": "summaries/UNITE-Innovation_Approach-Stage_2a-JTBD.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "UNITE-JTBD_Customer_Criteria.pdf",
+        "size_bytes": 165988,
+        "mtime_ms": 1646326424000,
+        "sha256": "401074b9fc0751c1dd0d25fe29ba7f8ec4664781c13279d6dcb1429b0341d75a",
+        "tags": [
+          "jtbd_odi",
+          "unite_playbook"
+        ],
+        "impacts": [
+          "Job Steps / Opportunities: ODI wording and evidence expectations",
+          "Methodology docs: stage definitions and operating standards"
+        ],
+        "summary_path": "summaries/UNITE-JTBD_Customer_Criteria.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "UNITE-JTBD_Statement+Map-Presentation.pdf",
+        "size_bytes": 2860074,
+        "mtime_ms": 1647115642000,
+        "sha256": "953cbc29c29404975773be249471d9d9a00a00ed184b1b5da242f73b416ae147",
+        "tags": [
+          "jtbd_odi",
+          "unite_playbook"
+        ],
+        "impacts": [
+          "Job Steps / Opportunities: ODI wording and evidence expectations",
+          "Methodology docs: stage definitions and operating standards"
+        ],
+        "summary_path": "summaries/UNITE-JTBD_Statement+Map-Presentation.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "Unlocking Product Innovation From The Inside.pdf",
+        "size_bytes": 9875250,
+        "mtime_ms": 1774913497932.592,
+        "sha256": "aae1c06ff464418e8ff6008563891737809c2368e91d0395f463210c4c3ff786",
+        "tags": [
+          "market_validation"
+        ],
+        "impacts": [
+          "Routes/opportunities: interest vs commitment validation and decision pathways"
+        ],
+        "summary_path": "summaries/Unlocking Product Innovation From The Inside.pdf.md",
+        "summary_exists": true
+      }
+    ]
+  },
+  "comparison": {
+    "added": [
+      {
+        "path": "20-global-cx-blindspots-uncovered.pdf",
+        "size_bytes": 3673092,
+        "mtime_ms": 1773788820184.5322,
+        "sha256": "351b9eee0e1747725a3b7c94c0e4c00244f00a1d6c31d1f0967bf6e65f6947e7",
+        "tags": [
+          "general_framework"
+        ],
+        "impacts": [
+          "General methodology interpretation"
+        ],
+        "summary_path": "summaries/20-global-cx-blindspots-uncovered.pdf.md",
+        "summary_exists": false
+      },
+      {
+        "path": "cards_prototype.pdf",
+        "size_bytes": 933127,
+        "mtime_ms": 1774913497938.6074,
+        "sha256": "62b4860cdd8a2a219a905f147ccb156b42718ce67ef8db3e5e5a5dcae9f8ef59",
+        "tags": [
+          "strategic_goal_cards"
+        ],
+        "impacts": [
+          "Focus prioritization: defend/grow/expand strategic goal card coherence"
+        ],
+        "summary_path": "summaries/cards_prototype.pdf.md",
+        "summary_exists": true
+      },
+      {
+        "path": "Strategy by Design Framework (SxD).pdf",
+        "size_bytes": 6169150,
+        "mtime_ms": 1774913497936.3372,
+        "sha256": "348fd59b60de4c039bd9f9493953d9472ca952eed99cd5de1b0d07336c2a1ef1",
+        "tags": [
+          "sxd_playbook",
+          "strategy_choices"
+        ],
+        "impacts": [
+          "Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals",
+          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+        ],
+        "summary_path": "summaries/Strategy by Design Framework (SxD).pdf.md",
+        "summary_exists": true
+      },
+      {
+        "path": "Unlocking Product Innovation From The Inside.pdf",
+        "size_bytes": 9875250,
+        "mtime_ms": 1774913497932.592,
+        "sha256": "aae1c06ff464418e8ff6008563891737809c2368e91d0395f463210c4c3ff786",
+        "tags": [
+          "market_validation"
+        ],
+        "impacts": [
+          "Routes/opportunities: interest vs commitment validation and decision pathways"
+        ],
+        "summary_path": "summaries/Unlocking Product Innovation From The Inside.pdf.md",
+        "summary_exists": true
+      }
+    ],
+    "changed": [],
+    "removed": [],
+    "unchanged": [
       {
         "path": "5-Things-Your-Website-Should-Include.pdf",
         "size_bytes": 2463021,
@@ -366,368 +846,5 @@
         "summary_exists": false
       }
     ]
-  },
-  "comparison": {
-    "added": [
-      {
-        "path": "5-Things-Your-Website-Should-Include.pdf",
-        "size_bytes": 2463021,
-        "mtime_ms": 1568225307000,
-        "sha256": "1ec3a34fa3a27ac4e8bcbb306aab64edc27e4c66fa372368805f6fe8f3838e2f",
-        "tags": [
-          "general_framework"
-        ],
-        "impacts": [
-          "General methodology interpretation"
-        ],
-        "summary_path": "summaries/5-Things-Your-Website-Should-Include.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "AJ&Smart Design Sprint Checklist.pdf",
-        "size_bytes": 294082,
-        "mtime_ms": 1669246693960,
-        "sha256": "ed10f03a446b4941389c83c5d8383c741bea417c44ebfab57218952c2a48f1d1",
-        "tags": [
-          "facilitation"
-        ],
-        "impacts": [
-          "Process playbooks: interview/sprint cadence and workshop structure"
-        ],
-        "summary_path": "summaries/AJ&Smart Design Sprint Checklist.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "AJS_DesignSprint_Workshop_Presentation.pdf",
-        "size_bytes": 33477870,
-        "mtime_ms": 1669246549380,
-        "sha256": "31ff571cbce571e08a0a861e3e06720753b87c2f70ffcb3825718bbe04f28383",
-        "tags": [
-          "facilitation"
-        ],
-        "impacts": [
-          "Process playbooks: interview/sprint cadence and workshop structure"
-        ],
-        "summary_path": "summaries/AJS_DesignSprint_Workshop_Presentation.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "BK_SANS_007366.pdf",
-        "size_bytes": 2260320,
-        "mtime_ms": 1591823439000,
-        "sha256": "2abe58c6a547fc6d10d6125f5d76f9d0debe7ea8d71fe916f0a7495dcfea543b",
-        "tags": [
-          "general_framework"
-        ],
-        "impacts": [
-          "General methodology interpretation"
-        ],
-        "summary_path": "summaries/BK_SANS_007366.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "BK_TNWD_001704.pdf",
-        "size_bytes": 3113314,
-        "mtime_ms": 1584462522000,
-        "sha256": "345d53392db84ea54149bb9ef75c1a518ba7f75ce70c0e3971c54a2c4bc2d4f5",
-        "tags": [
-          "general_framework"
-        ],
-        "impacts": [
-          "General methodology interpretation"
-        ],
-        "summary_path": "summaries/BK_TNWD_001704.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "Crafting-Contagious-Workbook.pdf",
-        "size_bytes": 95380,
-        "mtime_ms": 1622845840000,
-        "sha256": "eee0f1c0afef794222a338d0b65cab0d2fa0c67d48c872e4cf9055bd45c92c93",
-        "tags": [
-          "general_framework"
-        ],
-        "impacts": [
-          "General methodology interpretation"
-        ],
-        "summary_path": "summaries/Crafting-Contagious-Workbook.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "HBR_P2W_Deck 1.ppt",
-        "size_bytes": 2791936,
-        "mtime_ms": 1399467887000,
-        "sha256": "c187aa1a9eb7e2f40f70a485a86edd9f7010992971ac70aa16ab37bc7ecb0352",
-        "tags": [
-          "strategy_choices"
-        ],
-        "impacts": [
-          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
-        ],
-        "summary_path": "summaries/HBR_P2W_Deck 1.ppt.md",
-        "summary_exists": false
-      },
-      {
-        "path": "HBR_P2W_Deck 2.ppt",
-        "size_bytes": 2780672,
-        "mtime_ms": 1399467948000,
-        "sha256": "fdc520a8466d359d8652db0667148bec4b1410f0ffb61938ae406ccd6e76a3bb",
-        "tags": [
-          "strategy_choices"
-        ],
-        "impacts": [
-          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
-        ],
-        "summary_path": "summaries/HBR_P2W_Deck 2.ppt.md",
-        "summary_exists": false
-      },
-      {
-        "path": "HBR_P2W_Deck 3.ppt",
-        "size_bytes": 759808,
-        "mtime_ms": 1399467975000,
-        "sha256": "23d835b62643946cb576eaef3866cf0ddc10f594de50df6d350d117dcbd795b0",
-        "tags": [
-          "strategy_choices"
-        ],
-        "impacts": [
-          "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
-        ],
-        "summary_path": "summaries/HBR_P2W_Deck 3.ppt.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-1-page-summary-of-the-wrap-model.pdf",
-        "size_bytes": 653890,
-        "mtime_ms": 1598114581000,
-        "sha256": "7aaddc8f1800410a96617b5d2194a8cafbcb531845c91257479f8274a7fc112e",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-1-page-summary-of-the-wrap-model.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-4-strategies-motivating-team.pdf",
-        "size_bytes": 106669,
-        "mtime_ms": 1592838503000,
-        "sha256": "97b5ff37b311b1acf6430825be91bd816d2b756b93b1872492f9314b73c66551",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-4-strategies-motivating-team.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-6-tips-giving-great-elevator-pitch.pdf",
-        "size_bytes": 93835,
-        "mtime_ms": 1614991092000,
-        "sha256": "f252c8a597dc9f3722af0447d3584166c22a491cfec999215be799c4f08e32a1",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-6-tips-giving-great-elevator-pitch.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-decisive-workbook.pdf",
-        "size_bytes": 301485,
-        "mtime_ms": 1598114827000,
-        "sha256": "17a8a09e6274f0fc0cee14db6335cf00c6d265d363a412145a74e2fa5e0525e6",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-decisive-workbook.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-made-to-stick-model.pdf",
-        "size_bytes": 2045920,
-        "mtime_ms": 1614991002000,
-        "sha256": "cda266bfd7e04d32b1fa8f96b38c02dbea4ede5d7e954c6fd0ecfe0843f26ed0",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-made-to-stick-model.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-power-moments-1-page-summary-epic.pdf",
-        "size_bytes": 773765,
-        "mtime_ms": 1591805744000,
-        "sha256": "4321d084f2b19d28bb74033d627f70f9557c7d33c4995f757549e5ae79593856",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-power-moments-1-page-summary-epic.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-six-simple-questions-yield-better-decisions.pdf",
-        "size_bytes": 113576,
-        "mtime_ms": 1598114103000,
-        "sha256": "73ebcc867ae4b12dbcd182f156634dd8ab63cd10cc0a7cd76e1e83f6923d4c1e",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-six-simple-questions-yield-better-decisions.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-the-switch-framework.pdf",
-        "size_bytes": 31088,
-        "mtime_ms": 1592838538000,
-        "sha256": "aba17d5ec46f35e800ebf86fc899b01ce82339aa5f6823b688bc050f9b11e159",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-the-switch-framework.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "heathbrothers-upstream-1-page-summary.pdf",
-        "size_bytes": 354861,
-        "mtime_ms": 1591805720000,
-        "sha256": "c27f3181e8982fcdf8e81e872643833dd377323a481e1d3280b02093c4845a78",
-        "tags": [
-          "behavior_change"
-        ],
-        "impacts": [
-          "Routes / messaging: clarity, decision framing, action language"
-        ],
-        "summary_path": "summaries/heathbrothers-upstream-1-page-summary.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "JTBD_Frameworks.pdf",
-        "size_bytes": 147770,
-        "mtime_ms": 1707522097250,
-        "sha256": "b2a35b785547d22da4c5e2a7d7fd22e7b333d91aa197e100b154d85f8948848d",
-        "tags": [
-          "jtbd_odi"
-        ],
-        "impacts": [
-          "Job Steps / Opportunities: ODI wording and evidence expectations"
-        ],
-        "summary_path": "summaries/JTBD_Frameworks.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "Sprint Preparation Guide.pdf",
-        "size_bytes": 78216,
-        "mtime_ms": 1669246532890,
-        "sha256": "096f1c2ce3e1f3edbe04ac07a7c77e5a6220d3c36b8ff00f85458e6fbf2b6627",
-        "tags": [
-          "facilitation"
-        ],
-        "impacts": [
-          "Process playbooks: interview/sprint cadence and workshop structure"
-        ],
-        "summary_path": "summaries/Sprint Preparation Guide.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "Sprint+checklists.pdf",
-        "size_bytes": 938165,
-        "mtime_ms": 1591805870000,
-        "sha256": "dd3dbf0d68266bbe208618124febcbeec3bfcd649aa4ac90a535c42ef4d05b64",
-        "tags": [
-          "facilitation"
-        ],
-        "impacts": [
-          "Process playbooks: interview/sprint cadence and workshop structure"
-        ],
-        "summary_path": "summaries/Sprint+checklists.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "UNITE-Innovation_Approach-Stage_2-Overview.pdf",
-        "size_bytes": 88313,
-        "mtime_ms": 1637708066000,
-        "sha256": "a32d9563ec07921fc040098e94d7628f52e8e45aac14b2bb0e6fc89f218b78ce",
-        "tags": [
-          "unite_playbook"
-        ],
-        "impacts": [
-          "Methodology docs: stage definitions and operating standards"
-        ],
-        "summary_path": "summaries/UNITE-Innovation_Approach-Stage_2-Overview.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "UNITE-Innovation_Approach-Stage_2a-JTBD.pdf",
-        "size_bytes": 66336,
-        "mtime_ms": 1638564064000,
-        "sha256": "16d0bf65f768864a89f04b328f9c271c5e6471975cd759d946b3686888d03504",
-        "tags": [
-          "jtbd_odi",
-          "unite_playbook"
-        ],
-        "impacts": [
-          "Job Steps / Opportunities: ODI wording and evidence expectations",
-          "Methodology docs: stage definitions and operating standards"
-        ],
-        "summary_path": "summaries/UNITE-Innovation_Approach-Stage_2a-JTBD.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "UNITE-JTBD_Customer_Criteria.pdf",
-        "size_bytes": 165988,
-        "mtime_ms": 1646326424000,
-        "sha256": "401074b9fc0751c1dd0d25fe29ba7f8ec4664781c13279d6dcb1429b0341d75a",
-        "tags": [
-          "jtbd_odi",
-          "unite_playbook"
-        ],
-        "impacts": [
-          "Job Steps / Opportunities: ODI wording and evidence expectations",
-          "Methodology docs: stage definitions and operating standards"
-        ],
-        "summary_path": "summaries/UNITE-JTBD_Customer_Criteria.pdf.md",
-        "summary_exists": false
-      },
-      {
-        "path": "UNITE-JTBD_Statement+Map-Presentation.pdf",
-        "size_bytes": 2860074,
-        "mtime_ms": 1647115642000,
-        "sha256": "953cbc29c29404975773be249471d9d9a00a00ed184b1b5da242f73b416ae147",
-        "tags": [
-          "jtbd_odi",
-          "unite_playbook"
-        ],
-        "impacts": [
-          "Job Steps / Opportunities: ODI wording and evidence expectations",
-          "Methodology docs: stage definitions and operating standards"
-        ],
-        "summary_path": "summaries/UNITE-JTBD_Statement+Map-Presentation.pdf.md",
-        "summary_exists": false
-      }
-    ],
-    "changed": [],
-    "removed": [],
-    "unchanged": []
   }
 }

@@ -30,6 +30,15 @@ type RecommendationRow = {
 
 type CouncilKey = "strategy_council" | "mojo_council";
 type ProcessStage = "diagnose" | "focus" | "flow";
+type StrategicGoalCardKey = "defend_market_share" | "grow_revenue" | "expand_market_share" | "unclear";
+
+type StrategicGoalCardProfile = {
+  key: StrategicGoalCardKey;
+  label: string;
+  confidence: number;
+  rationale: string;
+  signals: string[];
+};
 
 type CouncilProfile = {
   key: CouncilKey;
@@ -230,10 +239,11 @@ async function fetchWithTimeout(
   }
 }
 
-function extractResponsesOutputText(data: any): string | null {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
+function extractResponsesOutputText(data: unknown): string | null {
+  const row = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  if (typeof row.output_text === "string" && row.output_text.trim()) return row.output_text;
 
-  const out = Array.isArray(data?.output) ? data.output : [];
+  const out = Array.isArray(row.output) ? row.output : [];
   for (const item of out) {
     if (item?.type !== "message") continue;
     const content = Array.isArray(item?.content) ? item.content : [];
@@ -416,6 +426,127 @@ function detectTestedSignal(areaScoresJson: unknown) {
   );
 }
 
+function inferStrategicGoalCard(args: {
+  strategicProblems: Array<Record<string, unknown>>;
+  opportunities: Array<Record<string, unknown>>;
+  routes: Array<Record<string, unknown>>;
+  inputs: Array<Record<string, unknown>>;
+}): StrategicGoalCardProfile {
+  const corpus = [
+    ...args.strategicProblems.flatMap((row) => [
+      asText(row.statement, ""),
+      asText(row.problem_statement, ""),
+      asText(row.title, ""),
+      asText(row.description, ""),
+    ]),
+    ...args.opportunities.flatMap((row) => [
+      asText(row.outcome, ""),
+      asText(row.description, ""),
+      asText(row.journey_key, ""),
+    ]),
+    ...args.routes.flatMap((row) => [
+      asText(row.title, ""),
+      asText(row.description, ""),
+      asText(row.why_this_matters, ""),
+    ]),
+    ...args.inputs.flatMap((row) => [
+      asText(row.input_label, ""),
+      asText(row.description, ""),
+      asText(row.why_it_matters, ""),
+      asText(row.sub_group, ""),
+      asText(row.group_label, ""),
+    ]),
+  ]
+    .map((item) => item.toLowerCase().trim())
+    .filter(Boolean)
+    .join(" \n ");
+
+  const signalMap: Array<{
+    key: Exclude<StrategicGoalCardKey, "unclear">;
+    label: string;
+    keywords: string[];
+  }> = [
+    {
+      key: "defend_market_share",
+      label: "Defend Market Share",
+      keywords: [
+        "churn",
+        "retention",
+        "renewal",
+        "defend",
+        "erosion",
+        "price pressure",
+        "satisfaction slipping",
+        "market share declining",
+        "baseline expectations",
+        "parity",
+      ],
+    },
+    {
+      key: "grow_revenue",
+      label: "Grow Revenue",
+      keywords: [
+        "revenue",
+        "pipeline",
+        "pricing",
+        "monetization",
+        "upsell",
+        "cross-sell",
+        "arpu",
+        "margin",
+        "willingness to pay",
+        "bookings",
+      ],
+    },
+    {
+      key: "expand_market_share",
+      label: "Expand Market Share",
+      keywords: [
+        "acquisition",
+        "new customers",
+        "competitor",
+        "new entrants",
+        "switch",
+        "win rate",
+        "category expansion",
+        "share growth",
+        "differentiat",
+      ],
+    },
+  ];
+
+  const scored = signalMap.map((card) => {
+    const hits = card.keywords.filter((keyword) => corpus.includes(keyword));
+    return { ...card, score: hits.length, hits };
+  });
+  const ranked = scored.sort((a, b) => b.score - a.score);
+  const top = ranked[0];
+  const second = ranked[1];
+
+  if (!top || top.score <= 0) {
+    return {
+      key: "unclear",
+      label: "Unclear",
+      confidence: 35,
+      rationale: "Signal mix does not yet indicate one dominant strategic goal card.",
+      signals: ["No high-confidence keyword cluster found across current context."],
+    };
+  }
+
+  const spread = Math.max(0, top.score - (second?.score || 0));
+  const confidence = clamp(54 + spread * 9 + Math.min(12, top.score * 2), 54, 92);
+  const signalHits = top.hits.slice(0, 6).map((hit) => `Matched signal: ${hit}`);
+  const rationale = `Current context most strongly aligns with ${top.label.toLowerCase()} based on observed signal language.`;
+
+  return {
+    key: top.key,
+    label: top.label,
+    confidence: Math.round(confidence),
+    rationale,
+    signals: signalHits.length > 0 ? signalHits : [`Keyword score: ${top.score}`],
+  };
+}
+
 function stageLabel(stage: ProcessStage) {
   if (stage === "diagnose") return "Diagnose";
   if (stage === "focus") return "Focus";
@@ -435,6 +566,12 @@ function buildProcessStageProfile(args: {
   const routes = sliceArray<Record<string, unknown>>(args.contextPayload.routes, 800);
   const sourceCounts = sourceTierCountsFromInputs(inputs);
   const testedSignal = detectTestedSignal(args.company.area_scores_json);
+  const strategicGoalCard = inferStrategicGoalCard({
+    strategicProblems,
+    opportunities,
+    routes,
+    inputs,
+  });
 
   const hasDiagnosisCore = strategicProblems.length > 0 || inputs.length > 0 || assumptions.length > 0;
   const hasCompanyInfo = sourceCounts.company + sourceCounts.evidence + sourceCounts.implemented_tested > 0;
@@ -470,17 +607,22 @@ function buildProcessStageProfile(args: {
           "Prioritize recommendations that sharpen problem framing and expose weak evidence quickly.",
           "Convert public findings into concrete next evidence actions (interviews, company docs, direct proof).",
           "Avoid premature implementation plans when diagnosis is still weak.",
+          strategicGoalCard.key === "unclear"
+            ? "Resolve strategic goal card ambiguity (defend, grow, expand) before committing route mix."
+            : `Use the inferred strategic goal card (${strategicGoalCard.label}) as a working hypothesis, then validate quickly.`,
         ]
       : stage === "focus"
         ? [
             "Prioritize recommendations that rank opportunities against ODI outcomes and strategic choices.",
             "Integrate public and uploaded company evidence before route selection.",
             "Produce one clear next route with rationale, expected outcome movement, and validation plan.",
+            `Keep route sequencing coherent with the strategic goal card: ${strategicGoalCard.label}.`,
           ]
         : [
             "Prioritize recommendations that improve implementation sequencing, enablement, and adoption.",
             "Use tested evidence signals to refine routes and de-risk execution.",
             "Highlight coaching/training actions and measurable checkpoints for sustained execution quality.",
+            "Run explicit interest and commitment validation loops before broad scale-up bets.",
           ];
 
   const evidenceSummary =
@@ -506,6 +648,7 @@ function buildProcessStageProfile(args: {
     testedSignal,
     hasPrimaryEvidence,
     hasTestingEvidence,
+    strategicGoalCard,
   };
 }
 
@@ -530,6 +673,7 @@ function buildDeterministicCouncilOutput(args: {
     testedSignal: number;
     hasPrimaryEvidence: boolean;
     hasTestingEvidence: boolean;
+    strategicGoalCard: StrategicGoalCardProfile;
   };
   modelFailure?: string;
 }) {
@@ -600,6 +744,34 @@ function buildDeterministicCouncilOutput(args: {
         confidence: 83,
         source_basis: "process_stage.flow",
         references: [args.stageProfile.evidenceSummary, args.stageProfile.nextGate],
+      });
+    }
+
+    if (args.stageProfile.strategicGoalCard.key === "unclear") {
+      addRecommendation({
+        title: "Set one strategic goal card before route expansion",
+        recommendation:
+          "Pick one dominant near-term goal card (Defend Market Share, Grow Revenue, or Expand Market Share) and use it as the route sequencing anchor.",
+        rationale:
+          "Without a declared goal card, prioritization tends to mix conflicting tradeoffs and weakens recommendation clarity.",
+        category: "Focus",
+        priority: "high",
+        confidence: 66,
+        source_basis: "strategic_goal_card.inference_unclear",
+        references: args.stageProfile.strategicGoalCard.signals,
+      });
+    } else {
+      addRecommendation({
+        title: `Strategic goal anchor: ${args.stageProfile.strategicGoalCard.label}`,
+        recommendation:
+          `Treat ${args.stageProfile.strategicGoalCard.label.toLowerCase()} as the current prioritization anchor and align route choices to this tradeoff profile until new evidence suggests a shift.`,
+        rationale:
+          "A clear goal-card anchor improves route coherence and reduces fragmented prioritization.",
+        category: "Focus",
+        priority: "medium",
+        confidence: args.stageProfile.strategicGoalCard.confidence,
+        source_basis: "strategic_goal_card.inference",
+        references: args.stageProfile.strategicGoalCard.signals,
       });
     }
 
@@ -1340,6 +1512,13 @@ Deno.serve(async (req) => {
         guidance: processStageProfile.stageGuidance,
         rationale: processStageProfile.rationale,
         evidence_summary: processStageProfile.evidenceSummary,
+        strategic_goal_card: {
+          key: processStageProfile.strategicGoalCard.key,
+          label: processStageProfile.strategicGoalCard.label,
+          confidence: processStageProfile.strategicGoalCard.confidence,
+          rationale: processStageProfile.strategicGoalCard.rationale,
+          signals: processStageProfile.strategicGoalCard.signals,
+        },
       },
       llm_path: {
         provider: "openai_api",
@@ -1380,6 +1559,7 @@ Deno.serve(async (req) => {
       `Stage objective: ${processStageProfile.objective}`,
       `Stage next gate: ${processStageProfile.nextGate}`,
       `Evidence profile: ${processStageProfile.evidenceSummary}`,
+      `Inferred strategic goal card: ${processStageProfile.strategicGoalCard.label} (confidence ${processStageProfile.strategicGoalCard.confidence})`,
       "Stage-specific recommendation rules:",
       ...processStageProfile.stageGuidance.map((rule, index) => `${index + 1}. ${rule}`),
       "Always drive decisions toward evidence-based progression: Diagnose -> Focus -> Flow.",

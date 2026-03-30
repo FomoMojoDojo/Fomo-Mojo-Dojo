@@ -27,6 +27,9 @@ Each framework entry contains:
 - `teresa_torres`
 - `heath_brothers`
 - `strategy_cascade`
+- `sxd`
+- `market_validation`
+- `strategic_goal_cards`
 - `positioning_first`
 - `working_playbook`
 

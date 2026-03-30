@@ -1,9 +1,23 @@
 {
   "version": 1,
-  "accepted_at": "2026-03-17T22:36:39.538Z",
-  "generated_at": "2026-03-17T22:35:53.994Z",
-  "digest": "4ea850df03d954d481f30bbb8ca690a0f88b4959be10c9169f7036ef5de20094",
+  "accepted_at": "2026-03-30T23:35:52.508Z",
+  "generated_at": "2026-03-30T23:35:46.808Z",
+  "digest": "3f55ae98591e58ddeef8b03e583997971972d0d2fabf15f8cecabd949a34df13",
   "files": [
+    {
+      "path": "20-global-cx-blindspots-uncovered.pdf",
+      "size_bytes": 3673092,
+      "mtime_ms": 1773788820184.5322,
+      "sha256": "351b9eee0e1747725a3b7c94c0e4c00244f00a1d6c31d1f0967bf6e65f6947e7",
+      "tags": [
+        "general_framework"
+      ],
+      "impacts": [
+        "General methodology interpretation"
+      ],
+      "summary_path": "summaries/20-global-cx-blindspots-uncovered.pdf.md",
+      "summary_exists": false
+    },
     {
       "path": "5-Things-Your-Website-Should-Include.pdf",
       "size_bytes": 2463021,
@@ -73,6 +87,20 @@
       ],
       "summary_path": "summaries/BK_TNWD_001704.pdf.md",
       "summary_exists": false
+    },
+    {
+      "path": "cards_prototype.pdf",
+      "size_bytes": 933127,
+      "mtime_ms": 1774913497938.6074,
+      "sha256": "62b4860cdd8a2a219a905f147ccb156b42718ce67ef8db3e5e5a5dcae9f8ef59",
+      "tags": [
+        "strategic_goal_cards"
+      ],
+      "impacts": [
+        "Focus prioritization: defend/grow/expand strategic goal card coherence"
+      ],
+      "summary_path": "summaries/cards_prototype.pdf.md",
+      "summary_exists": true
     },
     {
       "path": "Crafting-Contagious-Workbook.pdf",
@@ -299,6 +327,22 @@
       "summary_exists": false
     },
     {
+      "path": "Strategy by Design Framework (SxD).pdf",
+      "size_bytes": 6169150,
+      "mtime_ms": 1774913497936.3372,
+      "sha256": "348fd59b60de4c039bd9f9493953d9472ca952eed99cd5de1b0d07336c2a1ef1",
+      "tags": [
+        "sxd_playbook",
+        "strategy_choices"
+      ],
+      "impacts": [
+        "Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals",
+        "Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment"
+      ],
+      "summary_path": "summaries/Strategy by Design Framework (SxD).pdf.md",
+      "summary_exists": true
+    },
+    {
       "path": "UNITE-Innovation_Approach-Stage_2-Overview.pdf",
       "size_bytes": 88313,
       "mtime_ms": 1637708066000,
@@ -359,6 +403,20 @@
       ],
       "summary_path": "summaries/UNITE-JTBD_Statement+Map-Presentation.pdf.md",
       "summary_exists": false
+    },
+    {
+      "path": "Unlocking Product Innovation From The Inside.pdf",
+      "size_bytes": 9875250,
+      "mtime_ms": 1774913497932.592,
+      "sha256": "aae1c06ff464418e8ff6008563891737809c2368e91d0395f463210c4c3ff786",
+      "tags": [
+        "market_validation"
+      ],
+      "impacts": [
+        "Routes/opportunities: interest vs commitment validation and decision pathways"
+      ],
+      "summary_path": "summaries/Unlocking Product Innovation From The Inside.pdf.md",
+      "summary_exists": true
     }
   ]
 }

@@ -32,6 +32,19 @@ function tagsFor(fileName) {
   const text = fileName.toLowerCase();
   const tags = new Set();
 
+  if (text.includes("strategy by design") || text.includes("(sxd)") || text.includes("sxd")) {
+    tags.add("sxd_playbook");
+  }
+  if (
+    text.includes("market validation") ||
+    text.includes("unlocking product innovation from the inside")
+  ) {
+    tags.add("market_validation");
+  }
+  if (text.includes("cards_prototype") || text.includes("strategic goal cards")) {
+    tags.add("strategic_goal_cards");
+  }
+
   if (text.includes("jtbd") || text.includes("odi") || text.includes("jobs-to-be-done")) tags.add("jtbd_odi");
   if (
     text.includes("p2w") ||
@@ -82,6 +95,16 @@ function tagsFor(fileName) {
 
 function impactsFor(tags) {
   const impacts = new Set();
+
+  if (tags.includes("sxd_playbook")) {
+    impacts.add("Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals");
+  }
+  if (tags.includes("market_validation")) {
+    impacts.add("Routes/opportunities: interest vs commitment validation and decision pathways");
+  }
+  if (tags.includes("strategic_goal_cards")) {
+    impacts.add("Focus prioritization: defend/grow/expand strategic goal card coherence");
+  }
 
   if (tags.includes("jtbd_odi")) {
     impacts.add("Job Steps / Opportunities: ODI wording and evidence expectations");

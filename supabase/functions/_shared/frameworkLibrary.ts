@@ -12,6 +12,9 @@ export type FrameworkKey =
   | "teresa_torres"
   | "heath_brothers"
   | "strategy_cascade"
+  | "sxd"
+  | "market_validation"
+  | "strategic_goal_cards"
   | "working_playbook"
   | "positioning_first";
 
@@ -376,6 +379,159 @@ const FRAMEWORK_LIBRARY: FrameworkReference[] = [
     },
   },
   {
+    key: "sxd",
+    name: "Strategy by Design (SxD)",
+    sourceMode: "hybrid",
+    priority: 72,
+    summary:
+      "Bridges strategy and execution through shared framing, cross-functional alignment rituals, and iterative refinement based on real evidence.",
+    useCases: ["inputs", "journeys", "opportunities", "routes", "positioning", "messaging"],
+    concepts: [
+      "Treat strategy as a living process, not a static artifact.",
+      "Use cross-functional alignment rituals to keep strategy and execution connected.",
+      "Capture assumptions, constraints, and feedback loops explicitly.",
+      "Prefer smallest high-leverage changes before full-scale rollout.",
+    ],
+    heuristics: [
+      "In Diagnose, expose framing gaps and unresolved assumptions before recommending scale actions.",
+      "In Focus, prioritize decisions that improve strategic coherence and execution feasibility.",
+      "In Flow, emphasize cadence, ownership, and measurable adaptation loops.",
+    ],
+    scoringDimensions: [
+      "Framing quality",
+      "Cross-functional alignment",
+      "Execution feasibility",
+      "Adaptation cadence",
+    ],
+    antiPatterns: [
+      "Treating strategy and execution as separate streams.",
+      "Skipping assumption checks and second-order effects.",
+      "Committing to broad execution plans without early pilot evidence.",
+    ],
+    evidencePreference: [
+      "Cross-functional inputs",
+      "Operational constraints",
+      "Pilot learnings",
+      "Behavioral execution signals",
+    ],
+    promptRules: {
+      inputs: [
+        "Capture UX briefing style clarity across users, unmet needs, market scope, differentiation, success metrics, constraints, and ways of working.",
+        "Make knowns vs unknowns explicit and attach a concrete evidence action for unknowns.",
+      ],
+      journeys: [
+        "Highlight strategy-execution handoff risks and where alignment can break across teams.",
+      ],
+      opportunities: [
+        "Prefer opportunities that resolve strategic framing gaps and blocked execution conditions.",
+      ],
+      routes: [
+        "Sequence routes with an execution rhythm: clarify -> test -> operationalize -> reinforce.",
+      ],
+      positioning: [
+        "Stress proposition credibility and ownable positioning supported by observable evidence.",
+      ],
+      messaging: [
+        "Keep strategic narrative concrete and tied to the current stage objective.",
+      ],
+    },
+  },
+  {
+    key: "market_validation",
+    name: "Market Validation Playbook",
+    sourceMode: "hybrid",
+    priority: 66,
+    summary:
+      "Validates opportunities through observable behavior by separating interest signals from commitment signals before scaling decisions.",
+    useCases: ["inputs", "opportunities", "routes"],
+    concepts: [
+      "Behavior beats opinion when validating demand.",
+      "Interest and commitment are distinct validation phases.",
+      "Each route should define next validation step and kill/refine criteria.",
+      "Decision pathways should include proceed, refine, pause, merge, or kill.",
+    ],
+    heuristics: [
+      "When evidence is thin, recommend low-cost validation first.",
+      "Use commitment tests before major investment asks.",
+      "Tie confidence language to validation phase maturity.",
+    ],
+    scoringDimensions: [
+      "Interest signal strength",
+      "Commitment signal strength",
+      "Validation maturity",
+      "Decision readiness",
+    ],
+    antiPatterns: [
+      "Jumping from early curiosity directly to scale recommendations.",
+      "Treating stakeholder preference as market proof.",
+      "Omitting explicit stop/refine conditions.",
+    ],
+    evidencePreference: [
+      "Behavioral conversion events",
+      "Commitment signals (deposit, LOI, payment, value exchange)",
+      "Experiment outcomes",
+      "Observed retention/adoption behavior",
+    ],
+    promptRules: {
+      inputs: [
+        "Add validation fields that distinguish interest tests from commitment tests.",
+      ],
+      opportunities: [
+        "Label opportunity confidence by validation maturity and avoid overclaiming before commitment evidence exists.",
+      ],
+      routes: [
+        "Include a validation plan with method, success criteria, and a decision pathway (proceed/refine/pause/merge/kill).",
+      ],
+    },
+  },
+  {
+    key: "strategic_goal_cards",
+    name: "Strategic Goal Cards",
+    sourceMode: "internal",
+    priority: 58,
+    summary:
+      "Anchors prioritization to a dominant near-term strategic goal card: defend market share, grow revenue, or expand market share.",
+    useCases: ["inputs", "opportunities", "routes"],
+    concepts: [
+      "Prioritization should reflect the current dominant business objective.",
+      "Signal interpretation should map to one explicit goal card.",
+      "Route sequencing should stay coherent with selected goal card tradeoffs.",
+    ],
+    heuristics: [
+      "Infer likely goal card from available signals and state confidence.",
+      "When confidence is low, recommend evidence to confirm or revise the goal card.",
+      "Avoid mixing conflicting goal-card priorities in one route set.",
+    ],
+    scoringDimensions: [
+      "Goal-card clarity",
+      "Signal consistency",
+      "Route-goal coherence",
+      "Tradeoff quality",
+    ],
+    antiPatterns: [
+      "Generic prioritization with no declared strategic goal.",
+      "Conflicting recommendations across defend/grow/expand logic.",
+      "Claiming goal certainty without supporting signals.",
+    ],
+    evidencePreference: [
+      "Revenue trend signals",
+      "Competitive intensity signals",
+      "Satisfaction and retention signals",
+      "Sales and pricing signals",
+    ],
+    promptRules: {
+      inputs: [
+        "Capture which strategic goal card is currently most likely and what evidence supports it.",
+      ],
+      opportunities: [
+        "Frame prioritization rationale in the context of the selected strategic goal card.",
+      ],
+      routes: [
+        "Ensure route mix and sequencing align with the current strategic goal card and its tradeoffs.",
+      ],
+    },
+  },
+  {
     key: "positioning_first",
     name: "Positioning-First Approach",
     sourceMode: "internal",
@@ -558,11 +714,11 @@ export function buildFrameworkCatalog(): string {
 }
 
 const ARTIFACT_ROUTING: Record<FrameworkArtifact, FrameworkKey[]> = {
-  inputs: ["working_playbook", "positioning_first", "strategy_cascade", "april_dunford", "odi", "teresa_torres"],
-  journeys: ["working_playbook", "positioning_first", "odi"],
-  opportunities: ["working_playbook", "positioning_first", "odi", "teresa_torres"],
-  routes: ["working_playbook", "positioning_first", "strategy_cascade", "odi", "teresa_torres", "april_dunford", "heath_brothers"],
-  positioning: ["working_playbook", "positioning_first", "strategy_cascade", "april_dunford", "heath_brothers"],
+  inputs: ["working_playbook", "positioning_first", "sxd", "strategy_cascade", "april_dunford", "odi", "market_validation", "strategic_goal_cards", "teresa_torres"],
+  journeys: ["working_playbook", "positioning_first", "sxd", "odi"],
+  opportunities: ["working_playbook", "positioning_first", "sxd", "odi", "teresa_torres", "market_validation", "strategic_goal_cards"],
+  routes: ["working_playbook", "positioning_first", "sxd", "strategy_cascade", "odi", "teresa_torres", "market_validation", "strategic_goal_cards", "april_dunford", "heath_brothers"],
+  positioning: ["working_playbook", "positioning_first", "sxd", "strategy_cascade", "april_dunford", "heath_brothers"],
   messaging: ["working_playbook", "positioning_first", "april_dunford", "heath_brothers"],
 };
 

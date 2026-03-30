@@ -1,8 +1,14 @@
 # Training Inputs: Active Context
 
-Accepted at: 2026-03-17T22:36:39.538Z
+Accepted at: 2026-03-30T23:35:52.508Z
 
 Use these references to refine reasoning, but do not silently change prompts/scoring without review.
+
+## 20-global-cx-blindspots-uncovered.pdf
+
+- Tags: general_framework
+- Impacts: General methodology interpretation
+- Summary file: summaries/20-global-cx-blindspots-uncovered.pdf.md (missing)
 
 ## 5-Things-Your-Website-Should-Include.pdf
 
@@ -33,6 +39,41 @@ Use these references to refine reasoning, but do not silently change prompts/sco
 - Tags: general_framework
 - Impacts: General methodology interpretation
 - Summary file: summaries/BK_TNWD_001704.pdf.md (missing)
+
+## cards_prototype.pdf
+
+- Tags: strategic_goal_cards
+- Impacts: Focus prioritization: defend/grow/expand strategic goal card coherence
+- Summary file: summaries/cards_prototype.pdf.md (present)
+
+Summary excerpt:
+
+# cards_prototype - Summary
+
+## Purpose
+Simple strategic goal cards for selecting dominant near-term direction and expected trade-offs.
+
+## Strategic goal cards
+- Defend Market Share
+  - Signals: competitor quality rising, satisfaction slipping, price pressure, share erosion.
+  - Implication: prioritize reliability and baseline expectations.
+- Grow Revenue
+  - Signals: flat revenue, leadership pressure, monetization exploration, sales pull.
+  - Implication: emphasize willingness-to-pay and premium/bundle motions.
+- Expand Market Share
+  - Signals: strong competitor growth, new entrants, underleveraged strengths.
+  - Implication: invest in standout differentiation to win switches.
+
+## Diagnose -> Focus -> Flow mapping
+- Diagnose:
+  - Infer likely strategic goal card from evidence signals.
+- Focus:
+  - Use selected card to guide route mix and sequencing.
+- Flow:
+  - Re-evaluate card choice as new evidence and test outcomes arrive.
+
+## Phase 1 integration rule
+Use cards as orientation and recommendation context only; no direct score weighting yet.
 
 ## Crafting-Contagious-Workbook.pdf
 
@@ -130,6 +171,41 @@ Use these references to refine reasoning, but do not silently change prompts/sco
 - Impacts: Process playbooks: interview/sprint cadence and workshop structure
 - Summary file: summaries/Sprint+checklists.pdf.md (missing)
 
+## Strategy by Design Framework (SxD).pdf
+
+- Tags: sxd_playbook, strategy_choices
+- Impacts: Diagnose/Focus/Flow stage guidance: strategy-execution alignment and rituals; Strategy + Positioning: where-to-play/category and how-to-win/attributes alignment
+- Summary file: summaries/Strategy by Design Framework (SxD).pdf.md (present)
+
+Summary excerpt:
+
+# Strategy by Design Framework (SxD) - Summary
+
+## Purpose
+Bridge strategy and execution by making strategy a living, cross-functional process rather than a top-down artifact.
+
+## Key methods to incorporate
+- Strategy Stack / Vertical Team: include leadership, middle management, and frontline context in ongoing strategy refinement.
+- Alignment Ritual: recurring cadence for strategy refinement, OKR adjustment, customer insight, market analysis, technical feasibility, and viability checks.
+- Invaluable Proposition Method: synthesize unmet needs + strengths + ownable positioning; test proposition variants.
+- OKR Stories: narrative-first objective design to maintain intent during execution.
+- Communication and buy-in pathway: role-aligned entry points and momentum-building routines.
+- Psychological safety and middle-management playbook as execution multipliers.
+
+## Diagnose -> Focus -> Flow mapping
+- Diagnose:
+  - Add strategy-execution gap checks and silo/misalignment diagnostics.
+  - Force explicit assumption review and second-order effect prompts.
+- Focus:
+  - Prioritize with cross-functional alignment and proposition quality checks.
+  - Ensure route selection connects to where-to-play/how-to-win logic.
+- Flow:
+  - Run monthly/quarterly alignment rituals.
+  - Track issue escalation, adaptation, and strategic integrity over time.
+
+## Phase 1 integration rule
+Use this framework to...
+
 ## UNITE-Innovation_Approach-Stage_2-Overview.pdf
 
 - Tags: unite_playbook
@@ -154,4 +230,35 @@ Use these references to refine reasoning, but do not silently change prompts/sco
 - Impacts: Job Steps / Opportunities: ODI wording and evidence expectations; Methodology docs: stage definitions and operating standards
 - Summary file: summaries/UNITE-JTBD_Statement+Map-Presentation.pdf.md (missing)
 
-No summary files found yet. Add `Training_Inputs/summaries/<original-file-name>.md` files to make these usable for agent/Ollama context.
+## Unlocking Product Innovation From The Inside.pdf
+
+- Tags: market_validation
+- Impacts: Routes/opportunities: interest vs commitment validation and decision pathways
+- Summary file: summaries/Unlocking Product Innovation From The Inside.pdf.md (present)
+
+Summary excerpt:
+
+# Unlocking Product Innovation From The Inside - Summary
+
+## Purpose
+Operational playbook for moving from hypothesis-heavy planning to evidence-backed strategy execution.
+
+## Key methods to incorporate
+- 4 strategic habits: question problem framing, use project work to reveal system signals, prioritize with discipline, align/adapt continuously.
+- UX Briefing with 7 sections: users, unmet needs, where to play, unique qualification, success metrics, constraints, ways of working.
+- Framestorming: generate and compare alternate problem frames before solutioning.
+- Market Validation Framework:
+  - Phase 1 Interest: fake door, concierge MVP, wizard-of-oz, behavioral interviews, referral challenge.
+  - Phase 2 Commitment: deposit, pre-order/paid beta, LOI, price sensitivity, value exchange.
+  - Decision pathways: proceed, refine, pause, merge, kill.
+- SxD Prioritization: combine customer value, business goal fit, and effort; maintain portfolio balance across must-haves/performance/delighters.
+
+## Diagnose -> Focus -> Flow mapping
+- Diagnose:
+  - Require UX Briefing completeness checks.
+  - Capture framestorm alternatives and assumptions explicitly.
+  - Separate unknowns from claims and define evidence actions.
+- Focus:
+  - Use market validation plans per priority opportunity/route.
+  - Add decision pathway states (proceed/refine/pause/merge/kill).
+  - Apply strategic-goal-aware portfo...
