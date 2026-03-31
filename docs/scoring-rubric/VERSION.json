@@ -1,0 +1,6 @@
+{
+  "current": "0.1.0",
+  "released_on": "2026-03-30",
+  "source_of_truth": "supabase/functions/research-company/index.ts",
+  "notes": "Initial Notion rubric export with market-baseline calibration and multipliers included."
+}
