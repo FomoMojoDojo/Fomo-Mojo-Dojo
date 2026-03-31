@@ -16,6 +16,7 @@ import { useInputs } from "@/hooks/useInputs";
 import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import type { InputItem } from "@/lib/types";
+import { opportunityActionFromNeedScore, opportunityActionTone } from "@/lib/opportunityLabels";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
@@ -82,6 +83,24 @@ function sourcePathLabel(sourcePath?: string | null) {
   const value = String(sourcePath || "").trim();
   if (!value) return "Unknown source";
   return isPublicSourcePath(value) ? `Public: ${value}` : `Uploaded/company: ${value}`;
+}
+
+function formatNeedScore(value: number | null | undefined) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function NeedActionBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
+  const tone = opportunityActionTone(label);
+  return (
+    <span
+      className="inline-flex items-center rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
+      style={{ borderColor: tone.border, background: tone.bg, color: tone.fg }}
+    >
+      {label}
+    </span>
+  );
 }
 
 function normalizeAudienceSignal(value: string | null | undefined) {
@@ -1445,7 +1464,7 @@ function OdiNeedsListSection({
                     setDraggingNeedId(null);
                     setDragOverNeedId(null);
                   }}
-                  className="rounded-xl border p-3"
+                  className="rounded-2xl border overflow-hidden"
                   style={{
                     borderColor: c.line,
                     background: c.card,
@@ -1454,125 +1473,161 @@ function OdiNeedsListSection({
                     opacity: draggingNeedId === item.id ? 0.72 : 1,
                   }}
                 >
-                  <div className="flex items-start gap-2">
-                    <span
-                      className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
-                      style={{ color: c.secondary }}
-                      title="Stable need number based on suggested priority"
-                    >
-                      {needNumberById.get(item.id) || "—"}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      {editingNeedId === item.id ? (
-                        <textarea
-                          value={needDrafts[item.id] ?? item.desired_outcome}
-                          onChange={(event) =>
-                            setNeedDrafts((current) => ({ ...current, [item.id]: event.target.value }))
-                          }
-                          className="min-h-[78px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
-                          style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
-                          placeholder="Desired outcome"
-                        />
-                      ) : (
-                        <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                          {item.desired_outcome}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-start gap-2">
-                    <span className="shrink-0 w-9" aria-hidden />
-                    <div className="min-w-0 flex flex-wrap gap-2">
-                      <StateBadge tone={item.service_state} />
-                      <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge>
-                      <MetaBadge>{item.step_label || "Unassigned step"}</MetaBadge>
-                      <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
-                      <ScoreChip label="Est. I" value={item.importance} />
-                      <ScoreChip label="Est. S" value={item.satisfaction} />
-                    </div>
-                  </div>
-                  {onRemoveNeed ? (
-                    <div className="mt-3 flex justify-end gap-2">
-                      {editingNeedId === item.id ? (
+                  {(() => {
+                    const actionLabel = opportunityActionFromNeedScore(item.opportunity_score);
+                    const actionTone = opportunityActionTone(actionLabel);
+                    const stepContext = item.step_number ? `Step ${item.step_number}` : "Step —";
+                    const stepDetail = item.step_label ? ` · ${item.step_label}` : "";
+                    return (
+                      <>
+                        <div className="h-[4px] w-full" style={{ background: actionTone.fg }} />
+                        <div className="p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+                            <div className="min-w-0">
+                              <div className="mb-2 flex items-center gap-2">
+                                <span
+                                  className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
+                                  style={{ color: c.secondary }}
+                                  title="Stable need number based on suggested priority"
+                                >
+                                  {needNumberById.get(item.id) || "—"}
+                                </span>
+                                <span className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.secondary }}>
+                                  {titleCaseJourney(item.journey_key)} · {stepContext}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="shrink-0">
+                              <p className="font-mono text-[10px] uppercase tracking-[0.06em] whitespace-nowrap text-right" style={{ color: c.secondary }}>
+                                Opp Score {formatNeedScore(item.opportunity_score)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {editingNeedId === item.id ? (
+                            <textarea
+                              value={needDrafts[item.id] ?? item.desired_outcome}
+                              onChange={(event) =>
+                                setNeedDrafts((current) => ({ ...current, [item.id]: event.target.value }))
+                              }
+                              className="min-h-[84px] w-full rounded-lg border px-2.5 py-2 font-sans text-[13px] leading-[1.5] outline-none"
+                              style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                              placeholder="Desired outcome"
+                            />
+                          ) : (
+                            <p className="font-sans text-[16px] font-semibold leading-[1.5]" style={{ color: c.charcoal }}>
+                              {item.desired_outcome}
+                            </p>
+                          )}
+
+                          <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
+                            <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                              Job step context:
+                            </span>{" "}
+                            {stepContext}
+                            {stepDetail}
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2" style={{ borderColor: c.line }}>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <NeedActionBadge label={actionLabel} />
+                              <StateBadge tone={item.service_state} />
+                              <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
+                            </div>
+                            <p className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.secondary }}>
+                              I {item.importance ?? "—"} · S {item.satisfaction ?? "—"}
+                            </p>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                  <div className="px-4 pb-4">
+                    <div className="flex justify-end gap-2">
+                      {onRemoveNeed ? (
                         <>
+                          {editingNeedId === item.id ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingNeedId(null);
+                                  setNeedDrafts((current) => {
+                                    const next = { ...current };
+                                    delete next[item.id];
+                                    return next;
+                                  });
+                                }}
+                                disabled={updatingNeedId === item.id}
+                                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!onUpdateNeedText) return;
+                                  const draftValue = String(needDrafts[item.id] ?? item.desired_outcome).trim();
+                                  if (!draftValue) {
+                                    toast.error("Need text cannot be empty.");
+                                    return;
+                                  }
+                                  try {
+                                    await onUpdateNeedText(item.id, { desired_outcome: draftValue });
+                                    setNeedItems((current) =>
+                                      current.map((row) =>
+                                        row.id === item.id ? { ...row, desired_outcome: draftValue } : row,
+                                      ),
+                                    );
+                                    setEditingNeedId(null);
+                                    setNeedDrafts((current) => {
+                                      const next = { ...current };
+                                      delete next[item.id];
+                                      return next;
+                                    });
+                                    toast.success("Need updated.");
+                                  } catch (err) {
+                                    toast.error(err instanceof Error ? err.message : "Failed to update need.");
+                                  }
+                                }}
+                                disabled={updatingNeedId === item.id}
+                                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                              >
+                                {updatingNeedId === item.id ? "Saving…" : "Save"}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingNeedId(item.id);
+                                setNeedDrafts((current) => ({
+                                  ...current,
+                                  [item.id]: current[item.id] ?? item.desired_outcome,
+                                }));
+                              }}
+                              disabled={updatingNeedId === item.id}
+                              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                            >
+                              Edit
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => {
-                              setEditingNeedId(null);
-                              setNeedDrafts((current) => {
-                                const next = { ...current };
-                                delete next[item.id];
-                                return next;
-                              });
-                            }}
-                            disabled={updatingNeedId === item.id}
+                            onClick={() => onRemoveNeed(item.id)}
+                            disabled={removingNeedId === item.id || updatingNeedId === item.id}
                             className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                            style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                            style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
                           >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (!onUpdateNeedText) return;
-                              const draftValue = String(needDrafts[item.id] ?? item.desired_outcome).trim();
-                              if (!draftValue) {
-                                toast.error("Need text cannot be empty.");
-                                return;
-                              }
-                              try {
-                                await onUpdateNeedText(item.id, { desired_outcome: draftValue });
-                                setNeedItems((current) =>
-                                  current.map((row) =>
-                                    row.id === item.id ? { ...row, desired_outcome: draftValue } : row,
-                                  ),
-                                );
-                                setEditingNeedId(null);
-                                setNeedDrafts((current) => {
-                                  const next = { ...current };
-                                  delete next[item.id];
-                                  return next;
-                                });
-                                toast.success("Need updated.");
-                              } catch (err) {
-                                toast.error(err instanceof Error ? err.message : "Failed to update need.");
-                              }
-                            }}
-                            disabled={updatingNeedId === item.id}
-                            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                            style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
-                          >
-                            {updatingNeedId === item.id ? "Saving…" : "Save"}
+                            {removingNeedId === item.id ? "Removing…" : "Remove Need"}
                           </button>
                         </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingNeedId(item.id);
-                            setNeedDrafts((current) => ({
-                              ...current,
-                              [item.id]: current[item.id] ?? item.desired_outcome,
-                            }));
-                          }}
-                          disabled={updatingNeedId === item.id}
-                          className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                          style={{ borderColor: c.line, color: c.secondary, background: c.card }}
-                        >
-                          Edit
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => onRemoveNeed(item.id)}
-                        disabled={removingNeedId === item.id || updatingNeedId === item.id}
-                        className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                        style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
-                      >
-                        {removingNeedId === item.id ? "Removing…" : "Remove Need"}
-                      </button>
+                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               ))}
             </div>

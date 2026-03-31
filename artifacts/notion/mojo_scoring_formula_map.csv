@@ -1,4 +1,9 @@
 property,notion_formula,notes,version
+Guiding Principle 01,,"Clarity first: keep rubric wording simple and avoid jargon.",0.1.0
+Guiding Principle 02,,"Evidence over opinion: score from traceable signals, not assumptions.",0.1.0
+Guiding Principle 03,,"Actionable outputs: each score component should point to a practical next step.",0.1.0
+Guiding Principle 04,,"Comparable and stable: formulas should stay consistent across companies and time.",0.1.0
+Guiding Principle 05,,"Transparent tradeoffs: document what the rubric rewards and penalizes.",0.1.0
 Positioning Gate,"round(100 * (0.5 * prop(""Positioning Coverage N"") + 0.25 * prop(""Baseline Support N"") + 0.15 * prop(""Ledger Coverage N"") + 0.1 * prop(""Positioning Completeness N"")) * 10) / 10","Positioning gate score",0.1.0
 Customer Insight Gate,"round(100 * (0.2 * prop(""Customer Coverage N"") + 0.25 * prop(""Opp Coverage N"") + 0.2 * prop(""Underserved N"") + 0.2 * prop(""Customer Journey Health N"") + 0.15 * prop(""Customer Opp Coverage N"")) * 10) / 10","Customer insight gate score",0.1.0
 Strategy Cascade Gate,"round(100 * (0.2 * prop(""Strategy Coverage N"") + 0.15 * prop(""Revenue Journey Health N"") + 0.15 * prop(""Ops Journey Health N"") + 0.15 * prop(""Baseline Support N"") + 0.1 * prop(""Strategy Opp Coverage N"") + 0.1 * prop(""Strategy Completeness N"") + 0.15 * prop(""Strategic Alignment N"")) * 10) / 10","Strategy cascade gate score",0.1.0

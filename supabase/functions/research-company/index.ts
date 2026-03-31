@@ -829,26 +829,26 @@ function contextualizeInputForCompany(args: {
     !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
   if (key === "needs-assessment") {
     if (needsOdiSignal(description)) {
-      description = "ODI job map and desired outcomes by segment";
+      description = "Customer job map and desired outcomes by segment";
     }
     if (needsOdiSignal(whyItMatters)) {
-      whyItMatters = "Sets importance and satisfaction gaps before solution bets";
+      whyItMatters = "Shows what matters most and where current results are falling short";
     }
   }
   if (key === "outcome-data") {
     if (needsOdiSignal(description)) {
-      description = "Track ODI outcome satisfaction and completion signals";
+      description = "Track desired outcome satisfaction and completion signals";
     }
     if (needsOdiSignal(whyItMatters)) {
-      whyItMatters = "Validates progress on high-importance underserved outcomes";
+      whyItMatters = "Confirms progress on high-importance outcomes that are still underserved";
     }
   }
   if (key === "referral-map") {
     if (needsOdiSignal(description)) {
-      description = "Map decision-journey triggers and trusted acquisition sources";
+      description = "Map decision triggers and trusted channels customers use";
     }
     if (needsOdiSignal(whyItMatters)) {
-      whyItMatters = "Shows where customers discover, evaluate, and choose";
+      whyItMatters = "Shows where customers discover, evaluate, and choose with confidence";
     }
   }
 
@@ -1040,6 +1040,37 @@ const WEAK_OUTCOME_TERMS = [
   "integration",
 ];
 
+const ODI_PLAIN_LANGUAGE_RULES =
+  "ODI wording rules: Keep desired outcomes in plain, human language. " +
+  "Use one clear idea per sentence. Prefer everyday words over abstract consulting terms. " +
+  "Keep outcomes concise (roughly 10-18 words when possible). " +
+  "Prefer concrete phrasing like 'tracked decision results' instead of jargon like 'monitored decision outcomes'.";
+
+const ODI_OUTCOME_PHRASE_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmonitored decision outcomes\b/gi, "tracked decision results"],
+  [/\bdecision outcomes\b/gi, "decision results"],
+  [/\bbased on insights from\b/gi, "using evidence from"],
+  [/\bstrategic alignment\b/gi, "fit with strategy"],
+  [/\bcore audience\b/gi, "main audience"],
+  [/\bleverage\b/gi, "use"],
+  [/\butili[sz]e\b/gi, "use"],
+  [/\boptimi[sz]e\b/gi, "improve"],
+];
+
+function normalizeOutcomeLanguage(outcome: string) {
+  let text = String(outcome || "").trim();
+  if (!text) return "";
+  for (const [pattern, replacement] of ODI_OUTCOME_PHRASE_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  text = text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 const GENERIC_MANAGED_OUTCOME_PHRASES = [
   "improve customer progress",
   "improve demand and funding progress",
@@ -1093,7 +1124,8 @@ async function repairWeakOpportunities(args: {
     `- uses a directional construction like minimize, reduce, increase, improve, maximize, or avoid\n` +
     `- includes a measurable dimension in spirit: time, effort, risk, confidence, clarity, consistency, completion, follow-through, retention, conversion, continuity, or similar\n` +
     `- stays specific to the company, audience, and step context\n` +
-    `Do not output feature ideas, initiatives, deliverables, launches, forms, portals, dashboards, or campaigns as outcomes.\n`;
+    `Do not output feature ideas, initiatives, deliverables, launches, forms, portals, dashboards, or campaigns as outcomes.\n` +
+    `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
@@ -1736,6 +1768,8 @@ const PLAIN_LANGUAGE_RULES =
   "Writing style rules: Use clear, plain language that a non-expert can understand. " +
   "Avoid consulting jargon, business cliches, and buzzwords. " +
   "Prefer concrete wording over abstract phrasing. Keep sentences short and direct. " +
+  "For ODI needs and outcomes, keep one idea per sentence and use everyday wording. " +
+  "Prefer 'tracked decision results' over abstract phrasing like 'monitored decision outcomes'. " +
   "Only keep specialized terms when they are required by the evidence or provided explicitly by the user/client. " +
   "If source evidence includes direct quotes, preserve them verbatim. Do not paraphrase direct quotes. " +
   "If company-specific phrasing/taglines exist, keep them as-is and, when useful, add a separate optional suggestion prefixed exactly with 'Suggested clearer version:' rather than replacing the original wording.";
@@ -4162,11 +4196,14 @@ Deno.serve(async (req) => {
       `- Good example style: "Minimize the time it takes to complete intake during a family crisis"\n` +
       `- Better example style: "Increase the likelihood that a referred family completes the first intake step after initial outreach"\n` +
       `- Bad example style: "Build a better intake form", "Add referral dashboard", or "Launch a new donor campaign"\n` +
+      `- Avoid jargon phrases like "monitored decision outcomes", "strategic alignment", and "core audience"\n` +
+      `- Prefer plain alternatives like "tracked decision results", "fit with strategy", and "main audience"\n` +
       `- importance/satisfaction 1..10\n` +
       `- opportunity_score = importance + (10 - satisfaction)\n` +
       `- priority_tier: focus if >= 12, monitor if >= 7, defer if < 7\n` +
       `- Bias toward higher importance / lower satisfaction when a referenced step has has_gap=true or designed=false\n` +
-      `- Treat high-importance, low-satisfaction outcomes as underserved opportunities\n`;
+      `- Treat high-importance, low-satisfaction outcomes as underserved opportunities\n` +
+      `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
     const oppsUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -4235,6 +4272,10 @@ Deno.serve(async (req) => {
       const key = `${Number(opp?.step_number) || 0}::${String(opp?.step_label || "").trim().toLowerCase()}`;
       return customerStepIndex.has(key);
     });
+    opportunities = opportunities.map((opp) => ({
+      ...opp,
+      outcome: normalizeOutcomeLanguage(String(opp?.outcome || "")),
+    }));
 
     if (opportunities.length < 8) {
       return jsonResponse({
@@ -5105,12 +5146,13 @@ Deno.serve(async (req) => {
       );
       const priority_tier =
         opportunity_score >= 12 ? "focus" : opportunity_score >= 7 ? "monitor" : "defer";
+      const desiredOutcome = normalizeOutcomeLanguage(String(opp?.outcome || ""));
 
       const { error: odiNeedErr } = await supabase.from("odi_needs").insert({
         company_id,
         user_id: user.id,
         tier: "need",
-        desired_outcome: String(opp?.outcome || ""),
+        desired_outcome: desiredOutcome,
         journey_key: "customer",
         step_number: Number(opp?.step_number) || 0,
         step_label: String(opp?.step_label || ""),

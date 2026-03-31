@@ -130,6 +130,31 @@ function normalizeCrossAreaInputIds(raw: unknown): string[] {
   return [...unique];
 }
 
+const ODI_UPLOAD_OUTCOME_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmonitored decision outcomes\b/gi, 'tracked decision results'],
+  [/\bdecision outcomes\b/gi, 'decision results'],
+  [/\bbased on insights from\b/gi, 'using evidence from'],
+  [/\bstrategic alignment\b/gi, 'fit with strategy'],
+  [/\bcore audience\b/gi, 'main audience'],
+  [/\bleverage\b/gi, 'use'],
+  [/\butili[sz]e\b/gi, 'use'],
+  [/\boptimi[sz]e\b/gi, 'improve'],
+];
+
+function normalizeNeedOutcomeText(value: string): string {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  for (const [pattern, replacement] of ODI_UPLOAD_OUTCOME_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  text = text
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function normalizeOdiNeedCandidates(raw: unknown) {
   if (!Array.isArray(raw)) return [] as AnalysisResult['odiNeedCandidates'];
   const normalized: AnalysisResult['odiNeedCandidates'] = [];
@@ -137,7 +162,7 @@ function normalizeOdiNeedCandidates(raw: unknown) {
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const record = item as Record<string, unknown>;
-    const desiredOutcome = String(record.desired_outcome || '').trim();
+    const desiredOutcome = normalizeNeedOutcomeText(String(record.desired_outcome || ''));
     if (!desiredOutcome) continue;
     const canonical = desiredOutcome.toLowerCase();
     if (seen.has(canonical)) continue;
@@ -337,7 +362,7 @@ async function persistUploadDerivedNeeds(params: {
 
     const toInsert = candidates
       .map((candidate) => ({
-        desired_outcome: candidate.desiredOutcome.trim(),
+        desired_outcome: normalizeNeedOutcomeText(candidate.desiredOutcome),
         importance: Math.max(1, Math.min(10, Math.round(candidate.importance || 7))),
         satisfaction: Math.max(1, Math.min(10, Math.round(candidate.satisfaction || 4))),
       }))

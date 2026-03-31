@@ -655,6 +655,7 @@ When company evidence (or stronger) is present, do not keep this area framed as 
 Use strategic problem statements as the prioritization anchor for what matters, what is missing, and what should happen next.
 
 Use clear, plain language. Avoid consulting jargon, business cliches, and buzzwords unless the source evidence explicitly uses those terms.
+For ODI-style needs or outcomes, keep one clear idea per sentence and use plain wording (for example: "tracked decision results").
 If source text includes direct quotes or company-specific phrasing/taglines, keep them exactly as written.
 If a clearer phrasing would help, keep the original and add a separate optional line starting with "Suggested clearer version:".`;
 

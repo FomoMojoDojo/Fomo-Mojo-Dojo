@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -107,6 +107,8 @@ export function ProblemSequence() {
   const viewportHeightRef = useRef(0);
   const mobileActiveIndexRef = useRef(0);
   const mobileInitRef = useRef(false);
+  const clarityHoldUntilRef = useRef(0);
+  const systemHoldUntilRef = useRef(0);
   const [progress, setProgress] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [mobileMode, setMobileMode] = useState(false);
@@ -114,7 +116,36 @@ export function ProblemSequence() {
   const [isInView, setIsInView] = useState(false);
   const strategyLeadIndex = steps.findIndex((step) => step.id === "s4a");
   const strategyFollowIndex = steps.findIndex((step) => step.id === "s4b");
-  const getSequenceProgress = (value: number, count: number) => clamp01((value - 0.07) / 0.86) * (count - 1);
+  const clarityStepIndex = steps.findIndex((step) => step.id === "s3");
+  const systemStepIndex = steps.findIndex((step) => step.id === "s6");
+  const clarityHoldDurationMs = 1800;
+  const systemHoldDurationMs = 1800;
+  const getSequenceProgress = useCallback((value: number, count: number) => clamp01((value - 0.07) / 0.86) * (count - 1), []);
+  const getHoldAwareSequenceProgress = useCallback((value: number, count: number) => {
+    const raw = getSequenceProgress(value, count);
+    const now = Date.now();
+    const evaluateHold = (stepIndex: number, holdDurationMs: number, holdRef: { current: number }) => {
+      if (stepIndex < 0) return null;
+      const inWindow = raw >= stepIndex && raw < stepIndex + 1;
+      if (inWindow && now >= holdRef.current) {
+        holdRef.current = now + holdDurationMs;
+      }
+      if (raw < stepIndex) {
+        holdRef.current = 0;
+      }
+      if (now < holdRef.current && raw >= stepIndex) {
+        return stepIndex;
+      }
+      return null;
+    };
+
+    const clarityHold = evaluateHold(clarityStepIndex, clarityHoldDurationMs, clarityHoldUntilRef);
+    const systemHold = evaluateHold(systemStepIndex, systemHoldDurationMs, systemHoldUntilRef);
+
+    const heldStep = Math.max(clarityHold ?? -1, systemHold ?? -1);
+    if (heldStep >= 0) return heldStep;
+    return raw;
+  }, [clarityStepIndex, clarityHoldDurationMs, getSequenceProgress, systemStepIndex, systemHoldDurationMs]);
   const renderLines = (step: SequenceStep, index: number) => {
     const output: { key: string; text: string; accent: boolean; dim: boolean; delayed: boolean }[] = [];
     if (step.carryPreviousAsDim && index > 0) {
@@ -199,7 +230,7 @@ export function ProblemSequence() {
       const rawProgress = scrolled / scrollLength;
       if (isMobileRef.current) {
         const count = steps.length;
-        const sequenceProgress = getSequenceProgress(rawProgress, count);
+        const sequenceProgress = getHoldAwareSequenceProgress(rawProgress, count);
         let next = mobileActiveIndexRef.current;
 
         while (next < count - 1 && sequenceProgress >= next + 0.7) next += 1;
@@ -243,7 +274,7 @@ export function ProblemSequence() {
       window.removeEventListener("resize", onResize);
       if (rafId !== 0) window.cancelAnimationFrame(rafId);
     };
-  }, [reducedMotion, isInView]);
+  }, [getHoldAwareSequenceProgress, reducedMotion, isInView]);
 
   useEffect(() => {
     if (!mobileMode) {
@@ -319,7 +350,7 @@ export function ProblemSequence() {
       <div className="problem-sequence-inner">
         <div className="sequence-stage">
           {(() => {
-            const sequenceProgress = getSequenceProgress(progress, steps.length);
+            const sequenceProgress = getHoldAwareSequenceProgress(progress, steps.length);
             const nearestIndex = Math.round(sequenceProgress);
             const hasStrategyPair = strategyLeadIndex >= 0 && strategyFollowIndex === strategyLeadIndex + 1;
             const strategyBlend = hasStrategyPair ? clamp01(sequenceProgress - strategyLeadIndex) : 0;

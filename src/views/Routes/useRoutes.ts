@@ -97,7 +97,7 @@ export function useRoutes(companyId?: string) {
               short_description:
                 `${opp.journey_key} journey` +
                 (opp.step_label ? `, step ${opp.step_number ?? "?"}: ${opp.step_label}. ` : ". ") +
-                `Derived from opportunity score ${opp.opportunity_score ?? "?"}; importance ${opp.importance ?? "?"}, satisfaction ${opp.satisfaction ?? "?"}.`,
+                `Derived from opp score ${opp.opportunity_score ?? "?"}; importance ${opp.importance ?? "?"}, satisfaction ${opp.satisfaction ?? "?"}.`,
               pts_value: Math.max(1, Math.min(10, Math.round((opp.opportunity_score ?? 1) / 2))),
               effort,
               type: category === "fix" ? "Fix" : category === "create" ? "Create" : "Improve",
@@ -164,7 +164,7 @@ export function useRoutes(companyId?: string) {
                 short_description:
                   `${opp.journey_key} journey` +
                   (opp.step_label ? `, step ${opp.step_number ?? "?"}: ${opp.step_label}. ` : ". ") +
-                  `Derived from opportunity score ${opp.opportunity_score ?? "?"}; importance ${opp.importance ?? "?"}, satisfaction ${opp.satisfaction ?? "?"}.`,
+                  `Derived from opp score ${opp.opportunity_score ?? "?"}; importance ${opp.importance ?? "?"}, satisfaction ${opp.satisfaction ?? "?"}.`,
                 pts_value: Math.max(1, Math.min(10, Math.round((opp.opportunity_score ?? 1) / 2))),
                 effort,
                 type: category === "fix" ? "Fix" : category === "create" ? "Create" : "Improve",

@@ -4,6 +4,13 @@ This folder versions the Notion-facing scoring rubric separately from implementa
 
 Current phase is proving/pre-release, so versions remain in 0.x until the model is fully validated.
 
+## Guiding principles
+- Clarity first: scoring logic and labels should be easy to understand without consulting jargon.
+- Evidence over opinion: prefer observed evidence and traceable signals over assumptions.
+- Actionable outputs: each score component should point to a practical next improvement.
+- Comparable and stable: formulas should be consistent across companies and over time.
+- Transparent tradeoffs: document what the rubric rewards and what it penalizes.
+
 ## Current version
 - See `VERSION.json`.
 

@@ -1195,6 +1195,7 @@ async function callOpenAI(opts: {
               "If not proven, use low_pct=0, typical_pct=12, high_pct=20 and source='unproven'. " +
               "When proven=true, include source name plus evidence_urls and short evidence_snippets that support the numbers. " +
               "Use clear, plain language. Avoid consulting jargon, business cliches, and buzzwords unless the source evidence explicitly uses those terms. " +
+              "For ODI-style needs or outcomes, keep one clear idea per sentence and use plain wording (for example: 'tracked decision results'). " +
               "Do not infer company type from name alone (for example, do not assume education/school context unless evidence explicitly supports it). " +
               "If the evidence includes direct quotes, preserve them verbatim. " +
               "If clearer wording is helpful, keep the original wording and add a separate optional line starting with 'Suggested clearer version:'.",

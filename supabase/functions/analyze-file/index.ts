@@ -320,6 +320,9 @@ ODI candidates should follow desired-outcome structure and avoid prescribing a s
 
     const plainLanguageRule =
       "Use clear, plain language in reasoning. Avoid consulting jargon, business cliches, and buzzwords unless the source text explicitly uses them.";
+    const odiOutcomeLanguageRule =
+      "For ODI desired outcomes, keep one clear idea per sentence and use everyday words. " +
+      "Prefer plain phrasing like 'tracked decision results' instead of abstract wording like 'monitored decision outcomes'.";
     const quoteAndVoiceRule =
       "Preserve direct quotes exactly. If company-specific language or taglines are present, keep them unchanged. " +
       "If clarity help is useful, keep original wording and add a separate optional line prefixed with 'Suggested clearer version:'.";
@@ -339,7 +342,7 @@ Return your analysis.`;
       body: JSON.stringify({
         model: OLLAMA_MODEL,
         messages: [
-          { role: "system", content: `${systemPrompt}\n\n${plainLanguageRule}\n${quoteAndVoiceRule}` },
+          { role: "system", content: `${systemPrompt}\n\n${plainLanguageRule}\n${odiOutcomeLanguageRule}\n${quoteAndVoiceRule}` },
           { role: "user", content: userPrompt },
         ],
         tools: [

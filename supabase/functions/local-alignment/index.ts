@@ -20,6 +20,7 @@ const PLAIN_LANGUAGE_RULES =
   "Use clear, plain language for all output. " +
   "Avoid consulting jargon, business cliches, and buzzwords. " +
   "Use concrete wording and short direct sentences. " +
+  "For ODI needs and outcomes, keep one idea per sentence and use plain wording (for example: 'tracked decision results'). " +
   "Only keep specialized terms when they come directly from source evidence or user-provided terms. " +
   "Preserve direct quotes exactly as written. Do not paraphrase quoted text. " +
   "If clarity help is needed, keep the original wording and add a separate optional line prefixed with 'Suggested clearer version:'.";

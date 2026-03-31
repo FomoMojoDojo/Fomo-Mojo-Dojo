@@ -272,10 +272,12 @@ export default function Home() {
             <MojoMapSequence />
           </div>
 
-          <div className="map-screens-wrap map-screens-overlap">
-            <Reveal delay={360}>
-              <MapDetailGallery items={mapDetailCards} />
-            </Reveal>
+          <div className="map-screens-hold">
+            <div className="map-screens-wrap map-screens-overlap">
+              <Reveal delay={360}>
+                <MapDetailGallery items={mapDetailCards} />
+              </Reveal>
+            </div>
           </div>
 
           <div className="mx-auto max-w-3xl space-y-4 text-center">

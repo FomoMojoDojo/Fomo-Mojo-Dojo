@@ -1,21 +1,22 @@
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, GitBranch, Info, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
-import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities";
+import { useOpportunities, type OpportunityRow, type WorkflowStatus } from "@/hooks/useOpportunities";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { MetaBadge, ScoreChip, StateBadge, TierBadge } from "@/components/ui/semantic-badges";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import { computeOpportunityScore } from "@/lib/scoring";
+import { opportunityActionFromPriorityTier, opportunityActionTone } from "@/lib/opportunityLabels";
 import {
-  alignmentLevelFromFocus,
   classifyOpportunityFocus,
   deriveInitiativeContext,
   type FocusClassification,
 } from "@/lib/initiativeFocus";
-import AlignmentCircle from "@/components/ui/AlignmentCircle";
 
 const c = {
   bg: "#faf7f6",
@@ -37,10 +38,38 @@ const JOURNEY_ACCENT: Record<string, string> = {
   operations: "#233C4B",
 };
 
-const EVIDENCE_DOT_STYLES = {
-  active: { border: "#233C4B", background: "#233C4B", text: "#233C4B" },
-  inactive: { border: "#B9C8C3", background: "transparent", text: "#7B8F89" },
-};
+const TREE_STEP_MIN_WIDTH = 280;
+const TREE_MAP_MIN_WIDTH = 1160;
+const WORKFLOW_STATUS_OPTIONS: Array<{ value: WorkflowStatus; label: string }> = [
+  { value: "in_progress", label: "In progress" },
+  { value: "planned", label: "Planned" },
+  { value: "parked", label: "Parked" },
+];
+
+const OUTCOME_TEXT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmonitored decision outcomes\b/gi, "tracked decision results"],
+  [/\bdecision outcomes\b/gi, "decision results"],
+  [/\bbased on insights from\b/gi, "using evidence from"],
+  [/\bstrategic alignment\b/gi, "fit with strategy"],
+  [/\bcore audience\b/gi, "main audience"],
+  [/\bleverage\b/gi, "use"],
+  [/\butili[sz]e\b/gi, "use"],
+  [/\boptimi[sz]e\b/gi, "improve"],
+];
+
+function humanizeOutcomeText(value: string | null | undefined) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  for (const [pattern, replacement] of OUTCOME_TEXT_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  text = text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function focusSortValue(focus: FocusClassification | undefined) {
   if (!focus) return 0;
@@ -60,24 +89,11 @@ function OpportunityNumberBadge({ value }: { value?: string }) {
   if (!value) return null;
   return (
     <span
-      className="shrink-0 w-9 font-mono text-[11px] uppercase tracking-[0.08em] text-left"
+      className="shrink-0 min-w-[52px] whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.04em] text-left"
       style={{ color: c.secondary }}
       title="Stable opportunity number based on suggested priority"
     >
       {value}
-    </span>
-  );
-}
-
-function AlignmentIcon({ focus }: { focus?: FocusClassification }) {
-  const level = alignmentLevelFromFocus(focus);
-  return (
-    <span
-      className="inline-flex items-center rounded-full border px-1.5 py-1"
-      style={{ borderColor: c.line, background: "#FFFFFF" }}
-      title={`Goal alignment ${level * 25}%`}
-    >
-      <AlignmentCircle level={level} />
     </span>
   );
 }
@@ -89,20 +105,55 @@ function titleCaseJourney(key: string) {
   return key;
 }
 
-function servingLabel(item: OpportunityRow) {
-  const importance = item.importance ?? 0;
-  const satisfaction = item.satisfaction ?? 0;
-  const delta = importance - satisfaction;
+function odiScore(item: OpportunityRow) {
+  const importance = Number(item.importance);
+  const satisfaction = Number(item.satisfaction);
+  if (Number.isFinite(importance) && Number.isFinite(satisfaction)) {
+    return computeOpportunityScore(importance, satisfaction);
+  }
+  const stored = Number(item.opportunity_score);
+  return Number.isFinite(stored) ? Math.round(stored * 10) / 10 : null;
+}
 
-  if (delta >= 3) return "underserved";
-  if (delta <= -2) return "overserved";
-  return "served";
+function formatOdiScore(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function priorityLabel(tier: string) {
   if (tier === "focus") return "Prioritize now";
   if (tier === "monitor") return "Investigate next";
   return "Keep visible";
+}
+
+function defaultWorkflowStatusForTier(tier: string): WorkflowStatus {
+  if (tier === "focus") return "in_progress";
+  if (tier === "monitor") return "planned";
+  return "parked";
+}
+
+function resolveWorkflowStatus(item: OpportunityRow): WorkflowStatus {
+  const raw = String(item.workflow_status || "").trim().toLowerCase();
+  if (raw === "in_progress" || raw === "planned" || raw === "parked") return raw;
+  return defaultWorkflowStatusForTier(String(item.priority_tier || ""));
+}
+
+function ActionTypeBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
+  const style = opportunityActionTone(label);
+  return (
+    <span
+      className="inline-flex items-center rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
+      style={{ borderColor: style.border, background: style.bg, color: style.fg }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function priorityAccent(tier: string) {
+  if (tier === "focus") return c.focus;
+  if (tier === "monitor") return c.monitor;
+  return c.secondary;
 }
 
 function journeyRootLabel(key: string, companyName?: string | null) {
@@ -132,165 +183,81 @@ function evidenceNeeded(item: OpportunityRow) {
     "Collect direct customer, operator, or buyer language for this outcome.",
     item.priority_tier === "focus"
       ? "Validate importance and dissatisfaction with interviews or survey evidence."
-      : "Confirm this is a real underserved outcome before choosing a solution.",
+      : "Confirm this is a real high-opportunity outcome before choosing a solution.",
   ];
 }
 
-function EvidenceDots({
-  hasPublic,
-  hasCustomer,
-  hasValidated,
-  hasTested,
-}: {
+function evidenceSummaryText(args: {
   hasPublic: boolean;
   hasCustomer: boolean;
   hasValidated: boolean;
   hasTested: boolean;
 }) {
-  const items = [
-    { key: "P", label: "Public evidence", active: hasPublic },
-    { key: "C", label: "Customer evidence", active: hasCustomer },
-    { key: "V", label: "Validated evidence", active: hasValidated },
-    { key: "T", label: "Tested evidence", active: hasTested },
-  ];
+  const active: string[] = [];
+  if (args.hasPublic) active.push("Public");
+  if (args.hasCustomer) active.push("Company");
+  if (args.hasValidated) active.push("Validated");
+  if (args.hasTested) active.push("Tested");
+  return active.length > 0 ? active.join(" · ") : "No active evidence sources";
+}
 
+function WorkflowStatusPicker({
+  value,
+  onChange,
+  disabled = false,
+  compact = false,
+}: {
+  value: WorkflowStatus;
+  onChange: (value: WorkflowStatus) => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
   return (
-    <div className="inline-flex items-center gap-2">
-      {items.map((item) => {
-        const style = item.active ? EVIDENCE_DOT_STYLES.active : EVIDENCE_DOT_STYLES.inactive;
-        return (
-          <span
-            key={item.key}
-            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-            style={{ color: style.text }}
-            title={`${item.label}: ${item.active ? "in use" : "not in use"}`}
+    <Select value={value} onValueChange={(next) => onChange(next as WorkflowStatus)} disabled={disabled}>
+      <SelectTrigger
+        className={`${compact ? "h-7 min-w-[126px]" : "h-8 min-w-[138px]"} border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]`}
+        style={{ borderColor: c.line, color: c.secondary }}
+      >
+        <SelectValue placeholder="Set workflow" />
+      </SelectTrigger>
+      <SelectContent className="border-[#DDE6D1] bg-white text-[#233C4B] shadow-[0_14px_32px_rgba(35,60,75,0.14)]">
+        {WORKFLOW_STATUS_OPTIONS.map((option) => (
+          <SelectItem
+            key={option.value}
+            value={option.value}
+            className="font-mono text-[10px] uppercase tracking-[0.08em] focus:bg-[#EEF4FF] focus:text-[#233C4B]"
           >
-            <span
-              className="h-2.5 w-2.5 rounded-full border"
-              style={{ borderColor: style.border, background: style.background }}
-            />
-            {item.key}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function OpportunityHoverDetail({
-  item,
-  opportunityNumber,
-  focus,
-  hasPublic,
-  hasCustomer,
-  hasValidated,
-  hasTested,
-  showJourneyBadge = true,
-}: {
-  item: OpportunityRow;
-  opportunityNumber?: string;
-  focus?: FocusClassification;
-  hasPublic: boolean;
-  hasCustomer: boolean;
-  hasValidated: boolean;
-  hasTested: boolean;
-  showJourneyBadge?: boolean;
-}) {
-  return (
-    <div className="w-[320px] rounded-[20px] border p-4" style={{ borderColor: c.line, background: "#FBFAF7" }}>
-      <div className="flex items-start gap-2">
-        <OpportunityNumberBadge value={opportunityNumber} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <TierBadge tone={item.priority_tier} />
-            <StateBadge tone={servingLabel(item)} />
-            <AlignmentIcon focus={focus} />
-            <ScoreChip label="Opp" value={item.opportunity_score} />
-          </div>
-
-          <div className="mt-3 font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
-            {item.outcome}
-          </div>
-
-          <div className="mt-2 flex flex-wrap gap-2">
-            {showJourneyBadge ? <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge> : null}
-            {item.step_number ? (
-              <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
-                <MetaBadge>Step {item.step_number}</MetaBadge>
-              </span>
-            ) : null}
-            <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        <ScoreChip label="I" value={item.importance} />
-        <ScoreChip label="S" value={item.satisfaction} />
-        <ScoreChip label="Gap" value={(item.importance ?? 0) - (item.satisfaction ?? 0)} />
-      </div>
-
-      <div className="mt-4">
-        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-          Opportunity branch
-        </div>
-      </div>
-
-      <div className="mt-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-          Why this node exists
-        </div>
-        <p className="mt-2 font-sans text-[12px] leading-[1.65]" style={{ color: c.secondary }}>
-          {item.priority_tier === "focus"
-            ? "This appears underserved enough to justify discovery attention before choosing a solution."
-            : item.priority_tier === "monitor"
-              ? "This may matter, but it needs better evidence before it becomes a top branch in the tree."
-              : "Keep this opportunity visible, but do not invest heavily until stronger evidence appears."}
-        </p>
-      </div>
-
-      <div className="mt-4">
-        <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-          Evidence still needed
-        </div>
-        <ul className="mt-2 space-y-2">
-          {evidenceNeeded(item).map((entry, index) => (
-            <li
-              key={`${item.id}-hover-evidence-${index}`}
-              className="flex items-start gap-2 font-sans text-[12px] leading-[1.55]"
-              style={{ color: c.secondary }}
-            >
-              <span style={{ color: JOURNEY_ACCENT[item.journey_key] || c.monitor }}>•</span>
-              <span>{entry}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-    </div>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
 function OpportunityCard({
   item,
   opportunityNumber,
-  focus,
-  hasPublic,
-  hasCustomer,
-  hasValidated,
-  hasTested,
+  workflowStatus,
+  workflowStatusAvailable,
+  workflowSaving = false,
+  onWorkflowChange,
   showJourneyBadge = true,
+  isTargeted = false,
 }: {
   item: OpportunityRow;
   opportunityNumber?: string;
-  focus?: FocusClassification;
-  hasPublic: boolean;
-  hasCustomer: boolean;
-  hasValidated: boolean;
-  hasTested: boolean;
+  workflowStatus: WorkflowStatus;
+  workflowStatusAvailable: boolean;
+  workflowSaving?: boolean;
+  onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
   showJourneyBadge?: boolean;
+  isTargeted?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(isTargeted);
+  useEffect(() => {
+    if (isTargeted) setExpanded(true);
+  }, [isTargeted]);
   const accent = JOURNEY_ACCENT[item.journey_key] || c.monitor;
   const evidenceNeeded = [
     item.step_label
@@ -307,59 +274,85 @@ function OpportunityCard({
       : item.priority_tier === "monitor"
         ? "Tighten evidence, then decide whether this should move into the focus lane."
         : "Keep this visible, but do not invest heavily until stronger underserved outcomes are confirmed.";
+  const score = formatOdiScore(odiScore(item));
+  const actionType = opportunityActionFromPriorityTier(item.priority_tier);
+  const stepContext = item.step_number ? `Step ${item.step_number}` : "Unassigned step";
+  const stepContextDetail = item.step_label ? ` · ${item.step_label}` : "";
 
   return (
     <div
+      id={`opportunity-${item.id}`}
       className="overflow-hidden rounded-2xl border"
-      style={{ borderColor: c.line, background: c.paper, boxShadow: "0 1px 2px rgba(0,0,0,0.03)" }}
+      style={{
+        borderColor: isTargeted ? c.charcoal : c.line,
+        background: c.paper,
+        boxShadow: isTargeted
+          ? "0 0 0 3px rgba(35,60,75,0.16), 0 6px 22px rgba(35,60,75,0.10)"
+          : "0 1px 2px rgba(0,0,0,0.03)",
+      }}
     >
       <div className="h-[5px] w-full" style={{ background: accent }} />
-      <button type="button" onClick={() => setExpanded((value) => !value)} className="w-full cursor-pointer p-5 text-left">
+      <button type="button" onClick={() => setExpanded((value) => !value)} className="w-full cursor-pointer px-5 pt-5 text-left">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-2">
             <OpportunityNumberBadge value={opportunityNumber} />
             <div className="min-w-0">
-              <div className="mb-2 flex items-center gap-2">
-                <TierBadge tone={item.priority_tier} />
-                {showJourneyBadge ? <MetaBadge>{titleCaseJourney(item.journey_key)}</MetaBadge> : null}
-                {item.step_number ? (
-                  <span title={item.step_label ? `Step ${item.step_number}: ${item.step_label}` : `Step ${item.step_number}`}>
-                    <MetaBadge>Step {item.step_number}</MetaBadge>
-                  </span>
-                ) : null}
-                <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
-                <AlignmentIcon focus={focus} />
-              </div>
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.secondary }}>
+                {showJourneyBadge ? `${titleCaseJourney(item.journey_key)}` : ""}
+              </p>
 
               <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 Desired Outcome Opportunity
               </p>
               <h3 className="mt-1 font-sans text-[16px] font-semibold leading-tight" style={{ color: c.charcoal }}>
-                {item.outcome || "Untitled opportunity"}
+                {humanizeOutcomeText(item.outcome) || "Untitled opportunity"}
               </h3>
+              {isTargeted ? (
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.charcoal }}>
+                  Opened from map insight
+                </p>
+              ) : null}
 
-              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                Job step context
-              </p>
-              <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-                {item.step_label || "Unassigned step"}
+              <p className="mt-3 font-sans text-[13px]" style={{ color: c.secondary }}>
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  Job step context:
+                </span>{" "}
+                {stepContext}
+                {stepContextDetail}
               </p>
             </div>
           </div>
 
-          <div className="flex items-start gap-3">
-            <ScoreChip label="Est. Opp" value={item.opportunity_score} />
+          <div className="text-right">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Opp Score
+            </p>
+            <p className="font-sans text-[20px] font-semibold leading-none mt-1" style={{ color: c.charcoal }}>
+              {score}
+            </p>
             <div style={{ color: c.muted }}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</div>
           </div>
         </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <StateBadge tone={servingLabel(item)} />
-          <ScoreChip label="Est. I" value={item.importance} />
-          <ScoreChip label="Est. S" value={item.satisfaction} />
-        </div>
-
       </button>
+      <div className="px-5 pb-4">
+        <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: c.line }}>
+          <p
+            className="font-sans text-[14px] font-semibold tracking-[0.01em]"
+            style={{ color: priorityAccent(item.priority_tier) }}
+          >
+            {priorityLabel(item.priority_tier)}
+          </p>
+          <div className="flex items-center gap-2">
+            <ActionTypeBadge label={actionType} />
+            <WorkflowStatusPicker
+              value={workflowStatus}
+              compact
+              disabled={workflowSaving}
+              onChange={(next) => onWorkflowChange(item, next)}
+            />
+          </div>
+        </div>
+      </div>
 
       {expanded ? (
         <div className="border-t p-5 pt-4 animate-fade-in-up" style={{ borderColor: c.line }}>
@@ -401,26 +394,24 @@ function OpportunitySection({
   title,
   subtitle,
   items,
-  focusById,
   opportunityNumberById,
+  workflowStatusAvailable,
+  updatingWorkflowId,
+  onWorkflowChange,
   subtitleItalic = false,
-  hasPublic,
-  hasCustomer,
-  hasValidated,
-  hasTested,
   showJourneyBadge = true,
+  targetOpportunityId,
 }: {
   title: string;
   subtitle: string;
   items: OpportunityRow[];
-  focusById: Map<string, FocusClassification>;
   opportunityNumberById: Map<string, string>;
+  workflowStatusAvailable: boolean;
+  updatingWorkflowId: string | null;
+  onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
   subtitleItalic?: boolean;
-  hasPublic: boolean;
-  hasCustomer: boolean;
-  hasValidated: boolean;
-  hasTested: boolean;
   showJourneyBadge?: boolean;
+  targetOpportunityId?: string | null;
 }) {
   if (items.length === 0) return null;
 
@@ -436,7 +427,9 @@ function OpportunitySection({
           </p>
         </div>
 
-        <MetaBadge>{items.length} opportunities</MetaBadge>
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+          {items.length} opportunities
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -445,12 +438,12 @@ function OpportunitySection({
             key={item.id}
             item={item}
             opportunityNumber={opportunityNumberById.get(item.id)}
-            focus={focusById.get(item.id)}
-            hasPublic={hasPublic}
-            hasCustomer={hasCustomer}
-            hasValidated={hasValidated}
-            hasTested={hasTested}
+            workflowStatus={resolveWorkflowStatus(item)}
+            workflowStatusAvailable={workflowStatusAvailable}
+            workflowSaving={updatingWorkflowId === item.id}
+            onWorkflowChange={onWorkflowChange}
             showJourneyBadge={showJourneyBadge}
+            isTargeted={targetOpportunityId === item.id}
           />
         ))}
       </div>
@@ -497,13 +490,12 @@ function ViewToggle({
 function OpportunityTreeView({
   items,
   managedOutcomes,
-  focusById,
   opportunityNumberById,
-  hasPublic,
-  hasCustomer,
-  hasValidated,
-  hasTested,
+  workflowStatusAvailable,
+  updatingWorkflowId,
+  onWorkflowChange,
   showJourneyBadge = true,
+  targetOpportunityId,
 }: {
   items: OpportunityRow[];
   managedOutcomes: Array<{
@@ -515,13 +507,12 @@ function OpportunityTreeView({
     evidence_basis: string;
     confidence: number;
   }>;
-  focusById: Map<string, FocusClassification>;
   opportunityNumberById: Map<string, string>;
-  hasPublic: boolean;
-  hasCustomer: boolean;
-  hasValidated: boolean;
-  hasTested: boolean;
+  workflowStatusAvailable: boolean;
+  updatingWorkflowId: string | null;
+  onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
   showJourneyBadge?: boolean;
+  targetOpportunityId?: string | null;
 }) {
   const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
   const orderedJourneyKeys = [
@@ -563,14 +554,11 @@ function OpportunityTreeView({
           Opportunity Solution Tree
         </h2>
         <p className="mt-2 max-w-4xl font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
-          This view now separates a top-level product outcome target from the opportunity branches beneath it, which is closer to Teresa Torres' guidance on managing outcomes. The top node is the leading-indicator result the team should manage toward. The lower nodes are opportunity hypotheses to explore before selecting solutions. Hover any branch to inspect the context, evidence gap, and why it is prioritized. Current scores are still estimated from public evidence, not survey-based ODI measurements.
+          This view separates a top-level product outcome target from the opportunity branches beneath it. The top node is the leading-indicator result the team should manage toward. The lower nodes are opportunity hypotheses to explore before selecting solutions. Hover over any opportunity branch to preview detail. Current scores are still estimated from public evidence, not survey-validated measurements.
         </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <MetaBadge>Product outcome target</MetaBadge>
-          <MetaBadge>Step branch</MetaBadge>
-          <MetaBadge>Opportunity branch</MetaBadge>
-          <MetaBadge>Solutions come later</MetaBadge>
-        </div>
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+          Product outcome target → step branches → opportunity branches (solutions come later)
+        </p>
       </div>
 
       <div className="space-y-6">
@@ -590,10 +578,9 @@ function OpportunityTreeView({
                     {titleCaseJourney(journeyKey)}
                   </h3>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <MetaBadge>{steps.length} steps</MetaBadge>
-                  <MetaBadge>{itemCount} opportunities</MetaBadge>
-                </div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  {steps.length} steps · {itemCount} opportunities
+                </p>
               </div>
 
               {steps.length === 0 ? (
@@ -604,7 +591,11 @@ function OpportunityTreeView({
                 </div>
               ) : (
                 <div className="mt-5 overflow-x-auto pb-2">
-                  <div className="min-w-[960px]">
+                  <div
+                    style={{
+                      minWidth: `${Math.max(TREE_MAP_MIN_WIDTH, steps.length * TREE_STEP_MIN_WIDTH)}px`,
+                    }}
+                  >
                     <div className="flex justify-center">
                       <HoverCard openDelay={100}>
                         <HoverCardTrigger asChild>
@@ -661,7 +652,7 @@ function OpportunityTreeView({
                     <div className="mx-auto h-8 w-px" style={{ background: `${accent}66` }} />
                     <div className="mx-auto h-px w-[88%]" style={{ background: `${accent}55` }} />
 
-                    <div className="mt-6 grid gap-5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(220px, 1fr))` }}>
+                    <div className="mt-6 grid gap-5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(${TREE_STEP_MIN_WIDTH}px, 1fr))` }}>
                       {steps.map((step) => (
                         <div key={`${journeyKey}-${step.stepNumber}-${step.stepLabel}`} className="flex flex-col items-center">
                           <div className="h-6 w-px" style={{ background: `${accent}55` }} />
@@ -673,14 +664,13 @@ function OpportunityTreeView({
                                 style={{ borderColor: c.line, background: c.card }}
                                 title={step.stepLabel ? `Step ${step.stepNumber}: ${step.stepLabel}` : `Step ${step.stepNumber}`}
                               >
-                                <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                <div className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.muted }}>
                                   Job Step {step.stepNumber}
                                 </div>
                                 <div className="mt-1 font-sans text-[14px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
                                   {step.stepLabel}
                                 </div>
                                 <div className="mt-3 flex items-center gap-2">
-                                  <GitBranch className="h-3.5 w-3.5" style={{ color: accent }} />
                                   <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
                                     {step.items.length} branches
                                   </span>
@@ -701,58 +691,79 @@ function OpportunityTreeView({
 
                           <div className="w-full space-y-3">
                             {step.items.map((item) => {
-                              const focus = focusById.get(item.id);
                               const opportunityNumber = opportunityNumberById.get(item.id);
+                              const isTargeted = targetOpportunityId === item.id;
+                              const readableOutcome = humanizeOutcomeText(item.outcome);
+                              const score = formatOdiScore(odiScore(item));
+                              const workflowStatus = resolveWorkflowStatus(item);
+                              const actionType = opportunityActionFromPriorityTier(item.priority_tier);
                               return (
                                 <div key={item.id} className="flex justify-center">
-                                  <HoverCard openDelay={80}>
-                                    <HoverCardTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                        style={{ borderColor: c.line, background: c.paper }}
-                                      >
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div className="min-w-0 flex items-start gap-2">
-                                            <OpportunityNumberBadge value={opportunityNumber} />
-                                            <div className="min-w-0">
-                                              <div className="mb-2 flex flex-wrap items-center gap-2">
-                                                <TierBadge tone={item.priority_tier} />
-                                                <StateBadge tone={servingLabel(item)} />
-                                                <AlignmentIcon focus={focus} />
-                                              </div>
-                                              <p className="font-sans text-[13px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                                                {item.outcome}
-                                              </p>
-                                            </div>
-                                          </div>
-                                          <div className="shrink-0">
-                                            <ScoreChip label="Opp" value={item.opportunity_score} />
-                                          </div>
+                                  <div
+                                    id={`opportunity-${item.id}`}
+                                    className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                                    style={{
+                                      borderColor: isTargeted ? c.charcoal : c.line,
+                                      background: c.paper,
+                                      boxShadow: isTargeted
+                                        ? "0 0 0 3px rgba(35,60,75,0.16), 0 6px 22px rgba(35,60,75,0.10)"
+                                        : undefined,
+                                    }}
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+                                      <div className="min-w-0">
+                                        <div className="mb-2 flex items-center gap-2">
+                                          <OpportunityNumberBadge value={opportunityNumber} />
+                                          <span
+                                            className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap"
+                                            style={{ color: c.secondary }}
+                                          >
+                                            {showJourneyBadge ? `${titleCaseJourney(item.journey_key)} · ` : ""}
+                                            {item.step_number ? `Step ${item.step_number}` : "Step"}
+                                          </span>
                                         </div>
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                          <ScoreChip label="I" value={item.importance} />
-                                          <ScoreChip label="S" value={item.satisfaction} />
+                                      </div>
+                                      <div className="shrink-0">
+                                        <p
+                                          className="font-mono text-[10px] uppercase tracking-[0.06em] whitespace-nowrap text-right"
+                                          style={{ color: c.secondary }}
+                                        >
+                                          Opp Score {score}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <p
+                                      className="mt-2 w-full font-sans text-[14px] font-normal leading-[1.55] line-clamp-7"
+                                      style={{ color: c.charcoal }}
+                                      title={readableOutcome}
+                                    >
+                                      {readableOutcome || "Untitled opportunity"}
+                                    </p>
+                                    {isTargeted ? (
+                                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.charcoal }}>
+                                        Opened from map insight
+                                      </p>
+                                    ) : null}
+                                    <div className="mt-3 pt-2" style={{ borderTop: `1px solid ${c.line}` }}>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p
+                                          className="font-sans text-[13px] font-semibold"
+                                          style={{ color: priorityAccent(item.priority_tier) }}
+                                        >
+                                          {priorityLabel(item.priority_tier)}
+                                        </p>
+                                        <div className="flex items-center gap-2">
+                                          <ActionTypeBadge label={actionType} />
+                                          <WorkflowStatusPicker
+                                            value={workflowStatus}
+                                            compact
+                                            disabled={updatingWorkflowId === item.id}
+                                            onChange={(next) => onWorkflowChange(item, next)}
+                                          />
                                         </div>
-                                        <div className="mt-3 flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                                          <Info className="h-3 w-3" />
-                                          Hover for opportunity detail
-                                        </div>
-                                      </button>
-                                    </HoverCardTrigger>
-                                    <HoverCardContent className="w-auto border-none bg-transparent p-0 shadow-none">
-                                      <OpportunityHoverDetail
-                                        item={item}
-                                        opportunityNumber={opportunityNumber}
-                                        focus={focus}
-                                        hasPublic={hasPublic}
-                                        hasCustomer={hasCustomer}
-                                        hasValidated={hasValidated}
-                                        hasTested={hasTested}
-                                        showJourneyBadge={showJourneyBadge}
-                                      />
-                                    </HoverCardContent>
-                                  </HoverCard>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                               );
                             })}
@@ -772,15 +783,22 @@ function OpportunityTreeView({
 }
 
 export default function OpportunitiesView() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { activeCompany } = useCompany();
-  const { loading, items, error } = useOpportunities(activeCompany?.id);
+  const { loading, items, error, updatingWorkflowId, workflowStatusAvailable, updateWorkflowStatus } = useOpportunities(activeCompany?.id);
   const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
-  const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const queryView = String(searchParams.get("view") || "").toLowerCase();
+  const targetOpportunityId = String(searchParams.get("opportunity") || "").trim() || null;
+  const requestedView: "list" | "map" = queryView === "map" ? "map" : "list";
+  const [viewMode, setViewMode] = useState<"list" | "map">(requestedView);
+  useEffect(() => {
+    setViewMode(requestedView);
+  }, [requestedView]);
   const publicEvidenceStatus = String(activeCompany?.evidence_status || "").trim().toLowerCase();
   const hasPublic = !["", "not_scored", "no_public_evidence", "generated_no_baseline"].includes(publicEvidenceStatus);
   const hasCustomer = sourceSignals.hasCompanyEvidence;
@@ -862,6 +880,35 @@ export default function OpportunitiesView() {
     return !(keys.length === 1 && keys[0] === "customer");
   }, [items]);
 
+  useEffect(() => {
+    if (!targetOpportunityId || loading || items.length === 0) return;
+    const exists = items.some((item) => item.id === targetOpportunityId);
+    if (!exists) return;
+    const frame = window.requestAnimationFrame(() => {
+      const node = document.getElementById(`opportunity-${targetOpportunityId}`);
+      if (!node) return;
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [targetOpportunityId, loading, items, viewMode]);
+
+  const handleViewChange = (mode: "list" | "map") => {
+    setViewMode(mode);
+    const next = new URLSearchParams(searchParams);
+    next.set("view", mode);
+    if (!targetOpportunityId) next.delete("opportunity");
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleWorkflowChange = async (item: OpportunityRow, next: WorkflowStatus) => {
+    try {
+      await updateWorkflowStatus(item.id, next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update workflow label.";
+      window.alert(message);
+    }
+  };
+
   return (
     <div
       className="min-h-screen"
@@ -873,7 +920,7 @@ export default function OpportunitiesView() {
     >
       <TopNav />
 
-      <main className="max-w-[1440px] mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8">
+      <main className={`${viewMode === "map" ? "max-w-[1720px]" : "max-w-[1440px]"} mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8`}>
         <div className="mb-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -884,21 +931,25 @@ export default function OpportunitiesView() {
                 Opportunities
               </h1>
               <p className="mojo-under-title max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                Focus on the product outcomes and leading indicators behind the jobs customers, buyers, and operators are trying to get done. The top of the tree should represent a result to manage toward. The branches below should capture the opportunity space, not outputs, initiatives, or deliverables. Prioritize underserved opportunities first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
+                Focus on the product outcomes and leading indicators behind the jobs customers, buyers, and operators are trying to get done. The top of the tree should represent a result to manage toward. The branches below should capture the opportunity space, not outputs, initiatives, or deliverables. Prioritize the highest-opportunity outcomes first, then test assumptions before locking into solution choices. Current importance, satisfaction, and opportunity values are estimated from public evidence until interviews or surveys exist.
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <MetaBadge>{`Initiative: ${initiativeContext.primaryJourneyTitle}`}</MetaBadge>
-                <AlignmentIcon focus={{ level: "related", overlap: 1 }} />
-              </div>
+              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                Initiative: {initiativeContext.primaryJourneyTitle}
+              </p>
             </div>
           </div>
           <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
-          <div className="mt-3">
-            <EvidenceDots hasPublic={hasPublic} hasCustomer={hasCustomer} hasValidated={hasValidated} hasTested={hasTested} />
-          </div>
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+            Evidence: {evidenceSummaryText({ hasPublic, hasCustomer, hasValidated, hasTested })}
+          </p>
+          {!workflowStatusAvailable ? (
+            <p className="mt-2 font-sans text-[12px] italic" style={{ color: c.secondary }}>
+              Workflow labels are view-only until latest database migrations are applied.
+            </p>
+          ) : null}
           {items.length > 0 ? (
             <div className="mt-4">
-              <ViewToggle mode={viewMode} onChange={setViewMode} />
+              <ViewToggle mode={viewMode} onChange={handleViewChange} />
             </div>
           ) : null}
         </div>
@@ -931,13 +982,12 @@ export default function OpportunitiesView() {
           <OpportunityTreeView
             items={sortedForTree}
             managedOutcomes={managedOutcomes}
-            focusById={focusById}
             opportunityNumberById={opportunityNumberById}
-            hasPublic={hasPublic}
-            hasCustomer={hasCustomer}
-            hasValidated={hasValidated}
-            hasTested={hasTested}
+            workflowStatusAvailable={workflowStatusAvailable}
+            updatingWorkflowId={updatingWorkflowId}
+            onWorkflowChange={handleWorkflowChange}
             showJourneyBadge={showJourneyBadge}
+            targetOpportunityId={targetOpportunityId}
           />
         ) : (
           <div className="space-y-8">
@@ -945,39 +995,36 @@ export default function OpportunitiesView() {
               title="Prioritize Now"
               subtitle="Strong opportunities that deserve attention before you commit to a solution."
               items={prioritizeNow}
-              focusById={focusById}
               opportunityNumberById={opportunityNumberById}
+              workflowStatusAvailable={workflowStatusAvailable}
+              updatingWorkflowId={updatingWorkflowId}
+              onWorkflowChange={handleWorkflowChange}
               subtitleItalic
-              hasPublic={hasPublic}
-              hasCustomer={hasCustomer}
-              hasValidated={hasValidated}
-              hasTested={hasTested}
               showJourneyBadge={showJourneyBadge}
+              targetOpportunityId={targetOpportunityId}
             />
             <OpportunitySection
               title="Investigate Next"
               subtitle="Promising opportunities where the next move is better evidence, sharper assumptions, or smaller tests."
               items={investigateNext}
-              focusById={focusById}
               opportunityNumberById={opportunityNumberById}
+              workflowStatusAvailable={workflowStatusAvailable}
+              updatingWorkflowId={updatingWorkflowId}
+              onWorkflowChange={handleWorkflowChange}
               subtitleItalic
-              hasPublic={hasPublic}
-              hasCustomer={hasCustomer}
-              hasValidated={hasValidated}
-              hasTested={hasTested}
               showJourneyBadge={showJourneyBadge}
+              targetOpportunityId={targetOpportunityId}
             />
             <OpportunitySection
               title="Later Opportunities"
               subtitle="Keep these visible, but sequence them after higher-leverage opportunity work."
               items={laterOpportunities}
-              focusById={focusById}
               opportunityNumberById={opportunityNumberById}
-              hasPublic={hasPublic}
-              hasCustomer={hasCustomer}
-              hasValidated={hasValidated}
-              hasTested={hasTested}
+              workflowStatusAvailable={workflowStatusAvailable}
+              updatingWorkflowId={updatingWorkflowId}
+              onWorkflowChange={handleWorkflowChange}
               showJourneyBadge={showJourneyBadge}
+              targetOpportunityId={targetOpportunityId}
             />
           </div>
         )}

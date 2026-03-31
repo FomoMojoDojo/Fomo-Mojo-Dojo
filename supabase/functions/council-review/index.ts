@@ -13,6 +13,7 @@ const PLAIN_LANGUAGE_RULES =
   "Writing style rules: Use clear, plain language that a non-expert can understand. " +
   "Avoid consulting jargon, business cliches, and buzzwords. " +
   "Prefer concrete wording over abstract phrasing. Keep sentences short and direct. " +
+  "For ODI needs and outcomes, keep one idea per sentence and use plain wording (for example: 'tracked decision results'). " +
   "Never mention framework creator names in labels or recommendations. " +
   "If source evidence includes direct quotes, preserve them verbatim. " +
   "If company-specific phrasing/taglines exist, keep them unchanged and optionally add a second line prefixed exactly with 'Suggested clearer version:' if clarity is needed.";

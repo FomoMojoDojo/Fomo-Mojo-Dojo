@@ -621,6 +621,7 @@ export type Database = {
           step_number: number
           updated_at: string
           user_id: string
+          workflow_status: string
         }
         Insert: {
           company_id: string
@@ -637,6 +638,7 @@ export type Database = {
           step_number?: number
           updated_at?: string
           user_id: string
+          workflow_status?: string
         }
         Update: {
           company_id?: string
@@ -653,6 +655,7 @@ export type Database = {
           step_number?: number
           updated_at?: string
           user_id?: string
+          workflow_status?: string
         }
         Relationships: [
           {

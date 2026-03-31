@@ -1,6 +1,21 @@
 -- Re-align all company score fields from authoritative score artifacts and shared projection formula.
 -- This is safe/idempotent and intended to correct repeated manual-apply drift.
 
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS mojo_score integer;
+
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS potential_score integer;
+
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS projected_score integer;
+
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS last_scored_at timestamptz;
+
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS area_scores_json jsonb;
+
 WITH normalized AS (
   SELECT
     c.id,

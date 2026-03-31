@@ -11,14 +11,16 @@ import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
-import { useOpportunities } from "@/hooks/useOpportunities";
+import { useOpportunities, type OpportunityRow, type WorkflowStatus } from "@/hooks/useOpportunities";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
+import { opportunityActionFromPriorityTier, opportunityActionTone } from "@/lib/opportunityLabels";
 import {
   alignmentLevelFromFocus,
   classifyOpportunityFocus,
@@ -67,6 +69,31 @@ function priorityTierSortValue(tier: string | null | undefined) {
   return 3;
 }
 
+const MAP_OUTCOME_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmonitored decision outcomes\b/gi, "tracked decision results"],
+  [/\bdecision outcomes\b/gi, "decision results"],
+  [/\bbased on insights from\b/gi, "using evidence from"],
+  [/\bstrategic alignment\b/gi, "fit with strategy"],
+  [/\bcore audience\b/gi, "main audience"],
+  [/\bleverage\b/gi, "use"],
+  [/\butili[sz]e\b/gi, "use"],
+  [/\boptimi[sz]e\b/gi, "improve"],
+];
+
+function humanizeOutcomeText(value: string | null | undefined) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  for (const [pattern, replacement] of MAP_OUTCOME_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  text = text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function OpportunityNumberBadge({ value }: { value?: string }) {
   if (!value) return null;
   return (
@@ -79,6 +106,36 @@ function OpportunityNumberBadge({ value }: { value?: string }) {
     </span>
   );
 }
+
+function resolveWorkflowStatus(item: OpportunityRow): WorkflowStatus {
+  const raw = String(item.workflow_status || "").trim().toLowerCase();
+  if (raw === "in_progress" || raw === "planned" || raw === "parked") return raw;
+  if (item.priority_tier === "focus") return "in_progress";
+  if (item.priority_tier === "monitor") return "planned";
+  return "parked";
+}
+
+function ActionTypeBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
+  const style = opportunityActionTone(label);
+  return (
+    <span
+      className="inline-flex items-center rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
+      style={{ borderColor: style.border, background: style.bg, color: style.fg }}
+    >
+      {label}
+    </span>
+  );
+}
+
+type InsightCard = {
+  label: string;
+  headline: string;
+  detail: string;
+  chips: Array<{ label: string; value: number }>;
+  whyItMatters?: string;
+  whatNext?: string;
+  opportunityId?: string;
+};
 
 function isClientSummary(value: unknown): value is ClientSummary {
   return typeof value === "object" && value !== null && Array.isArray((value as ClientSummary).key_insights);
@@ -182,6 +239,9 @@ export default function MapView() {
     loading: oppLoading,
     items: oppItems,
     error: oppError,
+    updatingWorkflowId,
+    workflowStatusAvailable,
+    updateWorkflowStatus,
   } = useOpportunities(activeCompany?.id);
   const { items: routeItems } = useRoutes(activeCompany?.id);
 
@@ -408,7 +468,7 @@ export default function MapView() {
       .sort((a, b) => safeNumber(b.score_impact, 0) - safeNumber(a.score_impact, 0))[0] ?? null;
   }, [inputs]);
 
-  const researchFinding = useMemo(() => {
+  const researchFinding = useMemo<InsightCard>(() => {
     const topFocusEntry =
       focusOpps.find((entry) => alignmentLevelFromFocus(entry.focus) > 0 || entry.focus.overlap > 0) ??
       focusOpps[0];
@@ -418,22 +478,26 @@ export default function MapView() {
         topFocus.step_label && topFocus.step_number
           ? `${topFocus.journey_key} step ${topFocus.step_number}: ${topFocus.step_label}`
           : topFocus.step_label || topFocus.journey_key || "current workflow";
-      const oppScore = safeNumber(topFocus.opportunity_score, 0);
-      const importance = safeNumber(topFocus.importance, 0);
-      const satisfaction = safeNumber(topFocus.satisfaction, 0);
       const initiativeLabel = initiativeContext.primaryJourneyTitle;
-      const alignmentPct = alignmentLevelFromFocus(topFocusEntry?.focus) * 25;
+      const evidencePrefix = sourceSignals.hasPrimaryEvidence
+        ? "Primary research evidence"
+        : sourceSignals.hasCompanyEvidence
+          ? "Uploaded company evidence"
+          : "Public evidence";
       return {
         label: "Highest-Impact Finding",
-        headline: topFocus.outcome || "A high-impact opportunity was identified.",
+        headline: humanizeOutcomeText(topFocus.outcome) || "A high-impact opportunity was identified.",
         detail:
-          `Research points to ${stepContext} as the strongest leverage point right now for ${initiativeLabel} (alignment ${alignmentPct}%). ` +
-          `This outcome carries an estimated opportunity score of ${oppScore}, with importance at ${importance} and satisfaction at ${satisfaction}, which suggests a meaningful gap worth fixing first.`,
-        chips: [
-          { label: "Opp", value: oppScore },
-          { label: "Imp", value: importance },
-          { label: "Sat", value: satisfaction },
-        ],
+          `${evidencePrefix} points to ${stepContext} as the biggest leverage point right now for ${initiativeLabel}.`,
+        whyItMatters:
+          "This step is likely creating the most drag right now, so improving it should unlock progress across the rest of the journey.",
+        whatNext: sourceSignals.hasPrimaryEvidence
+          ? "Open this opportunity, define one testable change, and set clear success criteria for the next cycle."
+          : sourceSignals.hasCompanyEvidence
+            ? "Open this opportunity, confirm the missing evidence in the opportunity card, and run a quick interview or survey before committing."
+            : "Strengthen evidence for this step first, then rerun baseline + analysis to confirm priority.",
+        opportunityId: topFocus.id,
+        chips: [],
       };
     }
 
@@ -445,7 +509,7 @@ export default function MapView() {
         label: "Strategic Problem Coverage",
         headline: "Current focus opportunities are not yet tied to the stated ask.",
         detail:
-          "The current generated opportunities do not show clear overlap with your client-stated strategic problem yet. This usually means we need a more initiative-specific job map or a fresh research run grounded in the reconciled problem.",
+          "The current generated opportunities do not show clear overlap with your client-stated strategic problem yet. This usually means we need a more initiative-specific job map or a fresh analysis run grounded in the reconciled problem.",
         chips: [{ label: "Open Problems", value: openStrategicProblems.length }],
       };
     }
@@ -479,10 +543,10 @@ export default function MapView() {
       headline: topInsight?.headline?.replace(/\*/g, "") || "No research finding yet.",
       detail:
         topInsight?.detail ||
-        "Run Web Baseline + AI Research to generate an evidence-backed finding about the most important thing to fix next.",
+        "Run Web Baseline + AI analysis to generate an evidence-backed finding about the most important thing to fix next.",
       chips: [],
     };
-  }, [focusOpps, weakestArea, topInputGap, summary, initiativeContext, strategicProblems]);
+  }, [focusOpps, weakestArea, topInputGap, summary, initiativeContext, strategicProblems, sourceSignals]);
 
   // Areas list (full width card)
   const areaList: ScoreArea[] = Array.isArray(areas) ? areas : [];
@@ -572,6 +636,14 @@ export default function MapView() {
   );
   const headedTitle = workflow.title;
   const headedDetail = workflow.detail;
+  const handleWorkflowChange = async (item: OpportunityRow, next: WorkflowStatus) => {
+    try {
+      await updateWorkflowStatus(item.id, next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update workflow label.";
+      window.alert(message);
+    }
+  };
 
   return (
     <div
@@ -722,6 +794,36 @@ export default function MapView() {
               <p className="font-sans text-[13px] leading-[1.7] mt-2" style={{ color: c.secondary }}>
                 {researchFinding.detail}
               </p>
+              {researchFinding.whyItMatters ? (
+                <p className="font-sans text-[13px] leading-[1.6] mt-2" style={{ color: c.secondary }}>
+                  <span className="font-semibold" style={{ color: c.charcoal }}>Why it matters:</span>{" "}
+                  {researchFinding.whyItMatters}
+                </p>
+              ) : null}
+              {researchFinding.whatNext ? (
+                <p className="font-sans text-[13px] leading-[1.6] mt-1.5" style={{ color: c.secondary }}>
+                  <span className="font-semibold" style={{ color: c.charcoal }}>What next:</span>{" "}
+                  {researchFinding.whatNext}
+                </p>
+              ) : null}
+              {researchFinding.opportunityId ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    to={`/opportunities?view=list&opportunity=${encodeURIComponent(researchFinding.opportunityId)}`}
+                    className="font-mono text-[10px] uppercase tracking-[0.08em] rounded-full border px-3 py-1.5 hover:opacity-80 transition-opacity"
+                    style={{ borderColor: c.line, color: c.secondary, background: "#FFFFFF" }}
+                  >
+                    Open in opportunity card →
+                  </Link>
+                  <Link
+                    to={`/opportunities?view=map&opportunity=${encodeURIComponent(researchFinding.opportunityId)}`}
+                    className="font-mono text-[10px] uppercase tracking-[0.08em] rounded-full border px-3 py-1.5 hover:opacity-80 transition-opacity"
+                    style={{ borderColor: c.line, color: c.secondary, background: "#FFFFFF" }}
+                  >
+                    Open in opportunity map →
+                  </Link>
+                </div>
+              ) : null}
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {researchFinding.chips.length > 0 ? (
@@ -822,39 +924,65 @@ export default function MapView() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {focusOpps.map(({ item: o, focus }) => (
-                    <div
-                      key={o.id}
-                      className="rounded-lg p-3"
-                      style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
-                    >
-                      <div className="flex items-start justify-between gap-3">
+                  {focusOpps.map(({ item: o, focus }) => {
+                    const workflowStatus = resolveWorkflowStatus(o);
+                    const actionType = opportunityActionFromPriorityTier(o.priority_tier);
+                    return (
+                      <div
+                        key={o.id}
+                        className="rounded-lg p-3"
+                        style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-start gap-2">
                           <OpportunityNumberBadge value={opportunityNumberById.get(o.id)} />
                           <div className="min-w-0">
                             <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
-                              {o.outcome || "Untitled opportunity"}
+                              {humanizeOutcomeText(o.outcome) || "Untitled opportunity"}
                             </p>
                             <p className="font-sans text-[12px] mt-0.5" style={{ color: c.secondary }}>
                               {o.journey_key}
                               {o.step_label ? ` • ${o.step_label}` : ""}
                               {o.step_number ? ` (Step ${o.step_number})` : ""}
                             </p>
+                            <div className="mt-1">
+                              <ActionTypeBadge label={actionType} />
+                            </div>
                           </div>
                         </div>
 
-                        <div className="shrink-0 flex items-center gap-2">
-                          <span className="inline-flex items-center rounded-full border px-1.5 py-1" style={{ borderColor: c.line, background: "#FFFFFF" }}>
-                            <AlignmentCircle
-                              level={alignmentLevelFromFocus(focus)}
-                              title={`Goal alignment ${alignmentLevelFromFocus(focus) * 25}%`}
-                            />
-                          </span>
-                          <ScoreChip label="Score" value={o.opportunity_score} />
+                        <div className="shrink-0 flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full border px-1.5 py-1" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                              <AlignmentCircle
+                                level={alignmentLevelFromFocus(focus)}
+                                title={`Goal alignment ${alignmentLevelFromFocus(focus) * 25}%`}
+                              />
+                            </span>
+                            <ScoreChip label="Opp Score" value={o.opportunity_score} />
+                          </div>
+                          <Select
+                            value={workflowStatus}
+                            onValueChange={(next) => handleWorkflowChange(o, next as WorkflowStatus)}
+                            disabled={updatingWorkflowId === o.id}
+                          >
+                            <SelectTrigger
+                              className="h-7 min-w-[126px] border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                              style={{ borderColor: c.line, color: c.secondary }}
+                            >
+                              <SelectValue placeholder="Set workflow" />
+                            </SelectTrigger>
+                            <SelectContent className="border-[#DDE6D1] bg-white text-[#233C4B] shadow-[0_14px_32px_rgba(35,60,75,0.14)]">
+                              <SelectItem value="in_progress" className="font-mono text-[10px] uppercase tracking-[0.08em] focus:bg-[#EEF4FF] focus:text-[#233C4B]">In progress</SelectItem>
+                              <SelectItem value="planned" className="font-mono text-[10px] uppercase tracking-[0.08em] focus:bg-[#EEF4FF] focus:text-[#233C4B]">Planned</SelectItem>
+                              <SelectItem value="parked" className="font-mono text-[10px] uppercase tracking-[0.08em] focus:bg-[#EEF4FF] focus:text-[#233C4B]">Parked</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

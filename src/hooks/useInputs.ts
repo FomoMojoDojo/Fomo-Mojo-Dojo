@@ -139,14 +139,14 @@ function contextualizeInputText(args: {
   const needsOdiSignal = (text: string) =>
     !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
   if (args.inputKey === "needs-assessment") {
-    if (needsOdiSignal(description)) description = "ODI job map and desired outcomes by segment";
-    if (needsOdiSignal(whyItMatters)) whyItMatters = "Sets importance and satisfaction gaps before solution bets";
+    if (needsOdiSignal(description)) description = "Customer job map and desired outcomes by segment";
+    if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows what matters most and where current results are falling short";
   } else if (args.inputKey === "outcome-data") {
-    if (needsOdiSignal(description)) description = "Track ODI outcome satisfaction and completion signals";
-    if (needsOdiSignal(whyItMatters)) whyItMatters = "Validates progress on high-importance underserved outcomes";
+    if (needsOdiSignal(description)) description = "Track desired outcome satisfaction and completion signals";
+    if (needsOdiSignal(whyItMatters)) whyItMatters = "Confirms progress on high-importance outcomes that are still underserved";
   } else if (args.inputKey === "referral-map") {
-    if (needsOdiSignal(description)) description = "Map decision-journey triggers and trusted acquisition sources";
-    if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows where customers discover, evaluate, and choose";
+    if (needsOdiSignal(description)) description = "Map decision triggers and trusted channels customers use";
+    if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows where customers discover, evaluate, and choose with confidence";
   }
 
   return { inputLabel, subGroup, description, whyItMatters };
