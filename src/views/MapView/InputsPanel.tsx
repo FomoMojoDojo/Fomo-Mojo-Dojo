@@ -65,7 +65,7 @@ export default function InputsPanel({ open, onClose }: Props) {
   const groups = [
     { key: 'foundation', label: 'Foundation', badge: 'Positioning + Strategy Cascade', items: grouped.foundation },
     { key: 'execution', label: 'Execution', badge: 'GTM + Messaging', items: grouped.execution },
-    { key: 'market_evidence', label: 'Market Evidence', badge: 'ODI + Validation', items: grouped.market_evidence },
+    { key: 'market_evidence', label: 'Market Evidence', badge: 'Strategic Decision System + Validation', items: grouped.market_evidence },
   ];
 
   // If an input is selected, show the detail panel

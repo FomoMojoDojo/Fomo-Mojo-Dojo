@@ -35,7 +35,7 @@ const META: Record<
     offBorder: "#E9DFC7",
   },
   evidence: {
-    label: "Evidence",
+    label: "Research",
     icon: FlaskConical,
     bg: "#EEF6E7",
     fg: "#2E6B52",
@@ -45,7 +45,7 @@ const META: Record<
     offBorder: "#DCE8E0",
   },
   implemented_tested: {
-    label: "Implemented & Tested",
+    label: "Testing",
     icon: CheckCircle2,
     bg: "#EAF3EC",
     fg: "#25603E",
@@ -104,4 +104,3 @@ export function SourceLegend({
     </div>
   );
 }
-

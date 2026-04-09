@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 export type WorkflowStatus = 'in_progress' | 'planned' | 'parked';
@@ -26,6 +26,60 @@ export function useOpportunities(companyId?: string) {
   const [updatingWorkflowId, setUpdatingWorkflowId] = useState<string | null>(null);
   const [workflowStatusAvailable, setWorkflowStatusAvailable] = useState(true);
 
+  const load = useCallback(async (id: string, args?: { cancelled?: () => boolean }) => {
+    setLoading(true);
+    setError(null);
+    setWorkflowStatusAvailable(true);
+
+    const primary = await supabase
+      .from('opportunities')
+      .select(
+        'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, workflow_status, created_at'
+      )
+      .eq('company_id', id)
+      .order('opportunity_score', { ascending: false })
+      .limit(200);
+
+    if (args?.cancelled?.()) return;
+
+    const missingWorkflowColumn = Boolean(
+      primary.error?.message &&
+        /column\s+.*workflow_status.*does not exist|workflow_status.*does not exist/i.test(primary.error.message),
+    );
+
+    if (missingWorkflowColumn) {
+      setWorkflowStatusAvailable(false);
+      const fallback = await supabase
+        .from('opportunities')
+        .select(
+          'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, created_at'
+        )
+        .eq('company_id', id)
+        .order('opportunity_score', { ascending: false })
+        .limit(200);
+
+      if (args?.cancelled?.()) return;
+
+      if (fallback.error) {
+        setError(fallback.error.message);
+        setItems([]);
+      } else {
+        const normalized = ((fallback.data as any[]) ?? []).map((row) => ({
+          ...row,
+          workflow_status: null,
+        }));
+        setItems(normalized);
+      }
+    } else if (primary.error) {
+      setError(primary.error.message);
+      setItems([]);
+    } else {
+      setItems((primary.data as any[]) ?? []);
+    }
+
+    setLoading(false);
+  }, []);
+
   useEffect(() => {
     if (!companyId) {
       setItems([]);
@@ -35,65 +89,12 @@ export function useOpportunities(companyId?: string) {
     }
 
     let cancelled = false;
-
-    (async () => {
-      setLoading(true);
-      setError(null);
-      setWorkflowStatusAvailable(true);
-
-      const primary = await supabase
-        .from('opportunities')
-        .select(
-          'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, workflow_status, created_at'
-        )
-        .eq('company_id', companyId)
-        .order('opportunity_score', { ascending: false })
-        .limit(200);
-
-      if (cancelled) return;
-
-      const missingWorkflowColumn = Boolean(
-        primary.error?.message &&
-          /column\s+.*workflow_status.*does not exist|workflow_status.*does not exist/i.test(primary.error.message),
-      );
-
-      if (missingWorkflowColumn) {
-        setWorkflowStatusAvailable(false);
-        const fallback = await supabase
-          .from('opportunities')
-          .select(
-            'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, created_at'
-          )
-          .eq('company_id', companyId)
-          .order('opportunity_score', { ascending: false })
-          .limit(200);
-
-        if (cancelled) return;
-
-        if (fallback.error) {
-          setError(fallback.error.message);
-          setItems([]);
-        } else {
-          const normalized = ((fallback.data as any[]) ?? []).map((row) => ({
-            ...row,
-            workflow_status: null,
-          }));
-          setItems(normalized);
-        }
-      } else if (primary.error) {
-        setError(primary.error.message);
-        setItems([]);
-      } else {
-        setItems((primary.data as any[]) ?? []);
-      }
-
-      setLoading(false);
-    })();
+    void load(companyId, { cancelled: () => cancelled });
 
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, load]);
 
   return {
     loading,
@@ -101,6 +102,10 @@ export function useOpportunities(companyId?: string) {
     error,
     updatingWorkflowId,
     workflowStatusAvailable,
+    refetch: async () => {
+      if (!companyId) return;
+      await load(companyId);
+    },
     updateWorkflowStatus: async (opportunityId: string, workflowStatus: WorkflowStatus) => {
       if (!companyId) throw new Error('No active company selected.');
       if (!workflowStatusAvailable) {

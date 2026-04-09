@@ -9,7 +9,9 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import type { CascadeItem } from "@/lib/types";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import { toast } from "sonner";
 
@@ -215,11 +217,8 @@ function sourceTone(source: ProvenanceSource) {
   return { bg: "#FFF0E6", fg: c.coral, border: "#FFD1B4" };
 }
 
-function truncateText(value: string, maxChars: number) {
-  const cleaned = String(value || "").replace(/\s+/g, " ").trim();
-  if (!cleaned) return "";
-  if (cleaned.length <= maxChars) return cleaned;
-  return `${cleaned.slice(0, Math.max(0, maxChars - 1)).trim()}…`;
+function normalizeText(value: string) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function strategicProblemTitle(statement: string, fallbackIndex: number) {
@@ -229,11 +228,11 @@ function strategicProblemTitle(statement: string, fallbackIndex: number) {
     .filter(Boolean);
 
   const headline = lines[0] || "";
-  if (headline) return truncateText(headline, 88);
+  if (headline) return normalizeText(headline);
 
-  const compact = String(statement || "").replace(/\s+/g, " ").trim();
+  const compact = normalizeText(statement || "");
   if (!compact) return `Strategic Problem ${fallbackIndex + 1}`;
-  return truncateText(compact, 88);
+  return compact;
 }
 
 function strategicProblemSummary(statement: string, title: string) {
@@ -245,7 +244,7 @@ function strategicProblemSummary(statement: string, title: string) {
   const body = lines.slice(1).join(" ").trim();
   const fallback = lines[0] || "";
   const candidate = body || fallback;
-  const cleaned = String(candidate || "").replace(/\s+/g, " ").trim();
+  const cleaned = normalizeText(candidate || "");
   if (!cleaned) return "No additional context captured yet.";
 
   const normalizedTitle = String(title || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -253,7 +252,7 @@ function strategicProblemSummary(statement: string, title: string) {
   if (normalizedTitle && normalizedBody === normalizedTitle) {
     return "Open this problem to review the full client statement.";
   }
-  return truncateText(cleaned, 180);
+  return cleaned;
 }
 
 function strategicProblemDecisionAsk(statement: string) {
@@ -286,9 +285,44 @@ function strategicProblemDecisionAsk(statement: string) {
 
 function problemStatusTone(status: StrategicProblem["status"]) {
   if (status === "reconciled") {
-    return { bg: "#F3F6F1", fg: "#708070", border: "#D4DDCF", label: "Reconciled" };
+    return { bg: "#F3F6F1", fg: "#708070", border: "#D4DDCF", label: "Reconciled (Closed)" };
   }
-  return { bg: "#FFF0E6", fg: c.coral, border: "#FFD1B4", label: "Open" };
+  return { bg: "#FFF0E6", fg: c.coral, border: "#FFD1B4", label: "Open (In play)" };
+}
+
+function sourceEvidenceWeight(source: StrategicProblem["source"]) {
+  if (source === "evidence") return 5;
+  if (source === "public") return 4;
+  if (source === "company") return 3;
+  if (source === "intake") return 2;
+  return 1;
+}
+
+const EVIDENCE_HINT_TERMS = [
+  "evidence",
+  "data",
+  "metric",
+  "measure",
+  "validate",
+  "test",
+  "interview",
+  "survey",
+  "conversion",
+  "retention",
+  "adoption",
+  "usage",
+  "proof",
+  "signal",
+  "impact",
+  "outcome",
+];
+
+function evidenceHintCount(statement: string) {
+  const normalized = String(statement || "").toLowerCase();
+  if (!normalized) return 0;
+  return EVIDENCE_HINT_TERMS.reduce((count, term) => {
+    return normalized.includes(term) ? count + 1 : count;
+  }, 0);
 }
 
 function assumptionStatusLabel(status: StrategicAssumption["status"]) {
@@ -515,6 +549,7 @@ function suggestEvidenceNeeded(assumptionText: string): string {
 
 export default function StrategyView() {
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { loading, item, error, savingField, updateNarrativeField } = useStrategyCascade(activeCompany?.id);
   const {
     loading: problemsLoading,
@@ -625,6 +660,68 @@ export default function StrategyView() {
       };
     });
   }, [orderedStrategicProblems]);
+  const strategicProblemCardById = useMemo(
+    () => new Map(strategicProblemCards.map((entry) => [entry.problem.id, entry])),
+    [strategicProblemCards],
+  );
+  const currentFocusProblem = useMemo(() => {
+    const openProblems = orderedStrategicProblems.filter((problem) => problem.status !== "reconciled");
+    if (!openProblems.length) return null;
+
+    const ranked = openProblems
+      .map((problem) => {
+        const card = strategicProblemCardById.get(problem.id);
+        const sourcePoints = sourceEvidenceWeight(problem.source);
+        const hintPoints = evidenceHintCount(problem.statement);
+        const updatedMs = Number.isFinite(Date.parse(problem.updated_at))
+          ? Date.parse(problem.updated_at)
+          : Date.parse(problem.created_at);
+        const ageDays = Number.isFinite(updatedMs)
+          ? Math.max(0, (Date.now() - updatedMs) / 86_400_000)
+          : Number.POSITIVE_INFINITY;
+        const freshnessPoints = ageDays <= 14 ? 2 : ageDays <= 45 ? 1 : 0;
+        const total = sourcePoints + hintPoints + freshnessPoints;
+        return {
+          problem,
+          card,
+          sourcePoints,
+          hintPoints,
+          freshnessPoints,
+          updatedMs,
+          total,
+        };
+      })
+      .sort((a, b) => {
+        if (b.total !== a.total) return b.total - a.total;
+        return b.updatedMs - a.updatedMs;
+      });
+
+    const lead = ranked[0];
+    const reasonParts: string[] = [];
+    if (lead.sourcePoints >= 4) {
+      reasonParts.push("it is backed by the strongest outside evidence source among open problems");
+    } else if (lead.sourcePoints === 3) {
+      reasonParts.push("it is supported by company-side context we can verify quickly");
+    } else if (lead.sourcePoints === 2) {
+      reasonParts.push("it is grounded in intake evidence we can test in Diagnose");
+    } else {
+      reasonParts.push("it is the clearest unresolved problem stated by the client team");
+    }
+    if (lead.hintPoints > 0) {
+      reasonParts.push("it is phrased in measurable terms");
+    }
+    if (lead.freshnessPoints > 0) {
+      reasonParts.push("it was updated recently and is likely time-sensitive");
+    }
+
+    return {
+      problem: lead.problem,
+      title: lead.card?.title || strategicProblemTitle(lead.problem.statement, 0),
+      summary: lead.card?.summary || strategicProblemSummary(lead.problem.statement, ""),
+      decisionAsk: lead.card?.decisionAsk || strategicProblemDecisionAsk(lead.problem.statement),
+      whyNow: reasonParts.join("; "),
+    };
+  }, [orderedStrategicProblems, strategicProblemCardById]);
 
   const suggestedEvidenceForNewAssumption = useMemo(
     () => suggestEvidenceNeeded(newAssumptionText),
@@ -816,6 +913,8 @@ export default function StrategyView() {
       <TopNav />
 
       <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
+        <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
           <div className="flex flex-wrap items-center gap-3">
             <div>
@@ -832,7 +931,14 @@ export default function StrategyView() {
               </p>
             </div>
           </div>
-          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-4xl"
+            source="strategy_cascades plus client-stated strategic problems, assumptions, and local alignment artifacts."
+            evaluation="AI checks narrative coherence across aspiration, where-to-play, how-to-win, and evidence status from reconciled problem statements."
+            scoring="Strategy context contributes to foundation constraints and downstream score ceilings in shared scoring logic."
+            why="This makes it explicit when cascade guidance is evidence-backed versus template-like, so strategic language can be tightened."
+          />
         </div>
 
         {!activeCompany?.id ? (
@@ -847,12 +953,55 @@ export default function StrategyView() {
                 <div>
                   {sectionLabel("Client-Stated Strategic Problem(s)")}
                   <p className="mt-2.5 max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                    Capture what the client says the strategic problem is. Multiple statements are expected, especially early.
-                    Reconcile them before locking strategic choices in the cascade below.
+                    Capture the strategic problems in the client&apos;s own words, then narrow to one priority problem
+                    for this cycle using evidence. Problems stay open while they are still shaping active choices.
                   </p>
                 </div>
                 <MetaBadge>{openProblemsCount} open</MetaBadge>
               </div>
+              <div className="mt-4 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                  What reconciliation means
+                </p>
+                <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                  <span className="font-semibold" style={{ color: c.charcoal }}>Open (In play):</span> this problem is
+                  still unresolved and should influence strategy decisions now.
+                </p>
+                <p className="mt-1.5 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                  <span className="font-semibold" style={{ color: c.charcoal }}>Reconciled (Closed):</span> evidence has
+                  resolved, reframed, or merged this problem for now. You can reopen it any time if new evidence shows up.
+                </p>
+              </div>
+              {currentFocusProblem ? (
+                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                    Current focus problem (evidence-led)
+                  </p>
+                  <p className="mt-2 font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                    {currentFocusProblem.title}
+                  </p>
+                  <p className="mt-1 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                    {currentFocusProblem.summary}
+                  </p>
+                  <p className="mt-2 font-sans text-[12px] leading-[1.65]" style={{ color: c.secondary }}>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.08em]">Why this now:</span>{" "}
+                    {currentFocusProblem.whyNow}.
+                  </p>
+                  <p className="mt-1 font-sans text-[12px] leading-[1.65]" style={{ color: c.secondary }}>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.08em]">Decision ask:</span>{" "}
+                    {currentFocusProblem.decisionAsk}
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                    Current focus problem (evidence-led)
+                  </p>
+                  <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                    Add at least one open strategic problem to identify the single problem we should focus on first.
+                  </p>
+                </div>
+              )}
 
               {strategicProblemsTableMissing ? (
                 <p className="mt-4 font-sans text-[13px]" style={{ color: c.secondary }}>
@@ -1008,7 +1157,7 @@ export default function StrategyView() {
                                             [problem.id]: event.target.value,
                                           }))
                                         }
-                                        placeholder="Optional note for how this was reconciled"
+                                        placeholder="Optional: what evidence resolved this, or how it was merged/reframed"
                                         className="min-w-[260px] flex-1 rounded-md border px-2.5 py-1.5 font-sans text-[12px] outline-none"
                                         style={{ borderColor: c.line, background: "#fff", color: c.secondary }}
                                       />
@@ -1019,7 +1168,7 @@ export default function StrategyView() {
                                         className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                                         style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
                                       >
-                                        {reconcilingId === problem.id ? "Saving..." : "Mark Reconciled"}
+                                        {reconcilingId === problem.id ? "Saving..." : "Mark Reconciled (Close)"}
                                       </button>
                                       <button
                                         type="button"

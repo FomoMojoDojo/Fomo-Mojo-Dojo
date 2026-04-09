@@ -9,7 +9,9 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
 import {
   AlertTriangle,
@@ -88,15 +90,15 @@ const SOURCE_META: Record<
     border: "#F3D77A",
   },
   evidence: {
-    label: "Evidence",
-    short: "Primary research validated",
+    label: "Research",
+    short: "Research-backed evidence",
     icon: FlaskConical,
     bg: "#EEF6E7",
     fg: "#2E6B52",
     border: "#BDD8CF",
   },
   implemented_tested: {
-    label: "Implemented & Tested",
+    label: "Testing",
     short: "Live and measured",
     icon: CheckCircle2,
     bg: "#EAF3EC",
@@ -750,6 +752,7 @@ function CanvasSection({
 
 export default function PositioningView() {
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { query } = useInputs();
   const {
     loading: canvasLoading,
@@ -899,6 +902,8 @@ export default function PositioningView() {
       <TopNav />
 
       <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
+        <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
           <div className="flex flex-wrap items-center gap-3">
             <div>
@@ -910,11 +915,18 @@ export default function PositioningView() {
               </h1>
               <p className="mojo-under-title max-w-3xl font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
                 Positioning is the foundation for go-to-market clarity. This canvas now shows source
-                confidence so we can distinguish public-source drafts from validated and tested positioning.
+                confidence so we can distinguish public-source drafts from research-backed and testing-informed positioning.
               </p>
             </div>
           </div>
-          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-4xl"
+            source="positioning_canvases when saved; otherwise this page falls back to foundation inputs and public baseline context."
+            evaluation="AI clarity review plus alignment checks compare market category, unique attributes, and strategy cascade coherence."
+            scoring="Source confidence tiers (public/company/research/testing) and review severity determine confidence readout, warnings, and quality status."
+            why="This explains whether positioning is first-class evidence or fallback synthesis, so generic claims can be replaced with concrete proof."
+          />
         </div>
 
         {!activeCompany?.id ? (
@@ -965,8 +977,8 @@ export default function PositioningView() {
                   </p>
                   <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.muted }}>
                     {sourceSignals.hasPrimaryEvidence
-                      ? `Evidence is enabled from primary ODI interview/survey signals (${sourceSignals.primaryEvidenceSignals} source signals).`
-                      : "Evidence stays off until primary ODI interviews/surveys are captured; public sources alone never qualify."}
+                      ? `Evidence is enabled from primary Strategic Decision System interview/survey signals (${sourceSignals.primaryEvidenceSignals} source signals).`
+                      : "Evidence stays off until primary Strategic Decision System interviews/surveys are captured; public sources alone never qualify."}
                   </p>
                 </div>
               </div>

@@ -7,11 +7,13 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useOpportunities, type OpportunityRow, type WorkflowStatus } from "@/hooks/useOpportunities";
 import { useJobSteps } from "@/hooks/useJobSteps";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { useRoutes, type RouteRow } from "@/views/Routes/useRoutes";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import { computeOpportunityScore } from "@/lib/scoring";
 import { opportunityActionFromPriorityTier, opportunityActionTone } from "@/lib/opportunityLabels";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 import {
   classifyOpportunityFocus,
   deriveInitiativeContext,
@@ -38,8 +40,6 @@ const JOURNEY_ACCENT: Record<string, string> = {
   operations: "#233C4B",
 };
 
-const TREE_STEP_MIN_WIDTH = 280;
-const TREE_MAP_MIN_WIDTH = 1160;
 const WORKFLOW_STATUS_OPTIONS: Array<{ value: WorkflowStatus; label: string }> = [
   { value: "in_progress", label: "In progress" },
   { value: "planned", label: "Planned" },
@@ -175,18 +175,6 @@ function journeyRootLabel(key: string, companyName?: string | null) {
   return "Increase successful progress through the core journey";
 }
 
-function evidenceNeeded(item: OpportunityRow) {
-  return [
-    item.step_label
-      ? `Confirm where "${item.step_label}" breaks down in real practice.`
-      : "Tie this opportunity to a specific job step or workflow moment.",
-    "Collect direct customer, operator, or buyer language for this outcome.",
-    item.priority_tier === "focus"
-      ? "Validate importance and dissatisfaction with interviews or survey evidence."
-      : "Confirm this is a real high-opportunity outcome before choosing a solution.",
-  ];
-}
-
 function evidenceSummaryText(args: {
   hasPublic: boolean;
   hasCustomer: boolean;
@@ -196,9 +184,258 @@ function evidenceSummaryText(args: {
   const active: string[] = [];
   if (args.hasPublic) active.push("Public");
   if (args.hasCustomer) active.push("Company");
-  if (args.hasValidated) active.push("Validated");
-  if (args.hasTested) active.push("Tested");
+  if (args.hasValidated) active.push("Research");
+  if (args.hasTested) active.push("Testing");
   return active.length > 0 ? active.join(" · ") : "No active evidence sources";
+}
+
+type DesiredOutcomeOption = {
+  id: string;
+  title: string;
+  statement: string;
+  leadingIndicator: string;
+  targetDirection: string;
+  evidenceBasis: string;
+  confidence: number;
+  source: "managed_outcome" | "opportunity";
+  managedOutcomeId?: string;
+};
+
+type SolutionIdea = {
+  id: string;
+  title: string;
+  category: string;
+  effort: string;
+};
+
+const TOKEN_STOP_WORDS = new Set([
+  "the", "and", "for", "with", "into", "from", "that", "this", "your", "their", "while", "through", "across",
+  "owner", "owners", "customer", "customers", "partner", "partners", "team", "teams", "step", "journey",
+  "increase", "reduce", "improve", "maximize", "minimize", "avoid", "rate", "share", "consistency", "confidence",
+]);
+
+function tokenizeText(value: string) {
+  const tokens = String(value || "")
+    .toLowerCase()
+    .match(/[a-z][a-z-]{2,}/g) || [];
+  return tokens.filter((token) => !TOKEN_STOP_WORDS.has(token));
+}
+
+function parseDirectionalVerb(value: string) {
+  const match = String(value || "").trim().toLowerCase().match(/^(increase|reduce|improve|maximize|minimize|avoid)\b/);
+  return match ? match[1] : "";
+}
+
+function directionalConflict(a: string, b: string) {
+  const key = `${a}:${b}`;
+  return key === "increase:reduce" ||
+    key === "reduce:increase" ||
+    key === "maximize:minimize" ||
+    key === "minimize:maximize";
+}
+
+function scoreOutcomeOpportunityFit(outcomeStatement: string, item: OpportunityRow) {
+  const outcomeTokens = new Set(tokenizeText(outcomeStatement));
+  const itemTokens = new Set(tokenizeText(`${item.outcome} ${item.step_label || ""}`));
+
+  if (outcomeTokens.size === 0 || itemTokens.size === 0) return 0;
+
+  let overlap = 0;
+  for (const token of itemTokens) {
+    if (outcomeTokens.has(token)) overlap += 1;
+  }
+
+  const outcomeDirection = parseDirectionalVerb(outcomeStatement);
+  const itemDirection = parseDirectionalVerb(item.outcome);
+  const directionBonus = !outcomeDirection || !itemDirection
+    ? 0
+    : outcomeDirection === itemDirection
+      ? 0.75
+      : directionalConflict(outcomeDirection, itemDirection)
+        ? -0.75
+        : -0.25;
+
+  const outcomeCoverage = overlap / Math.max(1, outcomeTokens.size);
+  const itemCoverage = overlap / Math.max(1, itemTokens.size);
+  const noOverlapPenalty = overlap === 0 ? -0.5 : 0;
+  return overlap * 0.8 + outcomeCoverage * 1.4 + itemCoverage * 0.9 + directionBonus + noOverlapPenalty;
+}
+
+function selectOutcomeScopedOpportunities(outcomeStatement: string, journeyItems: OpportunityRow[]) {
+  const outcomeTokenCount = new Set(tokenizeText(outcomeStatement)).size;
+  const strongThreshold = outcomeTokenCount <= 3 ? 1.2 : outcomeTokenCount <= 6 ? 1.5 : 1.8;
+  const ranked = [...journeyItems]
+    .map((item) => ({
+      item,
+      fitScore: scoreOutcomeOpportunityFit(outcomeStatement, item),
+    }))
+    .sort((a, b) => {
+      if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
+      return (Number(b.item.opportunity_score) || 0) - (Number(a.item.opportunity_score) || 0);
+    });
+
+  const strong = ranked.filter((entry) => entry.fitScore >= strongThreshold);
+  const visible = strong.slice(0, 4);
+
+  return {
+    visible,
+    hiddenCount: Math.max(0, journeyItems.length - visible.length),
+    bestFitScore: ranked[0]?.fitScore ?? 0,
+  };
+}
+
+function scoreRouteOutcomeFit(route: RouteRow, item: OpportunityRow, outcomeStatement: string) {
+  const routeText = `${route.title} ${route.short_description || ""} ${(route.frameworks_used || []).join(" ")}`;
+  const routeTokens = new Set(tokenizeText(routeText));
+  const outcomeTokens = new Set(tokenizeText(outcomeStatement));
+  const itemTokens = new Set(tokenizeText(`${item.outcome} ${item.step_label || ""}`));
+  if (routeTokens.size === 0) return 0;
+
+  let outcomeOverlap = 0;
+  for (const token of outcomeTokens) {
+    if (routeTokens.has(token)) outcomeOverlap += 1;
+  }
+  let itemOverlap = 0;
+  for (const token of itemTokens) {
+    if (routeTokens.has(token)) itemOverlap += 1;
+  }
+
+  const desiredCategory =
+    item.priority_tier === "focus"
+      ? "fix"
+      : item.priority_tier === "monitor"
+        ? "improve"
+        : "create";
+  const routeCategory = String(route.category || "").toLowerCase();
+  const categoryScore =
+    routeCategory === desiredCategory ? 0.6 : routeCategory ? -0.2 : 0;
+
+  const outcomeDirection = parseDirectionalVerb(outcomeStatement);
+  const routeDirection = parseDirectionalVerb(routeText);
+  const directionScore = !outcomeDirection || !routeDirection
+    ? 0
+    : outcomeDirection === routeDirection
+      ? 0.5
+      : directionalConflict(outcomeDirection, routeDirection)
+        ? -0.6
+        : -0.2;
+
+  return outcomeOverlap * 1.25 + itemOverlap * 0.8 + categoryScore + directionScore;
+}
+
+function matchSolutionsForOpportunity(item: OpportunityRow, routeItems: RouteRow[], outcomeStatement: string) {
+  const ranked = routeItems
+    .map((route) => ({ route, score: scoreRouteOutcomeFit(route, item, outcomeStatement) }))
+    .filter((entry) => entry.score >= 1.2)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2)
+    .map((entry, index) => ({
+      id: `${item.id}-route-${entry.route.id || index}`,
+      title: entry.route.title || "Untitled solution idea",
+      category: String(entry.route.category || "improve"),
+      effort: String(entry.route.effort || "medium"),
+    }));
+
+  return ranked;
+}
+
+function inferAudienceLabel(text: string) {
+  const raw = String(text || "").toLowerCase();
+  if (raw.includes("cafe owner")) return "cafe owners";
+  if (raw.includes("partner cafe")) return "partner cafes";
+  if (raw.includes("family")) return "families";
+  if (raw.includes("patient")) return "patients";
+  if (raw.includes("operator")) return "operators";
+  if (raw.includes("buyer")) return "buyers";
+  if (raw.includes("partner")) return "partners";
+  if (raw.includes("client")) return "clients";
+  return "target users";
+}
+
+function buildAssumptionTests(item: OpportunityRow, solution: SolutionIdea) {
+  const audience = inferAudienceLabel(item.outcome);
+  const stepLabel = String(item.step_label || "this journey step").toLowerCase();
+  return [
+    `Desirability test: Interview 5 ${audience} about friction in ${stepLabel} before scaling "${solution.title}".`,
+    `Viability/feasibility test: Run a 2-week pilot and track step completion rate, quality consistency, and rework.`,
+  ];
+}
+
+function DesiredOutcomeFlipCard({
+  outcome,
+  accent,
+}: {
+  outcome?: DesiredOutcomeOption;
+  accent: string;
+}) {
+  const [flipped, setFlipped] = useState(false);
+
+  useEffect(() => {
+    setFlipped(false);
+  }, [outcome?.id]);
+
+  const statement = outcome?.statement || "Define a desired outcome to anchor this branch.";
+  const targetDirection = outcome?.targetDirection || "improve";
+  const evidenceBasis = outcome?.evidenceBasis || "No evidence basis provided yet.";
+  const confidence = Number.isFinite(Number(outcome?.confidence)) ? Number(outcome?.confidence) : 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => setFlipped((current) => !current)}
+      className="group mx-auto block w-full max-w-[420px] text-left"
+      aria-label="Flip desired outcome card"
+      title="Click to flip"
+    >
+      <div className="relative h-[230px] w-full [perspective:1200px]">
+        <div
+          className={`relative h-full w-full transition-transform duration-500 [transform-style:preserve-3d] ${flipped ? "[transform:rotateY(180deg)]" : ""}`}
+        >
+          <div
+            className="absolute inset-0 rounded-[24px] border px-5 py-4 shadow-sm [backface-visibility:hidden]"
+            style={{ borderColor: c.line, background: "#F8F4ED" }}
+          >
+            <div
+              className="mb-3 flex h-10 w-10 items-center justify-center rounded-full"
+              style={{ background: `${accent}18`, color: accent }}
+            >
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Desired outcome
+            </p>
+            <p className="mt-2 font-sans text-[16px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+              {statement}
+            </p>
+            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+              Tap to flip for details
+            </p>
+          </div>
+
+          <div
+            className="absolute inset-0 rounded-[24px] border px-5 py-4 shadow-sm [backface-visibility:hidden] [transform:rotateY(180deg)]"
+            style={{ borderColor: c.line, background: "#FFFFFF" }}
+          >
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Outcome details
+            </p>
+            <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+              <span className="font-semibold" style={{ color: c.charcoal }}>Target direction:</span> {targetDirection}
+            </p>
+            <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+              <span className="font-semibold" style={{ color: c.charcoal }}>Evidence:</span> {evidenceBasis}
+            </p>
+            <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+              <span className="font-semibold" style={{ color: c.charcoal }}>Confidence:</span> {confidence}/100
+            </p>
+            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+              Tap to flip back
+            </p>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
 }
 
 function WorkflowStatusPicker({
@@ -215,7 +452,7 @@ function WorkflowStatusPicker({
   return (
     <Select value={value} onValueChange={(next) => onChange(next as WorkflowStatus)} disabled={disabled}>
       <SelectTrigger
-        className={`${compact ? "h-7 min-w-[126px]" : "h-8 min-w-[138px]"} border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]`}
+        className={`${compact ? "h-7 w-[132px] shrink-0" : "h-8 w-[148px] shrink-0"} max-w-full border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]`}
         style={{ borderColor: c.line, color: c.secondary }}
       >
         <SelectValue placeholder="Set workflow" />
@@ -342,7 +579,7 @@ function OpportunityCard({
           >
             {priorityLabel(item.priority_tier)}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <ActionTypeBadge label={actionType} />
             <WorkflowStatusPicker
               value={workflowStatus}
@@ -490,6 +727,10 @@ function ViewToggle({
 function OpportunityTreeView({
   items,
   managedOutcomes,
+  routeItems,
+  savingManagedOutcome,
+  onCreateManagedOutcome,
+  onUpdateManagedOutcome,
   opportunityNumberById,
   workflowStatusAvailable,
   updatingWorkflowId,
@@ -499,6 +740,7 @@ function OpportunityTreeView({
 }: {
   items: OpportunityRow[];
   managedOutcomes: Array<{
+    id: string;
     journey_key: string;
     outcome_title: string;
     outcome_statement: string;
@@ -507,6 +749,27 @@ function OpportunityTreeView({
     evidence_basis: string;
     confidence: number;
   }>;
+  routeItems: RouteRow[];
+  savingManagedOutcome: boolean;
+  onCreateManagedOutcome: (input: {
+    journey_key: string;
+    outcome_title: string;
+    outcome_statement: string;
+    leading_indicator: string;
+    target_direction: string;
+    evidence_basis: string;
+    confidence: number;
+    frameworks_used?: string[];
+  }) => Promise<{ id: string } | void>;
+  onUpdateManagedOutcome: (id: string, patch: {
+    outcome_title?: string;
+    outcome_statement?: string;
+    leading_indicator?: string;
+    target_direction?: string;
+    evidence_basis?: string;
+    confidence?: number;
+    frameworks_used?: string[];
+  }) => Promise<{ id: string } | void>;
   opportunityNumberById: Map<string, string>;
   workflowStatusAvailable: boolean;
   updatingWorkflowId: string | null;
@@ -514,38 +777,202 @@ function OpportunityTreeView({
   showJourneyBadge?: boolean;
   targetOpportunityId?: string | null;
 }) {
-  const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
-  const orderedJourneyKeys = [
-    ...["customer", "revenue", "operations"].filter((key) => presentJourneyKeys.includes(key)),
-    ...presentJourneyKeys.filter((key) => !["customer", "revenue", "operations"].includes(key)).sort((a, b) => a.localeCompare(b)),
-  ];
-  const grouped = orderedJourneyKeys.map((journeyKey) => {
-    const journeyItems = items.filter((item) => item.journey_key === journeyKey);
-    const stepMap = new Map<string, OpportunityRow[]>();
+  const [selectedOutcomeByJourney, setSelectedOutcomeByJourney] = useState<Record<string, string>>({});
+  const [editorByJourney, setEditorByJourney] = useState<Record<string, {
+    mode: "add" | "edit";
+    managedOutcomeId?: string;
+    outcome_title: string;
+    outcome_statement: string;
+    leading_indicator: string;
+    target_direction: string;
+    evidence_basis: string;
+    confidence: number;
+    error?: string;
+  } | null>>({});
 
-    for (const item of journeyItems) {
-      const key = `${item.step_number ?? "?"}|${item.step_label ?? "Unassigned step"}`;
-      if (!stepMap.has(key)) stepMap.set(key, []);
-      stepMap.get(key)?.push(item);
+  const grouped = useMemo(() => {
+    const presentJourneyKeys = Array.from(new Set(items.map((item) => String(item.journey_key || "").trim()).filter(Boolean)));
+    const orderedJourneyKeys = [
+      ...["customer", "revenue", "operations"].filter((key) => presentJourneyKeys.includes(key)),
+      ...presentJourneyKeys.filter((key) => !["customer", "revenue", "operations"].includes(key)).sort((a, b) => a.localeCompare(b)),
+    ];
+
+    return orderedJourneyKeys.map((journeyKey) => {
+      const journeyItems = items
+        .filter((item) => item.journey_key === journeyKey)
+        .sort((a, b) => (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0));
+
+      const managedJourneyOutcomes = managedOutcomes
+        .filter((outcome) => outcome.journey_key === journeyKey)
+        .map((outcome) => ({
+          id: `managed-${outcome.id}`,
+          title: outcome.outcome_statement || outcome.outcome_title || journeyRootLabel(journeyKey),
+          statement: outcome.outcome_statement || outcome.outcome_title || journeyRootLabel(journeyKey),
+          leadingIndicator: outcome.leading_indicator || "Leading indicator to validate",
+          targetDirection: outcome.target_direction || "improve",
+          evidenceBasis: outcome.evidence_basis || "Derived from current evidence",
+          confidence: Number.isFinite(Number(outcome.confidence)) ? Number(outcome.confidence) : 55,
+          source: "managed_outcome" as const,
+          managedOutcomeId: outcome.id,
+        }));
+
+      const candidateOutcomeOptions = [...journeyItems]
+        .sort((a, b) => (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0))
+        .slice(0, 6)
+        .map((item) => {
+          const statement = humanizeOutcomeText(item.outcome) || journeyRootLabel(journeyKey);
+          const stepLabel = String(item.step_label || "the customer journey").toLowerCase();
+          const audience = inferAudienceLabel(item.outcome);
+          const verbMatch = statement.match(/^(Increase|Reduce|Improve|Maximize|Minimize|Avoid)\b/i);
+          const targetDirection = (verbMatch?.[1] || "Increase").toLowerCase();
+          return {
+            id: `opp-${item.id}`,
+            title: statement,
+            statement,
+            leadingIndicator: `Share of ${audience} progressing through ${stepLabel} with fewer delays and less rework.`,
+            targetDirection,
+            evidenceBasis: "Candidate desired outcome derived from current opportunity map and should be validated through interviews.",
+            confidence: 42,
+            source: "opportunity" as const,
+          };
+        });
+
+      const dedupedOptions: DesiredOutcomeOption[] = [];
+      const seenTitles = new Set<string>();
+      for (const option of [...managedJourneyOutcomes, ...candidateOutcomeOptions]) {
+        const normalized = option.statement.trim().toLowerCase();
+        if (!normalized || seenTitles.has(normalized)) continue;
+        seenTitles.add(normalized);
+        dedupedOptions.push(option);
+      }
+      if (dedupedOptions.length === 0) {
+        dedupedOptions.push({
+          id: `fallback-${journeyKey}`,
+          title: journeyRootLabel(journeyKey),
+          statement: journeyRootLabel(journeyKey),
+          leadingIndicator: "Leading indicator to validate with Strategic Decision System importance/satisfaction evidence.",
+          targetDirection: "improve",
+          evidenceBasis: "Fallback outcome; replace with validated desired outcome.",
+          confidence: 30,
+          source: "opportunity",
+        });
+      }
+
+      return {
+        journeyKey,
+        journeyItems,
+        itemCount: journeyItems.length,
+        desiredOutcomeOptions: dedupedOptions,
+        managedJourneyOutcomes,
+      };
+    });
+  }, [items, managedOutcomes]);
+
+  useEffect(() => {
+    setSelectedOutcomeByJourney((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const group of grouped) {
+        const ids = new Set(group.desiredOutcomeOptions.map((option) => option.id));
+        const active = next[group.journeyKey];
+        if (!active || !ids.has(active)) {
+          next[group.journeyKey] = group.desiredOutcomeOptions[0]?.id || "";
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [grouped]);
+
+  function openAddEditor(journeyKey: string) {
+    setEditorByJourney((current) => ({
+      ...current,
+      [journeyKey]: {
+        mode: "add",
+        outcome_title: "",
+        outcome_statement: "",
+        leading_indicator: "",
+        target_direction: "increase",
+        evidence_basis: "Team-authored desired outcome.",
+        confidence: 55,
+      },
+    }));
+  }
+
+  function openEditEditor(journeyKey: string, option: DesiredOutcomeOption) {
+    if (!option.managedOutcomeId) return;
+    setEditorByJourney((current) => ({
+      ...current,
+      [journeyKey]: {
+        mode: "edit",
+        managedOutcomeId: option.managedOutcomeId,
+        outcome_title: option.statement,
+        outcome_statement: option.statement,
+        leading_indicator: option.leadingIndicator,
+        target_direction: option.targetDirection || "increase",
+        evidence_basis: option.evidenceBasis,
+        confidence: Number.isFinite(option.confidence) ? option.confidence : 55,
+      },
+    }));
+  }
+
+  function closeEditor(journeyKey: string) {
+    setEditorByJourney((current) => ({ ...current, [journeyKey]: null }));
+  }
+
+  async function saveEditor(journeyKey: string) {
+    const editor = editorByJourney[journeyKey];
+    if (!editor) return;
+    const statement = editor.outcome_statement.trim();
+    const indicator = editor.leading_indicator.trim();
+    if (!statement || !indicator) {
+      setEditorByJourney((current) => ({
+        ...current,
+        [journeyKey]: { ...editor, error: "Add an outcome statement and leading indicator." },
+      }));
+      return;
     }
 
-    const steps = Array.from(stepMap.entries())
-      .map(([key, rows]) => {
-        const [stepNumber, stepLabel] = key.split("|");
-        return {
-          stepNumber,
-          stepLabel,
-          items: rows.sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0)),
-        };
-      })
-      .sort((a, b) => Number(a.stepNumber) - Number(b.stepNumber));
-
-    return {
-      journeyKey,
-      steps,
-      managedOutcome: managedOutcomes.find((outcome) => outcome.journey_key === journeyKey) ?? null,
-    };
-  });
+    try {
+      if (editor.mode === "edit" && editor.managedOutcomeId) {
+        const updated = await onUpdateManagedOutcome(editor.managedOutcomeId, {
+          outcome_title: statement,
+          outcome_statement: statement,
+          leading_indicator: indicator,
+          target_direction: editor.target_direction || "increase",
+          evidence_basis: editor.evidence_basis || "Team-authored desired outcome.",
+          confidence: Math.max(10, Math.min(95, Number(editor.confidence) || 55)),
+          frameworks_used: ["Teresa Torres", "Strategic Decision System", "JTBD"],
+        });
+        const updatedId = (updated as { id?: string } | void)?.id;
+        if (updatedId) {
+          setSelectedOutcomeByJourney((current) => ({ ...current, [journeyKey]: `managed-${updatedId}` }));
+        }
+      } else {
+        const created = await onCreateManagedOutcome({
+          journey_key: journeyKey,
+          outcome_title: statement,
+          outcome_statement: statement,
+          leading_indicator: indicator,
+          target_direction: editor.target_direction || "increase",
+          evidence_basis: editor.evidence_basis || "Team-authored desired outcome.",
+          confidence: Math.max(10, Math.min(95, Number(editor.confidence) || 55)),
+          frameworks_used: ["Teresa Torres", "Strategic Decision System", "JTBD"],
+        });
+        const createdId = (created as { id?: string } | void)?.id;
+        if (createdId) {
+          setSelectedOutcomeByJourney((current) => ({ ...current, [journeyKey]: `managed-${createdId}` }));
+        }
+      }
+      closeEditor(journeyKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save desired outcome.";
+      setEditorByJourney((current) => ({
+        ...current,
+        [journeyKey]: editor ? { ...editor, error: message } : editor,
+      }));
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -554,17 +981,22 @@ function OpportunityTreeView({
           Opportunity Solution Tree
         </h2>
         <p className="mt-2 max-w-4xl font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>
-          This view separates a top-level product outcome target from the opportunity branches beneath it. The top node is the leading-indicator result the team should manage toward. The lower nodes are opportunity hypotheses to explore before selecting solutions. Hover over any opportunity branch to preview detail. Current scores are still estimated from public evidence, not survey-validated measurements.
+          This view now follows Teresa Torres flow end-to-end: desired outcome first, then opportunity branches, then solution ideas, then assumption tests. Pick a desired outcome for each journey and pressure-test solutions before committing.
         </p>
         <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-          Product outcome target → step branches → opportunity branches (solutions come later)
+          Desired outcome → opportunities → solution ideas → assumption tests
         </p>
       </div>
 
       <div className="space-y-6">
-        {grouped.map(({ journeyKey, steps, managedOutcome }) => {
+        {grouped.map(({ journeyKey, journeyItems, itemCount, desiredOutcomeOptions, managedJourneyOutcomes }) => {
           const accent = JOURNEY_ACCENT[journeyKey] || c.monitor;
-          const itemCount = steps.reduce((sum, step) => sum + step.items.length, 0);
+          const selectedOutcome =
+            desiredOutcomeOptions.find((option) => option.id === selectedOutcomeByJourney[journeyKey]) ||
+            desiredOutcomeOptions[0];
+          const editor = editorByJourney[journeyKey];
+          const scoped = selectOutcomeScopedOpportunities(selectedOutcome?.statement || "", journeyItems);
+          const visibleOpportunities = scoped.visible.map((entry) => entry.item);
           return (
             <section
               key={journeyKey}
@@ -579,199 +1011,337 @@ function OpportunityTreeView({
                   </h3>
                 </div>
                 <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                  {steps.length} steps · {itemCount} opportunities
+                  {itemCount} opportunities
                 </p>
               </div>
 
-              {steps.length === 0 ? (
+              <div className="mt-4 max-w-[760px] space-y-3">
+                <div className="max-w-[580px]">
+                  <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                    Desired outcome
+                  </p>
+                  <Select
+                    value={selectedOutcome?.id || desiredOutcomeOptions[0]?.id}
+                    onValueChange={(next) =>
+                      setSelectedOutcomeByJourney((current) => ({
+                        ...current,
+                        [journeyKey]: next,
+                      }))
+                    }
+                  >
+                    <SelectTrigger
+                      className="h-9 max-w-full border bg-white px-3 py-1 text-left font-sans text-[13px]"
+                      style={{ borderColor: c.line, color: c.charcoal }}
+                    >
+                      <SelectValue placeholder="Choose desired outcome" />
+                    </SelectTrigger>
+                    <SelectContent className="border-[#DDE6D1] bg-white text-[#233C4B] shadow-[0_14px_32px_rgba(35,60,75,0.14)]">
+                      {desiredOutcomeOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id} className="text-[12px] leading-[1.45]">
+                          {option.statement}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
+                    Opportunities below are regenerated for this desired outcome and non-matching branches are removed.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openAddEditor(journeyKey)}
+                    className="rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors hover:bg-[#F5F7F2]"
+                    style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                  >
+                    Add Desired Outcome
+                  </button>
+                  {managedJourneyOutcomes.map((option) => (
+                    <button
+                      key={`${journeyKey}-edit-${option.id}`}
+                      type="button"
+                      onClick={() => openEditEditor(journeyKey, option)}
+                      className="rounded-md border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors hover:bg-[#F5F7F2]"
+                      style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                    >
+                      Edit: {(option.statement || option.title).slice(0, 42)}{(option.statement || option.title).length > 42 ? "…" : ""}
+                    </button>
+                  ))}
+                </div>
+
+                {editor ? (
+                  <div className="rounded-xl border p-3" style={{ borderColor: c.line, background: "#FAF9F6" }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                      {editor.mode === "edit" ? "Edit desired outcome" : "Add desired outcome"}
+                    </p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <Select
+                        value={editor.target_direction || "increase"}
+                        onValueChange={(next) =>
+                          setEditorByJourney((current) => ({
+                            ...current,
+                            [journeyKey]: current[journeyKey]
+                              ? { ...current[journeyKey]!, target_direction: next, error: "" }
+                              : current[journeyKey],
+                          }))
+                        }
+                      >
+                        <SelectTrigger
+                        className="h-9 border bg-white px-3 py-1 text-left font-sans text-[13px] md:col-span-2"
+                        style={{ borderColor: c.line, color: c.charcoal }}
+                      >
+                        <SelectValue placeholder="Target direction" />
+                        </SelectTrigger>
+                        <SelectContent className="border-[#DDE6D1] bg-white text-[#233C4B] shadow-[0_14px_32px_rgba(35,60,75,0.14)]">
+                          {["increase", "reduce", "improve", "maximize", "minimize", "avoid"].map((direction) => (
+                            <SelectItem key={`${journeyKey}-${direction}`} value={direction} className="text-[12px] leading-[1.45] capitalize">
+                              {direction}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <textarea
+                        value={editor.outcome_statement}
+                        onChange={(event) =>
+                          setEditorByJourney((current) => ({
+                            ...current,
+                            [journeyKey]: current[journeyKey]
+                              ? { ...current[journeyKey]!, outcome_statement: event.target.value, error: "" }
+                              : current[journeyKey],
+                          }))
+                        }
+                        placeholder="Desired outcome statement"
+                        rows={3}
+                        className="rounded-md border px-3 py-2 text-[13px] outline-none focus:ring-1 md:col-span-2"
+                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      />
+                      <input
+                        type="text"
+                        value={editor.leading_indicator}
+                        onChange={(event) =>
+                          setEditorByJourney((current) => ({
+                            ...current,
+                            [journeyKey]: current[journeyKey]
+                              ? { ...current[journeyKey]!, leading_indicator: event.target.value, error: "" }
+                              : current[journeyKey],
+                          }))
+                        }
+                        placeholder="Leading indicator"
+                        className="h-9 rounded-md border px-3 text-[13px] outline-none focus:ring-1 md:col-span-2"
+                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      />
+                    </div>
+                    {editor.error ? (
+                      <p className="mt-2 font-sans text-[12px]" style={{ color: c.focus }}>
+                        {editor.error}
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void saveEditor(journeyKey)}
+                        disabled={savingManagedOutcome}
+                        className="rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors disabled:opacity-60"
+                        style={{ borderColor: c.line, color: "#fff", background: c.charcoal }}
+                      >
+                        {savingManagedOutcome ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => closeEditor(journeyKey)}
+                        disabled={savingManagedOutcome}
+                        className="rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors hover:bg-[#F5F7F2] disabled:opacity-60"
+                        style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {journeyItems.length === 0 ? (
                 <div className="mt-4 rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
                   <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
                     No opportunities mapped to this journey yet.
                   </p>
                 </div>
               ) : (
-                <div className="mt-5 overflow-x-auto pb-2">
-                  <div
-                    style={{
-                      minWidth: `${Math.max(TREE_MAP_MIN_WIDTH, steps.length * TREE_STEP_MIN_WIDTH)}px`,
-                    }}
-                  >
-                    <div className="flex justify-center">
-                      <HoverCard openDelay={100}>
-                        <HoverCardTrigger asChild>
-                          <div
-                            className="relative max-w-[360px] rounded-[24px] border px-5 py-4 text-center shadow-sm"
-                            style={{ borderColor: c.line, background: "#F8F4ED" }}
-                          >
-                            <div
-                              className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full"
-                              style={{ background: `${accent}18`, color: accent }}
-                            >
-                              <Sparkles className="h-4 w-4" />
-                            </div>
-                            <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                              Product outcome target
-                            </p>
-                            <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
-                              {managedOutcome?.outcome_title || journeyRootLabel(journeyKey)}
-                            </p>
-                            <p className="mt-2 font-sans text-[12px] italic leading-[1.55]" style={{ color: c.secondary }}>
-                              {managedOutcome?.leading_indicator
-                                ? `Leading indicator: ${managedOutcome.leading_indicator}`
-                                : "Provisional leading-indicator target derived from public evidence, not yet a hard-measured KPI."}
-                            </p>
-                          </div>
-                        </HoverCardTrigger>
-                        <HoverCardContent className="w-[320px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
-                          <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                            Product outcome target
-                          </div>
-                          <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
-                            {managedOutcome?.outcome_statement ||
-                              "This root is the result the team should manage toward. It is not a feature, project, or initiative. The branches below are opportunities that may explain why the team is or is not reaching that outcome."}
-                          </p>
-                          {managedOutcome?.target_direction ? (
-                            <p className="mt-3 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                              Target direction: {managedOutcome.target_direction}
-                            </p>
-                          ) : null}
-                          {managedOutcome?.evidence_basis ? (
-                            <p className="mt-3 font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                              Evidence basis: {managedOutcome.evidence_basis}
-                            </p>
-                          ) : null}
-                          <p className="mt-3 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
-                            {managedOutcome
-                              ? `Confidence ${managedOutcome.confidence}/100. Still provisional until backed by measured baseline and target data.`
-                              : "A true managed outcome should eventually become a measurable leading indicator with a baseline and target."}
-                          </p>
-                        </HoverCardContent>
-                      </HoverCard>
+                <div className="mt-5 space-y-4">
+                  <div className="flex justify-center">
+                    <DesiredOutcomeFlipCard outcome={selectedOutcome} accent={accent} />
+                  </div>
+
+                  <div className="mx-auto h-8 w-px" style={{ background: `${accent}66` }} />
+                  <div className="mx-auto h-px w-[88%]" style={{ background: `${accent}55` }} />
+
+                  {scoped.hiddenCount > 0 && visibleOpportunities.length > 0 ? (
+                    <p className="text-center font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                      Regenerated for selected outcome: showing {visibleOpportunities.length}, hiding {scoped.hiddenCount}
+                    </p>
+                  ) : null}
+
+                  {visibleOpportunities.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
+                      <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
+                        No high-confidence opportunity matches found for this desired outcome.
+                      </p>
+                      <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
+                        Adjust the desired outcome wording or update the opportunity set so this branch reflects evidence-backed fit.
+                      </p>
+                      {scoped.bestFitScore > 0 ? (
+                        <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                          Best available fit score: {scoped.bestFitScore.toFixed(2)} (below threshold)
+                        </p>
+                      ) : null}
                     </div>
-
-                    <div className="mx-auto h-8 w-px" style={{ background: `${accent}66` }} />
-                    <div className="mx-auto h-px w-[88%]" style={{ background: `${accent}55` }} />
-
-                    <div className="mt-6 grid gap-5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(${TREE_STEP_MIN_WIDTH}px, 1fr))` }}>
-                      {steps.map((step) => (
-                        <div key={`${journeyKey}-${step.stepNumber}-${step.stepLabel}`} className="flex flex-col items-center">
-                          <div className="h-6 w-px" style={{ background: `${accent}55` }} />
-                          <HoverCard openDelay={100}>
-                            <HoverCardTrigger asChild>
-                              <button
-                                type="button"
-                                className="w-full rounded-[22px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                style={{ borderColor: c.line, background: c.card }}
-                                title={step.stepLabel ? `Step ${step.stepNumber}: ${step.stepLabel}` : `Step ${step.stepNumber}`}
-                              >
-                                <div className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.muted }}>
-                                  Job Step {step.stepNumber}
-                                </div>
-                                <div className="mt-1 font-sans text-[14px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                                  {step.stepLabel}
-                                </div>
-                                <div className="mt-3 flex items-center gap-2">
-                                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
-                                    {step.items.length} branches
-                                  </span>
-                                </div>
-                              </button>
-                            </HoverCardTrigger>
-                            <HoverCardContent className="w-[300px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
-                              <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                                Step branch
-                              </div>
-                              <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
-                                This branch groups the opportunity nodes around the same moment in the journey, so we can see where to investigate before discussing solutions.
-                              </p>
-                            </HoverCardContent>
-                          </HoverCard>
-
-                          <div className="h-5 w-px" style={{ background: `${accent}44` }} />
-
-                          <div className="w-full space-y-3">
-                            {step.items.map((item) => {
-                              const opportunityNumber = opportunityNumberById.get(item.id);
-                              const isTargeted = targetOpportunityId === item.id;
-                              const readableOutcome = humanizeOutcomeText(item.outcome);
-                              const score = formatOdiScore(odiScore(item));
-                              const workflowStatus = resolveWorkflowStatus(item);
-                              const actionType = opportunityActionFromPriorityTier(item.priority_tier);
-                              return (
-                                <div key={item.id} className="flex justify-center">
-                                  <div
-                                    id={`opportunity-${item.id}`}
-                                    className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                    style={{
-                                      borderColor: isTargeted ? c.charcoal : c.line,
-                                      background: c.paper,
-                                      boxShadow: isTargeted
-                                        ? "0 0 0 3px rgba(35,60,75,0.16), 0 6px 22px rgba(35,60,75,0.10)"
-                                        : undefined,
-                                    }}
-                                  >
-                                    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-                                      <div className="min-w-0">
-                                        <div className="mb-2 flex items-center gap-2">
-                                          <OpportunityNumberBadge value={opportunityNumber} />
-                                          <span
-                                            className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap"
-                                            style={{ color: c.secondary }}
-                                          >
-                                            {showJourneyBadge ? `${titleCaseJourney(item.journey_key)} · ` : ""}
-                                            {item.step_number ? `Step ${item.step_number}` : "Step"}
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div className="shrink-0">
-                                        <p
-                                          className="font-mono text-[10px] uppercase tracking-[0.06em] whitespace-nowrap text-right"
-                                          style={{ color: c.secondary }}
-                                        >
-                                          Opp Score {score}
-                                        </p>
-                                      </div>
-                                    </div>
-                                    <p
-                                      className="mt-2 w-full font-sans text-[14px] font-normal leading-[1.55] line-clamp-7"
-                                      style={{ color: c.charcoal }}
-                                      title={readableOutcome}
+                  ) : (
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    {visibleOpportunities.map((item) => {
+                      const opportunityNumber = opportunityNumberById.get(item.id);
+                      const isTargeted = targetOpportunityId === item.id;
+                      const readableOutcome = humanizeOutcomeText(item.outcome);
+                      const score = formatOdiScore(odiScore(item));
+                      const workflowStatus = resolveWorkflowStatus(item);
+                      const actionType = opportunityActionFromPriorityTier(item.priority_tier);
+                      const solutions = matchSolutionsForOpportunity(item, routeItems, selectedOutcome?.statement || "");
+                      return (
+                        <div key={item.id} className="w-full space-y-2">
+                          <div className="flex justify-center">
+                            <div
+                              id={`opportunity-${item.id}`}
+                              className="relative w-full rounded-[20px] border px-4 py-3 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                              style={{
+                                borderColor: isTargeted ? c.charcoal : c.line,
+                                background: c.paper,
+                                boxShadow: isTargeted
+                                  ? "0 0 0 3px rgba(35,60,75,0.16), 0 6px 22px rgba(35,60,75,0.10)"
+                                  : undefined,
+                              }}
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+                                <div className="min-w-0">
+                                  <div className="mb-2 flex items-center gap-2">
+                                    <OpportunityNumberBadge value={opportunityNumber} />
+                                    <span
+                                      className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap"
+                                      style={{ color: c.secondary }}
                                     >
-                                      {readableOutcome || "Untitled opportunity"}
-                                    </p>
-                                    {isTargeted ? (
-                                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.charcoal }}>
-                                        Opened from map insight
-                                      </p>
-                                    ) : null}
-                                    <div className="mt-3 pt-2" style={{ borderTop: `1px solid ${c.line}` }}>
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p
-                                          className="font-sans text-[13px] font-semibold"
-                                          style={{ color: priorityAccent(item.priority_tier) }}
-                                        >
-                                          {priorityLabel(item.priority_tier)}
-                                        </p>
-                                        <div className="flex items-center gap-2">
-                                          <ActionTypeBadge label={actionType} />
-                                          <WorkflowStatusPicker
-                                            value={workflowStatus}
-                                            compact
-                                            disabled={updatingWorkflowId === item.id}
-                                            onChange={(next) => onWorkflowChange(item, next)}
-                                          />
-                                        </div>
-                                      </div>
-                                    </div>
+                                      {showJourneyBadge ? `${titleCaseJourney(item.journey_key)} · ` : ""}
+                                      {item.step_number ? `Step ${item.step_number}` : "Step context"}
+                                    </span>
                                   </div>
                                 </div>
-                              );
-                            })}
+                                <div className="shrink-0">
+                                  <p
+                                    className="font-mono text-[10px] uppercase tracking-[0.06em] whitespace-nowrap text-right"
+                                    style={{ color: c.secondary }}
+                                  >
+                                    Opp Score {score}
+                                  </p>
+                                </div>
+                              </div>
+                              <p
+                                className="mt-2 w-full font-sans text-[14px] font-normal leading-[1.55] line-clamp-7"
+                                style={{ color: c.charcoal }}
+                                title={readableOutcome}
+                              >
+                                {readableOutcome || "Untitled opportunity"}
+                              </p>
+                              {isTargeted ? (
+                                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.charcoal }}>
+                                  Opened from map insight
+                                </p>
+                              ) : null}
+                              <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
+                                Step context: {item.step_number ? `Step ${item.step_number}` : "Unassigned"}
+                                {item.step_label ? ` · ${item.step_label}` : ""}
+                              </p>
+                              <div className="mt-3 pt-2" style={{ borderTop: `1px solid ${c.line}` }}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <p
+                                    className="font-sans text-[13px] font-semibold"
+                                    style={{ color: priorityAccent(item.priority_tier) }}
+                                  >
+                                    {priorityLabel(item.priority_tier)}
+                                  </p>
+                                  <div className="flex flex-wrap items-center justify-end gap-2">
+                                    <ActionTypeBadge label={actionType} />
+                                    <WorkflowStatusPicker
+                                      value={workflowStatus}
+                                      compact
+                                      disabled={updatingWorkflowId === item.id}
+                                      onChange={(next) => onWorkflowChange(item, next)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="ml-3 border-l pl-3" style={{ borderColor: `${accent}44` }}>
+                            <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                              Solution ideas
+                            </p>
+                            {solutions.length === 0 ? (
+                              <div className="rounded-lg border border-dashed px-3 py-2" style={{ borderColor: c.line, background: "#FAF9F6" }}>
+                                <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                                  No high-confidence solution routes match this opportunity yet. Refine route statements in Routes to improve alignment.
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {solutions.map((solution) => {
+                                  const tests = buildAssumptionTests(item, solution);
+                                  return (
+                                    <div key={solution.id} className="space-y-2">
+                                      <div
+                                        className="rounded-lg border px-3 py-2"
+                                        style={{ borderColor: c.line, background: "#FAF9F6" }}
+                                      >
+                                        <div className="flex flex-wrap items-start justify-between gap-2">
+                                          <p className="font-sans text-[12px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                            {solution.title}
+                                          </p>
+                                          <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                                            {solution.category} · {solution.effort}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      <div className="ml-3 border-l pl-3" style={{ borderColor: `${accent}33` }}>
+                                        <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                          Assumption tests
+                                        </p>
+                                        <div className="space-y-1.5">
+                                          {tests.map((test, index) => (
+                                            <div
+                                              key={`${solution.id}-test-${index}`}
+                                              className="rounded-md border px-3 py-2"
+                                              style={{ borderColor: c.line, background: "#FFFFFF" }}
+                                            >
+                                              <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                                                Test {index + 1}
+                                              </p>
+                                              <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+                                                {test}
+                                              </p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
+                  )}
                 </div>
               )}
             </section>
@@ -785,8 +1355,15 @@ function OpportunityTreeView({
 export default function OpportunitiesView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { loading, items, error, updatingWorkflowId, workflowStatusAvailable, updateWorkflowStatus } = useOpportunities(activeCompany?.id);
-  const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
+  const {
+    items: managedOutcomes,
+    saving: savingManagedOutcome,
+    createManagedOutcome,
+    updateManagedOutcome,
+  } = useManagedOutcomes(activeCompany?.id);
+  const { items: routeItems } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
@@ -921,6 +1498,8 @@ export default function OpportunitiesView() {
       <TopNav />
 
       <main className={`${viewMode === "map" ? "max-w-[1720px]" : "max-w-[1440px]"} mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8`}>
+        <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+
         <div className="mb-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -938,7 +1517,14 @@ export default function OpportunitiesView() {
               </p>
             </div>
           </div>
-          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-5xl"
+            source="opportunities, job_steps, managed_outcomes, routes, and company area_scores_json."
+            evaluation="AI and deterministic fit logic rank opportunities against selected desired outcomes, then score route alignment to each opportunity."
+            scoring="Opportunity score uses Strategic Decision System importance and satisfaction; visible branches are thresholded by outcome-fit score; weak matches are hidden."
+            why="This box shows why a branch appears, what was filtered out, and where language may still be generic."
+          />
           <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
             Evidence: {evidenceSummaryText({ hasPublic, hasCustomer, hasValidated, hasTested })}
           </p>
@@ -982,6 +1568,10 @@ export default function OpportunitiesView() {
           <OpportunityTreeView
             items={sortedForTree}
             managedOutcomes={managedOutcomes}
+            routeItems={routeItems}
+            savingManagedOutcome={savingManagedOutcome}
+            onCreateManagedOutcome={createManagedOutcome}
+            onUpdateManagedOutcome={updateManagedOutcome}
             opportunityNumberById={opportunityNumberById}
             workflowStatusAvailable={workflowStatusAvailable}
             updatingWorkflowId={updatingWorkflowId}

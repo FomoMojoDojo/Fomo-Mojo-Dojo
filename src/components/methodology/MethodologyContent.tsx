@@ -25,18 +25,17 @@ interface Props {
 }
 
 const c = {
-  bg: '#faf7f6',
-  field: '#ffffff',
-  card: '#ffffff',
-  line: '#DDE6D1',
-  lineFaint: '#EEF3E9',
-  charcoal: '#233C4B',
-  secondary: '#46606D',
-  muted: '#6E847F',
-  faint: '#C8D8CA',
-  coral: '#FF7D2D',
-  teal: '#5F9B8C',
-  amber: '#FAC846',
+  card: "#0e1834",
+  cardSoft: "#111c3c",
+  line: "rgba(136, 163, 218, 0.24)",
+  lineSoft: "rgba(136, 163, 218, 0.16)",
+  charcoal: "#eef4ff",
+  secondary: "#c1cceb",
+  muted: "#95a6d3",
+  faint: "#7383ae",
+  coral: "#ff8c4b",
+  teal: "#34d2be",
+  amber: "#f6b35f",
 };
 
 export default function MethodologyContent({ page, compact = false }: Props) {
@@ -58,14 +57,14 @@ export default function MethodologyContent({ page, compact = false }: Props) {
         style={{
           background: c.card,
           borderColor: c.line,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+          boxShadow: "0 30px 70px -45px rgba(0, 0, 0, 0.9)",
         }}
       >
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
             backgroundImage:
-              'radial-gradient(circle 360px at top right, rgba(250,200,70,0.18), transparent 58%), radial-gradient(circle 240px at bottom left, rgba(95,155,140,0.10), transparent 60%)',
+              "radial-gradient(circle 420px at top right, rgba(255,140,75,0.18), transparent 58%), radial-gradient(circle 280px at bottom left, rgba(52,210,190,0.16), transparent 62%)",
           }}
         />
         <div className={`relative ${compact ? 'p-6' : 'p-8 md:p-10'}`}>
@@ -83,7 +82,7 @@ export default function MethodologyContent({ page, compact = false }: Props) {
             </div>
             {!compact && (
               <div className="text-right">
-                <div className="font-sans text-[56px] font-black leading-none" style={{ color: c.coral }}>
+                <div className="font-sans text-[56px] font-black leading-none" style={{ color: c.coral, textShadow: "0 0 26px rgba(255,140,75,0.25)" }}>
                   {page.impact_score}
                 </div>
                 <p className="font-mono text-[10px] uppercase tracking-[0.1em] mt-1" style={{ color: c.muted }}>Mojo Score Impact</p>
@@ -93,7 +92,7 @@ export default function MethodologyContent({ page, compact = false }: Props) {
           {page.score_detail && !compact && (
             <div
               className="rounded-xl p-4 mt-5 border"
-              style={{ background: c.lineFaint, borderColor: c.line }}
+              style={{ background: "rgba(255,255,255,0.03)", borderColor: c.lineSoft }}
             >
               <p className="font-sans text-[13px] leading-[1.7]" style={{ color: c.secondary }}>{page.score_detail}</p>
             </div>
@@ -109,13 +108,15 @@ export default function MethodologyContent({ page, compact = false }: Props) {
               key={i}
               className="rounded-xl p-4 text-center border"
               style={{
-                background: c.card,
+                background: c.cardSoft,
                 borderColor: c.line,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                boxShadow: "0 18px 45px -36px rgba(0,0,0,0.88)",
               }}
             >
-              <div className="text-[24px] mb-2">{step.icon}</div>
-              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em]" style={{ color: c.secondary }}>{step.label}</p>
+              <div className="mb-2 text-[20px] font-semibold" style={{ color: c.teal }}>{step.icon}</div>
+              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em]" style={{ color: c.secondary }}>
+                {step.label}
+              </p>
             </div>
           ))}
         </div>
@@ -128,15 +129,15 @@ export default function MethodologyContent({ page, compact = false }: Props) {
             key={section.num}
             className="rounded-[22px] p-6 md:p-8 border"
             style={{
-              background: c.card,
+              background: c.cardSoft,
               borderColor: c.line,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+              boxShadow: "0 20px 48px -38px rgba(0,0,0,0.9)",
             }}
           >
             <div className="flex items-center gap-3 mb-4">
               <span
                 className="inline-flex w-[36px] h-[36px] rounded-full font-sans text-[14px] font-bold items-center justify-center shrink-0"
-                style={{ background: c.amber, color: c.charcoal }}
+                style={{ background: c.amber, color: "#0e142c" }}
               >
                 {section.num}
               </span>
@@ -145,7 +146,7 @@ export default function MethodologyContent({ page, compact = false }: Props) {
               </h2>
             </div>
             <div
-              className="prose max-w-none font-sans text-[14px] leading-[1.8] [&_strong]:font-semibold [&_li]:mb-1"
+              className="prose max-w-none font-sans text-[14px] leading-[1.8] [&_blockquote]:border-l [&_blockquote]:border-[#ff8c4b]/60 [&_blockquote]:pl-4 [&_strong]:font-semibold [&_li]:mb-1"
               style={{ color: c.secondary }}
               dangerouslySetInnerHTML={{ __html: section.content }}
             />

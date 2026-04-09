@@ -9,10 +9,12 @@ import { useInputs } from "@/hooks/useInputs";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import RouteCard from "./RouteCard";
 import type { RouteRow } from "./useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 import {
   classifyOpportunityFocus,
   classifyRouteFocus,
@@ -366,6 +368,7 @@ function StatBand({
 
 export default function RoutesView() {
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
@@ -418,6 +421,8 @@ export default function RoutesView() {
       <TopNav />
 
       <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
+        <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+
         <div className="mb-6">
           <div className="flex flex-wrap items-start gap-3">
             <div>
@@ -435,7 +440,14 @@ export default function RoutesView() {
               </div>
             </div>
           </div>
-          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-5xl"
+            source="routes table when available; otherwise route cards are derived from opportunities and priority tiers."
+            evaluation="AI/logic classify each route as Fix/Improve/Create and match it against initiative focus and linked opportunities."
+            scoring="Route impact uses pts_value; top-panel score delta compares current reality vs potential and highlights expected movement."
+            why="This shows whether route guidance is evidence-backed or derived fallback, so you can tune route quality and confidence."
+          />
         </div>
 
         {!activeCompany?.id ? (

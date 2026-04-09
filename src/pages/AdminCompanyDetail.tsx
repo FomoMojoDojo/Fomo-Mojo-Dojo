@@ -11,13 +11,13 @@ import TopNav from "@/components/layout/TopNav";
 import { ArrowLeft, ArrowRight, Building2, Globe } from "lucide-react";
 
 const c = {
-  bg: "#faf7f6",
-  panel: "#FFFFFF",
-  paper: "#FFFFFF",
-  line: "#DDE6D1",
-  charcoal: "#233C4B",
-  secondary: "#46606D",
-  muted: "#6E847F",
+  bg: "#070d20",
+  panel: "rgba(255,255,255,0.04)",
+  paper: "rgba(255,255,255,0.04)",
+  line: "rgba(136, 163, 218, 0.24)",
+  charcoal: "#eef4ff",
+  secondary: "#c1cceb",
+  muted: "#95a6d3",
 };
 
 function normalizeUrl(url?: string) {
@@ -45,7 +45,7 @@ export default function AdminCompanyDetail() {
       <div className="min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="flex items-center justify-center py-16">
-          <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+          <div className="font-mono text-[12px] tracking-[0.06em]" style={{ color: c.muted }}>
             Loading company…
           </div>
         </div>
@@ -60,7 +60,7 @@ export default function AdminCompanyDetail() {
         <div className="max-w-5xl mx-auto px-6 py-10">
           <Link
             to="/admin/companies"
-            className="font-mono text-[10px] uppercase tracking-wide inline-flex items-center gap-1"
+            className="font-mono text-[11px] tracking-[0.06em] inline-flex items-center gap-1"
             style={{ color: c.secondary }}
           >
             <ArrowLeft className="w-3 h-3" />
@@ -80,11 +80,18 @@ export default function AdminCompanyDetail() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: c.bg }}>
+    <div
+      className="min-h-screen"
+      style={{
+        background: c.bg,
+        backgroundImage:
+          "radial-gradient(1200px 500px at 18% -12%, rgba(52,210,190,0.16), transparent), radial-gradient(900px 420px at 92% 2%, rgba(255,140,75,0.12), transparent), linear-gradient(180deg,#070d20 0%, #0b1530 100%)",
+      }}
+    >
       <TopNav />
       <div
         className="border-b backdrop-blur-sm"
-        style={{ borderColor: c.line, background: "rgba(255,255,255,0.88)" }}
+        style={{ borderColor: c.line, background: "rgba(10,16,39,0.92)" }}
       >
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -98,7 +105,7 @@ export default function AdminCompanyDetail() {
               <div className="font-sans text-[16px] font-semibold" style={{ color: c.charcoal }}>
                 {company.name}
               </div>
-              <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+              <div className="font-mono text-[11px] tracking-[0.08em]" style={{ color: c.muted }}>
                 Company Research Detail
               </div>
             </div>
@@ -108,7 +115,7 @@ export default function AdminCompanyDetail() {
             <button
               type="button"
               onClick={() => navigate("/admin/companies")}
-              className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
+              className="font-mono text-[11px] tracking-[0.06em] px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
               style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
             >
               <ArrowLeft className="w-3 h-3" />
@@ -118,7 +125,7 @@ export default function AdminCompanyDetail() {
             <button
               type="button"
               onClick={() => navigate("/")}
-              className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
+              className="font-mono text-[11px] tracking-[0.06em] px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
               style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
             >
               View Map
@@ -135,13 +142,16 @@ export default function AdminCompanyDetail() {
           detail="Baseline, Research, and Baseline + Research prioritize company website + public web evidence. When public evidence is weak, research now falls back to uploaded company files."
         />
 
-        <section className="rounded-2xl p-5 shadow-sm" style={{ background: c.panel, border: `1px solid ${c.line}` }}>
+        <section
+          className="rounded-2xl p-5 shadow-sm"
+          style={{ background: c.panel, border: `1px solid ${c.line}`, boxShadow: "0 20px 48px -38px rgba(0,0,0,0.9)" }}
+        >
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="font-sans text-[20px] font-semibold" style={{ color: c.charcoal }}>
                 {company.name}
               </div>
-              <div className="mt-2 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+              <div className="mt-2 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.muted }}>
                 Company ID: <span style={{ color: c.secondary }}>{company.id}</span>
               </div>
               {company.website ? (
@@ -149,27 +159,27 @@ export default function AdminCompanyDetail() {
                   href={normalizeUrl(company.website)}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-3 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide"
+                  className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] tracking-[0.04em] break-all"
                   style={{ color: c.secondary }}
                 >
                   <Globe className="w-3 h-3" />
                   {company.website}
                 </a>
               ) : (
-                <div className="mt-3 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
+                <div className="mt-3 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.muted }}>
                   No website saved
                 </div>
               )}
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <div className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
+              <div className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
                 Mojo {company.mojo_score ?? "—"}
               </div>
-              <div className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
+              <div className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
                 Potential {company.potential_score ?? "—"}
               </div>
-              <div className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
+              <div className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
                 Evidence {company.evidence_status ?? "unknown"}
               </div>
             </div>

@@ -1,0 +1,149 @@
+@layer base {
+  .lovable-client-view {
+    /* Colors */
+    --cv-color-hero-start: 222 47% 6%;
+    --cv-color-hero-mid: 222 52% 12%;
+    --cv-color-hero-end: 220 63% 17%;
+    --cv-color-hero-glow: 217 91% 60%;
+
+    --cv-color-surface-dark: 222 44% 10%;
+    --cv-color-surface-light: 0 0% 100%;
+    --cv-color-surface-muted: 220 20% 97%;
+    --cv-color-surface-secondary: 217 33% 17%;
+
+    --cv-color-text-primary: 222 47% 11%;
+    --cv-color-text-secondary: 220 10% 40%;
+    --cv-color-text-tertiary: 220 10% 45%;
+    --cv-color-text-quiet: 220 10% 48%;
+    --cv-color-text-dark: 210 40% 96%;
+    --cv-color-text-dark-soft: 210 40% 96%;
+
+    --cv-color-border-subtle: 217 24% 86%;
+    --cv-color-border-default: 217 24% 82%;
+    --cv-color-border-strong: 217 24% 78%;
+
+    --cv-color-risk: 0 84% 60%;
+    --cv-color-caution: 38 92% 50%;
+    --cv-color-progress: 142 71% 45%;
+    --cv-color-structure: 217 91% 60%;
+
+    --cv-color-constraint-weak-text: 35 90% 34%;
+    --cv-color-constraint-stable-text: 217 84% 45%;
+    --cv-color-constraint-strong-text: 142 75% 29%;
+    --cv-color-success-text: 142 72% 31%;
+    --cv-color-action-blue-text: 217 84% 46%;
+    --cv-color-danger-deep: 0 78% 36%;
+
+    /* Spacing */
+    --cv-space-gutter: 24px;
+    --cv-space-gutter-mobile: 16px;
+    --cv-space-1: 4px;
+    --cv-space-2: 8px;
+    --cv-space-3: 12px;
+    --cv-space-4: 16px;
+    --cv-space-5: 20px;
+    --cv-space-6: 24px;
+    --cv-space-8: 32px;
+    --cv-space-10: 40px;
+    --cv-space-12: 48px;
+    --cv-space-16: 64px;
+    --cv-space-18: 72px;
+    --cv-space-20: 80px;
+    --cv-space-hero-top: 64px;
+    --cv-space-hero-bottom: 56px;
+    --cv-space-hero-top-mobile: 44px;
+    --cv-space-hero-bottom-mobile: 40px;
+    --cv-space-section-top: 80px;
+    --cv-space-section-bottom: 24px;
+    --cv-space-row: 18px;
+    --cv-space-card: 16px;
+    --cv-space-chip-gap: 8px;
+    --cv-space-page-bottom: 80px;
+
+    /* Radius */
+    --cv-radius-card: 14px;
+    --cv-radius-panel: 12px;
+    --cv-radius-chip: 999px;
+    --cv-radius-soft: 10px;
+    --cv-radius-card-strong: 16px;
+    --cv-radius-button: 10px;
+
+    /* Typography */
+    --cv-font-sans: "Inter", system-ui, -apple-system, sans-serif;
+    --cv-text-label: 11px;
+    --cv-text-caption: 12px;
+    --cv-text-body-sm: 13px;
+    --cv-text-body: 14px;
+    --cv-text-body-lg: 15px;
+    --cv-text-subtitle: 18px;
+    --cv-text-title: 22px;
+    --cv-text-headline: 30px;
+    --cv-text-display-min: 64px;
+    --cv-text-display-max: 88px;
+    --cv-text-status-min: 28px;
+    --cv-text-status-max: 36px;
+    --cv-text-body-xl: 16px;
+    --cv-text-diagnosis: 24px;
+    --cv-text-diagnosis-mobile: 18px;
+    --cv-text-constraint-title: 30px;
+    --cv-text-constraint-title-mobile: 28px;
+    --cv-text-constraint-problem: 34px;
+    --cv-text-constraint-problem-mobile: 28px;
+    --cv-text-constraint-explainer: 22px;
+    --cv-text-constraint-consequence: 26px;
+    --cv-text-priority-title: 24px;
+    --cv-text-priority-title-mobile: 22px;
+    --cv-text-interpretation-title: 54px;
+    --cv-text-interpretation-title-mobile: 38px;
+    --cv-text-interpretation-risk: 30px;
+    --cv-text-interpretation-risk-mobile: 24px;
+    --cv-text-interpretation-muted: 18px;
+    --cv-text-interpretation-muted-mobile: 17px;
+
+    /* Shadows */
+    --cv-shadow-card: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --cv-shadow-card-selected:
+      0 0 0 1px hsl(var(--cv-color-structure) / 0.24),
+      0 8px 24px rgba(15, 23, 42, 0.08);
+    --cv-shadow-card-active: 0 0 0 1px hsl(var(--cv-color-risk) / 0.2) inset;
+
+    /* Motion */
+    --cv-motion-fast: 120ms;
+    --cv-motion-base: 180ms;
+    --cv-motion-slow: 260ms;
+    --cv-motion-score: 600ms;
+    --cv-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+    /* Layout widths */
+    --cv-layout-page-max: 1200px;
+    --cv-layout-read-max: 860px;
+    --cv-layout-actions-max: 1120px;
+    --cv-layout-hero-anchor: 520px;
+
+    /* Keep existing semantic vars in sync for current component styles */
+    --background: var(--cv-color-hero-start);
+    --foreground: var(--cv-color-text-dark);
+    --card: var(--cv-color-surface-dark);
+    --card-foreground: var(--cv-color-text-dark);
+    --popover: var(--cv-color-surface-dark);
+    --popover-foreground: var(--cv-color-text-dark);
+    --primary: var(--cv-color-structure);
+    --primary-foreground: var(--cv-color-hero-start);
+    --secondary: var(--cv-color-surface-secondary);
+    --secondary-foreground: var(--cv-color-text-dark);
+    --muted: var(--cv-color-surface-secondary);
+    --muted-foreground: 215 20% 55%;
+    --accent: var(--cv-color-surface-secondary);
+    --accent-foreground: var(--cv-color-text-dark);
+    --destructive: var(--cv-color-risk);
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
+    --ring: var(--cv-color-structure);
+    --radius: 0.75rem;
+    --risk: var(--cv-color-risk);
+    --progress: var(--cv-color-progress);
+    --caution: var(--cv-color-caution);
+    --structure: var(--cv-color-structure);
+  }
+}

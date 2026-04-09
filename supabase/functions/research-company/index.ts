@@ -4,6 +4,12 @@ import {
   buildFrameworkBrief,
   getFrameworkRoutingPlan,
 } from "../_shared/frameworkLibrary.ts";
+import {
+  JTBD_CHECKPOINT_COUNT,
+  containsSolutionPrescriptiveLanguage,
+  normalizeToEightCheckpointSpine,
+  validateEightCheckpointSpine,
+} from "../_shared/jtbdProcess.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1161,11 +1167,14 @@ async function generateManagedOutcomes(args: {
     `You are defining managed product outcomes for a Teresa Torres style opportunity solution tree.\n` +
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Create exactly one managed outcome for journey_key=customer.\n` +
+    `Apply Teresa Torres + ODI/JTBD framing together.\n` +
     `A managed outcome is the result the team should manage toward, not an opportunity branch, feature, initiative, or broad vanity KPI.\n` +
     `Each managed outcome should:\n` +
     `- be a leading-indicator style result within the company's influence\n` +
     `- be broad enough to span multiple opportunities and solutions\n` +
     `- stay specific to the company, audience, and journey context\n` +
+    `- reference the customer job performer and the most relevant job step context\n` +
+    `- read like a desired outcome, not a recommendation or implementation plan\n` +
     `- have a clear target_direction like increase, reduce, improve, maximize, or minimize\n` +
     `- include a plausible leading indicator that could eventually be measured\n` +
     `- note evidence_basis honestly from public evidence only\n` +
@@ -1173,7 +1182,8 @@ async function generateManagedOutcomes(args: {
     `- reuse concrete nouns and contexts from the top opportunities and steps for that journey\n` +
     `- do not use generic roots like "Improve customer progress", "Improve operations", or "Increase conversion" without a concrete object and context\n` +
     `- outcome_title should be specific enough to distinguish this company from another company in a different sector\n` +
-    `- leading_indicator should mention what specifically changes, not just "progress" or "performance"\n`;
+    `- leading_indicator should mention what specifically changes, not just "progress" or "performance"\n` +
+    `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
@@ -1200,7 +1210,7 @@ function analyzeManagedOutcomeSpecificity(outcome: {
   outcome_title?: string;
   outcome_statement?: string;
   leading_indicator?: string;
-}) {
+}, contextTokens: string[] = []) {
   const text = [
     String(outcome?.outcome_title || ""),
     String(outcome?.outcome_statement || ""),
@@ -1210,20 +1220,166 @@ function analyzeManagedOutcomeSpecificity(outcome: {
     .toLowerCase()
     .trim();
 
+  const normalizedContextTokens = contextTokens
+    .map((token) => String(token || "").trim().toLowerCase())
+    .filter((token) => token.length >= 4);
+
   const issues: string[] = [];
   if (!text) issues.push("missing_text");
   if (GENERIC_MANAGED_OUTCOME_PHRASES.some((phrase) => text.includes(phrase))) issues.push("generic_phrase");
-  if (!/\b(family|families|patient|patients|referral|intake|enrollment|program|care|handoff|service|donor|grant|contract|renewal|screening|transition|follow-up|delivery|crisis|community)\b/.test(text)) {
+  if (!/\b(family|families|patient|patients|referral|intake|enrollment|program|care|handoff|service|donor|grant|contract|renewal|screening|transition|follow-up|delivery|crisis|community|cafe|coffee|roaster)\b/.test(text)) {
     issues.push("missing_concrete_context");
   }
-  if (!/\b(time|rate|share|likelihood|percentage|retention|completion|conversion|continuity|delay|drop-off|handoff|follow-through|readiness|access|consistency)\b/.test(text)) {
+  if (!/\b(time|rate|share|likelihood|percentage|retention|completion|conversion|continuity|delay|drop-off|handoff|follow-through|readiness|access|consistency|quality|rework)\b/.test(text)) {
     issues.push("missing_indicator_language");
+  }
+  if (!/\b(increase|reduce|improve|maximize|minimize|avoid)\b/.test(text)) {
+    issues.push("missing_direction");
+  }
+
+  if (normalizedContextTokens.length > 0) {
+    const usesContextToken = normalizedContextTokens.some((token) => text.includes(token));
+    if (!usesContextToken) issues.push("missing_step_or_domain_context");
   }
 
   return {
     weak: issues.length >= 2,
     issues,
   };
+}
+
+function collectOutcomeContextTokensFromOpportunities(opportunities: unknown) {
+  const stop = new Set([
+    "increase", "reduce", "improve", "maximize", "minimize", "avoid", "with", "from", "into", "through", "across",
+    "about", "their", "there", "this", "that", "these", "those", "your", "our", "for", "and", "the", "a", "an",
+    "owners", "owner", "customers", "customer", "teams", "team", "users", "user", "partners", "partner",
+    "process", "progress", "quality", "confidence", "consistency", "training",
+  ]);
+
+  const counts = new Map<string, number>();
+  const rows = (Array.isArray(opportunities) ? opportunities : []) as Array<{ step_label?: string; outcome?: string }>;
+  for (const row of rows) {
+    const text = `${String(row?.step_label || "")} ${String(row?.outcome || "")}`.toLowerCase();
+    for (const token of text.match(/[a-z][a-z-]{3,}/g) || []) {
+      if (stop.has(token)) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([token]) => token);
+}
+
+function inferManagedOutcomeAudience(opportunities: unknown) {
+  const text = (Array.isArray(opportunities) ? opportunities : [])
+    .map((row) => `${String((row as any)?.outcome || "")} ${String((row as any)?.step_label || "")}`)
+    .join(" ")
+    .toLowerCase();
+
+  if (/\bcafe owners?\b/.test(text)) return "cafe owners";
+  if (/\bpartner cafes?\b/.test(text)) return "partner cafes";
+  if (/\bfamil(y|ies)\b/.test(text)) return "families";
+  if (/\bpatients?\b/.test(text)) return "patients";
+  if (/\bstudents?\b/.test(text)) return "students";
+  if (/\boperators?\b/.test(text)) return "operators";
+  if (/\bbuyers?\b/.test(text)) return "buyers";
+  if (/\bpartners?\b/.test(text)) return "partners";
+  if (/\bclients?\b/.test(text)) return "clients";
+  if (/\bcustomers?\b/.test(text)) return "customers";
+  return "target customers";
+}
+
+function lowerLeading(text: string) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+function humanizeStepPhrase(label: string) {
+  const raw = lowerLeading(label);
+  if (!raw) return "";
+
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (/^execute onboarding and training\b/i.test(normalized)) return "onboarding and training completion";
+  if (/^monitor coffee quality\b/i.test(normalized)) return "consistent coffee quality monitoring";
+  if (/^confirm supplier alignment\b/i.test(normalized)) return "supplier alignment confirmation";
+
+  const generic = normalized
+    .replace(/^(define|locate|prepare|confirm|execute|monitor|modify|conclude)\s+/i, "")
+    .trim();
+  return generic || normalized;
+}
+
+function normalizeDirection(value: string) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["increase", "reduce", "improve", "maximize", "minimize", "avoid"].includes(raw)) return raw;
+  return "increase";
+}
+
+function normalizeManagedOutcome(outcome: any) {
+  return {
+    journey_key: "customer",
+    outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
+    outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
+    leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
+    target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+    evidence_basis: String(outcome?.evidence_basis || "").trim()
+      || "Inferred from public evidence and current opportunity map. Validate with customer interviews and ODI importance/satisfaction signals.",
+    confidence: clamp(Number(outcome?.confidence) || 60, 35, 80),
+  };
+}
+
+function buildDeterministicManagedOutcomeFallback(args: {
+  opportunities: unknown;
+}) {
+  const rows = ((Array.isArray(args.opportunities) ? args.opportunities : []) as Array<{
+    journey_key?: string;
+    step_label?: string;
+    step_number?: number;
+    opportunity_score?: number;
+    importance?: number;
+  }>)
+    .filter((row) => String(row?.journey_key || "customer") === "customer")
+    .sort((a, b) => {
+      const scoreDiff = (Number(b?.opportunity_score) || 0) - (Number(a?.opportunity_score) || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      const importanceDiff = (Number(b?.importance) || 0) - (Number(a?.importance) || 0);
+      if (importanceDiff !== 0) return importanceDiff;
+      return (Number(a?.step_number) || 999) - (Number(b?.step_number) || 999);
+    });
+
+  const first = rows[0];
+  const second = rows.find((row) => String(row?.step_label || "").trim() && String(row?.step_label || "").trim() !== String(first?.step_label || "").trim());
+  const stepA = humanizeStepPhrase(String(first?.step_label || "the core customer journey"));
+  const stepB = humanizeStepPhrase(String(second?.step_label || ""));
+  const audience = inferManagedOutcomeAudience(rows);
+
+  const outcomeTitle = stepB
+    ? `Reliable progress from ${stepA} to ${stepB}`
+    : `Reliable progress through ${stepA}`;
+  const outcomeStatement = stepB
+    ? `Increase the share of ${audience} who move from ${stepA} to ${stepB} with fewer delays and less rework.`
+    : `Increase the share of ${audience} who complete ${stepA} with fewer delays and less rework.`;
+  const leadingIndicator = stepB
+    ? `Share of ${audience} who complete ${stepA} and reach ${stepB} within target time.`
+    : `Share of ${audience} who complete ${stepA} on time without repeat support.`;
+
+  return normalizeManagedOutcome({
+    journey_key: "customer",
+    outcome_title: outcomeTitle,
+    outcome_statement: outcomeStatement,
+    leading_indicator: leadingIndicator,
+    target_direction: "increase",
+    evidence_basis: "Fallback generated from top ODI/JTBD opportunity steps using public evidence only; validate with interviews and importance/satisfaction data.",
+    confidence: 58,
+  });
+}
+
+function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutcome>, contextTokens: string[]) {
+  if (!outcome.outcome_title || !outcome.outcome_statement || !outcome.leading_indicator) return false;
+  return !analyzeManagedOutcomeSpecificity(outcome, contextTokens).weak;
 }
 
 async function repairManagedOutcomes(args: {
@@ -1242,8 +1398,10 @@ async function repairManagedOutcomes(args: {
     `Return ONLY valid JSON matching the schema. No prose.\n` +
     `Keep exactly one outcome for journey_key=customer.\n` +
     `Rewrite only outcomes that are too generic.\n` +
+    `Apply Teresa Torres + ODI/JTBD framing: outcome first, step-aware, no solution language.\n` +
     `Make each managed outcome clearly company-specific by using the audience, step context, and concrete nouns already present in the opportunities.\n` +
-    `Do not output generic wording like "Improve customer progress", "Improve operations", or "Increase conversion" unless a specific object and context are attached.\n`;
+    `Do not output generic wording like "Improve customer progress", "Improve operations", or "Increase conversion" unless a specific object and context are attached.\n` +
+    `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
@@ -2140,6 +2298,60 @@ function defaultJourneySubtitle(key: JourneyKey) {
   return "How the primary job performer defines, prepares, executes, and concludes progress.";
 }
 
+function sanitizeJourneyStepEvidenceStatus(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "evidenced" || normalized === "implied") return normalized;
+  return "unclear";
+}
+
+function enforceCustomerJourneySpine(journeys: Array<Record<string, unknown>>) {
+  return journeys.map((journey) => {
+    const journeyKey = normalizeJourneyKey(journey?.journey_key);
+    if (!isCustomerJourneyKey(journeyKey)) return journey;
+
+    const rawSteps = Array.isArray(journey?.steps)
+      ? (journey.steps as Array<Record<string, unknown>>)
+      : [];
+    const normalizedSteps = normalizeToEightCheckpointSpine(
+      rawSteps.map((step) => ({
+        step_number: Number(step?.step_number) || null,
+        step_label: String(step?.step_label || ""),
+        description: String(step?.description || ""),
+        designed: step?.designed === true,
+        has_gap: step?.has_gap === true,
+        evidence_status: sanitizeJourneyStepEvidenceStatus(step?.evidence_status),
+        evidence_basis: String(step?.evidence_basis || ""),
+        evidence_confidence: Number(step?.evidence_confidence),
+        gap_note: String(step?.gap_note || ""),
+      })),
+      {
+        defaultEvidenceBasis:
+          "The generated sequence was inconsistent, so it was reset to the required 8-step customer sequence using available evidence.",
+        defaultConfidence: 48,
+      },
+    );
+
+    const validated = validateEightCheckpointSpine(normalizedSteps);
+    const fallbackSubtitle = "How the primary job performer moves through all 8 customer checkpoints.";
+    const currentSubtitle = String(journey?.journey_subtitle || "").trim();
+    const safeSubtitle = containsSolutionPrescriptiveLanguage(currentSubtitle)
+      ? fallbackSubtitle
+      : currentSubtitle || fallbackSubtitle;
+
+    return {
+      ...journey,
+      journey_subtitle: safeSubtitle,
+      steps: validated.isValid ? normalizedSteps : normalizeToEightCheckpointSpine([], {
+        defaultEvidenceBasis:
+          "The first pass produced invalid steps, so this map was rebuilt into the required 8-step customer sequence.",
+        defaultConfidence: 42,
+        defaultGapNote:
+          "This step is marked as a gap until we capture direct evidence about what is slowing progress.",
+      }),
+    };
+  });
+}
+
 function sanitizeJobMapTitle(value: unknown, key: JourneyKey) {
   const title = String(value || "").trim();
   if (!title) return defaultJourneyTitle(key);
@@ -2171,15 +2383,36 @@ function isGenericAudienceLabel(value: unknown) {
     normalized === "buyers" ||
     normalized === "decision maker" ||
     normalized === "decision-maker" ||
+    normalized === "progress" ||
+    normalized === "outcome" ||
+    normalized === "outcomes" ||
+    normalized === "strategy" ||
+    normalized === "execution" ||
+    normalized === "monitoring" ||
+    normalized === "journey" ||
+    normalized === "process" ||
     normalized === "unknown from public evidence" ||
     normalized === "unknown from uploaded evidence"
   );
 }
 
+function hasAudienceRoleNoun(value: string) {
+  return /\b(owner|manager|director|lead|officer|team|department|specialist|buyer|user|customer|consumer|operator|administrator|executive|committee|sponsor|partner|staff|organization|organisation|enterprise|company|client|debtor|creditor|collector|agent|analyst|founder|ceo|cfo|coo|vp|head)\b/.test(value);
+}
+
+function isAbstractSingleTokenAudience(value: unknown) {
+  const normalized = normalizeAudienceSignal(value).toLowerCase();
+  if (!normalized) return true;
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length !== 1) return false;
+  if (hasAudienceRoleNoun(normalized)) return false;
+  return true;
+}
+
 function isLikelyJobActionLabel(value: unknown) {
   const normalized = normalizeAudienceSignal(value).toLowerCase();
   if (!normalized) return false;
-  const hasRoleNoun = /\b(owner|manager|director|lead|officer|team|department|specialist|buyer|user|customer|consumer|operator|administrator|executive|committee|sponsor|partner|staff|organization|organisation|enterprise|company|client|debtor|creditor|collector|agent|analyst|founder|ceo|cfo|coo|vp|head)\b/.test(normalized);
+  const hasRoleNoun = hasAudienceRoleNoun(normalized);
   if (hasRoleNoun) return false;
   if (/^(getting|securing|converting|delivering|improving|optimizing|building|driving|increasing|reducing|achieving|executing|obtaining|winning|raising|funding|acquiring)\b/.test(normalized)) {
     return true;
@@ -2191,7 +2424,7 @@ function isLikelyJobActionLabel(value: unknown) {
 }
 
 function isInvalidAudienceLabel(value: unknown) {
-  return isGenericAudienceLabel(value) || isLikelyJobActionLabel(value);
+  return isGenericAudienceLabel(value) || isLikelyJobActionLabel(value) || isAbstractSingleTokenAudience(value);
 }
 
 function parseSelectedJobMaps(value: unknown): SelectedJobMap[] {
@@ -4081,7 +4314,8 @@ Deno.serve(async (req) => {
       `${journeyTypeGuidance}\n` +
       noIndustrySwitchConstraint +
       `- Journey bottlenecks should connect to the client-stated strategic problems when provided\n` +
-      `- Use ODI job map sequencing language (define, locate, prepare, confirm, execute, monitor, modify, conclude) as the structural spine\n` +
+      `- For customer journey keys, enforce all ${JTBD_CHECKPOINT_COUNT} ODI checkpoints in order: define, locate, prepare, confirm, execute, monitor, modify, conclude\n` +
+      `- Non-customer journeys may use 6-8 steps, but must remain action-based and ODI/JTBD compatible\n` +
       `- step_label 2–5 words, action-oriented, no generic funnel labels\n` +
       `- description 18–40 words, concrete, sequential, and tied to the selected job performer context\n` +
       `- evidence_status must be one of evidenced, implied, or unclear\n` +
@@ -4102,7 +4336,8 @@ Deno.serve(async (req) => {
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Create these journeys: ${targetJourneyKeys.join(", ")}.\n` +
-      `For each journey: 6–8 ODI-style steps, numbered 1..N.\n` +
+      `Customer journeys must include exactly ${JTBD_CHECKPOINT_COUNT} checkpoints, numbered 1..${JTBD_CHECKPOINT_COUNT}.\n` +
+      `Non-customer journeys can include 6-8 ODI-style steps, numbered 1..N.\n` +
       `Make the sequence realistic for this exact company category and audience.\n` +
       `Do not use generic labels like "Engagement" or "Operations" unless they are qualified.\n` +
       `Mark designed=false and has_gap=true when evidence remains unclear.\n`;
@@ -4134,7 +4369,7 @@ Deno.serve(async (req) => {
         });
       }
     }
-    journeys = alignedJourneys;
+    journeys = enforceCustomerJourneySpine(alignedJourneys as Array<Record<string, unknown>>);
 
     if (journeys.length !== targetJourneyKeys.length) {
       const found = new Set(journeys.map((journey) => normalizeJourneyKey(journey?.journey_key)));
@@ -5032,10 +5267,31 @@ Deno.serve(async (req) => {
       }
     }
 
+    const customerStepLabelByNumber = new Map<number, string>();
+    const normalizedCustomerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
+    const normalizedCustomerSteps = Array.isArray(normalizedCustomerJourney?.steps)
+      ? normalizedCustomerJourney.steps
+      : [];
+    for (const step of normalizedCustomerSteps) {
+      const stepNumber = clamp(Number((step as Record<string, unknown>)?.step_number) || 0, 1, JTBD_CHECKPOINT_COUNT);
+      const stepLabel = String((step as Record<string, unknown>)?.step_label || "").trim();
+      if (!stepLabel) continue;
+      if (!customerStepLabelByNumber.has(stepNumber)) {
+        customerStepLabelByNumber.set(stepNumber, stepLabel);
+      }
+    }
+
     // Opportunities: recompute tier from score to keep consistent
     for (const opp of opportunities) {
       const normalizedJourneyKey = normalizeJourneyKey(opp?.journey_key);
       const journeyKey = normalizedJourneyKey || "customer";
+      const rawStepNumber = Number(opp?.step_number) || 0;
+      const stepNumber = isCustomerJourneyKey(journeyKey)
+        ? clamp(rawStepNumber || 1, 1, JTBD_CHECKPOINT_COUNT)
+        : Math.max(1, rawStepNumber || 1);
+      const stepLabel = isCustomerJourneyKey(journeyKey)
+        ? customerStepLabelByNumber.get(stepNumber) || String(opp?.step_label || "").trim()
+        : String(opp?.step_label || "").trim();
 
       const importance = clamp(Number(opp?.importance) || 5, 1, 10);
       const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
@@ -5053,8 +5309,8 @@ Deno.serve(async (req) => {
         user_id: user.id,
         frameworks_used: opportunityFrameworkKeys,
         outcome: String(opp?.outcome || ""),
-        step_number: Number(opp?.step_number) || 0,
-        step_label: String(opp?.step_label || ""),
+        step_number: stepNumber,
+        step_label: stepLabel,
         journey_key: journeyKey,
         importance,
         satisfaction,
@@ -5084,7 +5340,7 @@ Deno.serve(async (req) => {
     const journeyDerivedExecutor = audienceFromJourneyTitle(customerJourney?.journey_title);
     const journeyDerivedJtbd = jtbdFromJourneyTitle(customerJourney?.journey_title);
     const normalizedCompanyName = normalizeAudienceSignal(company_name);
-    const companyExecutorFallback = normalizedCompanyName ? `${normalizedCompanyName} customer` : "Primary job performer";
+    const companyExecutorFallback = normalizedCompanyName ? `${normalizedCompanyName} decision owner` : "Primary decision owner";
     const lensUser = normalizeAudienceSignal(baselineLens.user);
     const lensPrimaryBuyer = normalizeAudienceSignal(baselineLens.primary_buyer);
     const lensChooser = normalizeAudienceSignal(baselineLens.chooser);
@@ -5112,7 +5368,7 @@ Deno.serve(async (req) => {
           ? normalizedJourneyExecutor
           : "";
     const chooser =
-      String(chooserCandidate || (researchContextMode === "uploaded_evidence_fallback" ? "Buying/decision lead" : fallbackUnknownLabel));
+      String(chooserCandidate || (researchContextMode === "uploaded_evidence_fallback" ? "Business decision owner" : fallbackUnknownLabel));
     const jtbdFallbackSubject = isInvalidAudienceLabel(job_executor)
       ? "the primary job performer"
       : job_executor.toLowerCase();
@@ -5137,6 +5393,9 @@ Deno.serve(async (req) => {
 
     for (let needIndex = 0; needIndex < opportunities.length; needIndex += 1) {
       const opp = opportunities[needIndex];
+      const rawStepNumber = Number(opp?.step_number) || 0;
+      const stepNumber = clamp(rawStepNumber || 1, 1, JTBD_CHECKPOINT_COUNT);
+      const stepLabel = customerStepLabelByNumber.get(stepNumber) || String(opp?.step_label || "").trim();
       const importance = clamp(Number(opp?.importance) || 5, 1, 10);
       const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
       const opportunity_score = clamp(
@@ -5154,8 +5413,8 @@ Deno.serve(async (req) => {
         tier: "need",
         desired_outcome: desiredOutcome,
         journey_key: "customer",
-        step_number: Number(opp?.step_number) || 0,
-        step_label: String(opp?.step_label || ""),
+        step_number: stepNumber,
+        step_label: stepLabel,
         importance,
         satisfaction,
         opportunity_score,
@@ -5225,6 +5484,8 @@ Deno.serve(async (req) => {
       opportunities,
     });
 
+    const managedOutcomeContextTokens = collectOutcomeContextTokensFromOpportunities(opportunities);
+
     let managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
       ? managedOutcomesResult.outcomes
       : [];
@@ -5234,7 +5495,7 @@ Deno.serve(async (req) => {
         outcome_title: String(outcome?.outcome_title || ""),
         outcome_statement: String(outcome?.outcome_statement || ""),
         leading_indicator: String(outcome?.leading_indicator || ""),
-      }).weak
+      }, managedOutcomeContextTokens).weak
     ).length;
 
     if (weakManagedOutcomeCount > 0) {
@@ -5263,9 +5524,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    managedOutcomes = managedOutcomes.filter(
-      (outcome) => String(outcome?.journey_key || "") === "customer"
+    managedOutcomes = managedOutcomes
+      .filter((outcome) => String(outcome?.journey_key || "") === "customer")
+      .map((outcome) => normalizeManagedOutcome(outcome));
+
+    const hasUsableManagedOutcome = managedOutcomes.some((outcome) =>
+      isUsableManagedOutcome(outcome, managedOutcomeContextTokens)
     );
+
+    if (!hasUsableManagedOutcome) {
+      managedOutcomes = [buildDeterministicManagedOutcomeFallback({ opportunities })];
+    }
 
     for (const outcome of managedOutcomes) {
       const journeyKey = "customer";
@@ -5274,12 +5543,12 @@ Deno.serve(async (req) => {
         company_id,
         user_id: user.id,
         journey_key: journeyKey,
-        outcome_title: String(outcome?.outcome_title || ""),
-        outcome_statement: String(outcome?.outcome_statement || ""),
-        leading_indicator: String(outcome?.leading_indicator || ""),
-        target_direction: String(outcome?.target_direction || ""),
-        evidence_basis: String(outcome?.evidence_basis || ""),
-        confidence: clamp(Number(outcome?.confidence) || 0, 0, 100),
+        outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
+        outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
+        leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
+        target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+        evidence_basis: String(outcome?.evidence_basis || "").trim(),
+        confidence: clamp(Number(outcome?.confidence) || 58, 0, 100),
         frameworks_used: opportunityFrameworkKeys,
       });
 

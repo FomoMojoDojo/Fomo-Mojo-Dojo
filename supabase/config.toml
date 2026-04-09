@@ -26,6 +26,21 @@ verify_jwt = false
 [functions.council-review]
 verify_jwt = false
 
+[functions.maps]
+verify_jwt = false
+
+[functions.public-companies]
+verify_jwt = false
+
+[functions.launch-site-intake]
+verify_jwt = false
+
+[functions.run-agent-flow]
+verify_jwt = false
+
+[functions.local-jobmap-synthesis]
+verify_jwt = false
+
 [edge_runtime.secrets]
 OPENAI_API_KEY = "env(OPENAI_API_KEY)"
 OPENAI_MODEL = "env(OPENAI_MODEL)"

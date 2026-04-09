@@ -17,9 +17,18 @@ import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalA
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import type { InputItem } from "@/lib/types";
 import { opportunityActionFromNeedScore, opportunityActionTone } from "@/lib/opportunityLabels";
+import {
+  JTBD_CHECKPOINT_COUNT,
+  JTBD_ODI_CHECKPOINTS,
+  buildDefaultCheckpointSeed,
+  deriveMarketDefinitionCanvas,
+} from "@/lib/jtbdProcess";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
+import SdsTerm from "@/components/ui/sds-term";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 
 const c = {
   bg: "#faf7f6",
@@ -335,8 +344,11 @@ function shouldUseLocalMapFallback(message: string) {
   const text = String(message || "").toLowerCase();
   return (
     text.includes("missing openai_api_key") ||
+    text.includes("missing openai") ||
+    text.includes("openai") && text.includes("non-2xx") ||
     text.includes("edge function returned a non-2xx status code") ||
     text.includes("public baseline is not strong enough") ||
+    text.includes("evidence check blocked") ||
     text.includes("insufficient_public_evidence") ||
     text.includes("ambiguous_public_evidence") ||
     text.includes("customer_job_map_required")
@@ -393,14 +405,10 @@ async function invokeFunctionWithTimeout<T>(
   }
 }
 
-const LOCAL_ODI_STEP_SEED = [
-  { label: "Define desired outcome", description: "Clarify the primary progress target and constraints before evaluating alternatives." },
-  { label: "Locate best options", description: "Identify and compare available options relevant to this job context." },
-  { label: "Prepare to execute", description: "Gather prerequisites, resources, and decision criteria needed to act." },
-  { label: "Execute core action", description: "Perform the core action sequence that advances the job toward completion." },
-  { label: "Monitor progress", description: "Track results, quality, and confidence signals while progressing through the job." },
-  { label: "Adjust and conclude", description: "Resolve issues, confirm outcomes, and close the loop for repeatable success." },
-];
+const LOCAL_ODI_STEP_SEED = buildDefaultCheckpointSeed().map((checkpoint) => ({
+  label: checkpoint.step_label,
+  description: checkpoint.description,
+}));
 
 function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
   const byKey = new Map<string, JobStepRow[]>();
@@ -437,7 +445,82 @@ function normalizeRoleLabel(value: string) {
     .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
     .trim();
   if (!cleaned) return "Primary Job Performer";
-  return cleaned.length > 48 ? `${cleaned.slice(0, 45).trim()}…` : cleaned;
+  return cleaned;
+}
+
+function deriveAbstractedExecutor(executor: string) {
+  const normalized = safeText(executor, "Primary job performer");
+  const lower = normalized.toLowerCase();
+  if (/(director|manager|lead|officer|head|vp|chief|owner|founder|coordinator|specialist)/.test(lower)) {
+    return "Decision owner";
+  }
+  if (/(customer|client|buyer|user|member|consumer|participant)/.test(lower)) {
+    return "Primary job performer";
+  }
+  if (/(team|department|organization|organisation|company|staff)/.test(lower)) {
+    return "Operating team";
+  }
+  return "Primary job performer";
+}
+
+function deriveFunctionOfProductStatement(jtbd: string, executor: string) {
+  const trimmed = safeText(jtbd, "");
+  if (!trimmed) {
+    return `Help ${safeText(executor, "the job performer").toLowerCase()} make progress with less risk and rework.`;
+  }
+  const wantMatch = trimmed.match(/\bwant to\b(.*?)(?:,\s*so they can| so they can|$)/i);
+  if (wantMatch?.[1]) {
+    const clause = wantMatch[1].replace(/^[\s,:-]+|[\s,:-]+$/g, "");
+    if (clause) {
+      return `Help ${safeText(executor, "the job performer").toLowerCase()} ${clause}.`;
+    }
+  }
+  return trimmed;
+}
+
+function deriveAbstractedJobStatement(jtbd: string, abstractedExecutor: string) {
+  const trimmed = safeText(jtbd, "");
+  if (!trimmed) {
+    return `${abstractedExecutor} can complete the core job reliably with clear evidence of progress.`;
+  }
+  const soMatch = trimmed.match(/\bso they can\b(.*?)(?:\.|$)/i);
+  if (soMatch?.[1]) {
+    const outcomeClause = soMatch[1].replace(/^[\s,:-]+|[\s,:-]+$/g, "");
+    if (outcomeClause) {
+      return `${abstractedExecutor} can ${outcomeClause}.`;
+    }
+  }
+  return trimmed;
+}
+
+function deriveOtherProductsContext(marketContext: string, needs: OdiNeedRow[]) {
+  const context = safeText(marketContext, "");
+  if (context) {
+    return `Compared against current alternatives in this market context: ${context}`;
+  }
+  const topNeed = needs
+    .slice()
+    .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
+  if (topNeed?.step_label) {
+    return `Compared against existing ways teams currently handle "${topNeed.step_label}".`;
+  }
+  return "Compared against existing alternatives customers use to complete the same job.";
+}
+
+function deriveExecutorDetermination(args: {
+  activeCustomerJourneyTitle?: string | null;
+  marketDefinitionExecutor?: string | null;
+  marketDefinitionChooser?: string | null;
+}) {
+  const titleExecutor = audienceFromJourneyTitle(args.activeCustomerJourneyTitle);
+  const storedExecutor = safeText(args.marketDefinitionExecutor, "");
+  const chooser = safeText(args.marketDefinitionChooser, "");
+
+  const notes: string[] = [];
+  if (titleExecutor) notes.push(`Customer map title suggests "${titleExecutor}".`);
+  if (storedExecutor) notes.push(`Strategic Decision System market row currently stores "${storedExecutor}".`);
+  if (chooser) notes.push(`Chooser context: "${chooser}".`);
+  return notes.join(" ");
 }
 
 function inferRevenueMapTitle(economicEngine: string, publicSignalText: string, allowNonprofitFunding: boolean) {
@@ -879,8 +962,8 @@ function StepCard({
             {safeText(
               step.evidence_basis,
               draftPlaceholder
-                ? "Template step only. Run research to replace with evidence-backed rationale."
-                : "No evidence rationale captured.",
+                ? "This is a starter step. Add customer evidence to make it specific."
+                : "No evidence note has been captured yet.",
             )}
           </p>
         </div>
@@ -904,7 +987,7 @@ function StepCard({
               className="mt-1 font-sans text-[12px] leading-[1.55]"
               style={{ color: c.gap }}
             >
-              {safeText(step.gap_note, "Gap present, but no rationale captured yet.")}
+              {safeText(step.gap_note, "A gap is flagged here, but we still need clear evidence showing why it is happening.")}
             </p>
           </div>
         ) : draftPlaceholder ? (
@@ -916,7 +999,7 @@ function StepCard({
               Needs Assessment
             </p>
             <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-              This step is a draft placeholder. Run research to determine whether a real gap exists.
+              This step is still a draft. Run research to confirm whether a real gap exists and what is causing it.
             </p>
           </div>
         ) : (
@@ -1059,7 +1142,7 @@ function OdiContextSection({
       return;
     }
     const confirmed = window.confirm(
-      "Save these market context edits?\n\nThis will update ODI market context (executor, chooser, JTBD) and then regenerate downstream strategy artifacts (job steps, opportunities, routes, and related strategy outputs).",
+      "Save these market context edits?\n\nThis will update Strategic Decision System market context (executor, chooser, JTBD) and then regenerate downstream strategy artifacts (job steps, opportunities, routes, and related strategy outputs).",
     );
     if (!confirmed) return;
     try {
@@ -1083,7 +1166,7 @@ function OdiContextSection({
       <div className="mb-5">
         <div className="flex items-center gap-2">
           <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
-            ODI Needs & Market Context
+            <SdsTerm short />{" "}Needs & Market Context
           </h2>
           <MetaBadge>{marketSource}</MetaBadge>
           <MetaBadge>{`Needs: ${publicNeedCount} public / ${uploadedNeedCount} uploaded`}</MetaBadge>
@@ -1110,11 +1193,11 @@ function OdiContextSection({
           ) : null}
         </div>
         <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
-          Public and uploaded-company signals are shown side by side through local alignment. Use this panel to spot mismatches before trusting ODI priorities.
+          Public and uploaded-company signals are shown side by side through local alignment. Use this panel to spot mismatches before trusting Strategic Decision System priorities.
         </p>
         {odiError ? (
           <p className="mt-2 font-sans text-[13px]" style={{ color: c.gap }}>
-            ODI data load warning: {odiError}
+            Strategic Decision System data load warning: {odiError}
           </p>
         ) : null}
         {hasPublicMarketContext && onRemovePublicMarketContext ? (
@@ -1253,7 +1336,7 @@ function OdiContextSection({
                 Save Impact
               </p>
               <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: "#6C4638" }}>
-                Saving updates market context plus ODI executor/chooser/JTBD, then regenerates downstream strategy artifacts (job steps, opportunities, routes, and strategy outputs).
+                Saving updates market context plus Strategic Decision System executor/chooser/JTBD, then regenerates downstream strategy artifacts (job steps, opportunities, routes, and strategy outputs).
               </p>
             </div>
             <div className="flex justify-end">
@@ -1274,7 +1357,223 @@ function OdiContextSection({
   );
 }
 
+function ProcessFidelitySection({
+  marketDefinition,
+  marketContext,
+  customerJourney,
+  activeCustomerJourneyTitle,
+  needs,
+}: {
+  marketDefinition: OdiMarketDefinitionRow | null;
+  marketContext?: string | null;
+  customerJourney?: JourneyGroup | null;
+  activeCustomerJourneyTitle?: string | null;
+  needs: OdiNeedRow[];
+}) {
+  const market = safeText(marketContext, "No market context captured yet.");
+  const executor = safeText(marketDefinition?.job_executor, audienceFromJourneyTitle(activeCustomerJourneyTitle));
+  const chooser = safeText(marketDefinition?.chooser, "Buying or decision lead");
+  const jtbd = safeText(
+    marketDefinition?.jtbd,
+    jtbdFromJourneyTitle(activeCustomerJourneyTitle) || "No JTBD captured yet.",
+  );
+  const abstractedExecutor = deriveAbstractedExecutor(executor);
+  const functionOfProduct = deriveFunctionOfProductStatement(jtbd, executor);
+  const abstractedJob = deriveAbstractedJobStatement(jtbd, abstractedExecutor);
+  const executorDetermination = deriveExecutorDetermination({
+    activeCustomerJourneyTitle,
+    marketDefinitionExecutor: marketDefinition?.job_executor,
+    marketDefinitionChooser: marketDefinition?.chooser,
+  });
+  const canvasFields = deriveMarketDefinitionCanvas({
+    traditionalMarketDefinition: market,
+    executorDetermination,
+    jobExecutor: executor,
+    chooser,
+    functionOfProductStatement: functionOfProduct,
+    otherProductsContext: deriveOtherProductsContext(market, needs),
+    abstractedJobStatement: abstractedJob,
+    jtbd,
+  });
+  const customerSteps = Array.isArray(customerJourney?.steps) ? customerJourney?.steps : [];
+  const customerStepByNumber = new Map<number, JobStepRow>();
+  for (const step of customerSteps) {
+    const stepNumber = Number(step.step_number);
+    if (!Number.isFinite(stepNumber)) continue;
+    const normalized = Math.max(1, Math.min(JTBD_CHECKPOINT_COUNT, Math.round(stepNumber)));
+    if (!customerStepByNumber.has(normalized)) customerStepByNumber.set(normalized, step);
+  }
+
+  const rankedNeeds = needs
+    .slice()
+    .sort((a, b) => {
+      const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      const sortDiff = (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER);
+      if (sortDiff !== 0) return sortDiff;
+      return String(a.id).localeCompare(String(b.id));
+    })
+    .slice(0, 12);
+
+  return (
+    <section
+      className="rounded-[28px] border px-6 py-6"
+      style={{ borderColor: c.line, background: c.panel }}
+    >
+      <div className="mb-5">
+        <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
+          Process Fidelity
+        </h2>
+        <p className="mt-1 max-w-5xl font-sans text-[14px]" style={{ color: c.secondary }}>
+          This section translates current company evidence into a clear market definition canvas, an 8-checkpoint customer job spine, and Strategic Decision System needs linked to exact checkpoints.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="rounded-2xl border p-4 xl:col-span-5" style={{ borderColor: c.line, background: c.paper }}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+            Derived Market Definition Canvas
+          </p>
+          <div className="mt-3 space-y-3">
+            {canvasFields.map((field) => (
+              <div key={field.key} className="rounded-xl border px-3 py-2.5" style={{ borderColor: c.line, background: "#fff" }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: c.muted }}>
+                  {field.label}
+                </p>
+                <p className="mt-1 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                  {field.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border p-4 xl:col-span-7" style={{ borderColor: c.line, background: c.paper }}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+            8-Checkpoint Spine
+          </p>
+          <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+            Customer map checkpoints are fixed at 1–8. Labels can be customized, but sequence cannot break.
+          </p>
+
+          <div className="mt-3 space-y-2">
+            {JTBD_ODI_CHECKPOINTS.map((checkpoint) => {
+              const row = customerStepByNumber.get(checkpoint.stepNumber);
+              const evidenceStatus = safeText(row?.evidence_status, "unclear").toLowerCase();
+              const statusLabel =
+                evidenceStatus === "evidenced"
+                  ? "Evidenced"
+                  : evidenceStatus === "implied"
+                    ? "Implied"
+                    : row
+                      ? "Unclear"
+                      : "Missing";
+              const statusTone =
+                statusLabel === "Evidenced"
+                  ? { bg: "#EEF6E7", border: "#BDD8CF", color: c.teal }
+                  : statusLabel === "Implied"
+                    ? { bg: "#EDF4F6", border: "#C4D7DE", color: c.slate }
+                    : statusLabel === "Missing"
+                      ? { bg: "#FFF4EC", border: "#F1C3AC", color: c.gap }
+                      : { bg: "#F3F4EF", border: c.line, color: c.muted };
+              const hasGap = row?.has_gap === true && !isDraftPlaceholderStep(row);
+              return (
+                <div
+                  key={`checkpoint-${checkpoint.stepNumber}`}
+                  className="rounded-xl border px-3 py-2.5"
+                  style={{ borderColor: c.line, background: "#fff" }}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                        Checkpoint {checkpoint.stepNumber} · {checkpoint.key.toUpperCase()}
+                      </p>
+                      <p className="mt-1 font-sans text-[15px] font-semibold leading-[1.35]" style={{ color: c.charcoal }}>
+                        {safeText(row?.step_label, checkpoint.canonicalLabel)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                        style={{ background: statusTone.bg, borderColor: statusTone.border, color: statusTone.color }}
+                      >
+                        {statusLabel}
+                      </span>
+                      <span
+                        className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                        style={{
+                          background: hasGap ? "#FFF0E6" : "#F3F4EF",
+                          borderColor: hasGap ? "#F1C3AC" : c.line,
+                          color: hasGap ? c.gap : c.muted,
+                        }}
+                      >
+                        {hasGap ? "Gap Flagged" : row ? "No Gap Flagged" : "Gap Unknown"}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                    {safeText(row?.description, checkpoint.description)}
+                  </p>
+                  <p className="mt-1 font-sans text-[12px] leading-[1.5]" style={{ color: c.muted }}>
+                    Evidence: {safeText(row?.evidence_basis, "No evidence rationale recorded yet.")}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+          <SdsTerm short />{" "}Needs Linked To Checkpoints
+        </p>
+        <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
+          Needs stay ranked by opportunity score and always show the checkpoint anchor used to evaluate the job map.
+        </p>
+        {rankedNeeds.length === 0 ? (
+          <p className="mt-3 font-sans text-[13px]" style={{ color: c.secondary }}>
+            No Strategic Decision System needs are available yet.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {rankedNeeds.map((need, index) => {
+              const stepNumber = Number(need.step_number);
+              const anchorNumber = Number.isFinite(stepNumber)
+                ? Math.max(1, Math.min(JTBD_CHECKPOINT_COUNT, Math.round(stepNumber)))
+                : 1;
+              const stepLabel =
+                safeText(need.step_label, "") ||
+                safeText(customerStepByNumber.get(anchorNumber)?.step_label, JTBD_ODI_CHECKPOINTS[anchorNumber - 1].canonicalLabel);
+              return (
+                <div
+                  key={need.id}
+                  className="rounded-xl border px-3 py-2.5"
+                  style={{ borderColor: c.line, background: "#fff" }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                      Rank {String(index + 1).padStart(2, "0")} · Checkpoint {anchorNumber} · {stepLabel}
+                    </p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.secondary }}>
+                      Opp {formatNeedScore(need.opportunity_score)} · I {need.importance} · S {need.satisfaction}
+                    </p>
+                  </div>
+                  <p className="mt-1 font-sans text-[14px] leading-[1.5]" style={{ color: c.charcoal }}>
+                    {need.desired_outcome}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function OdiNeedsListSection({
+  companyId,
   needs,
   onRemoveNeed,
   removingNeedId,
@@ -1285,6 +1584,7 @@ function OdiNeedsListSection({
   onUpdateNeedText,
   updatingNeedId,
 }: {
+  companyId?: string;
   needs: OdiNeedRow[];
   onRemoveNeed?: (needId: string) => void;
   removingNeedId?: string | null;
@@ -1296,6 +1596,11 @@ function OdiNeedsListSection({
   updatingNeedId?: string | null;
 }) {
   type NeedOrderMode = "suggested" | "custom";
+  const hasManualNeedOverride = (rows: OdiNeedRow[]) =>
+    rows.some((row) =>
+      Array.isArray(row.frameworks_used) &&
+      row.frameworks_used.some((flag) => String(flag || "").trim().toLowerCase() === "manual_override"),
+    );
   const sortNeedItems = (rows: OdiNeedRow[]) => [...rows].sort((a, b) => {
     const aSort = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : Number.MAX_SAFE_INTEGER;
     const bSort = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : Number.MAX_SAFE_INTEGER;
@@ -1313,12 +1618,20 @@ function OdiNeedsListSection({
     if (satisfactionDiff !== 0) return satisfactionDiff;
     return String(a.id).localeCompare(String(b.id));
   });
-  const [needItems, setNeedItems] = useState<OdiNeedRow[]>(() => sortNeedItems(needs));
-  const [orderMode, setOrderMode] = useState<NeedOrderMode>("custom");
+  const [needItems, setNeedItems] = useState<OdiNeedRow[]>(() =>
+    hasManualNeedOverride(needs) ? sortNeedItems(needs) : sortSuggestedItems(needs),
+  );
+  const [orderMode, setOrderMode] = useState<NeedOrderMode>(() =>
+    hasManualNeedOverride(needs) ? "custom" : "suggested",
+  );
   const [draggingNeedId, setDraggingNeedId] = useState<string | null>(null);
   const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
   const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
   const [needDrafts, setNeedDrafts] = useState<Record<string, string>>({});
+  const customLabelStorageKey = companyId ? `odi-needs-custom-label:${companyId}` : null;
+  const [customLabel, setCustomLabel] = useState("Custom");
+  const [customLabelDraft, setCustomLabelDraft] = useState("Custom");
+  const [isRenamingCustomLabel, setIsRenamingCustomLabel] = useState(false);
   const reorderNeedItems = (items: OdiNeedRow[], fromId: string, toId: string) => {
     const fromIndex = items.findIndex((item) => item.id === fromId);
     const toIndex = items.findIndex((item) => item.id === toId);
@@ -1330,11 +1643,26 @@ function OdiNeedsListSection({
   };
 
   useEffect(() => {
-    setNeedItems(sortNeedItems(needs));
+    const useCustomOrder = hasManualNeedOverride(needs);
+    setNeedItems(useCustomOrder ? sortNeedItems(needs) : sortSuggestedItems(needs));
+    setOrderMode((current) => (useCustomOrder ? current : "suggested"));
     setDraggingNeedId(null);
     setDragOverNeedId(null);
     setEditingNeedId(null);
   }, [needs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!customLabelStorageKey) {
+      setCustomLabel("Custom");
+      setCustomLabelDraft("Custom");
+      return;
+    }
+    const stored = window.localStorage.getItem(customLabelStorageKey);
+    const nextLabel = String(stored || "").trim() || "Custom";
+    setCustomLabel(nextLabel);
+    setCustomLabelDraft(nextLabel);
+  }, [customLabelStorageKey]);
 
   const suggestedItems = useMemo(() => sortSuggestedItems(needs), [needs]);
   const suggestedOrderIds = suggestedItems.map((item) => item.id);
@@ -1347,9 +1675,11 @@ function OdiNeedsListSection({
     [suggestedItems],
   );
   const hasCustomOrder =
+    hasManualNeedOverride(needs) ||
     suggestedOrderIds.length === customOrderIds.length &&
     suggestedOrderIds.some((id, index) => customOrderIds[index] !== id);
   const visibleNeedItems = orderMode === "suggested" ? suggestedItems : needItems;
+  const customOrderLabel = customLabel.trim() || "Custom";
 
   const publicNeedCount = visibleNeedItems.filter((item) => isPublicSourcePath(item.source_path)).length;
 
@@ -1382,7 +1712,7 @@ function OdiNeedsListSection({
                   background: orderMode === "suggested" ? "#FFF4EC" : c.card,
                 }}
               >
-                Suggested Priority
+                Generated
               </button>
               <button
                 type="button"
@@ -1394,20 +1724,58 @@ function OdiNeedsListSection({
                   background: orderMode === "custom" ? "#EEF6E7" : c.card,
                 }}
               >
-                Your Priority
+                {customOrderLabel}
               </button>
               {hasCustomOrder ? (
-                <MetaBadge>Custom order saved</MetaBadge>
+                <MetaBadge>{customOrderLabel} saved</MetaBadge>
               ) : (
-                <MetaBadge>Using suggested order</MetaBadge>
+                <MetaBadge>Using generated order</MetaBadge>
               )}
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomLabelDraft(customOrderLabel);
+                  setIsRenamingCustomLabel((current) => !current);
+                }}
+                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              >
+                {isRenamingCustomLabel ? "Close Rename" : "Rename Custom"}
+              </button>
             </div>
+            {isRenamingCustomLabel ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  value={customLabelDraft}
+                  onChange={(event) => setCustomLabelDraft(event.target.value)}
+                  className="w-full max-w-[260px] rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
+                  style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                  placeholder="Custom"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextLabel = customLabelDraft.trim() || "Custom";
+                    setCustomLabel(nextLabel);
+                    setCustomLabelDraft(nextLabel);
+                    setIsRenamingCustomLabel(false);
+                    if (typeof window !== "undefined" && customLabelStorageKey) {
+                      window.localStorage.setItem(customLabelStorageKey, nextLabel);
+                    }
+                  }}
+                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                  style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                >
+                  Save Name
+                </button>
+              </div>
+            ) : null}
             <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
               {orderMode === "suggested"
-                ? "Viewing system-suggested rank"
+                ? "Viewing generated rank"
                 : reorderingNeeds
                   ? "Saving your order…"
-                  : "Drag needs to reorder your priority"}
+                  : `Drag needs to reorder ${customOrderLabel.toLowerCase()}`}
             </p>
             {publicNeedCount > 0 && onRemovePublicNeeds ? (
               <div className="mt-3">
@@ -1426,7 +1794,7 @@ function OdiNeedsListSection({
 
           {visibleNeedItems.length === 0 ? (
             <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
-              No ODI needs identified yet from current evidence.
+              No Strategic Decision System needs identified yet from current evidence.
             </p>
           ) : (
             <div className="space-y-3">
@@ -1832,13 +2200,21 @@ function SuggestedMapsSection({
               <MetaBadge>{titleCaseJourney(option.key)}</MetaBadge>
               <ScoreChip label="Confidence" value={option.confidence} />
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="font-sans text-[14px] font-semibold" style={{ color: c.charcoal }}>
-                {drafts[option.key]?.title || option.title}
-              </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <MetaBadge>Public signal</MetaBadge>
             </div>
-            <p className="mt-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+            <p
+              className="mt-2 font-sans text-[16px] font-semibold leading-[1.3] break-words"
+              style={{ color: c.charcoal }}
+              title={drafts[option.key]?.title || option.title}
+            >
+              {drafts[option.key]?.title || option.title}
+            </p>
+            <p
+              className="mt-1 font-sans text-[12px] leading-[1.55] break-words"
+              style={{ color: c.secondary }}
+              title={option.rationale}
+            >
               {option.rationale}
             </p>
             <div className="mt-3 grid grid-cols-1 gap-2">
@@ -1878,6 +2254,7 @@ function SuggestedMapsSection({
 
 export default function JobStepsView() {
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const activeCompanyId = activeCompany?.id ?? null;
   const {
     loading,
@@ -1951,6 +2328,11 @@ export default function JobStepsView() {
     if (customerJourney) return customerJourney.subtitle;
     const customCustomerJourney = journeys.find((journey) => journey.key.startsWith("customer-"));
     return customCustomerJourney?.subtitle ?? null;
+  }, [journeys]);
+  const activeCustomerJourneyGroup = useMemo(() => {
+    const customerJourney = journeys.find((journey) => journey.key === "customer");
+    if (customerJourney) return customerJourney;
+    return journeys.find((journey) => journey.key.startsWith("customer-")) ?? null;
   }, [journeys]);
   const totalGaps = useMemo(
     () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => hasAssessedGap(step)).length, 0),
@@ -2048,6 +2430,65 @@ export default function JobStepsView() {
     const { error: insertErr } = await supabase.from("job_steps").insert(rows);
     if (insertErr) throw new Error(insertErr.message || "Failed to insert local job map draft.");
     return true;
+  };
+
+  const currentSelectedMapsForSynthesis = () => {
+    const maps = journeys.map((journey) => ({
+      journey_key: journey.key,
+      journey_title: safeText(journey.title, titleFromKey(journey.key)),
+      journey_subtitle: safeText(journey.subtitle, subtitleFromKey(journey.key)),
+    }));
+    if (maps.length === 0) {
+      return [
+        {
+          journey_key: "customer",
+          journey_title: titleFromKey("customer"),
+          journey_subtitle: subtitleFromKey("customer"),
+        },
+      ];
+    }
+    return maps;
+  };
+
+  const invokeLocalJobMapSynthesis = async (args: {
+    selectedJobMaps: Array<{ journey_key: string; journey_title: string; journey_subtitle: string }>;
+    trigger: string;
+  }) => {
+    if (!activeCompany?.id) throw new Error("Select a company before running local synthesis.");
+
+    const invocation = await supabase.functions.invoke("local-jobmap-synthesis", {
+      body: {
+        company_id: activeCompany.id,
+        selected_job_maps: args.selectedJobMaps,
+        trigger: args.trigger,
+      },
+    });
+
+    if (invocation.error) {
+      throw new Error(await describeJobMapInvokeError(invocation.error));
+    }
+
+    const payload =
+      invocation.data && typeof invocation.data === "object"
+        ? (invocation.data as {
+            error?: unknown;
+            summary?: {
+              selected_maps?: number;
+              journeys_generated?: number;
+              steps_inserted?: number;
+              odi_needs_inserted?: number;
+            };
+            artifacts?: {
+              journeys?: Array<{ journey_key?: string; journey_title?: string; step_count?: number }>;
+            };
+          })
+        : null;
+
+    if (payload?.error) {
+      throw new Error(String(payload.error));
+    }
+
+    return payload;
   };
 
   const runAddMap = async (args: {
@@ -2170,15 +2611,58 @@ export default function JobStepsView() {
 
       if (invokeError) {
         if (shouldUseLocalMapFallback(invokeMessage)) {
-          const inserted = await insertLocalDraftMap({
-            key,
-            title: jobMap.journey_title,
-            subtitle: jobMap.journey_subtitle,
-          });
+          let localSynthesisPayload:
+            | {
+                summary?: {
+                  journeys_generated?: number;
+                  odi_needs_inserted?: number;
+                };
+                artifacts?: {
+                  journeys?: Array<{ journey_key?: string }>;
+                };
+              }
+            | null = null;
+          let localSynthesisError: string | null = null;
+
+          try {
+            localSynthesisPayload = await invokeLocalJobMapSynthesis({
+              selectedJobMaps: jobMapsPayload.map((entry) => ({
+                journey_key: entry.journey_key,
+                journey_title: entry.journey_title,
+                journey_subtitle: entry.journey_subtitle,
+              })),
+              trigger: `jobsteps_add_map:${key}`,
+            });
+          } catch (synthesisErr) {
+            localSynthesisError = synthesisErr instanceof Error ? synthesisErr.message : String(synthesisErr);
+          }
+
+          const generatedJourneyKeys = new Set(
+            (localSynthesisPayload?.artifacts?.journeys ?? [])
+              .map((entry) => normalizeJourneyKey(entry?.journey_key))
+              .filter(Boolean),
+          );
+          let insertedDraft = false;
+          if (!generatedJourneyKeys.has(key)) {
+            insertedDraft = await insertLocalDraftMap({
+              key,
+              title: jobMap.journey_title,
+              subtitle: jobMap.journey_subtitle,
+            });
+          }
+
           await Promise.all([refetchJobSteps(), refetchBaseline()]);
-          if (inserted) {
+          if (generatedJourneyKeys.has(key)) {
+            toast.success(
+              `${titleCaseJourney(key)} map generated from local synthesis (${localSynthesisPayload?.summary?.journeys_generated ?? 0} map(s), ${localSynthesisPayload?.summary?.odi_needs_inserted ?? 0} need(s)).`,
+            );
+          } else if (insertedDraft) {
             toast.success(`${titleCaseJourney(key)} map added as a local draft.`);
-            toast.message("Evidence-backed generation could not run yet. Baseline and model access are required.");
+            toast.message(
+              localSynthesisError
+                ? `Local synthesis was unavailable (${localSynthesisError}).`
+                : "Local synthesis did not return the requested map key, so a draft was added.",
+            );
           } else {
             toast.message(`${titleCaseJourney(key)} map already exists.`);
           }
@@ -2258,12 +2742,19 @@ export default function JobStepsView() {
 
     setReorderingNeeds(true);
     try {
+      const needById = new Map(needs.map((item) => [item.id, item]));
       const updateCalls = ids.map((id, index) =>
-        supabase
-          .from("odi_needs")
-          .update({ sort_order: index + 1 })
-          .eq("company_id", activeCompanyId)
-          .eq("id", id),
+        {
+          const current = needById.get(id);
+          const nextFrameworks = Array.from(
+            new Set([...(current?.frameworks_used ?? []), "manual_override"]),
+          );
+          return supabase
+            .from("odi_needs")
+            .update({ sort_order: index + 1, frameworks_used: nextFrameworks })
+            .eq("company_id", activeCompanyId)
+            .eq("id", id);
+        },
       );
       const results = await Promise.all(updateCalls);
       const errors = results
@@ -2348,7 +2839,7 @@ export default function JobStepsView() {
         .select("id")
         .maybeSingle();
       if (updateMarketError) {
-        throw new Error(updateMarketError.message || "Failed to update ODI market context.");
+        throw new Error(updateMarketError.message || "Failed to update Strategic Decision System market context.");
       }
       if (!updatedMarket?.id) {
         const { error: insertMarketError } = await supabase.from("odi_market_definitions").insert({
@@ -2361,7 +2852,7 @@ export default function JobStepsView() {
           frameworks_used: marketFrameworks,
         });
         if (insertMarketError) {
-          throw new Error(insertMarketError.message || "Failed to insert ODI market context.");
+          throw new Error(insertMarketError.message || "Failed to insert Strategic Decision System market context.");
         }
       }
 
@@ -2396,15 +2887,49 @@ export default function JobStepsView() {
         ignorePublicBaseline: true,
       });
 
+      let usedLocalSynthesis = false;
+      let usedDraftFallback = false;
       if (uploadedFileCount > 0) {
-        await runResearchFromUploadedEvidence();
+        try {
+          await runResearchFromUploadedEvidence();
+        } catch (researchErr) {
+          const researchMessage = researchErr instanceof Error ? researchErr.message : String(researchErr);
+          if (!shouldUseLocalMapFallback(researchMessage)) {
+            throw researchErr;
+          }
+
+          try {
+            await invokeLocalJobMapSynthesis({
+              selectedJobMaps: currentSelectedMapsForSynthesis(),
+              trigger: "jobsteps_save_context_fallback",
+            });
+            usedLocalSynthesis = true;
+          } catch (localErr) {
+            const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
+            const inserted = await insertLocalDraftMap({
+              key: "customer",
+              title: safeText(activeCustomerJourneyTitle, titleFromKey("customer")),
+              subtitle: safeText(activeCustomerJourneySubtitle, subtitleFromKey("customer")),
+            });
+            usedDraftFallback = inserted;
+            if (!inserted) {
+              throw new Error(`${researchMessage}. Local synthesis fallback failed: ${localMessage}`);
+            }
+          }
+        }
       }
 
       await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
       refreshOdi();
 
       if (uploadedFileCount > 0) {
-        toast.success("Saved context edits and regenerated downstream artifacts.");
+        if (usedLocalSynthesis) {
+          toast.success("Saved context edits and regenerated job map + Strategic Decision System artifacts through local synthesis.");
+        } else if (usedDraftFallback) {
+          toast.success("Saved context edits and added a local draft customer map while model-backed synthesis is unavailable.");
+        } else {
+          toast.success("Saved context edits and regenerated downstream artifacts.");
+        }
       } else {
         toast.success("Saved context edits and refreshed alignment. Upload files to regenerate full artifacts.");
       }
@@ -2437,8 +2962,8 @@ export default function JobStepsView() {
       }
       toast.success(
         key === "customer"
-          ? "Customer job map and related opportunities, ODI needs, outcomes, and routes removed."
-          : `${titleCaseJourney(key)} job map and related opportunities/ODI needs removed.`,
+          ? "Customer job map and related opportunities, Strategic Decision System needs, outcomes, and routes removed."
+          : `${titleCaseJourney(key)} job map and related opportunities/Strategic Decision System needs removed.`,
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to remove job map.");
@@ -2565,7 +3090,7 @@ export default function JobStepsView() {
         .in("id", publicNeedIds);
       if (deleteErr) throw new Error(deleteErr.message || "Failed to remove public needs.");
       refreshOdi();
-      toast.success(`Removed ${publicNeedIds.length} public ODI need${publicNeedIds.length === 1 ? "" : "s"}.`);
+      toast.success(`Removed ${publicNeedIds.length} public Strategic Decision System need${publicNeedIds.length === 1 ? "" : "s"}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to remove public needs.");
     } finally {
@@ -2766,7 +3291,7 @@ export default function JobStepsView() {
           await runResearchFromUploadedEvidence();
           await Promise.all([refetchJobSteps(), refetchBaseline(), inputsQuery.refetch()]);
           refreshOdi();
-          toast.success("False public artifacts removed. Regenerated map, ODI, market context, and strategy from uploaded evidence.");
+          toast.success("False public artifacts removed. Regenerated map, Strategic Decision System context, market context, and strategy from uploaded evidence.");
         } catch (rerunError) {
           const rerunMessage = rerunError instanceof Error ? rerunError.message : "unknown error";
           if (/still running|already running/i.test(rerunMessage)) {
@@ -2801,6 +3326,8 @@ export default function JobStepsView() {
       <TopNav />
 
       <main className="max-w-[1440px] mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8">
+        <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+
         <div className="mb-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -2811,7 +3338,7 @@ export default function JobStepsView() {
                 Job Steps Map
               </h1>
               <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                Select and define ODI-style job maps first, then run research to generate steps and aligned opportunities.
+                Select and define Strategic Decision System-style job maps first, then run research to generate steps and aligned opportunities.
               </p>
             </div>
 
@@ -2823,7 +3350,14 @@ export default function JobStepsView() {
               Back to Map
             </Link>
           </div>
-          <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-5xl"
+            source="job_steps, Strategic Decision System market definitions, Strategic Decision System needs, strategic_problems, and baseline/source_path provenance."
+            evaluation="AI proposes map structure, then journey and evidence logic classify what is public vs uploaded context and where clarity gaps remain."
+            scoring="Strategic Decision System needs use importance, satisfaction, and opportunity score; gap states and evidence confidence shape priority readouts."
+            why="This explains why each step/need exists, what evidence it came from, and which assumptions still need validation."
+          />
         </div>
 
         <AiBoundaryNote
@@ -2880,6 +3414,14 @@ export default function JobStepsView() {
               resettingPublicResearchArtifacts={resettingPublicResearchArtifacts}
             />
 
+            <ProcessFidelitySection
+              marketDefinition={marketDefinition}
+              marketContext={strategyCascade?.where_to_play}
+              customerJourney={activeCustomerJourneyGroup}
+              activeCustomerJourneyTitle={activeCustomerJourneyTitle}
+              needs={needs}
+            />
+
             <AreaAlignmentPanel
               title="Market Context"
               area={marketAlignment}
@@ -2891,7 +3433,7 @@ export default function JobStepsView() {
             />
 
             <AreaAlignmentPanel
-              title="ODI Needs"
+              title="SDS Needs"
               area={odiAlignment}
               run={localAlignment}
               lineColor={c.line}
@@ -2942,15 +3484,36 @@ export default function JobStepsView() {
                     No job map selected yet.
                   </p>
                 ) : (
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
                     {journeys.map((journey) => (
-                      <span
+                      <div
                         key={`selected-${journey.key}`}
-                        className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                        className="rounded-xl border px-3 py-2"
+                        style={{ borderColor: c.line, background: "#fff" }}
                       >
-                        {journey.title}
-                      </span>
+                        <p
+                          className="font-mono text-[10px] uppercase tracking-[0.1em]"
+                          style={{ color: c.muted }}
+                        >
+                          {titleCaseJourney(journey.key)}
+                        </p>
+                        <p
+                          className="mt-1 font-sans text-[14px] font-semibold leading-[1.35] break-words"
+                          style={{ color: c.charcoal }}
+                          title={journey.title}
+                        >
+                          {journey.title}
+                        </p>
+                        {safeText(journey.subtitle) ? (
+                          <p
+                            className="mt-1 font-sans text-[12px] leading-[1.5] break-words"
+                            style={{ color: c.secondary }}
+                            title={journey.subtitle}
+                          >
+                            {journey.subtitle}
+                          </p>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -3049,6 +3612,7 @@ export default function JobStepsView() {
             )}
 
             <OdiNeedsListSection
+              companyId={activeCompanyId ?? undefined}
               needs={needs}
               onRemoveNeed={handleRemoveNeed}
               removingNeedId={removingNeedId}

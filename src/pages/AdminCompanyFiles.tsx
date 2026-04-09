@@ -7,13 +7,13 @@ import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
 import TopNav from "@/components/layout/TopNav";
 
 const c = {
-  bg: "#faf7f6",
-  panel: "#FFFFFF",
-  paper: "#FFFFFF",
-  line: "#DDE6D1",
-  charcoal: "#233C4B",
-  secondary: "#46606D",
-  muted: "#6E847F",
+  bg: "#070d20",
+  panel: "rgba(255,255,255,0.04)",
+  paper: "rgba(255,255,255,0.04)",
+  line: "rgba(136, 163, 218, 0.24)",
+  charcoal: "#eef4ff",
+  secondary: "#c1cceb",
+  muted: "#95a6d3",
 };
 
 function normalizeUrl(url?: string) {
@@ -38,7 +38,7 @@ export default function AdminCompanyFiles() {
 
   if (loading) {
     return (
-      <div className="min-h-screen" style={{ background: c.bg }}>
+      <div className="admin-premium-scope min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="flex items-center justify-center py-16">
           <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
@@ -51,7 +51,7 @@ export default function AdminCompanyFiles() {
 
   if (!company) {
     return (
-      <div className="min-h-screen" style={{ background: c.bg }}>
+      <div className="admin-premium-scope min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="max-w-5xl mx-auto px-6 py-10">
           <Link
@@ -73,11 +73,18 @@ export default function AdminCompanyFiles() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: c.bg }}>
+    <div
+      className="admin-premium-scope min-h-screen"
+      style={{
+        background: c.bg,
+        backgroundImage:
+          "radial-gradient(1200px 500px at 18% -12%, rgba(52,210,190,0.16), transparent), radial-gradient(900px 420px at 92% 2%, rgba(255,140,75,0.12), transparent), linear-gradient(180deg,#070d20 0%, #0b1530 100%)",
+      }}
+    >
       <TopNav />
       <div
         className="border-b backdrop-blur-sm"
-        style={{ borderColor: c.line, background: "rgba(255,255,255,0.88)" }}
+        style={{ borderColor: c.line, background: "rgba(10,16,39,0.92)" }}
       >
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -118,7 +125,10 @@ export default function AdminCompanyFiles() {
           detail="Uploaded files stay company-scoped and support internal analysis flows. They are separate from the public baseline and public web research path."
         />
 
-        <section className="rounded-2xl p-5 shadow-sm" style={{ background: c.panel, border: `1px solid ${c.line}` }}>
+        <section
+          className="rounded-2xl p-5 shadow-sm"
+          style={{ background: c.panel, border: `1px solid ${c.line}`, boxShadow: "0 20px 48px -38px rgba(0,0,0,0.9)" }}
+        >
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="font-sans text-[20px] font-semibold" style={{ color: c.charcoal }}>

@@ -90,7 +90,7 @@ const KEYWORDS_BY_INPUT_KEY: Array<{ key: string; terms: string[] }> = [
   { key: 'family-satisfaction', terms: ['family', 'satisfaction', 'feedback', 'experience'] },
 ];
 
-const PROVENANCE_TAG_OPTIONS = ['Public', 'Company', 'Primary Evidence', 'Implemented & Tested'] as const;
+const PROVENANCE_TAG_OPTIONS = ['Public', 'Company', 'Research', 'Testing'] as const;
 
 function isInputNotApplicable(input: Pick<InputItem, 'input_label' | 'sub_group'>): boolean {
   const combined = `${input.input_label} ${input.sub_group}`.toLowerCase();
@@ -388,7 +388,7 @@ async function persistUploadDerivedNeeds(params: {
           tier: 'company',
           service_state: 'monitor',
           source_path: sourcePath,
-          frameworks_used: ['JTBD', 'ODI', 'Local Upload Analysis'],
+          frameworks_used: ['JTBD', 'Strategic Decision System', 'Local Upload Analysis'],
         };
       });
 
@@ -727,14 +727,14 @@ export default function FileUploadDialog({
         })
         .then(({ error, data }) => {
           if (error || data?.error) {
-            toast.error("Local comparison failed (positioning, strategy, market, ODI). Uploads were saved.");
+            toast.error("Local comparison failed (positioning, strategy, market, Strategic Decision System). Uploads were saved.");
             return;
           }
           void queryClient.invalidateQueries({ queryKey: ["local-alignment", selectedCompanyId] });
-          toast.success("Local comparison updated (positioning, strategy, market, ODI).");
+          toast.success("Local comparison updated (positioning, strategy, market, Strategic Decision System).");
         })
         .catch(() => {
-          toast.error("Local comparison failed (positioning, strategy, market, ODI). Uploads were saved.");
+          toast.error("Local comparison failed (positioning, strategy, market, Strategic Decision System). Uploads were saved.");
         })
         .finally(() => {
           setAlignmentRunning(false);
@@ -992,7 +992,7 @@ export default function FileUploadDialog({
                         </p>
                         {summary.derivedNeedsAdded && summary.derivedNeedsAdded > 0 ? (
                           <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: '#4c7f73' }}>
-                            +{summary.derivedNeedsAdded} upload-derived ODI need{summary.derivedNeedsAdded === 1 ? '' : 's'} added
+                            +{summary.derivedNeedsAdded} upload-derived Strategic Decision System need{summary.derivedNeedsAdded === 1 ? '' : 's'} added
                           </p>
                         ) : null}
                         {summary.additionalAreas && summary.additionalAreas.length > 0 ? (

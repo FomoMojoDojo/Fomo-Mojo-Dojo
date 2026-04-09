@@ -252,8 +252,8 @@ function hasAnyTag(tags: string[], candidates: string[]) {
 }
 
 function inferSourceTier(tags: string[]) {
-  if (hasAnyTag(tags, ["implemented & tested", "implemented tested"])) return "implemented_tested";
-  if (hasAnyTag(tags, ["primary evidence", "evidence"])) return "evidence";
+  if (hasAnyTag(tags, ["implemented & tested", "implemented tested", "implemented + testing", "implemented testing", "testing"])) return "implemented_tested";
+  if (hasAnyTag(tags, ["primary evidence", "evidence", "research"])) return "evidence";
   if (hasAnyTag(tags, ["company"])) return "company";
   if (hasAnyTag(tags, ["public"])) return "public";
   return "company";
@@ -602,7 +602,7 @@ Deno.serve(async (req) => {
       },
       { public: 0, company: 0, evidence: 0, implemented: 0 },
     );
-    const provenanceSummary = `Source mix: Public ${sourceCounts.public} · Company ${sourceCounts.company} · Evidence ${sourceCounts.evidence} · Implemented/Tested ${sourceCounts.implemented}`;
+    const provenanceSummary = `Source mix: Public ${sourceCounts.public} · Company ${sourceCounts.company} · Research ${sourceCounts.evidence} · Testing ${sourceCounts.implemented}`;
     const modelPathSummary = `LLM path: local_ollama · model: ${OLLAMA_MODEL}`;
     const combinedSummary = `${provenanceSummary}\n${modelPathSummary}`;
 

@@ -26,10 +26,14 @@ type IntakeRequest = {
   };
 };
 
-const RECEIVER_EMAIL = "dojocho@fomomojodojo.com";
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const FALLBACK_FROM_EMAIL = "FomoMojoDojo Intake <onboarding@resend.dev>";
 const AUTORUN_TIMEOUT_MS = 12000;
+const DEFAULT_RECEIVER_EMAIL = "dojocho@fomomojodojo.com";
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://fomomojodojo-launch.vercel.app",
+  "https://happy-file-hugger-main.vercel.app",
+];
 
 const present = (value?: string) => {
   const trimmed = value?.trim();
@@ -53,6 +57,49 @@ const normalizeWebhookUrl = (value?: string) => {
     return null;
   }
 };
+
+const isAllowedOrigin = (origin: string) => {
+  if (!origin) return false;
+
+  if (DEFAULT_ALLOWED_ORIGINS.includes(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname.endsWith(".lovable.app") ||
+      hostname.endsWith(".lovableproject.com")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const buildCorsHeaders = (origin?: string | null) => {
+  const allowedOrigin = origin && isAllowedOrigin(origin) ? origin : DEFAULT_ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+};
+
+const jsonWithCors = (
+  body: Record<string, unknown>,
+  init: { status?: number; headers?: HeadersInit } = {},
+  origin?: string | null,
+) =>
+  NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...buildCorsHeaders(origin),
+      ...(init.headers ?? {}),
+    },
+  });
 
 type AutorunResult = {
   requested: boolean;
@@ -109,14 +156,43 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
       }),
     });
 
+    const rawBody = await response.text().catch(() => "");
+    let parsedBody: Record<string, unknown> | null = null;
+    if (rawBody) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        parsedBody = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        parsedBody = null;
+      }
+    }
+
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
       return {
         requested: true,
         attempted: true,
         triggered: false,
         status: response.status,
-        message: `Webhook rejected request.${body ? ` ${body.slice(0, 240)}` : ""}`,
+        message: `Webhook rejected request.${rawBody ? ` ${rawBody.slice(0, 240)}` : ""}`,
+      };
+    }
+
+    const nestedAutorun = parsedBody?.autorun && typeof parsedBody.autorun === "object"
+      ? (parsedBody.autorun as Record<string, unknown>)
+      : null;
+    const nestedTriggered = nestedAutorun?.triggered === true;
+    const nestedStatus = typeof nestedAutorun?.status === "number" ? Number(nestedAutorun.status) : response.status;
+    const nestedMessage = typeof nestedAutorun?.message === "string"
+      ? nestedAutorun.message
+      : (typeof parsedBody?.error === "string" ? parsedBody.error : "");
+
+    if (parsedBody?.success === false || (nestedAutorun && !nestedTriggered)) {
+      return {
+        requested: true,
+        attempted: true,
+        triggered: false,
+        status: nestedStatus,
+        message: nestedMessage || "Autorun did not complete successfully.",
       };
     }
 
@@ -124,7 +200,7 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
       requested: true,
       attempted: true,
       triggered: true,
-      status: response.status,
+      status: nestedStatus,
       message: "Autorun job accepted.",
     };
   } catch (error) {
@@ -286,36 +362,48 @@ const validatePayload = (payload: IntakeRequest) => {
   return null;
 };
 
+export async function OPTIONS(request: Request) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: buildCorsHeaders(request.headers.get("origin")),
+  });
+}
+
 export async function POST(request: Request) {
+  const origin = request.headers.get("origin");
   try {
     const payload = (await request.json()) as IntakeRequest;
     const validationError = validatePayload(payload);
     if (validationError) {
-      return NextResponse.json({ success: false, error: validationError }, { status: 400 });
+      return jsonWithCors({ success: false, error: validationError }, { status: 400 }, origin);
     }
 
     const resendApiKey = process.env.RESEND_API_KEY?.trim();
     const fromEmail = process.env.MOJOMAP_FROM_EMAIL?.trim() || FALLBACK_FROM_EMAIL;
+    const receiverEmail =
+      process.env.MOJOMAP_TO_EMAIL?.trim() || DEFAULT_RECEIVER_EMAIL;
 
     if (!resendApiKey) {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           success: false,
           error:
             "Missing RESEND_API_KEY. Add it to launch-site/.env.local, then restart the dev server.",
         },
         { status: 500 },
+        origin,
       );
     }
 
     if (!resendApiKey.startsWith("re_")) {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           success: false,
           error:
             "RESEND_API_KEY format is invalid. Use a Resend API key that starts with re_.",
         },
         { status: 500 },
+        origin,
       );
     }
 
@@ -332,7 +420,7 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           from: sender,
-          to: [RECEIVER_EMAIL],
+          to: [receiverEmail],
           subject,
           text,
           html,
@@ -348,12 +436,16 @@ export async function POST(request: Request) {
       (responseBody && typeof responseBody === "object" && "message" in responseBody
         ? String((responseBody as { message?: unknown }).message ?? "")
         : "") || "";
+    const providerMessageLower = providerMessage.toLowerCase();
 
     const shouldFallbackToOnboarding =
       !emailResponse.ok &&
       fromEmail !== FALLBACK_FROM_EMAIL &&
-      emailResponse.status === 403 &&
-      providerMessage.toLowerCase().includes("domain is not verified");
+      (emailResponse.status === 403 || emailResponse.status === 422) &&
+      (providerMessageLower.includes("domain is not verified") ||
+        providerMessageLower.includes("verify a domain") ||
+        providerMessageLower.includes("from address") ||
+        providerMessageLower.includes("sender"));
 
     if (shouldFallbackToOnboarding) {
       console.warn("[mojomap-intake] sender domain not verified; retrying with onboarding@resend.dev");
@@ -366,6 +458,8 @@ export async function POST(request: Request) {
       console.error("[mojomap-intake] resend rejected request", {
         status: emailResponse.status,
         body: responseBody,
+        to: receiverEmail,
+        from: fromEmail,
       });
       const detailedMessage =
         (responseBody &&
@@ -374,18 +468,27 @@ export async function POST(request: Request) {
         typeof (responseBody as { message?: unknown }).message === "string"
           ? (responseBody as { message: string }).message
           : null) || "Email provider rejected the request.";
+      const sandboxRecipientIssue =
+        providerMessageLower.includes("testing emails") ||
+        providerMessageLower.includes("own email address") ||
+        providerMessageLower.includes("recipient") ||
+        providerMessageLower.includes("not allowed to send to");
+      const actionableError = sandboxRecipientIssue
+        ? `${detailedMessage} Resend is likely still in testing mode. Verify ${receiverEmail} in Resend or set MOJOMAP_TO_EMAIL to an allowed inbox, then retry.`
+        : `${detailedMessage} Check RESEND_API_KEY, sender verification, and recipient permissions in Resend.`;
 
-      return NextResponse.json(
+      return jsonWithCors(
         {
           success: false,
-          error: `${detailedMessage} Check RESEND_API_KEY, sender verification, and recipient permissions in Resend.`,
+          error: actionableError,
         },
         { status: 502 },
+        origin,
       );
     }
 
     console.log("[mojomap-intake] email sent", {
-      to: RECEIVER_EMAIL,
+      to: receiverEmail,
       id: responseBody?.id || null,
       company: payload.company_name || null,
     });
@@ -393,20 +496,25 @@ export async function POST(request: Request) {
     const autorun = await triggerMojoMapAutorun(payload);
     console.log("[mojomap-intake] autorun", autorun);
 
-    return NextResponse.json({
-      success: true,
-      email_sent: true,
-      email_id: responseBody?.id || null,
-      autorun,
-    });
+    return jsonWithCors(
+      {
+        success: true,
+        email_sent: true,
+        email_id: responseBody?.id || null,
+        autorun,
+      },
+      {},
+      origin,
+    );
   } catch (error) {
     console.error("[mojomap-intake] failed", error);
-    return NextResponse.json(
+    return jsonWithCors(
       {
         success: false,
         error: "Unexpected server error while submitting intake.",
       },
       { status: 500 },
+      origin,
     );
   }
 }

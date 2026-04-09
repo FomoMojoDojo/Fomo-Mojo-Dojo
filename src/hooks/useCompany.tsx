@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { safeLocalStorageGet, safeLocalStorageSet } from '@/lib/safeLocalStorage';
 
 type AreaScoresJson = Record<string, unknown> | null;
 
@@ -10,6 +11,8 @@ export interface Company {
   website: string | null;
   created_by: string;
   created_at: string;
+  quarter?: string | null;
+  archetype?: string | null;
 
   // NEW
   mojo_score: number | null;
@@ -31,14 +34,53 @@ interface CompanyCtx {
 }
 
 const CompanyContext = createContext<CompanyCtx | undefined>(undefined);
+const PREFERRED_COMPANY_NAME = "cafe barra";
+const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
+  // Use a UUID-shaped id so UUID-filtered queries fail gracefully (empty) instead of throwing DB cast errors.
+  id: "00000000-0000-0000-0000-000000000001",
+  name: "Cafe Barra",
+  website: "https://cafebarra.com",
+  created_by: "public",
+  created_at: new Date(0).toISOString(),
+  quarter: "Q2 2026",
+  archetype: "Founder",
+  mojo_score: 64,
+  potential_score: 78,
+  projected_score: 82,
+  evidence_status: "emerging",
+  evidence_note: "Public preview fallback company.",
+  last_scored_at: null,
+  area_scores_json: null,
+  public_source_filters_json: null,
+};
+
+function pickDefaultCompanyId(companies: Company[]): string | null {
+  if (companies.length === 0) return null;
+
+  const preferred = companies.find((company) =>
+    company.name.trim().toLowerCase() === PREFERRED_COMPANY_NAME,
+  );
+
+  return preferred?.id ?? companies[0].id;
+}
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const { user, isAdmin, loading: authLoading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() =>
-    localStorage.getItem('active_company_id')
+    safeLocalStorageGet('active_company_id')
   );
   const [loading, setLoading] = useState(true);
+
+  const setFallbackPublicCompany = useCallback(() => {
+    setCompanies([PUBLIC_CAFE_BARRA_FALLBACK]);
+    const nextId = PUBLIC_CAFE_BARRA_FALLBACK.id;
+    setActiveId((current) => current ?? nextId);
+    if (!safeLocalStorageGet("active_company_id")) {
+      safeLocalStorageSet("active_company_id", nextId);
+    }
+    setLoading(false);
+  }, []);
 
   const fetchCompanies = useCallback(async () => {
     if (authLoading) {
@@ -47,9 +89,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
 
     if (!user || !isAdmin) {
-      setCompanies([]);
-      setActiveId(null);
-      localStorage.removeItem('active_company_id');
+      setFallbackPublicCompany();
       setLoading(false);
       return;
     }
@@ -85,14 +125,15 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
     if (error) {
       console.error("[companies] fetch error:", error);
-      setCompanies([]);
+      // Keep UI usable even when DB access fails.
+      setFallbackPublicCompany();
       setLoading(false);
       return;
     }
 
     setCompanies((data as Company[]) || []);
     setLoading(false);
-  }, [user, isAdmin, authLoading]);
+  }, [user, isAdmin, authLoading, setFallbackPublicCompany]);
 
   useEffect(() => {
     fetchCompanies();
@@ -100,7 +141,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   const setActiveCompanyId = (id: string) => {
     setActiveId(id);
-    localStorage.setItem('active_company_id', id);
+    safeLocalStorageSet('active_company_id', id);
   };
 
   useEffect(() => {
@@ -109,12 +150,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     const stillExists = activeId ? companies.some((company) => company.id === activeId) : false;
     if (stillExists) return;
 
-    const nextId = companies[0].id;
+    const nextId = pickDefaultCompanyId(companies);
+    if (!nextId) return;
     setActiveId(nextId);
-    localStorage.setItem('active_company_id', nextId);
+    safeLocalStorageSet('active_company_id', nextId);
   }, [companies, activeId]);
 
-  const activeCompany = companies.find((c) => c.id === activeId) ?? companies[0] ?? null;
+  const defaultCompanyId = pickDefaultCompanyId(companies);
+  const activeCompany =
+    companies.find((company) => company.id === activeId) ??
+    companies.find((company) => company.id === defaultCompanyId) ??
+    null;
 
   return (
     <CompanyContext.Provider value={{ companies, activeCompany, setActiveCompanyId, loading, refetch: fetchCompanies }}>

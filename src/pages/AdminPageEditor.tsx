@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import RichTextEditor from '@/components/cms/RichTextEditor';
+import TopNav from '@/components/layout/TopNav';
+import { ArrowUpRight, Save } from 'lucide-react';
 
 interface PageForm {
   slug: string;
@@ -142,61 +144,74 @@ export default function AdminPageEditor() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-cream flex items-center justify-center">
-        <p className="font-mono text-[13px] text-muted-foreground">Loading…</p>
+      <div className="admin-premium-scope min-h-screen bg-[radial-gradient(1200px_500px_at_20%_-10%,rgba(45,212,191,0.14),transparent),linear-gradient(180deg,#0a0f23_0%,#0d1530_100%)]">
+        <TopNav />
+        <div className="flex items-center justify-center py-24">
+          <p className="font-mono text-[13px] text-[#aab5d8]">Loading...</p>
+        </div>
       </div>
     );
   }
 
-  const fieldClass = "w-full bg-background border border-border rounded-lg px-3 py-2.5 font-sans text-[14px] text-foreground focus:border-gold focus:outline-none transition-colors";
-  const labelClass = "font-mono text-[10px] text-muted-foreground uppercase tracking-wide block mb-1";
+  const fieldClass =
+    "w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2.5 font-sans text-[14px] text-[#eef4ff] placeholder:text-[#8ea0cd] focus:border-[#34d2be] focus:outline-none";
+  const labelClass = "mb-1 block font-mono text-[10px] uppercase tracking-wide text-[#9aa7cf]";
 
   return (
-    <div className="min-h-screen bg-cream">
-      {/* Header */}
-      <div className="bg-ink border-b border-[#2a2618] px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/admin" className="font-mono text-[11px] text-t-ds hover:text-t-dp uppercase">
-            ← Back to Dashboard
-          </Link>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-gold text-ink font-mono text-[11px] uppercase tracking-wide px-5 py-2 rounded-lg font-semibold hover:bg-gold-light transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : isEditing ? 'Update Page' : 'Create Page'}
-          </button>
-        </div>
-      </div>
-
-      <div className="max-w-[800px] mx-auto px-6 py-8">
-        <h1 className="font-serif text-[22px] font-medium text-foreground mb-6">
-          {isEditing ? `Edit: ${form.page_title}` : 'New Methodology Page'}
-        </h1>
-
-        {error && (
-          <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 mb-4">
-            <p className="font-mono text-[12px] text-danger">{error}</p>
+    <div className="admin-premium-scope min-h-screen bg-[radial-gradient(1200px_500px_at_20%_-10%,rgba(45,212,191,0.14),transparent),linear-gradient(180deg,#0a0f23_0%,#0d1530_100%)] text-[#eaf0ff]">
+      <TopNav />
+      <div className="mx-auto w-full max-w-[980px] px-4 pb-12 pt-7 sm:px-6 lg:px-8">
+        <section className="rounded-2xl border border-white/10 bg-[#121936]/85 p-5 shadow-[0_20px_55px_-40px_rgba(0,0,0,0.9)] backdrop-blur">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#9ea9cd]">
+                {isEditing ? 'Edit Methodology Page' : 'Create Methodology Page'}
+              </p>
+              <h1 className="mt-2 font-serif text-[28px] font-medium leading-tight text-[#f4f7ff]">
+                {isEditing ? `Edit: ${form.page_title}` : 'New Methodology Page'}
+              </h1>
+              <p className="mt-2 max-w-xl text-[14px] text-[#c4cce8]">
+                Keep this page aligned with the workshop system and your current narrative style.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/admin"
+                className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.09em] text-[#d7def8] transition-colors hover:bg-white/10"
+              >
+                Back to Methodology Pages <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#2cd3bd] bg-[#1e6b6a] px-4 py-2 font-mono text-[11px] uppercase tracking-[0.09em] text-white transition-colors hover:bg-[#247a79] disabled:opacity-50"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {saving ? 'Saving...' : isEditing ? 'Update Page' : 'Create Page'}
+              </button>
+            </div>
           </div>
-        )}
+          {error && (
+            <div className="mt-4 rounded-lg border border-[#7d3f52] bg-[#311725] p-3">
+              <p className="font-mono text-[12px] text-[#ffb8cd]">{error}</p>
+            </div>
+          )}
+        </section>
 
-        <div className="space-y-6">
-          {/* Meta fields */}
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-            <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide border-b border-border pb-2">Page Meta</p>
-            <div className="grid grid-cols-3 gap-4">
+        <div className="mt-6 space-y-6">
+          <div className="rounded-xl border border-white/10 bg-[#121936]/82 p-5 shadow-[0_20px_55px_-40px_rgba(0,0,0,0.9)]">
+            <p className="border-b border-white/10 pb-2 font-mono text-[10px] uppercase tracking-wide text-[#a8b3d8]">Page Meta</p>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <label className={labelClass}>Page Number</label>
                 <input value={form.page_number} onChange={(e) => handleChange('page_number', e.target.value)} className={fieldClass} placeholder="01" />
               </div>
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <label className={labelClass}>Page Title</label>
                 <input value={form.page_title} onChange={(e) => handleChange('page_title', e.target.value)} className={fieldClass} placeholder="Market Definition" />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <label className={labelClass}>Slug</label>
                 <input value={form.slug} onChange={(e) => handleChange('slug', e.target.value)} className={fieldClass} placeholder="market-definition" />
@@ -215,44 +230,46 @@ export default function AdminPageEditor() {
                 <input type="number" value={form.sort_order} onChange={(e) => handleChange('sort_order', parseInt(e.target.value) || 0)} className={fieldClass} />
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" checked={form.is_published} onChange={(e) => handleChange('is_published', e.target.checked)} id="published" className="accent-gold" />
-              <label htmlFor="published" className="font-mono text-[12px] text-foreground">Published</label>
+            <div className="mt-4 flex items-center gap-2">
+              <input type="checkbox" checked={form.is_published} onChange={(e) => handleChange('is_published', e.target.checked)} id="published" className="accent-[#34d2be]" />
+              <label htmlFor="published" className="font-mono text-[12px] text-[#d7def8]">Published</label>
             </div>
           </div>
 
-          {/* Hero fields */}
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-            <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide border-b border-border pb-2">Hero Section</p>
-            <div>
-              <label className={labelClass}>Hero Subtitle</label>
-              <input value={form.hero_subtitle} onChange={(e) => handleChange('hero_subtitle', e.target.value)} className={fieldClass} placeholder="Foundation Phase · Step 01" />
-            </div>
-            <div>
-              <label className={labelClass}>Hero Description</label>
-              <textarea value={form.hero_description} onChange={(e) => handleChange('hero_description', e.target.value)} className={`${fieldClass} h-24 resize-y`} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+          <div className="rounded-xl border border-white/10 bg-[#121936]/82 p-5 shadow-[0_20px_55px_-40px_rgba(0,0,0,0.9)]">
+            <p className="border-b border-white/10 pb-2 font-mono text-[10px] uppercase tracking-wide text-[#a8b3d8]">Hero Section</p>
+            <div className="mt-4 space-y-4">
               <div>
-                <label className={labelClass}>Impact Score</label>
-                <input value={form.impact_score} onChange={(e) => handleChange('impact_score', e.target.value)} className={fieldClass} placeholder="+12" />
+                <label className={labelClass}>Hero Subtitle</label>
+                <input value={form.hero_subtitle} onChange={(e) => handleChange('hero_subtitle', e.target.value)} className={fieldClass} placeholder="Foundation Phase · Step 01" />
               </div>
               <div>
-                <label className={labelClass}>Score Detail</label>
-                <textarea value={form.score_detail} onChange={(e) => handleChange('score_detail', e.target.value)} className={`${fieldClass} h-20 resize-y`} />
+                <label className={labelClass}>Hero Description</label>
+                <textarea value={form.hero_description} onChange={(e) => handleChange('hero_description', e.target.value)} className={`${fieldClass} h-24 resize-y`} />
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Impact Score</label>
+                  <input value={form.impact_score} onChange={(e) => handleChange('impact_score', e.target.value)} className={fieldClass} placeholder="+12" />
+                </div>
+                <div>
+                  <label className={labelClass}>Score Detail</label>
+                  <textarea value={form.score_detail} onChange={(e) => handleChange('score_detail', e.target.value)} className={`${fieldClass} h-20 resize-y`} />
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Content sections */}
           {([1, 2, 3, 4, 5] as const).map((n) => (
-            <div key={n} className="bg-card border border-border rounded-xl p-5 space-y-3">
-              <div className="flex items-center gap-3 border-b border-border pb-2">
-                <span className="w-7 h-7 rounded-full bg-gold text-ink font-mono text-[12px] flex items-center justify-center font-bold">{`0${n}`}</span>
+            <div key={n} className="rounded-xl border border-white/10 bg-[#121936]/82 p-5 shadow-[0_20px_55px_-40px_rgba(0,0,0,0.9)]">
+              <div className="mb-3 flex items-center gap-3 border-b border-white/10 pb-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#ff8c4b] font-mono text-[12px] font-bold text-[#0f1736]">
+                  {`0${n}`}
+                </span>
                 <input
                   value={form[`section${n}_title` as keyof PageForm] as string}
                   onChange={(e) => handleChange(`section${n}_title` as keyof PageForm, e.target.value)}
-                  className="flex-1 bg-transparent border-none font-serif text-[16px] text-foreground focus:outline-none"
+                  className="flex-1 bg-transparent font-serif text-[16px] text-[#eef4ff] outline-none placeholder:text-[#8ea0cd]"
                   placeholder={`Section ${n} Title`}
                 />
               </div>

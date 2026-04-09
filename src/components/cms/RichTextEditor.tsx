@@ -29,13 +29,13 @@ export default function RichTextEditor({ content, onChange }: Props) {
   if (!editor) return null;
 
   const btnClass = (active: boolean) =>
-    `px-2 py-1 font-mono text-[10px] uppercase rounded transition-colors cursor-pointer ${
-      active ? 'bg-gold/20 text-gold' : 'text-muted-foreground hover:text-foreground'
+    `rounded px-2 py-1 font-mono text-[10px] uppercase transition-colors cursor-pointer ${
+      active ? 'bg-[#1f5d5d] text-[#95ecdd]' : 'text-[#9aa7cf] hover:text-[#eef4ff]'
     }`;
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
-      <div className="flex items-center gap-1 px-2 py-1.5 bg-cream border-b border-border flex-wrap">
+    <div className="overflow-hidden rounded-lg border border-white/20 bg-white/5">
+      <div className="flex flex-wrap items-center gap-1 border-b border-white/15 bg-[#0f1836] px-2 py-1.5">
         <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={btnClass(editor.isActive('bold'))}>B</button>
         <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={btnClass(editor.isActive('italic'))}>I</button>
         <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={btnClass(editor.isActive('bulletList'))}>• List</button>
@@ -55,7 +55,7 @@ export default function RichTextEditor({ content, onChange }: Props) {
       </div>
       <EditorContent
         editor={editor}
-        className="prose prose-sm max-w-none px-3 py-3 min-h-[120px] font-serif text-[14px] text-foreground [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[100px]"
+        className="prose prose-sm max-w-none px-3 py-3 min-h-[120px] font-serif text-[14px] text-[#eaf0ff] [&_.ProseMirror]:min-h-[100px] [&_.ProseMirror]:outline-none [&_.ProseMirror_a]:text-[#95ecdd] [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:border-[#ff8c4b]/60 [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_h1]:text-[#eef4ff] [&_.ProseMirror_h2]:text-[#eef4ff] [&_.ProseMirror_h3]:text-[#eef4ff] [&_.ProseMirror_p]:text-[#d7def8] [&_.ProseMirror_strong]:text-[#eef4ff]"
       />
     </div>
   );

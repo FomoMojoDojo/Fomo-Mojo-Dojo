@@ -288,18 +288,12 @@ export default function Home() {
             </Reveal>
 
             <div className="mojomap-cta-stage">
-              <Reveal as="p" delay={620} className="mojomap-ambient-quote quote-left" aria-hidden="true">
-                "Oh... that's why we're stuck."
-              </Reveal>
               <Reveal delay={760}>
                 <MojoMapQuiz
                   triggerLabel={siteConfig.cta.primaryLabel}
                   triggerClassName="btn btn-primary btn-mojomap-cta"
                   calendlyBaseUrl={siteConfig.cta.secondaryUrl}
                 />
-              </Reveal>
-              <Reveal as="p" delay={920} className="mojomap-ambient-quote quote-right" aria-hidden="true">
-                "Now we know what to do."
               </Reveal>
             </div>
           </div>

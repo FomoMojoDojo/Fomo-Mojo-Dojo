@@ -92,13 +92,13 @@ export function usePrimaryEvidenceSignal(companyId?: string) {
       if (cancelled) return;
 
       if (needsRes.error && !isMissingTableError(needsRes.error.message || "")) {
-        setError(needsRes.error.message || "Failed to load ODI evidence sources.");
+        setError(needsRes.error.message || "Failed to load Strategic Decision System evidence sources.");
         setLoading(false);
         return;
       }
 
       if (marketRes.error && !isMissingTableError(marketRes.error.message || "")) {
-        setError(marketRes.error.message || "Failed to load ODI evidence sources.");
+        setError(marketRes.error.message || "Failed to load Strategic Decision System evidence sources.");
         setLoading(false);
         return;
       }

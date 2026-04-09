@@ -1,0 +1,257 @@
+🥋 FomoMojoDojo — MojoMap Input Document (v1)
+
+⸻
+
+1. Company Overview
+
+Company Name: FomoMojoDojo
+
+Product: MojoMap™
+
+Category: Strategic Decision System
+
+Description:
+
+FomoMojoDojo builds Strategic Decision Systems that help organizations stop guessing and start making better decisions. Its core product, MojoMap™, is a living, evidence-driven map that connects customer truth, strategic choices, and execution into one shared system. The company combines consulting-led engagements with a product vision to create a repeatable system that improves decision quality, aligns teams, and drives momentum.
+
+⸻
+
+2. Strategic Objective (Map Outcome)
+
+Build a category-defining Strategic Decision System (MojoMap™) and achieve consistent high-value engagements ($50K–$100K+) while progressing toward a scalable product.
+
+⸻
+
+3. Core Job-to-be-Done (ODI / JTBD)
+
+When leading a team or organization, help me decide what to focus on and what to do next so that we achieve our desired outcomes with confidence and speed.
+
+⸻
+
+4. Customer Truth (Evidence Layer)
+
+Known Customer Problems
+
+	•	Teams are busy but not making meaningful progress
+
+	•	Strategy exists but does not guide real decisions
+
+	•	Priorities frequently shift or are unclear
+
+	•	Internal misalignment slows execution
+
+	•	Customer needs are not well understood or validated
+
+	•	Decisions are often based on opinion rather than evidence
+
+Evidence Strength
+
+	•	Qualitative experience from consulting engagements
+
+	•	Framework-based understanding (ODI, JTBD, positioning)
+
+	•	Limited quantified case studies (current gap)
+
+Confidence Level: Medium
+
+Key Gap
+
+Lack of quantified, external proof demonstrating impact of MojoMap
+
+⸻
+
+5. Opportunity Landscape
+
+Primary Opportunity
+
+Replace static strategy (decks, plans) with a living Strategic Decision System
+
+Supporting Opportunities
+
+	•	Productize decision-making through MojoMap
+
+	•	Use MojoSignal™ as a predictive success indicator
+
+	•	Position consulting as system installation (not deliverables)
+
+	•	Establish a new category: Strategic Decision System
+
+Trade-offs
+
+	•	Do not expand into generic consulting services
+
+	•	Do not address multiple problems in one map
+
+	•	Avoid premature product complexity
+
+⸻
+
+6. Strategic Choices (Decision System)
+
+	•	One Map = One Problem
+
+	•	Consulting is an entry point, not the identity
+
+	•	Prioritize proof before product scale
+
+	•	Focus on category creation over service expansion
+
+⸻
+
+7. Capability Assessment
+
+Strengths
+
+	•	Strong strategic frameworks (ODI, JTBD, positioning)
+
+	•	Clear product concept (MojoMap)
+
+	•	High-value consulting capability
+
+	•	Strong differentiation vs traditional consulting
+
+Gaps
+
+	•	No standardized delivery system
+
+	•	Limited case studies
+
+	•	Product not yet built
+
+	•	Scoring system still evolving
+
+⸻
+
+8. Alignment & Decision Environment
+
+Current State
+
+	•	High clarity at founder level
+
+	•	Early-stage structure
+
+	•	Centralized decision-making
+
+Risks
+
+	•	Over-reliance on founder
+
+	•	Lack of repeatability
+
+	•	Potential inconsistency in delivery
+
+⸻
+
+9. Activation Readiness
+
+Current State
+
+	•	Clear next steps identified
+
+	•	Ability to run engagements immediately
+
+Gaps
+
+	•	No structured measurement of decision impact
+
+	•	Limited feedback loops
+
+	•	No standardized cadence
+
+⸻
+
+10. Primary Constraint
+
+Lack of undeniable proof that MojoMap drives measurable outcomes
+
+Impact
+
+	•	Limits trust
+
+	•	Slows sales
+
+	•	Weakens positioning
+
+	•	Reduces product confidence
+
+⸻
+
+11. Current Actions
+
+FIX (Now)
+
+	•	Run 3–5 flagship engagements
+
+	•	Capture before/after states
+
+	•	Document decisions and outcomes
+
+	•	Build 2–3 case studies
+
+IMPROVE (Next)
+
+	•	Refine MojoScore™ logic
+
+	•	Standardize delivery
+
+	•	Improve workshops
+
+CREATE (Later)
+
+	•	Build MojoMap UI (MVP)
+
+	•	Add AI recommendations
+
+	•	Create self-serve onboarding
+
+⸻
+
+12. Competition
+
+Direct
+
+	•	Strategy consulting firms (McKinsey, Bain, BCG)
+
+	•	Boutique strategy consultancies
+
+Indirect
+
+	•	Internal strategy decks
+
+	•	Tools (Notion, Miro, Airtable)
+
+	•	OKR platforms (WorkBoard, Ally.io)
+
+	•	Analytics tools (Tableau, Looker)
+
+Key Insight
+
+Competitors deliver outputs.
+
+FomoMojoDojo delivers a living decision system.
+
+⸻
+
+13. Success Metrics
+
+North Star
+
+Number of active MojoMaps used in decision-making
+
+Supporting Metrics
+
+	•	Decision speed
+
+	•	% of decisions made using the map
+
+	•	Conversion rate
+
+	•	Constraint resolution rate
+
+	•	Weekly usage
+
+⸻
+
+14. Key Hypothesis
+
+If teams use MojoMap™ to make their current reality and primary constraint visible, then decision speed and strategic progress will increase significantly, because teams align around what matters most and act on evidence instead of opinion.

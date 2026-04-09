@@ -11,6 +11,8 @@ import FileUploadDialog from '@/components/FileUploadDialog';
 import { useSourceConfidence } from '@/hooks/useSourceConfidence';
 import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badges';
 import PageContextStatus from '@/components/layout/PageContextStatus';
+import GenericAuditTraceNote from '@/components/diagnostics/GenericAuditTraceNote';
+import { isGenericAuditCompany } from '@/lib/genericAudit';
 
 const c = {
   bg: '#faf7f6',
@@ -36,6 +38,7 @@ export default function InputsView() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const { user } = useAuth();
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { query: inputsQuery } = useInputs();
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
@@ -69,7 +72,7 @@ export default function InputsView() {
   const groups = [
     { key: 'foundation', label: 'Foundation', badge: 'Positioning + Strategy Cascade', items: grouped.foundation, accent: '#e8613a' },
     { key: 'execution', label: 'Execution', badge: 'GTM + Messaging', items: grouped.execution, accent: '#3a9a8c' },
-    { key: 'market_evidence', label: 'Market Evidence', badge: 'ODI + Validation', items: grouped.market_evidence, accent: '#c48a2a' },
+    { key: 'market_evidence', label: 'Market Evidence', badge: 'Strategic Decision System + Validation', items: grouped.market_evidence, accent: '#c48a2a' },
   ];
 
   return (
@@ -82,6 +85,7 @@ export default function InputsView() {
         {/* Main area */}
         <div className="flex-1 overflow-y-auto" style={{ padding: '0 36px 48px 36px' }}>
           <div className="max-w-content mx-auto pt-6 px-4 sm:px-0">
+            <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
             {/* Page header — matching map view */}
             <div className="mb-8">
@@ -100,7 +104,14 @@ export default function InputsView() {
                 </div>
               </div>
               </div>
-              <PageContextStatus className="mt-4" lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
+              <GenericAuditTraceNote
+                active={auditMode}
+                className="mt-3 max-w-4xl"
+                source="inputs, input_subitems, input_files tags, and company source-confidence signals."
+                evaluation="AI and rule-based normalization map each input to an area, infer confidence, and rewrite weak legacy phrasing."
+                scoring="Completeness, impact tier, and score impact are recalculated from status, evidence, and file coverage."
+                why="This shows why each input card is scored and labeled the way it is, so generic defaults can be tuned."
+              />
             </div>
 
             {/* Recessed field */}

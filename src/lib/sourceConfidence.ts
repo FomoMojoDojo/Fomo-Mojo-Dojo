@@ -61,8 +61,20 @@ function fileTagSignals(inputs: InputItem[]) {
         const normalized = normalizeTag(tag);
         if (!normalized) continue;
         if (normalized === "company") hasCompanyTag = true;
-        if (normalized === "primary evidence" || normalized === "evidence") hasEvidenceTag = true;
-        if (normalized === "implemented & tested" || normalized === "implemented tested") {
+        if (
+          normalized === "primary evidence" ||
+          normalized === "evidence" ||
+          normalized === "research"
+        ) {
+          hasEvidenceTag = true;
+        }
+        if (
+          normalized === "implemented & tested" ||
+          normalized === "implemented tested" ||
+          normalized === "implemented + testing" ||
+          normalized === "implemented testing" ||
+          normalized === "testing"
+        ) {
           hasImplementedTag = true;
         }
       }

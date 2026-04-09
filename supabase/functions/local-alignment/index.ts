@@ -254,8 +254,8 @@ function hasTag(tags: string[], expected: string[]) {
 }
 
 function inferTierFromTags(tags: string[]) {
-  if (hasTag(tags, ["implemented & tested", "implemented tested"])) return "implemented_tested";
-  if (hasTag(tags, ["primary evidence", "evidence"])) return "evidence";
+  if (hasTag(tags, ["implemented & tested", "implemented tested", "implemented + testing", "implemented testing", "testing"])) return "implemented_tested";
+  if (hasTag(tags, ["primary evidence", "evidence", "research"])) return "evidence";
   if (hasTag(tags, ["public"])) return "public";
   if (hasTag(tags, ["company"])) return "company";
   // Uploaded client files should default to company evidence unless explicitly marked otherwise.

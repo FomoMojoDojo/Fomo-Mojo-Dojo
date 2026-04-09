@@ -17,17 +17,18 @@ import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageContextStatus from "@/components/layout/PageContextStatus";
+import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
 import { opportunityActionFromPriorityTier, opportunityActionTone } from "@/lib/opportunityLabels";
+import { isGenericAuditCompany } from "@/lib/genericAudit";
 import {
   alignmentLevelFromFocus,
   classifyOpportunityFocus,
   deriveInitiativeContext,
 } from "@/lib/initiativeFocus";
 import AlignmentCircle from "@/components/ui/AlignmentCircle";
-import { Info } from "lucide-react";
 
 /* ── Clean, sophisticated palette ── */
 const c = {
@@ -56,17 +57,25 @@ function safeNumber(n: unknown, fallback = 0) {
   return typeof n === "number" && Number.isFinite(n) ? n : fallback;
 }
 
-function focusSortValue(level: number, overlap: number) {
-  if (level >= 3 || overlap >= 2) return 2;
-  if (level >= 1 || overlap >= 1) return 1;
-  return 0;
-}
-
 function priorityTierSortValue(tier: string | null | undefined) {
   if (tier === "focus") return 0;
   if (tier === "monitor") return 1;
   if (tier === "defer") return 2;
   return 3;
+}
+
+function sortOpportunitiesBySystemRank<T extends OpportunityRow>(rows: T[]) {
+  return [...rows].sort((a, b) => {
+    const tierRank = priorityTierSortValue(a.priority_tier) - priorityTierSortValue(b.priority_tier);
+    if (tierRank !== 0) return tierRank;
+    const scoreDiff = safeNumber(b.opportunity_score, 0) - safeNumber(a.opportunity_score, 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const importanceDiff = safeNumber(b.importance, 0) - safeNumber(a.importance, 0);
+    if (importanceDiff !== 0) return importanceDiff;
+    const satisfactionDiff = safeNumber(a.satisfaction, 0) - safeNumber(b.satisfaction, 0);
+    if (satisfactionDiff !== 0) return satisfactionDiff;
+    return String(a.id).localeCompare(String(b.id));
+  });
 }
 
 const MAP_OUTCOME_REPLACEMENTS: Array<[RegExp, string]> = [
@@ -216,6 +225,7 @@ export default function MapView() {
 
   const { user } = useAuth();
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
 
   const { query: inputsQuery } = useInputs();
   const inputs = useMemo<InputItem[]>(() => {
@@ -392,58 +402,23 @@ export default function MapView() {
 
   const focusOpps = useMemo(() => {
     const items = Array.isArray(oppItems) ? oppItems : [];
-    const focusById = new Map(
-      items.map((item) => [item.id, classifyOpportunityFocus(item, initiativeContext)]),
-    );
-    const ranked = items
-      .filter((o) => o.priority_tier === "focus")
+    const focusById = new Map(items.map((item) => [item.id, classifyOpportunityFocus(item, initiativeContext)]));
+    return sortOpportunitiesBySystemRank(items)
+      .filter((item) => item.priority_tier === "focus")
       .map((item) => ({
         item,
         focus: focusById.get(item.id) ?? classifyOpportunityFocus(item, initiativeContext),
       }))
-      .sort((a, b) => {
-        const alignA = alignmentLevelFromFocus(a.focus);
-        const alignB = alignmentLevelFromFocus(b.focus);
-        if (alignA !== alignB) return alignB - alignA;
-        if (a.focus.overlap !== b.focus.overlap) return b.focus.overlap - a.focus.overlap;
-        return safeNumber(b.item.opportunity_score, 0) - safeNumber(a.item.opportunity_score, 0);
-      })
       .slice(0, 8);
-    return ranked;
   }, [oppItems, initiativeContext]);
 
   const opportunityNumberById = useMemo(() => {
     const items = Array.isArray(oppItems) ? oppItems : [];
-    const focusById = new Map(
-      items.map((item) => [item.id, classifyOpportunityFocus(item, initiativeContext)]),
-    );
-    const suggested = [...items].sort((a, b) => {
-      const tierRank = priorityTierSortValue(a.priority_tier) - priorityTierSortValue(b.priority_tier);
-      if (tierRank !== 0) return tierRank;
-      const focusA = focusById.get(a.id);
-      const focusB = focusById.get(b.id);
-      const focusRank =
-        focusSortValue(
-          alignmentLevelFromFocus(focusB ?? { level: "other", overlap: 0 }),
-          focusB?.overlap ?? 0,
-        ) -
-        focusSortValue(
-          alignmentLevelFromFocus(focusA ?? { level: "other", overlap: 0 }),
-          focusA?.overlap ?? 0,
-        );
-      if (focusRank !== 0) return focusRank;
-      const scoreDiff = safeNumber(b.opportunity_score, 0) - safeNumber(a.opportunity_score, 0);
-      if (scoreDiff !== 0) return scoreDiff;
-      const importanceDiff = safeNumber(b.importance, 0) - safeNumber(a.importance, 0);
-      if (importanceDiff !== 0) return importanceDiff;
-      const satisfactionDiff = safeNumber(a.satisfaction, 0) - safeNumber(b.satisfaction, 0);
-      if (satisfactionDiff !== 0) return satisfactionDiff;
-      return String(a.id).localeCompare(String(b.id));
-    });
+    const suggested = sortOpportunitiesBySystemRank(items);
     return new Map<string, string>(
       suggested.map((item, index) => [item.id, String(index + 1).padStart(3, "0")]),
     );
-  }, [oppItems, initiativeContext]);
+  }, [oppItems]);
 
   function openDeepDive(areaKey: string) {
     setDeepDiveArea(areaKey);
@@ -480,7 +455,7 @@ export default function MapView() {
           : topFocus.step_label || topFocus.journey_key || "current workflow";
       const initiativeLabel = initiativeContext.primaryJourneyTitle;
       const evidencePrefix = sourceSignals.hasPrimaryEvidence
-        ? "Primary research evidence"
+        ? "Research evidence"
         : sourceSignals.hasCompanyEvidence
           ? "Uploaded company evidence"
           : "Public evidence";
@@ -657,6 +632,14 @@ export default function MapView() {
       <TopNav />
 
       <main className="max-w-content mx-auto pt-6 px-4 sm:px-6 md:px-9 pb-12">
+        <PageContextStatus
+          lastScoredAt={activeCompany?.last_scored_at}
+          sourceSignals={sourceSignals}
+          evidenceLabel={usingStoredScores ? evidenceLabel : "Estimated from current artifacts"}
+          confidencePercent={evidencePct}
+          publicEvidenceStatus={String(activeCompany?.evidence_status || "")}
+        />
+
         {/* Company bar */}
         <div className="mb-8">
           <div className="flex items-center justify-between gap-3">
@@ -674,25 +657,14 @@ export default function MapView() {
             </p>
           </div>
           </div>
-          <div className="mt-3 flex items-center gap-2">
-            <PageContextStatus
-              lastScoredAt={activeCompany?.last_scored_at}
-              sourceSignals={sourceSignals}
-              evidenceLabel={usingStoredScores ? evidenceLabel : "Estimated from current artifacts"}
-              confidencePercent={evidencePct}
-              publicEvidenceStatus={String(activeCompany?.evidence_status || "")}
-              className="flex-1"
-            />
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border"
-              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
-              title="Map scores, journey steps, opportunities, and routes come from public baseline and company research. Uploaded client files are used in separate internal analysis flows."
-              aria-label="How source layers work"
-            >
-              <Info className="h-4 w-4" />
-            </button>
-          </div>
+          <GenericAuditTraceNote
+            active={auditMode}
+            className="mt-3 max-w-5xl"
+            source="companies scores/area_scores_json plus live inputs, job_steps, opportunities, routes, and Strategic Decision System tables."
+            evaluation="AI + deterministic logic merge evidence strength, initiative alignment, and source confidence to generate map cards and priorities."
+            scoring="Current/Potential/Projected prefer stored scores; fallback scorer computes gate scores, evidence multipliers, opportunity focus, and constraints."
+            why="This clarifies why each map box exists, how it was derived, and which levers to tune when output feels generic."
+          />
         </div>
 
         {/* Recessed field behind all cards */}
@@ -752,23 +724,6 @@ export default function MapView() {
 
           {/* Row 1: Strategy Journey Map (full width) */}
           <div style={cardStyle} className="p-4">
-            <div className="flex items-baseline justify-between gap-3 mb-3">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
-                  Strategy Journey Map
-                </p>
-                <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
-                  Where you stand and what to do next
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <ScoreChip label="Done" value={inputComplete} />
-                <ScoreChip label="Total" value={inputTotal} />
-                <StateBadge tone={inputGaps > 0 ? "gap" : "designed"}>{inputGaps} gaps</StateBadge>
-              </div>
-            </div>
-
             <StrategyJourneyMapAlt
               areas={areas}
               summary={summary}
@@ -967,7 +922,7 @@ export default function MapView() {
                             disabled={updatingWorkflowId === o.id}
                           >
                             <SelectTrigger
-                              className="h-7 min-w-[126px] border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                              className="h-7 w-[132px] shrink-0 max-w-full border bg-white px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
                               style={{ borderColor: c.line, color: c.secondary }}
                             >
                               <SelectValue placeholder="Set workflow" />

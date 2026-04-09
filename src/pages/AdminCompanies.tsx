@@ -68,6 +68,16 @@ type InvokeErrorDetails = {
   isTimeout?: boolean;
 };
 
+function shouldAutoFallbackToBaseline(details: InvokeErrorDetails) {
+  const text = `${details.title} ${details.description}`.toLowerCase();
+  return (
+    details.title === "Evidence Check Blocked" &&
+    (text.includes("run public baseline") ||
+      text.includes("public baseline or upload files") ||
+      text.includes("baseline evidence"))
+  );
+}
+
 type ArtifactRunSummary = {
   positioning?: {
     market_category?: string;
@@ -103,17 +113,18 @@ type ResearchArtifactRun = {
 const COMPANIES_REFRESH_MS = 15000;
 const REVIEW_REFRESH_MS = 12000;
 const LOCKS_REFRESH_MS = 8000;
+const RECENT_ERRORS_STORAGE_KEY = "admin-companies-recent-errors";
 
 const c = {
-  bg: "#faf7f6",
-  panel: "#FFFFFF",
-  paper: "#FFFFFF",
-  line: "#DDE6D1",
-  charcoal: "#233C4B",
-  secondary: "#46606D",
-  muted: "#6E847F",
-  coral: "#FF7D2D",
-  teal: "#5F9B8C",
+  bg: "#070d20",
+  panel: "rgba(255,255,255,0.04)",
+  paper: "rgba(255,255,255,0.04)",
+  line: "rgba(136, 163, 218, 0.24)",
+  charcoal: "#eef4ff",
+  secondary: "#c1cceb",
+  muted: "#95a6d3",
+  coral: "#ff8c4b",
+  teal: "#34d2be",
 };
 
 function normalizeUrl(url?: string) {
@@ -137,6 +148,33 @@ function titleCaseWords(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function safeSessionStorageGet(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSessionStorageSet(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Ignore blocked storage errors
+  }
+}
+
+function safeSessionStorageRemove(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Ignore blocked storage errors
+  }
 }
 
 function normalizeDisplayName(raw: string | null | undefined) {
@@ -374,7 +412,7 @@ export default function AdminCompanies() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const saved = window.sessionStorage.getItem("admin-companies-recent-errors");
+    const saved = safeSessionStorageGet(RECENT_ERRORS_STORAGE_KEY);
     if (!saved) return;
 
     try {
@@ -388,7 +426,7 @@ export default function AdminCompanies() {
         setRecentErrors(parsed.slice(0, 8));
       }
     } catch {
-      window.sessionStorage.removeItem("admin-companies-recent-errors");
+      safeSessionStorageRemove(RECENT_ERRORS_STORAGE_KEY);
     }
   }, []);
 
@@ -396,14 +434,11 @@ export default function AdminCompanies() {
     if (typeof window === "undefined") return;
 
     if (recentErrors.length === 0) {
-      window.sessionStorage.removeItem("admin-companies-recent-errors");
+      safeSessionStorageRemove(RECENT_ERRORS_STORAGE_KEY);
       return;
     }
 
-    window.sessionStorage.setItem(
-      "admin-companies-recent-errors",
-      JSON.stringify(recentErrors),
-    );
+    safeSessionStorageSet(RECENT_ERRORS_STORAGE_KEY, JSON.stringify(recentErrors));
   }, [recentErrors]);
 
   useEffect(() => {
@@ -700,6 +735,12 @@ export default function AdminCompanies() {
           description: details.description,
         });
         await refetch();
+      } else if (companyWebsite.trim() && shouldAutoFallbackToBaseline(details)) {
+        toast({
+          title: "Running Baseline First",
+          description: `Research for ${companyName} needs a quick web baseline first, so we’re starting that automatically.`,
+        });
+        await runBaselineAndResearch(companyId, companyName, companyWebsite);
       } else {
         showPersistentError(details.title, details.description);
       }
@@ -870,12 +911,12 @@ export default function AdminCompanies() {
   const severityTone = (severity?: string) => {
     const normalized = String(severity || "low").toLowerCase();
     if (normalized === "high") {
-      return { border: "#E7C3A4", background: "#FFF7F0", color: "#A44D14" };
+      return { border: "rgba(255,140,75,0.35)", background: "rgba(255,140,75,0.12)", color: "#ff9f73" };
     }
     if (normalized === "medium") {
-      return { border: "#E4D8AC", background: "#FFFBEA", color: "#8A6B12" };
+      return { border: "rgba(246,179,95,0.35)", background: "rgba(246,179,95,0.12)", color: "#f1c57e" };
     }
-    return { border: c.line, background: "#F7FBF9", color: c.teal };
+    return { border: c.line, background: "rgba(52,210,190,0.10)", color: c.teal };
   };
 
   const statusLabel = (status?: string) => {
@@ -930,13 +971,23 @@ export default function AdminCompanies() {
     return sorted;
   }, [companies, searchTerm, sortBy]);
 
+  const inputClassName =
+    "h-9 rounded-full border border-white/20 bg-white/5 px-3 text-[12px] text-[#eef4ff] placeholder:text-[#8ea0cd] focus-visible:ring-[#34d2be]/45";
+
   return (
-    <div className="min-h-screen" style={{ background: c.bg }}>
+    <div
+      className="admin-premium-scope min-h-screen"
+      style={{
+        background: c.bg,
+        backgroundImage:
+          "radial-gradient(1200px 500px at 18% -12%, rgba(52,210,190,0.16), transparent), radial-gradient(900px 420px at 92% 2%, rgba(255,140,75,0.12), transparent), linear-gradient(180deg,#070d20 0%, #0b1530 100%)",
+      }}
+    >
       <TopNav />
       {/* Map-view-ish header (light) */}
       <div
         className="border-b backdrop-blur-sm"
-        style={{ borderColor: c.line, background: "rgba(255,255,255,0.88)" }}
+        style={{ borderColor: c.line, background: "rgba(10,16,39,0.92)" }}
       >
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -994,7 +1045,7 @@ export default function AdminCompanies() {
         {recentErrors.length > 0 ? (
           <section
             className="rounded-[24px] border px-5 py-4"
-            style={{ borderColor: "#E7C3A4", background: "#FFF7F0" }}
+            style={{ borderColor: "rgba(255,140,75,0.35)", background: "rgba(255,140,75,0.12)" }}
           >
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1020,7 +1071,7 @@ export default function AdminCompanies() {
                 <div
                   key={entry.id}
                   className="rounded-2xl border px-4 py-3"
-                  style={{ borderColor: "#E7C3A4", background: "#FFFFFF" }}
+                  style={{ borderColor: "rgba(255,140,75,0.35)", background: "rgba(255,255,255,0.04)" }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -1091,6 +1142,7 @@ export default function AdminCompanies() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Company name"
+                  className={inputClassName}
                 />
               </div>
               <div>
@@ -1101,6 +1153,7 @@ export default function AdminCompanies() {
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
                   placeholder="https://example.com"
+                  className={inputClassName}
                 />
               </div>
             </div>
@@ -1154,6 +1207,7 @@ export default function AdminCompanies() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search name, website, or id"
+                className={inputClassName}
               />
               <select
                 value={sortBy}
@@ -1265,7 +1319,7 @@ export default function AdminCompanies() {
                             <div className="flex flex-wrap items-center gap-2">
                               <div
                                 className="inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
-                                style={{ color: c.coral, borderColor: "#E7C3A4", background: "#FFF7F0" }}
+                                style={{ color: c.coral, borderColor: "rgba(255,140,75,0.35)", background: "rgba(255,140,75,0.12)" }}
                               >
                                 {activeLock.operation} running
                               </div>
@@ -1370,7 +1424,9 @@ export default function AdminCompanies() {
                           title={
                             isLocked
                               ? `${activeLock?.operation || "Another run"} is already in progress for this company`
-                              : "Run AI Research"
+                              : hasWebsite
+                              ? "Run AI Research. If baseline evidence is missing, this will start with web baseline automatically."
+                              : "Run AI Research from existing uploaded or saved company evidence"
                           }
                         >
                           <Sparkles className="w-3 h-3" />
@@ -1471,7 +1527,7 @@ export default function AdminCompanies() {
                           className="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
                           style={{
                             borderColor: run.id === selectedReviewRun.id ? c.teal : c.line,
-                            background: run.id === selectedReviewRun.id ? "#F7FBF9" : "#FFFFFF",
+                            background: run.id === selectedReviewRun.id ? "rgba(52,210,190,0.10)" : "rgba(255,255,255,0.04)",
                           }}
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -1493,7 +1549,7 @@ export default function AdminCompanies() {
                                     ? c.coral
                                     : c.teal,
                                 borderColor: c.line,
-                                background: "#FFFFFF",
+                                background: "rgba(255,255,255,0.04)",
                               }}
                             >
                               {statusLabel(run.status)}
@@ -1507,7 +1563,7 @@ export default function AdminCompanies() {
 
                 <div
                   className="rounded-2xl border px-4 py-4"
-                  style={{ borderColor: c.line, background: "#FCFDFB" }}
+                  style={{ borderColor: c.line, background: "rgba(255,255,255,0.03)" }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -1532,7 +1588,7 @@ export default function AdminCompanies() {
                               ? c.coral
                               : c.teal,
                           borderColor: c.line,
-                          background: "#F8FBF7",
+                          background: "rgba(52,210,190,0.12)",
                         }}
                       >
                         {statusLabel(selectedReviewRun.status)}
@@ -1568,7 +1624,7 @@ export default function AdminCompanies() {
                           </div>
                           <span
                             className="shrink-0 rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
-                            style={{ color: tone.color, borderColor: tone.border, background: "#FFFFFF" }}
+                            style={{ color: tone.color, borderColor: tone.border, background: "rgba(255,255,255,0.04)" }}
                           >
                             {String(entry.review?.severity || "low")}
                           </span>
@@ -1580,7 +1636,7 @@ export default function AdminCompanies() {
                               <div
                                 key={`${entry.key || "review"}-finding-${findingIndex}`}
                                 className="rounded-xl border px-3 py-2"
-                                style={{ borderColor: c.line, background: "#FFFFFF" }}
+                                style={{ borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                               >
                                 <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
                                   {finding.artifact || "artifact"}{finding.field ? ` · ${finding.field}` : ""}
@@ -1623,7 +1679,7 @@ export default function AdminCompanies() {
                             className="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
                             style={{
                               borderColor: run.id === selectedArtifactRun?.id ? c.teal : c.line,
-                              background: run.id === selectedArtifactRun?.id ? "#F7FBF9" : "#FFFFFF",
+                              background: run.id === selectedArtifactRun?.id ? "rgba(52,210,190,0.10)" : "rgba(255,255,255,0.04)",
                             }}
                           >
                             <div className="flex items-center justify-between gap-3">
@@ -1638,7 +1694,7 @@ export default function AdminCompanies() {
                               <div className="text-right">
                                 <span
                                   className="rounded-full border px-2 py-1 font-mono text-[10px] uppercase tracking-wide"
-                                  style={{ color: c.teal, borderColor: c.line, background: "#FFFFFF" }}
+                                  style={{ color: c.teal, borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                                 >
                                   {statusLabel(run.status)}
                                 </span>
@@ -1656,7 +1712,7 @@ export default function AdminCompanies() {
                       {selectedArtifactRun ? (
                         <div
                           className="rounded-2xl border px-4 py-4"
-                          style={{ borderColor: c.line, background: "#FCFDFB" }}
+                          style={{ borderColor: c.line, background: "rgba(255,255,255,0.03)" }}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -1673,7 +1729,7 @@ export default function AdminCompanies() {
                             {typeof selectedArtifactRun.mojo_score === "number" ? (
                               <span
                                 className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
-                                style={{ color: c.charcoal, borderColor: c.line, background: "#FFFFFF" }}
+                                style={{ color: c.charcoal, borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                               >
                                 Mojo {selectedArtifactRun.mojo_score}
                               </span>
@@ -1681,7 +1737,7 @@ export default function AdminCompanies() {
                           </div>
 
                           <div className="mt-4 grid grid-cols-2 gap-3">
-                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "rgba(255,255,255,0.04)" }}>
                               <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
                                 Counts
                               </p>
@@ -1689,7 +1745,7 @@ export default function AdminCompanies() {
                                 {selectedArtifactRun.summary_json?.counts?.inputs ?? 0} inputs, {selectedArtifactRun.summary_json?.counts?.opportunities ?? 0} opportunities, {selectedArtifactRun.summary_json?.counts?.routes ?? 0} routes
                               </p>
                             </div>
-                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "#FFFFFF" }}>
+                            <div className="rounded-xl border px-3 py-2" style={{ borderColor: c.line, background: "rgba(255,255,255,0.04)" }}>
                               <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
                                 Strategy
                               </p>
@@ -1707,7 +1763,7 @@ export default function AdminCompanies() {
                               <div
                                 key={`${selectedArtifactRun.id}-route-${index}`}
                                 className="rounded-xl border px-3 py-2"
-                                style={{ borderColor: c.line, background: "#FFFFFF" }}
+                                style={{ borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                               >
                                 <p className="font-sans text-[13px] font-semibold capitalize" style={{ color: c.charcoal }}>
                                   {route.title || "Untitled route"}
@@ -1724,7 +1780,7 @@ export default function AdminCompanies() {
                   ) : (
                     <div
                       className="rounded-2xl border px-4 py-4"
-                      style={{ borderColor: c.line, background: "#FFFFFF" }}
+                      style={{ borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                     >
                       <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
                         No saved artifact snapshots exist for this company yet.

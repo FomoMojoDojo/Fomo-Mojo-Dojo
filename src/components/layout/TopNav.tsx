@@ -1,8 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
+import {
+  type ClientSystemPhase,
+  dispatchClientPhaseChange,
+  readStoredClientPhase,
+  writeStoredClientPhase,
+} from "@/hooks/useClientMapInteractionState";
 import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
+import { usePresentationMode } from "@/hooks/usePresentationMode";
+import { isClientPhasePath } from "@/lib/clientPhaseRoutes";
+import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "@/lib/clientViewVisibilityAudit";
+import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeLocalStorage";
+import {
+  CLIENT_ONBOARDING_MOJOMAP_EDITOR_ROUTE,
+  CLIENT_ONBOARDING_MOJOMAP_ROUTE,
+} from "@/lib/clientOnboardingMojoMapConfig";
 import { MOCK_NAV_CONFIG } from "@/lib/mockData";
 import {
   BarChart3,
@@ -10,6 +24,7 @@ import {
   ChevronDown,
   Compass,
   FileText,
+  FilePenLine,
   FolderKanban,
   Home,
   ListChecks,
@@ -24,6 +39,15 @@ import type { LucideIcon } from "lucide-react";
 import mojoLogo from "@/assets/mojomap-logo-white.svg";
 
 const SIDEBAR_OPEN_STORAGE_KEY = "mojo.sidebar.open";
+const TOOLING_OPEN_STORAGE_KEY = "mojo.sidebar.admin.tooling.open";
+const OUTSIDE_PHASE_DEFAULT_MIGRATION_KEY = "mojo.client.phase.default.outside.v1";
+
+const PHASE_OPTIONS: Array<{ value: ClientSystemPhase; label: string }> = [
+  { value: "outside", label: "Outside" },
+  { value: "diagnosis", label: "Diagnose" },
+  { value: "focus", label: "Focus" },
+  { value: "execution", label: "Flow" },
+];
 
 type NavFlag = keyof typeof MOCK_NAV_CONFIG;
 type NavItem = {
@@ -31,6 +55,7 @@ type NavItem = {
   path: string;
   icon: LucideIcon;
   flag?: NavFlag;
+  adminOnly?: boolean;
 };
 
 const coreItems: NavItem[] = [
@@ -40,9 +65,12 @@ const coreItems: NavItem[] = [
   { label: "Strategy", path: "/strategy", icon: Compass },
 ];
 
+const clientCoreItems: NavItem[] = [
+  { label: "Decision Path", path: "/", icon: Home },
+];
+
 const resourceItems: NavItem[] = [
   { label: "Artifacts", path: "/files", icon: FolderKanban },
-  { label: "Signal Map", path: "/map-signal-prototype", icon: Map },
   { label: "Inputs", path: "/inputs", icon: ListChecks },
   { label: "Job Steps", path: "/job-steps", icon: Sparkles, flag: "show_job_steps" },
   { label: "Positioning", path: "/positioning", icon: FileText, flag: "show_positioning" },
@@ -50,30 +78,56 @@ const resourceItems: NavItem[] = [
 ];
 
 const adminItems: NavItem[] = [
-  { label: "Admin Home", path: "/admin", icon: Shield },
+  { label: "Methodology Pages", path: "/admin", icon: Shield },
   { label: "Company Pages", path: "/admin/companies", icon: Building2 },
+];
+
+const adminToolingItems: NavItem[] = [
+  { label: "Client View Audit", path: CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE, icon: BarChart3, adminOnly: true },
+  { label: "Client Onboarding MojoMap", path: CLIENT_ONBOARDING_MOJOMAP_ROUTE, icon: Compass, adminOnly: true },
+  { label: "Onboarding Map Editor", path: CLIENT_ONBOARDING_MOJOMAP_EDITOR_ROUTE, icon: FilePenLine, adminOnly: true },
+  { label: "Signal Map", path: "/map-signal-prototype", icon: Map, adminOnly: true },
 ];
 
 export default function TopNav() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, isAdmin, signOut } = useAuth();
+  const { mode, setMode, isClientView } = usePresentationMode();
   const { enabled: llmTraceEnabled, toggle: toggleLlmTrace } = useLlmTraceDebug();
   const { companies, activeCompany, setActiveCompanyId } = useCompany();
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
-    const stored = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY);
+    const stored = safeLocalStorageGet(SIDEBAR_OPEN_STORAGE_KEY);
     if (stored === "1") return true;
     if (stored === "0") return false;
     return window.matchMedia("(min-width: 1024px)").matches;
   });
+  const [toolingOpen, setToolingOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = safeLocalStorageGet(TOOLING_OPEN_STORAGE_KEY);
+    if (stored === "0") return false;
+    if (stored === "1") return true;
+    return true;
+  });
 
   const [showSwitcher, setShowSwitcher] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+  const [selectedPhase, setSelectedPhase] = useState<ClientSystemPhase>(() =>
+    readStoredClientPhase(activeCompany?.id),
+  );
+
+  const visibleCore = useMemo(() => (isClientView ? clientCoreItems : coreItems), [isClientView]);
 
   const visibleResources = useMemo(
-    () => resourceItems.filter((item) => !item.flag || MOCK_NAV_CONFIG[item.flag]),
-    [],
+    () =>
+      isClientView
+        ? []
+        : resourceItems.filter(
+            (item) => (!item.flag || MOCK_NAV_CONFIG[item.flag]) && (!item.adminOnly || isAdmin),
+          ),
+    [isAdmin, isClientView],
   );
 
   const companyName = activeCompany?.name?.trim() || "No company selected";
@@ -101,8 +155,43 @@ export default function TopNav() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? "1" : "0");
+    safeLocalStorageSet(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? "1" : "0");
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    safeLocalStorageSet(TOOLING_OPEN_STORAGE_KEY, toolingOpen ? "1" : "0");
+  }, [toolingOpen]);
+
+  useEffect(() => {
+    setSelectedPhase(readStoredClientPhase(activeCompany?.id));
+  }, [activeCompany?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (safeLocalStorageGet(OUTSIDE_PHASE_DEFAULT_MIGRATION_KEY) === "1") return;
+
+    try {
+      const keysToMigrate: string[] = [];
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key && key.startsWith("mojo.client.interaction.")) keysToMigrate.push(key);
+      }
+
+      for (const key of keysToMigrate) {
+        const companyId = key.replace("mojo.client.interaction.", "") || "no-company";
+        writeStoredClientPhase(companyId, "outside");
+      }
+    } catch {
+      // Ignore storage access issues in private mode or restricted contexts.
+    } finally {
+      safeLocalStorageSet(OUTSIDE_PHASE_DEFAULT_MIGRATION_KEY, "1");
+      setSelectedPhase(readStoredClientPhase(activeCompany?.id));
+      if (activeCompany?.id) {
+        dispatchClientPhaseChange(activeCompany.id, readStoredClientPhase(activeCompany.id));
+      }
+    }
+  }, [activeCompany?.id]);
 
   useEffect(() => {
     const body = document.body;
@@ -129,6 +218,33 @@ export default function TopNav() {
       setSidebarOpen(false);
     }
   };
+
+  const onModeChange = (next: "internal" | "client") => {
+    safeLocalStorageSet("mojo.presentation.mode", next);
+    setMode(next);
+
+    if (next === "client") {
+      navigate("/", { replace: !isClientPhasePath(location.pathname) });
+    }
+
+    if (typeof window !== "undefined" && !isDesktop()) {
+      setSidebarOpen(false);
+    }
+  };
+
+  const onPhaseChange = (next: ClientSystemPhase) => {
+    if (!isAdmin || !activeCompany?.id) return;
+    setSelectedPhase(next);
+    writeStoredClientPhase(activeCompany.id, next);
+    dispatchClientPhaseChange(activeCompany.id, next);
+  };
+
+  useEffect(() => {
+    if (!isClientView) return;
+    if (!location.pathname.startsWith("/admin")) return;
+    if (location.pathname === "/") return;
+    navigate("/", { replace: true });
+  }, [isClientView, location.pathname, navigate]);
 
   const navItemClass = (path: string) =>
     `group flex items-center rounded-lg py-2 transition-colors ${
@@ -233,10 +349,10 @@ export default function TopNav() {
           </div>
 
           <div className={`flex-1 space-y-6 overflow-y-auto ${sidebarOpen ? "px-3 py-5" : "px-2 py-3"}`}>
-            {renderGroup("Core", coreItems)}
-            {renderGroup("Resources", visibleResources)}
+            {renderGroup("Core", visibleCore)}
+            {visibleResources.length > 0 ? renderGroup("Resources", visibleResources) : null}
 
-            {isAdmin ? (
+            {!isClientView && isAdmin ? (
               <div>
                 {sidebarOpen ? (
                   <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">Admin</p>
@@ -264,11 +380,100 @@ export default function TopNav() {
                     );
                   })}
                 </div>
+                <div className="mt-4">
+                  {sidebarOpen ? (
+                    <div className="flex items-center justify-between px-3 pb-2">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#7f87a8]">Tooling</p>
+                      <button
+                        type="button"
+                        onClick={() => setToolingOpen((current) => !current)}
+                        className="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#9fa7c7] transition-colors hover:bg-white/8 hover:text-white"
+                        aria-label={toolingOpen ? "Hide tooling links" : "Show tooling links"}
+                      >
+                        {toolingOpen ? "Hide" : "Show"}
+                        <ChevronDown className={`h-3 w-3 transition-transform ${toolingOpen ? "" : "-rotate-90"}`} />
+                      </button>
+                    </div>
+                  ) : null}
+                  {toolingOpen ? (
+                    <div className="space-y-1">
+                      {adminToolingItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <Link key={item.path} to={item.path} className={navItemClass(item.path)} onClick={onNavFollow}>
+                            <Icon className="h-4 w-4 opacity-90" />
+                            {sidebarOpen ? (
+                              <span className="font-medium">{item.label}</span>
+                            ) : (
+                              <span className="sr-only">{item.label}</span>
+                            )}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 
             {sidebarOpen ? (
               <div>
+                <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">View</p>
+                <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-1.5">
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onModeChange("internal")}
+                      className={`rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                        mode === "internal"
+                          ? "bg-white/12 text-white"
+                          : "text-[#c7cde4] hover:bg-white/8"
+                      }`}
+                    >
+                      Internal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onModeChange("client")}
+                      className={`rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                        mode === "client"
+                          ? "bg-white/12 text-white"
+                          : "text-[#c7cde4] hover:bg-white/8"
+                      }`}
+                    >
+                      Client
+                    </button>
+                  </div>
+                </div>
+                {isAdmin ? (
+                  <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#9ca5c7]">Stage</p>
+                      <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#7f87a8]">Admin</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {PHASE_OPTIONS.map((phase) => (
+                        <button
+                          key={phase.value}
+                          type="button"
+                          onClick={() => onPhaseChange(phase.value)}
+                          disabled={!activeCompany?.id}
+                          className={`rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                            selectedPhase === phase.value
+                              ? "bg-white/14 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
+                              : "text-[#c7cde4] hover:bg-white/8"
+                          } ${!activeCompany?.id ? "cursor-not-allowed opacity-60 hover:bg-transparent" : ""}`}
+                          aria-label={`Set stage to ${phase.label}`}
+                        >
+                          {phase.label}
+                        </button>
+                      ))}
+                    </div>
+                    {!activeCompany?.id ? (
+                      <p className="mt-2 px-1 text-[11px] text-[#98a1c3]">Select a company to set stage.</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">Status</p>
                 <div className="space-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                   {statusItems.map((item) => (
@@ -284,11 +489,13 @@ export default function TopNav() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (isAdmin) toggleLlmTrace();
+                      if (isAdmin && !isClientView) toggleLlmTrace();
                     }}
-                    disabled={!isAdmin}
+                    disabled={!isAdmin || isClientView}
                     className={`mt-2 flex w-full items-center justify-between rounded-md border px-2 py-1.5 transition-colors ${
-                      isAdmin ? "border-white/20 bg-white/5 hover:bg-white/10" : "border-white/10 bg-white/5 opacity-70"
+                      isAdmin && !isClientView
+                        ? "border-white/20 bg-white/5 hover:bg-white/10"
+                        : "border-white/10 bg-white/5 opacity-70"
                     }`}
                   >
                     <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-[#d4daf0]">LLM</span>
@@ -312,10 +519,10 @@ export default function TopNav() {
           <div className={`border-t border-white/10 ${sidebarOpen ? "px-3 py-3" : "px-2 py-3"}`}>
             <div className="relative" ref={switcherRef}>
               <button
-                onClick={() => isAdmin && companies.length > 1 && setShowSwitcher(!showSwitcher)}
+                onClick={() => companies.length > 1 && setShowSwitcher(!showSwitcher)}
                 className={`w-full rounded-lg border border-white/10 bg-white/5 py-2 transition-colors ${
                   sidebarOpen ? "px-3 text-left" : "px-2 text-center"
-                } ${isAdmin && companies.length > 1 ? "cursor-pointer hover:bg-white/10" : ""}`}
+                } ${companies.length > 1 ? "cursor-pointer hover:bg-white/10" : ""}`}
                 title={!sidebarOpen ? companyName : undefined}
               >
                 {sidebarOpen ? (
@@ -326,7 +533,7 @@ export default function TopNav() {
                         Active company
                       </p>
                     </div>
-                    {isAdmin && companies.length > 1 ? (
+                    {companies.length > 1 ? (
                       <ChevronDown
                         className={`h-3.5 w-3.5 text-[#9ca5c7] transition-transform ${showSwitcher ? "rotate-180" : ""}`}
                       />

@@ -2,6 +2,8 @@ import PageShell from '@/components/layout/PageShell';
 import { useCompany } from '@/hooks/useCompany';
 import { useInputs } from '@/hooks/useInputs';
 import { useOpportunities } from '@/hooks/useOpportunities';
+import GenericAuditTraceNote from '@/components/diagnostics/GenericAuditTraceNote';
+import { isGenericAuditCompany } from '@/lib/genericAudit';
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -14,6 +16,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 
 export default function AnalyticsView() {
   const { activeCompany } = useCompany();
+  const auditMode = isGenericAuditCompany(activeCompany);
   const { query: inputsQuery } = useInputs();
   const { items: opps } = useOpportunities(activeCompany?.id);
 
@@ -31,6 +34,14 @@ export default function AnalyticsView() {
         <p className="font-sans text-[13px] text-t-secondary mb-6">
           Current snapshot. History comes next.
         </p>
+        <GenericAuditTraceNote
+          active={auditMode}
+          className="mb-6 max-w-4xl"
+          source="company stored scores plus current counts from inputs and opportunities."
+          evaluation="Snapshot surfaces the current persisted state without extra synthesis."
+          scoring="Mojo/Potential/Projected are read directly from company score fields."
+          why="This makes the analytics panel explicit about what is computed versus simply displayed."
+        />
 
         {!activeCompany?.id ? (
           <div className="bg-cream-mid border border-cream-dark rounded-xl p-5">

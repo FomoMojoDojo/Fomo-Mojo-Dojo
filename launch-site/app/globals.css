@@ -815,8 +815,32 @@ a {
   max-width: 24ch;
 }
 
+.map-sequence-line.is-quote {
+  font-size: clamp(2.8rem, 6.1vw, 5.35rem);
+  line-height: 0.96;
+  max-width: 20ch;
+  color: rgba(245, 248, 255, 0.99);
+}
+
+.map-sequence-line.is-bridge {
+  font-size: clamp(1.15rem, 2.1vw, 1.9rem);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: rgba(161, 176, 205, 0.92);
+}
+
 .map-sequence-card.is-final-callout .map-sequence-line {
   color: #ff9a4e;
+  font-weight: 700;
+}
+
+.map-sequence-card .map-sequence-line.is-quote {
+  color: rgba(245, 248, 255, 0.99);
+  font-weight: 600;
+}
+
+.map-sequence-card.is-final-callout .map-sequence-line.is-quote {
+  color: rgba(245, 248, 255, 0.99);
   font-weight: 700;
 }
 
@@ -1848,6 +1872,15 @@ a {
   .map-sequence .sequence-stage,
   .diff-sequence .sequence-stage {
     height: min(52svh, 29rem);
+  }
+
+  .map-sequence-line.is-quote {
+    font-size: clamp(2.05rem, 8.4vw, 3.2rem);
+    max-width: 18ch;
+  }
+
+  .map-sequence-line.is-bridge {
+    font-size: clamp(0.96rem, 3.8vw, 1.2rem);
   }
 
   .brand-column {

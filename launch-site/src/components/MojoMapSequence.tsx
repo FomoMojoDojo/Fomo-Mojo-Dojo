@@ -9,6 +9,8 @@ type SequenceStep = {
   lines: string[];
   finalCallout?: boolean;
   accentLineIndex?: number;
+  quoteStage?: boolean;
+  bridgeStage?: boolean;
 };
 
 const steps: SequenceStep[] = [
@@ -31,6 +33,22 @@ const steps: SequenceStep[] = [
   {
     id: "m5",
     lines: ["A map shows you where to go."],
+    finalCallout: true,
+  },
+  {
+    id: "m6",
+    lines: ['"Oh that\'s why we\'re stuck."'],
+    quoteStage: true,
+  },
+  {
+    id: "m7",
+    lines: ["becomes"],
+    bridgeStage: true,
+  },
+  {
+    id: "m8",
+    lines: ['"Now we know what to do."'],
+    quoteStage: true,
     finalCallout: true,
   },
 ];
@@ -178,16 +196,16 @@ export function MojoMapSequence() {
               className={`sequence-card map-sequence-card mobile-swap-card is-active ${activeStep.finalCallout ? "is-final-callout" : ""}`}
               style={{ opacity: 1, transform: "translateY(0) scale(1)", zIndex: 20 }}
             >
-              <div className="sequence-lines">
-                {activeStep.lines.map((line, lineIndex) => (
-                  <p
-                    key={line}
-                    className={`sequence-line map-sequence-line ${activeStep.accentLineIndex === lineIndex ? "is-accent" : ""}`}
-                  >
-                    {line}
-                  </p>
-                ))}
-              </div>
+                <div className="sequence-lines">
+                  {activeStep.lines.map((line, lineIndex) => (
+                    <p
+                      key={line}
+                      className={`sequence-line map-sequence-line ${activeStep.accentLineIndex === lineIndex ? "is-accent" : ""} ${activeStep.quoteStage ? "is-quote" : ""} ${activeStep.bridgeStage ? "is-bridge" : ""}`}
+                    >
+                      {line}
+                    </p>
+                  ))}
+                </div>
             </article>
           </div>
         </div>
@@ -209,7 +227,7 @@ export function MojoMapSequence() {
                   {step.lines.map((line, lineIndex) => (
                     <p
                       key={line}
-                      className={`sequence-line map-sequence-line ${step.accentLineIndex === lineIndex ? "is-accent" : ""}`}
+                      className={`sequence-line map-sequence-line ${step.accentLineIndex === lineIndex ? "is-accent" : ""} ${step.quoteStage ? "is-quote" : ""} ${step.bridgeStage ? "is-bridge" : ""}`}
                     >
                       {line}
                     </p>
@@ -269,7 +287,7 @@ export function MojoMapSequence() {
                   {step.lines.map((line, lineIndex) => (
                     <p
                       key={line}
-                      className={`sequence-line map-sequence-line ${step.accentLineIndex === lineIndex ? "is-accent" : ""}`}
+                      className={`sequence-line map-sequence-line ${step.accentLineIndex === lineIndex ? "is-accent" : ""} ${step.quoteStage ? "is-quote" : ""} ${step.bridgeStage ? "is-bridge" : ""}`}
                     >
                       {line}
                     </p>

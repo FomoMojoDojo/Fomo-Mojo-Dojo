@@ -26,13 +26,11 @@ interface PageData {
 }
 
 const c = {
-  bg: '#faf7f6',
-  line: '#DDE6D1',
-  charcoal: '#233C4B',
-  secondary: '#46606D',
-  muted: '#6E847F',
-  faint: '#C8D8CA',
-  coral: '#FF7D2D',
+  bg: '#070d20',
+  secondary: '#c1cceb',
+  muted: '#9ba9d3',
+  faint: '#6f7da8',
+  coral: '#ff8c4b',
 };
 
 export default function MethodologyPage() {
@@ -59,7 +57,7 @@ export default function MethodologyPage() {
       <div className="min-h-screen" style={{ background: c.bg }}>
         <TopNav />
         <div className="flex items-center justify-center py-32">
-          <p className="font-mono text-[13px]" style={{ color: c.muted }}>Loading…</p>
+          <p className="font-mono text-[13px]" style={{ color: c.muted }}>Loading...</p>
         </div>
       </div>
     );
@@ -71,7 +69,7 @@ export default function MethodologyPage() {
         <TopNav />
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
-            <h1 className="font-sans text-[28px] font-bold mb-2" style={{ color: c.charcoal }}>Page Not Found</h1>
+            <h1 className="mb-2 font-sans text-[28px] font-bold text-[#eef4ff]">Page Not Found</h1>
             <Link to="/" className="font-mono text-[12px] transition-colors" style={{ color: c.coral }}>← Back to Map</Link>
           </div>
         </div>
@@ -85,7 +83,7 @@ export default function MethodologyPage() {
       style={{
         background: c.bg,
         backgroundImage:
-          `url("data:image/svg+xml,%3Csvg width='6' height='6' viewBox='0 0 6 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='0.025'%3E%3Cpath d='M5 0h1L0 5V4zM6 5v1H5z'/%3E%3C/g%3E%3C/svg%3E")`,
+          "radial-gradient(1200px 500px at 18% -12%, rgba(52,210,190,0.18), transparent), radial-gradient(900px 420px at 92% 2%, rgba(255,140,75,0.14), transparent), linear-gradient(180deg,#070d20 0%, #0b1530 100%)",
       }}
     >
       <TopNav />

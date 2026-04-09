@@ -6,32 +6,29 @@ type StateTone = "underserved" | "served" | "overserved" | "gap" | "designed" | 
 const baseClass =
   "inline-flex items-center rounded-full border font-sans uppercase tracking-[0.08em]";
 
-const tierStyles: Record<TierTone, { label: string; bg: string; fg: string; border: string }> = {
-  focus: { label: "Prioritize", bg: "#FFF0E6", fg: "#FF7D2D", border: "#FFD1B4" },
-  monitor: { label: "Investigate", bg: "#FFF6D8", fg: "#C68B00", border: "#F3D77A" },
-  defer: { label: "Later", bg: "#EEF6E7", fg: "#5F9B8C", border: "#BDD8CF" },
-  need: { label: "Need", bg: "#EEF6E7", fg: "#5F9B8C", border: "#BDD8CF" },
-  want: { label: "Want", bg: "#F2F7E8", fg: "#7B9C4F", border: "#D1E2B1" },
-  desire: { label: "Desire", bg: "#EDF4F6", fg: "#233C4B", border: "#C4D7DE" },
+const tierStyles: Record<TierTone, { label: string; className: string }> = {
+  focus: { label: "Prioritize", className: "border-rust/35 bg-white text-rust" },
+  monitor: { label: "Investigate", className: "border-amber/35 bg-white text-amber" },
+  defer: { label: "Later", className: "border-forest/35 bg-white text-forest" },
+  need: { label: "Need", className: "border-forest/35 bg-white text-forest" },
+  want: { label: "Want", className: "border-gold-dark/25 bg-white text-gold-dark" },
+  desire: { label: "Desire", className: "border-slate/25 bg-white text-slate" },
 };
 
-const stateStyles: Record<StateTone, { label: string; bg: string; fg: string; border: string }> = {
-  underserved: { label: "Underserved", bg: "#FFF0E6", fg: "#FF7D2D", border: "#FFD1B4" },
-  served: { label: "Served", bg: "#EEF6E7", fg: "#5F9B8C", border: "#BDD8CF" },
-  overserved: { label: "Overserved", bg: "#EDF4F6", fg: "#233C4B", border: "#C4D7DE" },
-  gap: { label: "Gap", bg: "#FFF0E6", fg: "#FF7D2D", border: "#FFD1B4" },
-  designed: { label: "Designed", bg: "#F6F8EF", fg: "#6B8368", border: "#D9E4C8" },
-  monitor: { label: "Optional", bg: "#FFF6D8", fg: "#C68B00", border: "#F3D77A" },
+const stateStyles: Record<StateTone, { label: string; className: string }> = {
+  underserved: { label: "Underserved", className: "border-rust/35 bg-white text-rust" },
+  served: { label: "Served", className: "border-forest/35 bg-white text-forest" },
+  overserved: { label: "Overserved", className: "border-slate/25 bg-white text-slate" },
+  gap: { label: "Gap", className: "border-rust/35 bg-white text-rust" },
+  designed: { label: "Designed", className: "border-forest/25 bg-white text-forest-mid" },
+  monitor: { label: "Optional", className: "border-amber/35 bg-white text-amber" },
 };
 
 export function TierBadge({ tone, children }: { tone: TierTone; children?: ReactNode }) {
   const style = tierStyles[tone];
 
   return (
-    <span
-      className={`${baseClass} px-2.5 py-1 text-[10px] font-bold`}
-      style={{ background: style.bg, color: style.fg, borderColor: style.border }}
-    >
+    <span className={`${baseClass} ${style.className} px-2.5 py-1 text-[10px] font-bold`}>
       {children ?? style.label}
     </span>
   );
@@ -41,10 +38,7 @@ export function StateBadge({ tone, children }: { tone: StateTone | string; child
   const style = stateStyles[tone as StateTone] ?? stateStyles.monitor;
 
   return (
-    <span
-      className={`${baseClass} px-2.5 py-1 text-[10px]`}
-      style={{ background: style.bg, color: style.fg, borderColor: style.border }}
-    >
+    <span className={`${baseClass} ${style.className} px-2.5 py-1 text-[10px]`}>
       {children ?? style.label}
     </span>
   );
@@ -52,10 +46,7 @@ export function StateBadge({ tone, children }: { tone: StateTone | string; child
 
 export function MetaBadge({ children }: { children: ReactNode }) {
   return (
-    <span
-      className={`${baseClass} bg-white px-2.5 py-1 text-[10px]`}
-      style={{ borderColor: "#D7E2D8", color: "#233C4B" }}
-    >
+    <span className={`${baseClass} border-[#d8e1de] bg-white px-2.5 py-1 text-[10px] text-t-primary`}>
       {children}
     </span>
   );
@@ -63,11 +54,8 @@ export function MetaBadge({ children }: { children: ReactNode }) {
 
 export function ScoreChip({ label, value }: { label: string; value: number | null | undefined }) {
   return (
-    <span
-      className="inline-flex items-center rounded-full border bg-white px-2.5 py-1 font-sans text-[10px]"
-      style={{ borderColor: "#D7E2D8", color: "#233C4B" }}
-    >
-      <span className="mr-1 uppercase tracking-[0.1em]" style={{ color: "#5F9B8C" }}>
+    <span className="inline-flex items-center rounded-full border border-[#d8e1de] bg-white px-2.5 py-1 font-sans text-[10px] text-t-primary">
+      <span className="mr-1 uppercase tracking-[0.1em] text-forest">
         {label}
       </span>
       <span className="font-bold">{value ?? "—"}</span>
