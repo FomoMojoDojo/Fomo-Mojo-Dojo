@@ -219,6 +219,43 @@ type DesiredOutcomeOption = {
   managedOutcomeId?: string;
 };
 
+function plainEnglishStepPhrase(stepLabel: string, stepNumber?: number | null) {
+  const raw = String(stepLabel || "").trim();
+  if (!raw) {
+    if (stepNumber) return `complete step ${stepNumber}`;
+    return "complete this stage";
+  }
+
+  let phrase = raw.toLowerCase().replace(/\s+/g, " ").trim();
+
+  const exactRewrites: Array<[RegExp, string]> = [
+    [/^monitor decision impact$/i, "review decision results"],
+    [/^review outcomes and reprioritize$/i, "review outcomes and update priorities"],
+    [/^run weekly decision cadence$/i, "run a weekly decision review"],
+    [/^map constraints and options$/i, "map constraints and next options"],
+    [/^frame strategic problem$/i, "define the strategic problem clearly"],
+    [/^prepare evidence inputs$/i, "prepare required evidence"],
+  ];
+
+  for (const [pattern, replacement] of exactRewrites) {
+    if (pattern.test(phrase)) {
+      phrase = replacement;
+      break;
+    }
+  }
+
+  phrase = phrase
+    .replace(/^monitor\b/i, "review")
+    .replace(/^frame\b/i, "define")
+    .replace(/^start\b/i, "complete");
+
+  if (!/^(review|define|complete|prepare|run|map|confirm|reduce|increase|improve)/i.test(phrase)) {
+    phrase = `complete ${phrase}`;
+  }
+
+  return phrase;
+}
+
 function buildRecommendedDesiredOutcomes(journeyKey: string, journeyItems: OpportunityRow[]): DesiredOutcomeOption[] {
   const uniqueStepItems: OpportunityRow[] = [];
   const seenStepKeys = new Set<string>();
@@ -233,24 +270,24 @@ function buildRecommendedDesiredOutcomes(journeyKey: string, journeyItems: Oppor
 
   return uniqueStepItems.map((item, index) => {
     const stepLabel = String(item.step_label || "").trim();
-    const stepContext = stepLabel || (item.step_number ? `Step ${item.step_number}` : "this stage");
+    const stepContext = plainEnglishStepPhrase(stepLabel, item.step_number);
     const stepContextLower = stepContext.toLowerCase();
 
-    let statement = `Reduce delays and rework during "${stepContext}" so more teams complete this stage on time.`;
-    let leadingIndicator = `Median time to complete "${stepContext}" without rework.`;
+    let statement = `Reduce delays and rework so more teams can ${stepContext} on time.`;
+    let leadingIndicator = `Share of teams who can ${stepContext} on first pass within expected time.`;
 
     if (journeyKey === "customer") {
-      statement = `Increase the share of customers who complete "${stepContext}" on time without extra back-and-forth.`;
-      leadingIndicator = `Share of customers who complete "${stepContext}" on first pass within expected time.`;
+      statement = `Increase the share of customers who can ${stepContext} on time without extra back-and-forth.`;
+      leadingIndicator = `Share of customers who can ${stepContext} on first pass within expected time.`;
     } else if (journeyKey === "revenue") {
-      statement = `Increase the share of qualified prospects who move through "${stepContext}" without stalling or repeat follow-up.`;
-      leadingIndicator = `Share of qualified prospects advancing past "${stepContext}" within target time.`;
+      statement = `Increase the share of qualified prospects who can ${stepContext} without stalling or repeat follow-up.`;
+      leadingIndicator = `Share of qualified prospects who can ${stepContext} within target time.`;
     } else if (journeyKey === "operations") {
-      statement = `Reduce handoff delays and rework in "${stepContext}" so teams complete this stage right the first time.`;
-      leadingIndicator = `First-pass completion rate for "${stepContext}" with cycle time inside target range.`;
+      statement = `Reduce handoff delays and rework so teams can ${stepContext} right the first time.`;
+      leadingIndicator = `First-pass rate for teams who can ${stepContext} within target cycle time.`;
     } else if (stepContextLower.includes("decision")) {
-      statement = `Increase the share of decisions in "${stepContext}" that end with a clear next action in the same cycle.`;
-      leadingIndicator = `Share of "${stepContext}" decisions closed with owner, due date, and next action.`;
+      statement = `Increase the share of teams who can ${stepContext} and leave with a clear next action in the same cycle.`;
+      leadingIndicator = `Share of teams who can ${stepContext} with owner, due date, and next action captured.`;
     }
 
     return {
