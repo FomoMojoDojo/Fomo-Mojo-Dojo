@@ -26,56 +26,78 @@ export function useOpportunities(companyId?: string) {
   const [error, setError] = useState<string | null>(null);
   const [updatingWorkflowId, setUpdatingWorkflowId] = useState<string | null>(null);
   const [workflowStatusAvailable, setWorkflowStatusAvailable] = useState(true);
+  const [managedOutcomeLinkAvailable, setManagedOutcomeLinkAvailable] = useState(true);
 
   const load = useCallback(async (id: string, args?: { cancelled?: () => boolean }) => {
     setLoading(true);
     setError(null);
     setWorkflowStatusAvailable(true);
+    setManagedOutcomeLinkAvailable(true);
 
-    const primary = await supabase
-      .from('opportunities')
-      .select(
-        'id, company_id, user_id, managed_outcome_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, workflow_status, created_at'
-      )
-      .eq('company_id', id)
-      .order('opportunity_score', { ascending: false })
-      .limit(200);
+    const runSelect = async (includeManagedOutcome: boolean, includeWorkflow: boolean) => {
+      const columns = [
+        'id',
+        'company_id',
+        'user_id',
+        includeManagedOutcome ? 'managed_outcome_id' : null,
+        'outcome',
+        'step_number',
+        'step_label',
+        'journey_key',
+        'importance',
+        'satisfaction',
+        'opportunity_score',
+        'priority_tier',
+        includeWorkflow ? 'workflow_status' : null,
+        'created_at',
+      ]
+        .filter(Boolean)
+        .join(', ');
 
-    if (args?.cancelled?.()) return;
-
-    const missingWorkflowColumn = Boolean(
-      primary.error?.message &&
-        /column\s+.*workflow_status.*does not exist|workflow_status.*does not exist/i.test(primary.error.message),
-    );
-
-    if (missingWorkflowColumn) {
-      setWorkflowStatusAvailable(false);
-      const fallback = await supabase
+      return supabase
         .from('opportunities')
-        .select(
-          'id, company_id, user_id, managed_outcome_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, created_at'
-        )
+        .select(columns)
         .eq('company_id', id)
         .order('opportunity_score', { ascending: false })
         .limit(200);
+    };
+
+    let result = await runSelect(true, true);
+
+    if (args?.cancelled?.()) return;
+
+    const missingManagedOutcomeColumn = Boolean(
+      result.error?.message &&
+        /column\s+.*managed_outcome_id.*does not exist|managed_outcome_id.*does not exist/i.test(result.error.message),
+    );
+    const missingWorkflowColumn = Boolean(
+      result.error?.message &&
+        /column\s+.*workflow_status.*does not exist|workflow_status.*does not exist/i.test(result.error.message),
+    );
+
+    if (missingManagedOutcomeColumn || missingWorkflowColumn) {
+      if (missingManagedOutcomeColumn) setManagedOutcomeLinkAvailable(false);
+      if (missingWorkflowColumn) setWorkflowStatusAvailable(false);
+      result = await runSelect(!missingManagedOutcomeColumn, !missingWorkflowColumn);
 
       if (args?.cancelled?.()) return;
 
-      if (fallback.error) {
-        setError(fallback.error.message);
+      if (result.error) {
+        setError(result.error.message);
         setItems([]);
       } else {
-        const normalized = ((fallback.data as any[]) ?? []).map((row) => ({
+        const normalized = ((result.data as any[]) ?? []).map((row) => ({
           ...row,
-          workflow_status: null,
+          managed_outcome_id: missingManagedOutcomeColumn ? null : (row as any).managed_outcome_id ?? null,
+          workflow_status: missingWorkflowColumn ? null : (row as any).workflow_status ?? null,
         }));
         setItems(normalized);
       }
-    } else if (primary.error) {
-      setError(primary.error.message);
+    } else if (result.error) {
+      setError(result.error.message);
       setItems([]);
     } else {
-      setItems((primary.data as any[]) ?? []);
+      setItems((result.data as any[]) ?? []);
     }
 
     setLoading(false);
@@ -103,6 +125,7 @@ export function useOpportunities(companyId?: string) {
     error,
     updatingWorkflowId,
     workflowStatusAvailable,
+    managedOutcomeLinkAvailable,
     refetch: async () => {
       if (!companyId) return;
       await load(companyId);

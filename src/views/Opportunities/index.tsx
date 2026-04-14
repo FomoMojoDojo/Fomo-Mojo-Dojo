@@ -1467,7 +1467,15 @@ export default function OpportunitiesView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
-  const { loading, items, error, updatingWorkflowId, workflowStatusAvailable, updateWorkflowStatus } = useOpportunities(activeCompany?.id);
+  const {
+    loading,
+    items,
+    error,
+    updatingWorkflowId,
+    workflowStatusAvailable,
+    managedOutcomeLinkAvailable,
+    updateWorkflowStatus,
+  } = useOpportunities(activeCompany?.id);
   const { needs } = useOdiNeeds(activeCompany?.id);
   const { item: strategyCascade } = useStrategyCascade(activeCompany?.id);
   const { item: positioningCanvas } = usePositioningCanvas(activeCompany?.id);
@@ -1698,6 +1706,11 @@ export default function OpportunitiesView() {
           {!workflowStatusAvailable ? (
             <p className="mt-2 font-sans text-[12px] italic" style={{ color: c.secondary }}>
               Workflow labels are view-only until latest database migrations are applied.
+            </p>
+          ) : null}
+          {!managedOutcomeLinkAvailable ? (
+            <p className="mt-2 font-sans text-[12px] italic" style={{ color: c.secondary }}>
+              Outcome linkage is unavailable until the `managed_outcome_id` migration is applied.
             </p>
           ) : null}
           {items.length > 0 ? (
