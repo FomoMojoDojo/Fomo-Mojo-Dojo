@@ -215,9 +215,42 @@ type DesiredOutcomeOption = {
   targetDirection: string;
   evidenceBasis: string;
   confidence: number;
-  source: "managed_outcome";
+  source: "managed_outcome" | "recommended";
   managedOutcomeId?: string;
 };
+
+function buildRecommendedDesiredOutcomes(journeyKey: string, journeyItems: OpportunityRow[]): DesiredOutcomeOption[] {
+  const uniqueStepItems: OpportunityRow[] = [];
+  const seenStepKeys = new Set<string>();
+
+  for (const item of journeyItems) {
+    const stepKey = `${String(item.step_number ?? "")}:${String(item.step_label || "").trim().toLowerCase()}`;
+    if (seenStepKeys.has(stepKey)) continue;
+    seenStepKeys.add(stepKey);
+    uniqueStepItems.push(item);
+    if (uniqueStepItems.length >= 3) break;
+  }
+
+  return uniqueStepItems.map((item, index) => {
+    const stepLabel = String(item.step_label || "").trim();
+    const stepContext = stepLabel
+      ? stepLabel.toLowerCase()
+      : item.step_number
+        ? `step ${item.step_number}`
+        : "the current journey step";
+
+    return {
+      id: `recommended-${journeyKey}-${index + 1}`,
+      title: `Starter outcome for ${titleCaseJourney(journeyKey)}`,
+      statement: `Increase reliable progress through ${stepContext} with less delay and rework.`,
+      leadingIndicator: `Share of users completing ${stepContext} on first pass within expected time.`,
+      targetDirection: "increase",
+      evidenceBasis: "Recommended starter outcome generated from current opportunities. Save or edit to persist.",
+      confidence: 45,
+      source: "recommended" as const,
+    };
+  });
+}
 
 function DesiredOutcomeFlipCard({
   outcome,
@@ -593,6 +626,7 @@ function OpportunityTreeView({
   onUpdateManagedOutcome,
   opportunityNumberById,
   workflowStatusAvailable,
+  managedOutcomeLinkAvailable,
   updatingWorkflowId,
   onWorkflowChange,
   showJourneyBadge = true,
@@ -634,6 +668,7 @@ function OpportunityTreeView({
   }) => Promise<{ id: string } | void>;
   opportunityNumberById: Map<string, string>;
   workflowStatusAvailable: boolean;
+  managedOutcomeLinkAvailable: boolean;
   updatingWorkflowId: string | null;
   onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
   showJourneyBadge?: boolean;
@@ -743,12 +778,16 @@ function OpportunityTreeView({
           managedOutcomeId: outcome.id,
         }));
 
+      const recommendedJourneyOutcomes =
+        managedJourneyOutcomes.length === 0 ? buildRecommendedDesiredOutcomes(journeyKey, journeyItems) : [];
+
       return {
         journeyKey,
         journeyItems,
         itemCount: journeyItems.length,
-        desiredOutcomeOptions: managedJourneyOutcomes,
+        desiredOutcomeOptions: managedJourneyOutcomes.length > 0 ? managedJourneyOutcomes : recommendedJourneyOutcomes,
         managedJourneyOutcomes,
+        hasRecommendedFallback: managedJourneyOutcomes.length === 0 && recommendedJourneyOutcomes.length > 0,
       };
     });
   }, [items, managedOutcomes]);
@@ -877,18 +916,22 @@ function OpportunityTreeView({
       </div>
 
       <div className="space-y-6">
-        {grouped.map(({ journeyKey, journeyItems, itemCount, desiredOutcomeOptions, managedJourneyOutcomes }) => {
+        {grouped.map(({ journeyKey, journeyItems, itemCount, desiredOutcomeOptions, managedJourneyOutcomes, hasRecommendedFallback }) => {
           const accent = JOURNEY_ACCENT[journeyKey] || c.monitor;
           const selectedOutcome =
             desiredOutcomeOptions.find((option) => option.id === selectedOutcomeByJourney[journeyKey]) ||
             desiredOutcomeOptions[0];
           const editor = editorByJourney[journeyKey];
           const selectedManagedOutcomeId = String(selectedOutcome?.managedOutcomeId || "");
-          const visibleOpportunities = selectedManagedOutcomeId
+          const useManagedFilter =
+            selectedOutcome?.source === "managed_outcome" &&
+            managedOutcomeLinkAvailable &&
+            Boolean(selectedManagedOutcomeId);
+          const visibleOpportunities = useManagedFilter
             ? journeyItems
                 .filter((item) => String(item.managed_outcome_id || "") === selectedManagedOutcomeId)
                 .sort((a, b) => (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0))
-            : [];
+            : journeyItems;
           return (
             <section
               key={journeyKey}
@@ -938,8 +981,15 @@ function OpportunityTreeView({
                         </SelectContent>
                       </Select>
                       <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
-                        Opportunities below are sourced from this persisted desired outcome branch.
+                        {selectedOutcome?.source === "recommended"
+                          ? "Starter recommendation from current opportunities. Save or edit to persist as a managed outcome."
+                          : "Opportunities below are sourced from this persisted desired outcome branch."}
                       </p>
+                      {hasRecommendedFallback ? (
+                        <p className="mt-1 font-sans text-[12px]" style={{ color: c.secondary }}>
+                          No managed outcomes found yet. You can start from these recommendations and then adjust.
+                        </p>
+                      ) : null}
                     </>
                   ) : (
                     <div className="rounded-lg border border-dashed px-3 py-3" style={{ borderColor: c.line, background: "#FAF9F6" }}>
@@ -1075,7 +1125,7 @@ function OpportunityTreeView({
               ) : desiredOutcomeOptions.length === 0 ? (
                 <div className="mt-4 rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
                   <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
-                    Add at least one desired outcome to load this branch.
+                    Add at least one desired outcome to load this branch, or generate opportunities first.
                   </p>
                 </div>
               ) : (
@@ -1090,11 +1140,15 @@ function OpportunityTreeView({
                   {visibleOpportunities.length === 0 ? (
                     <div className="rounded-2xl border border-dashed p-4" style={{ borderColor: c.line, background: c.card }}>
                       <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
-                        No persisted opportunities are linked to this desired outcome yet.
+                        {useManagedFilter
+                          ? "No persisted opportunities are linked to this desired outcome yet."
+                          : "No opportunities are available for this journey yet."}
                       </p>
-                      <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
-                        Re-run research or backfill linking so opportunities map to the selected desired outcome.
-                      </p>
+                      {useManagedFilter ? (
+                        <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
+                          Re-run research or backfill linking so opportunities map to the selected desired outcome.
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1755,6 +1809,7 @@ export default function OpportunitiesView() {
             onUpdateManagedOutcome={updateManagedOutcome}
             opportunityNumberById={opportunityNumberById}
             workflowStatusAvailable={workflowStatusAvailable}
+            managedOutcomeLinkAvailable={managedOutcomeLinkAvailable}
             updatingWorkflowId={updatingWorkflowId}
             onWorkflowChange={handleWorkflowChange}
             showJourneyBadge={showJourneyBadge}
