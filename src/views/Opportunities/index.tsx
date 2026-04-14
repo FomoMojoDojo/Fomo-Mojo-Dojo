@@ -233,17 +233,31 @@ function buildRecommendedDesiredOutcomes(journeyKey: string, journeyItems: Oppor
 
   return uniqueStepItems.map((item, index) => {
     const stepLabel = String(item.step_label || "").trim();
-    const stepContext = stepLabel
-      ? stepLabel.toLowerCase()
-      : item.step_number
-        ? `step ${item.step_number}`
-        : "the current journey step";
+    const stepContext = stepLabel || (item.step_number ? `Step ${item.step_number}` : "this stage");
+    const stepContextLower = stepContext.toLowerCase();
+
+    let statement = `Reduce delays and rework during "${stepContext}" so more teams complete this stage on time.`;
+    let leadingIndicator = `Median time to complete "${stepContext}" without rework.`;
+
+    if (journeyKey === "customer") {
+      statement = `Increase the share of customers who complete "${stepContext}" on time without extra back-and-forth.`;
+      leadingIndicator = `Share of customers who complete "${stepContext}" on first pass within expected time.`;
+    } else if (journeyKey === "revenue") {
+      statement = `Increase the share of qualified prospects who move through "${stepContext}" without stalling or repeat follow-up.`;
+      leadingIndicator = `Share of qualified prospects advancing past "${stepContext}" within target time.`;
+    } else if (journeyKey === "operations") {
+      statement = `Reduce handoff delays and rework in "${stepContext}" so teams complete this stage right the first time.`;
+      leadingIndicator = `First-pass completion rate for "${stepContext}" with cycle time inside target range.`;
+    } else if (stepContextLower.includes("decision")) {
+      statement = `Increase the share of decisions in "${stepContext}" that end with a clear next action in the same cycle.`;
+      leadingIndicator = `Share of "${stepContext}" decisions closed with owner, due date, and next action.`;
+    }
 
     return {
       id: `recommended-${journeyKey}-${index + 1}`,
       title: `Starter outcome for ${titleCaseJourney(journeyKey)}`,
-      statement: `Increase reliable progress through ${stepContext} with less delay and rework.`,
-      leadingIndicator: `Share of users completing ${stepContext} on first pass within expected time.`,
+      statement,
+      leadingIndicator,
       targetDirection: "increase",
       evidenceBasis: "Recommended starter outcome generated from current opportunities. Save or edit to persist.",
       confidence: 45,
