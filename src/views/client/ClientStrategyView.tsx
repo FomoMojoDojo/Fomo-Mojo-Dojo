@@ -31,6 +31,7 @@ export default function ClientStrategyView() {
     activeCompany,
     hasCompany,
     topActions,
+    primaryDesiredOutcome,
     mapStatus,
     committedAt,
     mapPrimaryOwner,
@@ -39,7 +40,11 @@ export default function ClientStrategyView() {
   } = useClientViewData({ actionLimit: 4 });
   const { item: cascade } = useStrategyCascade(activeCompany?.id);
 
-  const directionRaw = cascade?.how_to_win?.trim() || cascade?.winning_aspiration?.trim() || fallbackDirection(activeCompany?.name);
+  const directionRaw =
+    primaryDesiredOutcome?.statement?.trim() ||
+    cascade?.how_to_win?.trim() ||
+    cascade?.winning_aspiration?.trim() ||
+    fallbackDirection(activeCompany?.name);
   const direction = singleLine(singleDirectionSentence(directionRaw));
   const toWin = useMemo(() => {
     const top = topActions[0];
@@ -87,6 +92,9 @@ export default function ClientStrategyView() {
                 <div>
                   <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-t-muted">Direction</p>
                   <p className="mt-1 max-w-[820px] font-sans text-[36px] font-semibold leading-[1.15] text-t-primary">{direction}</p>
+                  <p className="mt-1 max-w-[820px] font-sans text-[13px] leading-[1.5] text-t-secondary">
+                    Leading indicator: {primaryDesiredOutcome?.leadingIndicator || "Not found in repo."}
+                  </p>
                 </div>
                 <div>
                   <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-t-muted">To Win</p>

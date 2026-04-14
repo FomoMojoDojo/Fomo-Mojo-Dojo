@@ -30,6 +30,12 @@ import {
   validateSolutionIdea,
   validateSolutionTest,
 } from "@/lib/opportunityTreeSemantics";
+import {
+  composeDesiredOutcomeFromParts,
+  humanizeOutcomeLanguage,
+  normalizeDesiredOutcomeDirection,
+  validateDesiredOutcomeParts,
+} from "@/lib/desiredOutcome";
 import { buildCheckpointOffers, type CheckpointOfferCandidate } from "@/lib/checkpointOffers";
 
 const c = {
@@ -213,6 +219,12 @@ type DesiredOutcomeOption = {
   statement: string;
   leadingIndicator: string;
   targetDirection: string;
+  direction: string;
+  metric: string;
+  object: string;
+  context: string;
+  constraint: string | null;
+  isPrimary: boolean;
   evidenceBasis: string;
   confidence: number;
   source: "managed_outcome" | "recommended";
@@ -290,12 +302,36 @@ function buildRecommendedDesiredOutcomes(journeyKey: string, journeyItems: Oppor
       leadingIndicator = `Share of teams who can ${stepContext} with owner, due date, and next action captured.`;
     }
 
+    const structured = composeDesiredOutcomeFromParts({
+      direction: "increase",
+      metric: leadingIndicator,
+      object: statement
+        .replace(/^Increase\\s+/i, "")
+        .replace(/^Reduce\\s+/i, "")
+        .replace(/\\.$/, ""),
+      context:
+        journeyKey === "customer"
+          ? "target customers in the customer journey"
+          : journeyKey === "revenue"
+            ? "qualified demand in the revenue journey"
+            : journeyKey === "operations"
+              ? "delivery teams in the operations journey"
+              : "the active journey",
+      constraint: null,
+    });
+
     return {
       id: `recommended-${journeyKey}-${index + 1}`,
       title: `Starter outcome for ${titleCaseJourney(journeyKey)}`,
-      statement,
-      leadingIndicator,
-      targetDirection: "increase",
+      statement: structured.outcome_statement,
+      leadingIndicator: structured.leading_indicator,
+      targetDirection: structured.target_direction,
+      direction: structured.direction,
+      metric: structured.metric,
+      object: structured.object,
+      context: structured.context,
+      constraint: structured.constraint,
+      isPrimary: index === 0,
       evidenceBasis: "Recommended starter outcome generated from current opportunities. Save or edit to persist.",
       confidence: 45,
       source: "recommended" as const,
@@ -691,6 +727,12 @@ function OpportunityTreeView({
     outcome_statement: string;
     leading_indicator: string;
     target_direction: string;
+    direction: string;
+    metric: string;
+    object: string;
+    context: string;
+    constraint: string | null;
+    is_primary: boolean;
     evidence_basis: string;
     confidence: number;
     frameworks_used?: string[];
@@ -704,6 +746,12 @@ function OpportunityTreeView({
     outcome_statement: string;
     leading_indicator: string;
     target_direction: string;
+    direction: string;
+    metric: string;
+    object: string;
+    context: string;
+    constraint?: string | null;
+    is_primary?: boolean;
     evidence_basis: string;
     confidence: number;
     frameworks_used?: string[];
@@ -713,6 +761,12 @@ function OpportunityTreeView({
     outcome_statement?: string;
     leading_indicator?: string;
     target_direction?: string;
+    direction?: string;
+    metric?: string;
+    object?: string;
+    context?: string;
+    constraint?: string | null;
+    is_primary?: boolean;
     evidence_basis?: string;
     confidence?: number;
     frameworks_used?: string[];
@@ -733,6 +787,12 @@ function OpportunityTreeView({
     outcome_statement: string;
     leading_indicator: string;
     target_direction: string;
+    direction: string;
+    metric: string;
+    object: string;
+    context: string;
+    constraint: string;
+    is_primary: boolean;
     evidence_basis: string;
     confidence: number;
     error?: string;
@@ -814,20 +874,41 @@ function OpportunityTreeView({
             statement: String(outcome.outcome_statement || outcome.outcome_title || ""),
             leadingIndicator: String(outcome.leading_indicator || ""),
             targetDirection: String(outcome.target_direction || ""),
+            direction: String(outcome.direction || outcome.target_direction || ""),
+            metric: String(outcome.metric || outcome.leading_indicator || ""),
+            object: String(outcome.object || ""),
+            context: String(outcome.context || ""),
+            constraint: String(outcome.constraint || ""),
             frameworksUsed: ensureRequiredFrameworkKeys(outcome.frameworks_used || []),
           }).valid,
         )
-        .map((outcome) => ({
-          id: `managed-${outcome.id}`,
-          title: outcome.outcome_statement || outcome.outcome_title || journeyRootLabel(journeyKey),
-          statement: outcome.outcome_statement || outcome.outcome_title || journeyRootLabel(journeyKey),
-          leadingIndicator: outcome.leading_indicator || "Leading indicator to validate",
-          targetDirection: outcome.target_direction || "improve",
-          evidenceBasis: outcome.evidence_basis || "Derived from current evidence",
-          confidence: Number.isFinite(Number(outcome.confidence)) ? Number(outcome.confidence) : 55,
-          source: "managed_outcome" as const,
-          managedOutcomeId: outcome.id,
-        }));
+        .map((outcome) => {
+          const structured = composeDesiredOutcomeFromParts({
+            direction: normalizeDesiredOutcomeDirection(outcome.direction || outcome.target_direction || "increase"),
+            metric: outcome.metric || outcome.leading_indicator || "Leading indicator to validate",
+            object: outcome.object || outcome.outcome_statement || outcome.outcome_title || journeyRootLabel(journeyKey),
+            context: outcome.context || `${titleCaseJourney(journeyKey)} journey`,
+            constraint: outcome.constraint || null,
+            is_primary: outcome.is_primary,
+          });
+          return {
+            id: `managed-${outcome.id}`,
+            title: structured.outcome_statement,
+            statement: structured.outcome_statement,
+            leadingIndicator: structured.leading_indicator,
+            targetDirection: structured.target_direction,
+            direction: structured.direction,
+            metric: structured.metric,
+            object: structured.object,
+            context: structured.context,
+            constraint: structured.constraint,
+            isPrimary: outcome.is_primary === true,
+            evidenceBasis: outcome.evidence_basis || "Derived from current evidence",
+            confidence: Number.isFinite(Number(outcome.confidence)) ? Number(outcome.confidence) : 55,
+            source: "managed_outcome" as const,
+            managedOutcomeId: outcome.id,
+          };
+        });
 
       const recommendedJourneyOutcomes =
         managedJourneyOutcomes.length === 0 ? buildRecommendedDesiredOutcomes(journeyKey, journeyItems) : [];
@@ -863,14 +944,35 @@ function OpportunityTreeView({
   }, [grouped]);
 
   function openAddEditor(journeyKey: string) {
+    const defaults = composeDesiredOutcomeFromParts({
+      direction: "increase",
+      metric: "Share of target users who complete this step on first pass within expected time",
+      object: "reliable progress through the step with fewer delays and less rework",
+      context:
+        journeyKey === "customer"
+          ? "target customers in the customer journey"
+          : journeyKey === "revenue"
+            ? "qualified demand in the revenue journey"
+            : journeyKey === "operations"
+              ? "delivery teams in the operations journey"
+              : "the active journey",
+      constraint: null,
+      is_primary: false,
+    });
     setEditorByJourney((current) => ({
       ...current,
       [journeyKey]: {
         mode: "add",
-        outcome_title: "",
-        outcome_statement: "",
-        leading_indicator: "",
-        target_direction: "increase",
+        outcome_title: defaults.outcome_statement,
+        outcome_statement: defaults.outcome_statement,
+        leading_indicator: defaults.leading_indicator,
+        target_direction: defaults.target_direction,
+        direction: defaults.direction,
+        metric: defaults.metric,
+        object: defaults.object,
+        context: defaults.context,
+        constraint: defaults.constraint || "",
+        is_primary: false,
         evidence_basis: "Team-authored desired outcome.",
         confidence: 55,
       },
@@ -888,6 +990,12 @@ function OpportunityTreeView({
         outcome_statement: option.statement,
         leading_indicator: option.leadingIndicator,
         target_direction: option.targetDirection || "increase",
+        direction: option.direction || option.targetDirection || "increase",
+        metric: option.metric || option.leadingIndicator || "",
+        object: option.object || option.statement || "",
+        context: option.context || `${titleCaseJourney(journeyKey)} journey`,
+        constraint: option.constraint || "",
+        is_primary: option.isPrimary,
         evidence_basis: option.evidenceBasis,
         confidence: Number.isFinite(option.confidence) ? option.confidence : 55,
       },
@@ -901,15 +1009,27 @@ function OpportunityTreeView({
   async function saveEditor(journeyKey: string) {
     const editor = editorByJourney[journeyKey];
     if (!editor) return;
-    const statement = editor.outcome_statement.trim();
-    const indicator = editor.leading_indicator.trim();
-    if (!statement || !indicator) {
+    const validation = validateDesiredOutcomeParts({
+      direction: normalizeDesiredOutcomeDirection(editor.direction || editor.target_direction || "increase"),
+      metric: editor.metric,
+      object: editor.object,
+      context: editor.context,
+      constraint: editor.constraint || null,
+      is_primary: editor.is_primary,
+    });
+    if (!validation.valid) {
       setEditorByJourney((current) => ({
         ...current,
-        [journeyKey]: { ...editor, error: "Add an outcome statement and leading indicator." },
+        [journeyKey]: {
+          ...editor,
+          error: `Complete direction, metric, object, and context in plain language. (${validation.reasons.join(", ")})`,
+        },
       }));
       return;
     }
+    const structured = validation.normalized;
+    const statement = humanizeOutcomeLanguage(structured.outcome_statement);
+    const indicator = humanizeOutcomeLanguage(structured.leading_indicator);
 
     try {
       if (editor.mode === "edit" && editor.managedOutcomeId) {
@@ -917,7 +1037,13 @@ function OpportunityTreeView({
           outcome_title: statement,
           outcome_statement: statement,
           leading_indicator: indicator,
-          target_direction: editor.target_direction || "increase",
+          target_direction: structured.target_direction || editor.target_direction || "increase",
+          direction: structured.direction,
+          metric: structured.metric,
+          object: structured.object,
+          context: structured.context,
+          constraint: structured.constraint || null,
+          is_primary: Boolean(editor.is_primary),
           evidence_basis: editor.evidence_basis || "Team-authored desired outcome.",
           confidence: Math.max(10, Math.min(95, Number(editor.confidence) || 55)),
           frameworks_used: ensureRequiredFrameworkKeys(["odi", "teresa_torres"]),
@@ -932,7 +1058,13 @@ function OpportunityTreeView({
           outcome_title: statement,
           outcome_statement: statement,
           leading_indicator: indicator,
-          target_direction: editor.target_direction || "increase",
+          target_direction: structured.target_direction || editor.target_direction || "increase",
+          direction: structured.direction,
+          metric: structured.metric,
+          object: structured.object,
+          context: structured.context,
+          constraint: structured.constraint || null,
+          is_primary: Boolean(editor.is_primary),
           evidence_basis: editor.evidence_basis || "Team-authored desired outcome.",
           confidence: Math.max(10, Math.min(95, Number(editor.confidence) || 55)),
           frameworks_used: ensureRequiredFrameworkKeys(["odi", "teresa_torres"]),
@@ -1083,12 +1215,12 @@ function OpportunityTreeView({
                     </p>
                     <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
                       <Select
-                        value={editor.target_direction || "increase"}
+                        value={editor.direction || editor.target_direction || "increase"}
                         onValueChange={(next) =>
                           setEditorByJourney((current) => ({
                             ...current,
                             [journeyKey]: current[journeyKey]
-                              ? { ...current[journeyKey]!, target_direction: next, error: "" }
+                              ? { ...current[journeyKey]!, direction: next, target_direction: next, error: "" }
                               : current[journeyKey],
                           }))
                         }
@@ -1107,36 +1239,109 @@ function OpportunityTreeView({
                           ))}
                         </SelectContent>
                       </Select>
-                      <textarea
-                        value={editor.outcome_statement}
+
+                      <input
+                        type="text"
+                        value={editor.metric}
                         onChange={(event) =>
                           setEditorByJourney((current) => ({
                             ...current,
                             [journeyKey]: current[journeyKey]
-                              ? { ...current[journeyKey]!, outcome_statement: event.target.value, error: "" }
+                              ? { ...current[journeyKey]!, metric: event.target.value, error: "" }
                               : current[journeyKey],
                           }))
                         }
-                        placeholder="Desired outcome statement"
-                        rows={3}
-                        className="rounded-md border px-3 py-2 text-[13px] outline-none focus:ring-1 md:col-span-2"
+                        placeholder="Metric (observable or measurable leading indicator)"
+                        className="h-9 rounded-md border px-3 text-[13px] outline-none focus:ring-1 md:col-span-2"
+                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      />
+
+                      <input
+                        type="text"
+                        value={editor.object}
+                        onChange={(event) =>
+                          setEditorByJourney((current) => ({
+                            ...current,
+                            [journeyKey]: current[journeyKey]
+                              ? { ...current[journeyKey]!, object: event.target.value, error: "" }
+                              : current[journeyKey],
+                          }))
+                        }
+                        placeholder="Object (what should improve)"
+                        className="h-9 rounded-md border px-3 text-[13px] outline-none focus:ring-1 md:col-span-2"
                         style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
                       />
                       <input
                         type="text"
-                        value={editor.leading_indicator}
+                        value={editor.context}
                         onChange={(event) =>
                           setEditorByJourney((current) => ({
                             ...current,
                             [journeyKey]: current[journeyKey]
-                              ? { ...current[journeyKey]!, leading_indicator: event.target.value, error: "" }
+                              ? { ...current[journeyKey]!, context: event.target.value, error: "" }
                               : current[journeyKey],
                           }))
                         }
-                        placeholder="Leading indicator"
+                        placeholder="Context (who/where this outcome applies)"
                         className="h-9 rounded-md border px-3 text-[13px] outline-none focus:ring-1 md:col-span-2"
                         style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
                       />
+                      <input
+                        type="text"
+                        value={editor.constraint}
+                        onChange={(event) =>
+                          setEditorByJourney((current) => ({
+                            ...current,
+                            [journeyKey]: current[journeyKey]
+                              ? { ...current[journeyKey]!, constraint: event.target.value, error: "" }
+                              : current[journeyKey],
+                          }))
+                        }
+                        placeholder="Optional constraint (e.g. without adding manual rework)"
+                        className="h-9 rounded-md border px-3 text-[13px] outline-none focus:ring-1 md:col-span-2"
+                        style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                      />
+                      <div className="rounded-md border px-3 py-2 md:col-span-2" style={{ borderColor: c.line, background: "#fff" }}>
+                        {(() => {
+                          const preview = composeDesiredOutcomeFromParts({
+                            direction: normalizeDesiredOutcomeDirection(editor.direction || "increase"),
+                            metric: editor.metric,
+                            object: editor.object,
+                            context: editor.context,
+                            constraint: editor.constraint || null,
+                          });
+                          return (
+                            <>
+                              <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                                Preview
+                              </p>
+                              <p className="mt-1 font-sans text-[13px]" style={{ color: c.charcoal }}>
+                                {preview.outcome_statement}
+                              </p>
+                              <p className="mt-1 font-sans text-[12px]" style={{ color: c.secondary }}>
+                                Leading indicator: {preview.leading_indicator}
+                              </p>
+                            </>
+                          );
+                        })()}
+                      </div>
+                      <label className="flex items-center gap-2 md:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editor.is_primary)}
+                          onChange={(event) =>
+                            setEditorByJourney((current) => ({
+                              ...current,
+                              [journeyKey]: current[journeyKey]
+                                ? { ...current[journeyKey]!, is_primary: event.target.checked, error: "" }
+                                : current[journeyKey],
+                            }))
+                          }
+                        />
+                        <span className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                          Set as primary desired outcome for this company
+                        </span>
+                      </label>
                     </div>
                     {editor.error ? (
                       <p className="mt-2 font-sans text-[12px]" style={{ color: c.focus }}>

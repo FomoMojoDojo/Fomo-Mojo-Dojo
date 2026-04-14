@@ -315,6 +315,7 @@ export default function ClientDecisionSystemView() {
     confidence,
     phase,
     mapStatus,
+    primaryDesiredOutcome,
     strategicProblems,
     currentUserBelief,
     currentUserId,
@@ -553,6 +554,17 @@ export default function ClientDecisionSystemView() {
                       ? viewModel.hero.outsideSignalNoteLine || viewModel.outsideView.confidenceLine
                       : viewModel.phaseNarrative.supportLine}
                   </p>
+                  {primaryDesiredOutcome ? (
+                    <div className="mt-4 rounded-xl border border-[#e2e8df] bg-white/70 px-3 py-2">
+                      <p className="cv-stage-label">Primary Desired Outcome</p>
+                      <p className="mt-1 text-[16px] leading-[1.4] text-t-primary">
+                        {primaryDesiredOutcome.statement}
+                      </p>
+                      <p className="mt-1 text-[12px] leading-[1.45] text-t-secondary">
+                        Leading indicator: {primaryDesiredOutcome.leadingIndicator || "Not found in repo."}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
 
                 <aside className="cv-score-card">

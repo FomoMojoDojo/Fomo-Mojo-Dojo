@@ -79,6 +79,95 @@ function ensureRequiredFrameworkKeys(value) {
   return Array.from(new Set([...normalizeFrameworkKeys(value), ...REQUIRED_FRAMEWORK_KEYS]));
 }
 
+function compact(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+}
+
+function humanizeOutcomeLanguage(value) {
+  let text = compact(value);
+  if (!text) return "";
+  const replacements = [
+    [/\bmonitor decision impact\b/gi, "review decision results"],
+    [/\bmonitored decision outcomes\b/gi, "tracked decision results"],
+    [/\bdecision outcomes\b/gi, "decision results"],
+    [/\bstrategic alignment\b/gi, "fit with strategy"],
+    [/\bcore audience\b/gi, "main audience"],
+    [/\bleverage\b/gi, "use"],
+    [/\butili[sz]e\b/gi, "use"],
+    [/\boptimi[sz]e\b/gi, "improve"],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement);
+  }
+  text = compact(text);
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : "";
+}
+
+function normalizeDesiredOutcomeDirection(value) {
+  const normalized = compact(value).toLowerCase();
+  if (["increase", "reduce", "improve", "maximize", "minimize", "avoid"].includes(normalized)) {
+    return normalized;
+  }
+  return "increase";
+}
+
+function splitObjectAndContext(statement) {
+  const normalized = compact(statement)
+    .replace(/^(increase|reduce|improve|maximize|minimize|avoid)\s+/i, "")
+    .trim();
+  if (!normalized) {
+    return { object: "reliable progress", context: "target customers" };
+  }
+  const contextMatch = normalized.match(/^(.*?)(?:\s+(?:for|among|across|within|during|in)\s+)(.+)$/i);
+  if (!contextMatch) {
+    return { object: normalized, context: "target customers" };
+  }
+  return {
+    object: compact(contextMatch[1]) || "reliable progress",
+    context: compact(contextMatch[2]) || "target customers",
+  };
+}
+
+function inferContextFromJourney(journeyKey) {
+  const key = compact(journeyKey).toLowerCase();
+  if (key === "customer") return "target customers in the customer journey";
+  if (key === "revenue") return "qualified demand in the revenue journey";
+  if (key === "operations") return "delivery teams in the operations journey";
+  if (key) return `${key} journey participants`;
+  return "target customers";
+}
+
+function normalizeManagedOutcomeStructured(outcome) {
+  const statement = humanizeOutcomeLanguage(outcome.outcome_statement || outcome.outcome_title || "");
+  const indicator = humanizeOutcomeLanguage(outcome.leading_indicator || "");
+  const split = splitObjectAndContext(statement);
+  const direction = normalizeDesiredOutcomeDirection(outcome.direction || outcome.target_direction || statement);
+  const metric = humanizeOutcomeLanguage(outcome.metric || indicator || `Share of ${split.context} that achieve ${split.object}`);
+  const object = humanizeOutcomeLanguage(outcome.object || split.object || "reliable progress");
+  const context = humanizeOutcomeLanguage(outcome.context || split.context || inferContextFromJourney(outcome.journey_key));
+  const constraint = compact(outcome.constraint || "") || null;
+  const constraintClause = constraint
+    ? (/^(without|under|within|before|after)\b/i.test(constraint) ? constraint : `while ${constraint}`)
+    : "";
+  const composedStatement = humanizeOutcomeLanguage(
+    `${direction} ${object}${context ? ` for ${context}` : ""}${constraintClause ? ` ${constraintClause}` : ""}.`,
+  );
+
+  return {
+    direction,
+    metric,
+    object,
+    context,
+    constraint,
+    outcome_statement: composedStatement,
+    leading_indicator: metric,
+    target_direction: direction,
+  };
+}
+
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -218,7 +307,7 @@ async function loadRows(supabase, companyId) {
     supabase.from("companies").select("id,name").eq("id", companyId).maybeSingle(),
     supabase
       .from("managed_outcomes")
-      .select("id,journey_key,outcome_title,outcome_statement,leading_indicator,target_direction,frameworks_used")
+      .select("id,journey_key,outcome_title,outcome_statement,leading_indicator,target_direction,direction,metric,object,context,constraint,is_primary,confidence,frameworks_used,created_at,updated_at")
       .eq("company_id", companyId)
       .order("created_at", { ascending: true }),
     supabase
@@ -296,9 +385,59 @@ async function main() {
     throw new Error("No managed outcomes found. Generate managed outcomes first before backfill.");
   }
 
+  const rankedPrimary = [...managedOutcomes].sort((a, b) => {
+    const aPrimary = a.is_primary === true ? 1 : 0;
+    const bPrimary = b.is_primary === true ? 1 : 0;
+    if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+    const aConfidence = Number(a.confidence) || 0;
+    const bConfidence = Number(b.confidence) || 0;
+    if (aConfidence !== bConfidence) return bConfidence - aConfidence;
+    const aUpdated = Date.parse(String(a.updated_at || a.created_at || "")) || 0;
+    const bUpdated = Date.parse(String(b.updated_at || b.created_at || "")) || 0;
+    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+    return String(a.id).localeCompare(String(b.id));
+  });
+  const selectedPrimaryId = rankedPrimary[0]?.id || null;
+
+  const managedOutcomeDiffs = [];
+  const normalizedManagedOutcomes = managedOutcomes.map((outcome) => {
+    const structured = normalizeManagedOutcomeStructured(outcome);
+    const normalizedFrameworks = ensureRequiredFrameworkKeys(outcome.frameworks_used);
+    const next = {
+      ...outcome,
+      ...structured,
+      is_primary: outcome.id === selectedPrimaryId,
+      frameworks_used: normalizedFrameworks,
+    };
+    const changed = {};
+    for (const field of ["direction", "metric", "object", "context", "constraint", "outcome_statement", "leading_indicator", "target_direction", "is_primary"]) {
+      const before = field === "constraint"
+        ? (outcome[field] == null ? null : String(outcome[field]))
+        : String(outcome[field] ?? "");
+      const after = field === "constraint"
+        ? (next[field] == null ? null : String(next[field]))
+        : String(next[field] ?? "");
+      if (before !== after) {
+        changed[field] = { before, after };
+      }
+    }
+    const beforeFrameworks = JSON.stringify(normalizeFrameworkKeys(outcome.frameworks_used));
+    const afterFrameworks = JSON.stringify(normalizedFrameworks);
+    if (beforeFrameworks !== afterFrameworks) {
+      changed.frameworks_used = { before: beforeFrameworks, after: afterFrameworks };
+    }
+    if (Object.keys(changed).length > 0) {
+      managedOutcomeDiffs.push({
+        managed_outcome_id: outcome.id,
+        changed,
+      });
+    }
+    return next;
+  });
+
   const linkDiffs = [];
   const mappedOpportunities = opportunities.map((opportunity) => {
-    const newManagedOutcomeId = inferManagedOutcomeLink(opportunity, managedOutcomes);
+    const newManagedOutcomeId = inferManagedOutcomeLink(opportunity, normalizedManagedOutcomes);
     if (String(opportunity.managed_outcome_id || "") !== String(newManagedOutcomeId || "")) {
       linkDiffs.push({
         opportunity_id: opportunity.id,
@@ -314,7 +453,7 @@ async function main() {
     };
   });
 
-  const managedById = new Map(managedOutcomes.map((item) => [item.id, item]));
+  const managedById = new Map(normalizedManagedOutcomes.map((item) => [item.id, item]));
   const distinctnessViolations = [];
 
   for (const opportunity of mappedOpportunities) {
@@ -399,6 +538,17 @@ async function main() {
   }
 
   console.log("");
+  console.log("Managed outcome structured diffs:", managedOutcomeDiffs.length);
+  console.log(`- selected primary desired outcome id: ${selectedPrimaryId || "none"}`);
+  for (const diff of managedOutcomeDiffs.slice(0, 20)) {
+    const changedFields = Object.keys(diff.changed || {});
+    console.log(`- outcome ${diff.managed_outcome_id}: ${changedFields.join(", ")}`);
+  }
+  if (managedOutcomeDiffs.length > 20) {
+    console.log(`- ... ${managedOutcomeDiffs.length - 20} more`);
+  }
+
+  console.log("");
   console.log("Distinctness violations after remap:", distinctnessViolations.length);
   for (const issue of distinctnessViolations.slice(0, 20)) {
     console.log(`- opp ${issue.opportunity_id}: near-duplicate or missing parent outcome`);
@@ -418,6 +568,28 @@ async function main() {
 
   if (distinctnessViolations.length > 0) {
     throw new Error("Backfill aborted: distinctness violations remain between desired outcomes and opportunities.");
+  }
+
+  for (const managed of normalizedManagedOutcomes) {
+    const { error } = await supabase
+      .from("managed_outcomes")
+      .update({
+        outcome_statement: managed.outcome_statement,
+        leading_indicator: managed.leading_indicator,
+        target_direction: managed.target_direction,
+        direction: managed.direction,
+        metric: managed.metric,
+        object: managed.object,
+        context: managed.context,
+        constraint: managed.constraint,
+        is_primary: managed.is_primary === true,
+        frameworks_used: ensureRequiredFrameworkKeys(managed.frameworks_used),
+      })
+      .eq("id", managed.id)
+      .eq("company_id", args.companyId);
+    if (error) {
+      throw new Error(`Failed to update managed outcome ${managed.id}: ${error.message}`);
+    }
   }
 
   for (const opp of mappedOpportunities) {
@@ -467,16 +639,38 @@ async function main() {
     .eq("company_id", args.companyId);
   if (verifyErr) throw new Error(`Failed verification query: ${verifyErr.message}`);
 
+  const { data: verifyOutcomes, error: verifyOutcomesErr } = await supabase
+    .from("managed_outcomes")
+    .select("id,is_primary,direction,metric,object,context")
+    .eq("company_id", args.companyId);
+  if (verifyOutcomesErr) throw new Error(`Failed managed_outcomes verification query: ${verifyOutcomesErr.message}`);
+
   const missingLinks = (verifyRows || []).filter((row) => !row.managed_outcome_id);
+  const primaryCount = (verifyOutcomes || []).filter((row) => row.is_primary === true).length;
+  const missingStructured = (verifyOutcomes || []).filter((row) =>
+    !String(row.direction || "").trim() ||
+    !String(row.metric || "").trim() ||
+    !String(row.object || "").trim() ||
+    !String(row.context || "").trim(),
+  );
 
   console.log("\nApply complete.");
+  console.log(`- managed outcomes updated: ${normalizedManagedOutcomes.length}`);
   console.log(`- opportunities updated: ${mappedOpportunities.length}`);
   console.log(`- solution ideas inserted: ${insertedIdeas}`);
   console.log(`- solution tests inserted: ${insertedTests}`);
   console.log(`- opportunities missing managed_outcome_id: ${missingLinks.length}`);
+  console.log(`- primary desired outcomes: ${primaryCount}`);
+  console.log(`- managed outcomes missing structured fields: ${missingStructured.length}`);
 
   if (missingLinks.length > 0) {
     throw new Error("Post-apply verification failed: some opportunities are missing managed_outcome_id.");
+  }
+  if (primaryCount !== 1) {
+    throw new Error(`Post-apply verification failed: expected exactly 1 primary managed outcome, found ${primaryCount}.`);
+  }
+  if (missingStructured.length > 0) {
+    throw new Error("Post-apply verification failed: some managed outcomes are missing structured desired outcome fields.");
   }
 }
 

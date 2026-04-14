@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
+import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useStrategicProblems, type StrategicProblem } from "@/hooks/useStrategicProblems";
 import { useStrategicAssumptions, type StrategicAssumption } from "@/hooks/useStrategicAssumptions";
 import { useLatestLocalAlignment } from "@/hooks/useLocalAlignment";
@@ -551,6 +552,7 @@ export default function StrategyView() {
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
   const { loading, item, error, savingField, updateNarrativeField } = useStrategyCascade(activeCompany?.id);
+  const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
   const {
     loading: problemsLoading,
     items: strategicProblems,
@@ -727,6 +729,25 @@ export default function StrategyView() {
     () => suggestEvidenceNeeded(newAssumptionText),
     [newAssumptionText],
   );
+  const primaryDesiredOutcome = useMemo(() => {
+    if (!managedOutcomes.length) return null;
+    const primary =
+      managedOutcomes.find((outcome) => outcome.is_primary) ||
+      managedOutcomes.find((outcome) => outcome.journey_key === "customer") ||
+      managedOutcomes[0] ||
+      null;
+    if (!primary) return null;
+    return {
+      statement: String(primary.outcome_statement || primary.outcome_title || "").trim(),
+      indicator: String(primary.leading_indicator || primary.metric || "").trim(),
+      direction: String(primary.direction || primary.target_direction || "").trim(),
+      metric: String(primary.metric || primary.leading_indicator || "").trim(),
+      object: String(primary.object || "").trim(),
+      context: String(primary.context || "").trim(),
+      constraint: String(primary.constraint || "").trim(),
+      confidence: Number.isFinite(Number(primary.confidence)) ? Number(primary.confidence) : null,
+    };
+  }, [managedOutcomes]);
   const unifiedAssumptions = useMemo<UnifiedAssumption[]>(() => {
     const generated = (item?.assumptions ?? [])
       .map((assumption, index) => ({
@@ -1190,6 +1211,47 @@ export default function StrategyView() {
                     </div>
                   )}
                 </>
+              )}
+            </section>
+
+            <section
+              className="mt-5 rounded-[24px] border px-5 py-5 sm:px-6"
+              style={{ borderColor: c.line, background: c.panel }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  {sectionLabel("Primary Desired Outcome")}
+                  <p className="mt-2.5 max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
+                    One clear north-star outcome for this company. It stays solution-agnostic and anchors opportunities, route choices, and score movement.
+                  </p>
+                </div>
+                <MetaBadge>{primaryDesiredOutcome ? "Defined" : "Not found in repo"}</MetaBadge>
+              </div>
+              {primaryDesiredOutcome ? (
+                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                  <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                    {primaryDesiredOutcome.statement}
+                  </p>
+                  <p className="mt-2 font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
+                    Leading indicator: {primaryDesiredOutcome.indicator || "Not found in repo."}
+                  </p>
+                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                    {[
+                      `Direction: ${primaryDesiredOutcome.direction || "Not found in repo"}`,
+                      `Metric: ${primaryDesiredOutcome.metric || "Not found in repo"}`,
+                      `Object: ${primaryDesiredOutcome.object || "Not found in repo"}`,
+                      `Context: ${primaryDesiredOutcome.context || "Not found in repo"}`,
+                      primaryDesiredOutcome.constraint ? `Constraint: ${primaryDesiredOutcome.constraint}` : null,
+                      primaryDesiredOutcome.confidence != null ? `Confidence: ${primaryDesiredOutcome.confidence}/100` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-3 font-sans text-[13px]" style={{ color: c.secondary }}>
+                  Not found in repo. Run AI Research or add a managed desired outcome to define this card.
+                </p>
               )}
             </section>
 

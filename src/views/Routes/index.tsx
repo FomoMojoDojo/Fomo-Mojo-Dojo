@@ -5,6 +5,8 @@ import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useOpportunities } from "@/hooks/useOpportunities";
+import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
+import { useSolutionIdeas } from "@/hooks/useSolutionIdeas";
 import { useInputs } from "@/hooks/useInputs";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { MetaBadge } from "@/components/ui/semantic-badges";
@@ -195,7 +197,7 @@ function routeDetail(args: {
       : "No route-to-opportunity linkage exists yet, so this needs stronger evidence before prioritization.",
     uniqueSteps.some((step) => step.has_gap)
       ? "At least one related job step is still marked as a gap, so this route reduces visible execution risk."
-      : "Related job steps are already partly designed, so this route can tighten and scale what exists.",
+      : "Related checkpoints are already partly designed, so this route can tighten and scale what exists.",
   ];
 
   const linkedOpportunityFocus = rankedOpps
@@ -229,6 +231,7 @@ function RoutesColumn({
   steps,
   initiativeContext,
   opportunityFocusById,
+  routeOutcomeMap,
 }: {
   category: string;
   items: RouteRow[];
@@ -236,6 +239,7 @@ function RoutesColumn({
   steps: JobStepRow[];
   initiativeContext: ReturnType<typeof deriveInitiativeContext>;
   opportunityFocusById: Map<string, FocusClassification>;
+  routeOutcomeMap: Map<string, { statement: string; leadingIndicator: string }>;
 }) {
   const meta = CATEGORY_META[category] ?? {
     title: category,
@@ -292,6 +296,7 @@ function RoutesColumn({
               evidence={detail.evidence}
               whyThisMatters={detail.whyThisMatters}
               frameworks={detail.frameworks}
+              linkedDesiredOutcome={routeOutcomeMap.get(route.id) || null}
               focus={detail.focus}
             />
           );
@@ -372,6 +377,8 @@ export default function RoutesView() {
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
+  const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
+  const { items: solutionIdeas } = useSolutionIdeas(activeCompany?.id);
   const { query: inputsQuery } = useInputs(activeCompany?.id);
   const inputs = inputsQuery.data ?? [];
   const { signals: sourceSignals } = useSourceConfidence({
@@ -397,6 +404,29 @@ export default function RoutesView() {
   const fix = items.filter((route) => String(route.category).toLowerCase() === "fix");
   const improve = items.filter((route) => String(route.category).toLowerCase() === "improve");
   const create = items.filter((route) => String(route.category).toLowerCase() === "create");
+  const routeOutcomeMap = useMemo(() => {
+    const managedById = new Map(
+      managedOutcomes.map((outcome) => [
+        outcome.id,
+        {
+          statement: String(outcome.outcome_statement || outcome.outcome_title || "").trim(),
+          leadingIndicator: String(outcome.leading_indicator || outcome.metric || "").trim(),
+        },
+      ]),
+    );
+    const opportunitiesById = new Map(opportunities.map((opp) => [opp.id, opp]));
+    const map = new Map<string, { statement: string; leadingIndicator: string }>();
+    for (const idea of solutionIdeas) {
+      const routeId = String(idea.route_id || "").trim();
+      if (!routeId || map.has(routeId)) continue;
+      const opp = opportunitiesById.get(String(idea.opportunity_id || ""));
+      if (!opp?.managed_outcome_id) continue;
+      const managed = managedById.get(String(opp.managed_outcome_id || ""));
+      if (!managed) continue;
+      map.set(routeId, managed);
+    }
+    return map;
+  }, [managedOutcomes, opportunities, solutionIdeas]);
 
   const currentScore = Math.round(Number(activeCompany?.mojo_score ?? 0));
   const potentialScore = Math.round(Number(activeCompany?.potential_score ?? activeCompany?.projected_score ?? 0));
@@ -535,6 +565,7 @@ export default function RoutesView() {
                 steps={steps}
                 initiativeContext={initiativeContext}
                 opportunityFocusById={opportunityFocusById}
+                routeOutcomeMap={routeOutcomeMap}
               />
               <RoutesColumn
                 category="improve"
@@ -543,6 +574,7 @@ export default function RoutesView() {
                 steps={steps}
                 initiativeContext={initiativeContext}
                 opportunityFocusById={opportunityFocusById}
+                routeOutcomeMap={routeOutcomeMap}
               />
               <RoutesColumn
                 category="create"
@@ -551,6 +583,7 @@ export default function RoutesView() {
                 steps={steps}
                 initiativeContext={initiativeContext}
                 opportunityFocusById={opportunityFocusById}
+                routeOutcomeMap={routeOutcomeMap}
               />
             </section>
           </div>

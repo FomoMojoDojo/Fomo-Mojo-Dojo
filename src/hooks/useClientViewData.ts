@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useOpportunities } from "@/hooks/useOpportunities";
+import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useClientMapInteractionState } from "@/hooks/useClientMapInteractionState";
@@ -45,7 +46,26 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
     refetch: refetchOpportunities,
   } = useOpportunities(companyId);
   const { items: strategicProblems, refetch: refetchStrategicProblems } = useStrategicProblems(companyId);
+  const { items: managedOutcomes } = useManagedOutcomes(companyId);
   const { preferredRun: publicBaselineRun } = usePublicBaseline(companyId);
+  const primaryDesiredOutcome = useMemo(() => {
+    const primary =
+      managedOutcomes.find((item) => item.is_primary) ||
+      managedOutcomes.find((item) => item.journey_key === "customer") ||
+      managedOutcomes[0] ||
+      null;
+    if (!primary) return null;
+    return {
+      id: primary.id,
+      statement: String(primary.outcome_statement || primary.outcome_title || "").trim(),
+      leadingIndicator: String(primary.leading_indicator || primary.metric || "").trim(),
+      direction: String(primary.direction || primary.target_direction || "").trim(),
+      metric: String(primary.metric || "").trim(),
+      object: String(primary.object || "").trim(),
+      context: String(primary.context || "").trim(),
+      constraint: String(primary.constraint || "").trim() || null,
+    };
+  }, [managedOutcomes]);
 
   const baseActions = useMemo(
     () => summarizeClientActions(opportunities, Math.max(opportunities.length, 1)),
@@ -212,6 +232,7 @@ export function useClientViewData(options: UseClientViewDataOptions = {}) {
     opportunitiesLoading,
     opportunitiesError,
     strategicProblems,
+    primaryDesiredOutcome,
     publicBaselineRun,
   };
 }

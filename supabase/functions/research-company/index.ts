@@ -18,6 +18,11 @@ import {
   validateSolutionIdea,
   validateSolutionTest,
 } from "../_shared/opportunityTreeSemantics.ts";
+import {
+  composeDesiredOutcomeFromParts,
+  deriveDesiredOutcomeParts,
+  normalizeDesiredOutcomeDirection,
+} from "../_shared/desiredOutcome.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1408,18 +1413,38 @@ function humanizeStepPhrase(label: string) {
 }
 
 function normalizeDirection(value: string) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (["increase", "reduce", "improve", "maximize", "minimize", "avoid"].includes(raw)) return raw;
-  return "increase";
+  return normalizeDesiredOutcomeDirection(String(value || ""));
 }
 
 function normalizeManagedOutcome(outcome: any) {
+  const legacyStatement = normalizeOutcomeLanguage(String(outcome?.outcome_statement || ""));
+  const legacyIndicator = normalizeOutcomeLanguage(String(outcome?.leading_indicator || ""));
+  const structured = composeDesiredOutcomeFromParts(
+    deriveDesiredOutcomeParts({
+      journey_key: "customer",
+      outcome_statement: legacyStatement,
+      leading_indicator: legacyIndicator,
+      target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+      direction: String(outcome?.direction || ""),
+      metric: String(outcome?.metric || ""),
+      object: String(outcome?.object || ""),
+      context: String(outcome?.context || ""),
+      constraint: String(outcome?.constraint || ""),
+      is_primary: Boolean(outcome?.is_primary),
+    }),
+  );
   return {
     journey_key: "customer",
-    outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
-    outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
-    leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
-    target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+    outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || structured.outcome_statement)),
+    outcome_statement: normalizeOutcomeLanguage(String(legacyStatement || structured.outcome_statement)),
+    leading_indicator: normalizeOutcomeLanguage(String(legacyIndicator || structured.leading_indicator)),
+    target_direction: normalizeDirection(String(outcome?.target_direction || structured.target_direction)),
+    direction: structured.direction,
+    metric: structured.metric,
+    object: structured.object,
+    context: structured.context,
+    constraint: structured.constraint || null,
+    is_primary: Boolean(outcome?.is_primary),
     evidence_basis: String(outcome?.evidence_basis || "").trim()
       || "Inferred from public evidence and current opportunity map. Validate with customer interviews and ODI importance/satisfaction signals.",
     confidence: clamp(Number(outcome?.confidence) || 60, 35, 80),
@@ -1490,6 +1515,11 @@ function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutco
     statement: outcome.outcome_statement,
     leadingIndicator: outcome.leading_indicator,
     targetDirection: outcome.target_direction,
+    direction: outcome.direction,
+    metric: outcome.metric,
+    object: outcome.object,
+    context: outcome.context,
+    constraint: outcome.constraint || null,
     frameworksUsed: ["odi", "teresa_torres"],
   });
   return !quality.weak && semantics.valid;
@@ -3151,6 +3181,83 @@ function computePotentialProjected(mojo_score: number) {
   return { potential_score, projected_score };
 }
 
+function computeDesiredOutcomeAlignment(args: {
+  managedOutcomes?: Array<{
+    journey_key?: unknown;
+    outcome_statement?: unknown;
+    leading_indicator?: unknown;
+    metric?: unknown;
+    object?: unknown;
+    context?: unknown;
+    is_primary?: unknown;
+  }>;
+  opportunities?: Array<{ outcome?: unknown; step_label?: unknown }>;
+  routes?: Array<{ title?: unknown; short_description?: unknown }>;
+}) {
+  const outcomes = Array.isArray(args.managedOutcomes) ? args.managedOutcomes : [];
+  const primary =
+    outcomes.find((item) => item?.is_primary === true)
+    || outcomes.find((item) => normalizeJourneyKey(item?.journey_key) === "customer")
+    || outcomes[0]
+    || null;
+
+  if (!primary) {
+    return {
+      available: false,
+      score: 50,
+      primary_statement: null as string | null,
+      coverage_ratio: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "not_available",
+    };
+  }
+
+  const keywordSource = [
+    String(primary?.outcome_statement || ""),
+    String(primary?.leading_indicator || ""),
+    String(primary?.metric || ""),
+    String(primary?.object || ""),
+    String(primary?.context || ""),
+  ].join(" ");
+  const keywords = Array.from(new Set(tokenizeStrategicText(keywordSource))).slice(0, 24);
+  if (!keywords.length) {
+    return {
+      available: true,
+      score: 50,
+      primary_statement: String(primary?.outcome_statement || "").trim() || null,
+      coverage_ratio: 50,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "insufficient_keywords",
+    };
+  }
+
+  const corpus = [
+    ...(Array.isArray(args.opportunities) ? args.opportunities : []).map((item) =>
+      `${String(item?.outcome || "")} ${String(item?.step_label || "")}`
+    ),
+    ...(Array.isArray(args.routes) ? args.routes : []).map((item) =>
+      `${String(item?.title || "")} ${String(item?.short_description || "")}`
+    ),
+  ].join(" ");
+  const corpusTokens = new Set(tokenizeStrategicText(corpus));
+  const matched = keywords.filter((token) => corpusTokens.has(token));
+  const missing = keywords.filter((token) => !corpusTokens.has(token));
+  const coverage = keywords.length ? matched.length / keywords.length : 0.5;
+  const score = round1(clamp(coverage * 100, 0, 100));
+
+  return {
+    available: true,
+    score,
+    primary_statement: String(primary?.outcome_statement || "").trim() || null,
+    coverage_ratio: round1(coverage * 100),
+    matched_keywords: matched.slice(0, 16),
+    missing_keywords: missing.slice(0, 16),
+    status: score >= 70 ? "aligned" : score >= 45 ? "partial" : "weak",
+  };
+}
+
 function scoreCompanyMojo(args: {
   baselineResultJson: any | null;
   inputs: Array<{ input_key?: unknown; completeness?: unknown }>;
@@ -3170,6 +3277,15 @@ function scoreCompanyMojo(args: {
     priority_tier?: unknown;
   }>;
   routes?: Array<{ title?: unknown; short_description?: unknown; category?: unknown }>;
+  managedOutcomes?: Array<{
+    journey_key?: unknown;
+    outcome_statement?: unknown;
+    leading_indicator?: unknown;
+    metric?: unknown;
+    object?: unknown;
+    context?: unknown;
+    is_primary?: unknown;
+  }>;
   positioning?: {
     competitive_alternatives?: Array<{ name?: unknown; description?: unknown }>;
     unique_attributes?: Array<{ name?: unknown; description?: unknown }>;
@@ -3247,6 +3363,11 @@ function scoreCompanyMojo(args: {
     positioning: args.positioning ?? null,
     strategy: args.strategy ?? null,
   });
+  const desiredOutcomeAlignment = computeDesiredOutcomeAlignment({
+    managedOutcomes: args.managedOutcomes,
+    opportunities: safeOpps,
+    routes: args.routes,
+  });
   const initiativeBase = deriveInitiativeFocusContext({
     jobSteps: safeSteps,
     strategicProblems: args.strategicProblems,
@@ -3301,6 +3422,9 @@ function scoreCompanyMojo(args: {
   );
   const initiativeFocusMultiplier = round1(clamp(0.7 + 0.3 * initiativeFocusNorm, 0.7, 1));
   const strategicAlignmentNorm = clamp(strategicAlignment.score / 100, 0, 1);
+  const desiredOutcomeAlignmentNorm = desiredOutcomeAlignment.available
+    ? clamp(desiredOutcomeAlignment.score / 100, 0, 1)
+    : strategicAlignmentNorm;
 
   const positioning = round1(
     100 * (
@@ -3327,7 +3451,8 @@ function scoreCompanyMojo(args: {
       0.15 * baselineSupport +
       0.1 * ratio(revenueOpps.length + opsOpps.length, 12) +
       0.1 * averageCompleteness(strategyInputs) +
-      0.15 * strategicAlignmentNorm
+      0.12 * strategicAlignmentNorm +
+      0.03 * desiredOutcomeAlignmentNorm
     ),
   );
   const gtm_execution = round1(
@@ -3443,6 +3568,7 @@ function scoreCompanyMojo(args: {
         label: "Strategy Cascade",
         score: perGateScores.strategy_cascade,
         strategic_problem_alignment: strategicAlignment.score,
+        desired_outcome_alignment: desiredOutcomeAlignment.score,
       },
       gtm_execution: {
         label: "GTM Execution",
@@ -3464,7 +3590,9 @@ function scoreCompanyMojo(args: {
       opportunities: oppsCount,
       evidence_ledger: ledgerCount,
       strategic_problems: strategicAlignment.strategic_problem_count,
+      desired_outcomes: Array.isArray(args.managedOutcomes) ? args.managedOutcomes.length : 0,
     },
+    desired_outcome_context: desiredOutcomeAlignment,
     strategic_problem_context: strategicAlignment,
     initiative_context: {
       ...initiativeBase,
@@ -3838,6 +3966,12 @@ const managedOutcomesSchema = {
           outcome_statement: { type: "string" },
           leading_indicator: { type: "string" },
           target_direction: { type: "string" },
+          direction: { type: "string" },
+          metric: { type: "string" },
+          object: { type: "string" },
+          context: { type: "string" },
+          constraint: { type: "string" },
+          is_primary: { type: "boolean" },
           evidence_basis: { type: "string" },
           confidence: { type: "integer" },
         },
@@ -4614,6 +4748,11 @@ Deno.serve(async (req) => {
           statement: outcome.outcome_statement,
           leadingIndicator: outcome.leading_indicator,
           targetDirection: outcome.target_direction,
+          direction: outcome.direction,
+          metric: outcome.metric,
+          object: outcome.object,
+          context: outcome.context,
+          constraint: outcome.constraint || null,
           frameworksUsed: opportunityFrameworkKeys,
         }).valid,
       );
@@ -5343,6 +5482,11 @@ Deno.serve(async (req) => {
         statement: String((managed as Record<string, unknown>)?.outcome_statement || (managed as Record<string, unknown>)?.outcome_title || ""),
         leadingIndicator: String((managed as Record<string, unknown>)?.leading_indicator || ""),
         targetDirection: String((managed as Record<string, unknown>)?.target_direction || ""),
+        direction: String((managed as Record<string, unknown>)?.direction || (managed as Record<string, unknown>)?.target_direction || ""),
+        metric: String((managed as Record<string, unknown>)?.metric || (managed as Record<string, unknown>)?.leading_indicator || ""),
+        object: String((managed as Record<string, unknown>)?.object || ""),
+        context: String((managed as Record<string, unknown>)?.context || ""),
+        constraint: String((managed as Record<string, unknown>)?.constraint || ""),
         frameworksUsed: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
       });
       if (!validation.valid) {
@@ -5694,14 +5838,35 @@ Deno.serve(async (req) => {
     const managedOutcomeIdByJourney = new Map<string, string>();
     for (const outcome of managedOutcomes) {
       const journeyKey = "customer";
+      const structured = composeDesiredOutcomeFromParts(
+        deriveDesiredOutcomeParts({
+          journey_key: journeyKey,
+          outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
+          leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
+          target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+          direction: String(outcome?.direction || ""),
+          metric: String(outcome?.metric || ""),
+          object: String(outcome?.object || ""),
+          context: String(outcome?.context || ""),
+          constraint: String(outcome?.constraint || ""),
+          is_primary: Boolean(outcome?.is_primary),
+        }),
+      );
+      const isPrimaryOutcome = Boolean(outcome?.is_primary) || managedOutcomesInserted === 0;
       const payload = {
         company_id,
         user_id: user.id,
         journey_key: journeyKey,
-        outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
-        outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
-        leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
-        target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+        outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || structured.outcome_statement)),
+        outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || structured.outcome_statement)),
+        leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || structured.leading_indicator)),
+        target_direction: normalizeDirection(String(outcome?.target_direction || structured.target_direction)),
+        direction: structured.direction,
+        metric: structured.metric,
+        object: structured.object,
+        context: structured.context,
+        constraint: structured.constraint || null,
+        is_primary: isPrimaryOutcome,
         evidence_basis: String(outcome?.evidence_basis || "").trim(),
         confidence: clamp(Number(outcome?.confidence) || 58, 0, 100),
         frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
@@ -5713,7 +5878,8 @@ Deno.serve(async (req) => {
         .select("id")
         .single();
 
-      if (insert.error && String(insert.error.message || "").toLowerCase().includes("frameworks_used")) {
+      const insertErrorMessage = String(insert.error?.message || "").toLowerCase();
+      if (insert.error && (insertErrorMessage.includes("frameworks_used") || insertErrorMessage.includes("direction") || insertErrorMessage.includes("metric") || insertErrorMessage.includes("object") || insertErrorMessage.includes("context") || insertErrorMessage.includes("constraint") || insertErrorMessage.includes("is_primary"))) {
         insert = await supabase
           .from("managed_outcomes")
           .insert({
@@ -6217,6 +6383,15 @@ Deno.serve(async (req) => {
         satisfaction: opp?.satisfaction,
         priority_tier: opp?.priority_tier,
       })),
+      managedOutcomes: managedOutcomes.map((outcome: any) => ({
+        journey_key: outcome?.journey_key,
+        outcome_statement: outcome?.outcome_statement,
+        leading_indicator: outcome?.leading_indicator,
+        metric: outcome?.metric,
+        object: outcome?.object,
+        context: outcome?.context,
+        is_primary: outcome?.is_primary,
+      })),
       routes: routes.map((route) => ({
         title: route?.title,
         short_description: route?.short_description,
@@ -6336,7 +6511,14 @@ Deno.serve(async (req) => {
         managed_outcomes: managedOutcomes.map((outcome: any) => ({
           journey_key: String(outcome?.journey_key || ""),
           outcome_title: String(outcome?.outcome_title || ""),
+          outcome_statement: String(outcome?.outcome_statement || ""),
           leading_indicator: String(outcome?.leading_indicator || ""),
+          direction: String(outcome?.direction || outcome?.target_direction || ""),
+          metric: String(outcome?.metric || ""),
+          object: String(outcome?.object || ""),
+          context: String(outcome?.context || ""),
+          constraint: String(outcome?.constraint || ""),
+          is_primary: Boolean(outcome?.is_primary),
           confidence: Number(outcome?.confidence) || 0,
         })),
         strategic_problems: strategicProblems.map((item) => ({
@@ -6370,6 +6552,7 @@ Deno.serve(async (req) => {
       strategy_cascade_inserted: strategyCascadeInserted,
       mojo_score: scored.mojo_score,
       evidence_status: scored.evidence_status,
+      primary_desired_outcome: managedOutcomes.find((outcome: any) => outcome?.is_primary === true) || managedOutcomes[0] || null,
     });
     } finally {
       stopLockHeartbeat();

@@ -32,6 +32,19 @@ export type ScoreableRoute = {
   category?: string | null;
 };
 
+export type ScoreableDesiredOutcome = {
+  journey_key?: string | null;
+  outcome_statement?: string | null;
+  leading_indicator?: string | null;
+  target_direction?: string | null;
+  direction?: string | null;
+  metric?: string | null;
+  object?: string | null;
+  context?: string | null;
+  constraint?: string | null;
+  is_primary?: boolean | null;
+};
+
 export type StrategicProblemInput = {
   statement?: string | null;
   source?: string | null;
@@ -94,6 +107,16 @@ export type GateScoreResult = {
     opportunities: number;
     evidence_ledger: number;
     strategic_problems: number;
+    desired_outcomes: number;
+  };
+  desiredOutcomeContext: {
+    available: boolean;
+    score: number;
+    primary_statement: string | null;
+    coverage_ratio: number;
+    matched_keywords: string[];
+    missing_keywords: string[];
+    status: string;
   };
   strategicProblemContext: {
     score: number;
@@ -579,10 +602,79 @@ function computeStrategicProblemAlignment(
   };
 }
 
+function computeDesiredOutcomeAlignment(
+  desiredOutcomes: ScoreableDesiredOutcome[],
+  opportunities: ScoreableOpportunity[],
+  routes: ScoreableRoute[],
+) {
+  const outcomes = Array.isArray(desiredOutcomes) ? desiredOutcomes : [];
+  const primary =
+    outcomes.find((item) => item?.is_primary === true) ||
+    outcomes.find((item) => normalizeJourneyKey(item?.journey_key) === "customer") ||
+    outcomes[0] ||
+    null;
+
+  if (!primary) {
+    return {
+      available: false,
+      score: 50,
+      primary_statement: null,
+      coverage_ratio: 0.5,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "not_available",
+    };
+  }
+
+  const primaryStatement = String(primary.outcome_statement || "").trim();
+  const keywordSource = [
+    primaryStatement,
+    String(primary.leading_indicator || ""),
+    String(primary.metric || ""),
+    String(primary.object || ""),
+    String(primary.context || ""),
+  ]
+    .join(" ")
+    .trim();
+  const keywords = Array.from(new Set(tokenizeStrategicText(keywordSource))).slice(0, 24);
+  if (!keywords.length) {
+    return {
+      available: true,
+      score: 50,
+      primary_statement: primaryStatement || null,
+      coverage_ratio: 0.5,
+      matched_keywords: [] as string[],
+      missing_keywords: [] as string[],
+      status: "insufficient_keywords",
+    };
+  }
+
+  const corpus = [
+    ...opportunities.map((item) => `${String(item.outcome || "")} ${String(item.step_label || "")}`),
+    ...routes.map((item) => `${String(item.title || "")} ${String(item.short_description || "")}`),
+  ].join(" ");
+  const corpusTokens = new Set(tokenizeStrategicText(corpus));
+  const matched = keywords.filter((token) => corpusTokens.has(token));
+  const missing = keywords.filter((token) => !corpusTokens.has(token));
+  const coverageRatio = keywords.length > 0 ? matched.length / keywords.length : 0.5;
+  const score = round1(clamp(100 * coverageRatio, 0, 100));
+
+  return {
+    available: true,
+    score,
+    primary_statement: primaryStatement || null,
+    coverage_ratio: round1(coverageRatio * 100),
+    matched_keywords: matched.slice(0, 16),
+    missing_keywords: missing.slice(0, 16),
+    status: score >= 70 ? "aligned" : score >= 45 ? "partial" : "weak",
+  };
+}
+
 export function computeGateScores(
   inputs: ScoreableInput[],
   jobSteps: ScoreableJobStep[],
   opportunities: ScoreableOpportunity[],
+  desiredOutcomes: ScoreableDesiredOutcome[] = [],
   baselineRunResultJson?: BaselineRunResult,
   strategicProblems: StrategicProblemInput[] = [],
   routes: ScoreableRoute[] = [],
@@ -650,6 +742,7 @@ export function computeGateScores(
     safeOpps,
     routes,
   );
+  const desiredOutcomeContext = computeDesiredOutcomeAlignment(desiredOutcomes, safeOpps, routes);
   const initiativeBase = deriveInitiativeContext(safeSteps, strategicProblems);
   const initiativeSteps = safeSteps.filter((step) => {
     const key = normalizeJourneyKey(step.journey_key);
@@ -709,6 +802,9 @@ export function computeGateScores(
   );
   const initiativeFocusMultiplier = round1(clamp(0.7 + 0.3 * initiativeFocusNorm, 0.7, 1));
   const strategicAlignmentNorm = clamp(strategicProblemContext.score / 100, 0, 1);
+  const desiredOutcomeAlignmentNorm = desiredOutcomeContext.available
+    ? clamp(desiredOutcomeContext.score / 100, 0, 1)
+    : strategicAlignmentNorm;
 
   const positioningScore = round1(
     clamp(
@@ -744,7 +840,8 @@ export function computeGateScores(
           0.15 * baselineSupport +
           0.1 * ratio(revenueOpps.length + opsOpps.length, 12) +
           0.1 * averageCompleteness(strategyInputs) +
-          0.15 * strategicAlignmentNorm),
+          0.12 * strategicAlignmentNorm +
+          0.03 * desiredOutcomeAlignmentNorm),
       0,
       100,
     ),
@@ -804,6 +901,7 @@ export function computeGateScores(
           strategy_opportunity_coverage: round1(ratio(revenueOpps.length + opsOpps.length, 12) * 100),
           completion_bonus: round1(averageCompleteness(strategyInputs) * 100),
           strategic_problem_alignment: strategicProblemContext.score,
+          desired_outcome_alignment: desiredOutcomeContext.score,
         },
       },
       gtm_execution: {
@@ -825,7 +923,9 @@ export function computeGateScores(
       opportunities: safeOpps.length,
       evidence_ledger: ledgerCount,
       strategic_problems: strategicProblemContext.strategic_problem_count,
+      desired_outcomes: Array.isArray(desiredOutcomes) ? desiredOutcomes.length : 0,
     },
+    desiredOutcomeContext,
     strategicProblemContext,
     initiativeContext: {
       ...initiativeBase,
@@ -1005,6 +1105,7 @@ export function scoreCompanyMojo(args: {
   inputs: ScoreableInput[];
   jobSteps: ScoreableJobStep[];
   opportunities: ScoreableOpportunity[];
+  managedOutcomes?: ScoreableDesiredOutcome[];
   routes?: ScoreableRoute[];
   strategicProblems?: StrategicProblemInput[];
   baselineRunResultJson?: BaselineRunResult;
@@ -1014,6 +1115,7 @@ export function scoreCompanyMojo(args: {
     args.inputs,
     args.jobSteps,
     args.opportunities,
+    args.managedOutcomes ?? [],
     args.baselineRunResultJson,
     args.strategicProblems ?? [],
     args.routes ?? [],
@@ -1050,6 +1152,7 @@ export function scoreCompanyMojo(args: {
       ...evidenceResult.evidenceBreakdown,
     },
     counts: gateResult.counts,
+    desired_outcome_context: gateResult.desiredOutcomeContext,
     strategic_problem_context: gateResult.strategicProblemContext,
     initiative_context: gateResult.initiativeContext,
     calibration: {

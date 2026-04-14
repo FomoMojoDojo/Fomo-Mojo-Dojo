@@ -44,6 +44,7 @@ export default function RouteCard({
   evidence,
   whyThisMatters,
   frameworks,
+  linkedDesiredOutcome,
   focus,
 }: {
   route: RouteRow;
@@ -52,6 +53,10 @@ export default function RouteCard({
   evidence: DetailEvidence[];
   whyThisMatters: string[];
   frameworks: string[];
+  linkedDesiredOutcome?: {
+    statement: string;
+    leadingIndicator: string;
+  } | null;
   focus?: FocusClassification;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -88,6 +93,18 @@ export default function RouteCard({
             </h3>
             <p className="mt-2 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
               {route.short_description || "No route description yet."}
+            </p>
+            <p className="mt-2 font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                Desired outcome:
+              </span>{" "}
+              {linkedDesiredOutcome?.statement || "Not linked yet."}
+            </p>
+            <p className="mt-1 font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                Indicator:
+              </span>{" "}
+              {linkedDesiredOutcome?.leadingIndicator || "Missing until outcome link exists."}
             </p>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">

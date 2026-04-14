@@ -359,13 +359,19 @@ export type Database = {
       managed_outcomes: {
         Row: {
           company_id: string
+          constraint: string | null
           confidence: number
+          context: string
           created_at: string
+          direction: string
           evidence_basis: string
           frameworks_used: string[]
           id: string
+          is_primary: boolean
           journey_key: string
           leading_indicator: string
+          metric: string
+          object: string
           outcome_statement: string
           outcome_title: string
           target_direction: string
@@ -374,13 +380,19 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          constraint?: string | null
           confidence?: number
+          context?: string
           created_at?: string
+          direction?: string
           evidence_basis?: string
           frameworks_used?: string[]
           id?: string
+          is_primary?: boolean
           journey_key?: string
           leading_indicator?: string
+          metric?: string
+          object?: string
           outcome_statement?: string
           outcome_title?: string
           target_direction?: string
@@ -389,13 +401,19 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          constraint?: string | null
           confidence?: number
+          context?: string
           created_at?: string
+          direction?: string
           evidence_basis?: string
           frameworks_used?: string[]
           id?: string
+          is_primary?: boolean
           journey_key?: string
           leading_indicator?: string
+          metric?: string
+          object?: string
           outcome_statement?: string
           outcome_title?: string
           target_direction?: string

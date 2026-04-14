@@ -1,3 +1,5 @@
+import { deriveDesiredOutcomeParts, validateDesiredOutcomeParts, type DesiredOutcomeParts } from "./desiredOutcome";
+
 export const REQUIRED_FRAMEWORK_KEYS = ["odi", "teresa_torres"] as const;
 
 const SOLUTION_LANGUAGE_PATTERN =
@@ -32,6 +34,11 @@ export type DesiredOutcomeCandidate = {
   statement: string;
   leadingIndicator: string;
   targetDirection?: string;
+  direction?: string;
+  metric?: string;
+  object?: string;
+  context?: string;
+  constraint?: string | null;
   frameworksUsed?: string[] | null;
 };
 
@@ -139,6 +146,22 @@ export function validateDesiredOutcome(candidate: DesiredOutcomeCandidate): Vali
     reasons.push("missing_measurable_dimension");
   }
   if (SOLUTION_LANGUAGE_PATTERN.test(statement)) reasons.push("contains_solution_language");
+
+  const structuredInput: DesiredOutcomeParts = {
+    ...deriveDesiredOutcomeParts({
+      outcome_statement: statement,
+      leading_indicator: indicator,
+      target_direction: String(candidate.direction || candidate.targetDirection || "increase"),
+      metric: String(candidate.metric || ""),
+      object: String(candidate.object || ""),
+      context: String(candidate.context || ""),
+      constraint: candidate.constraint || null,
+    }),
+  };
+  const structured = validateDesiredOutcomeParts(structuredInput);
+  if (!structured.valid) {
+    reasons.push(...structured.reasons.map((reason) => `structured_${reason}`));
+  }
 
   if (candidate.frameworksUsed && !hasRequiredFrameworkKeys(candidate.frameworksUsed)) {
     reasons.push("missing_required_frameworks");
