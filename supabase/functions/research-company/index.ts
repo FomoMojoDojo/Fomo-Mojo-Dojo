@@ -10,6 +10,14 @@ import {
   normalizeToEightCheckpointSpine,
   validateEightCheckpointSpine,
 } from "../_shared/jtbdProcess.ts";
+import {
+  ensureRequiredFrameworkKeys,
+  validateDesiredOutcome,
+  validateOpportunity,
+  validateOutcomeOpportunityDistinctness,
+  validateSolutionIdea,
+  validateSolutionTest,
+} from "../_shared/opportunityTreeSemantics.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -106,6 +114,59 @@ function avg(nums: number[]) {
 
 function roundInt(n: number) {
   return Math.round(n);
+}
+
+const STANDARD_MARKET_CATEGORY_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+  { label: "B2B SaaS", pattern: /\b(b2b|enterprise|business)\b.*\b(saas|software|platform)\b|\benterprise software\b|\bbusiness software\b/i },
+  { label: "B2C SaaS", pattern: /\bb2c\b.*\b(saas|software|platform)\b|\bconsumer software\b/i },
+  { label: "Marketplace", pattern: /\bmarketplace\b/i },
+  { label: "E-commerce", pattern: /\be-?commerce\b|\bonline retail\b/i },
+  { label: "Professional Services", pattern: /\bconsult(ing|ancy)?\b|\bagency\b|\bprofessional services?\b/i },
+  { label: "Healthcare Services", pattern: /\bhealth\s?care\b|\bmental health\b|\bclinic\b/i },
+  { label: "Financial Services", pattern: /\bfintech\b|\bfinancial services?\b|\bbanking\b|\binsurance\b|\blending\b|\bdebt\b|\bcollections?\b/i },
+  { label: "Education Services", pattern: /\bedtech\b|\beducation\b|\blearning\b|\bschool\b/i },
+  { label: "Nonprofit Services", pattern: /\bnon-?profit\b|\bphilanthrop(y|ic)\b|\bdonor\b|\bgrant\b/i },
+  { label: "Hospitality / Foodservice", pattern: /\bhospitality\b|\bfoodservice\b|\bcafe\b|\brestaurant\b|\bcoffee\b/i },
+  { label: "Logistics / Transportation", pattern: /\blogistics\b|\btransport(ation)?\b|\bdelivery\b|\bmobility\b|\bfreight\b/i },
+  { label: "Manufacturing", pattern: /\bmanufacturing\b|\bindustrial\b|\bfactory\b/i },
+  { label: "Public Sector / Government", pattern: /\bpublic sector\b|\bgovernment\b|\bcivic\b|\bmunicipal\b/i },
+];
+
+function inferStandardMarketCategory(...values: unknown[]) {
+  const corpus = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (!corpus) return "";
+  for (const candidate of STANDARD_MARKET_CATEGORY_PATTERNS) {
+    if (candidate.pattern.test(corpus)) return candidate.label;
+  }
+  return "";
+}
+
+function normalizeMarketCategoryValue(rawValue: unknown, ...context: unknown[]) {
+  const raw = String(rawValue || "")
+    .replace(/^\s*category\s*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const inferred = inferStandardMarketCategory(raw, ...context);
+  if (!raw) return inferred || "unknown";
+  if (!inferred) return raw;
+  if (raw.toLowerCase() === inferred.toLowerCase()) return inferred;
+  if (raw.toLowerCase().startsWith(`${inferred.toLowerCase()} for `)) return raw;
+  if (raw.toLowerCase().includes(inferred.toLowerCase())) return raw;
+  if (/^[a-z0-9/&\-\s]{2,80}$/i.test(raw) && /\bfor\b/i.test(raw)) {
+    return `${inferred} for ${raw.replace(/^.*?\bfor\b\s*/i, "").trim()}`;
+  }
+  return inferred;
+}
+
+function normalizeWhereToPlayValue(whereToPlayValue: unknown, normalizedMarketCategory: string) {
+  const value = String(whereToPlayValue || "").replace(/\s+/g, " ").trim();
+  const category = String(normalizedMarketCategory || "").trim();
+  if (!value) return category ? `Category: ${category}.` : "Category: unknown.";
+  if (/^\s*category\s*:/i.test(value)) return value;
+  return category ? `Category: ${category}. ${value}` : value;
 }
 
 async function fetchWithTimeout(
@@ -1114,6 +1175,7 @@ async function repairWeakOpportunities(args: {
   website: string;
   baselineBrief: string;
   strategicProblemBrief?: string;
+  managedOutcomes?: unknown;
   journeys: unknown;
   opportunities: unknown;
   schema: any;
@@ -1131,12 +1193,14 @@ async function repairWeakOpportunities(args: {
     `- includes a measurable dimension in spirit: time, effort, risk, confidence, clarity, consistency, completion, follow-through, retention, conversion, continuity, or similar\n` +
     `- stays specific to the company, audience, and step context\n` +
     `Do not output feature ideas, initiatives, deliverables, launches, forms, portals, dashboards, or campaigns as outcomes.\n` +
+    `Do not restate the parent desired outcome verbatim; opportunities must be narrower than desired outcomes.\n` +
     `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
     `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
     `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
+    `Managed outcomes:\n${buildManagedOutcomeBrief(args.managedOutcomes || [])}\n\n` +
     `Generated journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Current opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
     `Rewrite weak outcomes so they read like strong product discovery outcomes while staying faithful to the same step context and company reality.\n`;
@@ -1161,7 +1225,6 @@ async function generateManagedOutcomes(args: {
   baselineBrief: string;
   strategicProblemBrief?: string;
   journeys: unknown;
-  opportunities: unknown;
 }) {
   const systemText =
     `You are defining managed product outcomes for a Teresa Torres style opportunity solution tree.\n` +
@@ -1179,7 +1242,7 @@ async function generateManagedOutcomes(args: {
     `- include a plausible leading indicator that could eventually be measured\n` +
     `- note evidence_basis honestly from public evidence only\n` +
     `- keep confidence lower when evidence is inferential rather than directly measured\n` +
-    `- reuse concrete nouns and contexts from the top opportunities and steps for that journey\n` +
+    `- reuse concrete nouns and contexts from the journey steps and evidence context\n` +
     `- do not use generic roots like "Improve customer progress", "Improve operations", or "Increase conversion" without a concrete object and context\n` +
     `- outcome_title should be specific enough to distinguish this company from another company in a different sector\n` +
     `- leading_indicator should mention what specifically changes, not just "progress" or "performance"\n` +
@@ -1190,9 +1253,8 @@ async function generateManagedOutcomes(args: {
     `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
-    `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
     `Generate one customer managed outcome that the team should manage toward.\n` +
-    `Anchor it in the actual top customer opportunities instead of using generic template wording.\n`;
+    `Anchor it in the actual customer journey context instead of generic template wording.\n`;
 
   return callOpenAIJSON({
     apiKey: args.apiKey,
@@ -1272,11 +1334,44 @@ function collectOutcomeContextTokensFromOpportunities(opportunities: unknown) {
     .map(([token]) => token);
 }
 
-function inferManagedOutcomeAudience(opportunities: unknown) {
-  const text = (Array.isArray(opportunities) ? opportunities : [])
+function collectOutcomeContextTokensFromJourneys(journeys: unknown) {
+  const stop = new Set([
+    "define", "locate", "prepare", "confirm", "execute", "monitor", "modify", "conclude",
+    "customer", "customers", "journey", "journeys", "step", "steps", "progress", "decision",
+  ]);
+  const counts = new Map<string, number>();
+  const rows = (Array.isArray(journeys) ? journeys : []) as Array<{ steps?: Array<{ step_label?: string; description?: string }> }>;
+  for (const journey of rows) {
+    const steps = Array.isArray(journey?.steps) ? journey.steps : [];
+    for (const step of steps) {
+      const text = `${String(step?.step_label || "")} ${String(step?.description || "")}`.toLowerCase();
+      for (const token of text.match(/[a-z][a-z-]{3,}/g) || []) {
+        if (stop.has(token)) continue;
+        counts.set(token, (counts.get(token) || 0) + 1);
+      }
+    }
+  }
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([token]) => token);
+}
+
+function inferManagedOutcomeAudience(args: { opportunities?: unknown; journeys?: unknown }) {
+  const opportunitiesText = (Array.isArray(args.opportunities) ? args.opportunities : [])
     .map((row) => `${String((row as any)?.outcome || "")} ${String((row as any)?.step_label || "")}`)
     .join(" ")
     .toLowerCase();
+
+  const journeysText = (Array.isArray(args.journeys) ? args.journeys : [])
+    .map((journey) => {
+      const steps = Array.isArray((journey as any)?.steps) ? (journey as any).steps : [];
+      return steps.map((step: any) => `${String(step?.step_label || "")} ${String(step?.description || "")}`).join(" ");
+    })
+    .join(" ")
+    .toLowerCase();
+  const text = `${opportunitiesText} ${journeysText}`.trim();
 
   if (/\bcafe owners?\b/.test(text)) return "cafe owners";
   if (/\bpartner cafes?\b/.test(text)) return "partner cafes";
@@ -1332,7 +1427,8 @@ function normalizeManagedOutcome(outcome: any) {
 }
 
 function buildDeterministicManagedOutcomeFallback(args: {
-  opportunities: unknown;
+  opportunities?: unknown;
+  journeys?: unknown;
 }) {
   const rows = ((Array.isArray(args.opportunities) ? args.opportunities : []) as Array<{
     journey_key?: string;
@@ -1350,11 +1446,21 @@ function buildDeterministicManagedOutcomeFallback(args: {
       return (Number(a?.step_number) || 999) - (Number(b?.step_number) || 999);
     });
 
-  const first = rows[0];
-  const second = rows.find((row) => String(row?.step_label || "").trim() && String(row?.step_label || "").trim() !== String(first?.step_label || "").trim());
+  let first = rows[0];
+  let second = rows.find((row) => String(row?.step_label || "").trim() && String(row?.step_label || "").trim() !== String(first?.step_label || "").trim());
+
+  if (!first) {
+    const customerJourney = (Array.isArray(args.journeys) ? args.journeys : []).find((journey) =>
+      String((journey as any)?.journey_key || "").toLowerCase() === "customer"
+    ) as { steps?: Array<{ step_label?: string; step_number?: number }> } | undefined;
+    const steps = Array.isArray(customerJourney?.steps) ? customerJourney.steps : [];
+    first = steps[0] ? { step_label: steps[0].step_label, step_number: steps[0].step_number } : undefined;
+    second = steps[1] ? { step_label: steps[1].step_label, step_number: steps[1].step_number } : undefined;
+  }
+
   const stepA = humanizeStepPhrase(String(first?.step_label || "the core customer journey"));
   const stepB = humanizeStepPhrase(String(second?.step_label || ""));
-  const audience = inferManagedOutcomeAudience(rows);
+  const audience = inferManagedOutcomeAudience({ opportunities: rows, journeys: args.journeys });
 
   const outcomeTitle = stepB
     ? `Reliable progress from ${stepA} to ${stepB}`
@@ -1379,7 +1485,14 @@ function buildDeterministicManagedOutcomeFallback(args: {
 
 function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutcome>, contextTokens: string[]) {
   if (!outcome.outcome_title || !outcome.outcome_statement || !outcome.leading_indicator) return false;
-  return !analyzeManagedOutcomeSpecificity(outcome, contextTokens).weak;
+  const quality = analyzeManagedOutcomeSpecificity(outcome, contextTokens);
+  const semantics = validateDesiredOutcome({
+    statement: outcome.outcome_statement,
+    leadingIndicator: outcome.leading_indicator,
+    targetDirection: outcome.target_direction,
+    frameworksUsed: ["odi", "teresa_torres"],
+  });
+  return !quality.weak && semantics.valid;
 }
 
 async function repairManagedOutcomes(args: {
@@ -1390,7 +1503,7 @@ async function repairManagedOutcomes(args: {
   baselineBrief: string;
   strategicProblemBrief?: string;
   journeys: unknown;
-  opportunities: unknown;
+  opportunities?: unknown;
   outcomes: unknown;
 }) {
   const systemText =
@@ -1408,7 +1521,7 @@ async function repairManagedOutcomes(args: {
     `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
-    `Opportunities:\n${buildOpportunityBrief(args.opportunities)}\n\n` +
+    `Opportunities:\n${buildOpportunityBrief(args.opportunities || [])}\n\n` +
     `Current managed outcomes:\n${buildManagedOutcomeBrief(args.outcomes)}\n\n` +
     `Rewrite weak managed outcomes so each one is materially distinct and clearly tied to the company's actual journey context.\n`;
 
@@ -1460,6 +1573,66 @@ function buildRouteBrief(routes: unknown) {
     })
     .join("\n");
 }
+
+const SOLUTION_MATCH_STOP_WORDS = new Set([
+  "the", "and", "for", "with", "into", "from", "that", "this", "your", "their", "while", "through", "across",
+  "customer", "customers", "partner", "partners", "team", "teams", "step", "journey",
+  "increase", "reduce", "improve", "maximize", "minimize", "avoid",
+]);
+
+function solutionMatchTokens(value: string) {
+  const tokens = String(value || "").toLowerCase().match(/[a-z][a-z-]{2,}/g) || [];
+  return tokens.filter((token) => !SOLUTION_MATCH_STOP_WORDS.has(token));
+}
+
+function routeOpportunityFitScore(route: any, opportunity: any) {
+  const routeText = `${String(route?.title || "")} ${String(route?.short_description || "")} ${(Array.isArray(route?.frameworks_used) ? route.frameworks_used : []).join(" ")}`;
+  const routeTokens = new Set(solutionMatchTokens(routeText));
+  const oppTokens = new Set(solutionMatchTokens(`${String(opportunity?.outcome || "")} ${String(opportunity?.step_label || "")}`));
+  if (routeTokens.size === 0 || oppTokens.size === 0) return 0;
+
+  let overlap = 0;
+  for (const token of oppTokens) {
+    if (routeTokens.has(token)) overlap += 1;
+  }
+  const desiredCategory =
+    String(opportunity?.priority_tier || "") === "focus"
+      ? "fix"
+      : String(opportunity?.priority_tier || "") === "monitor"
+        ? "improve"
+        : "create";
+  const routeCategory = String(route?.category || "").toLowerCase();
+  const categoryScore = routeCategory === desiredCategory ? 0.6 : routeCategory ? -0.2 : 0;
+
+  return overlap * 1.1 + categoryScore;
+}
+
+function buildSolutionTestsForIdea(args: {
+  opportunity: { outcome?: string; step_label?: string };
+  solutionIdea: { title?: string };
+}) {
+  const outcome = String(args.opportunity?.outcome || "").trim() || "this opportunity outcome";
+  const stepLabel = String(args.opportunity?.step_label || "this journey step").trim().toLowerCase();
+  const title = String(args.solutionIdea?.title || "this idea").trim();
+
+  return [
+    {
+      title: "Desirability interview test",
+      method: "Interview",
+      metric: `Share of target users confirming ${outcome.toLowerCase()} is a high-priority friction in ${stepLabel}`,
+      success_threshold: "At least 70% of interviews confirm this is a top-3 pain point",
+      timebox: "2 weeks",
+    },
+    {
+      title: "Pilot behavior test",
+      method: "Pilot",
+      metric: `Completion and quality change when running ${title}`,
+      success_threshold: "At least 10% improvement vs. baseline with no quality regression",
+      timebox: "2 weeks",
+    },
+  ];
+}
+
 
 function buildPositioningBrief(positioning: unknown) {
   const entry = (positioning ?? {}) as {
@@ -1690,6 +1863,7 @@ async function runConsistencyReview(opts: {
     `- strategic problem alignment: drafts should clearly connect to client-stated problems\n` +
     `- buyer / chooser / user consistency across baseline, journeys, ODI, positioning, and strategy\n` +
     `- market category consistency across baseline, positioning, and strategy\n` +
+    `- market category phrasing anchored to a standard, well-known category (not bespoke jargon)\n` +
     `- opportunity rows correctly tied to journey steps\n` +
     `- routes that meaningfully connect to opportunities and job-step gaps\n` +
     `- any sign of wrong-company drift, adjacent-market drift, or contradictory language\n` +
@@ -1736,6 +1910,7 @@ async function runPositioningReview(opts: {
     `Check for:\n` +
     `- positioning clearly addresses the client-stated strategic problem(s)\n` +
     `- market category credibility and alignment with baseline evidence\n` +
+    `- market category written as a standard frame of reference (or '<known category> for <job>')\n` +
     `- best-fit customers matching the buyer/job context\n` +
     `- competitive alternatives serving the same job context\n` +
     `- unique attributes being specific and credible rather than generic\n` +
@@ -1921,6 +2096,11 @@ async function runAllDraftReviews(opts: {
 function frameworkKeysFor(artifact: "inputs" | "journeys" | "opportunities" | "routes") {
   return getFrameworkRoutingPlan(artifact).map((framework) => framework.key);
 }
+
+const STANDARD_MARKET_CATEGORY_GUIDANCE =
+  "Use a standard, well-known market category anchor. " +
+  "Preferred anchors: B2B SaaS, B2C SaaS, Marketplace, E-commerce, Professional Services, Healthcare Services, Financial Services, Education Services, Nonprofit Services, Hospitality/Foodservice, Logistics/Transportation, Manufacturing, Public Sector/Government. " +
+  "If the company is niche, format as '<well-known category> for <specific job executor/job>' rather than inventing proprietary category names.";
 
 const PLAIN_LANGUAGE_RULES =
   "Writing style rules: Use clear, plain language that a non-expert can understand. " +
@@ -3713,7 +3893,8 @@ async function runFinalizer(opts: {
     `Do not rewrite unaffected areas for style alone.\n` +
     `Stay strictly consistent with the provided evidence context and ODI context.\n` +
     `Ensure revisions remain aligned to client-stated strategic problems.\n` +
-    `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n`;
+    `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n` +
+    `Keep market category and where-to-play phrasing aligned to a standard category frame of reference and ODI job context.\n`;
 
   return await callOpenAIJSON({
     apiKey: opts.apiKey,
@@ -4379,8 +4560,81 @@ Deno.serve(async (req) => {
       }, 500);
     }
 
+    const opportunityFrameworkKeys = ensureRequiredFrameworkKeys(frameworkKeysFor("opportunities"));
+    const routeFrameworkKeys = ensureRequiredFrameworkKeys(frameworkKeysFor("routes"));
+
     // -------------------------
-    // 3) Generate OPPORTUNITIES (customer journey)
+    // 3) Generate MANAGED OUTCOMES (strict, before opportunities)
+    // -------------------------
+    const managedOutcomeContextTokensFromJourneys = collectOutcomeContextTokensFromJourneys(journeys);
+    const managedOutcomesResult = await generateManagedOutcomes({
+      apiKey: openaiKey,
+      model: openaiModel,
+      companyName: company_name,
+      website,
+      baselineBrief,
+      strategicProblemBrief,
+      journeys,
+    });
+
+    let managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
+      ? managedOutcomesResult.outcomes
+      : [];
+
+    const weakManagedOutcomeCount = managedOutcomes.filter((outcome) =>
+      analyzeManagedOutcomeSpecificity({
+        outcome_title: String(outcome?.outcome_title || ""),
+        outcome_statement: String(outcome?.outcome_statement || ""),
+        leading_indicator: String(outcome?.leading_indicator || ""),
+      }, managedOutcomeContextTokensFromJourneys).weak
+    ).length;
+
+    if (weakManagedOutcomeCount > 0) {
+      const repairedManagedOutcomesResult = await repairManagedOutcomes({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        strategicProblemBrief,
+        journeys,
+        outcomes: managedOutcomes,
+      });
+
+      managedOutcomes = Array.isArray(repairedManagedOutcomesResult?.outcomes)
+        ? repairedManagedOutcomesResult.outcomes
+        : [];
+    }
+
+    managedOutcomes = managedOutcomes
+      .filter((outcome) => String(outcome?.journey_key || "") === "customer")
+      .map((outcome) => normalizeManagedOutcome(outcome))
+      .filter((outcome) =>
+        validateDesiredOutcome({
+          statement: outcome.outcome_statement,
+          leadingIndicator: outcome.leading_indicator,
+          targetDirection: outcome.target_direction,
+          frameworksUsed: opportunityFrameworkKeys,
+        }).valid,
+      );
+
+    if (managedOutcomes.length === 0) {
+      managedOutcomes = [buildDeterministicManagedOutcomeFallback({ journeys })];
+    }
+
+    const hasUsableManagedOutcome = managedOutcomes.some((outcome) =>
+      isUsableManagedOutcome(outcome, managedOutcomeContextTokensFromJourneys)
+    );
+    if (!hasUsableManagedOutcome) {
+      return jsonResponse({
+        error: "Managed outcomes failed strict ODI/Teresa Torres validation after repair.",
+        status: "validation_failed",
+      }, 422);
+    }
+    const primaryManagedOutcomeStatement = String(managedOutcomes[0]?.outcome_statement || "").trim();
+
+    // -------------------------
+    // 4) Generate OPPORTUNITIES (customer journey)
     // -------------------------
     const oppsSchema = {
       type: "object",
@@ -4418,6 +4672,7 @@ Deno.serve(async (req) => {
       `Rules:\n` +
       `- Use the provided journeys and steps exactly; do not invent unrelated step labels or step numbers\n` +
       `- Opportunities should target bottlenecks, missing capabilities, weak transitions, or unclear handoffs in those journeys\n` +
+      `- Every opportunity must be narrower and more specific than the managed desired outcome it supports\n` +
       `- Opportunities should directly address the client-stated strategic problems when provided\n` +
       `- outcome must read like a strong product discovery outcome or ODI desired outcome, not a feature idea, deliverable, or recommendation\n` +
       `- Use a structured formula close to: direction + measurable dimension + object + context\n` +
@@ -4444,6 +4699,7 @@ Deno.serve(async (req) => {
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
+      `Managed outcomes:\n${buildManagedOutcomeBrief(managedOutcomes)}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief}\n\n` +
       `Generated journeys and steps:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generate 8–20 opportunities for the customer journey only.\n` +
@@ -4466,8 +4722,22 @@ Deno.serve(async (req) => {
     if (opportunities.length < 8) {
       return jsonResponse({ error: `Expected >=8 customer opportunities, got ${opportunities.length}` }, 500);
     }
-    const weakOutcomeCount = opportunities.filter((opp) => analyzeOutcomeQuality(String(opp?.outcome || "")).weak).length;
-    if (weakOutcomeCount > 0) {
+    const invalidOpportunityCount = opportunities.filter((opp) => {
+      const outcome = normalizeOutcomeLanguage(String(opp?.outcome || ""));
+      const quality = analyzeOutcomeQuality(outcome);
+      const semantic = validateOpportunity({
+        outcome,
+        importance: Number(opp?.importance),
+        satisfaction: Number(opp?.satisfaction),
+        frameworksUsed: opportunityFrameworkKeys,
+      });
+      const distinctness = primaryManagedOutcomeStatement
+        ? validateOutcomeOpportunityDistinctness(primaryManagedOutcomeStatement, outcome)
+        : { valid: true };
+      return quality.weak || !semantic.valid || !distinctness.valid;
+    }).length;
+
+    if (invalidOpportunityCount > 0) {
       const repairedOppsResult = await repairWeakOpportunities({
         apiKey: openaiKey,
         model: openaiModel,
@@ -4475,6 +4745,7 @@ Deno.serve(async (req) => {
         website,
         baselineBrief,
         strategicProblemBrief,
+        managedOutcomes,
         journeys,
         opportunities,
         schema: oppsSchema,
@@ -4517,7 +4788,25 @@ Deno.serve(async (req) => {
         error: "Generated opportunities did not align to existing customer job-map steps.",
       }, 500);
     }
-    const opportunityFrameworkKeys = frameworkKeysFor("opportunities");
+    const remainingInvalidOpportunities = opportunities.filter((opp) => {
+      const semantic = validateOpportunity({
+        outcome: String(opp?.outcome || ""),
+        importance: Number(opp?.importance),
+        satisfaction: Number(opp?.satisfaction),
+        frameworksUsed: opportunityFrameworkKeys,
+      });
+      const distinctness = primaryManagedOutcomeStatement
+        ? validateOutcomeOpportunityDistinctness(primaryManagedOutcomeStatement, String(opp?.outcome || ""))
+        : { valid: true };
+      return !semantic.valid || !distinctness.valid;
+    });
+    if (remainingInvalidOpportunities.length > 0) {
+      return jsonResponse({
+        error: "Opportunities failed strict ODI/Teresa Torres validation after repair.",
+        status: "validation_failed",
+      }, 422);
+    }
+
     const odiFrameworkKeys = Array.from(new Set([
       ...getFrameworkRoutingPlan("journeys").map((framework) => framework.key),
       ...getFrameworkRoutingPlan("opportunities").map((framework) => framework.key),
@@ -4661,16 +4950,18 @@ Deno.serve(async (req) => {
       `Framework guidance:\n${buildFrameworkBrief("positioning", getFrameworkRoutingPlan("positioning"))}\n\n` +
       `Rules:\n` +
       `- Stay strictly consistent with the provided website, evidence, category, audience, and company context\n` +
+      `- Use April Dunford frame-of-reference logic plus ODI role clarity (job executor, chooser, user)\n` +
       `- Never switch industries, populations, or buyer types; if the evidence says youth mental healthcare, do not output elder care, senior living, or adjacent but different markets\n` +
       `- competitive_alternatives should be real alternatives, including manual workarounds or doing nothing when relevant\n` +
       `- competitive_alternatives must serve the same customer/job context as the company; do not list alternatives from unrelated sectors\n` +
       `- unique_attributes should be specific and credible, not vague marketing claims\n` +
       `- value_for_customer should describe what customers can do or achieve that they could not before\n` +
-      `- best_fit_customers should describe the clearest-fit audience in one paragraph\n` +
-      `- market_category should be the category the company should claim or reshape\n` +
+      `- best_fit_customers should describe the clearest-fit audience in one paragraph and name buyer/executor context when possible\n` +
+      `- market_category should be the category the company should claim or reshape and must be concise (2-8 words)\n` +
+      `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
       evidenceAlignmentConstraint +
       `- positioning should directly address the client-stated strategic problem framing when provided\n` +
-      `- category_rationale should explain why this category framing helps buyers understand the company\n` +
+      `- category_rationale should explain why this category frame of reference helps buyers understand the company in ODI job terms\n` +
       `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
       `- proposed_tagline should be a strategist-quality direction, not a generic slogan\n` +
       `- highlighted=true only for the strongest or most differentiating items\n`;
@@ -4780,6 +5071,9 @@ Deno.serve(async (req) => {
       `- Strategy choices should directly resolve or reduce the client-stated strategic problem(s) when provided\n` +
       noIndustrySwitchConstraint +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
+      `- where_to_play must start with "Category: <well-known category>" and then describe segment + job context\n` +
+      `- where_to_play should align with April Dunford frame of reference and ODI role/job context\n` +
+      `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
       `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +
       `- capabilities should be concrete operational or strategic abilities, not departments\n` +
       `- management_systems should be recurring operating loops, measurement systems, governance, planning, or resource systems\n` +
@@ -4999,6 +5293,26 @@ Deno.serve(async (req) => {
       });
     }
 
+    const positioningRecord = (positioningCanvasResult ?? {}) as Record<string, unknown>;
+    const strategyRecord = (strategyCascadeResult ?? {}) as Record<string, unknown>;
+    const baselineCategory = String(
+      ((effectiveBaselineResultJson as { category_archetype?: unknown } | null)?.category_archetype) || "",
+    );
+    const normalizedMarketCategory = normalizeMarketCategoryValue(
+      positioningRecord.market_category,
+      baselineCategory,
+      strategyRecord.where_to_play,
+      positioningRecord.best_fit_customers,
+      strategicProblemBrief,
+    );
+    positioningRecord.market_category = normalizedMarketCategory;
+    strategyRecord.where_to_play = normalizeWhereToPlayValue(
+      strategyRecord.where_to_play,
+      normalizedMarketCategory,
+    );
+    positioningCanvasResult = positioningRecord;
+    strategyCascadeResult = strategyRecord;
+
     const savedReviewStatus =
       highSeverityReviews.length > 0 && allowHighSeverityReviewSave
         ? "saved_with_high_risk_review"
@@ -5021,6 +5335,80 @@ Deno.serve(async (req) => {
       reviews: reviewResults,
       finalizerApplied,
     });
+
+    const managedOutcomeValidationFailures: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < managedOutcomes.length; index += 1) {
+      const managed = managedOutcomes[index] || {};
+      const validation = validateDesiredOutcome({
+        statement: String((managed as Record<string, unknown>)?.outcome_statement || (managed as Record<string, unknown>)?.outcome_title || ""),
+        leadingIndicator: String((managed as Record<string, unknown>)?.leading_indicator || ""),
+        targetDirection: String((managed as Record<string, unknown>)?.target_direction || ""),
+        frameworksUsed: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
+      });
+      if (!validation.valid) {
+        managedOutcomeValidationFailures.push({
+          index,
+          reasons: validation.reasons,
+        });
+      }
+    }
+    if (managedOutcomeValidationFailures.length > 0) {
+      return jsonResponse({
+        error: "Managed outcomes failed strict ODI/Teresa Torres validation before persistence.",
+        status: "validation_failed",
+        details: managedOutcomeValidationFailures,
+      }, 422);
+    }
+
+    const primaryOutcomeStatement = String(
+      (managedOutcomes[0] as Record<string, unknown> | undefined)?.outcome_statement ||
+      (managedOutcomes[0] as Record<string, unknown> | undefined)?.outcome_title ||
+      "",
+    ).trim();
+    opportunities = opportunities.filter((opp) =>
+      isCustomerJourneyKey((opp as Record<string, unknown> | undefined)?.journey_key),
+    );
+    if (opportunities.length === 0) {
+      return jsonResponse({
+        error: "No customer opportunities available after strict scope enforcement.",
+        status: "validation_failed",
+      }, 422);
+    }
+    const opportunityValidationFailures: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < opportunities.length; index += 1) {
+      const opp = opportunities[index] as Record<string, unknown>;
+      const validation = validateOpportunity({
+        outcome: String(opp?.outcome || ""),
+        importance: Number(opp?.importance),
+        satisfaction: Number(opp?.satisfaction),
+        frameworksUsed: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
+      });
+      if (!validation.valid) {
+        opportunityValidationFailures.push({
+          index,
+          kind: "opportunity",
+          reasons: validation.reasons,
+        });
+        continue;
+      }
+      if (primaryOutcomeStatement) {
+        const distinctness = validateOutcomeOpportunityDistinctness(primaryOutcomeStatement, String(opp?.outcome || ""));
+        if (!distinctness.valid) {
+          opportunityValidationFailures.push({
+            index,
+            kind: "distinctness",
+            reasons: distinctness.reasons,
+          });
+        }
+      }
+    }
+    if (opportunityValidationFailures.length > 0) {
+      return jsonResponse({
+        error: "Opportunities failed strict ODI/Teresa Torres validation before persistence.",
+        status: "validation_failed",
+        details: opportunityValidationFailures,
+      }, 422);
+    }
 
     // -------------------------
     // 7) Clear old rows for company
@@ -5082,6 +5470,8 @@ Deno.serve(async (req) => {
         .eq("company_id", company_id)
         .in("journey_key", jobMapUpdateJourneyKeys);
     }
+    await supabase.from("solution_tests").delete().eq("company_id", company_id);
+    await supabase.from("solution_ideas").delete().eq("company_id", company_id);
     await supabase.from("opportunities").delete().eq("company_id", company_id);
     await supabase.from("routes").delete().eq("company_id", company_id);
     await supabase.from("managed_outcomes").delete().eq("company_id", company_id);
@@ -5098,10 +5488,30 @@ Deno.serve(async (req) => {
     let oppsInserted = 0;
     let routesInserted = 0;
     let managedOutcomesInserted = 0;
+    let solutionIdeasInserted = 0;
+    let solutionTestsInserted = 0;
     let odiNeedsInserted = 0;
     let odiMarketDefinitionsInserted = 0;
     let positioningCanvasInserted = 0;
     let strategyCascadeInserted = 0;
+    const insertedOpportunities: Array<{
+      id: string;
+      outcome: string;
+      step_label: string;
+      step_number: number;
+      journey_key: string;
+      priority_tier: string;
+      opportunity_score: number;
+    }> = [];
+    const insertedRoutes: Array<{
+      id: string;
+      category: string;
+      title: string;
+      short_description: string;
+      effort: string;
+      frameworks_used: string[];
+      sort_order: number;
+    }> = [];
     const restoredFileKeys = new Set<string>();
 
     // Inputs: accept model grouping with safe normalization/fallback
@@ -5281,6 +5691,63 @@ Deno.serve(async (req) => {
       }
     }
 
+    const managedOutcomeIdByJourney = new Map<string, string>();
+    for (const outcome of managedOutcomes) {
+      const journeyKey = "customer";
+      const payload = {
+        company_id,
+        user_id: user.id,
+        journey_key: journeyKey,
+        outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
+        outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
+        leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
+        target_direction: normalizeDirection(String(outcome?.target_direction || "")),
+        evidence_basis: String(outcome?.evidence_basis || "").trim(),
+        confidence: clamp(Number(outcome?.confidence) || 58, 0, 100),
+        frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
+      };
+
+      let insert = await supabase
+        .from("managed_outcomes")
+        .insert(payload)
+        .select("id")
+        .single();
+
+      if (insert.error && String(insert.error.message || "").toLowerCase().includes("frameworks_used")) {
+        insert = await supabase
+          .from("managed_outcomes")
+          .insert({
+            company_id,
+            user_id: user.id,
+            journey_key: journeyKey,
+            outcome_title: payload.outcome_title,
+            outcome_statement: payload.outcome_statement,
+            leading_indicator: payload.leading_indicator,
+            target_direction: payload.target_direction,
+            evidence_basis: payload.evidence_basis,
+            confidence: payload.confidence,
+          })
+          .select("id")
+          .single();
+      }
+
+      if (insert.error) {
+        console.error("[research-company] managed outcome insert error:", insert.error);
+      } else {
+        const managedId = String((insert.data as { id?: string } | null)?.id || "");
+        if (managedId) {
+          managedOutcomeIdByJourney.set(journeyKey, managedId);
+          managedOutcomesInserted++;
+        }
+      }
+    }
+    if (!managedOutcomeIdByJourney.get("customer")) {
+      return jsonResponse({
+        error: "Managed outcomes could not be persisted; aborting strict opportunity tree generation.",
+        status: "persistence_failed",
+      }, 422);
+    }
+
     // Opportunities: recompute tier from score to keep consistent
     for (const opp of opportunities) {
       const normalizedJourneyKey = normalizeJourneyKey(opp?.journey_key);
@@ -5304,22 +5771,65 @@ Deno.serve(async (req) => {
       const priority_tier =
         opportunity_score >= 12 ? "focus" : opportunity_score >= 7 ? "monitor" : "defer";
 
-      const { error: oppErr } = await supabase.from("opportunities").insert({
-        company_id,
-        user_id: user.id,
-        frameworks_used: opportunityFrameworkKeys,
-        outcome: String(opp?.outcome || ""),
-        step_number: stepNumber,
-        step_label: stepLabel,
-        journey_key: journeyKey,
-        importance,
-        satisfaction,
-        opportunity_score,
-        priority_tier,
-      });
+      const managedOutcomeId = managedOutcomeIdByJourney.get(journeyKey) || null;
 
-      if (oppErr) console.error("[research-company] opportunity insert error:", oppErr);
-      else oppsInserted++;
+      let insert = await supabase
+        .from("opportunities")
+        .insert({
+          company_id,
+          user_id: user.id,
+          frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
+          managed_outcome_id: managedOutcomeId,
+          outcome: String(opp?.outcome || ""),
+          step_number: stepNumber,
+          step_label: stepLabel,
+          journey_key: journeyKey,
+          importance,
+          satisfaction,
+          opportunity_score,
+          priority_tier,
+        })
+        .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
+        .single();
+
+      if (insert.error && String(insert.error.message || "").toLowerCase().includes("frameworks_used")) {
+        insert = await supabase
+          .from("opportunities")
+          .insert({
+            company_id,
+            user_id: user.id,
+            managed_outcome_id: managedOutcomeId,
+            outcome: String(opp?.outcome || ""),
+            step_number: stepNumber,
+            step_label: stepLabel,
+            journey_key: journeyKey,
+            importance,
+            satisfaction,
+            opportunity_score,
+            priority_tier,
+          })
+          .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
+          .single();
+      }
+
+      if (insert.error) {
+        console.error("[research-company] opportunity insert error:", insert.error);
+      } else {
+        const row = (insert.data || {}) as Record<string, unknown>;
+        const insertedId = String(row.id || "");
+        if (insertedId) {
+          insertedOpportunities.push({
+            id: insertedId,
+            outcome: String(row.outcome || ""),
+            step_label: String(row.step_label || ""),
+            step_number: Number(row.step_number) || stepNumber,
+            journey_key: String(row.journey_key || journeyKey),
+            priority_tier: String(row.priority_tier || priority_tier),
+            opportunity_score: Number(row.opportunity_score) || opportunity_score,
+          });
+        }
+        oppsInserted++;
+      }
     }
 
     const customerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
@@ -5442,7 +5952,7 @@ Deno.serve(async (req) => {
       const routePayload = {
         company_id,
         user_id: user.id,
-        frameworks_used: routeFrameworkKeys,
+        frameworks_used: ensureRequiredFrameworkKeys(routeFrameworkKeys),
         category,
         title: String(route?.title || ""),
         short_description: String(route?.short_description || ""),
@@ -5452,10 +5962,14 @@ Deno.serve(async (req) => {
         sort_order: Math.max(1, Number(route?.sort_order) || routesInserted + 1),
       };
 
-      let { error: routeErr } = await supabase.from("routes").insert(routePayload);
+      let insert = await supabase
+        .from("routes")
+        .insert(routePayload)
+        .select("id, category, title, short_description, effort, frameworks_used, sort_order")
+        .single();
 
-      if (routeErr && String(routeErr.message || "").toLowerCase().includes("frameworks_used")) {
-        const fallback = await supabase.from("routes").insert({
+      if (insert.error && String(insert.error.message || "").toLowerCase().includes("frameworks_used")) {
+        insert = await supabase.from("routes").insert({
           company_id,
           user_id: user.id,
           category,
@@ -5465,97 +5979,134 @@ Deno.serve(async (req) => {
           effort,
           type: String(route?.type || routeType),
           sort_order: Math.max(1, Number(route?.sort_order) || routesInserted + 1),
-        });
-        routeErr = fallback.error;
+        })
+          .select("id, category, title, short_description, effort, frameworks_used, sort_order")
+          .single();
       }
 
-      if (routeErr) console.error("[research-company] route insert error:", routeErr);
-      else routesInserted++;
-    }
-
-    const managedOutcomesResult = await generateManagedOutcomes({
-      apiKey: openaiKey,
-      model: openaiModel,
-      companyName: company_name,
-      website,
-      baselineBrief,
-      strategicProblemBrief,
-      journeys,
-      opportunities,
-    });
-
-    const managedOutcomeContextTokens = collectOutcomeContextTokensFromOpportunities(opportunities);
-
-    let managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
-      ? managedOutcomesResult.outcomes
-      : [];
-
-    const weakManagedOutcomeCount = managedOutcomes.filter((outcome) =>
-      analyzeManagedOutcomeSpecificity({
-        outcome_title: String(outcome?.outcome_title || ""),
-        outcome_statement: String(outcome?.outcome_statement || ""),
-        leading_indicator: String(outcome?.leading_indicator || ""),
-      }, managedOutcomeContextTokens).weak
-    ).length;
-
-    if (weakManagedOutcomeCount > 0) {
-      const repairedManagedOutcomesResult = await repairManagedOutcomes({
-        apiKey: openaiKey,
-        model: openaiModel,
-        companyName: company_name,
-        website,
-        baselineBrief,
-        strategicProblemBrief,
-        journeys,
-        opportunities,
-        outcomes: managedOutcomes,
-      });
-
-      const repairedManagedOutcomes = Array.isArray(repairedManagedOutcomesResult?.outcomes)
-        ? repairedManagedOutcomesResult.outcomes
-        : [];
-
-      const repairedCustomerOutcomes = repairedManagedOutcomes.filter(
-        (outcome) => String(outcome?.journey_key || "") === "customer"
-      );
-
-      if (repairedCustomerOutcomes.length >= 1) {
-        managedOutcomes = repairedCustomerOutcomes;
-      }
-    }
-
-    managedOutcomes = managedOutcomes
-      .filter((outcome) => String(outcome?.journey_key || "") === "customer")
-      .map((outcome) => normalizeManagedOutcome(outcome));
-
-    const hasUsableManagedOutcome = managedOutcomes.some((outcome) =>
-      isUsableManagedOutcome(outcome, managedOutcomeContextTokens)
-    );
-
-    if (!hasUsableManagedOutcome) {
-      managedOutcomes = [buildDeterministicManagedOutcomeFallback({ opportunities })];
-    }
-
-    for (const outcome of managedOutcomes) {
-      const journeyKey = "customer";
-
-      const { error: managedOutcomeErr } = await supabase.from("managed_outcomes").insert({
-        company_id,
-        user_id: user.id,
-        journey_key: journeyKey,
-        outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || "")),
-        outcome_statement: normalizeOutcomeLanguage(String(outcome?.outcome_statement || "")),
-        leading_indicator: normalizeOutcomeLanguage(String(outcome?.leading_indicator || "")),
-        target_direction: normalizeDirection(String(outcome?.target_direction || "")),
-        evidence_basis: String(outcome?.evidence_basis || "").trim(),
-        confidence: clamp(Number(outcome?.confidence) || 58, 0, 100),
-        frameworks_used: opportunityFrameworkKeys,
-      });
-
-      if (managedOutcomeErr) {
-        console.error("[research-company] managed outcome insert error:", managedOutcomeErr);
+      if (insert.error) {
+        console.error("[research-company] route insert error:", insert.error);
       } else {
-        managedOutcomesInserted++;
+        const row = (insert.data || {}) as Record<string, unknown>;
+        insertedRoutes.push({
+          id: String(row.id || ""),
+          category: String(row.category || category),
+          title: String(row.title || ""),
+          short_description: String(row.short_description || ""),
+          effort: String(row.effort || effort),
+          frameworks_used: ensureRequiredFrameworkKeys(Array.isArray(row.frameworks_used) ? row.frameworks_used as string[] : routeFrameworkKeys),
+          sort_order: Math.max(1, Number(row.sort_order) || routesInserted + 1),
+        });
+        routesInserted++;
+      }
+    }
+
+    for (const opportunity of insertedOpportunities) {
+      const rankedRoutes = insertedRoutes
+        .map((route) => ({
+          route,
+          score: routeOpportunityFitScore(route, opportunity),
+        }))
+        .filter((entry) => entry.score >= 1.2)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2);
+
+      for (let index = 0; index < rankedRoutes.length; index += 1) {
+        const candidate = rankedRoutes[index];
+        const ideaPayload = {
+          company_id,
+          user_id: user.id,
+          opportunity_id: opportunity.id,
+          route_id: candidate.route.id || null,
+          title: String(candidate.route.title || "Untitled solution idea"),
+          description: String(candidate.route.short_description || "Candidate intervention for this opportunity branch."),
+          category: String(candidate.route.category || "improve"),
+          effort: String(candidate.route.effort || "medium"),
+          confidence: clamp(Math.round(candidate.score * 22), 15, 90),
+          frameworks_used: ensureRequiredFrameworkKeys([
+            ...opportunityFrameworkKeys,
+            ...candidate.route.frameworks_used,
+          ]),
+          sort_order: index + 1,
+        };
+
+        const ideaValidation = validateSolutionIdea({
+          title: ideaPayload.title,
+          description: ideaPayload.description,
+          frameworksUsed: ideaPayload.frameworks_used,
+        });
+        if (!ideaValidation.valid) {
+          return jsonResponse({
+            error: "Solution ideas failed strict ODI/Teresa Torres validation.",
+            status: "validation_failed",
+            details: ideaValidation.reasons,
+          }, 422);
+        }
+
+        const ideaInsert = await supabase
+          .from("solution_ideas")
+          .insert(ideaPayload)
+          .select("id")
+          .single();
+
+        if (ideaInsert.error) {
+          console.error("[research-company] solution idea insert error:", ideaInsert.error);
+          return jsonResponse({
+            error: "Solution ideas could not be persisted.",
+            status: "persistence_failed",
+          }, 422);
+        }
+
+        const solutionIdeaId = String((ideaInsert.data as { id?: string } | null)?.id || "");
+        if (!solutionIdeaId) continue;
+        solutionIdeasInserted++;
+
+        const generatedTests = buildSolutionTestsForIdea({
+          opportunity,
+          solutionIdea: { title: ideaPayload.title },
+        });
+
+        for (let testIndex = 0; testIndex < generatedTests.length; testIndex += 1) {
+          const test = generatedTests[testIndex];
+          const testPayload = {
+            company_id,
+            user_id: user.id,
+            solution_idea_id: solutionIdeaId,
+            title: String(test.title || `Test ${testIndex + 1}`),
+            method: String(test.method || ""),
+            metric: String(test.metric || ""),
+            success_threshold: String(test.success_threshold || ""),
+            timebox: String(test.timebox || ""),
+            frameworks_used: ensureRequiredFrameworkKeys(ideaPayload.frameworks_used),
+            sort_order: testIndex + 1,
+          };
+
+          const testValidation = validateSolutionTest({
+            title: testPayload.title,
+            method: testPayload.method,
+            metric: testPayload.metric,
+            successThreshold: testPayload.success_threshold,
+            timebox: testPayload.timebox,
+            frameworksUsed: testPayload.frameworks_used,
+          });
+          if (!testValidation.valid) {
+            return jsonResponse({
+              error: "Solution tests failed strict ODI/Teresa Torres validation.",
+              status: "validation_failed",
+              details: testValidation.reasons,
+            }, 422);
+          }
+
+          const testInsert = await supabase.from("solution_tests").insert(testPayload);
+          if (testInsert.error) {
+            console.error("[research-company] solution test insert error:", testInsert.error);
+            return jsonResponse({
+              error: "Solution tests could not be persisted.",
+              status: "persistence_failed",
+            }, 422);
+          }
+          solutionTestsInserted++;
+        }
       }
     }
 
@@ -5750,6 +6301,8 @@ Deno.serve(async (req) => {
           opportunities: opportunities.length,
           routes: routes.length,
           managed_outcomes: managedOutcomesInserted,
+          solution_ideas: solutionIdeasInserted,
+          solution_tests: solutionTestsInserted,
         },
       },
       artifactsJson: {
@@ -5809,6 +6362,8 @@ Deno.serve(async (req) => {
       opportunities_inserted: oppsInserted,
       routes_inserted: routesInserted,
       managed_outcomes_inserted: managedOutcomesInserted,
+      solution_ideas_inserted: solutionIdeasInserted,
+      solution_tests_inserted: solutionTestsInserted,
       odi_market_definitions_inserted: odiMarketDefinitionsInserted,
       odi_needs_inserted: odiNeedsInserted,
       positioning_canvas_inserted: positioningCanvasInserted,

@@ -613,6 +613,7 @@ export type Database = {
           id: string
           importance: number
           journey_key: string
+          managed_outcome_id: string | null
           opportunity_score: number
           outcome: string
           priority_tier: string
@@ -630,6 +631,7 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          managed_outcome_id?: string | null
           opportunity_score?: number
           outcome?: string
           priority_tier?: string
@@ -647,6 +649,7 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          managed_outcome_id?: string | null
           opportunity_score?: number
           outcome?: string
           priority_tier?: string
@@ -663,6 +666,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunities_managed_outcome_id_fkey"
+            columns: ["managed_outcome_id"]
+            isOneToOne: false
+            referencedRelation: "managed_outcomes"
             referencedColumns: ["id"]
           },
         ]
@@ -942,6 +952,142 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solution_ideas: {
+        Row: {
+          category: string
+          company_id: string
+          confidence: number
+          created_at: string
+          description: string
+          effort: string
+          frameworks_used: string[]
+          id: string
+          opportunity_id: string
+          route_id: string | null
+          sort_order: number
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string
+          company_id: string
+          confidence?: number
+          created_at?: string
+          description?: string
+          effort?: string
+          frameworks_used?: string[]
+          id?: string
+          opportunity_id: string
+          route_id?: string | null
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          company_id?: string
+          confidence?: number
+          created_at?: string
+          description?: string
+          effort?: string
+          frameworks_used?: string[]
+          id?: string
+          opportunity_id?: string
+          route_id?: string | null
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solution_ideas_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solution_ideas_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solution_ideas_route_id_fkey"
+            columns: ["route_id"]
+            isOneToOne: false
+            referencedRelation: "routes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solution_tests: {
+        Row: {
+          company_id: string
+          created_at: string
+          frameworks_used: string[]
+          id: string
+          metric: string
+          method: string
+          solution_idea_id: string
+          sort_order: number
+          success_threshold: string
+          timebox: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          frameworks_used?: string[]
+          id?: string
+          metric?: string
+          method?: string
+          solution_idea_id: string
+          sort_order?: number
+          success_threshold?: string
+          timebox?: string
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          frameworks_used?: string[]
+          id?: string
+          metric?: string
+          method?: string
+          solution_idea_id?: string
+          sort_order?: number
+          success_threshold?: string
+          timebox?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solution_tests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solution_tests_solution_idea_id_fkey"
+            columns: ["solution_idea_id"]
+            isOneToOne: false
+            referencedRelation: "solution_ideas"
             referencedColumns: ["id"]
           },
         ]

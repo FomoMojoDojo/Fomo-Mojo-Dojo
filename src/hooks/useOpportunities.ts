@@ -7,6 +7,7 @@ export type OpportunityRow = {
   id: string;
   company_id: string;
   user_id: string;
+  managed_outcome_id: string | null;
   outcome: string;
   step_number: number | null;
   step_label: string | null;
@@ -34,7 +35,7 @@ export function useOpportunities(companyId?: string) {
     const primary = await supabase
       .from('opportunities')
       .select(
-        'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, workflow_status, created_at'
+        'id, company_id, user_id, managed_outcome_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, workflow_status, created_at'
       )
       .eq('company_id', id)
       .order('opportunity_score', { ascending: false })
@@ -52,7 +53,7 @@ export function useOpportunities(companyId?: string) {
       const fallback = await supabase
         .from('opportunities')
         .select(
-          'id, company_id, user_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, created_at'
+          'id, company_id, user_id, managed_outcome_id, outcome, step_number, step_label, journey_key, importance, satisfaction, opportunity_score, priority_tier, created_at'
         )
         .eq('company_id', id)
         .order('opportunity_score', { ascending: false })

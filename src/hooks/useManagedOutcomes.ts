@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { ensureRequiredFrameworkKeys } from "@/lib/opportunityTreeSemantics";
 
 export type ManagedOutcome = {
   id: string;
@@ -125,9 +126,11 @@ export function useManagedOutcomes(companyId?: string) {
         target_direction: String(input.target_direction || "").trim() || "increase",
         evidence_basis: String(input.evidence_basis || "").trim(),
         confidence: Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : 55,
-        frameworks_used: Array.isArray(input.frameworks_used) && input.frameworks_used.length > 0
-          ? input.frameworks_used
-          : ["Teresa Torres", "Strategic Decision System", "JTBD"],
+        frameworks_used: ensureRequiredFrameworkKeys(
+          Array.isArray(input.frameworks_used) && input.frameworks_used.length > 0
+            ? input.frameworks_used
+            : ["odi", "teresa_torres"],
+        ),
       };
 
       const { data, error } = await supabase
@@ -164,7 +167,9 @@ export function useManagedOutcomes(companyId?: string) {
       if (input.target_direction !== undefined) patch.target_direction = String(input.target_direction || "").trim() || "increase";
       if (input.evidence_basis !== undefined) patch.evidence_basis = String(input.evidence_basis || "").trim();
       if (input.confidence !== undefined && Number.isFinite(Number(input.confidence))) patch.confidence = Number(input.confidence);
-      if (input.frameworks_used !== undefined && Array.isArray(input.frameworks_used)) patch.frameworks_used = input.frameworks_used;
+      if (input.frameworks_used !== undefined && Array.isArray(input.frameworks_used)) {
+        patch.frameworks_used = ensureRequiredFrameworkKeys(input.frameworks_used);
+      }
 
       const { data, error } = await supabase
         .from("managed_outcomes")
