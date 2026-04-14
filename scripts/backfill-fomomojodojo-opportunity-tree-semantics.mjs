@@ -86,6 +86,31 @@ function compact(value) {
     .trim();
 }
 
+function lowerLeading(value) {
+  const text = compact(value);
+  if (!text) return "";
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function stripLeadingDirection(value) {
+  let text = compact(value);
+  const pattern = /^(increase|reduce|improve|maximize|minimize|avoid)\b[\s:,-]*/i;
+  while (pattern.test(text)) {
+    text = text.replace(pattern, "").trim();
+  }
+  return text;
+}
+
+function isContextRedundant(objectText, contextText) {
+  const object = compact(objectText).toLowerCase();
+  const context = compact(contextText).toLowerCase();
+  if (!object || !context) return false;
+  if (object.includes(context)) return true;
+
+  const actors = ["customer", "customers", "prospect", "prospects", "team", "teams", "operator", "operators", "buyer", "buyers", "partner", "partners"];
+  return actors.some((token) => object.includes(token) && context.includes(token));
+}
+
 function humanizeOutcomeLanguage(value) {
   let text = compact(value);
   if (!text) return "";
@@ -115,9 +140,7 @@ function normalizeDesiredOutcomeDirection(value) {
 }
 
 function splitObjectAndContext(statement) {
-  const normalized = compact(statement)
-    .replace(/^(increase|reduce|improve|maximize|minimize|avoid)\s+/i, "")
-    .trim();
+  const normalized = stripLeadingDirection(statement);
   if (!normalized) {
     return { object: "reliable progress", context: "target customers" };
   }
@@ -146,14 +169,17 @@ function normalizeManagedOutcomeStructured(outcome) {
   const split = splitObjectAndContext(statement);
   const direction = normalizeDesiredOutcomeDirection(outcome.direction || outcome.target_direction || statement);
   const metric = humanizeOutcomeLanguage(outcome.metric || indicator || `Share of ${split.context} that achieve ${split.object}`);
-  const object = humanizeOutcomeLanguage(outcome.object || split.object || "reliable progress");
+  const object = humanizeOutcomeLanguage(stripLeadingDirection(outcome.object || split.object || "reliable progress"));
   const context = humanizeOutcomeLanguage(outcome.context || split.context || inferContextFromJourney(outcome.journey_key));
   const constraint = compact(outcome.constraint || "") || null;
   const constraintClause = constraint
     ? (/^(without|under|within|before|after)\b/i.test(constraint) ? constraint : `while ${constraint}`)
     : "";
+  const contextClause = context && !isContextRedundant(object, context)
+    ? ` for ${lowerLeading(context)}`
+    : "";
   const composedStatement = humanizeOutcomeLanguage(
-    `${direction} ${object}${context ? ` for ${context}` : ""}${constraintClause ? ` ${constraintClause}` : ""}.`,
+    `${direction} ${object}${contextClause}${constraintClause ? ` ${constraintClause}` : ""}.`,
   );
 
   return {

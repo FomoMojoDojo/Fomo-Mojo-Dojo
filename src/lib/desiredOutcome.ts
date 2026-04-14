@@ -55,6 +55,31 @@ function compact(value: string | null | undefined) {
     .trim();
 }
 
+function lowerLeading(value: string) {
+  const text = compact(value);
+  if (!text) return "";
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function stripLeadingDirection(value: string) {
+  let text = compact(value);
+  const pattern = /^(increase|reduce|improve|maximize|minimize|avoid)\b[\s:,-]*/i;
+  while (pattern.test(text)) {
+    text = text.replace(pattern, "").trim();
+  }
+  return text;
+}
+
+function isContextRedundant(objectText: string, contextText: string) {
+  const object = compact(objectText).toLowerCase();
+  const context = compact(contextText).toLowerCase();
+  if (!object || !context) return false;
+  if (object.includes(context)) return true;
+
+  const actors = ["customer", "customers", "prospect", "prospects", "team", "teams", "operator", "operators", "buyer", "buyers", "partner", "partners"];
+  return actors.some((token) => object.includes(token) && context.includes(token));
+}
+
 export function normalizeDesiredOutcomeDirection(value: string | null | undefined): DesiredOutcomeDirection {
   const normalized = compact(value).toLowerCase();
   if ((DESIRED_OUTCOME_DIRECTIONS as readonly string[]).includes(normalized)) {
@@ -76,16 +101,19 @@ export function humanizeOutcomeLanguage(value: string | null | undefined) {
 
 export function buildDesiredOutcomeSentence(parts: DesiredOutcomeParts) {
   const direction = normalizeDesiredOutcomeDirection(parts.direction);
-  const object = compact(parts.object);
+  const object = stripLeadingDirection(parts.object);
   const context = compact(parts.context);
   const constraint = compact(parts.constraint || "");
   const constraintClause = constraint
     ? (/^(without|under|within|before|after)\b/i.test(constraint) ? constraint : `while ${constraint}`)
     : "";
+  const contextClause = context && !isContextRedundant(object, context)
+    ? `for ${lowerLeading(context)}`
+    : "";
 
   const body = [
     `${direction} ${object || "reliable progress"}`,
-    context ? `for ${context}` : "",
+    contextClause,
     constraintClause,
   ]
     .filter(Boolean)
@@ -113,9 +141,7 @@ function inferDirectionFromStatement(statement: string, fallback?: string | null
 }
 
 function splitObjectAndContext(statement: string) {
-  const normalized = compact(statement)
-    .replace(/^(increase|reduce|improve|maximize|minimize|avoid)\s+/i, "")
-    .trim();
+  const normalized = stripLeadingDirection(statement);
 
   if (!normalized) {
     return {
@@ -145,11 +171,12 @@ export function deriveDesiredOutcomeParts(row: DesiredOutcomeRowLike): DesiredOu
 
   const split = splitObjectAndContext(statement);
   const metric = compact(row.metric || leadingIndicator || "");
+  const object = stripLeadingDirection(compact(row.object || split.object || "reliable progress"));
 
   return {
     direction: normalizeDesiredOutcomeDirection(direction),
     metric: humanizeOutcomeLanguage(metric || `Share of ${split.context} that achieve ${split.object}`),
-    object: humanizeOutcomeLanguage(compact(row.object || split.object || "reliable progress")),
+    object: humanizeOutcomeLanguage(object || "reliable progress"),
     context: humanizeOutcomeLanguage(compact(row.context || split.context || inferContextFromJourney(row.journey_key))),
     constraint: compact(row.constraint || "") || null,
     is_primary: row.is_primary ?? null,
@@ -160,7 +187,7 @@ export function composeDesiredOutcomeFromParts(parts: DesiredOutcomeParts) {
   const normalizedParts: DesiredOutcomeParts = {
     direction: normalizeDesiredOutcomeDirection(parts.direction),
     metric: humanizeOutcomeLanguage(parts.metric),
-    object: humanizeOutcomeLanguage(parts.object),
+    object: humanizeOutcomeLanguage(stripLeadingDirection(parts.object)),
     context: humanizeOutcomeLanguage(parts.context),
     constraint: compact(parts.constraint || "") || null,
     is_primary: parts.is_primary ?? null,
