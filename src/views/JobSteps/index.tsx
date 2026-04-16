@@ -15,8 +15,14 @@ import { useStrategicProblems } from "@/hooks/useStrategicProblems";
 import { useInputs } from "@/hooks/useInputs";
 import { useLatestLocalAlignment, useRunLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
-import type { InputItem } from "@/lib/types";
+import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import type { InputItem, PositioningCanvas } from "@/lib/types";
 import { opportunityActionFromNeedScore, opportunityActionTone } from "@/lib/opportunityLabels";
+import {
+  bestFitStrategicMarketCategory,
+  buildMarketFitCheckpointSpine,
+  buildMarketFitMapOption,
+} from "@/lib/marketTaxonomy";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -137,6 +143,9 @@ function isGenericAudienceLabel(value: string | null | undefined) {
     normalized === "users" ||
     normalized === "buyer" ||
     normalized === "buyers" ||
+    normalized === "progress" ||
+    normalized === "customer progress" ||
+    normalized === "job progress" ||
     normalized === "decision maker" ||
     normalized === "decision-maker" ||
     normalized === "unknown from public evidence" ||
@@ -241,10 +250,331 @@ function marketContextFromJourney(args: {
   const subtitle = isGenericJourneySubtitle(subtitleRaw) ? "" : subtitleRaw;
   const fallback = safeText(args.fallback, "");
 
+  if (fallback) return fallback;
   if (title && subtitle) return `${title}: ${subtitle}`;
   if (subtitle) return subtitle;
   if (title) return title;
-  return fallback;
+  return "";
+}
+
+function isTraditionalMarketDefinition(value: string | null | undefined) {
+  const normalized = safeText(value, "").toLowerCase();
+  if (!normalized) return false;
+  if (/^\s*category\s*:/.test(normalized)) return true;
+  return /^(b2b saas|b2c saas|marketplace|e-?commerce|professional services|healthcare services|financial services|education services|nonprofit services|hospitality \/ foodservice|logistics & transportation|manufacturing|public sector \/ government)$/.test(normalized);
+}
+
+function rankedNeedsByOpportunity(needs: OdiNeedRow[]) {
+  return needs.slice().sort((a, b) => {
+    const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const sortDiff = (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER);
+    if (sortDiff !== 0) return sortDiff;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function normalizeClause(value: string | null | undefined) {
+  const normalized = safeText(value, "").replace(/\.+$/g, "").trim();
+  if (!normalized) return "";
+  return normalized.charAt(0).toLowerCase() + normalized.slice(1);
+}
+
+function joinWithAnd(values: string[]) {
+  if (values.length <= 1) return values[0] ?? "";
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+function isGenericRoleLabel(value: string | null | undefined) {
+  const normalized = safeText(value, "").toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === "primary job performer" ||
+    normalized === "buying/decision lead" ||
+    normalized === "buying or decision lead" ||
+    normalized === "decision owner" ||
+    normalized === "decision maker" ||
+    normalized === "job performer" ||
+    normalized === "customer" ||
+    normalized === "customers"
+  );
+}
+
+function trimToWordLimit(value: string | null | undefined, maxWords: number) {
+  const normalized = safeText(value, "");
+  if (!normalized) return "";
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return normalized.replace(/\s+/g, " ").trim();
+  let trimmed = words.slice(0, maxWords);
+  while (
+    trimmed.length > 3 &&
+    /^(a|an|the|to|for|with|by|and|or|of|on|in|that|which|who|using)$/i.test(trimmed[trimmed.length - 1] || "")
+  ) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function stripLeadIn(value: string | null | undefined) {
+  return safeText(value, "")
+    .replace(/^(customers?|users?|teams?|organizations?|enterprises?|companies|clients)\s+can\s+/i, "")
+    .replace(/^(for|to)\s+/i, "")
+    .replace(/^the\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstClause(value: string | null | undefined) {
+  const normalized = safeText(value, "");
+  if (!normalized) return "";
+  const sentence = normalized.split(/[.;:]/)[0] || normalized;
+  const clause = sentence.split(/\b(that|who|which|while|because|so that|by using|using|via)\b/i)[0] || sentence;
+  return safeText(clause, "");
+}
+
+function concisePhrase(value: string | null | undefined, options?: { maxWords?: number; fallback?: string; stripIntro?: boolean }) {
+  const maxWords = options?.maxWords ?? 10;
+  const fallback = options?.fallback ?? "";
+  const base = firstClause(value);
+  const stripped = options?.stripIntro ? stripLeadIn(base) : base;
+  const compact = trimToWordLimit(stripped, maxWords);
+  return compact || fallback;
+}
+
+function parseJtbdParts(value: string | null | undefined) {
+  const text = safeText(value, "");
+  if (!text) return null;
+  const match = text.match(
+    /when\s+(.+?)\s+needs\s+to\s+(.+?),\s*they\s+want\s+to\s+(.+?),\s*so\s+they\s+can\s+(.+?)(?:[.]|$)/i,
+  );
+  if (!match) return null;
+  return {
+    executor: safeText(match[1], ""),
+    situation: safeText(match[2], ""),
+    motivation: safeText(match[3], ""),
+    outcome: safeText(match[4], ""),
+  };
+}
+
+function normalizeFrameOfReference(frameCandidate: string | null | undefined) {
+  const raw = safeText(frameCandidate, "");
+  if (!raw) return "";
+  const noLabel = raw.replace(/^\s*category\s*:\s*/i, "").trim();
+  const beforeDelimiter = noLabel.split(/[;:]/)[0] || noLabel;
+  const withoutFocusedOn = beforeDelimiter.split(/\bfocused on\b/i)[0] || beforeDelimiter;
+  const compact = safeText(withoutFocusedOn, "");
+  if (!compact) return "";
+
+  const forParts = compact.split(/\s+for\s+/i).map((part) => safeText(part, "")).filter(Boolean);
+  if (forParts.length <= 2) return compact;
+  return `${forParts[0]} for ${forParts[1]}`;
+}
+
+function isOrganizationSegmentLabel(value: string | null | undefined) {
+  const normalized = safeText(value, "").toLowerCase();
+  if (!normalized) return true;
+  const hasRoleNoun = /\b(owner|founder|director|head|vp|chief|officer|manager|lead|buyer|procurement|executive|partner|operator|coordinator|specialist|analyst|staff|agent|practitioner|admin|consultant|strategist)\b/.test(normalized);
+  if (hasRoleNoun) return false;
+  return /\b(organization|enterprise|business|company|client|customer|segment|market|teams|mid|large|small|smb)\b/.test(normalized);
+}
+
+function inferRolesFromSignals(args: {
+  bestFitCustomers?: string | null;
+  valueForCustomer?: string | null;
+  marketContext?: string | null;
+  needs: OdiNeedRow[];
+}) {
+  const topNeed = rankedNeedsByOpportunity(args.needs)[0];
+  const signal = [
+    safeText(args.bestFitCustomers, ""),
+    safeText(args.valueForCustomer, ""),
+    safeText(args.marketContext, ""),
+    safeText(topNeed?.desired_outcome, ""),
+    safeText(topNeed?.step_label, ""),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (/\b(strategy|strategic decision|decision framework|consulting|advisory)\b/.test(signal)) {
+    return { executor: "Strategy lead", chooser: "Executive sponsor" };
+  }
+  if (/\bdebt|collection|repayment|delinquen|arrears\b/.test(signal)) {
+    return { executor: "Repayment customer", chooser: "Collections manager" };
+  }
+  if (/\bcafe|coffee|restaurant|foodservice|venue\b/.test(signal)) {
+    return { executor: "Operations lead", chooser: "Owner or general manager" };
+  }
+  if (/\binvestor|investment|capital|funding|raise\b/.test(signal)) {
+    return { executor: "Finance lead", chooser: "CEO or founder" };
+  }
+  if (/\bdonor|grant|philanthrop|fundraising\b/.test(signal)) {
+    return { executor: "Development lead", chooser: "Executive director" };
+  }
+  return { executor: "", chooser: "" };
+}
+
+function inferRoleFromBestFitCustomers(bestFitCustomers: string | null | undefined, options: { chooser: boolean }) {
+  const text = safeText(bestFitCustomers, "");
+  if (!text) return "";
+
+  const candidates = text
+    .split(/[,;/]|\band\b/gi)
+    .map((part) => safeText(part, ""))
+    .filter(Boolean)
+    .slice(0, 8);
+
+  if (options.chooser) {
+    const chooserHit = candidates.find((part) =>
+      /\b(owner|founder|director|head|vp|chief|officer|manager|lead|buyer|procurement|executive|partner)\b/i.test(part),
+    );
+    if (chooserHit) return chooserHit;
+    const first = candidates[0] || "";
+    return isOrganizationSegmentLabel(first) ? "" : first;
+  }
+
+  const executorHit = candidates.find((part) =>
+    /\b(operator|coordinator|specialist|analyst|team|staff|rep|agent|manager|lead|practitioner|admin)\b/i.test(part),
+  );
+  if (executorHit) return executorHit;
+  const first = candidates[0] || "";
+  return isOrganizationSegmentLabel(first) ? "" : first;
+}
+
+function firstSpecificRole(...candidates: Array<string | null | undefined>) {
+  const cleaned = candidates.map((value) => safeText(value, "")).filter(Boolean);
+  for (const candidate of cleaned) {
+    if (
+      !isGenericRoleLabel(candidate) &&
+      !isInvalidAudienceLabel(candidate) &&
+      !isOrganizationSegmentLabel(candidate)
+    ) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function deriveBestGuessJtbd(args: {
+  storedJtbd?: string | null;
+  derivedJtbd?: string | null;
+  executor?: string | null;
+  needs: OdiNeedRow[];
+  valueForCustomer?: string | null;
+}) {
+  const stored = safeText(args.storedJtbd, "");
+  if (
+    stored &&
+    !isGenericJtbdStatement(stored) &&
+    stored.length <= 200 &&
+    /when\b.+\b(want|need)s?\b.+\bso\b.+\bcan\b/i.test(stored)
+  ) {
+    return stored.replace(/\s+/g, " ").trim();
+  }
+
+  const derived = safeText(args.derivedJtbd, "");
+  if (
+    derived &&
+    !isGenericJtbdStatement(derived) &&
+    derived.length <= 200 &&
+    /when\b.+\b(want|need)s?\b.+\bso\b.+\bcan\b/i.test(derived)
+  ) {
+    return derived.replace(/\s+/g, " ").trim();
+  }
+
+  const rankedNeeds = rankedNeedsByOpportunity(args.needs);
+  const topNeed = rankedNeeds[0];
+  const topNeedOutcome = normalizeClause(topNeed?.desired_outcome);
+  const topNeedStep = normalizeClause(topNeed?.step_label);
+  const valueForCustomer = normalizeClause(args.valueForCustomer);
+  const executor = safeText(args.executor, "the customer").toLowerCase();
+
+  const situation = concisePhrase(valueForCustomer || topNeedOutcome || topNeedStep || "make progress on the core job", {
+    maxWords: 7,
+    stripIntro: true,
+    fallback: "make progress on the core job",
+  });
+  const motivation = concisePhrase(topNeedOutcome || valueForCustomer || "achieve the desired outcome with less effort", {
+    maxWords: 9,
+    stripIntro: true,
+    fallback: "achieve the desired outcome with less effort",
+  });
+  const outcome =
+    concisePhrase(valueForCustomer && valueForCustomer !== motivation ? valueForCustomer : "", {
+      maxWords: 9,
+      stripIntro: true,
+      fallback: "",
+    }) ||
+    "get reliable results with less risk";
+
+  return `When ${executor} needs to ${situation}, they want to ${motivation}, so they can ${outcome}.`;
+}
+
+function deriveOdiDunfordMarketContext(args: {
+  marketContext?: string | null;
+  jobExecutor?: string | null;
+  chooser?: string | null;
+  jtbd?: string | null;
+  needs: OdiNeedRow[];
+  positioningCanvas?: PositioningCanvas | null;
+}) {
+  const marketContext = safeText(args.marketContext, "");
+  const frameOfReference = safeText(args.positioningCanvas?.market_category, "");
+  const bestFitCustomers = safeText(args.positioningCanvas?.best_fit_customers, "");
+  const valueForCustomer = safeText(args.positioningCanvas?.value_for_customer, "");
+  const topNeedOutcome = normalizeClause(rankedNeedsByOpportunity(args.needs)[0]?.desired_outcome);
+  const jtbd = safeText(args.jtbd, "");
+  const executor = safeText(args.jobExecutor, "primary job performer");
+  const chooser = safeText(args.chooser, "buying or decision lead");
+  const inferredRoles = inferRolesFromSignals({
+    bestFitCustomers,
+    valueForCustomer,
+    marketContext,
+    needs: args.needs,
+  });
+
+  const parsedJtbd = parseJtbdParts(jtbd);
+  const frame = normalizeFrameOfReference(
+    frameOfReference
+      || (isTraditionalMarketDefinition(marketContext) ? marketContext : "")
+      || marketContext,
+  );
+  const specificCustomerRole = firstSpecificRole(
+    bestFitCustomers,
+    inferredRoles.executor,
+    parsedJtbd?.executor,
+    chooser,
+    executor,
+  );
+  const customers = safeText(
+    specificCustomerRole,
+    concisePhrase(bestFitCustomers, {
+      maxWords: 6,
+      stripIntro: true,
+      fallback: safeText(inferredRoles.executor, safeText(executor, "target customers")),
+    }),
+  );
+  const value = valueForCustomer || topNeedOutcome || "reliable progress on the core job";
+  const coreJob = parsedJtbd?.situation || concisePhrase(valueForCustomer || topNeedOutcome || "", {
+    maxWords: 7,
+    stripIntro: true,
+    fallback: "make progress on the core job",
+  });
+  const outcome = parsedJtbd?.outcome || concisePhrase(value, {
+    maxWords: 8,
+    stripIntro: true,
+    fallback: "reliable strategic outcomes",
+  });
+
+  if (!frame && !jtbd && !valueForCustomer && !topNeedOutcome) {
+    return marketContext;
+  }
+
+  const compactFrame = concisePhrase(frame || "Current market category", { maxWords: 6 });
+  const compactCustomers = concisePhrase(customers, { maxWords: 6 });
+  const compactJob = concisePhrase(coreJob, { maxWords: 7, stripIntro: true, fallback: "core job progress" });
+  const compactOutcome = concisePhrase(outcome, { maxWords: 8, stripIntro: true, fallback: "reliable strategic outcomes" });
+  return `${compactFrame}: ${compactCustomers} trying to ${compactJob}, so they can ${compactOutcome}.`;
 }
 
 function isDraftPlaceholderStep(step: JobStepRow) {
@@ -328,10 +658,10 @@ async function describeJobMapInvokeError(error: unknown) {
 
     const status = String(payload?.status || "");
     if (status === "job_map_selection_required") {
-      return "Choose at least one job map, then run research.";
+      return "Choose at least one checkpoint map, then run research.";
     }
     if (status === "customer_job_map_required") {
-      return "Include a customer job map so opportunities can anchor to the primary job performer.";
+      return "Include a customer checkpoint map so opportunities can anchor to the primary job performer.";
     }
 
     return String(payload?.message || payload?.error || payloadText || error.message);
@@ -410,6 +740,16 @@ const LOCAL_ODI_STEP_SEED = buildDefaultCheckpointSeed().map((checkpoint) => ({
   description: checkpoint.description,
 }));
 
+function checkpointSeedForJourneyKey(journeyKey: string) {
+  const normalizedKey = normalizeJourneyKey(journeyKey);
+  if (normalizedKey.startsWith("market-fit-")) {
+    const categoryKey = normalizedKey.replace(/^market-fit-/, "");
+    const marketSeed = buildMarketFitCheckpointSpine(categoryKey);
+    if (marketSeed.length === JTBD_CHECKPOINT_COUNT) return marketSeed;
+  }
+  return LOCAL_ODI_STEP_SEED;
+}
+
 function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
   const byKey = new Map<string, JobStepRow[]>();
   for (const item of items) {
@@ -432,7 +772,7 @@ function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
     const first = steps[0];
     return {
       key,
-      title: safeText(first?.journey_title, key === "customer" || key === "revenue" || key === "operations" ? titleFromKey(key) : `Job Map: ${titleCaseFromKey(key)}`),
+      title: safeText(first?.journey_title, key === "customer" || key === "revenue" || key === "operations" ? titleFromKey(key) : `Checkpoint Map: ${titleCaseFromKey(key)}`),
       subtitle: safeText(first?.journey_subtitle, key === "customer" || key === "revenue" || key === "operations" ? subtitleFromKey(key) : `How ${titleCaseFromKey(key).toLowerCase()} define, prepare, execute, monitor, and improve progress.`),
       steps,
     };
@@ -507,6 +847,67 @@ function deriveOtherProductsContext(marketContext: string, needs: OdiNeedRow[]) 
   return "Compared against existing alternatives customers use to complete the same job.";
 }
 
+type OtherProductsContextGroup = {
+  alternative: string;
+  context: string;
+  comparisonPressure: string;
+};
+
+function deriveOtherProductsContextGroups(args: {
+  marketContext?: string | null;
+  needs: OdiNeedRow[];
+  positioningCanvas?: PositioningCanvas | null;
+}): OtherProductsContextGroup[] {
+  const context = safeText(args.marketContext, "");
+  const topNeed = rankedNeedsByOpportunity(args.needs)[0];
+  const pressure =
+    normalizeClause(topNeed?.desired_outcome) ||
+    "reliable progress on the core job with less risk and rework";
+
+  const alternatives = (args.positioningCanvas?.competitive_alternatives ?? [])
+    .map((entry) => ({
+      name: safeText(entry.name, ""),
+      description: safeText(entry.description, ""),
+    }))
+    .filter((entry) => Boolean(entry.name));
+
+  if (alternatives.length > 0) {
+    return alternatives.map((entry) => ({
+      alternative: entry.name,
+      context: entry.description || "No detailed context captured yet for this alternative.",
+      comparisonPressure: pressure,
+    }));
+  }
+
+  if (context) {
+    return [
+      {
+        alternative: "Current market alternatives",
+        context,
+        comparisonPressure: pressure,
+      },
+    ];
+  }
+
+  if (topNeed?.step_label) {
+    return [
+      {
+        alternative: "Current workaround options",
+        context: `Teams currently patch together ways to handle "${topNeed.step_label}".`,
+        comparisonPressure: pressure,
+      },
+    ];
+  }
+
+  return [
+    {
+      alternative: "Existing alternatives",
+      context: "Customers use current alternatives to complete the same job.",
+      comparisonPressure: pressure,
+    },
+  ];
+}
+
 function deriveExecutorDetermination(args: {
   activeCustomerJourneyTitle?: string | null;
   marketDefinitionExecutor?: string | null;
@@ -526,15 +927,15 @@ function deriveExecutorDetermination(args: {
 function inferRevenueMapTitle(economicEngine: string, publicSignalText: string, allowNonprofitFunding: boolean) {
   const text = `${economicEngine} ${publicSignalText}`.toLowerCase();
   if (/(investment|investor|capital|funding|raise)/.test(text)) {
-    return "Job Map: Getting Financial Investment";
+    return "Checkpoint Map: Getting Financial Investment";
   }
   if (allowNonprofitFunding && /(donor|grant|philanthrop|fundraising)/.test(text)) {
-    return "Job Map: Securing Donor and Grant Support";
+    return "Checkpoint Map: Securing Donor and Grant Support";
   }
   if (/(referral|pipeline|conversion|enrollment)/.test(text)) {
-    return "Job Map: Converting Qualified Demand";
+    return "Checkpoint Map: Converting Qualified Demand";
   }
-  return "Job Map: Securing Revenue Outcomes";
+  return "Checkpoint Map: Securing Revenue Outcomes";
 }
 
 function inferSuggestedJourneyOptions(args: {
@@ -655,12 +1056,12 @@ function inferSuggestedJourneyOptions(args: {
       : "Primary Job Performer";
     addOption({
       key: "customer",
-      title: `Job Map: ${customerSignal}`,
+      title: `Checkpoint Map: ${customerSignal}`,
       subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
       confidence: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
       rationale: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
         ? `Public signal identifies primary job performer context: ${normalizedCustomerSignal}`
-        : "Customer job map is required first and should define the core functional job performer.",
+        : "Customer checkpoint map is required first and should define the core functional job performer.",
     });
   }
 
@@ -721,7 +1122,7 @@ function inferSuggestedJourneyOptions(args: {
     if (operationsMatches >= 2 || hasOpsSignal) {
       addOption({
         key: "operations",
-        title: "Job Map: Delivering Consistent Service",
+        title: "Checkpoint Map: Delivering Consistent Service",
         subtitle: "How delivery systems coordinate define, prepare, execute, monitor, and adjust work at quality.",
         confidence: Math.min(92, 50 + operationsMatches * 8 + (hasOpsSignal ? 10 : 0)),
         rationale: hasOpsSignal
@@ -758,12 +1159,28 @@ function inferSuggestedJourneyOptions(args: {
       : "Derived from baseline role signals and market context.";
     addOption({
       key,
-      title: `Job Map: ${candidate}`,
+      title: `Checkpoint Map: ${candidate}`,
       subtitle: `How ${candidate.toLowerCase()} define, evaluate, select, execute, and monitor progress.`,
       confidence: candidateEvidence.length > 0 ? 90 : 78,
       rationale,
     });
   }
+
+  const bestFitCategory = bestFitStrategicMarketCategory([
+    publicSignalText,
+    marketSignalText,
+    nonprofitSignalText,
+    String(args.whereToPlay || ""),
+    String(args.howToWin || ""),
+  ].join(" "));
+  const marketFitOption = buildMarketFitMapOption(bestFitCategory.label);
+  addOption({
+    key: marketFitOption.key,
+    title: marketFitOption.title,
+    subtitle: marketFitOption.subtitle,
+    confidence: 86,
+    rationale: `Best-fit market category: ${marketFitOption.categoryLabel}. Adds a market-specific checkpoint spine option.`,
+  });
 
   return options.sort((a, b) => b.confidence - a.confidence);
 }
@@ -819,12 +1236,12 @@ function StepCard({
   const draftPlaceholder = isDraftPlaceholderStep(step);
   const assessedGap = hasAssessedGap(step);
   const [isEditing, setIsEditing] = useState(false);
-  const [labelDraft, setLabelDraft] = useState(safeText(step.step_label, "Untitled step"));
+  const [labelDraft, setLabelDraft] = useState(safeText(step.step_label, "Untitled checkpoint"));
   const [descriptionDraft, setDescriptionDraft] = useState(safeText(step.description, ""));
 
   useEffect(() => {
     if (isEditing) return;
-    setLabelDraft(safeText(step.step_label, "Untitled step"));
+    setLabelDraft(safeText(step.step_label, "Untitled checkpoint"));
     setDescriptionDraft(safeText(step.description, ""));
   }, [step.step_label, step.description, isEditing]);
 
@@ -835,7 +1252,7 @@ function StepCard({
     }
     const nextLabel = labelDraft.trim();
     if (!nextLabel) {
-      toast.error("Step label cannot be empty.");
+      toast.error("Checkpoint label cannot be empty.");
       return;
     }
     try {
@@ -844,9 +1261,9 @@ function StepCard({
         description: descriptionDraft.trim(),
       });
       setIsEditing(false);
-      toast.success("Step updated.");
+      toast.success("Checkpoint updated.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update step.");
+      toast.error(err instanceof Error ? err.message : "Failed to update checkpoint.");
     }
   };
 
@@ -873,7 +1290,7 @@ function StepCard({
         <div>
           <div className="flex items-center justify-between gap-2">
             <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-              Step {step.step_number ?? "—"}
+              Checkpoint {step.step_number ?? "—"}
             </p>
             {!isEditing ? (
               <button
@@ -891,7 +1308,7 @@ function StepCard({
                   type="button"
                   onClick={() => {
                     setIsEditing(false);
-                    setLabelDraft(safeText(step.step_label, "Untitled step"));
+                    setLabelDraft(safeText(step.step_label, "Untitled checkpoint"));
                     setDescriptionDraft(safeText(step.description, ""));
                   }}
                   disabled={!!saving}
@@ -915,7 +1332,7 @@ function StepCard({
           {!isEditing ? (
             <>
               <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
-                {safeText(step.step_label, "Untitled step")}
+                {safeText(step.step_label, "Untitled checkpoint")}
               </p>
               <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
                 {safeText(step.description, "No description yet.")}
@@ -928,14 +1345,14 @@ function StepCard({
                 onChange={(event) => setLabelDraft(event.target.value)}
                 className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
                 style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
-                placeholder="Step title"
+                placeholder="Checkpoint title"
               />
               <textarea
                 value={descriptionDraft}
                 onChange={(event) => setDescriptionDraft(event.target.value)}
                 className="min-h-[74px] w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] leading-[1.5] outline-none"
                 style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
-                placeholder="Step description"
+                placeholder="Checkpoint description"
               />
             </div>
           )}
@@ -962,7 +1379,7 @@ function StepCard({
             {safeText(
               step.evidence_basis,
               draftPlaceholder
-                ? "This is a starter step. Add customer evidence to make it specific."
+                ? "This is a starter checkpoint. Add customer evidence to make it specific."
                 : "No evidence note has been captured yet.",
             )}
           </p>
@@ -999,7 +1416,7 @@ function StepCard({
               Needs Assessment
             </p>
             <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-              This step is still a draft. Run research to confirm whether a real gap exists and what is causing it.
+              This checkpoint is still a draft. Run research to confirm whether a real gap exists and what is causing it.
             </p>
           </div>
         ) : (
@@ -1037,6 +1454,13 @@ function titleCaseJourney(key: string) {
   return titleCaseFromKey(key);
 }
 
+const INNOVATION_STRATEGIES = [
+  { key: "differentiated", label: "Differentiated", desc: "Target underserved outcomes in the mainstream market with a better solution than current alternatives." },
+  { key: "dominant", label: "Dominant", desc: "Address all key outcomes better than any competitor — suitable when resources allow a full-market play." },
+  { key: "disruptive", label: "Disruptive", desc: "Target overserved or non-consuming segments with a simpler, more affordable solution." },
+  { key: "discrete", label: "Discrete", desc: "Build a unique solution for a distinct segment with unique outcome priorities not served by the mainstream." },
+] as const;
+
 function OdiContextSection({
   companyName,
   marketDefinition,
@@ -1050,9 +1474,11 @@ function OdiContextSection({
   removingPublicMarketContextAction,
   onSaveContextEdits,
   savingContextEdits,
+  positioningCanvas,
   hasUploadedFiles,
   onResetPublicResearchArtifacts,
   resettingPublicResearchArtifacts,
+  onUpdateInnovationStrategy,
 }: {
   companyName?: string | null;
   marketDefinition: OdiMarketDefinitionRow | null;
@@ -1071,9 +1497,11 @@ function OdiContextSection({
     jtbd: string;
   }) => Promise<void>;
   savingContextEdits?: boolean;
+  positioningCanvas?: PositioningCanvas | null;
   hasUploadedFiles?: boolean;
   onResetPublicResearchArtifacts?: () => void;
   resettingPublicResearchArtifacts?: boolean;
+  onUpdateInnovationStrategy?: (strategy: string) => Promise<void>;
 }) {
   const derivedExecutor = audienceFromJourneyTitle(activeCustomerJourneyTitle);
   const derivedJtbd = jtbdFromJourneyTitle(activeCustomerJourneyTitle);
@@ -1085,31 +1513,67 @@ function OdiContextSection({
     ? `${safeText(companyName, "")} customer`
     : "Primary job performer";
 
-  const jobExecutor = safeText(
-    derivedExecutor,
-    safeText(
-      isInvalidAudienceLabel(storedExecutor) ? "" : storedExecutor,
-      safeText(isInvalidAudienceLabel(storedChooser) ? "" : storedChooser, companyExecutorFallback),
-    ),
+  const storedExecutorClean = isInvalidAudienceLabel(storedExecutor) ? "" : storedExecutor;
+  const storedChooserClean = isInvalidAudienceLabel(storedChooser) ? "" : storedChooser;
+  const derivedExecutorClean = isInvalidAudienceLabel(derivedExecutor) ? "" : derivedExecutor;
+  const derivedChooserClean = isInvalidAudienceLabel(derivedChooser) ? "" : derivedChooser;
+  const storedJtbdClean = isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd;
+  const derivedJtbdClean = isGenericJtbdStatement(derivedJtbd) ? "" : derivedJtbd;
+  const bestFitCustomers = safeText(positioningCanvas?.best_fit_customers, "");
+  const inferredExecutor = inferRoleFromBestFitCustomers(bestFitCustomers, { chooser: false });
+  const inferredChooser = inferRoleFromBestFitCustomers(bestFitCustomers, { chooser: true });
+  const inferredRoles = inferRolesFromSignals({
+    bestFitCustomers,
+    valueForCustomer: positioningCanvas?.value_for_customer,
+    marketContext,
+    needs,
+  });
+
+  const jobExecutor = firstSpecificRole(
+    storedExecutorClean,
+    derivedExecutorClean,
+    inferredExecutor,
+    inferredRoles.executor,
+    storedChooserClean,
   );
-  const chooser = safeText(
-    derivedChooser,
-    safeText(isInvalidAudienceLabel(storedChooser) ? "" : storedChooser, "Buying/decision lead"),
+  const resolvedJobExecutor = safeText(
+    jobExecutor,
+    safeText(inferredRoles.executor, companyExecutorFallback),
   );
-  const shouldIgnoreStoredJtbd = isInvalidAudienceLabel(storedExecutor);
-  const jtbd = safeText(
-    derivedJtbd,
-    safeText(
-      shouldIgnoreStoredJtbd || isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd,
-      "Complete the end-to-end customer job with reliable outcomes."
-    ),
+  const chooser = firstSpecificRole(
+    storedChooserClean,
+    derivedChooserClean,
+    inferredChooser,
+    inferredRoles.chooser,
+    isGenericRoleLabel(resolvedJobExecutor) ? "" : `${resolvedJobExecutor} decision owner`,
   );
-  const marketFallback = safeText(marketContext, shouldIgnoreStoredJtbd ? "" : storedJtbd);
-  const market = safeText(
+  const resolvedChooser = safeText(
+    chooser,
+    safeText(inferredRoles.chooser, "Executive sponsor"),
+  );
+  const jtbd = deriveBestGuessJtbd({
+    storedJtbd: storedJtbdClean,
+    derivedJtbd: derivedJtbdClean,
+    executor: resolvedJobExecutor,
+    needs,
+    valueForCustomer: positioningCanvas?.value_for_customer,
+  });
+  const traditionalMarketFallback = safeText(
     marketContextFromJourney({
       title: activeCustomerJourneyTitle,
       subtitle: activeCustomerJourneySubtitle,
-      fallback: marketFallback,
+      fallback: safeText(marketContext, ""),
+    }),
+    "",
+  );
+  const market = safeText(
+    deriveOdiDunfordMarketContext({
+      marketContext: traditionalMarketFallback,
+      jobExecutor: resolvedJobExecutor,
+      chooser: resolvedChooser,
+      jtbd,
+      needs,
+      positioningCanvas,
     }),
     "No market context captured yet.",
   );
@@ -1119,17 +1583,19 @@ function OdiContextSection({
   const hasPublicMarketContext = Boolean(marketDefinition?.source_path) && isPublicSourcePath(marketDefinition?.source_path);
   const [editingContext, setEditingContext] = useState(false);
   const [marketDraft, setMarketDraft] = useState(market);
-  const [jobExecutorDraft, setJobExecutorDraft] = useState(jobExecutor);
-  const [chooserDraft, setChooserDraft] = useState(chooser);
+  const [jobExecutorDraft, setJobExecutorDraft] = useState(resolvedJobExecutor);
+  const [chooserDraft, setChooserDraft] = useState(resolvedChooser);
   const [jtbdDraft, setJtbdDraft] = useState(jtbd);
+  const [savingStrategy, setSavingStrategy] = useState(false);
+  const currentStrategy = String(marketDefinition?.innovation_strategy || "").trim().toLowerCase() || null;
 
   useEffect(() => {
     if (editingContext) return;
     setMarketDraft(market);
-    setJobExecutorDraft(jobExecutor);
-    setChooserDraft(chooser);
+    setJobExecutorDraft(resolvedJobExecutor);
+    setChooserDraft(resolvedChooser);
     setJtbdDraft(jtbd);
-  }, [editingContext, market, jobExecutor, chooser, jtbd]);
+  }, [editingContext, market, resolvedJobExecutor, resolvedChooser, jtbd]);
 
   const handleSaveContext = async () => {
     if (!onSaveContextEdits) return;
@@ -1138,11 +1604,11 @@ function OdiContextSection({
     const nextChooser = chooserDraft.trim();
     const nextJtbd = jtbdDraft.trim();
     if (!nextMarket || !nextExecutor || !nextChooser || !nextJtbd) {
-      toast.error("Market context, job executor, chooser, and JTBD are all required.");
+      toast.error("Market context, job executor, chooser, and job statement are all required.");
       return;
     }
     const confirmed = window.confirm(
-      "Save these market context edits?\n\nThis will update Strategic Decision System market context (executor, chooser, JTBD) and then regenerate downstream strategy artifacts (job steps, opportunities, routes, and related strategy outputs).",
+      "Save these market context edits?\n\nThis will update Strategic Decision System market context (executor, chooser, job statement) and then regenerate downstream strategy artifacts (job checkpoints, opportunities, routes, and related strategy outputs).",
     );
     if (!confirmed) return;
     try {
@@ -1179,8 +1645,8 @@ function OdiContextSection({
                   return;
                 }
                 setMarketDraft(market);
-                setJobExecutorDraft(jobExecutor);
-                setChooserDraft(chooser);
+                setJobExecutorDraft(resolvedJobExecutor);
+                setChooserDraft(resolvedChooser);
                 setJtbdDraft(jtbd);
                 setEditingContext(true);
               }}
@@ -1280,7 +1746,7 @@ function OdiContextSection({
             />
           ) : (
             <p className="mt-2 font-sans text-[15px] font-semibold" style={{ color: c.charcoal }}>
-              {jobExecutor}
+              {resolvedJobExecutor}
             </p>
           )}
           <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
@@ -1296,7 +1762,7 @@ function OdiContextSection({
             />
           ) : (
             <p className="mt-2 font-sans text-[13px]" style={{ color: c.secondary }}>
-              {chooser}
+              {resolvedChooser}
             </p>
           )}
         </div>
@@ -1315,7 +1781,7 @@ function OdiContextSection({
                 placeholder="When [job executor] is trying to..., they want to..., so they can..."
               />
               <p className="mt-2 font-sans text-[12px] italic leading-[1.6]" style={{ color: c.muted }}>
-                Keep JTBD stable and solution-agnostic. Focus on enduring progress, not a specific product flow.
+                Keep the job statement stable and solution-agnostic. Focus on enduring progress, not a specific product flow.
               </p>
             </>
           ) : (
@@ -1336,7 +1802,7 @@ function OdiContextSection({
                 Save Impact
               </p>
               <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: "#6C4638" }}>
-                Saving updates market context plus Strategic Decision System executor/chooser/JTBD, then regenerates downstream strategy artifacts (job steps, opportunities, routes, and strategy outputs).
+                Saving updates Strategic Decision System market context (executor, chooser, job statement), then regenerates downstream strategy artifacts (job checkpoints, opportunities, routes, and strategy outputs).
               </p>
             </div>
             <div className="flex justify-end">
@@ -1353,6 +1819,57 @@ function OdiContextSection({
           </div>
         </div>
       ) : null}
+
+      {onUpdateInnovationStrategy ? (
+        <div className="mt-5">
+          <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+            Innovation Strategy
+          </p>
+          <p className="mb-3 font-sans text-[13px]" style={{ color: c.secondary }}>
+            Select the strategy that best matches the opportunity landscape. This shapes how solutions should be framed and prioritized.
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {INNOVATION_STRATEGIES.map((s) => {
+              const isSelected = currentStrategy === s.key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  disabled={savingStrategy}
+                  onClick={async () => {
+                    if (isSelected) return;
+                    setSavingStrategy(true);
+                    try {
+                      await onUpdateInnovationStrategy(s.key);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to save strategy.");
+                    } finally {
+                      setSavingStrategy(false);
+                    }
+                  }}
+                  className="rounded-xl border p-3 text-left transition-colors disabled:opacity-60"
+                  style={{
+                    borderColor: isSelected ? c.coral : c.line,
+                    background: isSelected ? "#FFF4EC" : c.card,
+                  }}
+                >
+                  <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: isSelected ? c.coral : c.secondary }}>
+                    {s.label}
+                  </p>
+                  <p className="mt-1 font-sans text-[11px] leading-[1.55]" style={{ color: c.secondary }}>
+                    {s.desc}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+          {savingStrategy ? (
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+              Saving…
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1363,33 +1880,77 @@ function ProcessFidelitySection({
   customerJourney,
   activeCustomerJourneyTitle,
   needs,
+  positioningCanvas,
 }: {
   marketDefinition: OdiMarketDefinitionRow | null;
   marketContext?: string | null;
   customerJourney?: JourneyGroup | null;
   activeCustomerJourneyTitle?: string | null;
   needs: OdiNeedRow[];
+  positioningCanvas?: PositioningCanvas | null;
 }) {
   const market = safeText(marketContext, "No market context captured yet.");
-  const executor = safeText(marketDefinition?.job_executor, audienceFromJourneyTitle(activeCustomerJourneyTitle));
-  const chooser = safeText(marketDefinition?.chooser, "Buying or decision lead");
-  const jtbd = safeText(
-    marketDefinition?.jtbd,
-    jtbdFromJourneyTitle(activeCustomerJourneyTitle) || "No JTBD captured yet.",
+  const storedExecutor = safeText(marketDefinition?.job_executor, "");
+  const storedChooser = safeText(marketDefinition?.chooser, "");
+  const derivedExecutor = audienceFromJourneyTitle(activeCustomerJourneyTitle);
+  const derivedChooser = chooserFromJourneyTitle(activeCustomerJourneyTitle);
+  const bestFitCustomers = safeText(positioningCanvas?.best_fit_customers, "");
+  const inferredExecutor = inferRoleFromBestFitCustomers(bestFitCustomers, { chooser: false });
+  const inferredChooser = inferRoleFromBestFitCustomers(bestFitCustomers, { chooser: true });
+  const inferredRoles = inferRolesFromSignals({
+    bestFitCustomers,
+    valueForCustomer: positioningCanvas?.value_for_customer,
+    marketContext,
+    needs,
+  });
+  const executor = firstSpecificRole(
+    isInvalidAudienceLabel(storedExecutor) ? "" : storedExecutor,
+    isInvalidAudienceLabel(derivedExecutor) ? "" : derivedExecutor,
+    inferredExecutor,
+    inferredRoles.executor,
   );
-  const abstractedExecutor = deriveAbstractedExecutor(executor);
-  const functionOfProduct = deriveFunctionOfProductStatement(jtbd, executor);
+  const resolvedExecutor = safeText(
+    executor,
+    safeText(inferredRoles.executor, "Primary job performer"),
+  );
+  const chooser = firstSpecificRole(
+    isInvalidAudienceLabel(storedChooser) ? "" : storedChooser,
+    isInvalidAudienceLabel(derivedChooser) ? "" : derivedChooser,
+    inferredChooser,
+    inferredRoles.chooser,
+    isGenericRoleLabel(resolvedExecutor) ? "" : `${resolvedExecutor} decision owner`,
+  );
+  const resolvedChooser = safeText(
+    chooser,
+    safeText(inferredRoles.chooser, "Executive sponsor"),
+  );
+  const storedJtbd = safeText(marketDefinition?.jtbd, "");
+  const derivedJtbd = jtbdFromJourneyTitle(activeCustomerJourneyTitle);
+  const jtbd = deriveBestGuessJtbd({
+    storedJtbd: isGenericJtbdStatement(storedJtbd) ? "" : storedJtbd,
+    derivedJtbd: isGenericJtbdStatement(derivedJtbd) ? "" : derivedJtbd,
+    executor: resolvedExecutor,
+    needs,
+    valueForCustomer: positioningCanvas?.value_for_customer,
+  });
+  const abstractedExecutor = deriveAbstractedExecutor(resolvedExecutor);
+  const functionOfProduct = deriveFunctionOfProductStatement(jtbd, resolvedExecutor);
   const abstractedJob = deriveAbstractedJobStatement(jtbd, abstractedExecutor);
   const executorDetermination = deriveExecutorDetermination({
     activeCustomerJourneyTitle,
     marketDefinitionExecutor: marketDefinition?.job_executor,
     marketDefinitionChooser: marketDefinition?.chooser,
   });
+  const otherProductsContextGroups = deriveOtherProductsContextGroups({
+    marketContext: market,
+    needs,
+    positioningCanvas,
+  });
   const canvasFields = deriveMarketDefinitionCanvas({
     traditionalMarketDefinition: market,
     executorDetermination,
-    jobExecutor: executor,
-    chooser,
+    jobExecutor: resolvedExecutor,
+    chooser: resolvedChooser,
     functionOfProductStatement: functionOfProduct,
     otherProductsContext: deriveOtherProductsContext(market, needs),
     abstractedJobStatement: abstractedJob,
@@ -1440,9 +2001,31 @@ function ProcessFidelitySection({
                 <p className="font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: c.muted }}>
                   {field.label}
                 </p>
-                <p className="mt-1 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
-                  {field.value}
-                </p>
+                {field.key === "other_products_context" ? (
+                  <div className="mt-2 space-y-2">
+                    {otherProductsContextGroups.map((group, index) => (
+                      <div
+                        key={`${group.alternative}-${index}`}
+                        className="rounded-lg border px-2.5 py-2"
+                        style={{ borderColor: c.line, background: c.paper }}
+                      >
+                        <p className="font-sans text-[13px] font-semibold leading-[1.35]" style={{ color: c.charcoal }}>
+                          {group.alternative}
+                        </p>
+                        <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+                          {group.context}
+                        </p>
+                        <p className="mt-1 font-sans text-[11px] leading-[1.5]" style={{ color: c.muted }}>
+                          Comparison pressure: {group.comparisonPressure}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                    {field.value}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -1529,7 +2112,7 @@ function ProcessFidelitySection({
           <SdsTerm short />{" "}Needs Linked To Checkpoints
         </p>
         <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-          Needs stay ranked by opportunity score and always show the checkpoint anchor used to evaluate the job map.
+          Needs stay ranked by opportunity score and always show the checkpoint anchor used to evaluate the checkpoint map.
         </p>
         {rankedNeeds.length === 0 ? (
           <p className="mt-3 font-sans text-[13px]" style={{ color: c.secondary }}>
@@ -1583,6 +2166,7 @@ function OdiNeedsListSection({
   reorderingNeeds,
   onUpdateNeedText,
   updatingNeedId,
+  onUpdateNeedScores,
 }: {
   companyId?: string;
   needs: OdiNeedRow[];
@@ -1594,6 +2178,7 @@ function OdiNeedsListSection({
   reorderingNeeds?: boolean;
   onUpdateNeedText?: (needId: string, values: { desired_outcome: string }) => Promise<void>;
   updatingNeedId?: string | null;
+  onUpdateNeedScores?: (needId: string, importance: number, satisfaction: number) => Promise<void>;
 }) {
   type NeedOrderMode = "suggested" | "custom";
   const hasManualNeedOverride = (rows: OdiNeedRow[]) =>
@@ -1628,6 +2213,8 @@ function OdiNeedsListSection({
   const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
   const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
   const [needDrafts, setNeedDrafts] = useState<Record<string, string>>({});
+  const [scoreDrafts, setScoreDrafts] = useState<Record<string, { importance: number; satisfaction: number }>>({});
+  const [savingScoresId, setSavingScoresId] = useState<string | null>(null);
   const customLabelStorageKey = companyId ? `odi-needs-custom-label:${companyId}` : null;
   const [customLabel, setCustomLabel] = useState("Custom");
   const [customLabelDraft, setCustomLabelDraft] = useState("Custom");
@@ -1844,7 +2431,7 @@ function OdiNeedsListSection({
                   {(() => {
                     const actionLabel = opportunityActionFromNeedScore(item.opportunity_score);
                     const actionTone = opportunityActionTone(actionLabel);
-                    const stepContext = item.step_number ? `Step ${item.step_number}` : "Step —";
+                    const stepContext = item.step_number ? `Checkpoint ${item.step_number}` : "Checkpoint —";
                     const stepDetail = item.step_label ? ` · ${item.step_label}` : "";
                     return (
                       <>
@@ -1890,21 +2477,87 @@ function OdiNeedsListSection({
 
                           <p className="mt-2 font-sans text-[12px]" style={{ color: c.secondary }}>
                             <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                              Job step context:
+                              Job checkpoint context:
                             </span>{" "}
                             {stepContext}
                             {stepDetail}
                           </p>
 
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2" style={{ borderColor: c.line }}>
-                            <div className="flex min-w-0 flex-wrap items-center gap-2">
-                              <NeedActionBadge label={actionLabel} />
-                              <StateBadge tone={item.service_state} />
-                              <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
+                          <div className="mt-3 border-t pt-2" style={{ borderColor: c.line }}>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <NeedActionBadge label={actionLabel} />
+                                <StateBadge tone={item.service_state} />
+                                <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
+                              </div>
+                              {onUpdateNeedScores ? (() => {
+                                const draft = scoreDrafts[item.id];
+                                const curImp = draft?.importance ?? (item.importance ?? 5);
+                                const curSat = draft?.satisfaction ?? (item.satisfaction ?? 5);
+                                const isDirty = draft !== undefined && (draft.importance !== (item.importance ?? 5) || draft.satisfaction !== (item.satisfaction ?? 5));
+                                return (
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-mono text-[9px] uppercase tracking-[0.08em] w-5" style={{ color: c.muted }}>I</span>
+                                        <input
+                                          type="range"
+                                          min={0}
+                                          max={10}
+                                          step={1}
+                                          value={curImp}
+                                          className="h-1 w-[80px] cursor-pointer accent-current"
+                                          style={{ accentColor: c.coral }}
+                                          onChange={(e) => setScoreDrafts((prev) => ({ ...prev, [item.id]: { importance: Number(e.target.value), satisfaction: curSat } }))}
+                                        />
+                                        <span className="font-mono text-[10px] w-4 text-right" style={{ color: c.charcoal }}>{curImp}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-mono text-[9px] uppercase tracking-[0.08em] w-5" style={{ color: c.muted }}>S</span>
+                                        <input
+                                          type="range"
+                                          min={0}
+                                          max={10}
+                                          step={1}
+                                          value={curSat}
+                                          className="h-1 w-[80px] cursor-pointer"
+                                          style={{ accentColor: c.teal }}
+                                          onChange={(e) => setScoreDrafts((prev) => ({ ...prev, [item.id]: { importance: curImp, satisfaction: Number(e.target.value) } }))}
+                                        />
+                                        <span className="font-mono text-[10px] w-4 text-right" style={{ color: c.charcoal }}>{curSat}</span>
+                                      </div>
+                                    </div>
+                                    {isDirty ? (
+                                      <button
+                                        type="button"
+                                        disabled={savingScoresId === item.id}
+                                        onClick={async () => {
+                                          setSavingScoresId(item.id);
+                                          try {
+                                            await onUpdateNeedScores(item.id, curImp, curSat);
+                                            setScoreDrafts((prev) => {
+                                              const next = { ...prev };
+                                              delete next[item.id];
+                                              return next;
+                                            });
+                                          } finally {
+                                            setSavingScoresId(null);
+                                          }
+                                        }}
+                                        className="rounded-full border px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
+                                        style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                                      >
+                                        {savingScoresId === item.id ? "…" : "Save"}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                );
+                              })() : (
+                                <p className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.secondary }}>
+                                  I {item.importance ?? "—"} · S {item.satisfaction ?? "—"}
+                                </p>
+                              )}
                             </div>
-                            <p className="font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap" style={{ color: c.secondary }}>
-                              I {item.importance ?? "—"} · S {item.satisfaction ?? "—"}
-                            </p>
                           </div>
                         </div>
                       </>
@@ -2181,7 +2834,7 @@ function SuggestedMapsSection({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
-            Choose Job Maps
+            Choose Checkpoint Maps
           </p>
           <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
             Add maps one at a time. You can edit title/subtitle first, then click add.
@@ -2268,10 +2921,11 @@ export default function JobStepsView() {
   } = useJobSteps(activeCompanyId ?? undefined);
   const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(activeCompanyId ?? undefined);
   const { item: strategyCascade } = useStrategyCascade(activeCompanyId ?? undefined);
+  const { item: positioningCanvas } = usePositioningCanvas(activeCompanyId ?? undefined);
   const { items: strategicProblems } = useStrategicProblems(activeCompanyId ?? undefined);
   const { query: inputsQuery } = useInputs(activeCompanyId ?? undefined);
   const [odiRefreshKey, setOdiRefreshKey] = useState(0);
-  const { marketDefinition, needs, error: odiError } = useOdiNeeds(activeCompanyId ?? undefined, odiRefreshKey);
+  const { marketDefinition, needs, error: odiError, updateNeedScores, updateMarketDefinition } = useOdiNeeds(activeCompanyId ?? undefined, odiRefreshKey);
   const { data: localAlignment } = useLatestLocalAlignment(activeCompanyId ?? undefined);
   const runLocalAlignment = useRunLocalAlignment(activeCompanyId ?? undefined);
   const { signals: sourceSignals } = useSourceConfidence({
@@ -2394,11 +3048,12 @@ export default function JobStepsView() {
     key: string;
     title: string;
     subtitle: string;
+    checkpointSeed?: Array<{ label: string; description: string }>;
   }) => {
     if (!activeCompanyId) throw new Error("No active company selected.");
     const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData?.user?.id) {
-      throw new Error("Sign in required to add a local job map draft.");
+      throw new Error("Sign in required to add a local checkpoint map draft.");
     }
 
     const { data: existingRows, error: existingErr } = await supabase
@@ -2410,7 +3065,10 @@ export default function JobStepsView() {
     if (existingErr) throw new Error(existingErr.message || "Failed to verify existing map.");
     if ((existingRows ?? []).length > 0) return false;
 
-    const rows = LOCAL_ODI_STEP_SEED.map((seed, index) => ({
+    const draftCheckpointSeed = Array.isArray(args.checkpointSeed) && args.checkpointSeed.length === JTBD_CHECKPOINT_COUNT
+      ? args.checkpointSeed
+      : LOCAL_ODI_STEP_SEED;
+    const rows = draftCheckpointSeed.map((seed, index) => ({
       company_id: activeCompanyId,
       user_id: authData.user.id,
       journey_key: args.key,
@@ -2428,7 +3086,7 @@ export default function JobStepsView() {
     }));
 
     const { error: insertErr } = await supabase.from("job_steps").insert(rows);
-    if (insertErr) throw new Error(insertErr.message || "Failed to insert local job map draft.");
+    if (insertErr) throw new Error(insertErr.message || "Failed to insert local checkpoint map draft.");
     return true;
   };
 
@@ -2648,6 +3306,7 @@ export default function JobStepsView() {
               key,
               title: jobMap.journey_title,
               subtitle: jobMap.journey_subtitle,
+              checkpointSeed: checkpointSeedForJourneyKey(key),
             });
           }
 
@@ -2683,7 +3342,7 @@ export default function JobStepsView() {
       }
       toast.success(`${titleCaseJourney(key)} map added.`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add job map.");
+      toast.error(err instanceof Error ? err.message : "Failed to add checkpoint map.");
     } finally {
       setRunningJourneyKey(null);
     }
@@ -2790,6 +3449,14 @@ export default function JobStepsView() {
       }
     } finally {
       setUpdatingNeedId(null);
+    }
+  };
+
+  const handleUpdateNeedScores = async (needId: string, importance: number, satisfaction: number) => {
+    try {
+      await updateNeedScores(needId, importance, satisfaction);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update scores.");
     }
   };
 
@@ -2910,6 +3577,7 @@ export default function JobStepsView() {
               key: "customer",
               title: safeText(activeCustomerJourneyTitle, titleFromKey("customer")),
               subtitle: safeText(activeCustomerJourneySubtitle, subtitleFromKey("customer")),
+              checkpointSeed: checkpointSeedForJourneyKey("customer"),
             });
             usedDraftFallback = inserted;
             if (!inserted) {
@@ -2924,7 +3592,7 @@ export default function JobStepsView() {
 
       if (uploadedFileCount > 0) {
         if (usedLocalSynthesis) {
-          toast.success("Saved context edits and regenerated job map + Strategic Decision System artifacts through local synthesis.");
+          toast.success("Saved context edits and regenerated checkpoint map + Strategic Decision System artifacts through local synthesis.");
         } else if (usedDraftFallback) {
           toast.success("Saved context edits and added a local draft customer map while model-backed synthesis is unavailable.");
         } else {
@@ -2940,12 +3608,12 @@ export default function JobStepsView() {
 
   const handleRemoveJourneyMap = async (key: string) => {
     if (!activeCompany?.id) {
-      toast.error("Select a company before removing a job map.");
+      toast.error("Select a company before removing a checkpoint map.");
       return;
     }
 
     const confirmed = window.confirm(
-      `Remove the ${titleCaseJourney(key)} job map from this company? This deletes its current step map.`,
+      `Remove the ${titleCaseJourney(key)} checkpoint map from this company? This deletes its current checkpoint map.`,
     );
     if (!confirmed) return;
 
@@ -2962,11 +3630,11 @@ export default function JobStepsView() {
       }
       toast.success(
         key === "customer"
-          ? "Customer job map and related opportunities, Strategic Decision System needs, outcomes, and routes removed."
-          : `${titleCaseJourney(key)} job map and related opportunities/Strategic Decision System needs removed.`,
+          ? "Customer checkpoint map and related opportunities, Strategic Decision System needs, outcomes, and routes removed."
+          : `${titleCaseJourney(key)} checkpoint map and related opportunities/Strategic Decision System needs removed.`,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove job map.");
+      toast.error(err instanceof Error ? err.message : "Failed to remove checkpoint map.");
     }
   };
 
@@ -3178,7 +3846,7 @@ export default function JobStepsView() {
     }
 
     const confirmed = window.confirm(
-      "Reset false public research artifacts for this company?\n\nThis removes generated job steps, opportunities, routes, strategy/positioning drafts, and public research snapshots.\nUploaded files stay in place.",
+      "Reset false public research artifacts for this company?\n\nThis removes generated job checkpoints, opportunities, routes, strategy/positioning drafts, and public research snapshots.\nUploaded files stay in place.",
     );
     if (!confirmed) return;
 
@@ -3335,10 +4003,10 @@ export default function JobStepsView() {
                 {activeCompany?.name || "No company selected"}
               </div>
               <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
-                Job Steps Map
+                Job Checkpoints Map
               </h1>
               <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                Select and define Strategic Decision System-style job maps first, then run research to generate steps and aligned opportunities.
+                Select and define Strategic Decision System-style checkpoint maps first, then run research to generate checkpoints and aligned opportunities.
               </p>
             </div>
 
@@ -3356,7 +4024,7 @@ export default function JobStepsView() {
             source="job_steps, Strategic Decision System market definitions, Strategic Decision System needs, strategic_problems, and baseline/source_path provenance."
             evaluation="AI proposes map structure, then journey and evidence logic classify what is public vs uploaded context and where clarity gaps remain."
             scoring="Strategic Decision System needs use importance, satisfaction, and opportunity score; gap states and evidence confidence shape priority readouts."
-            why="This explains why each step/need exists, what evidence it came from, and which assumptions still need validation."
+            why="This explains why each checkpoint/need exists, what evidence it came from, and which assumptions still need validation."
           />
         </div>
 
@@ -3364,7 +4032,7 @@ export default function JobStepsView() {
           label="Public Research"
           tone="public"
           className="mb-6 max-w-[780px]"
-          detail="Map suggestions are inferred from public baseline signals. No job map is generated until you explicitly choose or define it."
+          detail="Map suggestions are inferred from public baseline signals. No checkpoint map is generated until you explicitly choose or define it."
         />
 
         {!activeCompany?.id ? (
@@ -3373,7 +4041,7 @@ export default function JobStepsView() {
             style={{ borderColor: c.line, background: c.panel }}
           >
             <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
-              Select a company to view its job-step journey map.
+              Select a company to view its job-checkpoint journey map.
             </p>
           </div>
         ) : loading ? (
@@ -3382,7 +4050,7 @@ export default function JobStepsView() {
             style={{ borderColor: c.line, background: c.panel }}
           >
             <p className="font-mono text-[12px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-              Loading job steps…
+              Loading checkpoints…
             </p>
           </div>
         ) : error ? (
@@ -3391,7 +4059,7 @@ export default function JobStepsView() {
             style={{ borderColor: c.line, background: c.panel }}
           >
             <p className="font-sans text-[15px]" style={{ color: c.gap }}>
-              Failed to load job steps: {error}
+              Failed to load checkpoints: {error}
             </p>
           </div>
         ) : (
@@ -3409,9 +4077,13 @@ export default function JobStepsView() {
               removingPublicMarketContextAction={removingPublicMarketContextAction}
               onSaveContextEdits={handleSaveOdiContextEdits}
               savingContextEdits={savingOdiContext}
+              positioningCanvas={positioningCanvas}
               hasUploadedFiles={uploadedFileCount > 0}
               onResetPublicResearchArtifacts={handleResetPublicResearchArtifacts}
               resettingPublicResearchArtifacts={resettingPublicResearchArtifacts}
+              onUpdateInnovationStrategy={async (strategy) => {
+                await updateMarketDefinition({ innovation_strategy: strategy });
+              }}
             />
 
             <ProcessFidelitySection
@@ -3420,6 +4092,7 @@ export default function JobStepsView() {
               customerJourney={activeCustomerJourneyGroup}
               activeCustomerJourneyTitle={activeCustomerJourneyTitle}
               needs={needs}
+              positioningCanvas={positioningCanvas}
             />
 
             <AreaAlignmentPanel
@@ -3449,7 +4122,7 @@ export default function JobStepsView() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="font-sans text-[18px] font-semibold" style={{ color: c.charcoal }}>
-                    Job Map Selection
+                    Checkpoint Map Selection
                   </p>
                   <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
                     Selected maps are shown first. Choose suggested maps or add a custom one as needed.
@@ -3462,7 +4135,7 @@ export default function JobStepsView() {
                     className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
                     style={{ borderColor: c.line, color: c.secondary, background: c.card }}
                   >
-                    {showChooseMaps ? "Hide Choose Job Maps" : "Show Choose Job Maps"}
+                    {showChooseMaps ? "Hide Choose Checkpoint Maps" : "Show Choose Checkpoint Maps"}
                   </button>
                   <button
                     type="button"
@@ -3477,11 +4150,11 @@ export default function JobStepsView() {
 
               <div className="mt-4 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.paper }}>
                 <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-                  Selected Job Maps
+                  Selected Checkpoint Maps
                 </p>
                 {journeys.length === 0 ? (
                   <p className="mt-2 font-sans text-[13px]" style={{ color: c.secondary }}>
-                    No job map selected yet.
+                    No checkpoint map selected yet.
                   </p>
                 ) : (
                   <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -3534,7 +4207,7 @@ export default function JobStepsView() {
               {showCustomMapForm ? (
                 <div className="mt-4 rounded-xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
                   <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-                    Add Custom Job Map
+                    Add Custom Checkpoint Map
                   </p>
                   <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
                     <input
@@ -3549,7 +4222,7 @@ export default function JobStepsView() {
                       onChange={(event) => setCustomMapDraft((prev) => ({ ...prev, title: event.target.value }))}
                       className="w-full rounded-lg border px-2.5 py-2 font-sans text-[12px] outline-none"
                       style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
-                      placeholder="Map title (e.g. Job Map: Cafe Owner Buying)"
+                      placeholder="Map title (e.g. Checkpoint Map: Cafe Owner Buying)"
                     />
                     <input
                       value={customMapDraft.subtitle}
@@ -3581,7 +4254,7 @@ export default function JobStepsView() {
                 style={{ borderColor: c.line, background: c.panel }}
               >
                 <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
-                  No job map exists yet. Choose or define at least one map above, then run research.
+                  No checkpoint map exists yet. Choose or define at least one map above, then run research.
                 </p>
               </div>
             ) : (
@@ -3602,9 +4275,9 @@ export default function JobStepsView() {
                   style={{ borderColor: c.line, background: c.panel }}
                 >
                   <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.secondary }}>
-                    <strong style={{ color: c.charcoal }}>{totalGaps} steps have active gaps</strong> across the current map{journeys.length === 1 ? "" : "s"}.
+                    <strong style={{ color: c.charcoal }}>{totalGaps} checkpoints have active gaps</strong> across the current map{journeys.length === 1 ? "" : "s"}.
                     {pendingAssessmentTotal > 0
-                      ? ` ${pendingAssessmentTotal} step${pendingAssessmentTotal === 1 ? "" : "s"} are pending assessment and need an evidence-backed research run.`
+                      ? ` ${pendingAssessmentTotal} checkpoint${pendingAssessmentTotal === 1 ? "" : "s"} are pending assessment and need an evidence-backed research run.`
                       : " Use this page to confirm the sequence and then move to Inputs and Opportunities to close the highest-impact issues."}
                   </p>
                 </div>
@@ -3622,6 +4295,7 @@ export default function JobStepsView() {
               reorderingNeeds={reorderingNeeds}
               onUpdateNeedText={handleUpdateNeedText}
               updatingNeedId={updatingNeedId}
+              onUpdateNeedScores={handleUpdateNeedScores}
             />
           </div>
         )}

@@ -9,6 +9,7 @@ export type OdiMarketDefinitionRow = {
   jtbd: string;
   source_path: string;
   frameworks_used: string[];
+  innovation_strategy?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -36,6 +37,7 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0) {
   const [marketDefinition, setMarketDefinition] = useState<OdiMarketDefinitionRow | null>(null);
   const [needs, setNeeds] = useState<OdiNeedRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [updatingScoresId, setUpdatingScoresId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -90,5 +92,44 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0) {
     };
   }, [companyId, refreshKey]);
 
-  return { loading, marketDefinition, needs, error };
+  async function updateMarketDefinition(patch: Partial<Pick<OdiMarketDefinitionRow, "innovation_strategy">>) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    const { error } = await supabase
+      .from("odi_market_definitions")
+      .update(patch)
+      .eq("company_id", companyId);
+
+    if (error) throw new Error(error.message || "Failed to update market definition.");
+
+    setMarketDefinition((prev) => (prev ? { ...prev, ...patch } : prev));
+  }
+
+  async function updateNeedScores(needId: string, importance: number, satisfaction: number) {
+    const imp = Math.max(0, Math.min(10, Math.round(importance)));
+    const sat = Math.max(0, Math.min(10, Math.round(satisfaction)));
+    const opportunityScore = imp + Math.max(0, imp - sat);
+    const serviceState: OdiNeedRow["service_state"] =
+      opportunityScore >= 10 ? "underserved" : sat > imp + 1 ? "overserved" : "served";
+
+    setUpdatingScoresId(needId);
+    try {
+      const { error } = await supabase
+        .from("odi_needs")
+        .update({ importance: imp, satisfaction: sat, opportunity_score: opportunityScore, service_state: serviceState })
+        .eq("id", needId);
+
+      if (error) throw new Error(error.message || "Failed to update scores.");
+
+      setNeeds((prev) =>
+        prev.map((n) =>
+          n.id === needId ? { ...n, importance: imp, satisfaction: sat, opportunity_score: opportunityScore, service_state: serviceState } : n,
+        ),
+      );
+    } finally {
+      setUpdatingScoresId(null);
+    }
+  }
+
+  return { loading, marketDefinition, needs, error, updatingScoresId, updateNeedScores, updateMarketDefinition };
 }
