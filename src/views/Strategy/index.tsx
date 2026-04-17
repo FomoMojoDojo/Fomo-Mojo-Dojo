@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
@@ -14,6 +15,14 @@ import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNot
 import type { CascadeItem } from "@/lib/types";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
+import {
+  OUTCOME_LEVEL_META,
+  OUTCOME_LEVELS,
+  buildDesiredOutcomeSentence,
+  normalizeDesiredOutcomeDirection,
+  isFullyStructured,
+  type OutcomeLevel,
+} from "@/lib/desiredOutcome";
 import { toast } from "sonner";
 
 const c = {
@@ -139,39 +148,48 @@ function statusTone(status: CascadeItem["status"]) {
   return { dot: c.amber, text: "DEVELOPING" };
 }
 
-function CapabilityCard({ item }: { item: CascadeItem }) {
-  const tone = statusTone(item.status);
 
-  return (
-    <div
-      className="rounded-[18px] border p-4"
-      style={{ borderColor: c.line, background: c.paper }}
-    >
-      <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-        {item.name}
-      </p>
-      <p
-        className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em]"
-        style={{ color: tone.dot }}
-      >
-        {tone.text}
-      </p>
-      {item.note ? (
-        <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-          {item.note}
-        </p>
-      ) : null}
-    </div>
-  );
-}
+const STATUS_CYCLE: CascadeItem["status"][] = ["developing", "strong", "gap"];
 
 function GridSection({
   label,
   items,
+  onUpdate,
 }: {
   label: string;
   items: CascadeItem[];
+  onUpdate?: (items: CascadeItem[]) => void;
 }) {
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const cycleStatus = async (index: number) => {
+    if (!onUpdate) return;
+    const current = items[index].status;
+    const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(current) + 1) % STATUS_CYCLE.length];
+    const updated = items.map((item, i) => (i === index ? { ...item, status: next } : item));
+    setSaving(true);
+    try { await onUpdate(updated); } finally { setSaving(false); }
+  };
+
+  const removeItem = async (index: number) => {
+    if (!onUpdate) return;
+    const updated = items.filter((_, i) => i !== index);
+    setSaving(true);
+    try { await onUpdate(updated); } finally { setSaving(false); }
+  };
+
+  const addItem = async () => {
+    const name = newName.trim();
+    if (!name || !onUpdate) return;
+    const updated = [...items, { name, status: "developing" as const }];
+    setSaving(true);
+    try {
+      await onUpdate(updated);
+      setNewName("");
+    } finally { setSaving(false); }
+  };
+
   return (
     <section
       className="rounded-[24px] border px-5 py-5 sm:px-6"
@@ -179,10 +197,77 @@ function GridSection({
     >
       {sectionLabel(label)}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-        {items.map((item, index) => (
-          <CapabilityCard key={`${label}-${item.name}-${index}`} item={item} />
-        ))}
+        {items.map((item, index) => {
+          const tone = statusTone(item.status);
+          return (
+            <div
+              key={`${label}-${item.name}-${index}`}
+              className="rounded-[18px] border p-4"
+              style={{ borderColor: c.line, background: c.paper }}
+            >
+              <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                {item.name}
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                {onUpdate ? (
+                  <button
+                    type="button"
+                    onClick={() => cycleStatus(index)}
+                    disabled={saving}
+                    className="rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:opacity-70 disabled:opacity-40"
+                    style={{ color: tone.dot, borderColor: tone.dot, background: "transparent" }}
+                    title="Click to cycle status"
+                  >
+                    {tone.text}
+                  </button>
+                ) : (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: tone.dot }}>
+                    {tone.text}
+                  </p>
+                )}
+                {onUpdate ? (
+                  <button
+                    type="button"
+                    onClick={() => removeItem(index)}
+                    disabled={saving}
+                    className="ml-auto rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-40"
+                    style={{ borderColor: c.line, color: c.muted, background: "#fff" }}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+              {item.note ? (
+                <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
+                  {item.note}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
+
+      {onUpdate ? (
+        <div className="mt-4 flex gap-2">
+          <input
+            className="flex-1 rounded-[12px] border px-3 py-2 font-sans text-[13px] outline-none"
+            style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+            value={newName}
+            placeholder={`Add ${label.toLowerCase()}…`}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addItem(); }}
+          />
+          <button
+            type="button"
+            onClick={addItem}
+            disabled={saving || !newName.trim()}
+            className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-40"
+            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+          >
+            {saving ? "Saving…" : "Add"}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -548,11 +633,254 @@ function suggestEvidenceNeeded(assumptionText: string): string {
   return "Define a measurable outcome for this assumption, run 5-8 direct interviews with the target decision-maker, and execute one small pilot test with clear pass/fail criteria.";
 }
 
+// ── Outcome editor types and form component ───────────────────────────────
+type OutcomeDraft = {
+  level: OutcomeLevel | "";
+  actor: string;
+  action: string;
+  metric: string;
+  context: string;
+  constraint: string;
+  is_primary: boolean;
+  confidence: string;
+};
+
+const EMPTY_OUTCOME_DRAFT: OutcomeDraft = {
+  level: "primary",
+  actor: "",
+  action: "",
+  metric: "percentage",
+  context: "",
+  constraint: "",
+  is_primary: false,
+  confidence: "65",
+};
+
+function OutcomeForm({
+  draft,
+  preview,
+  saving,
+  mode,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  draft: OutcomeDraft;
+  preview: string;
+  saving: boolean;
+  mode: "add" | "edit";
+  onChange: (draft: OutcomeDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  function field(key: keyof OutcomeDraft, value: string) {
+    onChange({ ...draft, [key]: value });
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Level */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Level
+        </label>
+        <select
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[13px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.level}
+          onChange={(e) => field("level", e.target.value)}
+        >
+          {OUTCOME_LEVELS.map((lvl) => (
+            <option key={lvl} value={lvl}>
+              {OUTCOME_LEVEL_META[lvl].label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Actor */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Actor — who changes behavior?
+        </label>
+        <input
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.actor}
+          placeholder="e.g. qualified prospects, clients, delivery teams"
+          onChange={(e) => field("actor", e.target.value)}
+        />
+      </div>
+
+      {/* Action */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Action — what will they do differently? (observable)
+        </label>
+        <input
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.action}
+          placeholder="e.g. book a strategy call, commit to a decision, complete onboarding"
+          onChange={(e) => field("action", e.target.value)}
+        />
+      </div>
+
+      {/* Metric */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Metric — how will we measure it?
+        </label>
+        <input
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.metric}
+          placeholder="e.g. percentage, rate, share, count"
+          onChange={(e) => field("metric", e.target.value)}
+        />
+      </div>
+
+      {/* Context */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Context — when or where does this happen?
+        </label>
+        <input
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.context}
+          placeholder="e.g. after their first interaction, within one week of identifying a priority"
+          onChange={(e) => field("context", e.target.value)}
+        />
+      </div>
+
+      {/* Constraint */}
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.1em] mb-1"
+          style={{ color: c.muted }}
+        >
+          Constraint — optional limit or condition
+        </label>
+        <input
+          className="w-full rounded-[12px] border px-3 py-2 font-sans text-[14px] outline-none"
+          style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+          value={draft.constraint}
+          placeholder="e.g. without adding headcount, within the same sales cycle"
+          onChange={(e) => field("constraint", e.target.value)}
+        />
+      </div>
+
+      {/* Is primary + confidence */}
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={draft.is_primary}
+            onChange={(e) => onChange({ ...draft, is_primary: e.target.checked })}
+            className="rounded"
+          />
+          <span
+            className="font-mono text-[10px] uppercase tracking-[0.08em]"
+            style={{ color: c.secondary }}
+          >
+            Primary anchor
+          </span>
+        </label>
+        <div className="flex items-center gap-2">
+          <label
+            className="font-mono text-[10px] uppercase tracking-[0.08em]"
+            style={{ color: c.muted }}
+          >
+            Confidence
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            className="w-16 rounded-[10px] border px-2 py-1 font-sans text-[13px] outline-none text-center"
+            style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
+            value={draft.confidence}
+            onChange={(e) => field("confidence", e.target.value)}
+          />
+          <span className="font-mono text-[10px]" style={{ color: c.muted }}>
+            /100
+          </span>
+        </div>
+      </div>
+
+      {/* Live sentence preview */}
+      {preview ? (
+        <div
+          className="rounded-[14px] border px-4 py-3"
+          style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}
+        >
+          <p
+            className="font-mono text-[10px] uppercase tracking-[0.1em]"
+            style={{ color: c.teal }}
+          >
+            Outcome preview
+          </p>
+          <p
+            className="mt-1.5 font-sans text-[14px] leading-[1.65]"
+            style={{ color: c.charcoal }}
+          >
+            {preview}
+          </p>
+        </div>
+      ) : null}
+
+      {/* Save / cancel */}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className="rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] disabled:opacity-50"
+          style={{ borderColor: c.teal, color: c.teal, background: "#EEF6E7" }}
+        >
+          {saving ? "Saving…" : mode === "add" ? "Add Outcome" : "Save Changes"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] disabled:opacity-50"
+          style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function StrategyView() {
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
-  const { loading, item, error, savingField, updateNarrativeField } = useStrategyCascade(activeCompany?.id);
-  const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
+  const { loading, item, error, savingField, updateNarrativeField, updateListField } = useStrategyCascade(activeCompany?.id);
+  const {
+    items: managedOutcomes,
+    saving: outcomeSaving,
+    createManagedOutcome,
+    updateManagedOutcome,
+  } = useManagedOutcomes(activeCompany?.id);
   const {
     loading: problemsLoading,
     items: strategicProblems,
@@ -581,6 +909,92 @@ export default function StrategyView() {
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
   });
+  // ── Outcome editor state ─────────────────────────────────────────────────
+  const [outcomeFormOpen, setOutcomeFormOpen] = useState(false);
+  const [editingOutcomeId, setEditingOutcomeId] = useState<string | null>(null);
+  const [outcomeDraft, setOutcomeDraft] = useState<OutcomeDraft>(EMPTY_OUTCOME_DRAFT);
+
+  const outcomeSentencePreview = useMemo(() => {
+    if (!outcomeDraft.actor && !outcomeDraft.action) return "";
+    try {
+      return buildDesiredOutcomeSentence({
+        direction: normalizeDesiredOutcomeDirection("increase"),
+        metric: outcomeDraft.metric || "percentage",
+        actor: outcomeDraft.actor,
+        action: outcomeDraft.action,
+        object: "",
+        context: outcomeDraft.context,
+        constraint: outcomeDraft.constraint || null,
+        level: outcomeDraft.level || null,
+      });
+    } catch {
+      return "";
+    }
+  }, [outcomeDraft]);
+
+  const openAddOutcome = useCallback(() => {
+    setEditingOutcomeId(null);
+    setOutcomeDraft(EMPTY_OUTCOME_DRAFT);
+    setOutcomeFormOpen(true);
+  }, []);
+
+  const openEditOutcome = useCallback((id: string) => {
+    const o = managedOutcomes.find((x) => x.id === id);
+    if (!o) return;
+    setEditingOutcomeId(id);
+    setOutcomeDraft({
+      level: (o.level as OutcomeLevel) || "primary",
+      actor: o.actor || "",
+      action: o.action || "",
+      metric: o.metric || "percentage",
+      context: o.context || "",
+      constraint: o.constraint || "",
+      is_primary: o.is_primary,
+      confidence: String(o.confidence ?? 65),
+    });
+    setOutcomeFormOpen(true);
+  }, [managedOutcomes]);
+
+  const cancelOutcomeForm = useCallback(() => {
+    setOutcomeFormOpen(false);
+    setEditingOutcomeId(null);
+    setOutcomeDraft(EMPTY_OUTCOME_DRAFT);
+  }, []);
+
+  const saveOutcome = async () => {
+    if (!outcomeDraft.actor.trim() || !outcomeDraft.action.trim()) {
+      toast.error("Actor and action are required.");
+      return;
+    }
+    const payload = {
+      journey_key: "customer",
+      actor: outcomeDraft.actor.trim(),
+      action: outcomeDraft.action.trim(),
+      metric: outcomeDraft.metric.trim() || "percentage",
+      context: outcomeDraft.context.trim(),
+      constraint: outcomeDraft.constraint.trim() || null,
+      is_primary: outcomeDraft.is_primary,
+      level: (outcomeDraft.level || "primary") as OutcomeLevel,
+      evidence_basis: "Team-authored desired outcome.",
+      confidence: Number.isFinite(Number(outcomeDraft.confidence))
+        ? Number(outcomeDraft.confidence)
+        : 65,
+    };
+    try {
+      if (editingOutcomeId) {
+        await updateManagedOutcome(editingOutcomeId, payload);
+        toast.success("Outcome updated.");
+      } else {
+        await createManagedOutcome(payload);
+        toast.success("Outcome added.");
+      }
+      cancelOutcomeForm();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save outcome.");
+    }
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   const [newProblemText, setNewProblemText] = useState("");
   const [newProblemSource, setNewProblemSource] = useState<StrategicProblem["source"]>("client");
   const [reconcileNoteById, setReconcileNoteById] = useState<Record<string, string>>({});
@@ -729,24 +1143,24 @@ export default function StrategyView() {
     () => suggestEvidenceNeeded(newAssumptionText),
     [newAssumptionText],
   );
-  const primaryDesiredOutcome = useMemo(() => {
-    if (!managedOutcomes.length) return null;
-    const primary =
-      managedOutcomes.find((outcome) => outcome.is_primary) ||
-      managedOutcomes.find((outcome) => outcome.journey_key === "customer") ||
-      managedOutcomes[0] ||
-      null;
-    if (!primary) return null;
-    return {
-      statement: String(primary.outcome_statement || primary.outcome_title || "").trim(),
-      indicator: String(primary.leading_indicator || primary.metric || "").trim(),
-      direction: String(primary.direction || primary.target_direction || "").trim(),
-      metric: String(primary.metric || primary.leading_indicator || "").trim(),
-      object: String(primary.object || "").trim(),
-      context: String(primary.context || "").trim(),
-      constraint: String(primary.constraint || "").trim(),
-      confidence: Number.isFinite(Number(primary.confidence)) ? Number(primary.confidence) : null,
+  const outcomesByLevel = useMemo(() => {
+    const groups: Record<"primary" | "secondary" | "tertiary" | "unset", typeof managedOutcomes> = {
+      primary: [],
+      secondary: [],
+      tertiary: [],
+      unset: [],
     };
+    for (const o of managedOutcomes) {
+      const lvl = o.level ?? null;
+      if (lvl === "primary" || lvl === "secondary" || lvl === "tertiary") {
+        groups[lvl].push(o);
+      } else if (o.is_primary) {
+        groups.primary.push(o);
+      } else {
+        groups.unset.push(o);
+      }
+    }
+    return groups;
   }, [managedOutcomes]);
   const unifiedAssumptions = useMemo<UnifiedAssumption[]>(() => {
     const generated = (item?.assumptions ?? [])
@@ -1218,40 +1632,198 @@ export default function StrategyView() {
               className="mt-5 rounded-[24px] border px-5 py-5 sm:px-6"
               style={{ borderColor: c.line, background: c.panel }}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
-                  {sectionLabel("Primary Desired Outcome")}
+                  {sectionLabel("Desired Outcomes")}
                   <p className="mt-2.5 max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                    One clear north-star outcome for this company. It stays solution-agnostic and anchors opportunities, route choices, and score movement.
+                    Outcomes anchor opportunities, route choices, and score movement. Each outcome must describe a measurable change in behavior — who does what differently, and when.
                   </p>
                 </div>
-                <MetaBadge>{primaryDesiredOutcome ? "Defined" : "Not found in repo"}</MetaBadge>
+                <MetaBadge>{managedOutcomes.length} outcome{managedOutcomes.length !== 1 ? "s" : ""}</MetaBadge>
               </div>
-              {primaryDesiredOutcome ? (
-                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
-                  <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {primaryDesiredOutcome.statement}
-                  </p>
-                  <p className="mt-2 font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
-                    Leading indicator: {primaryDesiredOutcome.indicator || "Not found in repo."}
-                  </p>
-                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                    {[
-                      `Direction: ${primaryDesiredOutcome.direction || "Not found in repo"}`,
-                      `Metric: ${primaryDesiredOutcome.metric || "Not found in repo"}`,
-                      `Object: ${primaryDesiredOutcome.object || "Not found in repo"}`,
-                      `Context: ${primaryDesiredOutcome.context || "Not found in repo"}`,
-                      primaryDesiredOutcome.constraint ? `Constraint: ${primaryDesiredOutcome.constraint}` : null,
-                      primaryDesiredOutcome.confidence != null ? `Confidence: ${primaryDesiredOutcome.confidence}/100` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </div>
-              ) : (
-                <p className="mt-3 font-sans text-[13px]" style={{ color: c.secondary }}>
-                  Not found in repo. Run AI Research or add a managed desired outcome to define this card.
+
+              {/* Outcome list */}
+              {managedOutcomes.length === 0 && !outcomeFormOpen ? (
+                <p className="font-sans text-[13px] mb-4" style={{ color: c.secondary }}>
+                  No desired outcomes yet.
                 </p>
+              ) : (
+                <div className="space-y-5 mb-4">
+                  {(["primary", "secondary", "tertiary", "unset"] as const).map((lvl) => {
+                    const items = outcomesByLevel[lvl];
+                    if (!items.length) return null;
+                    const meta = lvl !== "unset" ? OUTCOME_LEVEL_META[lvl as OutcomeLevel] : null;
+                    const levelAccent =
+                      lvl === "primary" ? c.coral :
+                      lvl === "secondary" ? c.teal :
+                      lvl === "tertiary" ? c.amber :
+                      c.muted;
+
+                    return (
+                      <div key={lvl}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="h-[3px] w-5 rounded-full" style={{ background: levelAccent }} />
+                          <p className="font-mono text-[10px] uppercase tracking-[0.1em] font-semibold" style={{ color: levelAccent }}>
+                            {meta ? meta.shortLabel : "Unclassified"}
+                          </p>
+                          {meta && (
+                            <p className="font-sans text-[11px]" style={{ color: c.muted }}>
+                              — {meta.problem}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="space-y-3">
+                          {items.map((outcome) => {
+                            const structured = isFullyStructured(outcome);
+                            const isEditing = outcomeFormOpen && editingOutcomeId === outcome.id;
+                            return (
+                              <div
+                                key={outcome.id}
+                                className="rounded-[18px] border p-4"
+                                style={{ borderColor: isEditing ? c.teal : c.line, background: c.paper }}
+                              >
+                                {isEditing ? null : (
+                                  <>
+                                    {/* Statement + edit button */}
+                                    <div className="flex items-start justify-between gap-3">
+                                      <p className="font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                        {outcome.outcome_statement || outcome.outcome_title}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditOutcome(outcome.id)}
+                                        className="shrink-0 rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] hover:opacity-70 transition-opacity"
+                                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                      >
+                                        Edit
+                                      </button>
+                                    </div>
+
+                                    {/* Behavior-first breakdown */}
+                                    {(outcome.actor || outcome.action) ? (
+                                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {outcome.actor && (
+                                          <div className="rounded-[12px] border px-3 py-2" style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}>
+                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Actor</p>
+                                            <p className="font-sans text-[13px] mt-0.5" style={{ color: c.charcoal }}>{outcome.actor}</p>
+                                          </div>
+                                        )}
+                                        {outcome.action && (
+                                          <div className="rounded-[12px] border px-3 py-2" style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}>
+                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Action (observable)</p>
+                                            <p className="font-sans text-[13px] mt-0.5" style={{ color: c.charcoal }}>{outcome.action}</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 rounded-[10px] border px-3 py-2" style={{ borderColor: "#FFD1B4", background: "#FFF5EE" }}>
+                                        <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral }}>Behavior-first rule not met</p>
+                                        <p className="font-sans text-[12px] mt-0.5" style={{ color: c.secondary }}>
+                                          Add Actor and Action to anchor this outcome to observable behavior.
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Detail */}
+                                    <div className="mt-3 space-y-1">
+                                      <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                                        <span className="font-semibold" style={{ color: c.charcoal }}>Leading indicator:</span>{" "}
+                                        {outcome.leading_indicator || outcome.metric || "—"}
+                                      </p>
+                                      {outcome.context && (
+                                        <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                                          <span className="font-semibold" style={{ color: c.charcoal }}>Context:</span>{" "}
+                                          {outcome.context}
+                                        </p>
+                                      )}
+                                      {outcome.constraint && (
+                                        <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
+                                          <span className="font-semibold" style={{ color: c.charcoal }}>Constraint:</span>{" "}
+                                          {outcome.constraint}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {/* Badges */}
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      {structured ? (
+                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: "#BDD8CF", background: "#EEF6E7", color: c.teal }}>
+                                          Behavior-first ✓
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: "#FFD1B4", background: "#FFF5EE", color: c.coral }}>
+                                          Incomplete
+                                        </span>
+                                      )}
+                                      {outcome.is_primary && (
+                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: c.line, background: "#FAFBF8", color: c.muted }}>
+                                          Primary anchor
+                                        </span>
+                                      )}
+                                      {outcome.confidence != null && (
+                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: c.line, background: "#FAFBF8", color: c.muted }}>
+                                          Confidence {outcome.confidence}/100
+                                        </span>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+
+                                {/* Inline edit form */}
+                                {isEditing && (
+                                  <OutcomeForm
+                                    draft={outcomeDraft}
+                                    preview={outcomeSentencePreview}
+                                    saving={outcomeSaving}
+                                    mode="edit"
+                                    onChange={setOutcomeDraft}
+                                    onSave={saveOutcome}
+                                    onCancel={cancelOutcomeForm}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add form */}
+              {outcomeFormOpen && !editingOutcomeId && (
+                <div
+                  className="rounded-[18px] border p-4 mb-4"
+                  style={{ borderColor: c.teal, background: c.paper }}
+                >
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.teal }}>
+                    New outcome
+                  </p>
+                  <OutcomeForm
+                    draft={outcomeDraft}
+                    preview={outcomeSentencePreview}
+                    saving={outcomeSaving}
+                    mode="add"
+                    onChange={setOutcomeDraft}
+                    onSave={saveOutcome}
+                    onCancel={cancelOutcomeForm}
+                  />
+                </div>
+              )}
+
+              {/* Add button */}
+              {!outcomeFormOpen && (
+                <button
+                  type="button"
+                  onClick={openAddOutcome}
+                  className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] hover:opacity-70 transition-opacity"
+                  style={{ borderColor: c.line, color: c.secondary, background: c.paper }}
+                >
+                  <span>+</span>
+                  <span>Add Outcome</span>
+                </button>
               )}
             </section>
 
@@ -1276,7 +1848,24 @@ export default function StrategyView() {
             ) : error ? (
               <EmptyState message={`Failed to load strategy cascade: ${error}`} />
             ) : !item ? (
-              <EmptyState message="No structured strategy cascade yet. Run AI Research again to generate the full cascade view." />
+              <div
+                className="rounded-[24px] border px-6 py-10 text-center"
+                style={{ borderColor: c.line, background: c.panel }}
+              >
+                <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+                  No strategy cascade yet.
+                </p>
+                <p className="mt-2 font-sans text-[13px]" style={{ color: c.muted }}>
+                  Run AI Research from the Admin panel to generate the full cascade.
+                </p>
+                <Link
+                  to="/admin/companies"
+                  className="mt-4 inline-block rounded-md border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors hover:bg-black/5"
+                  style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                >
+                  Go to Admin → Companies
+                </Link>
+              </div>
             ) : (
               <>
                 <NarrativeBlock
@@ -1326,6 +1915,13 @@ export default function StrategyView() {
                 <GridSection
                   label="Required Capabilities"
                   items={item.capabilities}
+                  onUpdate={async (updated) => {
+                    try {
+                      await updateListField("capabilities_json", updated);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to update capabilities.");
+                    }
+                  }}
                 />
 
                 {connector()}
@@ -1333,6 +1929,13 @@ export default function StrategyView() {
                 <GridSection
                   label="Management Systems"
                   items={item.management_systems}
+                  onUpdate={async (updated) => {
+                    try {
+                      await updateListField("management_systems_json", updated);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to update management systems.");
+                    }
+                  }}
                 />
 
                 {connector()}

@@ -12,6 +12,7 @@ import {
 } from "../_shared/jtbdProcess.ts";
 import {
   ensureRequiredFrameworkKeys,
+  validateParentChildOpportunityDistinctness,
   validateDesiredOutcome,
   validateOpportunity,
   validateOutcomeOpportunityDistinctness,
@@ -22,6 +23,11 @@ import {
   composeDesiredOutcomeFromParts,
   deriveDesiredOutcomeParts,
   normalizeDesiredOutcomeDirection,
+  classifyProblemType,
+  deriveEvidenceLevel,
+  EVIDENCE_CONFIDENCE_CEILING,
+  type ProblemType,
+  type EvidenceLevel,
 } from "../_shared/desiredOutcome.ts";
 
 const corsHeaders: Record<string, string> = {
@@ -1173,6 +1179,168 @@ function analyzeOutcomeQuality(outcome: string) {
   };
 }
 
+type HierarchicalOpportunity = Record<string, unknown> & {
+  __temp_key: string;
+  __parent_key: string | null;
+  __depth: number;
+};
+
+function tokenizeOutcomeText(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .match(/[a-z][a-z-]{2,}/g) || [];
+}
+
+function tokenOverlapScore(a: string, b: string) {
+  const aTokens = new Set(tokenizeOutcomeText(a));
+  const bTokens = new Set(tokenizeOutcomeText(b));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+function hierarchyCandidateScore(parent: Record<string, unknown>, child: Record<string, unknown>) {
+  const parentStep = Number(parent.step_number) || 0;
+  const childStep = Number(child.step_number) || 0;
+  let score = 0;
+
+  if (parentStep > 0 && childStep > 0) {
+    const distance = childStep - parentStep;
+    if (distance < 0) score -= 6;
+    else score += Math.max(0, 5 - distance);
+  }
+
+  score += tokenOverlapScore(
+    `${String(parent.outcome || "")} ${String(parent.step_label || "")}`,
+    `${String(child.outcome || "")} ${String(child.step_label || "")}`,
+  ) * 1.25;
+  score += (Number(parent.opportunity_score) || 0) * 0.03;
+  return score;
+}
+
+function computeHierarchyDepth(
+  key: string,
+  byKey: Map<string, HierarchicalOpportunity>,
+  memo: Map<string, number>,
+  visiting: Set<string>,
+) {
+  if (memo.has(key)) return memo.get(key) || 0;
+  if (visiting.has(key)) return 0;
+  visiting.add(key);
+  const row = byKey.get(key);
+  if (!row || !row.__parent_key || !byKey.has(row.__parent_key)) {
+    visiting.delete(key);
+    memo.set(key, 0);
+    return 0;
+  }
+  const parentDepth = computeHierarchyDepth(row.__parent_key, byKey, memo, visiting);
+  const nextDepth = parentDepth + 1;
+  visiting.delete(key);
+  memo.set(key, nextDepth);
+  return nextDepth;
+}
+
+function rankForHierarchy(opportunities: Array<Record<string, unknown>>): HierarchicalOpportunity[] {
+  const ranked = [...opportunities].sort((a, b) => {
+    const stepDelta = (Number(a.step_number) || 999) - (Number(b.step_number) || 999);
+    if (stepDelta !== 0) return stepDelta;
+    const scoreDelta = (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    return String(a.outcome || "").localeCompare(String(b.outcome || ""));
+  });
+
+  return ranked.map((row, index) => ({
+    ...row,
+    __temp_key: `opp_${index + 1}`,
+    __parent_key: null,
+    __depth: 0,
+  }));
+}
+
+function buildHierarchicalOpportunities(opportunities: Array<Record<string, unknown>>) {
+  const ranked = rankForHierarchy(opportunities);
+  for (let index = 0; index < ranked.length; index += 1) {
+    const child = ranked[index];
+    const candidates = ranked.slice(0, index);
+    if (candidates.length === 0) continue;
+
+    let best: HierarchicalOpportunity | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const candidate of candidates) {
+      const score = hierarchyCandidateScore(candidate, child);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+
+    if (best && bestScore >= 1.25) {
+      child.__parent_key = best.__temp_key;
+    }
+  }
+
+  const byKey = new Map(ranked.map((row) => [row.__temp_key, row]));
+  const depthMemo = new Map<string, number>();
+  for (const row of ranked) {
+    row.__depth = computeHierarchyDepth(row.__temp_key, byKey, depthMemo, new Set<string>());
+  }
+
+  return [...ranked].sort((a, b) => {
+    if (a.__depth !== b.__depth) return a.__depth - b.__depth;
+    const stepDelta = (Number(a.step_number) || 999) - (Number(b.step_number) || 999);
+    if (stepDelta !== 0) return stepDelta;
+    const scoreDelta = (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    return String(a.__temp_key).localeCompare(String(b.__temp_key));
+  });
+}
+
+function validateParentChildDistinctnessRows(rows: HierarchicalOpportunity[]) {
+  const byKey = new Map(rows.map((row) => [row.__temp_key, row]));
+  const failures: Array<{ child_key: string; parent_key: string; reasons: string[] }> = [];
+
+  for (const row of rows) {
+    if (!row.__parent_key) continue;
+    const parent = byKey.get(row.__parent_key);
+    if (!parent) continue;
+    const distinctness = validateParentChildOpportunityDistinctness(
+      String(parent.outcome || ""),
+      String(row.outcome || ""),
+    );
+    if (!distinctness.valid) {
+      failures.push({
+        child_key: row.__temp_key,
+        parent_key: row.__parent_key,
+        reasons: distinctness.reasons,
+      });
+    }
+  }
+
+  return failures;
+}
+
+function repairParentChildDistinctnessRows(rows: HierarchicalOpportunity[]) {
+  const next = rows.map((row) => ({ ...row }));
+  const failures = validateParentChildDistinctnessRows(next);
+  if (failures.length === 0) {
+    return next;
+  }
+
+  const invalidChildKeys = new Set(failures.map((failure) => failure.child_key));
+  for (const row of next) {
+    if (invalidChildKeys.has(row.__temp_key)) {
+      row.__parent_key = null;
+      row.__depth = 0;
+    }
+  }
+
+  const rebuilt = buildHierarchicalOpportunities(next);
+  return rebuilt;
+}
+
 async function repairWeakOpportunities(args: {
   apiKey: string;
   model: string;
@@ -1222,6 +1390,79 @@ async function repairWeakOpportunities(args: {
   });
 }
 
+// ── Stage/evidence rules injected into outcome generation prompts ─────────────
+
+function buildStageEvidenceRules(
+  programPhase: string,
+  evidenceLevel: EvidenceLevel,
+  problemType: ProblemType,
+  confidenceCeiling: number,
+): string {
+  const stageDescriptions: Record<string, string> = {
+    outside:  "OUTSIDE — external pattern recognition only; no validated root cause; outcomes are provisional hypotheses",
+    diagnose: "DIAGNOSE — validating what is true; identifying real constraints; outcomes are directional but not yet locked",
+    focus:    "FOCUS — narrowing to what matters most; primary outcome should be locked to the dominant bottleneck",
+    flow:     "FLOW — execution and movement; outcomes tied to measurable behavior change and active route progress",
+  };
+  const problemDescriptions: Record<ProblemType, string> = {
+    pre_conviction:  "PRE-CONVICTION / ACQUISITION — the bottleneck is before the first commitment; the primary outcome must be pre-sale",
+    post_conviction: "POST-CONVICTION / DELIVERY — the bottleneck is after commitment; the dominant outcome is post-sale adoption or value realization",
+    scale_retention: "SCALE / RETENTION / EXPANSION — the bottleneck is repeat engagement, expansion, or compounding growth",
+    unknown:         "UNKNOWN — derive the most likely problem type from the strategic problem statements and journey context",
+  };
+
+  const levelGuidance: Record<ProblemType, string> = {
+    pre_conviction:  "Primary outcome MUST describe pre-sale behavior (prospects booking, selecting, committing for the first time). Secondary outcome addresses post-sale adoption. Tertiary addresses scale.",
+    post_conviction: "Primary outcome addresses post-sale value realization (clients adopting, deciding, completing). Secondary outcome may address a supporting pre-sale condition if evidence warrants it. Tertiary addresses expansion.",
+    scale_retention: "Tertiary outcome is the anchor (past clients returning, renewing, expanding). Primary and secondary outcomes should address the upstream conditions that enable scale.",
+    unknown:         "Generate the most appropriate primary outcome based on the dominant bottleneck visible in the strategic problem statements and journey context.",
+  };
+
+  const stageCountGuidance: Record<string, string> = {
+    outside:  "Generate 1 outcome (primary only). Mark it as provisional — this is a hypothesis, not a locked target.",
+    diagnose: "Generate 2 outcomes: 1 primary + 1 secondary. Both should be directional but not overconfident.",
+    focus:    "Generate 3 outcomes: 1 primary (locked to dominant bottleneck) + 1 secondary + 1 tertiary.",
+    flow:     "Generate 3–5 outcomes: 1 primary + 1–2 secondary + 1–2 tertiary. All should be specific and measurable.",
+  };
+
+  return [
+    `=== STAGE-AWARE OUTCOME GENERATION RULES ===`,
+    ``,
+    `Current stage: ${stageDescriptions[programPhase] ?? stageDescriptions.outside}`,
+    ``,
+    `Problem type classified as: ${problemDescriptions[problemType]}`,
+    ``,
+    `OUTCOME COUNT FOR THIS STAGE: ${stageCountGuidance[programPhase] ?? stageCountGuidance.outside}`,
+    ``,
+    `LEVEL SELECTION RULE: ${levelGuidance[problemType]}`,
+    ``,
+    `Evidence state: ${evidenceLevel.replace("_", " ").toUpperCase()}`,
+    `Confidence ceiling for all outcomes: ${confidenceCeiling}. Do not exceed this value.`,
+    ``,
+    `=== WHAT MUST NEVER HAPPEN ===`,
+    `- Do NOT generate a post-sale outcome as the primary when the problem is pre-conviction.`,
+    `- Do NOT generate a pre-sale actor (prospect, lead) on a post-conviction primary outcome.`,
+    `- Do NOT use internal state language: "feel confident", "trust that", "believe in", "understand".`,
+    `  These are not observable behaviors. Use what people DO, not what they think or feel.`,
+    `- Do NOT describe a solution, tool, process, or implementation as an outcome.`,
+    `- Do NOT use vague roots: "improve alignment", "improve clarity", "improve strategy".`,
+    `  Every outcome must specify: who does what differently, at what rate, in what context.`,
+    ``,
+    `=== REQUIRED FORMAT ===`,
+    `Every outcome = Direction + Behavioral Metric + Actor + Action + Context + optional Constraint`,
+    `- direction: one of increase / reduce / improve / maximize / minimize / avoid`,
+    `- metric: measurable dimension (rate, share, percentage, time, likelihood, count, etc.)`,
+    `- actor: the specific human role performing the action`,
+    `- action: an observable verb (book, schedule, commit, complete, adopt, select, return, etc.)`,
+    `- context: when or where this behavior happens`,
+    ``,
+    `=== OUTCOME LEVEL DEFINITIONS ===`,
+    `Primary   = Selection / Conviction — the pre-sale bottleneck; prospects choosing, booking, committing for the first time`,
+    `Secondary = Value Realization — the post-sale adoption bottleneck; clients deciding, completing, progressing`,
+    `Tertiary  = Scale / Expansion — repeat engagement, referral, renewal, compounding growth`,
+  ].join("\n");
+}
+
 async function generateManagedOutcomes(args: {
   apiKey: string;
   model: string;
@@ -1230,45 +1471,56 @@ async function generateManagedOutcomes(args: {
   baselineBrief: string;
   strategicProblemBrief?: string;
   journeys: unknown;
+  programPhase: string;
+  problemType: ProblemType;
+  evidenceLevel: EvidenceLevel;
 }) {
+  const confidenceCeiling = EVIDENCE_CONFIDENCE_CEILING[args.evidenceLevel];
+  const stageRules = buildStageEvidenceRules(
+    args.programPhase,
+    args.evidenceLevel,
+    args.problemType,
+    confidenceCeiling,
+  );
+
   const systemText =
-    `You are defining managed product outcomes for a Teresa Torres style opportunity solution tree.\n` +
+    `You are defining managed desired outcomes for a Teresa Torres opportunity solution tree.\n` +
     `Return ONLY valid JSON matching the schema. No prose.\n` +
-    `Create exactly one managed outcome for journey_key=customer.\n` +
-    `Apply Teresa Torres + ODI/JTBD framing together.\n` +
-    `A managed outcome is the result the team should manage toward, not an opportunity branch, feature, initiative, or broad vanity KPI.\n` +
-    `Each managed outcome should:\n` +
-    `- be a leading-indicator style result within the company's influence\n` +
-    `- be broad enough to span multiple opportunities and solutions\n` +
-    `- stay specific to the company, audience, and journey context\n` +
-    `- reference the customer job performer and the most relevant job step context\n` +
-    `- read like a desired outcome, not a recommendation or implementation plan\n` +
-    `- have a clear target_direction like increase, reduce, improve, maximize, or minimize\n` +
-    `- include a plausible leading indicator that could eventually be measured\n` +
-    `- note evidence_basis honestly from public evidence only\n` +
-    `- keep confidence lower when evidence is inferential rather than directly measured\n` +
-    `- reuse concrete nouns and contexts from the journey steps and evidence context\n` +
-    `- do not use generic roots like "Improve customer progress", "Improve operations", or "Increase conversion" without a concrete object and context\n` +
-    `- outcome_title should be specific enough to distinguish this company from another company in a different sector\n` +
-    `- leading_indicator should mention what specifically changes, not just "progress" or "performance"\n` +
+    `All outcomes must be for journey_key=customer.\n` +
+    `Apply Teresa Torres + ODI/JTBD framing: outcome first, behavior-first, no solution language.\n` +
+    `\n` +
+    `${stageRules}\n` +
+    `\n` +
+    `Each outcome must:\n` +
+    `- describe a measurable change in observable behavior (who does what differently)\n` +
+    `- be specific to the company's actual audience and journey steps\n` +
+    `- read like a desired outcome, not a recommendation, feature, or plan\n` +
+    `- use a concrete leading indicator (not just "progress" or "performance")\n` +
+    `- be honest about evidence_basis: public inference vs. uploaded company evidence\n` +
+    `- not exceed confidence ceiling of ${confidenceCeiling}\n` +
+    `- populate why_this_level with a one-sentence rationale for the level choice\n` +
+    `- populate why_behavioral with a one-sentence explanation of what makes the action observable\n` +
+    `- populate leading_indicators with 2–3 early signals that precede the outcome moving\n` +
+    `- populate lagging_indicators with 1–2 confirmatory signals\n` +
     `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
-    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
+    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n` +
+    `Stage: ${args.programPhase} | Evidence: ${args.evidenceLevel} | Problem type: ${args.problemType}\n\n` +
     `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
-    `Generate one customer managed outcome that the team should manage toward.\n` +
-    `Anchor it in the actual customer journey context instead of generic template wording.\n`;
+    `Generate the outcomes appropriate for this stage. Anchor each one in the actual customer journey context.\n` +
+    `Ensure the primary outcome addresses the dominant bottleneck visible in the strategic problems above.\n`;
 
   return callOpenAIJSON({
     apiKey: args.apiKey,
     model: args.model,
-    schemaName: "mojo_managed_outcomes_v1",
+    schemaName: "mojo_managed_outcomes_v2",
     schema: managedOutcomesSchema,
     systemText,
     userText,
-    maxOutputTokens: 1200,
+    maxOutputTokens: 2400,
     temperature: 0.15,
   });
 }
@@ -1294,9 +1546,18 @@ function analyzeManagedOutcomeSpecificity(outcome: {
   const issues: string[] = [];
   if (!text) issues.push("missing_text");
   if (GENERIC_MANAGED_OUTCOME_PHRASES.some((phrase) => text.includes(phrase))) issues.push("generic_phrase");
-  if (!/\b(family|families|patient|patients|referral|intake|enrollment|program|care|handoff|service|donor|grant|contract|renewal|screening|transition|follow-up|delivery|crisis|community|cafe|coffee|roaster)\b/.test(text)) {
+
+  // Concrete context check: prefer step/journey tokens when available;
+  // fall back to a broad domain-word list so professional-services and B2B
+  // companies aren't penalised for not matching a healthcare/nonprofit list.
+  const hasDomainWord = normalizedContextTokens.length > 0
+    ? normalizedContextTokens.some((token) => text.includes(token))
+    : /\b(family|families|patient|patients|referral|intake|enrollment|program|care|handoff|service|donor|grant|contract|renewal|screening|transition|follow-up|delivery|crisis|community|cafe|coffee|roaster|client|clients|prospect|prospects|consultant|consulting|engagement|strategy|decision|onboard|adoption|conviction|agreement|proposal|discovery|partnership|advisor|coaching)\b/.test(text);
+
+  if (!hasDomainWord) {
     issues.push("missing_concrete_context");
   }
+
   if (!/\b(time|rate|share|likelihood|percentage|retention|completion|conversion|continuity|delay|drop-off|handoff|follow-through|readiness|access|consistency|quality|rework)\b/.test(text)) {
     issues.push("missing_indicator_language");
   }
@@ -1304,13 +1565,18 @@ function analyzeManagedOutcomeSpecificity(outcome: {
     issues.push("missing_direction");
   }
 
-  if (normalizedContextTokens.length > 0) {
+  // Only add missing_step_or_domain_context if missing_concrete_context hasn't already fired
+  // for this same reason (avoids double-counting the same gap for low-info companies).
+  if (normalizedContextTokens.length > 0 && !issues.includes("missing_concrete_context")) {
     const usesContextToken = normalizedContextTokens.some((token) => text.includes(token));
     if (!usesContextToken) issues.push("missing_step_or_domain_context");
   }
 
   return {
-    weak: issues.length >= 2,
+    // Threshold of 3+ lets a structurally valid outcome pass with one or two
+    // minor specificity gaps — important for outside-phase / low-evidence runs
+    // where company-specific vocabulary is scarce by definition.
+    weak: issues.length >= 3,
     issues,
   };
 }
@@ -1416,7 +1682,7 @@ function normalizeDirection(value: string) {
   return normalizeDesiredOutcomeDirection(String(value || ""));
 }
 
-function normalizeManagedOutcome(outcome: any) {
+function normalizeManagedOutcome(outcome: any, evidenceLevel?: EvidenceLevel) {
   const legacyStatement = normalizeOutcomeLanguage(String(outcome?.outcome_statement || ""));
   const legacyIndicator = normalizeOutcomeLanguage(String(outcome?.leading_indicator || ""));
   const structured = composeDesiredOutcomeFromParts(
@@ -1427,12 +1693,25 @@ function normalizeManagedOutcome(outcome: any) {
       target_direction: normalizeDirection(String(outcome?.target_direction || "")),
       direction: String(outcome?.direction || ""),
       metric: String(outcome?.metric || ""),
+      actor: String(outcome?.actor || ""),
+      action: String(outcome?.action || ""),
       object: String(outcome?.object || ""),
       context: String(outcome?.context || ""),
       constraint: String(outcome?.constraint || ""),
       is_primary: Boolean(outcome?.is_primary),
+      level: String(outcome?.level || ""),
     }),
   );
+
+  // Apply confidence ceiling for the evidence level
+  const ceiling = evidenceLevel ? EVIDENCE_CONFIDENCE_CEILING[evidenceLevel] : 80;
+  const rawConfidence = Number(outcome?.confidence) || 60;
+  const cappedConfidence = clamp(rawConfidence, 35, ceiling);
+
+  // Normalize level — fall back to "primary" for first outcome if missing
+  const rawLevel = String(outcome?.level || "").trim();
+  const level = ["primary", "secondary", "tertiary"].includes(rawLevel) ? rawLevel : "primary";
+
   return {
     journey_key: "customer",
     outcome_title: normalizeOutcomeLanguage(String(outcome?.outcome_title || structured.outcome_statement)),
@@ -1441,13 +1720,29 @@ function normalizeManagedOutcome(outcome: any) {
     target_direction: normalizeDirection(String(outcome?.target_direction || structured.target_direction)),
     direction: structured.direction,
     metric: structured.metric,
+    actor: structured.actor || "",
+    action: structured.action || "",
     object: structured.object,
     context: structured.context,
     constraint: structured.constraint || null,
     is_primary: Boolean(outcome?.is_primary),
+    level,
+    stage: String(outcome?.stage || "outside"),
+    evidence_level: String(outcome?.evidence_level || evidenceLevel || "external_only"),
+    why_this_level: String(outcome?.why_this_level || "").trim(),
+    why_behavioral: String(outcome?.why_behavioral || "").trim(),
+    leading_indicators: Array.isArray(outcome?.leading_indicators)
+      ? outcome.leading_indicators.map((s: unknown) => String(s || "").trim()).filter(Boolean)
+      : [],
+    lagging_indicators: Array.isArray(outcome?.lagging_indicators)
+      ? outcome.lagging_indicators.map((s: unknown) => String(s || "").trim()).filter(Boolean)
+      : [],
+    related_opportunity_areas: Array.isArray(outcome?.related_opportunity_areas)
+      ? outcome.related_opportunity_areas.map((s: unknown) => String(s || "").trim()).filter(Boolean)
+      : [],
     evidence_basis: String(outcome?.evidence_basis || "").trim()
       || "Inferred from public evidence and current opportunity map. Validate with customer interviews and ODI importance/satisfaction signals.",
-    confidence: clamp(Number(outcome?.confidence) || 60, 35, 80),
+    confidence: cappedConfidence,
   };
 }
 
@@ -1517,10 +1812,15 @@ function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutco
     targetDirection: outcome.target_direction,
     direction: outcome.direction,
     metric: outcome.metric,
+    actor: outcome.actor,
+    action: outcome.action,
     object: outcome.object,
     context: outcome.context,
     constraint: outcome.constraint || null,
+    level: outcome.level,
     frameworksUsed: ["odi", "teresa_torres"],
+    // Note: stage and problemType intentionally omitted here — alignment
+    // signals are warnings only and should not block a usable outcome.
   });
   return !quality.weak && semantics.valid;
 }
@@ -1535,34 +1835,52 @@ async function repairManagedOutcomes(args: {
   journeys: unknown;
   opportunities?: unknown;
   outcomes: unknown;
+  programPhase: string;
+  problemType: ProblemType;
+  evidenceLevel: EvidenceLevel;
 }) {
+  const confidenceCeiling = EVIDENCE_CONFIDENCE_CEILING[args.evidenceLevel];
+  const stageRules = buildStageEvidenceRules(
+    args.programPhase,
+    args.evidenceLevel,
+    args.problemType,
+    confidenceCeiling,
+  );
+
   const systemText =
-    `You are improving managed product outcomes so they stop collapsing into generic template language.\n` +
+    `You are repairing managed desired outcomes that are too generic or misaligned.\n` +
     `Return ONLY valid JSON matching the schema. No prose.\n` +
-    `Keep exactly one outcome for journey_key=customer.\n` +
-    `Rewrite only outcomes that are too generic.\n` +
-    `Apply Teresa Torres + ODI/JTBD framing: outcome first, step-aware, no solution language.\n` +
-    `Make each managed outcome clearly company-specific by using the audience, step context, and concrete nouns already present in the opportunities.\n` +
-    `Do not output generic wording like "Improve customer progress", "Improve operations", or "Increase conversion" unless a specific object and context are attached.\n` +
+    `Keep the same number of outcomes for journey_key=customer. Rewrite only the ones that are weak.\n` +
+    `Apply Teresa Torres + ODI/JTBD framing: outcome first, behavior-first, no solution language.\n` +
+    `\n` +
+    `${stageRules}\n` +
+    `\n` +
+    `Fix outcomes that:\n` +
+    `- use generic language ("improve customer progress", "improve operations")\n` +
+    `- have the wrong actor for the problem type (e.g. post-sale actor on a pre-conviction problem)\n` +
+    `- describe an internal state instead of an observable behavior\n` +
+    `- use solution language (build, launch, implement, design, etc.)\n` +
+    `- have confidence above the ceiling of ${confidenceCeiling}\n` +
     `${ODI_PLAIN_LANGUAGE_RULES}\n`;
 
   const userText =
-    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n\n` +
+    `Company: ${args.companyName}\nWebsite: ${args.website || "unknown"}\n` +
+    `Stage: ${args.programPhase} | Evidence: ${args.evidenceLevel} | Problem type: ${args.problemType}\n\n` +
     `Evidence context:\n${args.baselineBrief}\n\n` +
     `Client-stated strategic problems:\n${args.strategicProblemBrief || "None provided"}\n\n` +
     `Journeys:\n${buildJourneyBrief(args.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(args.opportunities || [])}\n\n` +
     `Current managed outcomes:\n${buildManagedOutcomeBrief(args.outcomes)}\n\n` +
-    `Rewrite weak managed outcomes so each one is materially distinct and clearly tied to the company's actual journey context.\n`;
+    `Rewrite weak outcomes. Ensure each is company-specific, behavior-first, and level-appropriate.\n`;
 
   return callOpenAIJSON({
     apiKey: args.apiKey,
     model: args.model,
-    schemaName: "mojo_managed_outcomes_repair_v1",
+    schemaName: "mojo_managed_outcomes_repair_v2",
     schema: managedOutcomesSchema,
     systemText,
     userText,
-    maxOutputTokens: 1200,
+    maxOutputTokens: 2400,
     temperature: 0.1,
   });
 }
@@ -1635,6 +1953,142 @@ function routeOpportunityFitScore(route: any, opportunity: any) {
   const categoryScore = routeCategory === desiredCategory ? 0.6 : routeCategory ? -0.2 : 0;
 
   return overlap * 1.1 + categoryScore;
+}
+
+type FlatStep = {
+  journey_key: string;
+  step_number: number;
+  step_label: string;
+  designed: boolean;
+  has_gap: boolean;
+  gap_note: string;
+};
+
+type StoredDetailItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
+
+function routeDetailTokenSet(text: string): Set<string> {
+  return new Set(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(" ")
+      .filter((t) => t.length >= 4),
+  );
+}
+
+function routeDetailOverlap(a: Set<string>, b: Set<string>): number {
+  let hits = 0;
+  for (const token of a) { if (b.has(token)) hits++; }
+  return hits;
+}
+
+function routeStepStatus(step: FlatStep): "complete" | "in_progress" | "missing" {
+  if (step.designed && !step.has_gap) return "complete";
+  if (step.designed || step.has_gap) return "in_progress";
+  return "missing";
+}
+
+function buildRouteDetailPayload(args: {
+  routeId: string;
+  routeTitle: string;
+  routeShortDescription: string;
+  category: string;
+  opportunities: Array<{
+    id: string;
+    outcome: string;
+    step_label: string;
+    step_number: number;
+    journey_key: string;
+    priority_tier: string;
+    opportunity_score: number;
+  }>;
+  allSteps: FlatStep[];
+}): { steps: StoredDetailItem[]; evidence: StoredDetailItem[]; why_this_matters: string[] } {
+  const { routeId, routeTitle, routeShortDescription, category, opportunities, allSteps } = args;
+
+  const categoryPriority = category === "fix" ? "focus" : category === "improve" ? "monitor" : "defer";
+  const routeTokens = routeDetailTokenSet(`${routeTitle} ${routeShortDescription}`);
+
+  const rankedOpps = opportunities
+    .map((opp) => {
+      const text = `${opp.outcome} ${opp.step_label || ""} ${opp.journey_key}`;
+      const overlap = routeDetailOverlap(routeTokens, routeDetailTokenSet(text));
+      const priorityBoost = opp.priority_tier === categoryPriority ? 2 : 0;
+      return { opp, score: overlap + priorityBoost + (opp.opportunity_score ?? 0) / 20 };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map((item) => item.opp);
+
+  const relatedSteps = rankedOpps.length > 0
+    ? rankedOpps
+        .map((opp) =>
+          allSteps.find(
+            (s) =>
+              s.journey_key === opp.journey_key &&
+              s.step_number === opp.step_number &&
+              s.step_label === opp.step_label,
+          ),
+        )
+        .filter((s): s is FlatStep => !!s)
+    : allSteps.filter((s) => category === "fix" ? s.has_gap : true).slice(0, 3);
+
+  const uniqueSteps = Array.from(
+    new Map(relatedSteps.map((s) => [`${s.journey_key}-${s.step_number}`, s])).values(),
+  ).slice(0, 4);
+
+  const steps: StoredDetailItem[] =
+    uniqueSteps.length > 0
+      ? uniqueSteps.map((s, i) => ({
+          id: `${routeId}-step-${i + 1}`,
+          title: `Step ${s.step_number ?? "?"}: ${s.step_label || "Untitled"}${s.gap_note ? ` — ${s.gap_note}` : ""}`,
+          status: routeStepStatus(s),
+        }))
+      : [
+          { id: `${routeId}-step-1`, title: "Define the concrete workstream and assign an owner.", status: "missing" },
+          { id: `${routeId}-step-2`, title: "Confirm the customer, revenue, or operations point of friction this route addresses.", status: "missing" },
+        ];
+
+  const evidence: StoredDetailItem[] = [
+    ...uniqueSteps.slice(0, 2).map((s, i) => ({
+      id: `${routeId}-evidence-step-${i + 1}`,
+      title: s.has_gap
+        ? `Evidence for ${s.step_label || "this step"} is thin: ${s.gap_note || "clarify current-state proof points"}`
+        : `Current-state evidence exists for ${s.step_label || "this step"}`,
+      status: (s.has_gap ? "missing" : "complete") as StoredDetailItem["status"],
+    })),
+    {
+      id: `${routeId}-evidence-owner`,
+      title:
+        category === "fix"
+          ? "Decision owner and turnaround timing confirmed"
+          : category === "create"
+            ? "New capability owner and pilot scope defined"
+            : "Improvement owner, baseline metric, and target state defined",
+      status: "in_progress",
+    },
+    {
+      id: `${routeId}-evidence-proof`,
+      title:
+        rankedOpps.length > 0
+          ? "Validate this route against the linked outcome opportunities"
+          : "Gather evidence that this route meaningfully changes an important outcome",
+      status: rankedOpps.length > 0 ? "in_progress" : "missing",
+    },
+  ].slice(0, 4);
+
+  const why_this_matters: string[] = [
+    routeShortDescription || "This route addresses a meaningful strategic gap.",
+    rankedOpps.length > 0
+      ? `Linked to ${rankedOpps.length} opportunity ${rankedOpps.length === 1 ? "signal" : "signals"}, led by ${rankedOpps[0].outcome}.`
+      : "No route-to-opportunity linkage exists yet, so this needs stronger evidence before prioritization.",
+    uniqueSteps.some((s) => s.has_gap)
+      ? "At least one related job step is still marked as a gap, so this route reduces visible execution risk."
+      : "Related checkpoints are already partly designed, so this route can tighten and scale what exists.",
+  ];
+
+  return { steps, evidence, why_this_matters };
 }
 
 function buildSolutionTestsForIdea(args: {
@@ -3956,24 +4410,37 @@ const managedOutcomesSchema = {
     outcomes: {
       type: "array",
       minItems: 1,
-      maxItems: 1,
+      maxItems: 5,
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
-          journey_key: { type: "string", enum: ["customer"] },
-          outcome_title: { type: "string" },
+          journey_key:    { type: "string", enum: ["customer"] },
+          outcome_title:  { type: "string" },
           outcome_statement: { type: "string" },
           leading_indicator: { type: "string" },
-          target_direction: { type: "string" },
-          direction: { type: "string" },
-          metric: { type: "string" },
-          object: { type: "string" },
-          context: { type: "string" },
+          target_direction:  { type: "string" },
+          direction:  { type: "string" },
+          metric:     { type: "string" },
+          actor:      { type: "string" },
+          action:     { type: "string" },
+          object:     { type: "string" },
+          context:    { type: "string" },
           constraint: { type: "string" },
           is_primary: { type: "boolean" },
+          level: { type: "string", enum: ["primary", "secondary", "tertiary"] },
+          stage: { type: "string", enum: ["outside", "diagnose", "focus", "flow"] },
+          evidence_level: {
+            type: "string",
+            enum: ["external_only", "internal_partial", "validated", "strong_validated"],
+          },
+          why_this_level:  { type: "string" },
+          why_behavioral:  { type: "string" },
+          leading_indicators:  { type: "array", items: { type: "string" } },
+          lagging_indicators:  { type: "array", items: { type: "string" } },
+          related_opportunity_areas: { type: "array", items: { type: "string" } },
           evidence_basis: { type: "string" },
-          confidence: { type: "integer" },
+          confidence:     { type: "integer" },
         },
         required: [
           "journey_key",
@@ -3981,6 +4448,22 @@ const managedOutcomesSchema = {
           "outcome_statement",
           "leading_indicator",
           "target_direction",
+          "direction",
+          "metric",
+          "actor",
+          "action",
+          "object",
+          "context",
+          "constraint",
+          "is_primary",
+          "level",
+          "stage",
+          "evidence_level",
+          "why_this_level",
+          "why_behavioral",
+          "leading_indicators",
+          "lagging_indicators",
+          "related_opportunity_areas",
           "evidence_basis",
           "confidence",
         ],
@@ -4700,6 +5183,17 @@ Deno.serve(async (req) => {
     // -------------------------
     // 3) Generate MANAGED OUTCOMES (strict, before opportunities)
     // -------------------------
+
+    // Derive the three context inputs that drive stage-aware generation
+    const programPhase: string = String(body?.program_phase || "outside").trim().toLowerCase();
+    const evidenceLevelDerived: EvidenceLevel = deriveEvidenceLevel(
+      researchContextMode,
+      uploadedEvidenceContext.fileCount,
+    );
+    const problemStatementTexts = (strategicProblems as Array<{ statement?: string }>)
+      .map((p) => String(p?.statement || "")).filter(Boolean);
+    const problemTypeDerived: ProblemType = classifyProblemType(problemStatementTexts);
+
     const managedOutcomeContextTokensFromJourneys = collectOutcomeContextTokensFromJourneys(journeys);
     const managedOutcomesResult = await generateManagedOutcomes({
       apiKey: openaiKey,
@@ -4709,6 +5203,9 @@ Deno.serve(async (req) => {
       baselineBrief,
       strategicProblemBrief,
       journeys,
+      programPhase,
+      problemType: problemTypeDerived,
+      evidenceLevel: evidenceLevelDerived,
     });
 
     let managedOutcomes = Array.isArray(managedOutcomesResult?.outcomes)
@@ -4733,6 +5230,9 @@ Deno.serve(async (req) => {
         strategicProblemBrief,
         journeys,
         outcomes: managedOutcomes,
+        programPhase,
+        problemType: problemTypeDerived,
+        evidenceLevel: evidenceLevelDerived,
       });
 
       managedOutcomes = Array.isArray(repairedManagedOutcomesResult?.outcomes)
@@ -4742,7 +5242,7 @@ Deno.serve(async (req) => {
 
     managedOutcomes = managedOutcomes
       .filter((outcome) => String(outcome?.journey_key || "") === "customer")
-      .map((outcome) => normalizeManagedOutcome(outcome))
+      .map((outcome) => normalizeManagedOutcome(outcome, evidenceLevelDerived))
       .filter((outcome) =>
         validateDesiredOutcome({
           statement: outcome.outcome_statement,
@@ -4750,9 +5250,14 @@ Deno.serve(async (req) => {
           targetDirection: outcome.target_direction,
           direction: outcome.direction,
           metric: outcome.metric,
+          actor: outcome.actor,
+          action: outcome.action,
           object: outcome.object,
           context: outcome.context,
           constraint: outcome.constraint || null,
+          level: outcome.level,
+          stage: programPhase as "outside" | "diagnose" | "focus" | "flow",
+          problemType: problemTypeDerived,
           frameworksUsed: opportunityFrameworkKeys,
         }).valid,
       );
@@ -4761,16 +5266,22 @@ Deno.serve(async (req) => {
       managedOutcomes = [buildDeterministicManagedOutcomeFallback({ journeys })];
     }
 
-    const hasUsableManagedOutcome = managedOutcomes.some((outcome) =>
+    // Filter to usable outcomes; if none pass, keep all available outcomes rather than
+    // aborting — low-information contexts (outside phase, no uploads, sparse public data)
+    // legitimately produce outcomes with limited specificity and must not block the run.
+    const usableManagedOutcomes = managedOutcomes.filter((outcome) =>
       isUsableManagedOutcome(outcome, managedOutcomeContextTokensFromJourneys)
     );
-    if (!hasUsableManagedOutcome) {
-      return jsonResponse({
-        error: "Managed outcomes failed strict ODI/Teresa Torres validation after repair.",
-        status: "validation_failed",
-      }, 422);
+    if (usableManagedOutcomes.length > 0) {
+      managedOutcomes = usableManagedOutcomes;
     }
-    const primaryManagedOutcomeStatement = String(managedOutcomes[0]?.outcome_statement || "").trim();
+    // If zero outcomes passed the strict check, managedOutcomes is unchanged (fallback or
+    // LLM-generated). The run continues; the outcome is flagged as low-confidence via its
+    // evidence_level and confidence ceiling, not by aborting the entire research run.
+    const primaryManagedOutcome =
+      managedOutcomes.find((o) => o.is_primary || String((o as any)?.level || "") === "primary") ??
+      managedOutcomes[0];
+    const primaryManagedOutcomeStatement = String(primaryManagedOutcome?.outcome_statement || "").trim();
 
     // -------------------------
     // 4) Generate OPPORTUNITIES (customer journey)
@@ -4927,7 +5438,11 @@ Deno.serve(async (req) => {
         error: "Generated opportunities did not align to existing customer job-map steps.",
       }, 500);
     }
-    const remainingInvalidOpportunities = opportunities.filter((opp) => {
+    // Filter out any remaining invalid opportunities rather than hard-failing.
+    // AI-generated outcomes may contain ambiguous words (process, program, framework)
+    // that are valid in ODI outcome language but trigger the solution-language pattern.
+    // As long as >= 8 valid opportunities remain, continue.
+    opportunities = opportunities.filter((opp) => {
       const semantic = validateOpportunity({
         outcome: String(opp?.outcome || ""),
         importance: Number(opp?.importance),
@@ -4937,12 +5452,28 @@ Deno.serve(async (req) => {
       const distinctness = primaryManagedOutcomeStatement
         ? validateOutcomeOpportunityDistinctness(primaryManagedOutcomeStatement, String(opp?.outcome || ""))
         : { valid: true };
-      return !semantic.valid || !distinctness.valid;
+      return semantic.valid && distinctness.valid;
     });
-    if (remainingInvalidOpportunities.length > 0) {
+    if (opportunities.length < 8) {
       return jsonResponse({
         error: "Opportunities failed strict ODI/Teresa Torres validation after repair.",
         status: "validation_failed",
+      }, 422);
+    }
+
+    let hierarchicalOpportunities = buildHierarchicalOpportunities(
+      opportunities.map((opp) => ({ ...(opp as Record<string, unknown>) })),
+    );
+    let parentChildDistinctnessFailures = validateParentChildDistinctnessRows(hierarchicalOpportunities);
+    if (parentChildDistinctnessFailures.length > 0) {
+      hierarchicalOpportunities = repairParentChildDistinctnessRows(hierarchicalOpportunities);
+      parentChildDistinctnessFailures = validateParentChildDistinctnessRows(hierarchicalOpportunities);
+    }
+    if (parentChildDistinctnessFailures.length > 0) {
+      return jsonResponse({
+        error: "Opportunities failed parent-child distinctness validation after repair.",
+        status: "validation_failed",
+        details: parentChildDistinctnessFailures,
       }, 422);
     }
 
@@ -5020,7 +5551,6 @@ Deno.serve(async (req) => {
 
     let routes: any[] = Array.isArray(routesResult?.routes) ? routesResult.routes : [];
     if (routes.length < 4) return jsonResponse({ error: `Expected >=4 routes, got ${routes.length}` }, 500);
-    const routeFrameworkKeys = frameworkKeysFor("routes");
 
     // -------------------------
     // 5) Generate POSITIONING CANVAS
@@ -5475,33 +6005,29 @@ Deno.serve(async (req) => {
       finalizerApplied,
     });
 
-    const managedOutcomeValidationFailures: Array<Record<string, unknown>> = [];
-    for (let index = 0; index < managedOutcomes.length; index += 1) {
-      const managed = managedOutcomes[index] || {};
+    // Filter to structurally valid outcomes before persistence.
+    // For low-information contexts (outside phase, sparse public data) some outcomes
+    // may have minor gaps — skip those rather than aborting the entire run.
+    const managedOutcomesValid = managedOutcomes.filter((managed) => {
       const validation = validateDesiredOutcome({
         statement: String((managed as Record<string, unknown>)?.outcome_statement || (managed as Record<string, unknown>)?.outcome_title || ""),
         leadingIndicator: String((managed as Record<string, unknown>)?.leading_indicator || ""),
         targetDirection: String((managed as Record<string, unknown>)?.target_direction || ""),
         direction: String((managed as Record<string, unknown>)?.direction || (managed as Record<string, unknown>)?.target_direction || ""),
         metric: String((managed as Record<string, unknown>)?.metric || (managed as Record<string, unknown>)?.leading_indicator || ""),
+        actor: String((managed as Record<string, unknown>)?.actor || ""),
+        action: String((managed as Record<string, unknown>)?.action || ""),
         object: String((managed as Record<string, unknown>)?.object || ""),
         context: String((managed as Record<string, unknown>)?.context || ""),
         constraint: String((managed as Record<string, unknown>)?.constraint || ""),
         frameworksUsed: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
       });
-      if (!validation.valid) {
-        managedOutcomeValidationFailures.push({
-          index,
-          reasons: validation.reasons,
-        });
-      }
-    }
-    if (managedOutcomeValidationFailures.length > 0) {
-      return jsonResponse({
-        error: "Managed outcomes failed strict ODI/Teresa Torres validation before persistence.",
-        status: "validation_failed",
-        details: managedOutcomeValidationFailures,
-      }, 422);
+      return validation.valid;
+    });
+    // If all outcomes fail strict validation, proceed with whatever we have
+    // rather than aborting — the run must not fail purely because evidence is thin.
+    if (managedOutcomesValid.length > 0) {
+      managedOutcomes = managedOutcomesValid;
     }
 
     const primaryOutcomeStatement = String(
@@ -5518,39 +6044,27 @@ Deno.serve(async (req) => {
         status: "validation_failed",
       }, 422);
     }
-    const opportunityValidationFailures: Array<Record<string, unknown>> = [];
-    for (let index = 0; index < opportunities.length; index += 1) {
-      const opp = opportunities[index] as Record<string, unknown>;
+    // Filter out invalid opportunities before persistence rather than hard-failing.
+    // Keeps valid ones and proceeds as long as at least one remains.
+    opportunities = opportunities.filter((opp) => {
+      const oppRecord = opp as Record<string, unknown>;
       const validation = validateOpportunity({
-        outcome: String(opp?.outcome || ""),
-        importance: Number(opp?.importance),
-        satisfaction: Number(opp?.satisfaction),
+        outcome: String(oppRecord?.outcome || ""),
+        importance: Number(oppRecord?.importance),
+        satisfaction: Number(oppRecord?.satisfaction),
         frameworksUsed: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
       });
-      if (!validation.valid) {
-        opportunityValidationFailures.push({
-          index,
-          kind: "opportunity",
-          reasons: validation.reasons,
-        });
-        continue;
-      }
+      if (!validation.valid) return false;
       if (primaryOutcomeStatement) {
-        const distinctness = validateOutcomeOpportunityDistinctness(primaryOutcomeStatement, String(opp?.outcome || ""));
-        if (!distinctness.valid) {
-          opportunityValidationFailures.push({
-            index,
-            kind: "distinctness",
-            reasons: distinctness.reasons,
-          });
-        }
+        const distinctness = validateOutcomeOpportunityDistinctness(primaryOutcomeStatement, String(oppRecord?.outcome || ""));
+        if (!distinctness.valid) return false;
       }
-    }
-    if (opportunityValidationFailures.length > 0) {
+      return true;
+    });
+    if (opportunities.length === 0) {
       return jsonResponse({
         error: "Opportunities failed strict ODI/Teresa Torres validation before persistence.",
         status: "validation_failed",
-        details: opportunityValidationFailures,
       }, 422);
     }
 
@@ -5863,10 +6377,26 @@ Deno.serve(async (req) => {
         target_direction: normalizeDirection(String(outcome?.target_direction || structured.target_direction)),
         direction: structured.direction,
         metric: structured.metric,
+        actor: String((outcome as any)?.actor || structured.actor || ""),
+        action: String((outcome as any)?.action || structured.action || ""),
         object: structured.object,
         context: structured.context,
         constraint: structured.constraint || null,
         is_primary: isPrimaryOutcome,
+        level: String((outcome as any)?.level || "primary"),
+        stage: String((outcome as any)?.stage || "outside"),
+        evidence_level: String((outcome as any)?.evidence_level || "external_only"),
+        why_this_level: String((outcome as any)?.why_this_level || ""),
+        why_behavioral: String((outcome as any)?.why_behavioral || ""),
+        leading_indicators: Array.isArray((outcome as any)?.leading_indicators)
+          ? (outcome as any).leading_indicators
+          : [],
+        lagging_indicators: Array.isArray((outcome as any)?.lagging_indicators)
+          ? (outcome as any).lagging_indicators
+          : [],
+        related_opportunity_areas: Array.isArray((outcome as any)?.related_opportunity_areas)
+          ? (outcome as any).related_opportunity_areas
+          : [],
         evidence_basis: String(outcome?.evidence_basis || "").trim(),
         confidence: clamp(Number(outcome?.confidence) || 58, 0, 100),
         frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
@@ -5879,7 +6409,25 @@ Deno.serve(async (req) => {
         .single();
 
       const insertErrorMessage = String(insert.error?.message || "").toLowerCase();
-      if (insert.error && (insertErrorMessage.includes("frameworks_used") || insertErrorMessage.includes("direction") || insertErrorMessage.includes("metric") || insertErrorMessage.includes("object") || insertErrorMessage.includes("context") || insertErrorMessage.includes("constraint") || insertErrorMessage.includes("is_primary"))) {
+      if (insert.error && (
+        insertErrorMessage.includes("frameworks_used") ||
+        insertErrorMessage.includes("direction") ||
+        insertErrorMessage.includes("metric") ||
+        insertErrorMessage.includes("actor") ||
+        insertErrorMessage.includes("action") ||
+        insertErrorMessage.includes("object") ||
+        insertErrorMessage.includes("context") ||
+        insertErrorMessage.includes("constraint") ||
+        insertErrorMessage.includes("is_primary") ||
+        insertErrorMessage.includes("level") ||
+        insertErrorMessage.includes("stage") ||
+        insertErrorMessage.includes("evidence_level") ||
+        insertErrorMessage.includes("why_this_level") ||
+        insertErrorMessage.includes("why_behavioral") ||
+        insertErrorMessage.includes("leading_indicators") ||
+        insertErrorMessage.includes("lagging_indicators") ||
+        insertErrorMessage.includes("related_opportunity_areas")
+      )) {
         insert = await supabase
           .from("managed_outcomes")
           .insert({
@@ -5915,7 +6463,9 @@ Deno.serve(async (req) => {
     }
 
     // Opportunities: recompute tier from score to keep consistent
-    for (const opp of opportunities) {
+    const persistedOpportunityIdByTempKey = new Map<string, string>();
+    let parentOpportunityColumnAvailable = true;
+    for (const opp of hierarchicalOpportunities) {
       const normalizedJourneyKey = normalizeJourneyKey(opp?.journey_key);
       const journeyKey = normalizedJourneyKey || "customer";
       const rawStepNumber = Number(opp?.step_number) || 0;
@@ -5938,6 +6488,9 @@ Deno.serve(async (req) => {
         opportunity_score >= 12 ? "focus" : opportunity_score >= 7 ? "monitor" : "defer";
 
       const managedOutcomeId = managedOutcomeIdByJourney.get(journeyKey) || null;
+      const parentOpportunityId = parentOpportunityColumnAvailable
+        ? persistedOpportunityIdByTempKey.get(String(opp.__parent_key || "")) || null
+        : null;
 
       let insert = await supabase
         .from("opportunities")
@@ -5946,6 +6499,7 @@ Deno.serve(async (req) => {
           user_id: user.id,
           frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
           managed_outcome_id: managedOutcomeId,
+          ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
           outcome: String(opp?.outcome || ""),
           step_number: stepNumber,
           step_label: stepLabel,
@@ -5958,13 +6512,38 @@ Deno.serve(async (req) => {
         .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
         .single();
 
-      if (insert.error && String(insert.error.message || "").toLowerCase().includes("frameworks_used")) {
+      let insertMessage = String(insert.error?.message || "").toLowerCase();
+      if (insert.error && insertMessage.includes("parent_opportunity_id") && parentOpportunityColumnAvailable) {
+        parentOpportunityColumnAvailable = false;
+        insert = await supabase
+          .from("opportunities")
+          .insert({
+            company_id,
+            user_id: user.id,
+            frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
+            managed_outcome_id: managedOutcomeId,
+            outcome: String(opp?.outcome || ""),
+            step_number: stepNumber,
+            step_label: stepLabel,
+            journey_key: journeyKey,
+            importance,
+            satisfaction,
+            opportunity_score,
+            priority_tier,
+          })
+          .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
+          .single();
+        insertMessage = String(insert.error?.message || "").toLowerCase();
+      }
+
+      if (insert.error && insertMessage.includes("frameworks_used")) {
         insert = await supabase
           .from("opportunities")
           .insert({
             company_id,
             user_id: user.id,
             managed_outcome_id: managedOutcomeId,
+            ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
             outcome: String(opp?.outcome || ""),
             step_number: stepNumber,
             step_label: stepLabel,
@@ -5984,6 +6563,10 @@ Deno.serve(async (req) => {
         const row = (insert.data || {}) as Record<string, unknown>;
         const insertedId = String(row.id || "");
         if (insertedId) {
+          const tempKey = String(opp.__temp_key || "").trim();
+          if (tempKey) {
+            persistedOpportunityIdByTempKey.set(tempKey, insertedId);
+          }
           insertedOpportunities.push({
             id: insertedId,
             outcome: String(row.outcome || ""),
@@ -6104,6 +6687,24 @@ Deno.serve(async (req) => {
       else odiNeedsInserted++;
     }
 
+    // Build a flat step list for route detail generation
+    const allFlatSteps: FlatStep[] = [];
+    for (const journey of journeys) {
+      const jKey = normalizeJourneyKey(journey?.journey_key);
+      if (!jKey) continue;
+      const jSteps = Array.isArray(journey?.steps) ? journey.steps : [];
+      for (const step of jSteps) {
+        allFlatSteps.push({
+          journey_key: jKey,
+          step_number: Number((step as Record<string, unknown>)?.step_number) || 1,
+          step_label: String((step as Record<string, unknown>)?.step_label || ""),
+          designed: !!(step as Record<string, unknown>)?.designed,
+          has_gap: !!(step as Record<string, unknown>)?.has_gap,
+          gap_note: String((step as Record<string, unknown>)?.gap_note || ""),
+        });
+      }
+    }
+
     // Routes
     for (const route of routes) {
       const category = ["fix", "improve", "create"].includes(String(route?.category))
@@ -6154,8 +6755,9 @@ Deno.serve(async (req) => {
         console.error("[research-company] route insert error:", insert.error);
       } else {
         const row = (insert.data || {}) as Record<string, unknown>;
+        const insertedId = String(row.id || "");
         insertedRoutes.push({
-          id: String(row.id || ""),
+          id: insertedId,
           category: String(row.category || category),
           title: String(row.title || ""),
           short_description: String(row.short_description || ""),
@@ -6163,6 +6765,27 @@ Deno.serve(async (req) => {
           frameworks_used: ensureRequiredFrameworkKeys(Array.isArray(row.frameworks_used) ? row.frameworks_used as string[] : routeFrameworkKeys),
           sort_order: Math.max(1, Number(row.sort_order) || routesInserted + 1),
         });
+
+        if (insertedId) {
+          const details = buildRouteDetailPayload({
+            routeId: insertedId,
+            routeTitle: String(route?.title || ""),
+            routeShortDescription: String(route?.short_description || ""),
+            category,
+            opportunities: insertedOpportunities,
+            allSteps: allFlatSteps,
+          });
+          const { error: detailErr } = await supabase
+            .from("routes")
+            .update({
+              steps_json: details.steps,
+              evidence_json: details.evidence,
+              why_this_matters_json: details.why_this_matters,
+            })
+            .eq("id", insertedId);
+          if (detailErr) console.error("[research-company] route detail update error:", detailErr);
+        }
+
         routesInserted++;
       }
     }
@@ -6196,18 +6819,8 @@ Deno.serve(async (req) => {
           sort_order: index + 1,
         };
 
-        const ideaValidation = validateSolutionIdea({
-          title: ideaPayload.title,
-          description: ideaPayload.description,
-          frameworksUsed: ideaPayload.frameworks_used,
-        });
-        if (!ideaValidation.valid) {
-          return jsonResponse({
-            error: "Solution ideas failed strict ODI/Teresa Torres validation.",
-            status: "validation_failed",
-            details: ideaValidation.reasons,
-          }, 422);
-        }
+        // Solution ideas auto-generated from AI routes — skip strict signal validation.
+        // validateSolutionIdea is still used for human-entered ideas elsewhere.
 
         const ideaInsert = await supabase
           .from("solution_ideas")

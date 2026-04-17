@@ -6,7 +6,9 @@ import {
   deriveDesiredOutcomeParts,
   humanizeOutcomeLanguage,
   normalizeDesiredOutcomeDirection,
+  normalizeOutcomeLevel,
   validateDesiredOutcomeParts,
+  type OutcomeLevel,
 } from "@/lib/desiredOutcome";
 
 export type ManagedOutcome = {
@@ -18,10 +20,20 @@ export type ManagedOutcome = {
   target_direction: string;
   direction: string;
   metric: string;
+  actor: string;
+  action: string;
   object: string;
   context: string;
   constraint: string | null;
   is_primary: boolean;
+  level: OutcomeLevel | null;
+  stage: string | null;
+  evidence_level: string | null;
+  why_this_level: string | null;
+  why_behavioral: string | null;
+  leading_indicators: string[];
+  lagging_indicators: string[];
+  related_opportunity_areas: string[];
   evidence_basis: string;
   confidence: number;
   frameworks_used: string[];
@@ -40,10 +52,20 @@ type ManagedOutcomeRow = {
   target_direction: string;
   direction?: string | null;
   metric?: string | null;
+  actor?: string | null;
+  action?: string | null;
   object?: string | null;
   context?: string | null;
   constraint?: string | null;
   is_primary?: boolean | null;
+  level?: string | null;
+  stage?: string | null;
+  evidence_level?: string | null;
+  why_this_level?: string | null;
+  why_behavioral?: string | null;
+  leading_indicators?: string[] | null;
+  lagging_indicators?: string[] | null;
+  related_opportunity_areas?: string[] | null;
   evidence_basis: string;
   confidence: number;
   frameworks_used: string[];
@@ -59,10 +81,13 @@ type ManagedOutcomeInput = {
   target_direction?: string;
   direction?: string;
   metric?: string;
+  actor?: string;
+  action?: string;
   object?: string;
   context?: string;
   constraint?: string | null;
   is_primary?: boolean;
+  level?: OutcomeLevel | null;
   evidence_basis: string;
   confidence: number;
   frameworks_used?: string[];
@@ -70,8 +95,9 @@ type ManagedOutcomeInput = {
 
 function isMissingManagedOutcomeColumnError(message: string) {
   const lower = String(message || "").toLowerCase();
-  return /(column\s+.*(direction|metric|object|context|constraint|is_primary).*does not exist)/i.test(lower)
-    || (lower.includes("does not exist") && /(direction|metric|object|context|constraint|is_primary)/.test(lower));
+  const newColumns = "direction|metric|actor|action|object|context|constraint|is_primary|level|stage|evidence_level|why_this_level|why_behavioral|leading_indicators|lagging_indicators|related_opportunity_areas";
+  return new RegExp(`column\\s+.*(${newColumns}).*does not exist`, "i").test(lower)
+    || (lower.includes("does not exist") && new RegExp(newColumns).test(lower));
 }
 
 function normalizeManagedOutcomeRow(row: ManagedOutcomeRow): ManagedOutcome {
@@ -82,10 +108,13 @@ function normalizeManagedOutcomeRow(row: ManagedOutcomeRow): ManagedOutcome {
     target_direction: row.target_direction,
     direction: row.direction,
     metric: row.metric,
+    actor: row.actor,
+    action: row.action,
     object: row.object,
     context: row.context,
     constraint: row.constraint,
     is_primary: row.is_primary,
+    level: row.level,
   });
   const composed = composeDesiredOutcomeFromParts(derived);
 
@@ -98,10 +127,22 @@ function normalizeManagedOutcomeRow(row: ManagedOutcomeRow): ManagedOutcome {
     target_direction: normalizeDesiredOutcomeDirection(composed.target_direction || row.target_direction),
     direction: normalizeDesiredOutcomeDirection(row.direction || composed.direction),
     metric: humanizeOutcomeLanguage(row.metric || composed.metric),
+    actor: humanizeOutcomeLanguage(row.actor || composed.actor),
+    action: humanizeOutcomeLanguage(row.action || composed.action),
     object: humanizeOutcomeLanguage(row.object || composed.object),
     context: humanizeOutcomeLanguage(row.context || composed.context),
     constraint: row.constraint ? humanizeOutcomeLanguage(row.constraint) : null,
     is_primary: row.is_primary === true,
+    level: normalizeOutcomeLevel(row.level),
+    stage: row.stage ?? null,
+    evidence_level: row.evidence_level ?? null,
+    why_this_level: row.why_this_level ?? null,
+    why_behavioral: row.why_behavioral ?? null,
+    leading_indicators: Array.isArray(row.leading_indicators) ? row.leading_indicators : [],
+    lagging_indicators: Array.isArray(row.lagging_indicators) ? row.lagging_indicators : [],
+    related_opportunity_areas: Array.isArray(row.related_opportunity_areas)
+      ? row.related_opportunity_areas
+      : [],
     evidence_basis: String(row.evidence_basis || "").trim(),
     confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 55,
     frameworks_used: ensureRequiredFrameworkKeys(row.frameworks_used || []),
@@ -126,10 +167,13 @@ function normalizeInputToOutcome(input: ManagedOutcomeInput) {
     target_direction: input.target_direction,
     direction: input.direction,
     metric: input.metric,
+    actor: input.actor,
+    action: input.action,
     object: input.object,
     context: input.context,
     constraint: input.constraint,
     is_primary: input.is_primary,
+    level: input.level,
   });
   const validation = validateDesiredOutcomeParts(base);
   if (!validation.valid) {
@@ -149,10 +193,13 @@ function normalizeInputToOutcome(input: ManagedOutcomeInput) {
     target_direction: composed.target_direction,
     direction: composed.direction,
     metric: composed.metric,
+    actor: composed.actor,
+    action: composed.action,
     object: composed.object,
     context: composed.context,
     constraint: composed.constraint || null,
     is_primary: composed.is_primary === true,
+    level: composed.level ?? null,
     evidence_basis: String(input.evidence_basis || "").trim() || "Team-authored desired outcome.",
     confidence: Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : 55,
     frameworks_used: ensureRequiredFrameworkKeys(
@@ -175,9 +222,19 @@ function selectColumns(includeStructured: boolean, includePrimary: boolean) {
     "target_direction",
     includeStructured ? "direction" : null,
     includeStructured ? "metric" : null,
+    includeStructured ? "actor" : null,
+    includeStructured ? "action" : null,
     includeStructured ? "object" : null,
     includeStructured ? "context" : null,
     includeStructured ? "constraint" : null,
+    includeStructured ? "level" : null,
+    includeStructured ? "stage" : null,
+    includeStructured ? "evidence_level" : null,
+    includeStructured ? "why_this_level" : null,
+    includeStructured ? "why_behavioral" : null,
+    includeStructured ? "leading_indicators" : null,
+    includeStructured ? "lagging_indicators" : null,
+    includeStructured ? "related_opportunity_areas" : null,
     includePrimary ? "is_primary" : null,
     "evidence_basis",
     "confidence",
@@ -246,10 +303,20 @@ export function useManagedOutcomes(companyId?: string) {
           ...row,
           direction: row.direction ?? null,
           metric: row.metric ?? null,
+          actor: row.actor ?? null,
+          action: row.action ?? null,
           object: row.object ?? null,
           context: row.context ?? null,
           constraint: row.constraint ?? null,
           is_primary: row.is_primary ?? false,
+          level: row.level ?? null,
+          stage: row.stage ?? null,
+          evidence_level: row.evidence_level ?? null,
+          why_this_level: row.why_this_level ?? null,
+          why_behavioral: row.why_behavioral ?? null,
+          leading_indicators: row.leading_indicators ?? [],
+          lagging_indicators: row.lagging_indicators ?? [],
+          related_opportunity_areas: row.related_opportunity_areas ?? [],
         }));
         setItems(sortManagedOutcomes(rows.map(normalizeManagedOutcomeRow)));
       }
@@ -349,10 +416,13 @@ export function useManagedOutcomes(companyId?: string) {
         target_direction: input.target_direction ?? current.target_direction,
         direction: input.direction ?? current.direction,
         metric: input.metric ?? current.metric,
+        actor: input.actor ?? current.actor,
+        action: input.action ?? current.action,
         object: input.object ?? current.object,
         context: input.context ?? current.context,
         constraint: input.constraint ?? current.constraint,
         is_primary: input.is_primary ?? current.is_primary,
+        level: input.level ?? current.level,
         evidence_basis: input.evidence_basis ?? current.evidence_basis,
         confidence: input.confidence ?? current.confidence,
         frameworks_used: input.frameworks_used ?? current.frameworks_used,
@@ -375,9 +445,12 @@ export function useManagedOutcomes(companyId?: string) {
         target_direction: normalized.target_direction,
         direction: normalized.direction,
         metric: normalized.metric,
+        actor: normalized.actor,
+        action: normalized.action,
         object: normalized.object,
         context: normalized.context,
         constraint: normalized.constraint,
+        level: normalized.level ?? null,
         evidence_basis: normalized.evidence_basis,
         confidence: normalized.confidence,
         frameworks_used: ensureRequiredFrameworkKeys(normalized.frameworks_used),
