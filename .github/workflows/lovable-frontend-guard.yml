@@ -1,0 +1,38 @@
+name: Lovable Frontend Guard
+
+on:
+  pull_request:
+    branches:
+      - lovable-frontend-only
+
+jobs:
+  block-backend-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block backend/db path changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          CHANGED_FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          FORBIDDEN_REGEX='^(supabase/|sql/|scripts/|launch-site/|Client_Files/|Training_Inputs/|artifacts/|tmp/|.*\.sql$)'
+          FORBIDDEN_MATCHES="$(echo "$CHANGED_FILES" | grep -E "$FORBIDDEN_REGEX" || true)"
+
+          if [ -n "$FORBIDDEN_MATCHES" ]; then
+            echo ""
+            echo "This branch is frontend-only. The following backend/data paths are not allowed:"
+            echo "$FORBIDDEN_MATCHES"
+            exit 1
+          fi
+
+          echo "No forbidden backend/db paths changed."

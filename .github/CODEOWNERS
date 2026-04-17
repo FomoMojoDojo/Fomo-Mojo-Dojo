@@ -1,0 +1,18 @@
+# Lovable Frontend Guardrails
+# Replace @fomomojodojo with your exact GitHub user or team if needed.
+
+# Frontend surface
+/src/** @fomomojodojo
+/public/** @fomomojodojo
+/index.html @fomomojodojo
+/vite.config.ts @fomomojodojo
+/tailwind.config.ts @fomomojodojo
+/postcss.config.js @fomomojodojo
+/components.json @fomomojodojo
+/package.json @fomomojodojo
+/package-lock.json @fomomojodojo
+
+# Backend / data paths (must be human-reviewed)
+/supabase/** @fomomojodojo
+/sql/** @fomomojodojo
+/scripts/** @fomomojodojo
