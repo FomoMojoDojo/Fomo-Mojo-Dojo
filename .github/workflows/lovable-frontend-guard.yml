@@ -1,9 +1,13 @@
 name: Lovable Frontend Guard
 
 on:
+  push:
+    branches:
+      - lovable-frontend-only
   pull_request:
     branches:
       - lovable-frontend-only
+  workflow_dispatch:
 
 jobs:
   block-backend-paths:
