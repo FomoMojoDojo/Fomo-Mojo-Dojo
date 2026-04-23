@@ -632,6 +632,7 @@ export type Database = {
           importance: number
           journey_key: string
           managed_outcome_id: string | null
+          parent_opportunity_id: string | null
           opportunity_score: number
           outcome: string
           priority_tier: string
@@ -650,6 +651,7 @@ export type Database = {
           importance?: number
           journey_key?: string
           managed_outcome_id?: string | null
+          parent_opportunity_id?: string | null
           opportunity_score?: number
           outcome?: string
           priority_tier?: string
@@ -668,6 +670,7 @@ export type Database = {
           importance?: number
           journey_key?: string
           managed_outcome_id?: string | null
+          parent_opportunity_id?: string | null
           opportunity_score?: number
           outcome?: string
           priority_tier?: string
@@ -691,6 +694,13 @@ export type Database = {
             columns: ["managed_outcome_id"]
             isOneToOne: false
             referencedRelation: "managed_outcomes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunities_parent_opportunity_id_fkey"
+            columns: ["parent_opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
             referencedColumns: ["id"]
           },
         ]

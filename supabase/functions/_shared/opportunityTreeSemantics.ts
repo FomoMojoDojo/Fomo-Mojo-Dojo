@@ -8,7 +8,18 @@ import {
 
 export const REQUIRED_FRAMEWORK_KEYS = ["odi", "teresa_torres"] as const;
 
-const SOLUTION_LANGUAGE_PATTERN =
+const PRESCRIPTIVE_SOLUTION_TERM_PATTERN =
+  /\b(feature|features|dashboard|portal|campaign|workflow|form|tool|tools|ui|ux|implementation|solution|solutions|prototype|wireframe|playbook|template|toolkit|checklist)\b/i;
+const PRESCRIPTIVE_SOLUTION_PREFIX_PATTERN =
+  /^(build|launch|create|implement|redesign|develop|establish|standardize|automate|deploy|design|integrate|introduce)\b/i;
+/**
+ * Paired prescriptive verb + solution noun — catches "build a workflow tracker",
+ * "launch a new dashboard", "deploy a form" etc. while leaving descriptive uses
+ * like "reduce friction in the approval workflow" untouched.
+ */
+const PRESCRIPTIVE_VERB_NOUN_PAIR_PATTERN =
+  /\b(build|launch|create|implement|redesign|develop|establish|standardize|automate|deploy|design|integrate|introduce)\s+\w*\s*(a|an|the)?\s*(feature|dashboard|portal|campaign|workflow|form|tool|tools|ui|ux|prototype|wireframe|playbook|template|toolkit|checklist|solution)\b/i;
+const SOLUTION_IDEA_SIGNAL_PATTERN =
   /\b(feature|features|build|built|launch|launched|dashboard|portal|campaign|workflow|form|tool|tools|ui|ux|implementation|implement|implemented|solution|solutions|redesign|redesigned|develop|developed|create|created|establish|established|standardize|standardized|automate|automated|deploy|deployed|pilot|piloted|map|mapped|analyze|analysed|analyzed|audit|audited|define|defined|train|trained|design|designed|integrate|integrated|introduce|introduced|process|system|program|protocol|playbook|framework|template|toolkit|script|guide|checklist)\b/i;
 
 const OUTCOME_VERB_PATTERN = /^(increase|reduce|improve|maximize|minimize|avoid)\b/i;
@@ -156,6 +167,29 @@ function normalizeText(value: string) {
     .trim();
 }
 
+function containsPrescriptiveSolutionLanguage(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+
+  // Strongest signal: sentence starts with a prescriptive build/deploy verb.
+  if (PRESCRIPTIVE_SOLUTION_PREFIX_PATTERN.test(text)) return true;
+
+  // Medium signal: prescriptive verb paired with a solution noun anywhere in text.
+  if (PRESCRIPTIVE_VERB_NOUN_PAIR_PATTERN.test(text)) return true;
+
+  // Weak signal: solution noun appears alone.
+  // Only treat it as prescriptive when there is NO outcome directional verb
+  // (increase / reduce / improve / maximize / minimize / avoid).
+  // If an outcome verb is present the noun is almost certainly used as
+  // descriptive context (e.g. "reduce friction in the approval workflow").
+  if (PRESCRIPTIVE_SOLUTION_TERM_PATTERN.test(text)) {
+    const hasOutcomeVerb = OUTCOME_VERB_PATTERN.test(text);
+    if (!hasOutcomeVerb) return true;
+  }
+
+  return false;
+}
+
 export function validateDesiredOutcome(candidate: DesiredOutcomeCandidate): ValidationResult {
   const reasons: string[] = [];
   const statement = String(candidate.statement || "").trim();
@@ -168,7 +202,7 @@ export function validateDesiredOutcome(candidate: DesiredOutcomeCandidate): Vali
   if (statement && !MEASURABLE_DIMENSION_PATTERN.test(statement) && !MEASURABLE_DIMENSION_PATTERN.test(indicator)) {
     reasons.push("missing_measurable_dimension");
   }
-  if (SOLUTION_LANGUAGE_PATTERN.test(statement)) reasons.push("contains_solution_language");
+  if (containsPrescriptiveSolutionLanguage(statement)) reasons.push("contains_solution_language");
 
   const structuredInput: DesiredOutcomeParts = {
     ...deriveDesiredOutcomeParts({
@@ -232,7 +266,7 @@ export function validateOpportunity(candidate: OpportunityCandidate): Validation
   const outcome = String(candidate.outcome || "").trim();
 
   if (!outcome) reasons.push("missing_outcome");
-  if (SOLUTION_LANGUAGE_PATTERN.test(outcome)) reasons.push("contains_solution_language");
+  if (containsPrescriptiveSolutionLanguage(outcome)) reasons.push("contains_solution_language");
   if (!OUTCOME_VERB_PATTERN.test(outcome)) reasons.push("missing_directional_verb");
 
   if (candidate.importance != null && !(Number(candidate.importance) >= 1 && Number(candidate.importance) <= 10)) {
@@ -290,7 +324,7 @@ export function validateSolutionIdea(candidate: SolutionIdeaCandidate): Validati
 
   if (!title) reasons.push("missing_title");
   if (!description) reasons.push("missing_description");
-  if (!SOLUTION_LANGUAGE_PATTERN.test(`${title} ${description}`)) reasons.push("missing_solution_signal");
+  if (!SOLUTION_IDEA_SIGNAL_PATTERN.test(`${title} ${description}`)) reasons.push("missing_solution_signal");
 
   if (candidate.frameworksUsed && !hasRequiredFrameworkKeys(candidate.frameworksUsed)) {
     reasons.push("missing_required_frameworks");

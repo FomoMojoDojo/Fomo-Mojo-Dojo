@@ -60,6 +60,7 @@ type NavItem = {
 
 const coreItems: NavItem[] = [
   { label: "MojoMap", path: "/", icon: Home },
+  { label: "Positioning", path: "/positioning", icon: FileText },
   { label: "Opportunities", path: "/opportunities", icon: TrendingUp },
   { label: "Routes", path: "/routes", icon: Map },
   { label: "Strategy", path: "/strategy", icon: Compass },
@@ -72,8 +73,7 @@ const clientCoreItems: NavItem[] = [
 const resourceItems: NavItem[] = [
   { label: "Artifacts", path: "/files", icon: FolderKanban },
   { label: "Inputs", path: "/inputs", icon: ListChecks },
-  { label: "Job Steps", path: "/job-steps", icon: Sparkles, flag: "show_job_steps" },
-  { label: "Positioning", path: "/positioning", icon: FileText, flag: "show_positioning" },
+  { label: "Checkpoints", path: "/job-steps", icon: Sparkles, flag: "show_job_steps" },
   { label: "Analytics", path: "/analytics", icon: BarChart3, flag: "show_analytics" },
 ];
 

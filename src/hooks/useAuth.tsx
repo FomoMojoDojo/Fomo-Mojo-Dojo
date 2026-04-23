@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { HAS_SUPABASE_CREDENTIALS, supabase } from '@/integrations/supabase/client';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthCtx {
@@ -13,6 +13,15 @@ interface AuthCtx {
 }
 
 const AuthContext = createContext<AuthCtx | undefined>(undefined);
+const PREVIEW_ADMIN_USER = {
+  id: 'preview-admin',
+  aud: 'authenticated',
+  role: 'authenticated',
+  email: 'preview-admin@local.test',
+  app_metadata: { provider: 'email' },
+  user_metadata: { previewMode: true },
+  created_at: new Date().toISOString(),
+} as User;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -21,6 +30,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!HAS_SUPABASE_CREDENTIALS) {
+      setSession(null);
+      setUser(PREVIEW_ADMIN_USER);
+      setIsAdmin(true);
+      setLoading(false);
+      return;
+    }
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -57,16 +74,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signIn = async (email: string, password: string) => {
+    if (!HAS_SUPABASE_CREDENTIALS) {
+      setUser(PREVIEW_ADMIN_USER);
+      setSession(null);
+      setIsAdmin(true);
+      return { error: null };
+    }
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error as Error | null };
   };
 
   const signUp = async (email: string, password: string) => {
+    if (!HAS_SUPABASE_CREDENTIALS) {
+      return { error: null };
+    }
     const { error } = await supabase.auth.signUp({ email, password });
     return { error: error as Error | null };
   };
 
   const signOut = async () => {
+    if (!HAS_SUPABASE_CREDENTIALS) {
+      setUser(null);
+      setSession(null);
+      setIsAdmin(false);
+      return;
+    }
     await supabase.auth.signOut();
   };
 

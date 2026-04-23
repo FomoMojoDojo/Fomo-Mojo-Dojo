@@ -9,6 +9,10 @@ const HAS_CONFIGURED_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY
 // Avoid hard-crashing the app when env vars are absent in hosted preview environments.
 const FALLBACK_SUPABASE_URL = 'https://example.supabase.co';
 const FALLBACK_SUPABASE_PUBLISHABLE_KEY = 'public-anon-key';
+const HAS_NON_PLACEHOLDER_FALLBACK =
+  FALLBACK_SUPABASE_URL !== 'https://example.supabase.co' &&
+  FALLBACK_SUPABASE_PUBLISHABLE_KEY !== 'public-anon-key';
+export const HAS_SUPABASE_CREDENTIALS = HAS_CONFIGURED_SUPABASE || HAS_NON_PLACEHOLDER_FALLBACK;
 
 const resolvedSupabaseUrl = HAS_CONFIGURED_SUPABASE ? SUPABASE_URL! : FALLBACK_SUPABASE_URL;
 const resolvedSupabasePublishableKey = HAS_CONFIGURED_SUPABASE

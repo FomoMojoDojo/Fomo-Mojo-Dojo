@@ -1,3 +1,8 @@
+import {
+  buildTraditionalMarketDefinition,
+  listTraditionalMarketCategoryLabels,
+} from "@/lib/marketTaxonomy";
+
 export type JtbdCheckpointKey =
   | "define"
   | "locate"
@@ -156,6 +161,12 @@ function validateActionLabel(value: string) {
   return compact;
 }
 
+function normalizeTraditionalMarketDefinition(value: string | null | undefined) {
+  return buildTraditionalMarketDefinition(value);
+}
+
+export const STRATEGIC_TRADITIONAL_MARKET_CATEGORY_OPTIONS = listTraditionalMarketCategoryLabels();
+
 export function checkpointForStepNumber(stepNumber: number) {
   const resolved = CHECKPOINT_BY_NUMBER.get(Math.max(1, Math.min(JTBD_CHECKPOINT_COUNT, Math.round(stepNumber))));
   return resolved || JTBD_ODI_CHECKPOINTS[0];
@@ -261,8 +272,7 @@ export function normalizeToEightCheckpointSpine(
 }
 
 export function deriveMarketDefinitionCanvas(input: DerivedMarketCanvasInput) {
-  const traditionalMarketDefinition =
-    safeText(input.traditionalMarketDefinition) || "No market definition captured yet.";
+  const traditionalMarketDefinition = normalizeTraditionalMarketDefinition(input.traditionalMarketDefinition);
   const jobExecutor = safeText(input.jobExecutor) || "Primary job performer";
   const chooser = safeText(input.chooser) || "Buying or decision lead";
   const abstractedExecutor = deriveAbstractedExecutor(jobExecutor);

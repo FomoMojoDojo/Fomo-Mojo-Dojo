@@ -17,7 +17,7 @@ type ArtifactSummary = {
 
 const LABELS: Record<ArtifactKey, string> = {
   inputs: "Inputs",
-  job_steps: "Job Steps",
+  job_steps: "Checkpoints",
   opportunities: "Opportunities",
   routes: "Routes",
 };

@@ -11,6 +11,28 @@ const ALLOWED_AREAS = new Set(["positioning", "strategy", "market", "odi"]);
 
 type FlowMode = "public_only" | "uploaded_only" | "hybrid";
 type ContextMode = "public_baseline" | "uploaded_only" | "uploaded_evidence_fallback";
+type FrameworkMode = "dunford_positioning" | "torres_opportunity_map" | "martin_strategy_cascade";
+type ProgramStage = "outside" | "diagnose" | "focus" | "flow";
+type OrchestratorMode = "off" | "chained" | "parallel";
+
+const FRAMEWORK_MODES: FrameworkMode[] = [
+  "dunford_positioning",
+  "torres_opportunity_map",
+  "martin_strategy_cascade",
+];
+const PROGRAM_STAGES: ProgramStage[] = ["outside", "diagnose", "focus", "flow"];
+const ORCHESTRATOR_MODES: OrchestratorMode[] = ["off", "chained", "parallel"];
+
+type RuntimeContract = {
+  request_id: string;
+  orchestrator_mode: OrchestratorMode;
+  framework_mode: FrameworkMode | null;
+  framework_modes: FrameworkMode[];
+  framework_schema_version: string;
+  stage: ProgramStage;
+  journey_key: string;
+  strict: boolean;
+};
 
 type StageKey =
   | "input_collect"
@@ -68,6 +90,115 @@ function parseJsonObjectSafe(raw: string): Record<string, unknown> | null {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function normalizeJourneyKey(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function normalizeFrameworkMode(value: unknown): FrameworkMode | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (FRAMEWORK_MODES as string[]).includes(normalized) ? normalized as FrameworkMode : null;
+}
+
+function parseFrameworkModes(value: unknown): FrameworkMode[] {
+  if (!Array.isArray(value)) return [];
+  const out: FrameworkMode[] = [];
+  for (const item of value) {
+    const mode = normalizeFrameworkMode(item);
+    if (!mode) continue;
+    if (out.includes(mode)) continue;
+    out.push(mode);
+  }
+  return out;
+}
+
+function normalizeProgramStage(value: unknown): ProgramStage | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (PROGRAM_STAGES as string[]).includes(normalized) ? normalized as ProgramStage : null;
+}
+
+function normalizeOrchestratorMode(value: unknown): OrchestratorMode | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (ORCHESTRATOR_MODES as string[]).includes(normalized) ? normalized as OrchestratorMode : null;
+}
+
+function hasRuntimeContractFields(body: Record<string, unknown>) {
+  const keys = [
+    "framework_mode",
+    "framework_modes",
+    "orchestrator_mode",
+    "stage",
+    "framework_schema_version",
+    "enforce_framework_contract",
+  ];
+  return keys.some((key) => body[key] !== undefined);
+}
+
+function parseRuntimeContract(body: Record<string, unknown>) {
+  const strict = body?.enforce_framework_contract === true || hasRuntimeContractFields(body);
+  if (!strict) return { strict: false, contract: null as RuntimeContract | null, errors: [] as string[] };
+
+  const errors: string[] = [];
+  const orchestratorMode = normalizeOrchestratorMode(body?.orchestrator_mode);
+  if (!orchestratorMode) {
+    errors.push("orchestrator_mode must be one of: off, chained, parallel");
+  }
+
+  const stage = normalizeProgramStage(body?.stage);
+  if (!stage) {
+    errors.push("stage must be one of: outside, diagnose, focus, flow");
+  }
+
+  const journeyKey = normalizeJourneyKey(body?.journey_key ?? body?.journey_id);
+  if (!journeyKey) {
+    errors.push("journey_key is required");
+  }
+
+  const frameworkSchemaVersion = String(body?.framework_schema_version || "").trim();
+  if (!frameworkSchemaVersion) {
+    errors.push("framework_schema_version is required");
+  }
+
+  const frameworkMode = normalizeFrameworkMode(body?.framework_mode);
+  const frameworkModes = parseFrameworkModes(body?.framework_modes);
+
+  if (orchestratorMode === "off") {
+    if (!frameworkMode) {
+      errors.push("framework_mode is required when orchestrator_mode=off");
+    }
+    if (frameworkModes.length > 0) {
+      errors.push("framework_modes is forbidden when orchestrator_mode=off");
+    }
+  } else if (orchestratorMode === "chained" || orchestratorMode === "parallel") {
+    if (frameworkModes.length === 0) {
+      errors.push("framework_modes is required when orchestrator_mode is chained or parallel");
+    }
+    if (String(body?.framework_mode || "").trim()) {
+      errors.push("framework_mode is forbidden when orchestrator_mode is chained or parallel");
+    }
+  }
+
+  const requestIdRaw = String(body?.request_id || "").trim();
+  const contract: RuntimeContract = {
+    request_id: requestIdRaw || crypto.randomUUID(),
+    orchestrator_mode: orchestratorMode || "off",
+    framework_mode: orchestratorMode === "off" ? frameworkMode : null,
+    framework_modes: orchestratorMode === "off"
+      ? (frameworkMode ? [frameworkMode] : [])
+      : frameworkModes,
+    framework_schema_version: frameworkSchemaVersion,
+    stage: stage || "outside",
+    journey_key: journeyKey,
+    strict: true,
+  };
+
+  return { strict: true, contract, errors };
 }
 
 function normalizeMode(raw: unknown): FlowMode {
@@ -289,7 +420,8 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}));
   const companyId = String(body?.company_id || "").trim();
-  const trigger = String(body?.trigger || "manual").trim() || "manual";
+  const trigger = String(body?.trigger || body?.trigger_type || "manual").trim() || "manual";
+  const requestedJourneyKey = normalizeJourneyKey(body?.journey_key ?? body?.journey_id);
   const mode = normalizeMode(body?.mode);
   const includePublicCollection = body?.include_public_collection === undefined
     ? mode !== "uploaded_only"
@@ -305,6 +437,24 @@ Deno.serve(async (req) => {
     : body?.allow_review_block_save === true;
   const reviewMode = String(body?.review_mode || "advisory").trim() || "advisory";
   const areas = normalizeAreas(body?.areas);
+  const contractParse = parseRuntimeContract(asRecord(body) || {});
+  if (contractParse.errors.length > 0) {
+    return json({
+      error: "invalid_runtime_contract",
+      details: contractParse.errors,
+    }, 422);
+  }
+  const runtimeContract = contractParse.contract;
+
+  if (runtimeContract?.strict && runtimeContract.orchestrator_mode !== "off") {
+    return json({
+      error: "orchestrator_mode_not_supported",
+      status: "orchestrator_mode_not_supported",
+      message: "run-agent-flow currently supports single framework runs only (orchestrator_mode=off).",
+      orchestrator_mode: runtimeContract.orchestrator_mode,
+      request_id: runtimeContract.request_id,
+    }, 422);
+  }
 
   if (!companyId) return json({ error: "company_id is required" }, 400);
 
@@ -337,6 +487,9 @@ Deno.serve(async (req) => {
     review_mode: reviewMode,
     allow_review_block_save: allowReviewBlockSave,
     areas,
+    request_id: runtimeContract?.request_id ?? null,
+    runtime_contract: runtimeContract,
+    journey_key: requestedJourneyKey || null,
   };
 
   const { data: runInsert, error: runInsertErr } = await supabase
@@ -623,8 +776,18 @@ Deno.serve(async (req) => {
       input: {
         company_id: companyId,
         selected_context_mode: selectedContextMode,
+        runtime_contract: runtimeContract,
       },
       task: async () => {
+        if (runtimeContract?.strict && runtimeContract.orchestrator_mode === "off" && runtimeContract.framework_modes.length !== 1) {
+          throw new FlowError(
+            "Strict runtime contract requires exactly one framework mode.",
+            "output_generation",
+            422,
+            { error: "invalid_framework_mode_count", request_id: runtimeContract.request_id },
+          );
+        }
+
         const requestBody: Record<string, unknown> = {
           company_id: companyId,
           company_name: companyName,
@@ -635,6 +798,27 @@ Deno.serve(async (req) => {
 
         if (selectedContextMode === "uploaded_only" || selectedContextMode === "uploaded_evidence_fallback") {
           requestBody.context_mode = "uploaded_only";
+        }
+
+        if (requestedJourneyKey) {
+          requestBody.journey_key = requestedJourneyKey;
+          requestBody.journeys_to_generate = [requestedJourneyKey];
+          requestBody.job_maps = [{ journey_key: requestedJourneyKey, source: "selected" }];
+        }
+
+        if (runtimeContract?.strict) {
+          requestBody.enforce_framework_contract = true;
+          requestBody.request_id = runtimeContract.request_id;
+          requestBody.run_id = runId;
+          requestBody.orchestrator_mode = runtimeContract.orchestrator_mode;
+          requestBody.framework_schema_version = runtimeContract.framework_schema_version;
+          requestBody.stage = runtimeContract.stage;
+          requestBody.journey_key = runtimeContract.journey_key;
+          requestBody.journeys_to_generate = [runtimeContract.journey_key];
+          requestBody.job_maps = [{ journey_key: runtimeContract.journey_key, source: "selected" }];
+          if (runtimeContract.framework_mode) {
+            requestBody.framework_mode = runtimeContract.framework_mode;
+          }
         }
 
         const invokeResult = await invokeEdgeFunction({
@@ -736,6 +920,7 @@ Deno.serve(async (req) => {
         local_alignment_attempted: includeLocalAlignment,
         local_alignment_error: localAlignmentError,
       },
+      runtime_contract: runtimeContract,
       adjudication: adjudicationResult,
       research: researchResult,
       local_alignment: localAlignmentResult,
@@ -758,16 +943,28 @@ Deno.serve(async (req) => {
         : "Agent flow completed.",
       status: finalStatus,
       run_id: runId,
+      request_id: runtimeContract?.request_id ?? null,
       selected_context_mode: selectedContextMode,
+      runtime_contract: runtimeContract,
       adjudication: adjudicationResult,
       research_result: researchResult,
       local_alignment_result: localAlignmentResult,
       local_alignment_error: localAlignmentError,
     });
   } catch (error) {
+    // Preserve the original stage from FlowError; only fall back to
+    // "output_generation" when the error truly has no stage attribution
+    // (i.e. an unexpected throw outside any runStage call).
     const flowError = error instanceof FlowError
       ? error
-      : new FlowError(error instanceof Error ? error.message : String(error), "output_generation", 500, null);
+      : new FlowError(
+          error instanceof Error ? error.message : String(error),
+          // Use the last known active stage rather than hard-coding output_generation,
+          // so monitoring surfaces accurate failure attribution.
+          (researchResult != null ? "output_check" : adjudicationResult != null ? "output_generation" : "adjudication") as StageKey,
+          500,
+          null,
+        );
 
     const runStatus = flowError.statusCode === 422 ? "blocked" : "failed";
     const failureSummary = {
@@ -792,6 +989,7 @@ Deno.serve(async (req) => {
       return json({
         ...flowError.payload,
         run_id: runId,
+        request_id: runtimeContract?.request_id ?? null,
         stage: flowError.stageKey,
       }, flowError.statusCode);
     }
@@ -801,6 +999,7 @@ Deno.serve(async (req) => {
       status: runStatus,
       stage: flowError.stageKey,
       run_id: runId,
+      request_id: runtimeContract?.request_id ?? null,
     }, flowError.statusCode);
   }
 });

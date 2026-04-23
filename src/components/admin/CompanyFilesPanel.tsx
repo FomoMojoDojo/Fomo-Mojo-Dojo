@@ -262,10 +262,10 @@ function deriveIntakeAudience(payload: QuizIntakePayload) {
 
 function deriveJobMapTitle(payload: QuizIntakePayload) {
   const desiredOutcome = cleanSentence(payload.desired_outcome || "", 56);
-  if (desiredOutcome) return `Job Map: ${toTitleCase(desiredOutcome)}`;
+  if (desiredOutcome) return `Checkpoint Map: ${toTitleCase(desiredOutcome)}`;
   const problem = cleanSentence(payload.explicit_strategic_problem || "", 56);
-  if (problem) return `Job Map: ${toTitleCase(problem)}`;
-  return `Job Map: ${deriveIntakeAudience(payload)}`;
+  if (problem) return `Checkpoint Map: ${toTitleCase(problem)}`;
+  return `Checkpoint Map: ${deriveIntakeAudience(payload)}`;
 }
 
 function deriveJobMapSubtitle(payload: QuizIntakePayload) {
@@ -1314,7 +1314,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       .eq("journey_key", "customer")
       .limit(1);
     if (existingError) {
-      throw new Error(existingError.message || "Could not check for an existing customer job map.");
+      throw new Error(existingError.message || "Could not check for an existing customer checkpoint map.");
     }
     if ((existingRows ?? []).length > 0) {
       return { createdMap: false, createdNeeds: 0, createdMarketDefinition: false };
@@ -1344,7 +1344,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
 
     const { error: insertErr } = await supabase.from("job_steps").insert(rows);
     if (insertErr) {
-      throw new Error(insertErr.message || "Failed to create the intake-derived job map.");
+      throw new Error(insertErr.message || "Failed to create the intake-derived checkpoint map.");
     }
 
     let createdMarketDefinition = false;
@@ -1494,7 +1494,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       setImportOpen(false);
       const successParts = ["Quiz intake imported into the map."];
       if (strategicProblemSaved) successParts.push("Strategic problem captured.");
-      if (draftJobMap.createdMap) successParts.push("Draft customer job map created.");
+      if (draftJobMap.createdMap) successParts.push("Draft customer checkpoint map created.");
       if (draftJobMap.createdNeeds > 0) successParts.push(`${draftJobMap.createdNeeds} provisional Strategic Decision System needs added.`);
       toast.success(successParts.join(" "));
     } catch (error) {

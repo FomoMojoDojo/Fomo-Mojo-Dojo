@@ -305,6 +305,119 @@ function managedOutcomeDistance(outcomeText, opportunityText) {
   return ratio + jaccardSimilarity(outcomeText, opportunityText) * 0.4;
 }
 
+function hierarchyCandidateScore(parent, child) {
+  const parentStep = Number(parent.step_number) || 0;
+  const childStep = Number(child.step_number) || 0;
+  let score = 0;
+
+  if (parentStep > 0 && childStep > 0) {
+    const distance = childStep - parentStep;
+    if (distance < 0) score -= 6;
+    else score += Math.max(0, 5 - distance);
+  }
+
+  score += tokenOverlapScore(
+    `${String(parent.outcome || "")} ${String(parent.step_label || "")}`,
+    `${String(child.outcome || "")} ${String(child.step_label || "")}`,
+  ) * 1.25;
+  score += (Number(parent.opportunity_score) || 0) * 0.03;
+  return score;
+}
+
+function tokenOverlapScore(a, b) {
+  const aTokens = new Set(solutionMatchTokens(a));
+  const bTokens = new Set(solutionMatchTokens(b));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+function computeDepthByTempKey(tempKey, byTempKey, memo, visiting = new Set()) {
+  if (memo.has(tempKey)) return memo.get(tempKey);
+  if (visiting.has(tempKey)) return 0;
+  visiting.add(tempKey);
+  const row = byTempKey.get(tempKey);
+  if (!row || !row.__parent_key || !byTempKey.has(row.__parent_key)) {
+    memo.set(tempKey, 0);
+    visiting.delete(tempKey);
+    return 0;
+  }
+  const depth = computeDepthByTempKey(row.__parent_key, byTempKey, memo, visiting) + 1;
+  memo.set(tempKey, depth);
+  visiting.delete(tempKey);
+  return depth;
+}
+
+function buildHierarchicalOpportunities(opportunities) {
+  const ranked = [...opportunities]
+    .map((row, index) => ({
+      ...row,
+      __temp_key: `opp_${index + 1}`,
+      __parent_key: null,
+      __depth: 0,
+    }))
+    .sort((a, b) => {
+      const stepDelta = (Number(a.step_number) || 999) - (Number(b.step_number) || 999);
+      if (stepDelta !== 0) return stepDelta;
+      const scoreDelta = (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0);
+      if (scoreDelta !== 0) return scoreDelta;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+  for (let index = 0; index < ranked.length; index += 1) {
+    const child = ranked[index];
+    const candidates = ranked.slice(0, index);
+    if (candidates.length === 0) continue;
+
+    let best = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const candidate of candidates) {
+      const score = hierarchyCandidateScore(candidate, child);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    if (best && bestScore >= 1.25) {
+      child.__parent_key = best.__temp_key;
+    }
+  }
+
+  const byTempKey = new Map(ranked.map((row) => [row.__temp_key, row]));
+  const depthMemo = new Map();
+  for (const row of ranked) {
+    row.__depth = computeDepthByTempKey(row.__temp_key, byTempKey, depthMemo);
+  }
+
+  return ranked.sort((a, b) => {
+    if (a.__depth !== b.__depth) return a.__depth - b.__depth;
+    const stepDelta = (Number(a.step_number) || 999) - (Number(b.step_number) || 999);
+    if (stepDelta !== 0) return stepDelta;
+    const scoreDelta = (Number(b.opportunity_score) || 0) - (Number(a.opportunity_score) || 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function hasOpportunityCycle(rows) {
+  const byId = new Map(rows.map((row) => [String(row.id), String(row.parent_opportunity_id || "") || null]));
+  for (const row of rows) {
+    const startId = String(row.id || "");
+    if (!startId) continue;
+    let cursor = byId.get(startId);
+    const seen = new Set([startId]);
+    while (cursor) {
+      if (seen.has(cursor)) return true;
+      seen.add(cursor);
+      cursor = byId.get(cursor) || null;
+    }
+  }
+  return false;
+}
+
 function inferManagedOutcomeLink(opportunity, managedOutcomes) {
   const sameJourney = managedOutcomes.filter((item) => String(item.journey_key || "") === String(opportunity.journey_key || ""));
   const pool = sameJourney.length > 0 ? sameJourney : managedOutcomes;
@@ -338,7 +451,7 @@ async function loadRows(supabase, companyId) {
       .order("created_at", { ascending: true }),
     supabase
       .from("opportunities")
-      .select("id,user_id,managed_outcome_id,journey_key,outcome,step_number,step_label,importance,satisfaction,opportunity_score,priority_tier,frameworks_used")
+      .select("id,user_id,managed_outcome_id,parent_opportunity_id,journey_key,outcome,step_number,step_label,importance,satisfaction,opportunity_score,priority_tier,frameworks_used")
       .eq("company_id", companyId)
       .order("opportunity_score", { ascending: false }),
     supabase
@@ -478,11 +591,15 @@ async function main() {
       frameworks_used: ensureRequiredFrameworkKeys(opportunity.frameworks_used),
     };
   });
+  const hierarchicalOpportunities = buildHierarchicalOpportunities(mappedOpportunities);
+  const byTempKey = new Map(hierarchicalOpportunities.map((item) => [item.__temp_key, item]));
+  const parentLinkDiffs = [];
+  const parentChildDistinctnessViolations = [];
 
   const managedById = new Map(normalizedManagedOutcomes.map((item) => [item.id, item]));
   const distinctnessViolations = [];
 
-  for (const opportunity of mappedOpportunities) {
+  for (const opportunity of hierarchicalOpportunities) {
     const managed = managedById.get(opportunity.managed_outcome_id || "");
     const desiredText = String(managed?.outcome_statement || managed?.outcome_title || "");
     if (!desiredText) {
@@ -500,12 +617,29 @@ async function main() {
         opportunity: String(opportunity.outcome || ""),
       });
     }
+
+    const parent = opportunity.__parent_key ? byTempKey.get(opportunity.__parent_key) : null;
+    const resolvedParentId = parent ? String(parent.id || "") : null;
+    if (String(opportunity.parent_opportunity_id || "") !== String(resolvedParentId || "")) {
+      parentLinkDiffs.push({
+        opportunity_id: String(opportunity.id || ""),
+        old_parent_opportunity_id: opportunity.parent_opportunity_id || null,
+        new_parent_opportunity_id: resolvedParentId || null,
+      });
+    }
+
+    if (parent && isNearDuplicate(String(parent.outcome || ""), String(opportunity.outcome || ""))) {
+      parentChildDistinctnessViolations.push({
+        opportunity_id: String(opportunity.id || ""),
+        parent_opportunity_id: String(parent.id || ""),
+      });
+    }
   }
 
   const generatedIdeas = [];
   const generatedTests = [];
 
-  for (const opportunity of mappedOpportunities) {
+  for (const opportunity of hierarchicalOpportunities) {
     const ranked = routes
       .map((route) => ({ route, score: routeOpportunityFitScore(route, opportunity) }))
       .sort((a, b) => b.score - a.score);
@@ -579,6 +713,19 @@ async function main() {
   for (const issue of distinctnessViolations.slice(0, 20)) {
     console.log(`- opp ${issue.opportunity_id}: near-duplicate or missing parent outcome`);
   }
+  console.log("");
+  console.log("Parent link diffs:", parentLinkDiffs.length);
+  for (const diff of parentLinkDiffs.slice(0, 20)) {
+    console.log(`- opp ${diff.opportunity_id}: ${diff.old_parent_opportunity_id || "null"} -> ${diff.new_parent_opportunity_id || "null"}`);
+  }
+  if (parentLinkDiffs.length > 20) {
+    console.log(`- ... ${parentLinkDiffs.length - 20} more`);
+  }
+  console.log(`- created parent opportunities: 0`);
+  console.log("Parent-child distinctness violations:", parentChildDistinctnessViolations.length);
+  for (const issue of parentChildDistinctnessViolations.slice(0, 20)) {
+    console.log(`- opp ${issue.opportunity_id}: near-duplicate with parent ${issue.parent_opportunity_id}`);
+  }
 
   console.log("");
   console.log("Solution backfill diff:");
@@ -592,8 +739,8 @@ async function main() {
     return;
   }
 
-  if (distinctnessViolations.length > 0) {
-    throw new Error("Backfill aborted: distinctness violations remain between desired outcomes and opportunities.");
+  if (distinctnessViolations.length > 0 || parentChildDistinctnessViolations.length > 0) {
+    throw new Error("Backfill aborted: distinctness violations remain in opportunity hierarchy.");
   }
 
   for (const managed of normalizedManagedOutcomes) {
@@ -618,11 +765,15 @@ async function main() {
     }
   }
 
-  for (const opp of mappedOpportunities) {
+  const hierarchyByTempKey = new Map(hierarchicalOpportunities.map((item) => [item.__temp_key, item]));
+  for (const opp of hierarchicalOpportunities) {
+    const parentRow = opp.__parent_key ? hierarchyByTempKey.get(opp.__parent_key) : null;
+    const resolvedParentId = parentRow ? String(parentRow.id || "") || null : null;
     const { error } = await supabase
       .from("opportunities")
       .update({
         managed_outcome_id: opp.managed_outcome_id,
+        parent_opportunity_id: resolvedParentId,
         frameworks_used: ensureRequiredFrameworkKeys(opp.frameworks_used),
       })
       .eq("id", opp.id)
@@ -661,7 +812,7 @@ async function main() {
 
   const { data: verifyRows, error: verifyErr } = await supabase
     .from("opportunities")
-    .select("id,managed_outcome_id,outcome")
+    .select("id,managed_outcome_id,parent_opportunity_id,outcome")
     .eq("company_id", args.companyId);
   if (verifyErr) throw new Error(`Failed verification query: ${verifyErr.message}`);
 
@@ -672,6 +823,15 @@ async function main() {
   if (verifyOutcomesErr) throw new Error(`Failed managed_outcomes verification query: ${verifyOutcomesErr.message}`);
 
   const missingLinks = (verifyRows || []).filter((row) => !row.managed_outcome_id);
+  const cyclePresent = hasOpportunityCycle(verifyRows || []);
+  const verifyById = new Map((verifyRows || []).map((row) => [String(row.id || ""), row]));
+  const parentChildDistinctnessAfterApply = (verifyRows || []).filter((row) => {
+    const parentId = String(row.parent_opportunity_id || "").trim();
+    if (!parentId) return false;
+    const parent = verifyById.get(parentId);
+    if (!parent) return false;
+    return isNearDuplicate(String(parent.outcome || ""), String(row.outcome || ""));
+  });
   const primaryCount = (verifyOutcomes || []).filter((row) => row.is_primary === true).length;
   const missingStructured = (verifyOutcomes || []).filter((row) =>
     !String(row.direction || "").trim() ||
@@ -682,15 +842,24 @@ async function main() {
 
   console.log("\nApply complete.");
   console.log(`- managed outcomes updated: ${normalizedManagedOutcomes.length}`);
-  console.log(`- opportunities updated: ${mappedOpportunities.length}`);
+  console.log(`- opportunities updated: ${hierarchicalOpportunities.length}`);
+  console.log(`- parent link diffs applied: ${parentLinkDiffs.length}`);
   console.log(`- solution ideas inserted: ${insertedIdeas}`);
   console.log(`- solution tests inserted: ${insertedTests}`);
   console.log(`- opportunities missing managed_outcome_id: ${missingLinks.length}`);
+  console.log(`- hierarchy cycles detected: ${cyclePresent ? 1 : 0}`);
+  console.log(`- parent-child near-duplicates: ${parentChildDistinctnessAfterApply.length}`);
   console.log(`- primary desired outcomes: ${primaryCount}`);
   console.log(`- managed outcomes missing structured fields: ${missingStructured.length}`);
 
   if (missingLinks.length > 0) {
     throw new Error("Post-apply verification failed: some opportunities are missing managed_outcome_id.");
+  }
+  if (cyclePresent) {
+    throw new Error("Post-apply verification failed: opportunity hierarchy contains a cycle.");
+  }
+  if (parentChildDistinctnessAfterApply.length > 0) {
+    throw new Error("Post-apply verification failed: some parent/child opportunities are near duplicates.");
   }
   if (primaryCount !== 1) {
     throw new Error(`Post-apply verification failed: expected exactly 1 primary managed outcome, found ${primaryCount}.`);

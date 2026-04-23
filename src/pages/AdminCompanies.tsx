@@ -278,11 +278,11 @@ async function describeResearchInvokeError(error: unknown) {
 
       if (status === "job_map_selection_required" || status === "customer_job_map_required") {
         return {
-          title: "Job Map Selection Required",
+          title: "Checkpoint Map Selection Required",
           description:
             status === "customer_job_map_required"
-              ? "Define at least one customer job map in Job Steps before running full AI Research."
-              : "Choose a job map in Job Steps before running full AI Research.",
+              ? "Define at least one customer checkpoint map in Checkpoints before running full AI Research."
+              : "Choose a checkpoint map in Checkpoints before running full AI Research.",
         };
       }
     }

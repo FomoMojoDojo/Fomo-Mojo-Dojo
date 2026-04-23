@@ -216,7 +216,7 @@ export function useJobSteps(companyId?: string) {
         }
 
         if (errors.length > 0) {
-          throw new Error(`Failed to remove job map artifacts (${errors.join(" | ")})`);
+          throw new Error(`Failed to remove checkpoint map artifacts (${errors.join(" | ")})`);
         }
         setRefreshKey((current) => current + 1);
       } finally {

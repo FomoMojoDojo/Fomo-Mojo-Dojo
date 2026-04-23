@@ -1803,6 +1803,90 @@ function buildDeterministicManagedOutcomeFallback(args: {
   });
 }
 
+function buildDeterministicOpportunityOutcome(args: {
+  audience: string;
+  stepLabel: string;
+  stepNumber: number;
+  variant: number;
+}) {
+  const stepPhrase = humanizeStepPhrase(String(args.stepLabel || "").trim()) || `step ${Math.max(1, args.stepNumber || 1)}`;
+  if (args.variant === 0) {
+    return normalizeOutcomeLanguage(
+      `Increase the share of ${args.audience} who complete ${stepPhrase} on time without rework.`,
+    );
+  }
+  if (args.variant === 1) {
+    return normalizeOutcomeLanguage(
+      `Increase the share of ${args.audience} who complete ${stepPhrase} at first attempt without back-and-forth.`,
+    );
+  }
+  return normalizeOutcomeLanguage(
+    `Reduce the time it takes for ${args.audience} to complete ${stepPhrase} without repeat support.`,
+  );
+}
+
+function recoverValidOpportunities(args: {
+  opportunities: any[];
+  journeys: unknown;
+  primaryManagedOutcomeStatement: string;
+  frameworkKeys: string[];
+}) {
+  const sourceRows = Array.isArray(args.opportunities) ? args.opportunities : [];
+  const audience = inferManagedOutcomeAudience({ opportunities: sourceRows, journeys: args.journeys });
+  const seenOutcomes = new Set<string>();
+  const recovered: any[] = [];
+
+  for (const row of sourceRows) {
+    const base = { ...(row || {}) };
+    const stepNumber = Math.max(1, Number(base?.step_number) || 1);
+    const stepLabel = String(base?.step_label || "").trim() || `step ${stepNumber}`;
+
+    const variants = [
+      normalizeOutcomeLanguage(String(base?.outcome || "")),
+      buildDeterministicOpportunityOutcome({ audience, stepLabel, stepNumber, variant: 0 }),
+      buildDeterministicOpportunityOutcome({ audience, stepLabel, stepNumber, variant: 1 }),
+      buildDeterministicOpportunityOutcome({ audience, stepLabel, stepNumber, variant: 2 }),
+    ];
+
+    let acceptedOutcome = "";
+    for (const candidate of variants) {
+      const normalizedCandidate = normalizeOutcomeLanguage(candidate);
+      if (!normalizedCandidate) continue;
+      if (seenOutcomes.has(normalizedCandidate.toLowerCase())) continue;
+
+      const semantic = validateOpportunity({
+        outcome: normalizedCandidate,
+        importance: Number(base?.importance),
+        satisfaction: Number(base?.satisfaction),
+        frameworksUsed: ensureRequiredFrameworkKeys(args.frameworkKeys),
+      });
+      if (!semantic.valid) continue;
+
+      if (args.primaryManagedOutcomeStatement) {
+        const distinctness = validateOutcomeOpportunityDistinctness(
+          args.primaryManagedOutcomeStatement,
+          normalizedCandidate,
+        );
+        if (!distinctness.valid) continue;
+      }
+
+      acceptedOutcome = normalizedCandidate;
+      break;
+    }
+
+    if (!acceptedOutcome) continue;
+    seenOutcomes.add(acceptedOutcome.toLowerCase());
+    recovered.push({
+      ...base,
+      outcome: acceptedOutcome,
+      step_number: stepNumber,
+      step_label: stepLabel,
+    });
+  }
+
+  return recovered;
+}
+
 function isUsableManagedOutcome(outcome: ReturnType<typeof normalizeManagedOutcome>, contextTokens: string[]) {
   if (!outcome.outcome_title || !outcome.outcome_statement || !outcome.leading_indicator) return false;
   const quality = analyzeManagedOutcomeSpecificity(outcome, contextTokens);
@@ -2803,6 +2887,17 @@ const GTM_KEYS = new Set([
   "grant-pipeline",
 ]);
 type JourneyKey = string;
+type FrameworkMode = "dunford_positioning" | "torres_opportunity_map" | "martin_strategy_cascade";
+type ProgramStage = "outside" | "diagnose" | "focus" | "flow";
+type OrchestratorMode = "off" | "chained" | "parallel";
+
+const FRAMEWORK_MODES: FrameworkMode[] = [
+  "dunford_positioning",
+  "torres_opportunity_map",
+  "martin_strategy_cascade",
+];
+const PROGRAM_STAGES: ProgramStage[] = ["outside", "diagnose", "focus", "flow"];
+const ORCHESTRATOR_MODES: OrchestratorMode[] = ["off", "chained", "parallel"];
 const STRATEGIC_PROBLEM_STOPWORDS = new Set([
   "about",
   "after",
@@ -2875,6 +2970,57 @@ function normalizeJourneyKey(value: unknown) {
     .slice(0, 80);
 }
 
+function normalizeFrameworkMode(value: unknown): FrameworkMode | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (FRAMEWORK_MODES as string[]).includes(normalized) ? normalized as FrameworkMode : null;
+}
+
+function parseFrameworkModes(value: unknown): FrameworkMode[] {
+  if (!Array.isArray(value)) return [];
+  const out: FrameworkMode[] = [];
+  for (const item of value) {
+    const mode = normalizeFrameworkMode(item);
+    if (!mode || out.includes(mode)) continue;
+    out.push(mode);
+  }
+  return out;
+}
+
+function normalizeProgramStage(value: unknown): ProgramStage | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (PROGRAM_STAGES as string[]).includes(normalized) ? normalized as ProgramStage : null;
+}
+
+function normalizeOrchestratorMode(value: unknown): OrchestratorMode | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (ORCHESTRATOR_MODES as string[]).includes(normalized) ? normalized as OrchestratorMode : null;
+}
+
+type RuntimeContract = {
+  strict: boolean;
+  request_id: string | null;
+  run_id: string | null;
+  orchestrator_mode: OrchestratorMode;
+  framework_mode: FrameworkMode | null;
+  framework_modes: FrameworkMode[];
+  framework_schema_version: string | null;
+  stage: ProgramStage | null;
+  journey_key: JourneyKey | null;
+  errors: string[];
+};
+
+function hasRuntimeContractFields(body: Record<string, unknown>) {
+  const keys = [
+    "framework_mode",
+    "framework_modes",
+    "orchestrator_mode",
+    "stage",
+    "framework_schema_version",
+    "enforce_framework_contract",
+  ];
+  return keys.some((key) => body[key] !== undefined);
+}
+
 function isCustomerJourneyKey(value: unknown) {
   const key = normalizeJourneyKey(value);
   return key === "customer" || key.startsWith("customer-");
@@ -2933,6 +3079,88 @@ function parseRequestedJourneyKeys(value: unknown): JourneyKey[] {
   }
 
   return keys;
+}
+
+function parseRuntimeContract(body: Record<string, unknown>): RuntimeContract {
+  const strict = body?.enforce_framework_contract === true || hasRuntimeContractFields(body);
+  const requestId = String(body?.request_id || "").trim() || null;
+  const runId = String(body?.run_id || "").trim() || null;
+
+  if (!strict) {
+    return {
+      strict: false,
+      request_id: requestId,
+      run_id: runId,
+      orchestrator_mode: "off",
+      framework_mode: null,
+      framework_modes: [],
+      framework_schema_version: null,
+      stage: null,
+      journey_key: null,
+      errors: [],
+    };
+  }
+
+  const errors: string[] = [];
+  const orchestratorMode = normalizeOrchestratorMode(body?.orchestrator_mode);
+  const stage = normalizeProgramStage(body?.stage);
+  const journeyKey = normalizeJourneyKey(body?.journey_key ?? body?.journey_id);
+  const frameworkSchemaVersion = String(body?.framework_schema_version || "").trim() || null;
+  const frameworkMode = normalizeFrameworkMode(body?.framework_mode);
+  const frameworkModes = parseFrameworkModes(body?.framework_modes);
+
+  if (!orchestratorMode) errors.push("orchestrator_mode must be one of: off, chained, parallel");
+  if (!stage) errors.push("stage must be one of: outside, diagnose, focus, flow");
+  if (!journeyKey) errors.push("journey_key is required");
+  if (!frameworkSchemaVersion) errors.push("framework_schema_version is required");
+
+  if (orchestratorMode === "off") {
+    if (!frameworkMode) errors.push("framework_mode is required when orchestrator_mode=off");
+    if (frameworkModes.length > 0) {
+      errors.push("framework_modes is forbidden when orchestrator_mode=off");
+    }
+  } else if (orchestratorMode === "chained" || orchestratorMode === "parallel") {
+    if (frameworkModes.length === 0) {
+      errors.push("framework_modes is required when orchestrator_mode is chained or parallel");
+    }
+    if (String(body?.framework_mode || "").trim()) {
+      errors.push("framework_mode is forbidden when orchestrator_mode is chained or parallel");
+    }
+    errors.push("orchestrator_mode chained/parallel is not supported by research-company yet");
+  }
+
+  for (const legacyField of ["journey", "journey_mode", "framework_journey"]) {
+    if (String(body?.[legacyField] || "").trim()) {
+      errors.push(`${legacyField} is deprecated; use framework_mode + stage + journey_key`);
+    }
+  }
+
+  if (journeyKey && Array.isArray(body?.journeys_to_generate)) {
+    const requested = parseRequestedJourneyKeys(body?.journeys_to_generate);
+    if (requested.some((key) => key !== journeyKey)) {
+      errors.push("journeys_to_generate must include only journey_key in strict framework mode");
+    }
+  }
+
+  if (journeyKey && Array.isArray(body?.job_maps)) {
+    const selected = parseSelectedJobMaps(body?.job_maps);
+    if (selected.some((map) => map.journey_key !== journeyKey)) {
+      errors.push("job_maps must include only journey_key in strict framework mode");
+    }
+  }
+
+  return {
+    strict: true,
+    request_id: requestId,
+    run_id: runId,
+    orchestrator_mode: orchestratorMode || "off",
+    framework_mode: orchestratorMode === "off" ? frameworkMode : null,
+    framework_modes: orchestratorMode === "off" ? (frameworkMode ? [frameworkMode] : []) : frameworkModes,
+    framework_schema_version: frameworkSchemaVersion,
+    stage,
+    journey_key: journeyKey || null,
+    errors,
+  };
 }
 
 type SelectedJobMap = {
@@ -4555,15 +4783,63 @@ Deno.serve(async (req) => {
     if (authError || !user) return jsonResponse({ error: "Unauthorized" }, 401);
 
     const body = await req.json().catch(() => ({}));
-    const company_id = body?.company_id;
-    const company_name = body?.company_name;
-    const website = typeof body?.website === "string" ? body.website : "";
-    const reviewMode = String(body?.review_mode || "").trim().toLowerCase();
-    const allowHighSeverityReviewSave = reviewMode === "advisory" || body?.allow_review_block_save === true;
-    const contextMode = String(body?.context_mode || "").trim().toLowerCase();
-    const forceUploadedOnlyContext = contextMode === "uploaded_only" || body?.prefer_uploaded_context === true;
-    const requestedJourneyKeys = parseRequestedJourneyKeys(body?.journeys_to_generate);
-    const submittedJobMaps = parseSelectedJobMaps(body?.job_maps);
+    const bodyRecord = asRecord(body) || {};
+    const requestedJourneyKey = normalizeJourneyKey(bodyRecord?.journey_key ?? bodyRecord?.journey_id);
+    const runtimeContract = parseRuntimeContract(bodyRecord);
+    if (runtimeContract.errors.length > 0) {
+      return jsonResponse({
+        error: "invalid_runtime_contract",
+        details: runtimeContract.errors,
+        request_id: runtimeContract.request_id,
+        run_id: runtimeContract.run_id,
+      }, 422);
+    }
+
+    const company_id = bodyRecord?.company_id;
+    const company_name = bodyRecord?.company_name;
+    const website = typeof bodyRecord?.website === "string" ? bodyRecord.website : "";
+    const reviewMode = String(bodyRecord?.review_mode || "").trim().toLowerCase();
+    const allowHighSeverityReviewSave = reviewMode === "advisory" || bodyRecord?.allow_review_block_save === true;
+    const contextMode = String(bodyRecord?.context_mode || "").trim().toLowerCase();
+    const forceUploadedOnlyContext = contextMode === "uploaded_only" || bodyRecord?.prefer_uploaded_context === true;
+    let requestedJourneyKeys = parseRequestedJourneyKeys(bodyRecord?.journeys_to_generate);
+    let submittedJobMaps = parseSelectedJobMaps(bodyRecord?.job_maps);
+    const strictSingleJourneyMode = runtimeContract.strict && runtimeContract.orchestrator_mode === "off";
+
+    if (strictSingleJourneyMode) {
+      const strictJourneyKey = runtimeContract.journey_key as JourneyKey;
+      if (!isCustomerJourneyKey(strictJourneyKey)) {
+        return jsonResponse({
+          error: "unsupported_journey_key_for_research_pipeline",
+          status: "unsupported_journey_key_for_research_pipeline",
+          message: "Current research pipeline requires a customer journey_key when strict framework mode is enabled.",
+          journey_key: strictJourneyKey,
+          request_id: runtimeContract.request_id,
+          run_id: runtimeContract.run_id,
+        }, 422);
+      }
+      requestedJourneyKeys = [strictJourneyKey];
+      const submittedByKey = new Map(submittedJobMaps.map((map) => [map.journey_key, map]));
+      submittedJobMaps = [
+        submittedByKey.get(strictJourneyKey) || {
+          journey_key: strictJourneyKey,
+          journey_title: sanitizeJobMapTitle(bodyRecord?.journey_title, strictJourneyKey),
+          journey_subtitle: sanitizeJobMapSubtitle(bodyRecord?.journey_subtitle, strictJourneyKey),
+          source: "selected" as const,
+        },
+      ];
+    } else if (requestedJourneyKey) {
+      requestedJourneyKeys = [requestedJourneyKey];
+      const submittedByKey = new Map(submittedJobMaps.map((map) => [map.journey_key, map]));
+      submittedJobMaps = [
+        submittedByKey.get(requestedJourneyKey) || {
+          journey_key: requestedJourneyKey,
+          journey_title: sanitizeJobMapTitle(bodyRecord?.journey_title, requestedJourneyKey),
+          journey_subtitle: sanitizeJobMapSubtitle(bodyRecord?.journey_subtitle, requestedJourneyKey),
+          source: "selected" as const,
+        },
+      ];
+    }
 
     if (!company_id || !company_name) {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
@@ -4788,13 +5064,13 @@ Deno.serve(async (req) => {
     }
 
     let autoInjectedCustomerMap = false;
-    if (!selectedMapByKey.has("customer")) {
+    if (!strictSingleJourneyMode && !selectedMapByKey.has("customer")) {
       const existingCustomer = existingJobMaps.find((map) => map.journey_key === "customer");
       if (existingCustomer) {
         selectedMapByKey.set("customer", existingCustomer);
       }
     }
-    if (!selectedMapByKey.has("customer") && !hasExplicitJobMapRequest && selectedMapByKey.size > 0) {
+    if (!strictSingleJourneyMode && !selectedMapByKey.has("customer") && !hasExplicitJobMapRequest && selectedMapByKey.size > 0) {
       const primaryMap = selectedBase[0] ?? existingJobMaps[0];
       const suggestedCustomer = suggestedJobMapByKey.get("customer");
       selectedMapByKey.set("customer", {
@@ -4886,6 +5162,20 @@ Deno.serve(async (req) => {
     const targetJourneyKeys: JourneyKey[] = [
       ...new Set(selectedJobMaps.map((map) => map.journey_key)),
     ];
+    if (strictSingleJourneyMode) {
+      const strictJourneyKey = runtimeContract.journey_key as JourneyKey;
+      if (targetJourneyKeys.length !== 1 || targetJourneyKeys[0] !== strictJourneyKey) {
+        return jsonResponse({
+          error: "strict_journey_selection_mismatch",
+          status: "strict_journey_selection_mismatch",
+          message: "Strict framework mode requires exactly one selected journey_key.",
+          expected_journey_key: strictJourneyKey,
+          selected_journey_keys: targetJourneyKeys,
+          request_id: runtimeContract.request_id,
+          run_id: runtimeContract.run_id,
+        }, 422);
+      }
+    }
     const jobMapUpdateJourneyKeys: JourneyKey[] =
       explicitSelectedJourneyKeys.length > 0 ? explicitSelectedJourneyKeys : targetJourneyKeys;
     const jobMapUpdateJourneyKeySet = new Set(jobMapUpdateJourneyKeys);
@@ -5185,7 +5475,7 @@ Deno.serve(async (req) => {
     // -------------------------
 
     // Derive the three context inputs that drive stage-aware generation
-    const programPhase: string = String(body?.program_phase || "outside").trim().toLowerCase();
+    const programPhase: string = String(bodyRecord?.program_phase || runtimeContract.stage || "outside").trim().toLowerCase();
     const evidenceLevelDerived: EvidenceLevel = deriveEvidenceLevel(
       researchContextMode,
       uploadedEvidenceContext.fileCount,
@@ -5408,7 +5698,7 @@ Deno.serve(async (req) => {
       const repairedCustomerOnly = repairedOpportunities.filter(
         (opp) => isCustomerJourneyKey(opp?.journey_key)
       );
-      if (repairedCustomerOnly.length >= 8) {
+      if (repairedCustomerOnly.length > 0) {
         opportunities = repairedCustomerOnly;
       }
     }
@@ -5433,16 +5723,12 @@ Deno.serve(async (req) => {
       outcome: normalizeOutcomeLanguage(String(opp?.outcome || "")),
     }));
 
-    if (opportunities.length < 8) {
+    if (opportunities.length === 0) {
       return jsonResponse({
         error: "Generated opportunities did not align to existing customer job-map steps.",
       }, 500);
     }
-    // Filter out any remaining invalid opportunities rather than hard-failing.
-    // AI-generated outcomes may contain ambiguous words (process, program, framework)
-    // that are valid in ODI outcome language but trigger the solution-language pattern.
-    // As long as >= 8 valid opportunities remain, continue.
-    opportunities = opportunities.filter((opp) => {
+    const strictValidatedOpportunities = opportunities.filter((opp) => {
       const semantic = validateOpportunity({
         outcome: String(opp?.outcome || ""),
         importance: Number(opp?.importance),
@@ -5454,11 +5740,30 @@ Deno.serve(async (req) => {
         : { valid: true };
       return semantic.valid && distinctness.valid;
     });
-    if (opportunities.length < 8) {
+
+    if (strictValidatedOpportunities.length >= 8) {
+      opportunities = strictValidatedOpportunities;
+    } else {
+      const recoveredOpportunities = recoverValidOpportunities({
+        opportunities,
+        journeys,
+        primaryManagedOutcomeStatement,
+        frameworkKeys: opportunityFrameworkKeys,
+      });
+      opportunities = recoveredOpportunities.length > 0 ? recoveredOpportunities : strictValidatedOpportunities;
+    }
+
+    if (opportunities.length === 0) {
       return jsonResponse({
         error: "Opportunities failed strict ODI/Teresa Torres validation after repair.",
         status: "validation_failed",
       }, 422);
+    }
+    if (opportunities.length < 8) {
+      console.log("[research-company] continuing with reduced strict-valid opportunity set", {
+        company_id,
+        strict_valid_count: opportunities.length,
+      });
     }
 
     let hierarchicalOpportunities = buildHierarchicalOpportunities(
@@ -7146,6 +7451,18 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       message: "Research complete",
+      request_id: runtimeContract.request_id,
+      run_id: runtimeContract.run_id,
+      runtime_contract: runtimeContract.strict
+        ? {
+            framework_mode: runtimeContract.framework_mode,
+            framework_modes: runtimeContract.framework_modes,
+            orchestrator_mode: runtimeContract.orchestrator_mode,
+            framework_schema_version: runtimeContract.framework_schema_version,
+            stage: runtimeContract.stage,
+            journey_key: runtimeContract.journey_key,
+          }
+        : null,
       review_status: savedReviewStatus,
       review_warnings: highSeverityReviews.map((entry) => ({
         key: entry.key,

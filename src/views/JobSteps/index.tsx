@@ -3644,6 +3644,8 @@ export default function JobStepsView() {
     if (!activeCompany?.id) {
       throw new Error("Select a company before regenerating research artifacts.");
     }
+    const selectedJourneyKey =
+      normalizeJourneyKey(activeCustomerJourneyGroup?.key || "customer") || "customer";
 
     const formatLockTime = (value?: string | null) => {
       if (!value) return "soon";
@@ -3675,6 +3677,8 @@ export default function JobStepsView() {
               company_id: activeCompany.id,
               company_name: activeCompany.name,
               website: activeCompany.website ?? "",
+              // Keep regeneration scoped to the selected customer journey context.
+              journey_key: selectedJourneyKey,
               mode: "uploaded_only",
               include_public_collection: false,
               include_local_alignment: false,

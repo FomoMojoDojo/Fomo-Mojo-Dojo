@@ -139,7 +139,7 @@ function contextualizeInputText(args: {
   const needsOdiSignal = (text: string) =>
     !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
   if (args.inputKey === "needs-assessment") {
-    if (needsOdiSignal(description)) description = "Customer job map and desired outcomes by segment";
+    if (needsOdiSignal(description)) description = "Customer checkpoint map and desired outcomes by segment";
     if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows what matters most and where current results are falling short";
   } else if (args.inputKey === "outcome-data") {
     if (needsOdiSignal(description)) description = "Track desired outcome satisfaction and completion signals";

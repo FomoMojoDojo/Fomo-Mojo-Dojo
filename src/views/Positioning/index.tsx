@@ -761,6 +761,7 @@ export default function PositioningView() {
     savingField,
     updateTextField,
     updateItemsField,
+    updateFrameworks,
   } = usePositioningCanvas(activeCompany?.id);
   const { item: strategyCascade } = useStrategyCascade(activeCompany?.id);
   const { item: latestReview } = useLatestPositioningReview(activeCompany?.id);
@@ -939,16 +940,6 @@ export default function PositioningView() {
           <EmptyState message="No foundation inputs yet. Run AI Research in Admin → Companies." />
         ) : (
           <div className="space-y-5">
-            <AreaAlignmentPanel
-              title="Positioning"
-              area={positioningAlignment}
-              run={localAlignment}
-              lineColor={c.line}
-              panelColor={c.panel}
-              textColor={c.charcoal}
-              mutedColor={c.muted}
-            />
-
             {!hasStoredCanvas ? (
               <section
                 className="rounded-[20px] border px-5 py-4"
@@ -960,37 +951,6 @@ export default function PositioningView() {
                 </p>
               </section>
             ) : null}
-
-            <section
-              className="relative rounded-[20px] border px-5 py-4"
-              style={{ borderColor: c.line, background: c.panel }}
-            >
-              <div className="absolute right-4 top-4 hidden sm:block">
-                <QualityPill label={qualityCheck.label} tone={qualityCheck.tone} />
-              </div>
-
-              <div className="flex flex-wrap items-start justify-between gap-3 pr-0 sm:pr-[220px]">
-                <div className="max-w-2xl">
-                  {sectionLabel("Source Confidence")}
-                  <p className="mt-2 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
-                    {summarizeTierSpread(Object.values(sectionTiers))}
-                  </p>
-                  <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.muted }}>
-                    {sourceSignals.hasPrimaryEvidence
-                      ? `Evidence is enabled from primary Strategic Decision System interview/survey signals (${sourceSignals.primaryEvidenceSignals} source signals).`
-                      : "Evidence stays off until primary Strategic Decision System interviews/surveys are captured; public sources alone never qualify."}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-3 sm:hidden">
-                <QualityPill label={qualityCheck.label} tone={qualityCheck.tone} />
-              </div>
-
-              <p className="mt-3 max-w-4xl font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
-                {qualityCheck.detail}
-              </p>
-            </section>
 
             <section
               className="rounded-[28px] border border-dashed p-4 sm:p-5"
@@ -1195,6 +1155,67 @@ export default function PositioningView() {
                 </p>
               </section>
             </div>
+
+            <AreaAlignmentPanel
+              title="Positioning"
+              area={positioningAlignment}
+              run={localAlignment}
+              lineColor={c.line}
+              panelColor={c.panel}
+              textColor={c.charcoal}
+              mutedColor={c.muted}
+            />
+
+            <section
+              className="relative rounded-[20px] border px-5 py-4"
+              style={{ borderColor: c.line, background: c.panel }}
+            >
+              <div className="absolute right-4 top-4 hidden sm:block">
+                <QualityPill label={qualityCheck.label} tone={qualityCheck.tone} />
+              </div>
+
+              <div className="flex flex-wrap items-start justify-between gap-3 pr-0 sm:pr-[220px]">
+                <div className="max-w-2xl">
+                  {sectionLabel("Source Confidence")}
+                  <p className="mt-2 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+                    {summarizeTierSpread(Object.values(sectionTiers))}
+                  </p>
+                  <p className="mt-1 font-sans text-[12px] leading-[1.6]" style={{ color: c.muted }}>
+                    {sourceSignals.hasPrimaryEvidence
+                      ? `Evidence is enabled from primary Strategic Decision System interview/survey signals (${sourceSignals.primaryEvidenceSignals} source signals).`
+                      : "Evidence stays off until primary Strategic Decision System interviews/surveys are captured; public sources alone never qualify."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 sm:hidden">
+                <QualityPill label={qualityCheck.label} tone={qualityCheck.tone} />
+              </div>
+
+              <p className="mt-3 max-w-4xl font-sans text-[12px] leading-[1.6]" style={{ color: c.secondary }}>
+                {qualityCheck.detail}
+              </p>
+
+              {hasStoredCanvas && !frameworksUsed.includes("april_dunford") ? (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await updateFrameworks(["april_dunford"]);
+                        toast.success("Framework guidance applied.");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Failed to apply framework guidance.");
+                      }
+                    }}
+                    className="rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors hover:bg-black/5"
+                    style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                  >
+                    Apply Positioning Framework
+                  </button>
+                </div>
+              ) : null}
+            </section>
 
             <section
               className="rounded-[24px] px-5 py-5 sm:px-6"

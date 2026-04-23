@@ -23,9 +23,45 @@ function normalizeItems(value: unknown): PositioningItem[] {
 
   return value
     .map((item, index) => {
-      const entry = item as { id?: unknown; name?: unknown; description?: unknown; highlighted?: unknown };
-      const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-      const description = typeof entry?.description === "string" ? entry.description.trim() : "";
+      if (typeof item === "string") {
+        const name = item.trim();
+        if (!name) return null;
+        return {
+          id: `item-${index}`,
+          name,
+          description: "",
+          highlighted: false,
+        };
+      }
+
+      const entry = item as {
+        id?: unknown;
+        name?: unknown;
+        title?: unknown;
+        alternative?: unknown;
+        attribute?: unknown;
+        description?: unknown;
+        detail?: unknown;
+        highlighted?: unknown;
+      };
+      const name = (
+        typeof entry?.name === "string"
+          ? entry.name
+          : typeof entry?.title === "string"
+            ? entry.title
+            : typeof entry?.alternative === "string"
+              ? entry.alternative
+              : typeof entry?.attribute === "string"
+                ? entry.attribute
+                : ""
+      ).trim();
+      const description = (
+        typeof entry?.description === "string"
+          ? entry.description
+          : typeof entry?.detail === "string"
+            ? entry.detail
+            : ""
+      ).trim();
       if (!name) return null;
       return {
         id: typeof entry?.id === "string" && entry.id.trim() ? entry.id : `item-${index}`,
@@ -184,5 +220,28 @@ export function usePositioningCanvas(companyId?: string) {
     }
   }
 
-  return { loading, item, error, savingField, updateTextField, updateItemsField };
+  async function updateFrameworks(frameworks: string[]) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    const { data, error } = await supabase
+      .from("positioning_canvases")
+      .update({ frameworks_used: frameworks })
+      .eq("company_id", companyId)
+      .select(
+        "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+      )
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message || "Failed to update framework guidance.");
+    }
+
+    if (data) {
+      setItem(mapRow(data as PositioningCanvasRow));
+    } else if (item) {
+      setItem({ ...item, frameworks_used: frameworks });
+    }
+  }
+
+  return { loading, item, error, savingField, updateTextField, updateItemsField, updateFrameworks };
 }

@@ -209,10 +209,20 @@ function routeDetail(args: {
     linkedOpportunityFocus,
   });
 
+  const storedSteps = Array.isArray(route.steps_json) && route.steps_json.length > 0
+    ? route.steps_json
+    : null;
+  const storedEvidence = Array.isArray(route.evidence_json) && route.evidence_json.length > 0
+    ? route.evidence_json
+    : null;
+  const storedWhy = Array.isArray(route.why_this_matters_json) && route.why_this_matters_json.length > 0
+    ? route.why_this_matters_json
+    : null;
+
   return {
-    steps: stepItems,
-    evidence: evidenceItems,
-    whyThisMatters,
+    steps: storedSteps ?? stepItems,
+    evidence: storedEvidence ?? evidenceItems,
+    whyThisMatters: storedWhy ?? whyThisMatters,
     frameworks: (route.frameworks_used ?? []).filter(Boolean),
     focus,
   };

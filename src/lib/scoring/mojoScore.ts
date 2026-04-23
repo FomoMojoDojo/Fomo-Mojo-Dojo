@@ -39,10 +39,13 @@ export type ScoreableDesiredOutcome = {
   target_direction?: string | null;
   direction?: string | null;
   metric?: string | null;
+  actor?: string | null;
+  action?: string | null;
   object?: string | null;
   context?: string | null;
   constraint?: string | null;
   is_primary?: boolean | null;
+  level?: string | null;
 };
 
 export type StrategicProblemInput = {
@@ -608,7 +611,10 @@ function computeDesiredOutcomeAlignment(
   routes: ScoreableRoute[],
 ) {
   const outcomes = Array.isArray(desiredOutcomes) ? desiredOutcomes : [];
+
+  // Prefer primary-level outcome, then is_primary flag, then customer journey, then first
   const primary =
+    outcomes.find((item) => item?.level === "primary") ||
     outcomes.find((item) => item?.is_primary === true) ||
     outcomes.find((item) => normalizeJourneyKey(item?.journey_key) === "customer") ||
     outcomes[0] ||
@@ -623,6 +629,7 @@ function computeDesiredOutcomeAlignment(
       matched_keywords: [] as string[],
       missing_keywords: [] as string[],
       status: "not_available",
+      behavior_structured: false,
     };
   }
 
@@ -631,6 +638,8 @@ function computeDesiredOutcomeAlignment(
     primaryStatement,
     String(primary.leading_indicator || ""),
     String(primary.metric || ""),
+    String(primary.actor || ""),
+    String(primary.action || ""),
     String(primary.object || ""),
     String(primary.context || ""),
   ]
@@ -646,18 +655,31 @@ function computeDesiredOutcomeAlignment(
       matched_keywords: [] as string[],
       missing_keywords: [] as string[],
       status: "insufficient_keywords",
+      behavior_structured: false,
     };
   }
 
   const corpus = [
-    ...opportunities.map((item) => `${String(item.outcome || "")} ${String(item.step_label || "")}`),
-    ...routes.map((item) => `${String(item.title || "")} ${String(item.short_description || "")}`),
+    ...opportunities.map(
+      (item) => `${String(item.outcome || "")} ${String(item.step_label || "")}`,
+    ),
+    ...routes.map(
+      (item) => `${String(item.title || "")} ${String(item.short_description || "")}`,
+    ),
   ].join(" ");
   const corpusTokens = new Set(tokenizeStrategicText(corpus));
   const matched = keywords.filter((token) => corpusTokens.has(token));
   const missing = keywords.filter((token) => !corpusTokens.has(token));
   const coverageRatio = keywords.length > 0 ? matched.length / keywords.length : 0.5;
-  const score = round1(clamp(100 * coverageRatio, 0, 100));
+
+  // Bonus: fully structured outcomes (level + actor + action) get up to +8 pts
+  const behaviorStructured = !!(
+    primary.level &&
+    String(primary.actor || "").trim() &&
+    String(primary.action || "").trim()
+  );
+  const structureBonus = behaviorStructured ? 8 : 0;
+  const score = round1(clamp(100 * coverageRatio + structureBonus, 0, 100));
 
   return {
     available: true,
@@ -667,6 +689,7 @@ function computeDesiredOutcomeAlignment(
     matched_keywords: matched.slice(0, 16),
     missing_keywords: missing.slice(0, 16),
     status: score >= 70 ? "aligned" : score >= 45 ? "partial" : "weak",
+    behavior_structured: behaviorStructured,
   };
 }
 

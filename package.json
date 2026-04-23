@@ -18,7 +18,8 @@
     "files:reparse-local": "node scripts/reparse-existing-files.mjs",
     "files:sync-local": "node scripts/sync-local-files-to-supabase.mjs",
     "files:pull-local": "node scripts/pull-supabase-files-to-local.mjs",
-    "files:auto-mirror": "node scripts/auto-mirror-local-files.mjs --root \"Client_Files\""
+    "files:auto-mirror": "node scripts/auto-mirror-local-files.mjs --root \"Client_Files\"",
+    "db:check-companies-columns": "node scripts/check-companies-columns.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

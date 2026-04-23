@@ -2253,8 +2253,32 @@ a {
   max-width: 24ch;
 }
 
+.map-sequence-line.is-quote {
+  font-size: clamp(2.8rem, 6.1vw, 5.35rem);
+  line-height: 0.96;
+  max-width: 20ch;
+  color: rgba(245, 248, 255, 0.99);
+}
+
+.map-sequence-line.is-bridge {
+  font-size: clamp(1.15rem, 2.1vw, 1.9rem);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: rgba(161, 176, 205, 0.92);
+}
+
 .map-sequence-card.is-final-callout .map-sequence-line {
   color: #ff9a4e;
+  font-weight: 700;
+}
+
+.map-sequence-card .map-sequence-line.is-quote {
+  color: rgba(245, 248, 255, 0.99);
+  font-weight: 600;
+}
+
+.map-sequence-card.is-final-callout .map-sequence-line.is-quote {
+  color: rgba(245, 248, 255, 0.99);
   font-weight: 700;
 }
 
@@ -2273,11 +2297,26 @@ a {
   gap: clamp(0.8rem, 1.5vw, 1.2rem);
 }
 
+.map-screens-hold {
+  position: relative;
+}
+
 .map-screens-overlap {
   position: relative;
   z-index: 5;
   margin-top: clamp(-36rem, -56vh, -20rem);
   padding-top: clamp(20rem, 32vh, 24rem);
+}
+
+@media (min-width: 980px) {
+  .map-screens-hold {
+    min-height: clamp(56rem, 118vh, 74rem);
+  }
+
+  .map-screens-hold .map-screens-wrap {
+    position: sticky;
+    top: clamp(4.5rem, 9vh, 7rem);
+  }
 }
 
 .diff-sequence-card {
@@ -3276,6 +3315,15 @@ a {
     height: min(52svh, 29rem);
   }
 
+  .map-sequence-line.is-quote {
+    font-size: clamp(2.05rem, 8.4vw, 3.2rem);
+    max-width: 18ch;
+  }
+
+  .map-sequence-line.is-bridge {
+    font-size: clamp(0.96rem, 3.8vw, 1.2rem);
+  }
+
   .brand-column {
     padding-left: 0;
     padding-right: 0;
@@ -3311,10 +3359,8 @@ a {
   }
 
   .reveal-item {
-    transition:
-      opacity 460ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 460ms cubic-bezier(0.22, 1, 0.36, 1);
-    transform: translate3d(0, 14px, 0);
+    transition: opacity 280ms ease-out;
+    transform: none;
     will-change: auto;
   }
 
@@ -3329,6 +3375,15 @@ a {
 
   .mobile-sequence .sequence-card,
   .mobile-sequence .sequence-intro-card {
+    transition: none;
+  }
+
+  .mobile-sequence .mobile-swap-card {
+    animation: none;
+  }
+
+  .mobile-sequence .sequence-line.is-delayed {
+    opacity: 1;
     transition: none;
   }
 }
@@ -3353,6 +3408,10 @@ a {
   .map-screens-overlap {
     margin-top: clamp(-12rem, -22vh, -7rem);
     padding-top: clamp(7.8rem, 14vh, 9.8rem);
+  }
+
+  .map-screens-hold {
+    min-height: auto;
   }
 
   .mojomap-shell {

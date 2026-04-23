@@ -23,6 +23,7 @@ export interface Company {
   last_scored_at: string | null;
   area_scores_json: AreaScoresJson;
   public_source_filters_json?: Record<string, unknown> | null;
+  program_phase?: string | null;
 }
 
 interface CompanyCtx {
@@ -95,7 +96,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
     const baseSelect =
       "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
-    const extendedSelect = `${baseSelect},public_source_filters_json`;
+    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase`;
 
     let { data, error } = await supabase
       .from("companies")

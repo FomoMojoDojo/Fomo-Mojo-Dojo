@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { buildMarketFitCheckpointSpine } from "@/lib/marketTaxonomy";
 import {
   deriveMarketDefinitionCanvas,
+  JTBD_CHECKPOINT_COUNT,
   validateEightCheckpointSpine,
 } from "@/lib/jtbdProcess";
 
@@ -83,5 +85,26 @@ describe("deriveMarketDefinitionCanvas", () => {
       "jtbd",
       "chooser",
     ]);
+  });
+
+  it("normalizes traditional market definition to a standard category-led format when possible", () => {
+    const canvas = deriveMarketDefinitionCanvas({
+      traditionalMarketDefinition: "Enterprise software for debt collection teams.",
+      jobExecutor: "Collections manager",
+      chooser: "COO",
+      jtbd: "When collections teams are trying to recover balances, they want a repeatable workflow so they can improve recovery rates.",
+    });
+    const marketField = canvas.find((field) => field.key === "traditional_market_definition");
+    expect(marketField?.value).toContain("Category: B2B SaaS.");
+    expect(marketField?.value).toContain("Enterprise software for debt collection teams.");
+  });
+
+  it("keeps market-fit checkpoint seed compatible with 8-step local draft insertion", () => {
+    const seed = buildMarketFitCheckpointSpine("professional-services");
+    expect(seed).toHaveLength(JTBD_CHECKPOINT_COUNT);
+    for (const step of seed) {
+      expect(step.label.trim().length).toBeGreaterThan(0);
+      expect(step.description.trim().length).toBeGreaterThan(0);
+    }
   });
 });

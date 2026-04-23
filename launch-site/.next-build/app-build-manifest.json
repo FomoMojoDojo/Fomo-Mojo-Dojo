@@ -12,7 +12,7 @@
       "static/chunks/4bd1b696-c023c6e3521b1417.js",
       "static/chunks/255-38b49df12a94ee57.js",
       "static/chunks/main-app-748412d4c83d8355.js",
-      "static/css/d5e06c1d739ef933.css",
+      "static/css/d5a4784d8ca700aa.css",
       "static/chunks/app/layout-46880af7ee24e232.js"
     ],
     "/api/mojomap-intake/route": [
@@ -22,20 +22,20 @@
       "static/chunks/main-app-748412d4c83d8355.js",
       "static/chunks/app/api/mojomap-intake/route-318557ce60f01c7e.js"
     ],
-    "/quiz/page": [
-      "static/chunks/webpack-54dd5749d24acfdc.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-38b49df12a94ee57.js",
-      "static/chunks/main-app-748412d4c83d8355.js",
-      "static/chunks/app/quiz/page-2327430ffc8c8025.js"
-    ],
     "/page": [
       "static/chunks/webpack-54dd5749d24acfdc.js",
       "static/chunks/4bd1b696-c023c6e3521b1417.js",
       "static/chunks/255-38b49df12a94ee57.js",
       "static/chunks/main-app-748412d4c83d8355.js",
       "static/chunks/942-6e7a6ad94d5a43f4.js",
-      "static/chunks/app/page-4ab75536b615e4a6.js"
+      "static/chunks/app/page-edd4e1e6cea58d41.js"
+    ],
+    "/quiz/page": [
+      "static/chunks/webpack-54dd5749d24acfdc.js",
+      "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "static/chunks/255-38b49df12a94ee57.js",
+      "static/chunks/main-app-748412d4c83d8355.js",
+      "static/chunks/app/quiz/page-2327430ffc8c8025.js"
     ]
   }
 }
