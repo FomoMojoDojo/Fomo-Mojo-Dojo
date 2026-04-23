@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
+type StoredDetailItem = {
+  id: string;
+  title: string;
+  status: "complete" | "in_progress" | "missing";
+};
+
 export type RouteRow = {
   id: string;
   company_id: string;
@@ -12,6 +18,9 @@ export type RouteRow = {
   effort?: string | null;
   type?: string | null;
   sort_order?: number | null;
+  steps_json?: StoredDetailItem[] | null;
+  evidence_json?: StoredDetailItem[] | null;
+  why_this_matters_json?: string[] | null;
   created_at?: string;
 };
 
@@ -37,7 +46,7 @@ export function useRoutes(companyId?: string) {
       const { data, error } = await supabase
         .from("routes")
         .select(
-          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, created_at"
+          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at"
         )
         .eq("company_id", companyId)
         .order("sort_order", { ascending: true })

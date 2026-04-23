@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { HAS_SUPABASE_CREDENTIALS } from '@/integrations/supabase/client';
 
 const c = {
   bg: "#faf7f6",
@@ -33,6 +34,11 @@ export default function Login() {
     setLoading(true);
 
     if (mode === 'forgot') {
+      if (!HAS_SUPABASE_CREDENTIALS) {
+        setLoading(false);
+        setError('Password reset is unavailable in preview mode.');
+        return;
+      }
       const { supabase } = await import('@/integrations/supabase/client');
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
@@ -94,6 +100,11 @@ export default function Login() {
           <p className="font-mono text-[11px] mb-5 uppercase tracking-wide" style={{ color: c.muted }}>
             {mode === 'forgot' ? 'Enter your email to reset' : 'CMS Access'}
           </p>
+          {!HAS_SUPABASE_CREDENTIALS ? (
+            <p className="mb-4 rounded-[12px] border px-3 py-2 font-mono text-[11px]" style={{ borderColor: c.line, color: c.secondary, background: c.paper }}>
+              Preview mode: Supabase credentials are not configured, so admin access is local-only.
+            </p>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

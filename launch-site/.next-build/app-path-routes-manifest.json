@@ -1,6 +1,6 @@
 {
   "/_not-found/page": "/_not-found",
   "/api/mojomap-intake/route": "/api/mojomap-intake",
-  "/quiz/page": "/quiz",
-  "/page": "/"
+  "/page": "/",
+  "/quiz/page": "/quiz"
 }

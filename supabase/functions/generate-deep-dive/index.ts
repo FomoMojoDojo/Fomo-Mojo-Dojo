@@ -421,7 +421,7 @@ Deno.serve(async (req) => {
 
     const OLLAMA_BASE_URL =
       Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
-    const OLLAMA_MODEL = Deno.env.get("OLLAMA_MODEL") ?? "llama3:70b";
+    const OLLAMA_MODEL = Deno.env.get("OLLAMA_MODEL") ?? "qwen2.5:7b-instruct";
     if (!isLocalOllamaUrl(OLLAMA_BASE_URL)) {
       return new Response(JSON.stringify({
         error: "Local-only policy violation: OLLAMA_BASE_URL must be localhost/host.docker.internal.",

@@ -138,6 +138,7 @@ const FRAMEWORK_LIBRARY: FrameworkReference[] = [
       "Tie differentiation to specific value themes and buyer context.",
       "Use routes to strengthen proof, category clarity, and sales narrative.",
       "Treat vague category language as a positioning gap.",
+      "Anchor market category to a well-known frame of reference, then add niche qualifiers only when needed.",
     ],
     scoringDimensions: [
       "Category clarity",
@@ -184,6 +185,7 @@ const FRAMEWORK_LIBRARY: FrameworkReference[] = [
       positioning: [
         "Frame positioning through alternatives, unique attributes, value themes, and market category.",
         "Use the exact labels competitive alternatives, unique attributes, value themes, best-fit customers, and market category.",
+        "Express market category as a standard well-known category (or '<known category> for <job context>') rather than a proprietary label.",
       ],
       routes: [
         "Create routes that improve proof, narrative clarity, and market framing where positioning is weak.",

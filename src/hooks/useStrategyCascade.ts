@@ -157,5 +157,34 @@ export function useStrategyCascade(companyId?: string) {
     }
   }
 
-  return { loading, item, error, savingField, updateNarrativeField };
+  async function updateListField(
+    field: "capabilities_json" | "management_systems_json",
+    items: CascadeItem[],
+  ) {
+    if (!companyId) throw new Error("Select a company first.");
+
+    const { data, error } = await supabase
+      .from("strategy_cascades")
+      .update({ [field]: items })
+      .eq("company_id", companyId)
+      .select(
+        "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
+      )
+      .maybeSingle();
+
+    if (error) throw new Error(error.message || "Failed to update strategy list.");
+
+    if (data) {
+      setItem(mapRow(data as StrategyCascadeRow));
+    } else if (item) {
+      setItem({
+        ...item,
+        ...(field === "capabilities_json"
+          ? { capabilities: items }
+          : { management_systems: items }),
+      });
+    }
+  }
+
+  return { loading, item, error, savingField, updateNarrativeField, updateListField };
 }

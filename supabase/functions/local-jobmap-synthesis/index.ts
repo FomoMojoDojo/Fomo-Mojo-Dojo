@@ -16,6 +16,8 @@ const corsHeaders = {
 
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 const OLLAMA_TIMEOUT_MS = 120_000;
+const STANDARD_MARKET_CATEGORY_LIST =
+  "B2B SaaS, B2C SaaS, Marketplace, E-commerce, Professional Services, Healthcare Services, Financial Services, Education Services, Nonprofit Services, Hospitality/Foodservice, Logistics/Transportation, Manufacturing, Public Sector/Government";
 
 type SelectedJobMap = {
   journey_key: string;
@@ -173,7 +175,7 @@ function audienceFromJourneyTitle(title: string) {
 
 function fallbackJtbd(executor: string) {
   const actor = safeText(executor) || "primary job performer";
-  return `When ${actor.toLowerCase()} are trying to move a critical decision forward, they need clear evidence, shared confidence, and a repeatable process so progress does not stall.`;
+  return `When the ${actor.toLowerCase()} is trying to move a critical decision forward, they need clear evidence, shared confidence, and a repeatable process so progress does not stall.`;
 }
 
 const WEAK_NEED_TERMS = /\b(strategic alignment|operational excellence|synergy|leverage|holistic|transformation|best practice|framework|optimization)\b/i;
@@ -461,9 +463,11 @@ async function callLocalSynthesis(args: {
     "You are a local JTBD/ODI analyst running only on private local inference. " +
     "Use only the provided context JSON and do not invent external evidence. " +
     "Output must be clean JSON only. " +
+    "Use April Dunford framing for market context: frame of reference first (market category), then differentiation context. " +
     "For customer journeys, enforce the 8 ODI checkpoints in exact order: Define, Locate, Prepare, Confirm, Execute, Monitor, Modify, Conclude. " +
     "Keep step labels action-oriented and solution-agnostic. Avoid feature prescriptions. " +
-    "Use plain language a client can read quickly; avoid consulting jargon, placeholders, and generic filler.";
+    "Use plain language a client can read quickly; avoid consulting jargon, placeholders, and generic filler. " +
+    "For market_definition.market_context, use a standard category anchor from common categories before any custom wording.";
 
   const userText =
     `Company: ${args.companyName}\n` +
@@ -475,6 +479,11 @@ async function callLocalSynthesis(args: {
     "journeys: array of { journey_key, journey_title, journey_subtitle, steps }\n" +
     "step shape: { step_number, step_label, description, evidence_status, evidence_basis, evidence_confidence, has_gap, gap_note, designed }\n" +
     "needs: array of { desired_outcome, step_number, importance, satisfaction, opportunity_score, evidence_basis }\n" +
+    `market_definition rules:\n` +
+    `- market_context must start with \"Category: <well-known category>\".\n` +
+    `- Use one of these category anchors when possible: ${STANDARD_MARKET_CATEGORY_LIST}.\n` +
+    `- If a custom niche is needed, format as \"<well-known category> for <specific job executor/job>\".\n` +
+    `- Keep market_context to 1-2 sentences and tie it to job executor + ODI job.\n` +
     "Customer journeys must contain exactly 8 checkpoints numbered 1..8.\n" +
     "Desired outcomes must be clear ODI-style statements in common language: directional verb (Minimize/Increase/Reduce/Improve) + measurable object + context.";
 

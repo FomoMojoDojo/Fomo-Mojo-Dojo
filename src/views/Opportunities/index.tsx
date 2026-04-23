@@ -762,14 +762,16 @@ function OpportunitySection({
   );
 }
 
-const KANBAN_COLUMNS: Array<{ status: WorkflowStatus; label: string; color: string; bg: string }> = [
-  { status: "in_progress", label: "In Progress", color: "#FF7D2D", bg: "#FFF4EC" },
-  { status: "planned",     label: "Planned",     color: "#FAC846", bg: "#FFFCE8" },
-  { status: "parked",      label: "Parked",      color: "#6E847F", bg: "#F4F6F8" },
-];
+// Workflow status badge colors (still stored, shown as badge on each card)
+const WORKFLOW_STATUS_BADGE: Record<WorkflowStatus, { label: string; bg: string; fg: string; border: string }> = {
+  in_progress: { label: "In Progress", bg: "#FFF4EC", fg: "#FF7D2D", border: "#FFD1B4" },
+  planned:     { label: "Planned",     bg: "#FFFCE8", fg: "#C48A2A", border: "#F3D77A" },
+  parked:      { label: "Parked",      bg: "#F4F6F5", fg: "#6E847F", border: "#C8D8CA" },
+};
 
-function KanbanSection({
+function CheckpointListSection({
   items,
+  jobSteps,
   opportunityNumberById,
   workflowStatusAvailable,
   updatingWorkflowId,
@@ -779,6 +781,7 @@ function KanbanSection({
   innovationStrategy = null,
 }: {
   items: OpportunityRow[];
+  jobSteps: Array<{ id: string; journey_key: string; step_number: number | null; step_label: string | null; journey_title?: string | null }>;
   opportunityNumberById: Map<string, string>;
   workflowStatusAvailable: boolean;
   updatingWorkflowId: string | null;
@@ -787,135 +790,115 @@ function KanbanSection({
   targetOpportunityId?: string | null;
   innovationStrategy?: string | null;
 }) {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverColumn, setDragOverColumn] = useState<WorkflowStatus | null>(null);
+  // Group opportunities by step_number + journey_key
+  const grouped = useMemo(() => {
+    const byKey = new Map<string, { stepLabel: string; journeyKey: string; stepNumber: number | null; items: OpportunityRow[] }>();
 
-  const columns = useMemo(() => {
-    const byStatus: Record<WorkflowStatus, OpportunityRow[]> = {
-      in_progress: [],
-      planned: [],
-      parked: [],
-    };
     for (const item of items) {
-      byStatus[resolveWorkflowStatus(item)].push(item);
+      const key = `${item.journey_key}::${item.step_number ?? ""}::${item.step_label ?? ""}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          stepLabel: item.step_label || "",
+          journeyKey: item.journey_key || "",
+          stepNumber: item.step_number ?? null,
+          items: [],
+        });
+      }
+      byKey.get(key)!.items.push(item);
     }
-    for (const key of Object.keys(byStatus) as WorkflowStatus[]) {
-      byStatus[key].sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
-    }
-    return byStatus;
-  }, [items]);
 
-  const draggingItem = useMemo(
-    () => (draggingId ? items.find((item) => item.id === draggingId) ?? null : null),
-    [draggingId, items],
-  );
+    // Sort items within each group by opportunity_score desc
+    for (const group of byKey.values()) {
+      group.items.sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
+    }
+
+    // Sort groups: by journey_key (customer, revenue, operations) then step_number asc
+    const journeyOrder: Record<string, number> = { customer: 0, revenue: 1, operations: 2 };
+    const sorted = Array.from(byKey.values()).sort((a, b) => {
+      const jDiff = (journeyOrder[a.journeyKey] ?? 9) - (journeyOrder[b.journeyKey] ?? 9);
+      if (jDiff !== 0) return jDiff;
+      return (a.stepNumber ?? 999) - (b.stepNumber ?? 999);
+    });
+
+    // Groups with no step label go at the bottom
+    const withStep = sorted.filter((g) => g.stepLabel || g.stepNumber !== null);
+    const noStep = sorted.filter((g) => !g.stepLabel && g.stepNumber === null);
+    return [...withStep, ...noStep];
+  }, [items]);
 
   if (items.length === 0) return null;
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-6">
       <div>
         <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
-          Prioritize Now
+          Opportunities by Checkpoint
         </h2>
-        <p className="font-sans text-[13px] italic" style={{ color: c.secondary }}>
-          Strong opportunities that deserve attention before you commit to a solution.
+        <p className="font-sans text-[13px]" style={{ color: c.secondary }}>
+          Opportunities grouped under the job step where they have the most impact. Sorted by opportunity score within each step.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {KANBAN_COLUMNS.map(({ status, label, color, bg }) => {
-          const colItems = columns[status];
-          const isDropTarget = dragOverColumn === status;
-          return (
+      {grouped.map((group) => {
+        const accentColor = JOURNEY_ACCENT[group.journeyKey] ?? c.muted;
+        const groupLabel = group.stepLabel
+          ? `${group.stepLabel}${group.stepNumber !== null ? ` (Step ${group.stepNumber})` : ""}`
+          : group.stepNumber !== null
+          ? `Step ${group.stepNumber}`
+          : "Unassigned";
+
+        return (
+          <div key={`${group.journeyKey}::${group.stepNumber}::${group.stepLabel}`}>
+            {/* Step header */}
             <div
-              key={status}
-              className="rounded-[20px] border transition-colors"
-              style={{
-                borderColor: isDropTarget ? color : c.line,
-                background: isDropTarget ? bg : "#FAFAF8",
-                minHeight: 120,
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverColumn(status);
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                  setDragOverColumn(null);
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOverColumn(null);
-                if (draggingItem && resolveWorkflowStatus(draggingItem) !== status) {
-                  onWorkflowChange(draggingItem, status);
-                }
-                setDraggingId(null);
-              }}
+              className="flex items-center gap-3 mb-3 pb-2"
+              style={{ borderBottom: `2px solid ${accentColor}20` }}
             >
               <div
-                className="flex items-center justify-between border-b px-4 py-3"
-                style={{ borderColor: c.line }}
+                className="h-[18px] w-[3px] rounded-full shrink-0"
+                style={{ background: accentColor }}
+              />
+              <div>
+                <p
+                  className="font-mono text-[10px] uppercase tracking-[0.08em]"
+                  style={{ color: accentColor }}
+                >
+                  {group.journeyKey}
+                </p>
+                <p className="font-sans text-[15px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+                  {groupLabel}
+                </p>
+              </div>
+              <span
+                className="ml-auto font-mono text-[10px] rounded-full border px-2 py-0.5"
+                style={{ borderColor: c.line, color: c.muted, background: "#FFFFFF" }}
               >
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
-                  <span
-                    className="font-mono text-[10px] uppercase tracking-[0.08em]"
-                    style={{ color }}
-                  >
-                    {label}
-                  </span>
-                </div>
-                <span className="font-mono text-[10px]" style={{ color: c.muted }}>
-                  {colItems.length}
-                </span>
-              </div>
-
-              <div className="space-y-3 p-3">
-                {colItems.length === 0 ? (
-                  <p
-                    className="py-6 text-center font-mono text-[10px] uppercase tracking-[0.08em]"
-                    style={{ color: c.muted }}
-                  >
-                    Empty
-                  </p>
-                ) : (
-                  colItems.map((item) => (
-                    <div
-                      key={item.id}
-                      draggable
-                      onDragStart={() => setDraggingId(item.id)}
-                      onDragEnd={() => {
-                        setDraggingId(null);
-                        setDragOverColumn(null);
-                      }}
-                      style={{
-                        opacity: draggingId === item.id ? 0.4 : 1,
-                        cursor: "grab",
-                        transition: "opacity 0.12s",
-                      }}
-                    >
-                      <OpportunityCard
-                        item={item}
-                        opportunityNumber={opportunityNumberById.get(item.id)}
-                        workflowStatus={resolveWorkflowStatus(item)}
-                        workflowStatusAvailable={workflowStatusAvailable}
-                        workflowSaving={updatingWorkflowId === item.id}
-                        onWorkflowChange={onWorkflowChange}
-                        showJourneyBadge={showJourneyBadge}
-                        isTargeted={targetOpportunityId === item.id}
-                        innovationStrategy={innovationStrategy}
-                        hideWorkflowPicker
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
+                {group.items.length}
+              </span>
             </div>
-          );
-        })}
-      </div>
+
+            {/* Opportunity cards for this step */}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {group.items.map((item) => (
+                <div key={item.id} className="relative">
+                  <OpportunityCard
+                    item={item}
+                    opportunityNumber={opportunityNumberById.get(item.id)}
+                    workflowStatus={resolveWorkflowStatus(item)}
+                    workflowStatusAvailable={workflowStatusAvailable}
+                    workflowSaving={updatingWorkflowId === item.id}
+                    onWorkflowChange={onWorkflowChange}
+                    showJourneyBadge={showJourneyBadge}
+                    isTargeted={targetOpportunityId === item.id}
+                    innovationStrategy={innovationStrategy}
+                    hideWorkflowPicker
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -2233,33 +2216,9 @@ export default function OpportunitiesView() {
                 </p>
               </div>
             ) : null}
-            <KanbanSection
-              items={prioritizeNow}
-              opportunityNumberById={opportunityNumberById}
-              workflowStatusAvailable={workflowStatusAvailable}
-              updatingWorkflowId={updatingWorkflowId}
-              onWorkflowChange={handleWorkflowChange}
-              showJourneyBadge={showJourneyBadge}
-              targetOpportunityId={targetOpportunityId}
-              innovationStrategy={innovationStrategy}
-            />
-            <OpportunitySection
-              title="Investigate Next"
-              subtitle="Promising opportunities where the next move is better evidence, sharper assumptions, or smaller tests."
-              items={investigateNext}
-              opportunityNumberById={opportunityNumberById}
-              workflowStatusAvailable={workflowStatusAvailable}
-              updatingWorkflowId={updatingWorkflowId}
-              onWorkflowChange={handleWorkflowChange}
-              subtitleItalic
-              showJourneyBadge={showJourneyBadge}
-              targetOpportunityId={targetOpportunityId}
-              innovationStrategy={innovationStrategy}
-            />
-            <OpportunitySection
-              title="Later Opportunities"
-              subtitle="Keep these visible, but sequence them after higher-leverage opportunity work."
-              items={laterOpportunities}
+            <CheckpointListSection
+              items={suggestedOpportunityItems}
+              jobSteps={steps}
               opportunityNumberById={opportunityNumberById}
               workflowStatusAvailable={workflowStatusAvailable}
               updatingWorkflowId={updatingWorkflowId}

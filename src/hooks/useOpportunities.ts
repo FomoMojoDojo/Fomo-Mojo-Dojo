@@ -8,6 +8,7 @@ export type OpportunityRow = {
   company_id: string;
   user_id: string;
   managed_outcome_id: string | null;
+  parent_opportunity_id: string | null;
   outcome: string;
   step_number: number | null;
   step_label: string | null;
@@ -34,12 +35,13 @@ export function useOpportunities(companyId?: string) {
     setWorkflowStatusAvailable(true);
     setManagedOutcomeLinkAvailable(true);
 
-    const runSelect = async (includeManagedOutcome: boolean, includeWorkflow: boolean) => {
+    const runSelect = async (includeManagedOutcome: boolean, includeWorkflow: boolean, includeParent: boolean) => {
       const columns = [
         'id',
         'company_id',
         'user_id',
         includeManagedOutcome ? 'managed_outcome_id' : null,
+        includeParent ? 'parent_opportunity_id' : null,
         'outcome',
         'step_number',
         'step_label',
@@ -62,43 +64,41 @@ export function useOpportunities(companyId?: string) {
         .limit(200);
     };
 
-    let result = await runSelect(true, true);
+    const attempts: Array<{ includeManagedOutcome: boolean; includeWorkflow: boolean; includeParent: boolean }> = [
+      { includeManagedOutcome: true, includeWorkflow: true, includeParent: true },
+      { includeManagedOutcome: true, includeWorkflow: true, includeParent: false },
+      { includeManagedOutcome: false, includeWorkflow: true, includeParent: false },
+      { includeManagedOutcome: false, includeWorkflow: false, includeParent: false },
+    ];
 
-    if (args?.cancelled?.()) return;
+    let resolved: { includeManagedOutcome: boolean; includeWorkflow: boolean; includeParent: boolean } | null = null;
+    let result: Awaited<ReturnType<typeof runSelect>> | null = null;
 
-    const missingManagedOutcomeColumn = Boolean(
-      result.error?.message &&
-        /column\s+.*managed_outcome_id.*does not exist|managed_outcome_id.*does not exist/i.test(result.error.message),
-    );
-    const missingWorkflowColumn = Boolean(
-      result.error?.message &&
-        /column\s+.*workflow_status.*does not exist|workflow_status.*does not exist/i.test(result.error.message),
-    );
-
-    if (missingManagedOutcomeColumn || missingWorkflowColumn) {
-      if (missingManagedOutcomeColumn) setManagedOutcomeLinkAvailable(false);
-      if (missingWorkflowColumn) setWorkflowStatusAvailable(false);
-      result = await runSelect(!missingManagedOutcomeColumn, !missingWorkflowColumn);
-
+    for (const attempt of attempts) {
+      result = await runSelect(attempt.includeManagedOutcome, attempt.includeWorkflow, attempt.includeParent);
       if (args?.cancelled?.()) return;
-
-      if (result.error) {
-        setError(result.error.message);
-        setItems([]);
-      } else {
-        const normalized = ((result.data as any[]) ?? []).map((row) => ({
-          ...row,
-          managed_outcome_id: missingManagedOutcomeColumn ? null : (row as any).managed_outcome_id ?? null,
-          workflow_status: missingWorkflowColumn ? null : (row as any).workflow_status ?? null,
-        }));
-        setItems(normalized);
+      if (!result.error) {
+        resolved = attempt;
+        break;
       }
-    } else if (result.error) {
-      setError(result.error.message);
-      setItems([]);
-    } else {
-      setItems((result.data as any[]) ?? []);
     }
+
+    if (!result || result.error || !resolved) {
+      setError(String(result?.error?.message || 'Failed to load opportunities.'));
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+
+    setManagedOutcomeLinkAvailable(resolved.includeManagedOutcome);
+    setWorkflowStatusAvailable(resolved.includeWorkflow);
+    const normalized = ((result.data as any[]) ?? []).map((row) => ({
+      ...row,
+      managed_outcome_id: resolved.includeManagedOutcome ? (row as any).managed_outcome_id ?? null : null,
+      parent_opportunity_id: resolved.includeParent ? (row as any).parent_opportunity_id ?? null : null,
+      workflow_status: resolved.includeWorkflow ? (row as any).workflow_status ?? null : null,
+    }));
+    setItems(normalized);
 
     setLoading(false);
   }, []);
@@ -119,6 +119,47 @@ export function useOpportunities(companyId?: string) {
     };
   }, [companyId, load]);
 
+  // Real-time sync: keep workflow_status in sync across all hook instances
+  // (e.g. Opportunities kanban and MapView cards update each other automatically)
+  useEffect(() => {
+    if (!companyId) return;
+
+    const channel = supabase
+      .channel(`opportunities_workflow:${companyId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'opportunities',
+          filter: `company_id=eq.${companyId}`,
+        },
+        (payload) => {
+          const updated = payload.new as Record<string, unknown>;
+          if (!updated?.id) return;
+          setItems((current) =>
+            current.map((row) => {
+              if (row.id !== updated.id) return row;
+              return {
+                ...row,
+                ...(updated.workflow_status !== undefined
+                  ? { workflow_status: updated.workflow_status as WorkflowStatus | null }
+                  : {}),
+                ...(updated.priority_tier !== undefined
+                  ? { priority_tier: updated.priority_tier as string }
+                  : {}),
+              };
+            }),
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [companyId]);
+
   return {
     loading,
     items,
@@ -129,6 +170,39 @@ export function useOpportunities(companyId?: string) {
     refetch: async () => {
       if (!companyId) return;
       await load(companyId);
+    },
+    updateWorkflowAndPriority: async (
+      opportunityId: string,
+      workflowStatus: WorkflowStatus,
+      priorityTier: 'focus' | 'monitor' | 'defer',
+    ) => {
+      if (!companyId) throw new Error('No active company selected.');
+      if (!workflowStatusAvailable) {
+        throw new Error('Workflow labels require the latest database migration. Please apply migrations and refresh.');
+      }
+      const id = String(opportunityId || '').trim();
+      if (!id) throw new Error('Missing opportunity id.');
+
+      setUpdatingWorkflowId(id);
+      try {
+        const { error: updateError } = await supabase
+          .from('opportunities')
+          .update({ workflow_status: workflowStatus, priority_tier: priorityTier })
+          .eq('company_id', companyId)
+          .eq('id', id);
+
+        if (updateError) throw new Error(updateError.message || 'Failed to update opportunity status.');
+
+        setItems((current) =>
+          current.map((row) =>
+            row.id === id
+              ? { ...row, workflow_status: workflowStatus, priority_tier: priorityTier }
+              : row,
+          ),
+        );
+      } finally {
+        setUpdatingWorkflowId(null);
+      }
     },
     updateWorkflowStatus: async (opportunityId: string, workflowStatus: WorkflowStatus) => {
       if (!companyId) throw new Error('No active company selected.');

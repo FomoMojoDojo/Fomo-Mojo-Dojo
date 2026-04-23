@@ -23,7 +23,7 @@ export const CLIENT_VIEW_VISIBILITY_AUDIT: VisibilityBucket[] = [
     internalOnly: [
       { label: "Inputs", note: "`/inputs`" },
       { label: "Artifacts / Files", note: "`/files`" },
-      { label: "Job Steps", note: "`/job-steps`" },
+      { label: "Checkpoints", note: "`/job-steps`" },
       { label: "Routes", note: "`/routes`" },
       { label: "Positioning", note: "`/positioning`" },
       { label: "Signal Map Prototype", note: "`/map-signal-prototype`" },

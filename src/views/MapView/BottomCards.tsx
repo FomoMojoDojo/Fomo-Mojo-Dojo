@@ -21,7 +21,7 @@ export default function BottomCards({ inputComplete, inputTotal, inputGaps, onDe
     },
     {
       icon: '🗺',
-      title: 'Job Steps Map',
+      title: 'Checkpoints Map',
       sub: inputTotal > 0
         ? 'View customer journey steps and gap analysis'
         : 'Customer journey mapping will appear after research',
