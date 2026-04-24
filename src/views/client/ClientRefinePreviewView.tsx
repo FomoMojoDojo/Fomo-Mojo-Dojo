@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PageShell from "@/components/layout/PageShell";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCompany } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
+import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE } from "@/lib/clientRefinePreview";
 import "@/styles/client-refine-preview.css";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
 type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "branching" | "waiting";
 type DrawerKey = "why" | "blocking" | "signals" | "progress";
+type RouteCategory = "Fix" | "Improve" | "Create";
 
 type AccessModes = {
   pills: boolean;
@@ -32,7 +34,7 @@ const MODE_STORAGE_KEY = "phase5-modes";
 const DEFAULT_ACCESS_MODES: AccessModes = {
   pills: true,
   inline: true,
-  edge: false,
+  edge: true,
   footer: false,
 };
 
@@ -67,12 +69,37 @@ const BRANCH_OPTIONS = [
   },
 ] as const;
 
+const ROUTE_ORDER: RouteCategory[] = ["Fix", "Improve", "Create"];
+
+const ROUTE_FALLBACK_HEADLINE: Record<RouteCategory, string> = {
+  Fix: "Resolve the highest-friction blocker first.",
+  Improve: "Improve the current route where execution is unstable.",
+  Create: "Create a new path only after core blockers are controlled.",
+};
+
+const MAP_ROUTE_CURVES: Record<RouteCategory, string> = {
+  Fix: "M 880 300 C 960 300, 1050 288, 1140 264 S 1300 220, 1378 186",
+  Improve: "M 880 300 C 962 270, 1048 226, 1138 192 S 1294 142, 1378 118",
+  Create: "M 880 300 C 955 336, 1044 382, 1136 424 S 1298 498, 1378 540",
+};
+
+const MAP_ROUTE_BADGES: Record<RouteCategory, { x: number; y: number }> = {
+  Fix: { x: 1146, y: 258 },
+  Improve: { x: 1146, y: 176 },
+  Create: { x: 1146, y: 410 },
+};
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
 function toSentence(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function shorten(value: string, max = 72) {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1).trimEnd()}…`;
 }
 
 function parseAccessModes(raw: string | null): AccessModes {
@@ -106,11 +133,11 @@ function statusLabel(value: string) {
 }
 
 function stageLabel(value: string) {
-  if (value === "outside") return "Learn";
-  if (value === "diagnosis") return "Focus";
-  if (value === "focus") return "Plan";
-  if (value === "execution") return "Execute";
-  return "Focus";
+  if (value === "outside") return "outside signals";
+  if (value === "diagnosis" || value === "diagnose") return "diagnose";
+  if (value === "focus") return "focus";
+  if (value === "execution" || value === "flow") return "flow";
+  return "diagnose";
 }
 
 function stateLabel(layer: LayerState) {
@@ -121,6 +148,7 @@ function stateLabel(layer: LayerState) {
 }
 
 export default function ClientRefinePreviewView() {
+  const navigate = useNavigate();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const {
     activeCompany,
@@ -139,8 +167,9 @@ export default function ClientRefinePreviewView() {
 
   const [layer, setLayer] = useState<LayerState>("command");
   const [commitState, setCommitState] = useState<CommitState>("idle");
-  const [mapPeek, setMapPeek] = useState(false);
   const [drawerKey, setDrawerKey] = useState<DrawerKey | null>(null);
+  const [selectedMapRoute, setSelectedMapRoute] = useState<RouteCategory>("Fix");
+  const [hoveredMapRoute, setHoveredMapRoute] = useState<RouteCategory | null>(null);
   const [systemLine, setSystemLine] = useState("");
   const [systemLineOn, setSystemLineOn] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
@@ -149,7 +178,9 @@ export default function ClientRefinePreviewView() {
   const [confidenceFrom, setConfidenceFrom] = useState(42);
   const [confidenceTo, setConfidenceTo] = useState(42);
   const [evidenceChecks, setEvidenceChecks] = useState<boolean[]>([false, false, false]);
+  const [hoverTip, setHoverTip] = useState<{ text: string; x: number; y: number } | null>(null);
 
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
   const typingRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -196,23 +227,75 @@ export default function ClientRefinePreviewView() {
 
   const stageIndex = useMemo(() => {
     if (phase === "outside") return 0;
-    if (phase === "diagnosis") return 1;
+    if (phase === "diagnosis" || phase === "diagnose") return 1;
     if (phase === "focus") return 2;
     return 3;
   }, [phase]);
 
   const stageStrip = useMemo(
-    () => ["Learn", "Focus", "Plan", "Execute"],
+    () => ["Outside Signals", "Diagnose", "Focus", "Flow"],
     [],
   );
 
   const strongestAction = topActions[0] ?? null;
-  const secondAction = topActions[1] ?? null;
 
-  const strongestSignal = useMemo(() => {
-    const rows = [signalStrength.proof, signalStrength.ownership, signalStrength.execution];
-    return rows.sort((a, b) => b.value - a.value)[0];
-  }, [signalStrength.execution, signalStrength.ownership, signalStrength.proof]);
+  const routeOptions = useMemo(() => {
+    const buckets: Record<RouteCategory, typeof allActions> = {
+      Fix: [],
+      Improve: [],
+      Create: [],
+    };
+
+    allActions.forEach((action) => {
+      buckets[action.category].push(action);
+    });
+
+    return ROUTE_ORDER.map((category) => {
+      const lead = buckets[category][0] ?? null;
+      return {
+        category,
+        count: buckets[category].length,
+        available: buckets[category].length > 0,
+        leadTitle: toSentence(lead?.title) || ROUTE_FALLBACK_HEADLINE[category],
+        leadStatus: lead ? statusLabel(lead.status) : "No route",
+        optionTitles: buckets[category].slice(0, 3).map((action) => toSentence(action.title)).filter(Boolean),
+      };
+    });
+  }, [allActions]);
+
+  const preferredRoute = useMemo<RouteCategory>(() => {
+    if (strongestAction?.category) return strongestAction.category;
+    const firstAvailable = routeOptions.find((route) => route.available);
+    return firstAvailable ? firstAvailable.category : "Fix";
+  }, [routeOptions, strongestAction?.category]);
+
+  const selectedRouteOption = useMemo(
+    () => routeOptions.find((route) => route.category === selectedMapRoute) ?? routeOptions[0],
+    [routeOptions, selectedMapRoute],
+  );
+
+  const hoverRouteOption = useMemo(
+    () =>
+      hoveredMapRoute
+        ? routeOptions.find((route) => route.category === hoveredMapRoute) ?? null
+        : null,
+    [hoveredMapRoute, routeOptions],
+  );
+
+  const mapActionHeadline = useMemo(
+    () => selectedRouteOption?.leadTitle || actionHeadline,
+    [actionHeadline, selectedRouteOption],
+  );
+
+  const routeHoverText = useCallback((category: RouteCategory) => {
+    const route = routeOptions.find((item) => item.category === category);
+    if (!route) return `${category} route`;
+    if (!route.available) return `${category} route · no live options yet`;
+    const options = route.optionTitles.length > 0
+      ? route.optionTitles.map((item) => shorten(item, 56)).join(" • ")
+      : shorten(route.leadTitle, 56);
+    return `${category} route · ${route.count} option${route.count === 1 ? "" : "s"} · ${options}`;
+  }, [routeOptions]);
 
   const evidencePresentLabels = useMemo(
     () => evidence.sources.filter((source) => source.present).map((source) => source.label),
@@ -313,47 +396,40 @@ export default function ClientRefinePreviewView() {
   const narrativeRows = useMemo(
     () => [
       {
-        step: "01",
-        label: "Context",
-        body: `${toSentence(activeCompany?.name) || "This company"} is currently operating in ${stageLabel(phase)} with ${Math.round(
-          inputCoverage.overallCoverage,
-        )}% usable input coverage.`,
+        label: "Where we are",
+        lead: `You are in the ${stageLabel(phase)} stage. `,
+        emphasis: `Confidence in the plan is ${confidence.level.toLowerCase()}`,
+        tail: " — the strategy still needs stronger evidence.",
       },
       {
-        step: "02",
-        label: "Blocking",
-        body: toSentence(primaryConstraint?.detail) || "No clear blocker statement has been captured yet.",
+        label: "What's wrong",
+        lead: "You cannot move forward because ",
+        emphasis: toSentence(primaryConstraint?.detail) || "the primary blocker is still not clearly validated",
+        tail: ". Every onward path depends on this being resolved.",
       },
       {
-        step: "03",
-        label: "Decision",
-        body: actionHeadline,
+        label: "What to do",
+        lead: "The next move is to ",
+        emphasis: actionHeadline,
+        tail: ` This is the single move that can lift confidence from ${baseConfidence} toward ${confidenceTarget}.`,
       },
       {
-        step: "04",
-        label: "Execution",
-        body:
-          toSentence(strongestAction?.ifSolved?.[0]) ||
-          "Owner assignment and evidence capture need to happen in the same sprint.",
-      },
-      {
-        step: "05",
-        label: "Outcome",
-        body:
-          toSentence(primaryDesiredOutcome?.statement) ||
-          toSentence(nextMove?.title) ||
-          "Define outcome criteria so the next commitment can be measured.",
+        label: "If we don't",
+        lead: "Confidence stays flat and the next phase is delayed. ",
+        emphasis:
+          toSentence(strongestAction?.ifMissed?.[0]) ||
+          "Execution decisions continue with assumption-heavy evidence",
+        tail: ".",
       },
     ],
     [
       actionHeadline,
-      activeCompany?.name,
-      inputCoverage.overallCoverage,
-      nextMove?.title,
+      baseConfidence,
+      confidence.level,
+      confidenceTarget,
       phase,
       primaryConstraint?.detail,
-      primaryDesiredOutcome?.statement,
-      strongestAction?.ifSolved,
+      strongestAction?.ifMissed,
     ],
   );
 
@@ -448,7 +524,6 @@ export default function ClientRefinePreviewView() {
       setCommitState("committing");
       setLayer("command");
       setDrawerKey(null);
-      setMapPeek(false);
       setEvidenceChecks([false, false, false]);
       setConfidenceFrom(baseConfidence);
       setConfidenceTo(baseConfidence);
@@ -484,7 +559,6 @@ export default function ClientRefinePreviewView() {
     setCommitState("branching");
     setLayer("command");
     setDrawerKey(null);
-    setMapPeek(false);
     setEvidenceChecks([false, false, false]);
     setConfidenceFrom(baseConfidence);
     setConfidenceTo(baseConfidence);
@@ -496,7 +570,6 @@ export default function ClientRefinePreviewView() {
     setCommitState("waiting");
     setLayer("command");
     setDrawerKey(null);
-    setMapPeek(false);
     setConfidenceFrom(baseConfidence);
     setConfidenceTo(baseConfidence);
     setEvidenceChecks([false, false, false]);
@@ -552,13 +625,32 @@ export default function ClientRefinePreviewView() {
     [accessModes.inline, openDrawer],
   );
 
-  const onMapHoverEnter = useCallback(() => {
-    if (layer === "command") setMapPeek(true);
-  }, [layer]);
+  const goToMainSite = useCallback(() => {
+    navigate("/");
+  }, [navigate]);
 
-  const onMapHoverLeave = useCallback(() => {
-    setMapPeek(false);
+  const goToRoutesPreview = useCallback(() => {
+    navigate(CLIENT_REFINE_PREVIEW_ROUTES_ROUTE);
+  }, [navigate]);
+
+  const showHoverTip = useCallback((event: ReactMouseEvent<HTMLElement>, text: string) => {
+    const stageBounds = stageRef.current?.getBoundingClientRect();
+    if (!stageBounds) return;
+
+    setHoverTip({
+      text,
+      x: event.clientX - stageBounds.left + 14,
+      y: event.clientY - stageBounds.top + 14,
+    });
   }, []);
+
+  const hideHoverTip = useCallback(() => {
+    setHoverTip(null);
+  }, []);
+
+  const moveHoverTip = useCallback((event: ReactMouseEvent<HTMLElement>, text: string) => {
+    showHoverTip(event, text);
+  }, [showHoverTip]);
 
   useEffect(() => {
     try {
@@ -588,11 +680,22 @@ export default function ClientRefinePreviewView() {
   }, [baseConfidence, commitState]);
 
   useEffect(() => {
+    setSelectedMapRoute(preferredRoute);
+  }, [activeCompany?.id, preferredRoute]);
+
+  useEffect(() => {
     setLayer("command");
     setDrawerKey(null);
-    setMapPeek(false);
+    setHoverTip(null);
     resetCommit();
   }, [activeCompany?.id, resetCommit]);
+
+  useEffect(() => {
+    if (layer !== "map") {
+      setHoveredMapRoute(null);
+      setHoverTip(null);
+    }
+  }, [layer]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -604,7 +707,6 @@ export default function ClientRefinePreviewView() {
           return;
         }
         setLayer("command");
-        setMapPeek(false);
         resetCommit();
         return;
       }
@@ -612,14 +714,12 @@ export default function ClientRefinePreviewView() {
       if (lower === "m") {
         setLayer("map");
         setDrawerKey(null);
-        setMapPeek(false);
         return;
       }
 
       if (lower === "n") {
         setLayer("narrative");
         setDrawerKey(null);
-        setMapPeek(false);
         return;
       }
 
@@ -642,7 +742,6 @@ export default function ClientRefinePreviewView() {
     layer === "map" ? "state-map" : "",
     layer === "narrative" ? "state-narrative" : "",
     layer === "drawer" ? "state-drawer" : "",
-    layer === "command" && mapPeek ? "state-map-peek" : "",
     commitState !== "idle" ? commitState : "",
     accessModes.pills ? "mode-pills" : "",
     accessModes.inline ? "mode-inline" : "",
@@ -655,7 +754,6 @@ export default function ClientRefinePreviewView() {
   const showStageStrip = commitState !== "idle";
 
   return (
-    <PageShell bare tone="neutral" mainClassName="max-w-none px-0 pb-0 pt-0">
       <section className="crpv-page">
         {!hasCompany ? (
           <article className="crpv-empty-state">
@@ -684,14 +782,22 @@ export default function ClientRefinePreviewView() {
             )}
           </article>
         ) : (
-          <div className={stageClassName}>
+          <div ref={stageRef} className={stageClassName}>
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
                 <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {stageLabel(phase).toUpperCase()}</span>
               </div>
-              <div className="cap" aria-live="polite">
-                {stateLabel(layer)}
+              <div className="crpv-header-tools">
+                <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToRoutesPreview}>
+                  Routes page
+                </button>
+                <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>
+                  ← Main site
+                </button>
+                <div className="cap" aria-live="polite">
+                  {stateLabel(layer)}
+                </div>
               </div>
             </header>
 
@@ -710,38 +816,74 @@ export default function ClientRefinePreviewView() {
 
             <section className="crpv-command-layer">
               {!commitState || commitState !== "next-revealed" ? (
-                <>
+                <div className="crpv-command-main">
                   <p className="cap">THE NEXT MOVE</p>
 
                   <p className="crpv-action" role="status">
-                    Validate the <span className="hot" onClick={() => onHotPhraseActivate("signals")}>top two customer needs</span> through <span className="hot" onClick={() => onHotPhraseActivate("why")}>8 to 10 customer interviews</span> in <span className="hot" onClick={() => onHotPhraseActivate("progress")}>two weeks</span>.
+                    Validate the{" "}
+                    <span
+                      className="hot"
+                      onClick={() => onHotPhraseActivate("signals")}
+                      onMouseEnter={(event) => showHoverTip(event, "Why these two needs are the highest-leverage signal gap right now.")}
+                      onMouseMove={(event) => moveHoverTip(event, "Why these two needs are the highest-leverage signal gap right now.")}
+                      onMouseLeave={hideHoverTip}
+                    >
+                      top two customer needs
+                    </span>{" "}
+                    through{" "}
+                    <span
+                      className="hot"
+                      onClick={() => onHotPhraseActivate("why")}
+                      onMouseEnter={(event) => showHoverTip(event, "Interview volume needed to validate demand direction before committing execution spend.")}
+                      onMouseMove={(event) => moveHoverTip(event, "Interview volume needed to validate demand direction before committing execution spend.")}
+                      onMouseLeave={hideHoverTip}
+                    >
+                      8 to 10 customer interviews
+                    </span>{" "}
+                    in{" "}
+                    <span
+                      className="hot"
+                      onClick={() => onHotPhraseActivate("progress")}
+                      onMouseEnter={(event) => showHoverTip(event, "Decision timebox to produce evidence and raise confidence for stage progression.")}
+                      onMouseMove={(event) => moveHoverTip(event, "Decision timebox to produce evidence and raise confidence for stage progression.")}
+                      onMouseLeave={hideHoverTip}
+                    >
+                      two weeks
+                    </span>
+                    .
                   </p>
 
                   <div className="crpv-meta-row">
-                    <button
-                      type="button"
+                    <div
                       className="meta"
                       onClick={() => (accessModes.inline ? openDrawer("progress") : undefined)}
+                      onMouseEnter={(event) => showHoverTip(event, "Estimated confidence lift after this action is complete.")}
+                      onMouseMove={(event) => moveHoverTip(event, "Estimated confidence lift after this action is complete.")}
+                      onMouseLeave={hideHoverTip}
                     >
                       <span className="cap">Impact</span>
                       <span className="v">{impactValue}</span>
-                    </button>
-                    <button
-                      type="button"
+                    </div>
+                    <div
                       className="meta"
                       onClick={() => (accessModes.inline ? openDrawer("blocking") : undefined)}
+                      onMouseEnter={(event) => showHoverTip(event, "Expected execution time and coordination load for this move.")}
+                      onMouseMove={(event) => moveHoverTip(event, "Expected execution time and coordination load for this move.")}
+                      onMouseLeave={hideHoverTip}
                     >
                       <span className="cap">Effort</span>
                       <span className="v">{effortValue}</span>
-                    </button>
-                    <button
-                      type="button"
+                    </div>
+                    <div
                       className="meta"
                       onClick={() => (accessModes.inline ? openDrawer("signals") : undefined)}
+                      onMouseEnter={(event) => showHoverTip(event, "How reliable the current evidence is for making this decision now.")}
+                      onMouseMove={(event) => moveHoverTip(event, "How reliable the current evidence is for making this decision now.")}
+                      onMouseLeave={hideHoverTip}
                     >
                       <span className="cap">Certainty</span>
                       <span className="v">{certaintyValue}</span>
-                    </button>
+                    </div>
                   </div>
 
                   {accessModes.pills ? (
@@ -761,7 +903,7 @@ export default function ClientRefinePreviewView() {
                     </div>
                   ) : null}
 
-                  <div className="crpv-primary-cta-row">
+                  <div className="crpv-cta-row">
                     <button type="button" className="btn primary" data-commit="agree" onClick={() => commitAgree()}>
                       ✓ Agree — do this
                     </button>
@@ -773,20 +915,24 @@ export default function ClientRefinePreviewView() {
                     </button>
                   </div>
 
-                  <div className="crpv-secondary-cta-row">
+                  <div className="crpv-secondary-links">
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={goToRoutesPreview}
+                    >
+                      ⧉ Routes page
+                    </button>
                     <button
                       type="button"
                       className="btn ghost"
                       data-go="map"
-                      onMouseEnter={onMapHoverEnter}
-                      onMouseLeave={onMapHoverLeave}
                       onClick={() => {
                         setLayer("map");
                         setDrawerKey(null);
-                        setMapPeek(false);
                       }}
                     >
-                      ◎ View map
+                      ◎ View Map
                     </button>
                     <button
                       type="button"
@@ -795,7 +941,6 @@ export default function ClientRefinePreviewView() {
                       onClick={() => {
                         setLayer("narrative");
                         setDrawerKey(null);
-                        setMapPeek(false);
                       }}
                     >
                       ✎ Explain this decision
@@ -804,7 +949,7 @@ export default function ClientRefinePreviewView() {
                       ↗ Share with team
                     </button>
                   </div>
-                </>
+                </div>
               ) : null}
 
               {showStageStrip ? (
@@ -821,17 +966,21 @@ export default function ClientRefinePreviewView() {
               ) : null}
 
               {commitState === "branching" ? (
-                <div className="crpv-branch-cards">
-                  {BRANCH_OPTIONS.map((option) => (
-                    <button key={option.id} type="button" className="crpv-branch-card" onClick={() => selectBranch(option.lift)}>
-                      <h4>{option.title}</h4>
-                      <p>{option.description}</p>
-                      <div className="lift">
-                        <span>+{option.lift} CONF</span>
-                        <span>{option.duration}</span>
-                      </div>
-                    </button>
-                  ))}
+                <div className="crpv-branch-prompt">
+                  <p className="cap">PATH BRANCHED · CHOOSE AN ALTERNATIVE</p>
+                  <h2>Pick the best route and continue.</h2>
+                  <div className="crpv-branch-options">
+                    {BRANCH_OPTIONS.map((option) => (
+                      <button key={option.id} type="button" className="crpv-branch-card" onClick={() => selectBranch(option.lift)}>
+                        <span className="t">{option.title}</span>
+                        <span className="d">{option.description}</span>
+                        <span className="lift">
+                          <span>+{option.lift} CONF</span>
+                          <span>{option.duration}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
@@ -931,6 +1080,51 @@ export default function ClientRefinePreviewView() {
                     strokeLinecap="round"
                   />
 
+                  {ROUTE_ORDER.map((category) => {
+                    const route = routeOptions.find((item) => item.category === category);
+                    const badge = MAP_ROUTE_BADGES[category];
+                    const isSelected = selectedMapRoute === category;
+                    const isHovered = hoveredMapRoute === category;
+                    const isDimmed = hoveredMapRoute
+                      ? hoveredMapRoute !== category && !isSelected
+                      : !isSelected;
+                    const routeMeta = route?.available ? `${route.count} options` : "No options";
+
+                    return (
+                      <g
+                        key={category}
+                        className={[
+                          "crpv-map-route",
+                          `route-${category.toLowerCase()}`,
+                          isSelected ? "selected" : "",
+                          isHovered ? "hovered" : "",
+                          isDimmed ? "dimmed" : "",
+                          route?.available ? "" : "empty",
+                        ].join(" ").trim()}
+                        onClick={() => setSelectedMapRoute(category)}
+                        onMouseEnter={(event) => {
+                          setHoveredMapRoute(category);
+                          showHoverTip(event, routeHoverText(category));
+                        }}
+                        onMouseMove={(event) => {
+                          moveHoverTip(event, routeHoverText(category));
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredMapRoute(null);
+                          hideHoverTip();
+                        }}
+                      >
+                        <path d={MAP_ROUTE_CURVES[category]} className="crpv-map-route-line" />
+                        <path d={MAP_ROUTE_CURVES[category]} className="crpv-map-route-hit" />
+                        <g transform={`translate(${badge.x}, ${badge.y})`} className="crpv-map-route-badge">
+                          <rect x="0" y="-22" width="128" height="38" rx="8" />
+                          <text x="12" y="-6" className="label">{category}</text>
+                          <text x="12" y="10" className="meta">{routeMeta}</text>
+                        </g>
+                      </g>
+                    );
+                  })}
+
                   <g className="wp wp-start" onClick={() => setLayer("narrative")}>
                     <circle cx="160" cy="515" r="7" fill="#111" />
                     <text x="178" y="518" className="wp-label">Start</text>
@@ -958,8 +1152,55 @@ export default function ClientRefinePreviewView() {
                 </svg>
               </div>
 
+              {hoverRouteOption ? (
+                <aside className="crpv-map-hover-card" aria-live="polite">
+                  <p className="cap">{hoverRouteOption.category} route</p>
+                  <h3>
+                    {hoverRouteOption.available
+                      ? `${hoverRouteOption.count} option${hoverRouteOption.count === 1 ? "" : "s"}`
+                      : "No live options"}
+                  </h3>
+                  {hoverRouteOption.optionTitles.length > 0 ? (
+                    <ul>
+                      {hoverRouteOption.optionTitles.slice(0, 3).map((item) => (
+                        <li key={item}>{shorten(item, 64)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="empty">{hoverRouteOption.leadTitle}</p>
+                  )}
+                </aside>
+              ) : null}
+
               <div className="crpv-map-pin">
-                <p>{actionHeadline}</p>
+                <div className="crpv-map-route-row" role="tablist" aria-label="Route options">
+                  {routeOptions.map((route) => (
+                    <button
+                      key={route.category}
+                      type="button"
+                      role="tab"
+                      aria-selected={selectedMapRoute === route.category}
+                      className={`crpv-map-route-pill ${selectedMapRoute === route.category ? "active" : ""}`.trim()}
+                      onClick={() => setSelectedMapRoute(route.category)}
+                    >
+                      <span className="name">{route.category}</span>
+                      <span className="meta">{route.available ? `${route.count} live` : "none"}</span>
+                    </button>
+                  ))}
+                </div>
+                <p>{mapActionHeadline}</p>
+                <p className="crpv-map-route-note">
+                  Chosen route: {selectedRouteOption?.category || preferredRoute} ·{" "}
+                  {selectedRouteOption?.leadStatus || "No route"}
+                </p>
+                {hoverRouteOption ? (
+                  <p className="crpv-map-route-note">
+                    Hovering: {hoverRouteOption.category} ·{" "}
+                    {hoverRouteOption.optionTitles.length > 0
+                      ? hoverRouteOption.optionTitles.slice(0, 2).map((item) => shorten(item, 44)).join(" • ")
+                      : hoverRouteOption.leadTitle}
+                  </p>
+                ) : null}
                 <div className="actions">
                   <button type="button" className="btn primary" onClick={() => commitAgree()}>
                     ✓ Agree
@@ -978,46 +1219,49 @@ export default function ClientRefinePreviewView() {
             </section>
 
             <section className="crpv-narrative-layer">
+              <div className="crpv-narrative-close">
+                <button type="button" className="btn ghost" onClick={() => setLayer("command") }>
+                  ← Back
+                </button>
+              </div>
               <div className="crpv-narrative-inner">
+                <p className="cap crpv-narrative-cap">
+                  THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52
+                </p>
                 {narrativeRows.map((item) => (
-                  <div key={item.step} className="step">
-                    <div className="n">{item.step} · {item.label}</div>
+                  <div key={item.label} className="step">
+                    <div className="n">{item.label}</div>
                     <p>
-                      {item.body.includes("validate") ? (
-                        <>
-                          {item.body.split(/(validate[^.]*\.)/i).map((part) =>
-                            /validate[^.]*\./i.test(part) ? <em key={part}>{part}</em> : <span key={part}>{part}</span>,
-                          )}
-                        </>
-                      ) : (
-                        item.body
-                      )}
+                      {item.lead}
+                      <em>{item.emphasis}</em>
+                      {item.tail}
                     </p>
                   </div>
                 ))}
-                <div className="actions">
+                <div className="crpv-narrative-cta">
                   <button type="button" className="btn primary" onClick={() => commitAgree()}>
                     ✓ Commit
                   </button>
                   <button type="button" className="btn" onClick={() => setLayer("map") }>
                     ◎ Show on map
                   </button>
+                  <button type="button" className="btn ghost" onClick={() => setLayer("narrative") }>
+                    ↗ Share as memo
+                  </button>
                   <button type="button" className="btn ghost" onClick={() => setLayer("command") }>
-                    ← Back to command
+                    ← Back to Command
                   </button>
                 </div>
               </div>
             </section>
 
-            {accessModes.edge ? (
-              <div className="crpv-edge-tabs">
-                {EDGE_DRAWERS.map((item) => (
-                  <button key={item.key} type="button" onClick={() => openDrawer(item.key)}>
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <div className="crpv-edge-tabs">
+              {EDGE_DRAWERS.map((item) => (
+                <button key={item.key} type="button" onClick={() => openDrawer(item.key)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
 
             {accessModes.footer ? (
               <div className="crpv-footer-drawers">
@@ -1045,6 +1289,10 @@ export default function ClientRefinePreviewView() {
             </aside>
 
             <div className="crpv-legend">
+              <button type="button" className="crpv-main-link" onClick={goToMainSite}>
+                ← MAIN SITE
+              </button>
+              <span className="sep">·</span>
               <span><span className="k">M</span> MAP</span>
               <span className="sep">·</span>
               <span><span className="k">N</span> NARRATIVE</span>
@@ -1108,6 +1356,12 @@ export default function ClientRefinePreviewView() {
                   <span className="sw" />
                 </label>
               </div>
+              <div className="section">
+                <div className="sect-title">Navigation</div>
+                <button type="button" className="btn" onClick={goToMainSite}>
+                  ← Main site
+                </button>
+              </div>
             </aside>
 
             <button type="button" className={`crpv-tweaks-fab ${tweaksOpen ? "hidden" : "visible"}`} onClick={() => setTweaksOpen(true)}>
@@ -1142,16 +1396,18 @@ export default function ClientRefinePreviewView() {
               <span className="cursor" />
             </div>
 
-            <div className="crpv-readonly-tag cap">READ-ONLY PREVIEW · NO WRITE ACTIONS</div>
-
-            <div className="crpv-inline-status">
-              <span>Top action: {toSentence(strongestAction?.title) || "No action mapped"}</span>
-              <span>Secondary: {toSentence(secondAction?.title) || "No secondary action"}</span>
-              <span>Strongest signal: {strongestSignal.label} {Math.round(strongestSignal.value)}</span>
+            <div
+              className={`crpv-waypoint-tooltip ${hoverTip ? "show" : ""}`}
+              style={{
+                left: `${hoverTip?.x ?? 0}px`,
+                top: `${hoverTip?.y ?? 0}px`,
+              }}
+            >
+              {hoverTip?.text || ""}
             </div>
+
           </div>
         )}
       </section>
-    </PageShell>
   );
 }

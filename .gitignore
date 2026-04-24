@@ -26,3 +26,13 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Local artifact/content directories (not source-controlled)
+Client_Files/
+dify/
+output/
+tmp/
+
+# Local Next.js build caches
+launch-site/.next-build/
+launch-site/.next-dev/
