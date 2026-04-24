@@ -33,9 +33,11 @@ import ClientOnboardingMojoMap from "./pages/ClientOnboardingMojoMap";
 import ClientOnboardingMojoMapEditor from "./pages/ClientOnboardingMojoMapEditor";
 import ClientViewVisibilityAuditPage from "./pages/ClientViewVisibilityAudit";
 import ClientDecisionSystemView from "./views/client/ClientDecisionSystemView";
+import ClientRefinePreviewView from "./views/client/ClientRefinePreviewView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
+import { CLIENT_REFINE_PREVIEW_ROUTE, isClientRefinePreviewEnabled } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
 import {
   CLIENT_ONBOARDING_MOJOMAP_EDITOR_ROUTE,
@@ -113,6 +115,17 @@ function AdminModeRoute({ children }: { children: JSX.Element }) {
   return <AdminGuard>{children}</AdminGuard>;
 }
 
+function ClientRefinePreviewRoute() {
+  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <ClientRefinePreviewView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -134,6 +147,7 @@ const App = () => (
                 <Route path="/inputs" element={<InternalViewOnlyRoute><InputsView /></InternalViewOnlyRoute>} />
                 <Route path="/files" element={<InternalViewOnlyRoute><FilesRepository /></InternalViewOnlyRoute>} />
                 <Route path="/job-steps" element={<InternalViewOnlyRoute><JobStepsView /></InternalViewOnlyRoute>} />
+                <Route path={CLIENT_REFINE_PREVIEW_ROUTE} element={<ClientRefinePreviewRoute />} />
                 <Route path="/strategy" element={<ModeAwareStrategyRoute />} />
                 <Route path="/opportunities" element={<ModeAwareFocusRoute />} />
                 <Route path="/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />
