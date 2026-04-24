@@ -11,6 +11,7 @@ import {
 import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import { usePresentationMode } from "@/hooks/usePresentationMode";
 import { isClientPhasePath } from "@/lib/clientPhaseRoutes";
+import { CLIENT_REFINE_PREVIEW_ROUTE, isClientRefinePreviewEnabled } from "@/lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "@/lib/clientViewVisibilityAudit";
 import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeLocalStorage";
 import {
@@ -117,6 +118,9 @@ export default function TopNav() {
   const [selectedPhase, setSelectedPhase] = useState<ClientSystemPhase>(() =>
     readStoredClientPhase(activeCompany?.id),
   );
+  const clientRefinePreviewEnabled = isClientRefinePreviewEnabled();
+  const showClientRefineVersionSwitch = isAdmin && clientRefinePreviewEnabled;
+  const isRefinePreviewActive = location.pathname === CLIENT_REFINE_PREVIEW_ROUTE;
 
   const visibleCore = useMemo(() => (isClientView ? clientCoreItems : coreItems), [isClientView]);
 
@@ -237,6 +241,23 @@ export default function TopNav() {
     setSelectedPhase(next);
     writeStoredClientPhase(activeCompany.id, next);
     dispatchClientPhaseChange(activeCompany.id, next);
+  };
+
+  const onClientVersionChange = (next: "current" | "refine_preview") => {
+    if (!showClientRefineVersionSwitch) return;
+
+    if (next === "current") {
+      onModeChange("client");
+      return;
+    }
+
+    safeLocalStorageSet("mojo.presentation.mode", "internal");
+    setMode("internal");
+    navigate(CLIENT_REFINE_PREVIEW_ROUTE);
+
+    if (typeof window !== "undefined" && !isDesktop()) {
+      setSidebarOpen(false);
+    }
   };
 
   useEffect(() => {
@@ -445,6 +466,38 @@ export default function TopNav() {
                     </button>
                   </div>
                 </div>
+                {showClientRefineVersionSwitch ? (
+                  <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#9ca5c7]">Client Version</p>
+                      <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#7f87a8]">Admin</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onClientVersionChange("current")}
+                        className={`rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                          mode === "client" && !isRefinePreviewActive
+                            ? "bg-white/14 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
+                            : "text-[#c7cde4] hover:bg-white/8"
+                        }`}
+                      >
+                        Current
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onClientVersionChange("refine_preview")}
+                        className={`rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                          isRefinePreviewActive
+                            ? "bg-white/14 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
+                            : "text-[#c7cde4] hover:bg-white/8"
+                        }`}
+                      >
+                        Refine Preview
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {isAdmin ? (
                   <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-2">
                     <div className="mb-2 flex items-center justify-between px-1">
