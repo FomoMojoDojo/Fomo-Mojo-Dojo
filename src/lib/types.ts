@@ -146,6 +146,8 @@ export interface CascadeItem {
   name: string;
   status: 'strong' | 'developing' | 'gap';
   note?: string;
+  evidence?: string;
+  unverified?: boolean;
 }
 
 export interface CascadeAssumption {

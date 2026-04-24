@@ -4,9 +4,14 @@ const PREVIEW_FLAG = String(import.meta.env.VITE_ENABLE_CLIENT_REFINE_PREVIEW ??
 
 export const CLIENT_REFINE_PREVIEW_ROUTE = "/preview/client-refine";
 export const CLIENT_REFINE_PREVIEW_ROUTES_ROUTE = "/preview/client-refine/routes";
+export const CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE = "/preview/client-refine/workshop";
 
 export function isClientRefinePreviewPath(pathname: string) {
-  return pathname === CLIENT_REFINE_PREVIEW_ROUTE || pathname === CLIENT_REFINE_PREVIEW_ROUTES_ROUTE;
+  return (
+    pathname === CLIENT_REFINE_PREVIEW_ROUTE ||
+    pathname === CLIENT_REFINE_PREVIEW_ROUTES_ROUTE ||
+    pathname === CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE
+  );
 }
 
 export function isClientRefinePreviewEnabled() {

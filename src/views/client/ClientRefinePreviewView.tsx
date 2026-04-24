@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useNavigate } from "react-router-dom";
 import { useCompany } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
-import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
 import "@/styles/client-refine-preview.css";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
@@ -633,6 +633,10 @@ export default function ClientRefinePreviewView() {
     navigate(CLIENT_REFINE_PREVIEW_ROUTES_ROUTE);
   }, [navigate]);
 
+  const goToWorkshop = useCallback(() => {
+    navigate(CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE);
+  }, [navigate]);
+
   const showHoverTip = useCallback((event: ReactMouseEvent<HTMLElement>, text: string) => {
     const stageBounds = stageRef.current?.getBoundingClientRect();
     if (!stageBounds) return;
@@ -789,6 +793,7 @@ export default function ClientRefinePreviewView() {
                 <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {stageLabel(phase).toUpperCase()}</span>
               </div>
               <div className="crpv-header-tools">
+                <button type="button" className="btn ghost" onClick={goToWorkshop}>Edit strategy →</button>
                 <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToRoutesPreview}>
                   Routes page
                 </button>

@@ -25,12 +25,18 @@ function normalizeItems(value: unknown): CascadeItem[] {
 
   return value
     .map((item) => {
-      const entry = item as { name?: unknown; status?: unknown; note?: unknown };
+      const entry = item as { name?: unknown; status?: unknown; note?: unknown; evidence?: unknown; unverified?: unknown };
       const name = typeof entry?.name === "string" ? entry.name.trim() : "";
       const status = isStatus(entry?.status) ? entry.status : "developing";
       const note = typeof entry?.note === "string" ? entry.note.trim() : "";
+      const evidence = typeof entry?.evidence === "string" ? entry.evidence.trim() : undefined;
+      const unverified = entry?.unverified === true ? true : undefined;
       if (!name) return null;
-      return note ? { name, status, note } : { name, status };
+      const out: CascadeItem = { name, status };
+      if (note) out.note = note;
+      if (evidence) out.evidence = evidence;
+      if (unverified) out.unverified = true;
+      return out;
     })
     .filter((item): item is CascadeItem => item !== null);
 }
