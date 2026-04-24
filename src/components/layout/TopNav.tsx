@@ -11,7 +11,11 @@ import {
 import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import { usePresentationMode } from "@/hooks/usePresentationMode";
 import { isClientPhasePath } from "@/lib/clientPhaseRoutes";
-import { CLIENT_REFINE_PREVIEW_ROUTE, isClientRefinePreviewEnabled } from "@/lib/clientRefinePreview";
+import {
+  CLIENT_REFINE_PREVIEW_ROUTE,
+  isClientRefinePreviewEnabled,
+  isClientRefinePreviewPath,
+} from "@/lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "@/lib/clientViewVisibilityAudit";
 import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeLocalStorage";
 import {
@@ -120,7 +124,7 @@ export default function TopNav() {
   );
   const clientRefinePreviewEnabled = isClientRefinePreviewEnabled();
   const showClientRefineVersionSwitch = isAdmin && clientRefinePreviewEnabled;
-  const isRefinePreviewActive = location.pathname === CLIENT_REFINE_PREVIEW_ROUTE;
+  const isRefinePreviewActive = isClientRefinePreviewPath(location.pathname);
 
   const visibleCore = useMemo(() => (isClientView ? clientCoreItems : coreItems), [isClientView]);
 
