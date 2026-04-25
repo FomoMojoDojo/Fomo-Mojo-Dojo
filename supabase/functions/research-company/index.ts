@@ -43,6 +43,102 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+type BaselineSourceFilters = {
+  exclude_domains: string[];
+};
+
+function normalizeDomainValue(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .split("?")[0]
+    .split("#")[0]
+    .trim();
+}
+
+function normalizeBaselineSourceFilters(value: unknown): BaselineSourceFilters {
+  const record = asRecord(value) ?? {};
+  const excludeRaw = Array.isArray(record.exclude_domains) ? record.exclude_domains : [];
+  return {
+    exclude_domains: Array.from(
+      new Set(
+        excludeRaw
+          .map((entry) => normalizeDomainValue(String(entry || "")))
+          .filter(Boolean),
+      ),
+    ),
+  };
+}
+
+function getUrlHost(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(candidate).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function domainMatches(host: string, domain: string) {
+  if (!host || !domain) return false;
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+function isBlockedByDomainPolicy(url: string, filters: BaselineSourceFilters) {
+  if (!url || filters.exclude_domains.length === 0) return false;
+  const host = getUrlHost(url);
+  if (!host) return false;
+  return filters.exclude_domains.some((domain) => domainMatches(host, domain));
+}
+
+function pruneBlockedReferencesFromBaseline(value: unknown, filters: BaselineSourceFilters): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    if (/^https?:\/\//i.test(candidate) && isBlockedByDomainPolicy(candidate, filters)) {
+      return undefined;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => pruneBlockedReferencesFromBaseline(entry, filters))
+      .filter((entry) => entry !== undefined);
+  }
+
+  const record = asRecord(value);
+  if (!record) return value;
+
+  const urlCandidate = typeof record.url === "string" ? record.url.trim() : "";
+  if (urlCandidate && isBlockedByDomainPolicy(urlCandidate, filters)) {
+    return undefined;
+  }
+
+  const sourceUrlCandidate = typeof record.source_url === "string" ? record.source_url.trim() : "";
+  if (sourceUrlCandidate && isBlockedByDomainPolicy(sourceUrlCandidate, filters)) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    const cleaned = pruneBlockedReferencesFromBaseline(entry, filters);
+    if (cleaned !== undefined) output[key] = cleaned;
+  }
+  return output;
+}
+
 function addMinutesIso(minutes: number) {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
@@ -4845,6 +4941,20 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
     }
 
+    const { data: companySourceFilterRow, error: companySourceFilterErr } = await supabase
+      .from("companies")
+      .select("public_source_filters_json")
+      .eq("id", company_id)
+      .maybeSingle();
+    if (companySourceFilterErr) {
+      console.log("[research-company] source filter fetch error:", companySourceFilterErr.message);
+    }
+    const baselineSourceFilters = normalizeBaselineSourceFilters(
+      bodyRecord?.public_source_filters_json ??
+        companySourceFilterRow?.public_source_filters_json ??
+        null,
+    );
+
     const lockTtlMinutes = 15;
     const lockResult = await acquireCompanyRunLock({
       supabase,
@@ -4920,6 +5030,12 @@ Deno.serve(async (req) => {
     const hasUploadedEvidence = uploadedEvidenceContext.fileCount > 0;
     let researchContextMode: "public_baseline" | "uploaded_evidence_fallback" = "public_baseline";
     let effectiveBaselineResultJson: unknown = baselineRun?.result_json ?? null;
+    if (baselineSourceFilters.exclude_domains.length > 0 && effectiveBaselineResultJson) {
+      effectiveBaselineResultJson = pruneBlockedReferencesFromBaseline(
+        effectiveBaselineResultJson,
+        baselineSourceFilters,
+      );
+    }
 
     if (forceUploadedOnlyContext && !hasUploadedEvidence) {
       return jsonResponse({
