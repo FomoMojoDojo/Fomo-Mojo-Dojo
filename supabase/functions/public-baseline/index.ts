@@ -1011,6 +1011,116 @@ function isSourceAllowedByPolicy(args: {
   return true;
 }
 
+function isUrlBlockedByDomainPolicy(url: string, filters: PublicSourceFilters) {
+  if (!url || filters.exclude_domains.length === 0) return false;
+  const host = getDomain(url);
+  if (!host) return false;
+  return filters.exclude_domains.some((domain) => domainMatches(host, domain));
+}
+
+function stringContainsBlockedDomain(value: string, filters: PublicSourceFilters) {
+  if (!value || filters.exclude_domains.length === 0) return false;
+  const lower = String(value).toLowerCase();
+  return filters.exclude_domains.some((domain) => {
+    const normalized = normalizeDomainValue(domain);
+    if (!normalized) return false;
+    return lower.includes(normalized) || lower.includes(`www.${normalized}`);
+  });
+}
+
+function pruneBlockedReferencesFromPayload(value: unknown, filters: PublicSourceFilters): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    if (/^https?:\/\//i.test(candidate) && isUrlBlockedByDomainPolicy(candidate, filters)) {
+      return undefined;
+    }
+    if (stringContainsBlockedDomain(candidate, filters)) {
+      return undefined;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const cleaned = value
+      .map((entry) => pruneBlockedReferencesFromPayload(entry, filters))
+      .filter((entry) => entry !== undefined);
+    return cleaned;
+  }
+
+  const record = asObject(value);
+  if (!record) return value;
+
+  const urlCandidate = typeof record.url === "string" ? record.url.trim() : "";
+  if (urlCandidate && isUrlBlockedByDomainPolicy(urlCandidate, filters)) {
+    return undefined;
+  }
+
+  const sourceUrlCandidate = typeof record.source_url === "string" ? record.source_url.trim() : "";
+  if (sourceUrlCandidate && isUrlBlockedByDomainPolicy(sourceUrlCandidate, filters)) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    const cleaned = pruneBlockedReferencesFromPayload(entry, filters);
+    if (cleaned !== undefined) output[key] = cleaned;
+  }
+  return output;
+}
+
+async function scrubHistoricalBlacklistedReferences(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  filters: PublicSourceFilters;
+}) {
+  if (!args.companyId || args.filters.exclude_domains.length === 0) return 0;
+
+  const { data: runs, error } = await args.supabase
+    .from("public_baseline_runs")
+    .select("id,sources_json,result_json")
+    .eq("company_id", args.companyId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    console.log("[baseline] historical scrub fetch error:", error.message);
+    return 0;
+  }
+
+  let updated = 0;
+  const runRows = Array.isArray(runs) ? runs : [];
+  for (const run of runRows) {
+    const cleanedSources = pruneBlockedReferencesFromPayload(run?.sources_json ?? null, args.filters);
+    const cleanedResult = pruneBlockedReferencesFromPayload(run?.result_json ?? null, args.filters);
+
+    const sourcesChanged = JSON.stringify(cleanedSources ?? null) !== JSON.stringify(run?.sources_json ?? null);
+    const resultChanged = JSON.stringify(cleanedResult ?? null) !== JSON.stringify(run?.result_json ?? null);
+    if (!sourcesChanged && !resultChanged) continue;
+
+    const { error: updateError } = await args.supabase
+      .from("public_baseline_runs")
+      .update({
+        sources_json: cleanedSources ?? {},
+        result_json: cleanedResult ?? {},
+      })
+      .eq("id", run.id);
+
+    if (updateError) {
+      console.log("[baseline] historical scrub update error:", {
+        run_id: run?.id ?? null,
+        message: updateError.message,
+      });
+      continue;
+    }
+
+    updated += 1;
+  }
+
+  return updated;
+}
+
 function extractResponsesOutputText(data: any): string | null {
   if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
 
@@ -1538,6 +1648,21 @@ Deno.serve(async (req) => {
     const sourceFilters = normalizePublicSourceFilters(
       body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
     );
+
+    if (sourceFilters.exclude_domains.length > 0) {
+      const scrubbedCount = await scrubHistoricalBlacklistedReferences({
+        supabase,
+        companyId: company_id,
+        filters: sourceFilters,
+      });
+      if (scrubbedCount > 0) {
+        console.log("[baseline] historical reference scrub applied", {
+          company_id,
+          scrubbed_runs: scrubbedCount,
+          exclude_domains: sourceFilters.exclude_domains,
+        });
+      }
+    }
 
     if (!company_name || !website) {
       return json({ error: "company_name and website are required (via request or company record)" }, 400);
@@ -2075,6 +2200,15 @@ Deno.serve(async (req) => {
             if (!host) return "";
             if (isKnownSocialHost(host)) return "";
             if (domainMatches(host, domain)) return "";
+            if (sourceFilters.exclude_domains.some((blocked) => domainMatches(host, blocked))) return "";
+            if (
+              !isSourceAllowedByPolicy({
+                url: candidateUrl,
+                sourceType: "public_web",
+                companyDomain: domain,
+                filters: sourceFilters,
+              })
+            ) return "";
             const hasStemMatch = stem ? host.includes(stem) : false;
             const variantMatches = variants.some((variant) => {
               const token = toSlug(variant);
@@ -2108,6 +2242,14 @@ Deno.serve(async (req) => {
         const fallbackSocial = Array.isArray(fallbackCrawl?.socialSources) ? fallbackCrawl.socialSources : [];
 
         for (const page of fallbackSitePages) {
+          if (
+            !isSourceAllowedByPolicy({
+              url: page.url,
+              sourceType: "public_web",
+              companyDomain: domain,
+              filters: sourceFilters,
+            })
+          ) continue;
           fallbackSiteEvidence.push({
             ...page,
             snippet: `Fallback site crawl (${fallbackDomain})`,
@@ -2116,6 +2258,14 @@ Deno.serve(async (req) => {
         }
 
         for (const social of fallbackSocial.slice(0, 6)) {
+          if (
+            !isSourceAllowedByPolicy({
+              url: social.url,
+              sourceType: social.source_type,
+              companyDomain: domain,
+              filters: sourceFilters,
+            })
+          ) continue;
           fallbackSocialEvidence.push({
             url: social.url,
             title: social.title,
@@ -2143,7 +2293,16 @@ Deno.serve(async (req) => {
     const directEvidenceMerged = mergeEvidenceByUrl([...directEvidence, ...fallbackSiteEvidence]).slice(0, 12);
     const socialEvidenceMerged = mergeEvidenceByUrl([...socialLinkEvidence, ...fallbackSocialEvidence]).slice(0, 8);
     // Combine (direct + website/social/manual evidence first so they are represented)
-    const evidence = [...directEvidenceMerged, ...socialEvidenceMerged, ...manualSeedEvidence, ...evidenceFromSearch].slice(0, 14);
+    const evidence = [...directEvidenceMerged, ...socialEvidenceMerged, ...manualSeedEvidence, ...evidenceFromSearch]
+      .filter((entry) =>
+        isSourceAllowedByPolicy({
+          url: String(entry?.url || ""),
+          sourceType: String(entry?.source_type || "public_web"),
+          companyDomain: domain,
+          filters: sourceFilters,
+        })
+      )
+      .slice(0, 14);
     const extractedByType = countBySourceType(evidenceFromSearch);
     const socialByType = countBySourceType(socialEvidenceMerged);
     const manualByType = countBySourceType(manualSeedEvidence);
@@ -2276,6 +2435,14 @@ Deno.serve(async (req) => {
     });
     const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
       .filter((entry) => String(entry?.url || "").trim().length > 0)
+      .filter((entry) =>
+        isSourceAllowedByPolicy({
+          url: String(entry?.url || ""),
+          sourceType: String(entry?.source_type || "profile_or_company_page"),
+          companyDomain: domain,
+          filters: sourceFilters,
+        })
+      )
       .map((entry) => ({
         url: String(entry.url || "").trim(),
         source_type: String(entry.source_type || "profile_or_company_page").trim(),
