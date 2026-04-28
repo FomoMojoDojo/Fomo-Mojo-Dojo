@@ -37,6 +37,8 @@ function effortTone(effort: string | null | undefined) {
   return { bg: "#FFF6D8", fg: "#C68B00", border: "#F3D77A" };
 }
 
+export type { DetailStep, DetailEvidence };
+
 export default function RouteCard({
   route,
   accent,
@@ -46,6 +48,7 @@ export default function RouteCard({
   frameworks,
   linkedDesiredOutcome,
   focus,
+  onInspect,
 }: {
   route: RouteRow;
   accent: string;
@@ -58,6 +61,7 @@ export default function RouteCard({
     leadingIndicator: string;
   } | null;
   focus?: FocusClassification;
+  onInspect?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const completedSteps = useMemo(
@@ -230,6 +234,16 @@ export default function RouteCard({
             {frameworks.slice(0, 2).map((framework) => (
               <MetaBadge key={`${route.id}-${framework}`}>{framework}</MetaBadge>
             ))}
+            {onInspect && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onInspect(); }}
+                className="ml-auto font-mono text-[10px] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Inspect why →
+              </button>
+            )}
           </div>
         </div>
       ) : null}

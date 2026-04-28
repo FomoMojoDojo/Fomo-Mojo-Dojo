@@ -1909,6 +1909,26 @@
   font-size: 10px;
   color: var(--crpv-ink-soft);
   letter-spacing: 0.14em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Excluded-count badge on the Outside Signals stage button */
+.crpv-ws-signal-excl-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  font-size: 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  border-radius: 2px;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 
 .crpv-ws-signal-desc {
@@ -1976,6 +1996,20 @@
 .crpv-ws-tab.active {
   color: var(--crpv-ink);
   border-bottom-color: var(--crpv-ink);
+}
+
+/* Affected tab state (exclusion impact) */
+.crpv-ws-tab-affected {
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-ws-tab-warn-dot {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 8px;
+  color: #f59e0b;
+  vertical-align: middle;
+  line-height: 1;
 }
 
 /* Content area */
@@ -2489,13 +2523,14 @@
 /* Needs table */
 .crpv-ws-need-table-hd {
   display: grid;
-  grid-template-columns: 1fr 180px 100px 60px;
+  grid-template-columns: 28px 1fr 180px 100px 60px;
   gap: 12px;
   padding: 0 8px 6px;
   border-bottom: 1px solid var(--crpv-line);
   align-items: center;
 }
 
+.crpv-ws-need-col-num,
 .crpv-ws-need-col-outcome,
 .crpv-ws-need-col-scores,
 .crpv-ws-need-col-state,
@@ -2507,12 +2542,25 @@
 
 .crpv-ws-need-row {
   display: grid;
-  grid-template-columns: 1fr 180px 100px 60px;
+  grid-template-columns: 28px 1fr 180px 100px 60px;
   gap: 12px;
   padding: 10px 8px;
   border-bottom: 1px solid var(--crpv-line-soft);
   align-items: center;
   transition: background var(--crpv-dur-micro) var(--crpv-ease);
+}
+
+.crpv-ws-need-num {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--crpv-ink-faint);
+  text-align: right;
+  letter-spacing: 0;
+}
+
+.crpv-ws-need-table-hd-outside,
+.crpv-ws-need-row-outside {
+  grid-template-columns: 1fr;
 }
 
 .crpv-ws-need-row:hover {
@@ -2642,6 +2690,11 @@
   border: 1px dashed var(--crpv-line);
   font-size: 13px;
 }
+.crpv-ws-error {
+  color: var(--crpv-hot);
+  border-color: var(--crpv-hot);
+  font-size: 11px;
+}
 
 /* Responsive */
 @media (max-width: 780px) {
@@ -2729,6 +2782,33 @@
   height: 32px;
   background: var(--crpv-line);
   flex-shrink: 0;
+}
+
+.crpv-r-stat-unlockable {
+  border: 1px solid var(--crpv-line);
+  padding: 6px 10px;
+}
+
+.crpv-r-stat-unlockable .crpv-r-stat-val {
+  color: var(--crpv-ink-faint);
+}
+
+/* Stat bar tooltip — renders in a Radix portal outside .crpv-page, so hardcode values */
+.crpv-stat-tooltip {
+  background: #ffffff !important;
+  border: 1px solid #d9d9d9 !important;
+  border-radius: 0 !important;
+  color: #555555 !important;
+  font-family: "Inter", system-ui, sans-serif !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  font-weight: 400 !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08) !important;
+  padding: 8px 12px !important;
+  max-width: 220px !important;
+  text-align: center !important;
 }
 
 /* Loading */
@@ -3008,6 +3088,7 @@
 
 .crpv-ws-gap-badge {
   display: inline-block;
+  position: relative;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -3015,6 +3096,29 @@
   vertical-align: middle;
   cursor: default;
   flex-shrink: 0;
+}
+
+.crpv-ws-gap-badge::after {
+  content: attr(title);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: #111111;
+  color: #ffffff;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 100;
+}
+
+.crpv-ws-gap-badge:hover::after {
+  opacity: 1;
 }
 
 .crpv-ws-gap-aligned { background: #22c55e; }
@@ -3073,11 +3177,11 @@
   color: var(--crpv-ink);
 }
 
-/* Signal items and evidence items: title | description box | chips */
+/* Signal items and evidence items: title | description box | chips | ctrl */
 .crpv-ws-outside-signal-item,
 .crpv-ws-outside-evidence-item {
   display: grid;
-  grid-template-columns: 120px 1fr 64px;
+  grid-template-columns: 120px 1fr 80px 44px;
   gap: 10px;
   align-items: start;
   background: transparent;
@@ -3417,26 +3521,44 @@
 
 /* One concept row: full-width label + two-column values */
 .crpv-ws-cmp-field {
-  border-bottom: 1px solid var(--crpv-line-soft);
+  border-bottom: 1px solid var(--crpv-line);
 }
 
 .crpv-ws-cmp-row-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 28px 8px;
+  width: 100%;
+  padding: 10px 20px 10px 28px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--crpv-ink-soft);
   background: var(--crpv-paper-2);
+  border: none;
   border-bottom: 1px solid var(--crpv-line-soft);
+  cursor: pointer;
+  text-align: left;
+}
+.crpv-ws-cmp-row-label:hover { background: var(--crpv-paper-3, #e8e8e8); }
+
+.crpv-ws-cmp-row-label-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.crpv-ws-cmp-chevron {
+  font-size: 8px;
+  color: var(--crpv-ink-faint);
+  flex-shrink: 0;
 }
 
 .crpv-ws-cmp-cells {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: stretch;
 }
 
 .crpv-ws-cmp-cell {
@@ -3444,18 +3566,23 @@
   border-right: 1px solid var(--crpv-line);
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 .crpv-ws-cmp-cell:last-child { border-right: none; }
 
-.crpv-ws-cmp-cell-note {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--crpv-ink-faint);
-  margin: 0;
+/* Inside compare cells, fields fill the full cell height and textareas auto-grow */
+.crpv-ws-cmp-cell .crpv-ws-field-grow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
+.crpv-ws-cmp-cell .crpv-ws-field-grow .crpv-ws-textarea {
+  flex-shrink: 0;
+  min-height: 60px;
+}
+.crpv-ws-cmp-cell .crpv-ws-readonly {
+  min-height: 60px;
+}
+
 
 .crpv-ws-cmp-none {
   font-size: 12px;
@@ -3599,9 +3726,275 @@
   margin-top: 1px;
 }
 
-/* Review button in field-hd row — align with label baseline */
-.crpv-ws-field-hd .crpv-rv-ctrl {
+/* ─── Excluded from analysis ─────────────────────────────────────────────── */
+
+.crpv-ws-excluded-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--crpv-line);
+  padding-top: 8px;
+}
+
+.crpv-ws-excluded-header {
+  margin: 0 0 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-ws-excluded-notice {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  padding: 6px 10px;
+}
+
+.crpv-ws-excluded-notice-display {
+  color: var(--crpv-ink-faint);
+  background: var(--crpv-surface, #fafafa);
+  border-color: var(--crpv-line);
+}
+
+.crpv-ws-excluded-item {
+  opacity: 0.5;
+}
+
+.crpv-ws-excluded-item .crpv-ws-outside-signal-text,
+.crpv-ws-excluded-item .crpv-ws-outside-snippet,
+.crpv-ws-excluded-item .crpv-ws-outside-text {
+  text-decoration: line-through;
+  color: var(--crpv-ink-faint);
+}
+
+/* ─── Evidence impact banner ─────────────────────────────────────────────── */
+
+@keyframes crpv-banner-flash {
+  0%   { box-shadow: inset 0 0 0 0 rgba(245, 158, 11, 0); }
+  20%  { box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.55); }
+  100% { box-shadow: inset 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+
+.crpv-impact-banner {
+  margin: 0 0 20px;
+  border: 1px solid #f59e0b;
+  background: #fefce8;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: crpv-banner-flash 1.1s ease-out;
+}
+
+/* When rendered as a direct flex child of the workshop page (outside the scroll
+   container), override margin/border-radius so it sits flush as a full-width strip. */
+.crpv-workshop-page > .crpv-impact-banner {
+  flex-shrink: 0;
+  margin: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  padding: 10px 36px;
+}
+
+@media (max-width: 780px) {
+  .crpv-workshop-page > .crpv-impact-banner {
+    padding: 10px 16px;
+  }
+}
+
+.crpv-impact-banner-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.crpv-impact-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: #d97706;
+  margin-top: 1px;
+}
+
+.crpv-impact-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.crpv-impact-count {
+  margin: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #92400e;
+}
+
+.crpv-impact-sub {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b45309;
+}
+
+.crpv-impact-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.crpv-impact-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+
+.crpv-impact-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #b45309;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.crpv-impact-toggle:hover {
+  color: #92400e;
+}
+
+.crpv-impact-guidance {
+  margin: 0;
+  padding: 0 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid #fcd34d;
+  padding-top: 10px;
+}
+
+.crpv-impact-guidance li {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #78350f;
+}
+
+/* ── Guidance block wrapper (guidance list + unlock summary) ── */
+.crpv-impact-guidance-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Unlock summary table inside the banner ── */
+.crpv-unlock-table {
+  border: 1px dashed #fcd34d;
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: #fffbeb;
+}
+
+.crpv-unlock-table-hd {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #92400e;
+  margin: 0 0 8px 0;
+}
+
+.crpv-unlock-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.crpv-unlock-table-row {
+  border-top: 1px solid #fef3c7;
+}
+
+.crpv-unlock-table-row:first-child {
+  border-top: none;
+}
+
+.crpv-unlock-table-artifact,
+.crpv-unlock-table-band,
+.crpv-unlock-table-action {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 4px 6px 4px 0;
+  vertical-align: top;
+}
+
+.crpv-unlock-table-artifact {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: #92400e;
+  white-space: nowrap;
+  width: 80px;
+}
+
+.crpv-unlock-table-band {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  color: #b45309;
+  white-space: nowrap;
+  width: 130px;
+}
+
+.crpv-unlock-table-action {
+  color: #78350f;
+}
+
+.crpv-ws-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--crpv-ink-faint);
+  background: transparent;
+  border: 1px solid var(--crpv-line);
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.crpv-ws-restore-btn:hover {
+  color: var(--crpv-ink);
+  border-color: var(--crpv-ink-soft);
+}
+
+/* ReviewableBlock: ctrl sits alongside the content box, top-aligned */
+.crpv-ws-rv-content-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.crpv-ws-rv-content-row .crpv-ws-readonly {
+  flex: 1;
+}
+.crpv-ws-rv-content-row .crpv-rv-ctrl {
   margin-left: 0;
+  padding-top: 10px;
+  flex-shrink: 0;
 }
 
 /* List item rows need flex so the review ctrl aligns right */
@@ -3615,10 +4008,12 @@
   flex: 1;
 }
 
-/* Chips column stacks vertically, review ctrl sits below the strength badge */
-.crpv-ws-outside-chips .crpv-rv-ctrl {
+/* Ctrl column: fixed right column, always pinned top */
+.crpv-ws-outside-signal-item > .crpv-rv-ctrl,
+.crpv-ws-outside-evidence-item > .crpv-rv-ctrl {
   margin-left: 0;
-  margin-top: 4px;
+  padding-top: 10px;
+  justify-content: flex-end;
 }
 
 /* ─── Council tab ────────────────────────────────────────────────────────── */
@@ -4024,4 +4419,167 @@
   font-size: 9px;
   letter-spacing: 0.1em;
   color: var(--crpv-ink-faint);
+}
+
+/* ─── Inspect buttons ──────────────────────────────────────────────────────── */
+
+.crpv-r-inspect-btn {
+  display: inline;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-faint);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.crpv-r-inspect-btn:hover {
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-ws-need-inspect-btn {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-faint);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.crpv-ws-need-inspect-btn:hover {
+  color: var(--crpv-ink-soft);
+}
+
+/* ─── Client route inspect panel ───────────────────────────────────────────── */
+
+.crpv-inspect-hd {
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid var(--crpv-line);
+}
+
+.crpv-inspect-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.crpv-inspect-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--crpv-ink);
+  margin: 0;
+}
+
+.crpv-inspect-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.crpv-inspect-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.crpv-inspect-section-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-faint);
+  margin: 0;
+}
+
+.crpv-inspect-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crpv-inspect-bullet {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-inspect-dot {
+  flex-shrink: 0;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-inspect-empty {
+  font-size: 12px;
+  color: var(--crpv-ink-faint);
+  margin: 0;
+}
+
+.crpv-inspect-divider {
+  height: 1px;
+  background: var(--crpv-line);
+}
+
+.crpv-inspect-evidence-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crpv-inspect-sub-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5f9b8c;
+  margin: 0;
+}
+
+.crpv-inspect-sub-label--gap {
+  color: #ff7d2d;
+}
+
+.crpv-r-detail-row--missing {
+  color: #ff7d2d;
+}
+
+.crpv-inspect-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--crpv-line);
+}
+
+.crpv-inspect-close {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--crpv-line);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-soft);
+  cursor: pointer;
+}
+
+.crpv-inspect-close:hover {
+  background: var(--crpv-line-soft);
 }
