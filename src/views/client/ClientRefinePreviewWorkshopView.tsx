@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -282,7 +282,7 @@ function StatementField({
 
   useEffect(() => { setLocal(value); }, [value]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (singleLine || !textareaRef.current) return;
     const el = textareaRef.current;
     el.style.height = "auto";
