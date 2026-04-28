@@ -88,16 +88,22 @@ function fileTagSignals(inputs: InputItem[]) {
   };
 }
 
+const ARTIFACT_EVIDENCE_STATUSES = new Set([
+  "baseline_plus_artifacts",
+]);
+
 export function buildSourceConfidenceSignals(args: {
   inputs: InputItem[];
   hasPrimaryEvidence: boolean;
   primaryEvidenceSignals: number;
   areaScoresJson?: unknown;
+  evidenceStatus?: string | null;
 }): SourceConfidenceSignals {
   const uploadedFiles = countUploadedInputFiles(args.inputs);
   const testedSignal = detectTestedSignal(args.areaScoresJson);
   const tags = fileTagSignals(args.inputs);
-  const hasCompanyEvidence = uploadedFiles > 0 || tags.hasCompanyTag;
+  const hasArtifactStatus = typeof args.evidenceStatus === "string" && ARTIFACT_EVIDENCE_STATUSES.has(args.evidenceStatus);
+  const hasCompanyEvidence = uploadedFiles > 0 || tags.hasCompanyTag || hasArtifactStatus;
   const hasPrimaryEvidence = args.hasPrimaryEvidence || tags.hasEvidenceTag;
   const hasImplementedTested =
     tags.hasImplementedTag ||

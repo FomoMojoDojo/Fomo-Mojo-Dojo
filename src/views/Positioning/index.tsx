@@ -1,5 +1,7 @@
+import { useState } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
+import PositioningInspectPanel from "./PositioningInspectPanel";
 import { useInputs } from "@/hooks/useInputs";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useLatestPositioningReview } from "@/hooks/useLatestPositioningReview";
@@ -751,6 +753,7 @@ function CanvasSection({
 }
 
 export default function PositioningView() {
+  const [inspectOpen, setInspectOpen] = useState(false);
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
   const { query } = useInputs();
@@ -781,6 +784,7 @@ export default function PositioningView() {
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
     inputsOverride: inputs,
+    evidenceStatus: activeCompany?.evidence_status,
   });
   const alignment = computeStrategyAlignment(canvas, strategyCascade);
 
@@ -907,7 +911,7 @@ export default function PositioningView() {
 
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
           <div className="flex flex-wrap items-center gap-3">
-            <div>
+            <div className="flex-1">
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
               </div>
@@ -919,6 +923,16 @@ export default function PositioningView() {
                 confidence so we can distinguish public-source drafts from research-backed and testing-informed positioning.
               </p>
             </div>
+            {hasStoredCanvas && (
+              <button
+                type="button"
+                onClick={() => setInspectOpen(true)}
+                className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Inspect canvas →
+              </button>
+            )}
           </div>
           <GenericAuditTraceNote
             active={auditMode}
@@ -1234,6 +1248,14 @@ export default function PositioningView() {
           </div>
         )}
       </main>
+
+      <PositioningInspectPanel
+        open={inspectOpen}
+        onClose={() => setInspectOpen(false)}
+        canvas={canvas}
+        frameworksUsed={frameworksUsed}
+        signals={sourceSignals}
+      />
     </div>
   );
 }

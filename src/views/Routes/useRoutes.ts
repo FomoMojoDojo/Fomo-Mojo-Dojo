@@ -7,6 +7,20 @@ type StoredDetailItem = {
   status: "complete" | "in_progress" | "missing";
 };
 
+export type RouteAssumption = {
+  id: string;
+  statement: string;
+  status: "unproven" | "partial" | "supported";
+  layer: "outside" | "org" | "customer" | "market";
+  // critical: true means this assumption gates the next evidence band.
+  // Unproven critical assumptions surface in "What would strengthen this".
+  critical?: boolean;
+  // v1: free-text labels only — not linked to evidence_json ids.
+  // TODO v2: replace with evidence_signal_refs: Array<{signal_id, signal_type, confirmed}>
+  //          so assumption status can be auto-derived from linked signal confirmation state.
+  evidence_refs?: string[];
+};
+
 export type RouteRow = {
   id: string;
   company_id: string;
@@ -21,6 +35,7 @@ export type RouteRow = {
   steps_json?: StoredDetailItem[] | null;
   evidence_json?: StoredDetailItem[] | null;
   why_this_matters_json?: string[] | null;
+  assumptions_json?: RouteAssumption[] | null;
   created_at?: string;
 };
 
@@ -46,7 +61,7 @@ export function useRoutes(companyId?: string) {
       const { data, error } = await supabase
         .from("routes")
         .select(
-          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at"
+          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, assumptions_json, created_at"
         )
         .eq("company_id", companyId)
         .order("sort_order", { ascending: true })

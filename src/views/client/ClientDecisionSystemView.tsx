@@ -603,7 +603,7 @@ export default function ClientDecisionSystemView() {
                       →
                     </span>
                     <div className="cv-score-node">
-                      <span>Potential</span>
+                      <span>Reachable</span>
                       <strong>{potentialScore}</strong>
                     </div>
                   </div>
@@ -821,7 +821,7 @@ export default function ClientDecisionSystemView() {
                             <h3>{selectedPriority.action.title}</h3>
                           </div>
                           <div className="cv-route-meta">
-                            <span>Projected {selectedPriority.projectedScore}</span>
+                            <span>Unlockable {selectedPriority.projectedScore}</span>
                             <span>{selectedPriority.impactedDriver}</span>
                           </div>
                         </div>

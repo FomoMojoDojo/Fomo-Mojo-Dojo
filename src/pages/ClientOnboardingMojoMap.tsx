@@ -878,7 +878,7 @@ export function ClientOnboardingMojoMapView({
                 </div>
                 {ownershipScoreModel.potentialScoreLift > 0 ? (
                   <p className="mt-2 font-sans text-[11px]" style={{ color: c.secondary }}>
-                    Assigning owners to Fix actions could raise your score by +{ownershipScoreModel.potentialScoreLift}.
+                    Assigning owners to Fix actions improves your reachable score by +{ownershipScoreModel.potentialScoreLift}.
                   </p>
                 ) : null}
               </div>

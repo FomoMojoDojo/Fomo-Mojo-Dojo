@@ -29,6 +29,7 @@ import ResetPassword from "./pages/ResetPassword";
 import FilesRepository from "./pages/FilesRepository";
 import NotFound from "./pages/NotFound";
 import MapSignalPrototype from "./pages/MapSignalPrototype";
+import LandingPage4 from "./pages/LandingPage4";
 import ClientOnboardingMojoMap from "./pages/ClientOnboardingMojoMap";
 import ClientOnboardingMojoMapEditor from "./pages/ClientOnboardingMojoMapEditor";
 import ClientViewVisibilityAuditPage from "./pages/ClientViewVisibilityAudit";
@@ -207,6 +208,7 @@ const App = () => (
                   }
                 />
                 <Route path="/map-signal-prototype" element={<InternalViewOnlyRoute><MapSignalPrototype /></InternalViewOnlyRoute>} />
+                <Route path="/landing-page" element={<LandingPage4 />} />
                 <Route path="*" element={<NotFound />} />
                 </Routes>
               </CompanyProvider>

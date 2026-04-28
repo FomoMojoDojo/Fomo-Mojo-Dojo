@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from "react";
+import StrategyInspectPanel from "./StrategyInspectPanel";
 import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
@@ -872,9 +873,10 @@ function OutcomeForm({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function StrategyView() {
+  const [inspectOpen, setInspectOpen] = useState(false);
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
-  const { loading, item, error, savingField, updateNarrativeField, updateListField } = useStrategyCascade(activeCompany?.id);
+  const { loading, item, frameworksUsed, error, savingField, updateNarrativeField, updateListField } = useStrategyCascade(activeCompany?.id);
   const {
     items: managedOutcomes,
     saving: outcomeSaving,
@@ -908,6 +910,7 @@ export default function StrategyView() {
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
+    evidenceStatus: activeCompany?.evidence_status,
   });
   // ── Outcome editor state ─────────────────────────────────────────────────
   const [outcomeFormOpen, setOutcomeFormOpen] = useState(false);
@@ -1352,7 +1355,7 @@ export default function StrategyView() {
 
         <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
           <div className="flex flex-wrap items-center gap-3">
-            <div>
+            <div className="flex-1">
               <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                 {activeCompany?.name || "No company selected"}
               </div>
@@ -1365,6 +1368,16 @@ export default function StrategyView() {
                 assumptions that still need proof.
               </p>
             </div>
+            {item && (
+              <button
+                type="button"
+                onClick={() => setInspectOpen(true)}
+                className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Inspect strategy →
+              </button>
+            )}
           </div>
           <GenericAuditTraceNote
             active={auditMode}
@@ -2121,6 +2134,14 @@ export default function StrategyView() {
           </div>
         )}
       </main>
+
+      <StrategyInspectPanel
+        open={inspectOpen}
+        onClose={() => setInspectOpen(false)}
+        cascade={item}
+        frameworksUsed={frameworksUsed}
+        signals={sourceSignals}
+      />
     </div>
   );
 }

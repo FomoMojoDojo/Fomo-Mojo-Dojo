@@ -177,7 +177,7 @@ export default function AdminCompanyDetail() {
                 Mojo {company.mojo_score ?? "—"}
               </div>
               <div className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
-                Potential {company.potential_score ?? "—"}
+                Reachable {company.potential_score ?? "—"}
               </div>
               <div className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.secondary, borderColor: c.line, background: c.paper }}>
                 Evidence {company.evidence_status ?? "unknown"}

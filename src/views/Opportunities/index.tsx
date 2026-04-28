@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import OpportunityInspectPanel from "./OpportunityInspectPanel";
 import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
@@ -527,6 +528,7 @@ function OpportunityCard({
   workflowStatusAvailable,
   workflowSaving = false,
   onWorkflowChange,
+  onInspect,
   showJourneyBadge = true,
   isTargeted = false,
   innovationStrategy = null,
@@ -538,6 +540,7 @@ function OpportunityCard({
   workflowStatusAvailable: boolean;
   workflowSaving?: boolean;
   onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
+  onInspect?: (item: OpportunityRow) => void;
   showJourneyBadge?: boolean;
   isTargeted?: boolean;
   innovationStrategy?: string | null;
@@ -692,6 +695,18 @@ function OpportunityCard({
               </ul>
             </div>
           </div>
+          {onInspect && (
+            <div className="mt-4 flex justify-start border-t pt-3" style={{ borderColor: c.line }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onInspect(item); }}
+                className="font-mono text-[10px] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Inspect why →
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -706,6 +721,7 @@ function OpportunitySection({
   workflowStatusAvailable,
   updatingWorkflowId,
   onWorkflowChange,
+  onInspect,
   subtitleItalic = false,
   showJourneyBadge = true,
   targetOpportunityId,
@@ -718,6 +734,7 @@ function OpportunitySection({
   workflowStatusAvailable: boolean;
   updatingWorkflowId: string | null;
   onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
+  onInspect?: (item: OpportunityRow) => void;
   subtitleItalic?: boolean;
   showJourneyBadge?: boolean;
   targetOpportunityId?: string | null;
@@ -752,6 +769,7 @@ function OpportunitySection({
             workflowStatusAvailable={workflowStatusAvailable}
             workflowSaving={updatingWorkflowId === item.id}
             onWorkflowChange={onWorkflowChange}
+            onInspect={onInspect}
             showJourneyBadge={showJourneyBadge}
             isTargeted={targetOpportunityId === item.id}
             innovationStrategy={innovationStrategy}
@@ -776,6 +794,7 @@ function CheckpointListSection({
   workflowStatusAvailable,
   updatingWorkflowId,
   onWorkflowChange,
+  onInspect,
   showJourneyBadge = true,
   targetOpportunityId,
   innovationStrategy = null,
@@ -786,6 +805,7 @@ function CheckpointListSection({
   workflowStatusAvailable: boolean;
   updatingWorkflowId: string | null;
   onWorkflowChange: (item: OpportunityRow, next: WorkflowStatus) => void;
+  onInspect?: (item: OpportunityRow) => void;
   showJourneyBadge?: boolean;
   targetOpportunityId?: string | null;
   innovationStrategy?: string | null;
@@ -888,6 +908,7 @@ function CheckpointListSection({
                     workflowStatusAvailable={workflowStatusAvailable}
                     workflowSaving={updatingWorkflowId === item.id}
                     onWorkflowChange={onWorkflowChange}
+                    onInspect={onInspect}
                     showJourneyBadge={showJourneyBadge}
                     isTargeted={targetOpportunityId === item.id}
                     innovationStrategy={innovationStrategy}
@@ -1892,6 +1913,7 @@ function CheckpointOffersView({
 
 export default function OpportunitiesView() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [inspectOpportunity, setInspectOpportunity] = useState<OpportunityRow | null>(null);
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
   const {
@@ -1919,6 +1941,7 @@ export default function OpportunitiesView() {
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
+    evidenceStatus: activeCompany?.evidence_status,
   });
   const queryView = String(searchParams.get("view") || "").toLowerCase();
   const targetOpportunityId = String(searchParams.get("opportunity") || "").trim() || null;
@@ -2223,6 +2246,7 @@ export default function OpportunitiesView() {
               workflowStatusAvailable={workflowStatusAvailable}
               updatingWorkflowId={updatingWorkflowId}
               onWorkflowChange={handleWorkflowChange}
+              onInspect={setInspectOpportunity}
               showJourneyBadge={showJourneyBadge}
               targetOpportunityId={targetOpportunityId}
               innovationStrategy={innovationStrategy}
@@ -2230,6 +2254,12 @@ export default function OpportunitiesView() {
           </div>
         )}
       </main>
+
+      <OpportunityInspectPanel
+        open={!!inspectOpportunity}
+        onClose={() => setInspectOpportunity(null)}
+        opportunity={inspectOpportunity}
+      />
     </div>
   );
 }

@@ -30,6 +30,7 @@ import {
   deriveMarketDefinitionCanvas,
 } from "@/lib/jtbdProcess";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
+import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import SdsTerm from "@/components/ui/sds-term";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
@@ -2209,6 +2210,7 @@ function OdiNeedsListSection({
   const [orderMode, setOrderMode] = useState<NeedOrderMode>(() =>
     hasManualNeedOverride(needs) ? "custom" : "suggested",
   );
+  const [inspectNeed, setInspectNeed] = useState<OdiNeedRow | null>(null);
   const [draggingNeedId, setDraggingNeedId] = useState<string | null>(null);
   const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
   const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
@@ -2564,7 +2566,16 @@ function OdiNeedsListSection({
                     );
                   })()}
                   <div className="px-4 pb-4">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setInspectNeed(item)}
+                        className="font-mono text-[10px] underline"
+                        style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                      >
+                        Inspect why →
+                      </button>
+                      <div className="ml-auto flex gap-2">
                       {onRemoveNeed ? (
                         <>
                           {editingNeedId === item.id ? (
@@ -2647,6 +2658,7 @@ function OdiNeedsListSection({
                           </button>
                         </>
                       ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2655,6 +2667,12 @@ function OdiNeedsListSection({
           )}
         </div>
       </div>
+
+      <NeedInspectPanel
+        open={!!inspectNeed}
+        onClose={() => setInspectNeed(null)}
+        need={inspectNeed}
+      />
     </section>
   );
 }
@@ -2931,6 +2949,7 @@ export default function JobStepsView() {
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompanyId ?? undefined,
     areaScoresJson: activeCompany?.area_scores_json,
+    evidenceStatus: activeCompany?.evidence_status,
   });
   const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({});
   const [customMapDraft, setCustomMapDraft] = useState({ key: "", title: "", subtitle: "" });

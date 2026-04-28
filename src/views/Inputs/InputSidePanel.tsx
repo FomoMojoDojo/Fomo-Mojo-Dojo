@@ -173,12 +173,12 @@ export default function InputSidePanel({ input, mojoScore, potentialScore, onClo
               <span className="font-mono text-[12px] font-medium" style={{ color: accent }}>
                 {afterScore.toFixed(1)} After
               </span>
-              <span className="font-mono text-[12px]" style={{ color: '#5aaa6a' }}>{potentialScore} Max</span>
+              <span className="font-mono text-[12px]" style={{ color: '#5aaa6a' }}>{potentialScore} Reachable</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <ScoreChip label="Now" value={mojoScore} />
               <ScoreChip label="After" value={afterScore} />
-              <ScoreChip label="Max" value={potentialScore} />
+              <ScoreChip label="Reachable" value={potentialScore} />
             </div>
             <p className="font-sans text-[12px] leading-[1.65] mt-[10px]" style={{ color: c.body }}>
               {input.description}

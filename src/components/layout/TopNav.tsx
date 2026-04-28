@@ -31,6 +31,7 @@ import {
   FileText,
   FilePenLine,
   FolderKanban,
+  Globe,
   Home,
   ListChecks,
   Map,
@@ -88,6 +89,7 @@ const adminItems: NavItem[] = [
 ];
 
 const adminToolingItems: NavItem[] = [
+  { label: "Landing Page", path: "/landing-page", icon: Globe, adminOnly: true },
   { label: "Client View Audit", path: CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE, icon: BarChart3, adminOnly: true },
   { label: "Client Onboarding MojoMap", path: CLIENT_ONBOARDING_MOJOMAP_ROUTE, icon: Compass, adminOnly: true },
   { label: "Onboarding Map Editor", path: CLIENT_ONBOARDING_MOJOMAP_EDITOR_ROUTE, icon: FilePenLine, adminOnly: true },

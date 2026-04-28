@@ -39,7 +39,7 @@ export default function AnalyticsView() {
           className="mb-6 max-w-4xl"
           source="company stored scores plus current counts from inputs and opportunities."
           evaluation="Snapshot surfaces the current persisted state without extra synthesis."
-          scoring="Mojo/Potential/Projected are read directly from company score fields."
+          scoring="Mojo/Reachable/Unlockable are read directly from company score fields."
           why="This makes the analytics panel explicit about what is computed versus simply displayed."
         />
 
@@ -51,8 +51,8 @@ export default function AnalyticsView() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Stat label="Mojo Score" value={mojo} />
-              <Stat label="Potential" value={potential} />
-              <Stat label="Projected" value={projected} />
+              <Stat label="Reachable" value={potential} />
+              <Stat label="Unlockable" value={projected} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
