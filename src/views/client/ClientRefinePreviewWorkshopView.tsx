@@ -262,7 +262,6 @@ function StatementField({
   value,
   onSave,
   hint,
-  rows = 3,
   isSaved,
   singleLine = false,
   gap,
@@ -278,14 +277,19 @@ function StatementField({
 }) {
   const [local, setLocal] = useState(value);
   const [saving, setSaving] = useState(false);
-  const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setLocal(value); }, [value]);
 
+  useEffect(() => {
+    if (singleLine || !textareaRef.current) return;
+    const el = textareaRef.current;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [local, singleLine]);
+
   const handleBlur = useCallback(async () => {
-    setFocused(false);
     if (local === value) return;
     setSaving(true);
     try { await onSave(local); } catch { /* revert on next load */ }
@@ -307,13 +311,40 @@ function StatementField({
   }, []);
 
   return (
-    <div className={`crpv-ws-stmt${focused ? " crpv-ws-stmt-focus" : ""}`}>
-      <div className="crpv-ws-stmt-meta">
+    <div className="crpv-ws-stmt">
+      <div className="crpv-ws-stmt-hd">
         <span className="crpv-ws-label">{label}</span>
-        {gap && <GapBadge alignment={gap.alignment} baselineValue={gap.baselineValue} />}
         <span className="crpv-ws-stmt-spacer" />
+        {gap && <GapBadge alignment={gap.alignment} baselineValue={gap.baselineValue} />}
         {saving && <span className="crpv-ws-saving cap">Saving…</span>}
         {!saving && isSaved && <span className="crpv-ws-saved cap">Saved ✓</span>}
+      </div>
+      <div className="crpv-ws-stmt-rule" />
+      {singleLine ? (
+        <input
+          ref={inputRef}
+          type="text"
+          className={`crpv-ws-stmt-body${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
+          value={local}
+          placeholder={label}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleInputKeyDown}
+        />
+      ) : (
+        <textarea
+          ref={textareaRef}
+          className={`crpv-ws-stmt-body${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
+          value={local}
+          placeholder={label}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          style={{ resize: "none", overflow: "hidden" }}
+        />
+      )}
+      <div className="crpv-ws-stmt-ft">
+        {hint && <span className="crpv-ws-stmt-hint">{hint}</span>}
         <button
           type="button"
           className="crpv-ws-stmt-edit-btn cap"
@@ -323,32 +354,6 @@ function StatementField({
           Edit ⌃
         </button>
       </div>
-      {hint && <p className="crpv-ws-stmt-hint">{hint}</p>}
-      {singleLine ? (
-        <input
-          ref={inputRef}
-          type="text"
-          className={`crpv-ws-stmt-input${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
-          value={local}
-          placeholder={label}
-          onChange={(e) => setLocal(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={handleBlur}
-          onKeyDown={handleInputKeyDown}
-        />
-      ) : (
-        <textarea
-          ref={textareaRef}
-          className={`crpv-ws-stmt-textarea${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
-          rows={rows}
-          value={local}
-          placeholder={label}
-          onChange={(e) => setLocal(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-        />
-      )}
     </div>
   );
 }
@@ -1325,7 +1330,7 @@ function KanbanBoard({
 
   return (
     <div className="crpv-ws-stmt-block">
-      <div className="crpv-ws-field-hd">
+      <div className="crpv-ws-stmt-block-hd">
         <label className="crpv-ws-label">{label}</label>
         {isSaved && <span className="crpv-ws-saved cap">Saved ✓</span>}
       </div>

@@ -4586,31 +4586,91 @@
 
 /* ── Statement field ──────────────────────────────────────────────────────── */
 
-.crpv-ws-stmt {
+.crpv-page .crpv-ws-stmt {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 14px 0;
+  padding: 18px 0 14px;
   border-bottom: 1px solid var(--crpv-line-soft);
 }
 
-.crpv-ws-stmt:last-child {
+.crpv-page .crpv-ws-stmt:last-child {
   border-bottom: none;
 }
 
-.crpv-ws-stmt-meta {
+/* Meta row: mono cap label + gap dot + saving/saved pip */
+.crpv-page .crpv-ws-stmt-hd {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  min-height: 18px;
+  margin-bottom: 6px;
 }
 
-.crpv-ws-stmt-spacer {
+.crpv-page .crpv-ws-stmt-spacer {
   flex: 1;
 }
 
-.crpv-ws-stmt-edit-btn {
+/* Hairline rule directly below the cap row */
+.crpv-page .crpv-ws-stmt-rule {
+  height: 1px;
+  background: var(--crpv-line);
+  margin: 0 0 10px;
+  border: none;
+}
+
+/* Body — 30px display prose */
+.crpv-page .crpv-ws-stmt-body {
+  width: 100%;
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+  font-family: "Inter", var(--font-sans), system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.28;
+  color: var(--crpv-ink);
+  resize: none;
+  overflow: hidden;
+  cursor: text;
+  display: block;
+}
+
+.crpv-page .crpv-ws-stmt-body:focus {
+  outline: none;
+  box-shadow: inset 0 -1px 0 var(--crpv-ink-faint);
+}
+
+.crpv-page .crpv-ws-stmt-body.crpv-ws-stmt-empty {
+  font-style: italic;
+  color: var(--crpv-ink-faint);
+}
+
+/* Footer row — hint + Edit ⌃, hidden until hover or focus-within */
+.crpv-page .crpv-ws-stmt-ft {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 10px;
   opacity: 0;
+  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
+}
+
+.crpv-page .crpv-ws-stmt:hover .crpv-ws-stmt-ft,
+.crpv-page .crpv-ws-stmt:focus-within .crpv-ws-stmt-ft {
+  opacity: 1;
+}
+
+.crpv-page .crpv-ws-stmt-hint {
+  flex: 1;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-page .crpv-ws-stmt-edit-btn {
+  flex-shrink: 0;
   background: none;
   border: none;
   cursor: pointer;
@@ -4620,79 +4680,39 @@
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--crpv-ink-faint);
-  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
   white-space: nowrap;
 }
 
-.crpv-ws-stmt:hover .crpv-ws-stmt-edit-btn,
-.crpv-ws-stmt-focus .crpv-ws-stmt-edit-btn {
-  opacity: 1;
-}
-
-.crpv-ws-stmt-hint {
-  margin: 0 0 4px;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--crpv-ink-faint);
-  opacity: 0;
-  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
-}
-
-.crpv-ws-stmt:hover .crpv-ws-stmt-hint,
-.crpv-ws-stmt-focus .crpv-ws-stmt-hint {
-  opacity: 1;
-}
-
-.crpv-ws-stmt-textarea,
-.crpv-ws-stmt-input {
-  width: 100%;
-  background: none;
-  border: none;
-  border-bottom: 1px solid transparent;
-  padding: 2px 0;
-  font-family: "Inter", var(--font-sans), system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.65;
-  color: var(--crpv-ink);
-  resize: none;
-  outline: none;
-  cursor: text;
-  transition: border-color var(--crpv-dur-micro) var(--crpv-ease),
-              background var(--crpv-dur-micro) var(--crpv-ease);
-}
-
-.crpv-ws-stmt-textarea {
-  overflow: hidden;
-}
-
-.crpv-ws-stmt-textarea.crpv-ws-stmt-empty,
-.crpv-ws-stmt-input.crpv-ws-stmt-empty {
-  font-style: italic;
-  color: var(--crpv-ink-faint);
-}
-
-.crpv-ws-stmt-focus .crpv-ws-stmt-textarea,
-.crpv-ws-stmt-focus .crpv-ws-stmt-input {
-  border-bottom-color: var(--crpv-line);
-  background: var(--crpv-paper);
-  padding: 6px 8px;
-  margin: 0 -8px;
-  width: calc(100% + 16px);
-}
-
-/* Kanban stmt-block: mono-cap heading + hairline rhythm matching StatementField */
-.crpv-ws-stmt-block {
+/* Kanban stmt-block: mono-cap heading + hairline, matches StatementField rhythm */
+.crpv-page .crpv-ws-stmt-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 0;
+  padding: 18px 0 14px;
   border-bottom: 1px solid var(--crpv-line-soft);
 }
 
-.crpv-ws-stmt-block:last-child {
+.crpv-page .crpv-ws-stmt-block:last-child {
   border-bottom: none;
 }
 
-.crpv-ws-stmt-block > .crpv-ws-field-hd {
-  margin-bottom: 4px;
+.crpv-page .crpv-ws-stmt-block-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.crpv-page .crpv-ws-stmt-block-hd::after {
+  content: "";
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+/* Hairline under kanban heading */
+.crpv-page .crpv-ws-stmt-block > .crpv-ws-stmt-block-hd {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--crpv-line);
+  margin-bottom: 12px;
 }
