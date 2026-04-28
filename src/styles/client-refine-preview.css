@@ -4583,3 +4583,116 @@
 .crpv-inspect-close:hover {
   background: var(--crpv-line-soft);
 }
+
+/* ── Statement field ──────────────────────────────────────────────────────── */
+
+.crpv-ws-stmt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-ws-stmt:last-child {
+  border-bottom: none;
+}
+
+.crpv-ws-stmt-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.crpv-ws-stmt-spacer {
+  flex: 1;
+}
+
+.crpv-ws-stmt-edit-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 9px;
+  font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--crpv-ink-faint);
+  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
+  white-space: nowrap;
+}
+
+.crpv-ws-stmt:hover .crpv-ws-stmt-edit-btn,
+.crpv-ws-stmt-focus .crpv-ws-stmt-edit-btn {
+  opacity: 1;
+}
+
+.crpv-ws-stmt-hint {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+  opacity: 0;
+  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
+}
+
+.crpv-ws-stmt:hover .crpv-ws-stmt-hint,
+.crpv-ws-stmt-focus .crpv-ws-stmt-hint {
+  opacity: 1;
+}
+
+.crpv-ws-stmt-textarea,
+.crpv-ws-stmt-input {
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 2px 0;
+  font-family: "Inter", var(--font-sans), system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--crpv-ink);
+  resize: none;
+  outline: none;
+  cursor: text;
+  transition: border-color var(--crpv-dur-micro) var(--crpv-ease),
+              background var(--crpv-dur-micro) var(--crpv-ease);
+}
+
+.crpv-ws-stmt-textarea {
+  overflow: hidden;
+}
+
+.crpv-ws-stmt-textarea.crpv-ws-stmt-empty,
+.crpv-ws-stmt-input.crpv-ws-stmt-empty {
+  font-style: italic;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-ws-stmt-focus .crpv-ws-stmt-textarea,
+.crpv-ws-stmt-focus .crpv-ws-stmt-input {
+  border-bottom-color: var(--crpv-line);
+  background: var(--crpv-paper);
+  padding: 6px 8px;
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+}
+
+/* Kanban stmt-block: mono-cap heading + hairline rhythm matching StatementField */
+.crpv-ws-stmt-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-ws-stmt-block:last-child {
+  border-bottom: none;
+}
+
+.crpv-ws-stmt-block > .crpv-ws-field-hd {
+  margin-bottom: 4px;
+}

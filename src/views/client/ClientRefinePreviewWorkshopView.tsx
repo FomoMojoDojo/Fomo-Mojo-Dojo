@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
@@ -248,6 +249,104 @@ function FieldBlock({
           onChange={(e) => setLocal(e.target.value)}
           onBlur={handleBlur}
           style={autoGrow ? { resize: "none", overflow: "hidden", flexShrink: 0 } : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── StatementField ───────────────────────────────────────────────────────────
+
+function StatementField({
+  label,
+  value,
+  onSave,
+  hint,
+  rows = 3,
+  isSaved,
+  singleLine = false,
+  gap,
+}: {
+  label: string;
+  value: string;
+  onSave: (v: string) => Promise<void>;
+  hint?: string;
+  rows?: number;
+  isSaved?: boolean;
+  singleLine?: boolean;
+  gap?: { alignment: GapAlignment; baselineValue?: string };
+}) {
+  const [local, setLocal] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setLocal(value); }, [value]);
+
+  const handleBlur = useCallback(async () => {
+    setFocused(false);
+    if (local === value) return;
+    setSaving(true);
+    try { await onSave(local); } catch { /* revert on next load */ }
+    finally { setSaving(false); }
+  }, [local, value, onSave]);
+
+  const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      textareaRef.current?.blur();
+    }
+  }, []);
+
+  const handleInputKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      inputRef.current?.blur();
+    }
+  }, []);
+
+  return (
+    <div className={`crpv-ws-stmt${focused ? " crpv-ws-stmt-focus" : ""}`}>
+      <div className="crpv-ws-stmt-meta">
+        <span className="crpv-ws-label">{label}</span>
+        {gap && <GapBadge alignment={gap.alignment} baselineValue={gap.baselineValue} />}
+        <span className="crpv-ws-stmt-spacer" />
+        {saving && <span className="crpv-ws-saving cap">Saving…</span>}
+        {!saving && isSaved && <span className="crpv-ws-saved cap">Saved ✓</span>}
+        <button
+          type="button"
+          className="crpv-ws-stmt-edit-btn cap"
+          tabIndex={-1}
+          onClick={() => singleLine ? inputRef.current?.focus() : textareaRef.current?.focus()}
+        >
+          Edit ⌃
+        </button>
+      </div>
+      {hint && <p className="crpv-ws-stmt-hint">{hint}</p>}
+      {singleLine ? (
+        <input
+          ref={inputRef}
+          type="text"
+          className={`crpv-ws-stmt-input${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
+          value={local}
+          placeholder={label}
+          onChange={(e) => setLocal(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          onKeyDown={handleInputKeyDown}
+        />
+      ) : (
+        <textarea
+          ref={textareaRef}
+          className={`crpv-ws-stmt-textarea${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
+          rows={rows}
+          value={local}
+          placeholder={label}
+          onChange={(e) => setLocal(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
         />
       )}
     </div>
@@ -1052,7 +1151,7 @@ function PositioningOrgPanel({
         isSaved={savedField === "attributes"}
       />
 
-      <FieldBlock
+      <StatementField
         label="The real value you deliver"
         value={canvas.value_for_customer}
         onSave={async (v) => { await updateTextField("value_for_customer", v); flash("value"); }}
@@ -1065,7 +1164,7 @@ function PositioningOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="Who this is built for"
         value={canvas.best_fit_customers}
         onSave={async (v) => { await updateTextField("best_fit_customers", v); flash("customers"); }}
@@ -1078,7 +1177,7 @@ function PositioningOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="The category you're in"
         value={canvas.market_category}
         onSave={async (v) => { await updateTextField("market_category", v); flash("category"); }}
@@ -1090,7 +1189,7 @@ function PositioningOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="Why you belong there"
         value={canvas.category_rationale}
         onSave={async (v) => { await updateTextField("category_rationale", v); flash("rationale"); }}
@@ -1099,20 +1198,18 @@ function PositioningOrgPanel({
         isSaved={savedField === "rationale"}
       />
 
-      <FieldBlock
+      <StatementField
         label="Current tagline"
         value={canvas.current_tagline}
         onSave={async (v) => { await updateTextField("current_tagline", v); flash("tagline_current"); }}
-        rows={1}
         singleLine
         isSaved={savedField === "tagline_current"}
       />
 
-      <FieldBlock
+      <StatementField
         label="Proposed tagline"
         value={canvas.proposed_tagline}
         onSave={async (v) => { await updateTextField("proposed_tagline", v); flash("tagline_proposed"); }}
-        rows={1}
         singleLine
         isSaved={savedField === "tagline_proposed"}
       />
@@ -1227,7 +1324,7 @@ function KanbanBoard({
     : "";
 
   return (
-    <div className="crpv-ws-field">
+    <div className="crpv-ws-stmt-block">
       <div className="crpv-ws-field-hd">
         <label className="crpv-ws-label">{label}</label>
         {isSaved && <span className="crpv-ws-saved cap">Saved ✓</span>}
@@ -1384,7 +1481,7 @@ function StrategyOrgPanel({
         updatedAt={updatedAt}
       />
 
-      <FieldBlock
+      <StatementField
         label="Where you're headed"
         value={strategy.winning_aspiration}
         onSave={async (v) => { await updateNarrativeField("winning_aspiration", v); flash("aspiration"); }}
@@ -1397,7 +1494,7 @@ function StrategyOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="Where you'll compete"
         value={strategy.where_to_play}
         onSave={async (v) => { await updateNarrativeField("where_to_play", v); flash("where"); }}
@@ -1410,7 +1507,7 @@ function StrategyOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="How you'll win"
         value={strategy.how_to_win}
         onSave={async (v) => { await updateNarrativeField("how_to_win", v); flash("how"); }}
@@ -1567,7 +1664,7 @@ function JTBDOrgPanel({
         </div>
       )}
 
-      <FieldBlock
+      <StatementField
         label="Who does this job"
         value={marketDef.job_executor}
         onSave={(v) => saveTextField("job_executor", v)}
@@ -1580,7 +1677,7 @@ function JTBDOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="Who makes the call"
         value={marketDef.chooser}
         onSave={(v) => saveTextField("chooser", v)}
@@ -1593,7 +1690,7 @@ function JTBDOrgPanel({
         } : undefined}
       />
 
-      <FieldBlock
+      <StatementField
         label="The job they're trying to do"
         value={marketDef.jtbd}
         onSave={(v) => saveTextField("jtbd", v)}
