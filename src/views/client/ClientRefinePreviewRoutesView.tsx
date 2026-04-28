@@ -5,7 +5,7 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import ScoreContextBar from "@/components/score/ScoreContextBar";
 import type { RouteRow } from "@/views/Routes/useRoutes";
 import "@/styles/client-refine-preview.css";
 
@@ -31,6 +31,50 @@ function toSentence(value: string | null | undefined) {
 
 // ─── Client route inspect panel ───────────────────────────────────────────────
 
+function deriveClientWhyReasons(route: RouteRow): string[] {
+  const stored = Array.isArray(route.why_this_matters_json) ? route.why_this_matters_json.map(String).filter(Boolean) : [];
+  if (stored.length > 0) return stored;
+  const category = String(route.category || "").toLowerCase();
+  const desc = route.short_description ? String(route.short_description).trim() : "";
+  const reasons: string[] = [];
+  if (desc) reasons.push(desc);
+  if (category === "fix") {
+    reasons.push("This gap is actively limiting your score and customer outcomes.");
+    if (reasons.length < 2) reasons.push("Addressing this now prevents the gap from compounding over time.");
+  } else if (category === "improve") {
+    reasons.push("Strengthening this area would measurably improve your readiness score.");
+    if (reasons.length < 2) reasons.push("Partial progress exists — this route closes the remaining gap.");
+  } else {
+    reasons.push("Building this capability would unlock growth opportunities not currently available.");
+    if (reasons.length < 2) reasons.push("This reflects unmet demand in your customer or market signals.");
+  }
+  return reasons.slice(0, 3);
+}
+
+type EvidenceItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
+
+function deriveClientEvidence(route: RouteRow): EvidenceItem[] {
+  const stored = (Array.isArray(route.evidence_json) ? route.evidence_json : []) as EvidenceItem[];
+  if (stored.length > 0) return stored;
+  const category = String(route.category || "").toLowerCase();
+  if (category === "fix") {
+    return [
+      { id: `${route.id}-ev-1`, title: "Current-state evidence for the identified gap", status: "missing" },
+      { id: `${route.id}-ev-2`, title: "Decision owner and turnaround timing confirmed", status: "missing" },
+    ];
+  }
+  if (category === "improve") {
+    return [
+      { id: `${route.id}-ev-1`, title: "Improvement owner and baseline metric defined", status: "in_progress" },
+      { id: `${route.id}-ev-2`, title: "Target state and success metric confirmed", status: "missing" },
+    ];
+  }
+  return [
+    { id: `${route.id}-ev-1`, title: "New capability owner and pilot scope defined", status: "missing" },
+    { id: `${route.id}-ev-2`, title: "Demand validation evidence gathered", status: "missing" },
+  ];
+}
+
 function ClientRouteInspectPanel({
   open,
   onClose,
@@ -42,9 +86,8 @@ function ClientRouteInspectPanel({
 }) {
   if (!route) return null;
 
-  const why = Array.isArray(route.why_this_matters_json) ? route.why_this_matters_json : [];
-  type EvidenceItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
-  const evidence = (Array.isArray(route.evidence_json) ? route.evidence_json : []) as EvidenceItem[];
+  const why = deriveClientWhyReasons(route);
+  const evidence = deriveClientEvidence(route);
   const supporting = evidence.filter((e) => e.status !== "missing");
   const missing = evidence.filter((e) => e.status === "missing");
   const category = String(route.category || "").toLowerCase();
@@ -54,44 +97,40 @@ function ClientRouteInspectPanel({
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <SheetContent side="right" className="sm:max-w-[480px] overflow-y-auto flex flex-col gap-0 p-0">
-        <div className="flex flex-col h-full">
-          <div className="crpv-inspect-hd">
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <div className="crpv-inspect-hd" style={{ borderBottom: "1px solid #d9d9d9" }}>
             <div className="crpv-inspect-badges">
               {category && <span className="crpv-r-badge">{category.toUpperCase()}</span>}
               {effort && <span className="crpv-r-badge">{effort} EFFORT</span>}
               {pts !== null && <span className="crpv-r-badge">{pts > 0 ? `+${pts}` : `${pts}`} PTS</span>}
             </div>
-            <p className="crpv-inspect-title">{route.title || "Untitled route"}</p>
+            <p className="crpv-inspect-title" style={{ color: "#111111" }}>{route.title || "Untitled route"}</p>
           </div>
 
-          <div className="crpv-inspect-body">
+          <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
             <div className="crpv-inspect-section">
-              <p className="crpv-inspect-section-label">Why this was flagged</p>
-              {why.length > 0 ? (
-                <ul className="crpv-inspect-bullets">
-                  {why.map((reason, i) => (
-                    <li key={i} className="crpv-inspect-bullet">
-                      <span className="crpv-inspect-dot">·</span>
-                      <span>{String(reason)}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="crpv-inspect-empty">No specific reasons recorded for this route.</p>
-              )}
+              <p className="crpv-inspect-section-label" style={{ color: "#999999" }}>Why this was flagged</p>
+              <ul className="crpv-inspect-bullets">
+                {why.map((reason, i) => (
+                  <li key={i} className="crpv-inspect-bullet" style={{ color: "#555555" }}>
+                    <span className="crpv-inspect-dot" style={{ color: "#999999" }}>·</span>
+                    <span>{reason}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
 
-            <div className="crpv-inspect-divider" />
+            <div style={{ height: 1, background: "#d9d9d9" }} />
 
             <div className="crpv-inspect-section">
-              <p className="crpv-inspect-section-label">Evidence</p>
+              <p className="crpv-inspect-section-label" style={{ color: "#999999" }}>Evidence</p>
               {supporting.length > 0 && (
                 <div className="crpv-inspect-evidence-group">
                   <p className="crpv-inspect-sub-label">Supporting</p>
                   {supporting.map((item) => (
                     <div key={item.id} className="crpv-r-detail-row">
                       <span className={`crpv-r-dot ${item.status}`} title={statusTip(item.status)}>{statusGlyph(item.status)}</span>
-                      <span>{item.title}</span>
+                      <span style={{ color: "#555555" }}>{item.title}</span>
                     </div>
                   ))}
                 </div>
@@ -102,17 +141,17 @@ function ClientRouteInspectPanel({
                   missing.map((item) => (
                     <div key={item.id} className="crpv-r-detail-row crpv-r-detail-row--missing">
                       <span className="crpv-r-dot missing" title="Missing — not yet addressed">○</span>
-                      <span>{item.title}</span>
+                      <span style={{ color: "#ff7d2d" }}>{item.title}</span>
                     </div>
                   ))
                 ) : (
-                  <p className="crpv-inspect-empty">No gaps flagged for this route.</p>
+                  <p className="crpv-inspect-empty" style={{ color: "#999999" }}>No gaps flagged for this route.</p>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="crpv-inspect-footer">
+          <div style={{ padding: "16px 24px", borderTop: "1px solid #d9d9d9" }}>
             <button type="button" className="crpv-inspect-close" onClick={onClose}>
               Close
             </button>
@@ -292,7 +331,6 @@ export default function ClientRefinePreviewRoutesView() {
   const currentScore    = Math.round(Number(activeCompany?.mojo_score ?? 0));
   const potentialScore  = Math.round(Number(activeCompany?.potential_score ?? 0));
   const unlockableScore = Math.round(Number(activeCompany?.projected_score ?? 0));
-  const scoreDelta      = Math.max(0, potentialScore - currentScore);
 
   if (!hasCompany) {
     return (
@@ -340,87 +378,13 @@ export default function ClientRefinePreviewRoutesView() {
         </div>
       </header>
 
-      <TooltipProvider delayDuration={120}>
-        <div className="crpv-r-stat-bar">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="crpv-r-stat" tabIndex={0}>
-                <span className="crpv-r-stat-val">{currentScore || "—"}</span>
-                <span className="crpv-r-stat-lbl">Current</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip">
-              Where you stand today based on current evidence, alignment, and readiness.
-            </TooltipContent>
-          </Tooltip>
-
-          <span className="crpv-r-stat-arrow">→</span>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="crpv-r-stat" tabIndex={0}>
-                <span className="crpv-r-stat-val">{potentialScore || "—"}</span>
-                <span className="crpv-r-stat-lbl">Reachable</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip">
-              How far you can improve within the current evidence level by fixing known gaps.
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="crpv-r-stat" tabIndex={0}>
-                <span className="crpv-r-stat-val crpv-r-stat-delta">+{scoreDelta}</span>
-                <span className="crpv-r-stat-lbl">Delta</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip">
-              The improvement available without needing new validation.
-            </TooltipContent>
-          </Tooltip>
-
-          {unlockableScore > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="crpv-r-stat crpv-r-stat-unlockable" tabIndex={0}>
-                  <span className="crpv-r-stat-val">{unlockableScore}</span>
-                  <span className="crpv-r-stat-lbl">Unlockable</span>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="crpv-stat-tooltip" style={{ maxWidth: 240 }}>
-                How far you could go if you gather the missing evidence or validation required to move into the next confidence band.
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          <div className="crpv-r-stat-sep" />
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="crpv-r-stat" tabIndex={0}>
-                <span className="crpv-r-stat-val">{routes.length}</span>
-                <span className="crpv-r-stat-lbl">Routes</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip">
-              The number of possible paths currently identified.
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="crpv-r-stat" tabIndex={0}>
-                <span className="crpv-r-stat-val">{confidence.level.toUpperCase()}</span>
-                <span className="crpv-r-stat-lbl">Confidence</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip">
-              How strongly the current recommendation is supported by evidence.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </TooltipProvider>
+      <ScoreContextBar
+        currentScore={currentScore}
+        reachableScore={potentialScore}
+        unlockableScore={unlockableScore}
+        routesCount={routes.length}
+        confidenceLabel={confidence.level}
+      />
 
       {routesLoading ? (
         <div className="crpv-r-loading">

@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import type { RouteRow } from "./useRoutes";
+import type { RouteRow, RouteAssumption } from "./useRoutes";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { FocusClassification } from "@/lib/initiativeFocus";
@@ -83,6 +83,114 @@ function gateInsight(category: string, gates: Record<string, GateScore>): { sent
   return { sentence: `Your ${label} score is currently ${score}/100.`, bullets };
 }
 
+const LAYER_LABELS: Record<RouteAssumption["layer"], string> = {
+  outside: "Outside Signals",
+  org:     "Organization",
+  customer:"Customer",
+  market:  "Market",
+};
+
+const STATUS_COLORS: Record<RouteAssumption["status"], string> = {
+  supported: "#5F9B8C",  // teal
+  partial:   "#FAC846",  // amber
+  unproven:  "#6E847F",  // muted
+};
+
+const STATUS_GLYPHS: Record<RouteAssumption["status"], string> = {
+  supported: "◉",
+  partial:   "◎",
+  unproven:  "○",
+};
+
+function deriveAssumptions(
+  category: string,
+  frameworks: string[],
+  supportingCount: number,
+  missingCount: number,
+  highPriorityOppCount: number,
+): RouteAssumption[] {
+  const hasOutsideSignals = frameworks.some((f) =>
+    ["odi", "jtbd", "public", "baseline"].some((m) => f.toLowerCase().includes(m))
+  );
+  const hasEvidence = supportingCount > 0;
+  const hasCustomerSignal = highPriorityOppCount > 0;
+
+  const assumptions: RouteAssumption[] = [];
+
+  if (category === "fix") {
+    assumptions.push({
+      id: "fix-gap-real",
+      statement: "The identified gap directly limits customer or business outcomes.",
+      layer: "outside",
+      critical: true,
+      status: hasOutsideSignals || hasEvidence ? "supported" : "partial",
+    });
+    assumptions.push({
+      id: "fix-highest-leverage",
+      statement: "Addressing this gap is the highest-leverage move available right now.",
+      layer: "customer",
+      critical: true,
+      status: hasCustomerSignal ? "supported" : "unproven",
+    });
+    assumptions.push({
+      id: "fix-capacity",
+      statement: "The team has the capacity and ownership to close this gap.",
+      layer: "org",
+      critical: false,
+      status: "unproven",
+    });
+  } else if (category === "improve") {
+    assumptions.push({
+      id: "improve-can-strengthen",
+      statement: "The current approach can be meaningfully strengthened without replacing it.",
+      layer: "outside",
+      critical: true,
+      status: hasEvidence ? "partial" : "unproven",
+    });
+    assumptions.push({
+      id: "improve-customer-value",
+      statement: "Customers will notice and benefit from this improvement.",
+      layer: "customer",
+      critical: true,
+      status: hasCustomerSignal ? "supported" : "unproven",
+    });
+  } else {
+    assumptions.push({
+      id: "create-demand",
+      statement: "There is validated demand for this new capability.",
+      layer: "customer",
+      critical: true,
+      status: highPriorityOppCount >= 2 ? "supported" : highPriorityOppCount === 1 ? "partial" : "unproven",
+    });
+    assumptions.push({
+      id: "create-timing",
+      statement: "The market timing is right for this investment.",
+      layer: "market",
+      critical: false,
+      status: hasOutsideSignals ? "partial" : "unproven",
+    });
+    assumptions.push({
+      id: "create-sustain",
+      statement: "The organization can sustain this after the initial build.",
+      layer: "org",
+      critical: false,
+      status: "unproven",
+    });
+  }
+
+  if (missingCount > 0) {
+    assumptions.push({
+      id: "evidence-gaps-closed",
+      statement: `The ${missingCount} flagged evidence gap${missingCount !== 1 ? "s" : ""} will be resolved before executing this route.`,
+      layer: "org",
+      critical: false,
+      status: "unproven",
+    });
+  }
+
+  return assumptions;
+}
+
 export default function RouteInspectPanel({
   open,
   onClose,
@@ -149,6 +257,21 @@ export default function RouteInspectPanel({
     false,
   ), [supporting.length, missing.length, highPriorityOpps.length, route?.id]);
 
+  const assumptions = useMemo((): RouteAssumption[] => {
+    const stored = Array.isArray(route?.assumptions_json) && route.assumptions_json.length > 0
+      ? route.assumptions_json
+      : null;
+    return stored ?? deriveAssumptions(category, frameworks, supporting.length, missing.length, highPriorityOpps.length);
+  }, [route?.assumptions_json, category, frameworks, supporting.length, missing.length, highPriorityOpps.length]);
+
+  const supportedCount = assumptions.filter((a) => a.status === "supported").length;
+  const criticalUnproven = assumptions.filter((a) => a.critical === true && a.status === "unproven");
+
+  const wwhtbtRef = useRef<HTMLDivElement>(null);
+  const scrollToWWHTBT = useCallback(() => {
+    wwhtbtRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   function statusGlyph(status: "complete" | "in_progress" | "missing") {
     if (status === "complete") return "◉";
     if (status === "in_progress") return "◎";
@@ -159,7 +282,7 @@ export default function RouteInspectPanel({
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <SheetContent side="right" className="sm:max-w-[480px] overflow-y-auto flex flex-col gap-0 p-0">
         {route ? (
-          <div className="flex flex-col h-full">
+          <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#f7fbf8" }}>
             {/* Stale banner */}
             {staleNote && (
               <div
@@ -193,13 +316,32 @@ export default function RouteInspectPanel({
               <h2 className="font-sans text-[18px] font-semibold leading-tight" style={{ color: c.charcoal }}>
                 {route.title || "Untitled route"}
               </h2>
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                Generated using: {genContext}
-              </p>
+              <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  Generated using: {genContext}
+                </p>
+                <button
+                  type="button"
+                  onClick={scrollToWWHTBT}
+                  className="font-mono text-[10px] uppercase tracking-[0.06em]"
+                  style={{
+                    color: supportedCount === assumptions.length && assumptions.length > 0 ? c.teal : c.muted,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    textDecoration: "underline",
+                    textDecorationColor: "currentColor",
+                    textUnderlineOffset: "2px",
+                  }}
+                >
+                  Conditions: {supportedCount} / {assumptions.length} supported ↓
+                </button>
+              </div>
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }} className="px-6 py-5 space-y-6">
 
               {/* Section 0: What this claims */}
               <div>
@@ -237,6 +379,78 @@ export default function RouteInspectPanel({
                     <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
                       {linkedDesiredOutcome.statement}
                     </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t" style={{ borderColor: c.line }} />
+
+              {/* Section WWHTBT: What would have to be true — always rendered, never gated */}
+              <div ref={wwhtbtRef}>
+                <div className="flex items-baseline justify-between mb-1 flex-wrap gap-2">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                    What would have to be true
+                  </p>
+                  {assumptions.length > 0 && (
+                    <span className="font-mono text-[10px]" style={{ color: c.teal }}>
+                      {supportedCount} of {assumptions.length} supported
+                    </span>
+                  )}
+                </div>
+                <p className="font-sans text-[12px] leading-[1.5] mb-3" style={{ color: c.muted }}>
+                  These are the conditions that must be true for this route to succeed.
+                </p>
+
+                {assumptions.length === 0 ? (
+                  <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.muted }}>
+                    No conditions have been defined yet. Treat this route as a hypothesis until validated.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {assumptions.map((assumption) => {
+                      const statusColor = STATUS_COLORS[assumption.status] ?? c.muted;
+                      const statusGlyphChar = STATUS_GLYPHS[assumption.status] ?? "○";
+                      const layerLabel = LAYER_LABELS[assumption.layer] ?? assumption.layer;
+                      return (
+                        <div
+                          key={assumption.id}
+                          className="rounded-lg border p-3"
+                          style={{ borderColor: c.line, background: c.paper }}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span
+                              className="mt-[2px] flex-shrink-0 text-[13px]"
+                              style={{ color: statusColor }}
+                              aria-label={assumption.status}
+                            >
+                              {statusGlyphChar}
+                            </span>
+                            <p className="font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
+                              {assumption.statement ?? "No statement provided."}
+                            </p>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            <span
+                              className="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-[2px] border"
+                              style={{ color: c.muted, borderColor: c.line }}
+                            >
+                              {layerLabel}
+                            </span>
+                            <span
+                              className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                              style={{ color: statusColor }}
+                            >
+                              {assumption.status ?? "unproven"}
+                            </span>
+                            {assumption.evidence_refs && assumption.evidence_refs.length > 0 && (
+                              <span className="font-mono text-[9px]" style={{ color: c.muted }}>
+                                · {assumption.evidence_refs.join(", ")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -347,6 +561,17 @@ export default function RouteInspectPanel({
                   {unlockConditions.currentStateDescription}
                 </p>
 
+                {/* Bridge sentence: unlockable potential tied to critical assumptions */}
+                {criticalUnproven.length > 0 && unlockConditions.nextBandLabel && (
+                  <p className="font-sans text-[12px] leading-[1.5] mb-3" style={{ color: c.muted }}>
+                    Your unlockable potential assumes{" "}
+                    <span style={{ color: c.secondary, fontWeight: 500 }}>
+                      {criticalUnproven.length} critical condition{criticalUnproven.length !== 1 ? "s" : ""}
+                    </span>{" "}
+                    can be validated.
+                  </p>
+                )}
+
                 {/* Missing items */}
                 {unlockConditions.missingItems.length > 0 && (
                   <div className="mb-3">
@@ -391,6 +616,21 @@ export default function RouteInspectPanel({
                       <div key={i} className="flex items-start gap-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
                         <span style={{ color: c.teal, flexShrink: 0 }}>·</span>
                         <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Unproven critical assumptions blocking next band */}
+                {criticalUnproven.length > 0 && unlockConditions.nextBandLabel && (
+                  <div className="mt-3 rounded border p-3 space-y-2" style={{ borderColor: `${c.coral}50`, background: `${c.coral}08` }}>
+                    <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral }}>
+                      Unproven conditions blocking {unlockConditions.nextBandLabel}
+                    </p>
+                    {criticalUnproven.map((assumption) => (
+                      <div key={assumption.id} className="flex items-start gap-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+                        <span style={{ color: c.coral, flexShrink: 0 }}>○</span>
+                        <span>{assumption.statement}</span>
                       </div>
                     ))}
                   </div>

@@ -170,10 +170,10 @@ export default function ClientScoreView() {
                     Baseline {mojoScore}
                   </span>
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Potential {potentialScore}
+                    Reachable {potentialScore}
                   </span>
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Projected {projectedScore}
+                    Unlockable {projectedScore}
                   </span>
                 </div>
               </div>

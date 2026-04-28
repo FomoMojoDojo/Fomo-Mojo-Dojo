@@ -76,6 +76,7 @@ function mapRow(row: StrategyCascadeRow): StrategyCascade {
 export function useStrategyCascade(companyId?: string) {
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<StrategyCascade | null>(null);
+  const [frameworksUsed, setFrameworksUsed] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [savingField, setSavingField] = useState<"winning_aspiration" | "where_to_play" | "how_to_win" | null>(null);
 
@@ -118,7 +119,9 @@ export function useStrategyCascade(companyId?: string) {
           setItem(null);
         }
       } else {
-        setItem(data ? mapRow(data as StrategyCascadeRow) : null);
+        const row = data as StrategyCascadeRow | null;
+        setItem(row ? mapRow(row) : null);
+        setFrameworksUsed(Array.isArray(row?.frameworks_used) ? row.frameworks_used : []);
       }
 
       setLoading(false);
@@ -192,5 +195,5 @@ export function useStrategyCascade(companyId?: string) {
     }
   }
 
-  return { loading, item, error, savingField, updateNarrativeField, updateListField };
+  return { loading, item, frameworksUsed, error, savingField, updateNarrativeField, updateListField };
 }

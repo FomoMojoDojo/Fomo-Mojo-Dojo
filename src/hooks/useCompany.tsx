@@ -5,6 +5,12 @@ import { safeLocalStorageGet, safeLocalStorageSet } from '@/lib/safeLocalStorage
 
 type AreaScoresJson = Record<string, unknown> | null;
 
+export interface ExcludedSignal {
+  fingerprint: string;
+  reason: string;
+  excluded_at: string;
+}
+
 export interface Company {
   id: string;
   name: string;
@@ -24,6 +30,7 @@ export interface Company {
   area_scores_json: AreaScoresJson;
   public_source_filters_json?: Record<string, unknown> | null;
   program_phase?: string | null;
+  excluded_signals_json?: ExcludedSignal[] | null;
 }
 
 interface CompanyCtx {
@@ -53,6 +60,7 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
   last_scored_at: null,
   area_scores_json: null,
   public_source_filters_json: null,
+  excluded_signals_json: [],
 };
 
 function pickDefaultCompanyId(companies: Company[]): string | null {
@@ -96,7 +104,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
     const baseSelect =
       "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
-    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase`;
+    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json`;
 
     let { data, error } = await supabase
       .from("companies")
@@ -120,6 +128,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
         data = (data ?? []).map((row) => ({
           ...row,
           public_source_filters_json: null,
+          excluded_signals_json: [],
         }));
       }
     }

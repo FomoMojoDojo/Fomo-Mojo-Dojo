@@ -16,6 +16,8 @@ import type { AffectedArtifact, ExclusionImpact } from "@/lib/evidenceImpact";
 import { computeExclusionImpact, RESTORE_GUIDANCE, computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
 import { computeArtifactUnlockSummary } from "@/lib/evidenceBands";
 import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
+import { useRoutes } from "@/views/Routes/useRoutes";
+import ScoreContextBar from "@/components/score/ScoreContextBar";
 import type { PositioningCanvas, PositioningItem, StrategyCascade, CascadeItem } from "@/lib/types";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import PositioningInspectPanel from "@/views/Positioning/PositioningInspectPanel";
@@ -2795,7 +2797,8 @@ function CompanySwitcher({
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
   const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
-  const { activeCompany, hasCompany } = useClientViewData({ actionLimit: 0 });
+  const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 0 });
+  const { items: routes } = useRoutes(activeCompany?.id);
   const [activeTab,   setActiveTab]   = useState<WorkshopTab>("positioning");
   const [activeStage, setActiveStage] = useState<SignalStage>("outside");
   const [showCompare, setShowCompare] = useState(false);
@@ -3047,6 +3050,14 @@ export default function ClientRefinePreviewWorkshopView() {
           <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>← Main site</button>
         </div>
       </header>
+
+      <ScoreContextBar
+        currentScore={Math.round(Number(activeCompany?.mojo_score ?? 0))}
+        reachableScore={Math.round(Number(activeCompany?.potential_score ?? 0))}
+        unlockableScore={Math.round(Number(activeCompany?.projected_score ?? 0))}
+        routesCount={routes.length}
+        confidenceLabel={confidence.level}
+      />
 
       <SignalBar
         activeStage={activeStage}

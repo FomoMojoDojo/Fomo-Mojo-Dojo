@@ -8,6 +8,7 @@ export function useSourceConfidence(args: {
   companyId?: string;
   areaScoresJson?: unknown;
   inputsOverride?: InputItem[];
+  evidenceStatus?: string | null;
 }) {
   const { query } = useInputs(args.companyId);
   const { signal: primarySignal } = usePrimaryEvidenceSignal(args.companyId);
@@ -20,8 +21,9 @@ export function useSourceConfidence(args: {
         hasPrimaryEvidence: primarySignal.hasPrimaryEvidence,
         primaryEvidenceSignals: primarySignal.primaryCount,
         areaScoresJson: args.areaScoresJson,
+        evidenceStatus: args.evidenceStatus,
       }),
-    [inputs, primarySignal.hasPrimaryEvidence, primarySignal.primaryCount, args.areaScoresJson],
+    [inputs, primarySignal.hasPrimaryEvidence, primarySignal.primaryCount, args.areaScoresJson, args.evidenceStatus],
   );
 
   return {
