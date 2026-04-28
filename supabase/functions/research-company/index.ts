@@ -3609,6 +3609,14 @@ function ratio(count: number, max: number) {
   return clamp(count / max, 0, 1);
 }
 
+// Must stay in sync with ledgerItemFingerprint() in src/lib/scoring/mojoScore.ts.
+function ledgerItemFingerprint(item: { snippet?: unknown; url?: unknown; bucket?: unknown; signal_strength?: unknown }): string {
+  return [item.snippet, item.url, item.bucket, item.signal_strength]
+    .filter(Boolean)
+    .join("|")
+    .slice(0, 200);
+}
+
 function isJobStepEvidenceColumnError(message: unknown) {
   const lower = String(message || "").toLowerCase();
   return (
@@ -3941,16 +3949,84 @@ function computeStrategicProblemAlignment(args: {
   };
 }
 
-function computePotentialProjected(mojo_score: number) {
+// ── Evidence-layer band derivation (inlined — cannot import from src/lib) ─────
+// TODO: Replace isPrimaryNeedsSourcePath with typed evidence_signals in v2 once
+//       odi_needs.source_path is superseded by a typed evidence_signals relation.
+
+type EvidenceBand =
+  | "hypothesis_only"
+  | "directional_not_validated"
+  | "customer_evidenced"
+  | "market_validated"
+  | "proven_path"
+  | "sustained_performance";
+
+const BAND_REACHABLE_CAP: Record<EvidenceBand, number> = {
+  hypothesis_only: 5,
+  directional_not_validated: 12,
+  customer_evidenced: 18,
+  market_validated: 22,
+  proven_path: 22,
+  sustained_performance: 22,
+};
+
+const BAND_UNLOCKABLE_CAP: Record<EvidenceBand, number> = {
+  hypothesis_only: 10,
+  directional_not_validated: 22,
+  customer_evidenced: 32,
+  market_validated: 38,
+  proven_path: 42,
+  sustained_performance: 42,
+};
+
+const NON_PRIMARY_MARKERS = ["public", "baseline", "benchmark", "generated", "research-company", "uploaded_file"];
+const PRIMARY_MARKERS = ["interview", "survey", "primary", "qualitative", "focus-group"];
+
+function isPrimaryNeedsSourcePath(sourcePath: string | null | undefined): boolean {
+  const s = String(sourcePath ?? "").toLowerCase();
+  if (!s) return false;
+  if (NON_PRIMARY_MARKERS.some((m) => s.includes(m))) return false;
+  return PRIMARY_MARKERS.some((m) => s.includes(m));
+}
+
+function computeEvidenceBand(profile: {
+  outside: { present: boolean; strength: number };
+  org: { present: boolean; strength: number };
+  customer: { present: boolean; strength: number };
+  measurement: { present: boolean; strength: number };
+}): EvidenceBand {
+  const { outside, org, customer, measurement } = profile;
+  if (outside.present && org.present && customer.present && measurement.present
+    && outside.strength >= 0.5 && org.strength >= 0.5 && customer.strength >= 0.5) {
+    return "sustained_performance";
+  }
+  if (customer.present && measurement.present && (org.present || outside.present)) {
+    return "proven_path";
+  }
+  if (customer.present && (outside.present || org.strength >= 0.5)) {
+    return "market_validated";
+  }
+  if (customer.present || org.strength >= 0.5) {
+    return "customer_evidenced";
+  }
+  if (outside.present || org.present) {
+    return "directional_not_validated";
+  }
+  return "hypothesis_only";
+}
+
+function computePotentialProjected(mojo_score: number, evidenceBand: EvidenceBand = "directional_not_validated") {
   const current = clamp(mojo_score, 0, 100);
   const headroom = 100 - current;
+  const reachableCap = BAND_REACHABLE_CAP[evidenceBand];
+  const unlockableCap = BAND_UNLOCKABLE_CAP[evidenceBand];
 
   const potential_score = Math.round(
-    clamp(current + Math.min(22, headroom * 0.35), 0, 100),
+    clamp(current + Math.min(reachableCap, headroom * 0.35), 0, 100),
   );
   const projected_score = Math.round(
     clamp(
-      Math.max(potential_score + 10, current + Math.min(42, headroom * 0.62)),
+      Math.max(potential_score + Math.min(5, headroom * 0.1), current + Math.min(unlockableCap, headroom * 0.62)),
       0,
       100,
     ),
@@ -4084,14 +4160,19 @@ function scoreCompanyMojo(args: {
   } | null;
   strategicProblems?: StrategicProblemStatement[];
   gamma?: number;
+  excludedFingerprints?: ReadonlySet<string>;
+  needsSourcePaths?: string[];
 }) {
   const marketBaseline = deriveMarketBaselineCalibration(args.baselineResultJson);
   const safeInputs = Array.isArray(args.inputs) ? args.inputs : [];
   const safeSteps = Array.isArray(args.jobSteps) ? args.jobSteps : [];
   const safeOpps = Array.isArray(args.opportunities) ? args.opportunities : [];
-  const ledger = Array.isArray(args.baselineResultJson?.evidence_ledger)
+  const rawLedger = Array.isArray(args.baselineResultJson?.evidence_ledger)
     ? args.baselineResultJson.evidence_ledger
     : [];
+  const ledger = args.excludedFingerprints?.size
+    ? rawLedger.filter((item: any) => !args.excludedFingerprints!.has(ledgerItemFingerprint(item)))
+    : rawLedger;
 
   const ledgerCount = ledger.length;
   const avgConfidence = avg(
@@ -4317,7 +4398,18 @@ function scoreCompanyMojo(args: {
       100,
     ),
   );
-  const { potential_score, projected_score } = computePotentialProjected(mojo_score);
+  const safeNeedsPaths = Array.isArray(args.needsSourcePaths) ? args.needsSourcePaths : [];
+  const hasPrimaryCustomer = safeNeedsPaths.some(isPrimaryNeedsSourcePath);
+  const primaryRatio = safeNeedsPaths.length > 0
+    ? safeNeedsPaths.filter(isPrimaryNeedsSourcePath).length / safeNeedsPaths.length
+    : 0;
+  const evidenceBand = computeEvidenceBand({
+    outside: { present: baselineStrength > 0, strength: baselineStrength },
+    org: { present: artifactCoverage > 0, strength: artifactCoverage },
+    customer: { present: hasPrimaryCustomer, strength: primaryRatio },
+    measurement: { present: ledgerCount >= 20, strength: Math.min(ledgerCount / 40, 1) },
+  });
+  const { potential_score, projected_score } = computePotentialProjected(mojo_score, evidenceBand);
 
   const evidence_note =
     ledgerCount > 0
@@ -4416,6 +4508,7 @@ function scoreCompanyMojo(args: {
       mojo_score,
       potential_score,
       projected_score,
+      evidence_band: evidenceBand,
     },
   };
 
@@ -4941,18 +5034,28 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
     }
 
-    const { data: companySourceFilterRow, error: companySourceFilterErr } = await supabase
+    const { data: companyRow, error: companySourceFilterErr } = await supabase
       .from("companies")
-      .select("public_source_filters_json")
+      .select("public_source_filters_json, excluded_signals_json")
       .eq("id", company_id)
       .maybeSingle();
     if (companySourceFilterErr) {
-      console.log("[research-company] source filter fetch error:", companySourceFilterErr.message);
+      console.log("[research-company] company row fetch error:", companySourceFilterErr.message);
     }
     const baselineSourceFilters = normalizeBaselineSourceFilters(
       bodyRecord?.public_source_filters_json ??
-        companySourceFilterRow?.public_source_filters_json ??
+        companyRow?.public_source_filters_json ??
         null,
+    );
+
+    // Build excluded ledger fingerprint set from DB-persisted exclusions.
+    // Only evidence_ledger fingerprints are applied to scoring; voice signal
+    // fingerprints stored in excluded_signals_json are ignored here (display-only).
+    const rawExcluded = Array.isArray((companyRow as any)?.excluded_signals_json)
+      ? (companyRow as any).excluded_signals_json as Array<{ fingerprint?: string }>
+      : [];
+    const excludedLedgerFingerprints: ReadonlySet<string> = new Set(
+      rawExcluded.map((e) => e?.fingerprint ?? "").filter(Boolean),
     );
 
     const lockTtlMinutes = 15;
@@ -7455,6 +7558,8 @@ Deno.serve(async (req) => {
       },
       strategicProblems,
       gamma: 2.2,
+      excludedFingerprints: excludedLedgerFingerprints,
+      needsSourcePaths: odiNeedsInserted > 0 ? Array(odiNeedsInserted).fill(artifactSourcePath) : [],
     });
 
     const { error: updErr } = await supabase

@@ -1200,19 +1200,68 @@ function normalizeRecommendations(raw: unknown): RecommendationRow[] {
     .slice(0, 12);
 }
 
-function buildBaselineSummary(latestBaselineRun: Record<string, unknown> | null) {
+// Must stay in sync with ledgerItemFingerprint() in:
+//   src/lib/scoring/mojoScore.ts
+//   supabase/functions/research-company/index.ts
+function ledgerItemFingerprint(item: { snippet?: unknown; url?: unknown; bucket?: unknown; signal_strength?: unknown }): string {
+  return [item.snippet, item.url, item.bucket, item.signal_strength]
+    .filter(Boolean)
+    .join("|")
+    .slice(0, 200);
+}
+
+// Must stay in sync with the voice-signal fingerprint in OutsideSignalItems
+// (ClientRefinePreviewWorkshopView.tsx): (s.signal || s.perspective || "").slice(0, 200)
+function voiceSignalFingerprint(signal: { signal?: unknown; perspective?: unknown }): string {
+  return String(signal.signal || signal.perspective || "").slice(0, 200);
+}
+
+function buildBaselineSummary(
+  latestBaselineRun: Record<string, unknown> | null,
+  excludedFingerprints: ReadonlySet<string>,
+) {
   if (!latestBaselineRun) return null;
 
   const result = (latestBaselineRun.result_json && typeof latestBaselineRun.result_json === "object")
     ? latestBaselineRun.result_json as Record<string, unknown>
     : {};
 
-  const evidenceLedger = sliceArray<Record<string, unknown>>(result.evidence_ledger, 8).map((entry) => ({
+  const hasExclusions = excludedFingerprints.size > 0;
+
+  // Filter evidence_ledger — hard filter, same logic as scoring path.
+  const rawLedger = sliceArray<Record<string, unknown>>(result.evidence_ledger, 8);
+  const filteredLedger = hasExclusions
+    ? rawLedger.filter((entry) => !excludedFingerprints.has(ledgerItemFingerprint(entry)))
+    : rawLedger;
+  const ledgerRemovedCount = rawLedger.length - filteredLedger.length;
+
+  const evidenceLedger = filteredLedger.map((entry) => ({
     bucket: asText(entry.bucket, "signal"),
     signal_strength: asText(entry.signal_strength, "unknown"),
     confidence: Number(entry.confidence) || null,
     snippet: asText(entry.snippet, "").slice(0, 220),
   }));
+
+  // Filter outside_voice_signals — hard filter using same content fingerprint as UI.
+  const rawVoice = sliceArray<Record<string, unknown>>(result.outside_voice_signals, 5);
+  const filteredVoice = hasExclusions
+    ? rawVoice.filter((s) => !excludedFingerprints.has(voiceSignalFingerprint(s)))
+    : rawVoice;
+  const voiceRemovedCount = rawVoice.length - filteredVoice.length;
+
+  if (hasExclusions) {
+    console.log(
+      `[council-review] buildBaselineSummary: filtered ${ledgerRemovedCount} ledger item(s), ${voiceRemovedCount} voice signal(s) from context.`,
+    );
+  }
+
+  // top_hypotheses and open_questions are derived strings generated before exclusion.
+  // They may contain references to excluded entities — soft-flag for the LLM.
+  const hypotheses = sliceArray<string>(result.top_hypotheses, 5);
+  const openQuestions = sliceArray<string>(result.open_questions, 5);
+  const staleFlagNote = hasExclusions
+    ? "[REVIEW NOTE: Hypotheses and questions generated before current signal exclusions — treat any entity or market references with caution.]"
+    : null;
 
   return {
     id: latestBaselineRun.id ?? null,
@@ -1220,9 +1269,9 @@ function buildBaselineSummary(latestBaselineRun: Record<string, unknown> | null)
     created_at: latestBaselineRun.created_at ?? null,
     category_archetype: asText(result.category_archetype, "unknown"),
     lens_card: result.lens_card ?? null,
-    top_hypotheses: sliceArray<string>(result.top_hypotheses, 5),
-    open_questions: sliceArray<string>(result.open_questions, 5),
-    outside_voice_signals: sliceArray<Record<string, unknown>>(result.outside_voice_signals, 5).map((signal) => ({
+    top_hypotheses: staleFlagNote ? [staleFlagNote, ...hypotheses] : hypotheses,
+    open_questions: staleFlagNote ? [staleFlagNote, ...openQuestions] : openQuestions,
+    outside_voice_signals: filteredVoice.map((signal) => ({
       perspective: asText(signal.perspective, "outside_voice"),
       sentiment: asText(signal.sentiment, "unknown"),
       alignment: asText(signal.alignment, "unknown"),
@@ -1230,6 +1279,10 @@ function buildBaselineSummary(latestBaselineRun: Record<string, unknown> | null)
       confidence: Number(signal.confidence) || null,
     })),
     evidence_ledger: evidenceLedger,
+    _exclusion_meta: hasExclusions ? {
+      ledger_items_removed: ledgerRemovedCount,
+      voice_signals_removed: voiceRemovedCount,
+    } : undefined,
   };
 }
 
@@ -1320,6 +1373,7 @@ Deno.serve(async (req) => {
 
     const [
       latestBaselineRun,
+      companyExclusionRow,
       inputs,
       jobSteps,
       opportunities,
@@ -1333,6 +1387,13 @@ Deno.serve(async (req) => {
       deepDives,
     ] = await Promise.all([
       fetchOptionalSingleLatest(serviceClient, "public_baseline_runs", companyId),
+      // Fetch excluded_signals_json separately so it never enters contextPayload.
+      serviceClient
+        .from("companies")
+        .select("excluded_signals_json")
+        .eq("id", companyId)
+        .maybeSingle()
+        .then(({ data }) => data as { excluded_signals_json?: unknown } | null),
       (async () => {
         const { data, error } = await serviceClient
           .from("inputs")
@@ -1353,6 +1414,44 @@ Deno.serve(async (req) => {
       fetchRowsOptional(serviceClient, "odi_needs", companyId, 500),
       fetchRowsOptional(serviceClient, "deep_dive_analyses", companyId, 200),
     ]);
+
+    // Build excluded fingerprint set — used only for prompt filtering, never sent to LLM.
+    const rawExcluded = Array.isArray(companyExclusionRow?.excluded_signals_json)
+      ? (companyExclusionRow.excluded_signals_json as Array<{ fingerprint?: string }>)
+      : [];
+    const excludedFingerprints: ReadonlySet<string> = new Set(
+      rawExcluded.map((e) => e?.fingerprint ?? "").filter(Boolean),
+    );
+    if (excludedFingerprints.size > 0) {
+      console.log(
+        `[council-review] ${excludedFingerprints.size} excluded signal fingerprint(s) will be filtered from context:`,
+        JSON.stringify(Array.from(excludedFingerprints)),
+      );
+    }
+
+    // Compute the latest exclusion timestamp to mark pre-exclusion artifacts as stale.
+    const rawExcludedWithTimestamps = Array.isArray(companyExclusionRow?.excluded_signals_json)
+      ? (companyExclusionRow.excluded_signals_json as Array<{ excluded_at?: string }>)
+      : [];
+    let latestExclusionAt: Date | null = null;
+    for (const e of rawExcludedWithTimestamps) {
+      if (!e.excluded_at) continue;
+      const d = new Date(e.excluded_at);
+      if (!Number.isNaN(d.getTime()) && (!latestExclusionAt || d > latestExclusionAt)) {
+        latestExclusionAt = d;
+      }
+    }
+
+    function artifactIsStale(row: Record<string, unknown>): boolean {
+      if (!latestExclusionAt) return false;
+      const ts = row.updated_at ?? row.generated_at ?? row.created_at;
+      if (!ts) return false;
+      const d = new Date(String(ts));
+      return !Number.isNaN(d.getTime()) && d < latestExclusionAt;
+    }
+
+    const maybeStale = (row: Record<string, unknown>) =>
+      latestExclusionAt && artifactIsStale(row) ? { stale_due_to_excluded_signals: true } : {};
 
     const normalizedInputs = inputs.map((item) => {
       const row = item as Record<string, unknown>;
@@ -1385,114 +1484,68 @@ Deno.serve(async (req) => {
 
     const contextPayload = {
       company,
-      baseline: buildBaselineSummary(latestBaselineRun as Record<string, unknown> | null),
-      strategic_problems: strategyProblems.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "title",
-          "statement",
-          "source",
-          "status",
-          "decision_ask",
-          "summary",
-          "reconciliation_note",
-          "created_at",
-          "updated_at",
-        ])
-      ),
-      strategy_assumptions: strategyAssumptions.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "assumption",
-          "title",
-          "status",
-          "evidence_needed",
-          "impact_level",
-          "created_at",
-          "updated_at",
-          "source",
-        ])
-      ),
+      baseline: buildBaselineSummary(latestBaselineRun as Record<string, unknown> | null, excludedFingerprints),
+      strategic_problems: strategyProblems.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "title", "statement", "source", "status",
+          "decision_ask", "summary", "reconciliation_note", "created_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      strategy_assumptions: strategyAssumptions.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "assumption", "title", "status", "evidence_needed",
+          "impact_level", "created_at", "updated_at", "source",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
       inputs: normalizedInputs,
-      job_steps: jobSteps.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "job_map_name",
-          "job_step",
-          "step_label",
-          "title",
-          "description",
-          "desired_outcome",
-          "importance",
-          "satisfaction",
-          "opportunity_score",
-          "source_tier",
-          "frameworks_used",
-          "created_at",
-          "updated_at",
-        ])
-      ),
+      job_steps: jobSteps.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "job_map_name", "job_step", "step_label", "title", "description",
+          "desired_outcome", "importance", "satisfaction", "opportunity_score",
+          "source_tier", "frameworks_used", "created_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
       odi_market_definitions: odiMarketDefinitions.map((row) => row as Record<string, unknown>),
-      odi_needs: odiNeeds.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "need_statement",
-          "job_step",
-          "importance",
-          "satisfaction",
-          "opportunity_score",
-          "source_tier",
-          "created_at",
-          "updated_at",
-        ])
-      ),
-      opportunities: opportunities.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "title",
-          "description",
-          "priority",
-          "score",
-          "impact",
-          "effort",
-          "source_tier",
-          "frameworks_used",
-          "created_at",
-          "updated_at",
-        ])
-      ),
-      routes: routes.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "title",
-          "description",
-          "pillar",
-          "priority",
-          "points",
-          "source_tier",
-          "frameworks_used",
-          "steps",
-          "evidence_needed",
-          "why_this_matters",
-          "created_at",
-          "updated_at",
-        ])
-      ),
-      positioning_canvases: positioningCanvases.map((row) => row as Record<string, unknown>),
-      strategy_cascades: strategyCascades.map((row) => row as Record<string, unknown>),
-      deep_dive_analyses: deepDives.map((row) =>
-        pick(row as Record<string, unknown>, [
-          "id",
-          "area_key",
-          "what_we_found",
-          "why_it_matters",
-          "what_good_looks_like",
-          "path_forward",
-          "holding_back",
-          "generated_at",
-          "updated_at",
-        ])
-      ),
+      odi_needs: odiNeeds.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "need_statement", "job_step", "importance", "satisfaction",
+          "opportunity_score", "source_tier", "created_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      opportunities: opportunities.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "title", "description", "priority", "score", "impact", "effort",
+          "source_tier", "frameworks_used", "created_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      routes: routes.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "title", "description", "pillar", "priority", "points",
+          "source_tier", "frameworks_used", "steps", "evidence_needed",
+          "why_this_matters", "created_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      positioning_canvases: positioningCanvases.map((row) => ({
+        ...(row as Record<string, unknown>),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      strategy_cascades: strategyCascades.map((row) => ({
+        ...(row as Record<string, unknown>),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
+      deep_dive_analyses: deepDives.map((row) => ({
+        ...pick(row as Record<string, unknown>, [
+          "id", "area_key", "what_we_found", "why_it_matters",
+          "what_good_looks_like", "path_forward", "holding_back", "generated_at", "updated_at",
+        ]),
+        ...maybeStale(row as Record<string, unknown>),
+      })),
     };
 
     const processStageProfile = buildProcessStageProfile({
@@ -1540,6 +1593,12 @@ Deno.serve(async (req) => {
         strategy_cascades: contextPayload.strategy_cascades.length,
         deep_dive_analyses: contextPayload.deep_dive_analyses.length,
         has_public_baseline: Boolean(contextPayload.baseline),
+        excluded_signals_count: excludedFingerprints.size,
+        baseline_items_removed: (contextPayload.baseline as Record<string, unknown> | null)
+          ?._exclusion_meta
+          ? ((contextPayload.baseline as Record<string, unknown>)._exclusion_meta as Record<string, number>).ledger_items_removed +
+            ((contextPayload.baseline as Record<string, unknown>)._exclusion_meta as Record<string, number>).voice_signals_removed
+          : 0,
       },
     };
 
@@ -1566,8 +1625,16 @@ Deno.serve(async (req) => {
       "Always drive decisions toward evidence-based progression: Diagnose -> Focus -> Flow.",
     ].join("\n");
 
+    const staleArtifactNote = latestExclusionAt
+      ? `SIGNAL EXCLUSION NOTE: Outside signals were excluded on ${latestExclusionAt.toISOString()}. ` +
+        `Artifacts in the context marked stale_due_to_excluded_signals: true were generated before this exclusion ` +
+        `and may contain language or entity references from the removed signals. ` +
+        `Treat these artifacts with extra scrutiny and prefer more recent evidence where available.\n\n`
+      : "";
+
     const userText =
       `Company context snapshot:\n${sourceSnapshotJson}\n\n` +
+      (staleArtifactNote ? `${staleArtifactNote}`) +
       `Current process stage guidance:\n${stageGuidanceText}\n\n` +
       `Applied framework guidance:\n${frameworkGuidance}\n\n` +
       `Full company context JSON:\n${contextJson}\n\n` +

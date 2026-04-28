@@ -8,8 +8,18 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds, type OdiNeedRow, type OdiMarketDefinitionRow } from "@/hooks/useOdiNeeds";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useSourceConfidence } from "@/hooks/useSourceConfidence";
+import type { SourceConfidenceSignals } from "@/lib/sourceConfidence";
+import { useSignalExclusion } from "@/hooks/useSignalExclusion";
+import { ledgerItemFingerprint } from "@/lib/scoring/mojoScore";
+import type { AffectedArtifact, ExclusionImpact } from "@/lib/evidenceImpact";
+import { computeExclusionImpact, RESTORE_GUIDANCE, computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
+import { computeArtifactUnlockSummary } from "@/lib/evidenceBands";
 import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import type { PositioningCanvas, PositioningItem, StrategyCascade, CascadeItem } from "@/lib/types";
+import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
+import PositioningInspectPanel from "@/views/Positioning/PositioningInspectPanel";
+import StrategyInspectPanel from "@/views/Strategy/StrategyInspectPanel";
 import "@/styles/client-refine-preview.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,6 +27,12 @@ import "@/styles/client-refine-preview.css";
 type WorkshopTab  = "positioning" | "strategy" | "jtbd" | "needs" | "council";
 type SignalStage  = "outside" | "org" | "customer";
 type GapAlignment = "aligned" | "drift" | "gap" | "missing";
+
+interface ExclusionControls {
+  isExcluded: (fp: string) => boolean;
+  excludeSignal: (fp: string, reason?: string) => Promise<void>;
+  restoreSignal: (fp: string) => Promise<void>;
+}
 
 interface BaselineVoiceSignal {
   perspective?: string;
@@ -133,12 +149,19 @@ function useSaveFlash() {
 
 // ─── Gap badge ────────────────────────────────────────────────────────────────
 
+const GAP_LABEL: Record<GapAlignment, string> = {
+  aligned: "Aligned with outside signals",
+  drift:   "Slight drift from outside signals",
+  gap:     "Gap vs. outside signals",
+  missing: "Not found in outside signals",
+};
+
 function GapBadge({ alignment, baselineValue }: { alignment: GapAlignment; baselineValue?: string }) {
-  const preview = alignment === "missing"
-    ? "Not found in outside signals"
-    : baselineValue
-      ? `Outside: "${baselineValue.slice(0, 80)}${baselineValue.length > 80 ? "…" : ""}"`
-      : "Outside signal unclear";
+  const label = GAP_LABEL[alignment];
+  const excerpt = alignment !== "missing" && baselineValue
+    ? ` — Outside: "${baselineValue.slice(0, 80)}${baselineValue.length > 80 ? "…" : ""}"`
+    : "";
+  const preview = `${label}${excerpt}`;
   return (
     <span
       className={`crpv-ws-gap-badge crpv-ws-gap-${alignment}`}
@@ -159,6 +182,8 @@ function FieldBlock({
   isSaved,
   singleLine = false,
   gap,
+  hideLabel = false,
+  autoGrow = false,
 }: {
   label: string;
   value: string;
@@ -168,11 +193,21 @@ function FieldBlock({
   isSaved?: boolean;
   singleLine?: boolean;
   gap?: { alignment: GapAlignment; baselineValue?: string };
+  hideLabel?: boolean;
+  autoGrow?: boolean;
 }) {
   const [local, setLocal] = useState(value);
   const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { setLocal(value); }, [value]);
+
+  useEffect(() => {
+    if (!autoGrow || singleLine || !textareaRef.current) return;
+    const el = textareaRef.current;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [local, autoGrow, singleLine]);
 
   const handleBlur = useCallback(async () => {
     if (local === value) return;
@@ -182,12 +217,14 @@ function FieldBlock({
   }, [local, value, onSave]);
 
   return (
-    <div className="crpv-ws-field">
+    <div className={`crpv-ws-field${autoGrow ? " crpv-ws-field-grow" : ""}`}>
       <div className="crpv-ws-field-hd">
-        <label className="crpv-ws-label">
-          {label}
-          {gap && <GapBadge alignment={gap.alignment} baselineValue={gap.baselineValue} />}
-        </label>
+        {!hideLabel && (
+          <label className="crpv-ws-label">
+            {label}
+            {gap && <GapBadge alignment={gap.alignment} baselineValue={gap.baselineValue} />}
+          </label>
+        )}
         {saving && <span className="crpv-ws-saving cap">Saving…</span>}
         {!saving && isSaved && <span className="crpv-ws-saved cap">Saved ✓</span>}
       </div>
@@ -202,11 +239,13 @@ function FieldBlock({
         />
       ) : (
         <textarea
+          ref={textareaRef}
           className="crpv-ws-textarea"
-          rows={rows}
+          rows={autoGrow ? 1 : rows}
           value={local}
           onChange={(e) => setLocal(e.target.value)}
           onBlur={handleBlur}
+          style={autoGrow ? { resize: "none", overflow: "hidden", flexShrink: 0 } : undefined}
         />
       )}
     </div>
@@ -323,14 +362,12 @@ function ReviewableBlock({
   const status = text ? getStatus(text) : null;
   return (
     <div className="crpv-ws-field">
-      <div className="crpv-ws-field-hd">
-        <label className="crpv-ws-label">{label}</label>
-        {text && (
-          <ReviewControl content={text} status={status} onSet={setStatus} />
-        )}
-      </div>
-      <div className={`crpv-ws-readonly${!text ? " crpv-ws-readonly-empty" : ""}${status === "flagged" ? " crpv-rv-flagged" : ""}`}>
-        {text || "—"}
+      <label className="crpv-ws-label">{label}</label>
+      <div className="crpv-ws-rv-content-row">
+        <div className={`crpv-ws-readonly${!text ? " crpv-ws-readonly-empty" : ""}${status === "flagged" ? " crpv-rv-flagged" : ""}`}>
+          {text || "—"}
+        </div>
+        {text && <ReviewControl content={text} status={status} onSet={setStatus} />}
       </div>
     </div>
   );
@@ -394,9 +431,11 @@ function ReviewControl({
 }) {
   return (
     <div className="crpv-rv-ctrl">
-      {isSuspicious && status === null && (
-        <span className="crpv-rv-suspicious cap" title="Needs review — may be from a different company or source">?</span>
-      )}
+      <span
+        className="crpv-rv-suspicious cap"
+        style={{ visibility: (isSuspicious && status === null) ? "visible" : "hidden" }}
+        title="Needs review — may be from a different company or source"
+      >?</span>
       <button
         type="button"
         className={`crpv-rv-btn crpv-rv-confirm${status === "confirmed" ? " active" : ""}`}
@@ -587,46 +626,187 @@ function OutsideSignalItems({
   signals,
   getStatus,
   setStatus,
+  exclusion,
 }: {
   label: string;
   signals: BaselineVoiceSignal[];
   getStatus?: (content: string) => ReviewStatus;
   setStatus?: (content: string, s: ReviewStatus) => void;
+  exclusion?: ExclusionControls;
 }) {
+  const activeSignals  = exclusion ? signals.filter((s) => !exclusion.isExcluded((s.signal || s.perspective || "").slice(0, 200))) : signals;
+  const excludedSignals = exclusion ? signals.filter((s) =>  exclusion.isExcluded((s.signal || s.perspective || "").slice(0, 200))) : [];
+
+  function renderSignalItem(s: BaselineVoiceSignal, i: number, isExcludedItem: boolean) {
+    const content = s.signal || s.perspective || "";
+    const fp = content.slice(0, 200);
+    const status = getStatus ? getStatus(content) : null;
+
+    return (
+      <div key={i} className={`crpv-ws-outside-signal-item${isExcludedItem ? " crpv-ws-excluded-item" : status === "flagged" ? " crpv-rv-flagged" : ""}`}>
+        <div className="crpv-ws-outside-title">
+          {s.source_type && (
+            <span className="crpv-ws-outside-type cap">{s.source_type.replace(/_/g, " ")}</span>
+          )}
+        </div>
+        <div className="crpv-ws-outside-body">
+          {s.signal && <span className="crpv-ws-outside-signal-text">{s.signal}</span>}
+        </div>
+        <div className="crpv-ws-outside-chips">
+          {s.sentiment && (
+            <span className={`crpv-ws-outside-sentiment cap crpv-ws-sent-${s.sentiment.toLowerCase()}`}>
+              {s.sentiment}
+            </span>
+          )}
+        </div>
+        {isExcludedItem && exclusion ? (
+          <button
+            type="button"
+            className="crpv-ws-restore-btn"
+            onClick={() => exclusion.restoreSignal(fp)}
+            title="Restore — show signal again"
+          >↩ Restore</button>
+        ) : exclusion && content ? (
+          <button
+            type="button"
+            className="crpv-rv-btn crpv-rv-flag"
+            title="Hide — display only, does not affect scoring"
+            onClick={() => exclusion.excludeSignal(fp)}
+          >✗</button>
+        ) : getStatus && setStatus && content ? (
+          <ReviewControl content={content} status={status} onSet={setStatus} />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="crpv-ws-field">
       <label className="crpv-ws-label">{label} ({signals.length})</label>
       {signals.length > 0 ? (
         <div className="crpv-ws-readonly-list">
-          {signals.map((s, i) => {
-            const content = s.signal || s.perspective || "";
-            const status = getStatus ? getStatus(content) : null;
-            return (
-              <div key={i} className={`crpv-ws-outside-signal-item${status === "flagged" ? " crpv-rv-flagged" : ""}`}>
-                <div className="crpv-ws-outside-title">
-                  {s.source_type && (
-                    <span className="crpv-ws-outside-type cap">{s.source_type.replace(/_/g, " ")}</span>
-                  )}
-                </div>
-                <div className="crpv-ws-outside-body">
-                  {s.signal && <span className="crpv-ws-outside-signal-text">{s.signal}</span>}
-                </div>
-                <div className="crpv-ws-outside-chips">
-                  {s.sentiment && (
-                    <span className={`crpv-ws-outside-sentiment cap crpv-ws-sent-${s.sentiment.toLowerCase()}`}>
-                      {s.sentiment}
-                    </span>
-                  )}
-                  {getStatus && setStatus && content && (
-                    <ReviewControl content={content} status={status} onSet={setStatus} />
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {activeSignals.map((s, i) => renderSignalItem(s, i, false))}
+          {excludedSignals.length > 0 && (
+            <div className="crpv-ws-excluded-section">
+              <p className="crpv-ws-excluded-header">Hidden from this view ({excludedSignals.length})</p>
+              <p className="crpv-ws-excluded-notice crpv-ws-excluded-notice-display">Signal hidden from this view. This item does not currently affect scoring.</p>
+              {excludedSignals.map((s, i) => renderSignalItem(s, i, true))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="crpv-ws-readonly crpv-ws-readonly-empty">No signals found</div>
+      )}
+    </div>
+  );
+}
+
+// ─── Exclusion impact detection ───────────────────────────────────────────────
+
+// Maps AffectedArtifact to this view's tab keys (view-specific — kept local).
+const ARTIFACT_TO_TAB: Record<AffectedArtifact, WorkshopTab> = {
+  Positioning: "positioning",
+  Strategy: "strategy",
+  Needs: "needs",
+  Routes: "jtbd",
+};
+
+// ─── Evidence impact banner ───────────────────────────────────────────────────
+
+function EvidenceImpactBanner({
+  impact,
+  evidenceStatus,
+  hasCompanyEvidence = false,
+  totalSignalCount,
+}: {
+  impact: ExclusionImpact;
+  evidenceStatus?: string | null;
+  hasCompanyEvidence?: boolean;
+  // Total excluded outside signals (ledger + voice). Banner shows if this > 0.
+  totalSignalCount?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const totalCount = totalSignalCount ?? impact.excludedCount;
+  if (totalCount === 0) return null;
+
+  // Distinguish: ledger items (affect scoring) vs. voice-only signals (display-only).
+  const affectsScoring = impact.excludedCount > 0;
+  const voiceOnlyCount = totalCount - impact.excludedCount;
+
+  const isMixed = affectsScoring && voiceOnlyCount > 0;
+
+  const countLabel = affectsScoring
+    ? isMixed
+      ? `${impact.excludedCount} evidence item${impact.excludedCount !== 1 ? "s" : ""} excluded from scoring · ${voiceOnlyCount} outside signal${voiceOnlyCount !== 1 ? "s" : ""} hidden from this view`
+      : `${impact.excludedCount} evidence item${impact.excludedCount !== 1 ? "s" : ""} excluded from scoring`
+    : `${totalCount} outside signal${totalCount !== 1 ? "s" : ""} hidden from this view`;
+
+  const subLabel = isMixed
+    ? "Outside evidence is now weaker. Voice signals are hidden visually only."
+    : affectsScoring
+      ? "Outside evidence is now weaker."
+      : "These signals do not currently affect scoring.";
+
+  const guidanceBullets = impact.affectedArtifacts.length > 0
+    ? impact.affectedArtifacts.map((a) => RESTORE_GUIDANCE[a])
+    : ["Restore excluded signals to re-include them in this view."];
+
+  const unlockSummaries = impact.affectedArtifacts.length > 0
+    ? impact.affectedArtifacts.map((a) =>
+        computeArtifactUnlockSummary(a, evidenceStatus, hasCompanyEvidence, impact.excludedCount > 0)
+      )
+    : [];
+
+  return (
+    <div className="crpv-impact-banner">
+      <div className="crpv-impact-banner-hd">
+        <span className="crpv-impact-icon">⚠</span>
+        <div className="crpv-impact-summary">
+          <p className="crpv-impact-count">{countLabel}</p>
+          <p className="crpv-impact-sub">{subLabel}</p>
+        </div>
+      </div>
+
+      {affectsScoring && impact.affectedArtifacts.length > 0 && (
+        <div className="crpv-impact-chips">
+          {impact.affectedArtifacts.map((a) => (
+            <span key={a} className="crpv-impact-chip">{a} confidence reduced</span>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="crpv-impact-toggle"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "▲ Hide" : "▼ What would restore confidence"}
+      </button>
+
+      {expanded && (
+        <div className="crpv-impact-guidance-block">
+          <ul className="crpv-impact-guidance">
+            {guidanceBullets.map((b, i) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+          {unlockSummaries.length > 0 && (
+            <div className="crpv-unlock-table">
+              <p className="crpv-unlock-table-hd">What would strengthen this</p>
+              <table>
+                <tbody>
+                  {unlockSummaries.map((s) => (
+                    <tr key={s.artifact} className="crpv-unlock-table-row">
+                      <td className="crpv-unlock-table-artifact">{s.artifact}</td>
+                      <td className="crpv-unlock-table-band">{s.bandLabel}</td>
+                      <td className="crpv-unlock-table-action">{s.topAction}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -662,12 +842,14 @@ function SignalBar({
   baseline,
   positioning,
   strategy,
+  excludedCount = 0,
 }: {
   activeStage: SignalStage;
   setActiveStage: (s: SignalStage) => void;
   baseline: BaselineResult | null;
   positioning: PositioningCanvas | null;
   strategy: StrategyCascade | null;
+  excludedCount?: number;
 }) {
   const outsideFields = [
     baseline?.category_archetype,
@@ -704,7 +886,14 @@ function SignalBar({
         className={`crpv-ws-signal-col crpv-ws-signal-btn${activeStage === "outside" ? " crpv-ws-signal-active" : ""}`}
         onClick={() => setActiveStage("outside")}
       >
-        <span className="crpv-ws-signal-tag cap">Outside Signals</span>
+        <span className="crpv-ws-signal-tag cap">
+          Outside Signals
+          {excludedCount > 0 && (
+            <span className="crpv-ws-signal-excl-badge" title={`${excludedCount} item${excludedCount !== 1 ? "s" : ""} excluded from scoring`}>
+              ·{excludedCount}
+            </span>
+          )}
+        </span>
         <span className="crpv-ws-signal-stage cap">Pre-Diagnosis</span>
         <span className="crpv-ws-signal-desc">Public research &amp; market sentiment</span>
         <div className="crpv-ws-signal-bar-track">
@@ -772,7 +961,7 @@ function SectionHeader({ title, desc, updatedAt }: { title: string; desc: string
 
 // ─── Positioning ──────────────────────────────────────────────────────────────
 
-function PositioningOutside({ baseline, companyId }: { baseline: BaselineResult | null; companyId: string | undefined }) {
+function PositioningOutside({ baseline, companyId, exclusion }: { baseline: BaselineResult | null; companyId: string | undefined; exclusion?: ExclusionControls }) {
   const { getStatus, setStatus } = useSignalReview(companyId);
 
   if (!baseline) {
@@ -807,7 +996,7 @@ function PositioningOutside({ baseline, companyId }: { baseline: BaselineResult 
         />
       )}
       {outside_voice_signals.length > 0 && (
-        <OutsideSignalItems label="External perspectives" signals={outside_voice_signals} getStatus={getStatus} setStatus={setStatus} />
+        <OutsideSignalItems label="External perspectives" signals={outside_voice_signals} exclusion={exclusion} />
       )}
     </div>
   );
@@ -818,6 +1007,7 @@ function PositioningOrgPanel({
   loading,
   updatedAt,
   baseline,
+  signals,
   updateTextField,
   updateItemsField,
 }: {
@@ -825,15 +1015,18 @@ function PositioningOrgPanel({
   loading: boolean;
   updatedAt?: string;
   baseline: BaselineResult | null;
+  signals: SourceConfidenceSignals;
   updateTextField: (field: "value_for_customer" | "best_fit_customers" | "market_category" | "category_rationale" | "current_tagline" | "proposed_tagline", value: string) => Promise<void>;
   updateItemsField: (field: "competitive_alternatives_json" | "unique_attributes_json", items: PositioningItem[]) => Promise<void>;
 }) {
+  const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (!canvas) return <div className="crpv-ws-placeholder">No positioning data yet.</div>;
 
   return (
+    <>
     <div className="crpv-ws-section">
       <SectionHeader
         title="Positioning · Organization Signals"
@@ -921,7 +1114,27 @@ function PositioningOrgPanel({
         singleLine
         isSaved={savedField === "tagline_proposed"}
       />
+
+      <div style={{ paddingTop: 8, display: "flex", justifyContent: "flex-start" }}>
+        <button
+          type="button"
+          className="crpv-ws-need-inspect-btn"
+          onClick={() => setInspectOpen(true)}
+        >
+          Inspect canvas →
+        </button>
+      </div>
     </div>
+
+    <PositioningInspectPanel
+      open={inspectOpen}
+      onClose={() => setInspectOpen(false)}
+      canvas={canvas}
+      frameworksUsed={Array.isArray(canvas.frameworks_used) ? canvas.frameworks_used : []}
+      signals={signals}
+      hasBaseline={baseline !== null}
+    />
+    </>
   );
 }
 
@@ -1142,6 +1355,7 @@ function StrategyOrgPanel({
   loading,
   updatedAt,
   baseline,
+  signals,
   updateNarrativeField,
   updateListField,
 }: {
@@ -1149,15 +1363,18 @@ function StrategyOrgPanel({
   loading: boolean;
   updatedAt?: string;
   baseline: BaselineResult | null;
+  signals: SourceConfidenceSignals;
   updateNarrativeField: (field: "winning_aspiration" | "where_to_play" | "how_to_win", value: string) => Promise<void>;
   updateListField: (field: "capabilities_json" | "management_systems_json", items: CascadeItem[]) => Promise<void>;
 }) {
+  const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (!strategy) return <div className="crpv-ws-placeholder">No strategy data yet.</div>;
 
   return (
+    <>
     <div className="crpv-ws-section crpv-ws-section-wide">
       <SectionHeader
         title="Strategy · Organization Signals"
@@ -1217,7 +1434,27 @@ function StrategyOrgPanel({
           isSaved={savedField === "management_systems_json"}
         />
       )}
+
+      <div style={{ paddingTop: 8, display: "flex", justifyContent: "flex-start" }}>
+        <button
+          type="button"
+          className="crpv-ws-need-inspect-btn"
+          onClick={() => setInspectOpen(true)}
+        >
+          Inspect strategy →
+        </button>
+      </div>
     </div>
+
+    <StrategyInspectPanel
+      open={inspectOpen}
+      onClose={() => setInspectOpen(false)}
+      cascade={strategy}
+      frameworksUsed={[]}
+      signals={signals}
+      hasBaseline={baseline !== null}
+    />
+    </>
   );
 }
 
@@ -1393,9 +1630,7 @@ function JTBDOrgPanel({
 
 // ─── Needs ────────────────────────────────────────────────────────────────────
 
-function NeedsOutside({ baseline, companyId }: { baseline: BaselineResult | null; companyId?: string }) {
-  const { getStatus, setStatus } = useSignalReview(companyId);
-
+function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult | null; exclusion?: ExclusionControls }) {
   if (!baseline) {
     return (
       <div className="crpv-ws-section">
@@ -1406,6 +1641,51 @@ function NeedsOutside({ baseline, companyId }: { baseline: BaselineResult | null
 
   const { outside_voice_signals = [], evidence_ledger = [] } = baseline;
 
+  const activeLedger   = exclusion ? evidence_ledger.filter((item) => !exclusion.isExcluded(ledgerItemFingerprint(item))) : evidence_ledger;
+  const excludedLedger = exclusion ? evidence_ledger.filter((item) =>  exclusion.isExcluded(ledgerItemFingerprint(item))) : [];
+  const hasExcluded    = excludedLedger.length > 0;
+
+  function renderLedgerItem(item: BaselineEvidenceItem, i: number, isExcludedItem: boolean) {
+    const fp = ledgerItemFingerprint(item);
+    const isSuspicious = item.signal_strength === "weak" || !cleanSnippet(item.snippet);
+    return (
+      <div key={i} className={`crpv-ws-outside-evidence-item${isExcludedItem ? " crpv-ws-excluded-item" : ""}`}>
+        <div className="crpv-ws-outside-title">
+          {item.bucket && (
+            <span className="crpv-ws-outside-type cap">{item.bucket.replace(/_/g, " ")}</span>
+          )}
+        </div>
+        <div className="crpv-ws-outside-body">
+          {cleanSnippet(item.snippet)
+            ? <span className="crpv-ws-outside-snippet">{cleanSnippet(item.snippet)}</span>
+            : <span className="crpv-ws-outside-snippet crpv-ws-snippet-none">No public content found</span>}
+        </div>
+        <div className="crpv-ws-outside-chips">
+          {item.signal_strength && (
+            <span className={`crpv-ws-outside-strength cap crpv-ws-strength-${item.signal_strength}`}>
+              {item.signal_strength}
+            </span>
+          )}
+        </div>
+        {isExcludedItem && exclusion ? (
+          <button
+            type="button"
+            className="crpv-ws-restore-btn"
+            onClick={() => exclusion.restoreSignal(fp)}
+            title="Restore — re-includes this item in the next scoring run"
+          >↩ Restore</button>
+        ) : exclusion ? (
+          <button
+            type="button"
+            className={`crpv-rv-btn crpv-rv-flag${isSuspicious ? " crpv-rv-suspicious-flag" : ""}`}
+            title={isSuspicious ? "Needs review — exclude if from the wrong source. Affects scoring." : "Exclude from analysis — affects scoring"}
+            onClick={() => exclusion.excludeSignal(fp)}
+          >✗</button>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="crpv-ws-section crpv-ws-section-wide">
       <BaselineWarningBanner baseline={baseline} />
@@ -1414,46 +1694,22 @@ function NeedsOutside({ baseline, companyId }: { baseline: BaselineResult | null
         desc="What the market is saying about their experience and frustrations."
       />
       {outside_voice_signals.length > 0 && (
-        <OutsideSignalItems label="Sentiment signals" signals={outside_voice_signals} getStatus={getStatus} setStatus={setStatus} />
+        <OutsideSignalItems label="Sentiment signals" signals={outside_voice_signals} exclusion={exclusion} />
       )}
       {evidence_ledger.length > 0 && (
         <div className="crpv-ws-field">
-          <label className="crpv-ws-label">Evidence items ({evidence_ledger.length})</label>
+          <label className="crpv-ws-label">Evidence items ({activeLedger.length}{excludedLedger.length > 0 ? ` of ${evidence_ledger.length}` : ""})</label>
           <div className="crpv-ws-readonly-list">
-            {evidence_ledger.slice(0, 15).map((item, i) => {
-              const content = `${item.bucket ?? ""}::${item.snippet ?? ""}`;
-              const status = getStatus(content);
-              const isSuspicious = item.signal_strength === "weak" || !cleanSnippet(item.snippet);
-              return (
-                <div key={i} className={`crpv-ws-outside-evidence-item${status === "flagged" ? " crpv-rv-flagged" : ""}`}>
-                  <div className="crpv-ws-outside-title">
-                    {item.bucket && (
-                      <span className="crpv-ws-outside-type cap">{item.bucket.replace(/_/g, " ")}</span>
-                    )}
-                  </div>
-                  <div className="crpv-ws-outside-body">
-                    {cleanSnippet(item.snippet)
-                      ? <span className="crpv-ws-outside-snippet">{cleanSnippet(item.snippet)}</span>
-                      : <span className="crpv-ws-outside-snippet crpv-ws-snippet-none">No public content found</span>}
-                  </div>
-                  <div className="crpv-ws-outside-chips">
-                    {item.signal_strength && (
-                      <span className={`crpv-ws-outside-strength cap crpv-ws-strength-${item.signal_strength}`}>
-                        {item.signal_strength}
-                      </span>
-                    )}
-                    <ReviewControl
-                      content={content}
-                      status={status}
-                      onSet={setStatus}
-                      isSuspicious={isSuspicious}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-            {evidence_ledger.length > 15 && (
-              <p className="crpv-ws-hint">{evidence_ledger.length - 15} more items not shown</p>
+            {activeLedger.slice(0, 15).map((item, i) => renderLedgerItem(item, i, false))}
+            {activeLedger.length > 15 && (
+              <p className="crpv-ws-hint">{activeLedger.length - 15} more items not shown</p>
+            )}
+            {hasExcluded && (
+              <div className="crpv-ws-excluded-section">
+                <p className="crpv-ws-excluded-header">Excluded from analysis ({excludedLedger.length})</p>
+                <p className="crpv-ws-excluded-notice">Source excluded. Scores will update; generated strategy artifacts may need review.</p>
+                {excludedLedger.map((item, i) => renderLedgerItem(item, i, true))}
+              </div>
             )}
           </div>
         </div>
@@ -1462,6 +1718,34 @@ function NeedsOutside({ baseline, companyId }: { baseline: BaselineResult | null
         <div className="crpv-ws-placeholder">No evidence found in outside signals.</div>
       )}
     </div>
+  );
+}
+
+// Focused outside view for the Needs compare column:
+// shows inferred jobs/needs from hypotheses + voice signals,
+// NOT the raw evidence ledger (which isn't comparable to ODI desired outcomes).
+function NeedsOutsideCompare({ baseline }: { baseline: BaselineResult | null }) {
+  if (!baseline) {
+    return <div className="crpv-ws-placeholder">No outside signals found. Run the baseline research for this company first.</div>;
+  }
+
+  const hypotheses = baseline.top_hypotheses ?? [];
+
+  if (hypotheses.length === 0) {
+    return <div className="crpv-ws-placeholder">No inferred outcomes in outside signals.</div>;
+  }
+
+  return (
+    <>
+      <div className="crpv-ws-need-table-hd crpv-ws-need-table-hd-outside">
+        <span className="crpv-ws-need-col-outcome cap">Inferred outcome</span>
+      </div>
+      {hypotheses.map((h, i) => (
+        <div key={i} className="crpv-ws-need-row crpv-ws-need-row-outside">
+          <div className="crpv-ws-need-outcome">{h}</div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -1474,17 +1758,21 @@ const STATE_LABEL: Record<string, string> = {
 function NeedRow({
   need,
   idx,
+  num,
   total,
   reorderingId,
   onMove,
   onScoreChange,
+  onInspect,
 }: {
   need: OdiNeedRow;
   idx: number;
+  num: string;
   total: number;
   reorderingId: string | null;
   onMove: (idx: number, dir: "up" | "down") => Promise<void>;
   onScoreChange: (id: string, imp: number, sat: number) => Promise<void>;
+  onInspect?: () => void;
 }) {
   const [imp, setImp] = useState(need.importance);
   const [sat, setSat] = useState(need.satisfaction);
@@ -1495,7 +1783,15 @@ function NeedRow({
 
   return (
     <div className={`crpv-ws-need-row${busy ? " crpv-ws-need-moving" : ""}`}>
-      <div className="crpv-ws-need-outcome">{need.desired_outcome}</div>
+      <span className="crpv-ws-need-num">{num}</span>
+      <div className="crpv-ws-need-outcome">
+        <span>{need.desired_outcome}</span>
+        {onInspect && (
+          <button type="button" className="crpv-ws-need-inspect-btn" onClick={onInspect}>
+            Inspect →
+          </button>
+        )}
+      </div>
       <div className="crpv-ws-need-scores">
         <label className="crpv-ws-need-score-wrap">
           <span className="crpv-ws-need-score-lbl cap">Imp</span>
@@ -1547,15 +1843,30 @@ function NeedsOrgPanel({
   needs: initialNeeds,
   loading,
   updateNeedScores,
+  latestExclusionAt,
 }: {
   needs: OdiNeedRow[];
   loading: boolean;
   updateNeedScores: (id: string, imp: number, sat: number) => Promise<void>;
+  latestExclusionAt?: Date | null;
 }) {
   const [localNeeds, setLocalNeeds] = useState<OdiNeedRow[]>(initialNeeds);
   const [reorderingId, setReorderingId] = useState<string | null>(null);
+  const [inspectNeed, setInspectNeed] = useState<OdiNeedRow | null>(null);
 
   useEffect(() => { setLocalNeeds(initialNeeds); }, [initialNeeds]);
+
+  // Stable need numbers keyed by id — sorted by opportunity score desc, same as main site
+  const needNumberById = useMemo(() => {
+    const sorted = [...initialNeeds].sort((a, b) => {
+      const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      const impDiff = (b.importance ?? 0) - (a.importance ?? 0);
+      if (impDiff !== 0) return impDiff;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return new Map<string, string>(sorted.map((n, i) => [n.id, String(i + 1).padStart(3, "0")]));
+  }, [initialNeeds]);
 
   const moveNeed = useCallback(async (idx: number, dir: "up" | "down") => {
     const targetIdx = dir === "up" ? idx - 1 : idx + 1;
@@ -1601,6 +1912,7 @@ function NeedsOrgPanel({
       />
 
       <div className="crpv-ws-need-table-hd">
+        <span className="crpv-ws-need-col-num cap">#</span>
         <span className="crpv-ws-need-col-outcome cap">Desired outcome</span>
         <span className="crpv-ws-need-col-scores cap">Scores</span>
         <span className="crpv-ws-need-col-state cap">State</span>
@@ -1612,10 +1924,12 @@ function NeedsOrgPanel({
           key={need.id}
           need={need}
           idx={idx}
+          num={needNumberById.get(need.id) ?? "—"}
           total={localNeeds.length}
           reorderingId={reorderingId}
           onMove={moveNeed}
           onScoreChange={updateNeedScores}
+          onInspect={() => setInspectNeed(need)}
         />
       ))}
 
@@ -1624,6 +1938,17 @@ function NeedsOrgPanel({
           Journeys: {Object.entries(grouped).map(([k, v]) => `${k} (${v.length})`).join(" · ")}
         </p>
       )}
+
+      <NeedInspectPanel
+        open={!!inspectNeed}
+        onClose={() => setInspectNeed(null)}
+        need={inspectNeed}
+        staleNote={
+          inspectNeed && latestExclusionAt && isArtifactStale(inspectNeed, latestExclusionAt)
+            ? "Needs review after excluded inputs"
+            : null
+        }
+      />
     </div>
   );
 }
@@ -1961,29 +2286,36 @@ function CompareFieldRow({
   outsideCell: React.ReactNode;
   orgCell: React.ReactNode;
 }) {
+  const [open, setOpen] = useState(true);
   return (
     <div className="crpv-ws-cmp-field">
-      <div className="crpv-ws-cmp-row-label cap">
-        {label}
-        {alignment && <GapBadge alignment={alignment} />}
-      </div>
-      <div className="crpv-ws-cmp-cells">
-        <div className="crpv-ws-cmp-cell">{outsideCell}</div>
-        <div className="crpv-ws-cmp-cell">{orgCell}</div>
-      </div>
+      <button
+        type="button"
+        className="crpv-ws-cmp-row-label cap"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="crpv-ws-cmp-row-label-text">
+          {label}
+          {alignment && <GapBadge alignment={alignment} />}
+        </span>
+        <span className="crpv-ws-cmp-chevron">{open ? "▼" : "▶"}</span>
+      </button>
+      {open && (
+        <div className="crpv-ws-cmp-cells">
+          <div className="crpv-ws-cmp-cell">{outsideCell}</div>
+          <div className="crpv-ws-cmp-cell">{orgCell}</div>
+        </div>
+      )}
     </div>
   );
 }
 
-function CmpOutsideValue({ note, value }: { note: string; value: string | null | undefined }) {
-  return (
-    <>
-      <p className="crpv-ws-cmp-cell-note">{note}</p>
-      {value
-        ? <div className="crpv-ws-readonly">{value}</div>
-        : <div className="crpv-ws-cmp-none">No outside data found</div>}
-    </>
-  );
+function CmpOutsideValue({ value }: { value: string | null | undefined }) {
+  const text = (value || "").trim();
+  return text
+    ? <div className="crpv-ws-readonly">{text}</div>
+    : <div className="crpv-ws-cmp-none">No outside data</div>;
 }
 
 function StrategyCompare({
@@ -2004,46 +2336,46 @@ function StrategyCompare({
   return (
     <>
       <CompareFieldRow
-        label="Direction"
+        label="Where you're headed"
         alignment={baseline ? alignmentOf(strategy?.winning_aspiration, baseline.top_hypotheses?.[0]) : undefined}
-        outsideCell={<CmpOutsideValue note="Top market assumption" value={baseline?.top_hypotheses?.[0]} />}
+        outsideCell={<CmpOutsideValue value={baseline?.top_hypotheses?.[0]} />}
         orgCell={
           <FieldBlock
             label="Where you're headed"
-            value={strategy?.winning_aspiration}
+            hideLabel
+            autoGrow
+            value={strategy?.winning_aspiration ?? ""}
             onSave={async (v) => { await updateNarrativeField("winning_aspiration", v); flash("aspiration"); }}
-            hint="What does winning look like in the market you're in right now?"
-            rows={4}
             isSaved={savedField === "aspiration"}
           />
         }
       />
       <CompareFieldRow
-        label="Market"
+        label="Where you'll compete"
         alignment={baseline ? alignmentOf(strategy?.where_to_play, baseline.category_archetype) : undefined}
-        outsideCell={<CmpOutsideValue note="Market space (inferred)" value={baseline?.category_archetype} />}
+        outsideCell={<CmpOutsideValue value={baseline?.category_archetype} />}
         orgCell={
           <FieldBlock
             label="Where you'll compete"
-            value={strategy?.where_to_play}
+            hideLabel
+            autoGrow
+            value={strategy?.where_to_play ?? ""}
             onSave={async (v) => { await updateNarrativeField("where_to_play", v); flash("where"); }}
-            hint="Which customers, geographies, and channels are you going after?"
-            rows={3}
             isSaved={savedField === "where"}
           />
         }
       />
       <CompareFieldRow
-        label="Edge"
+        label="How you'll win"
         alignment={baseline ? alignmentOf(strategy?.how_to_win, baseline.lens_card?.economic_engine) : undefined}
-        outsideCell={<CmpOutsideValue note="How they make money (inferred)" value={baseline?.lens_card?.economic_engine} />}
+        outsideCell={<CmpOutsideValue value={baseline?.lens_card?.economic_engine} />}
         orgCell={
           <FieldBlock
             label="How you'll win"
-            value={strategy?.how_to_win}
+            hideLabel
+            autoGrow
+            value={strategy?.how_to_win ?? ""}
             onSave={async (v) => { await updateNarrativeField("how_to_win", v); flash("how"); }}
-            hint="What specifically gives you an edge in the spaces you're competing in?"
-            rows={3}
             isSaved={savedField === "how"}
           />
         }
@@ -2099,46 +2431,118 @@ function PositioningCompare({
   return (
     <>
       <CompareFieldRow
-        label="Value delivered"
+        label="The real value you deliver"
         alignment={baseline ? alignmentOf(canvas?.value_for_customer, baseline.message_alignment?.outside_voice_posture) : undefined}
-        outsideCell={<CmpOutsideValue note="What the market sees" value={baseline?.message_alignment?.outside_voice_posture} />}
+        outsideCell={<CmpOutsideValue value={baseline?.message_alignment?.outside_voice_posture} />}
         orgCell={
           <FieldBlock
             label="The real value you deliver"
-            value={canvas?.value_for_customer}
+            hideLabel
+            autoGrow
+            value={canvas?.value_for_customer ?? ""}
             onSave={async (v) => { await updateTextField("value_for_customer", v); flash("value"); }}
-            hint="What changes for the customer? Not what your product does — what they actually gain."
-            rows={3}
             isSaved={savedField === "value"}
           />
         }
       />
       <CompareFieldRow
-        label="Market category"
+        label="Who this is built for"
+        alignment={baseline ? alignmentOf(canvas?.best_fit_customers, baseline.lens_card?.primary_buyer) : undefined}
+        outsideCell={<CmpOutsideValue value={baseline?.lens_card?.primary_buyer} />}
+        orgCell={
+          <FieldBlock
+            label="Who this is built for"
+            hideLabel
+            autoGrow
+            value={canvas?.best_fit_customers ?? ""}
+            onSave={async (v) => { await updateTextField("best_fit_customers", v); flash("customers"); }}
+            isSaved={savedField === "customers"}
+          />
+        }
+      />
+      <CompareFieldRow
+        label="The category you're in"
         alignment={baseline ? alignmentOf(canvas?.market_category, baseline.category_archetype) : undefined}
-        outsideCell={<CmpOutsideValue note="Market space (inferred)" value={baseline?.category_archetype} />}
+        outsideCell={<CmpOutsideValue value={baseline?.category_archetype} />}
         orgCell={
           <FieldBlock
             label="The category you're in"
-            value={canvas?.market_category}
+            hideLabel
+            autoGrow
+            value={canvas?.market_category ?? ""}
             onSave={async (v) => { await updateTextField("market_category", v); flash("category"); }}
-            rows={2}
             isSaved={savedField === "category"}
           />
         }
       />
       <CompareFieldRow
-        label="Who it's for"
-        alignment={baseline ? alignmentOf(canvas?.best_fit_customers, baseline.lens_card?.primary_buyer) : undefined}
-        outsideCell={<CmpOutsideValue note="Primary buyer (inferred)" value={baseline?.lens_card?.primary_buyer} />}
+        label="Why you belong there"
+        alignment={baseline ? alignmentOf(canvas?.category_rationale, baseline.message_alignment?.alignment_summary) : undefined}
+        outsideCell={<CmpOutsideValue value={baseline?.message_alignment?.alignment_summary} />}
         orgCell={
           <FieldBlock
-            label="Who this is built for"
-            value={canvas?.best_fit_customers}
-            onSave={async (v) => { await updateTextField("best_fit_customers", v); flash("customers"); }}
-            hint="Be specific. Who gets the most out of what you do?"
-            rows={2}
-            isSaved={savedField === "customers"}
+            label="Why you belong there"
+            hideLabel
+            autoGrow
+            value={canvas?.category_rationale ?? ""}
+            onSave={async (v) => { await updateTextField("category_rationale", v); flash("rationale"); }}
+            isSaved={savedField === "rationale"}
+          />
+        }
+      />
+      <CompareFieldRow
+        label="Who else they could choose"
+        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        orgCell={
+          <ListEditor
+            label="Who else they could choose"
+            items={canvas?.competitive_alternatives ?? []}
+            onSave={async (items) => { await updateItemsField("competitive_alternatives_json", items); flash("competitors"); }}
+            addPlaceholder="Add a competitor or alternative…"
+            isSaved={savedField === "competitors"}
+          />
+        }
+      />
+      <CompareFieldRow
+        label="What makes you different"
+        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        orgCell={
+          <ListEditor
+            label="What makes you different"
+            items={canvas?.unique_attributes ?? []}
+            onSave={async (items) => { await updateItemsField("unique_attributes_json", items); flash("attributes"); }}
+            addPlaceholder="Add a differentiator…"
+            isSaved={savedField === "attributes"}
+          />
+        }
+      />
+      <CompareFieldRow
+        label="Current tagline"
+        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        orgCell={
+          <FieldBlock
+            label="Current tagline"
+            hideLabel
+            value={canvas?.current_tagline ?? ""}
+            onSave={async (v) => { await updateTextField("current_tagline", v); flash("tagline_current"); }}
+            rows={1}
+            singleLine
+            isSaved={savedField === "tagline_current"}
+          />
+        }
+      />
+      <CompareFieldRow
+        label="Proposed tagline"
+        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        orgCell={
+          <FieldBlock
+            label="Proposed tagline"
+            hideLabel
+            value={canvas?.proposed_tagline ?? ""}
+            onSave={async (v) => { await updateTextField("proposed_tagline", v); flash("tagline_proposed"); }}
+            rows={1}
+            singleLine
+            isSaved={savedField === "tagline_proposed"}
           />
         }
       />
@@ -2158,46 +2562,7 @@ function PositioningCompare({
             <OutsideSignalItems label="External perspectives" signals={baseline!.outside_voice_signals!} />
           )}
         </div>
-        <div className="crpv-ws-cmp-support-col">
-          <FieldBlock
-            label="Why you belong there"
-            value={canvas?.category_rationale}
-            onSave={async (v) => { await updateTextField("category_rationale", v); flash("rationale"); }}
-            hint="What earns your place in this category?"
-            rows={2}
-            isSaved={savedField === "rationale"}
-          />
-          <ListEditor
-            label="Who else they could choose"
-            items={canvas?.competitive_alternatives ?? []}
-            onSave={async (items) => { await updateItemsField("competitive_alternatives_json", items); flash("competitors"); }}
-            addPlaceholder="Add a competitor or alternative…"
-            isSaved={savedField === "competitors"}
-          />
-          <ListEditor
-            label="What makes you different"
-            items={canvas?.unique_attributes ?? []}
-            onSave={async (items) => { await updateItemsField("unique_attributes_json", items); flash("attributes"); }}
-            addPlaceholder="Add a differentiator…"
-            isSaved={savedField === "attributes"}
-          />
-          <FieldBlock
-            label="Current tagline"
-            value={canvas?.current_tagline}
-            onSave={async (v) => { await updateTextField("current_tagline", v); flash("tagline_current"); }}
-            rows={1}
-            singleLine
-            isSaved={savedField === "tagline_current"}
-          />
-          <FieldBlock
-            label="Proposed tagline"
-            value={canvas?.proposed_tagline}
-            onSave={async (v) => { await updateTextField("proposed_tagline", v); flash("tagline_proposed"); }}
-            rows={1}
-            singleLine
-            isSaved={savedField === "tagline_proposed"}
-          />
-        </div>
+        <div className="crpv-ws-cmp-support-col" />
       </div>
     </>
   );
@@ -2233,14 +2598,14 @@ function JTBDCompare({
       <CompareFieldRow
         label="Who does this job"
         alignment={baseline ? alignmentOf(marketDef?.job_executor, baseline.lens_card?.primary_buyer) : undefined}
-        outsideCell={<CmpOutsideValue note="Primary buyer (inferred)" value={baseline?.lens_card?.primary_buyer} />}
+        outsideCell={<CmpOutsideValue value={baseline?.lens_card?.primary_buyer} />}
         orgCell={
           <FieldBlock
             label="Who does this job"
-            value={marketDef?.job_executor}
+            hideLabel
+            autoGrow
+            value={marketDef?.job_executor ?? ""}
             onSave={(v) => saveTextField("job_executor", v)}
-            hint="The person actually doing the job — not the buyer, not the org."
-            rows={2}
             isSaved={savedField === "job_executor"}
           />
         }
@@ -2248,48 +2613,40 @@ function JTBDCompare({
       <CompareFieldRow
         label="Who makes the call"
         alignment={baseline ? alignmentOf(marketDef?.chooser, baseline.lens_card?.chooser) : undefined}
-        outsideCell={<CmpOutsideValue note="Decision maker (inferred)" value={baseline?.lens_card?.chooser} />}
+        outsideCell={<CmpOutsideValue value={baseline?.lens_card?.chooser} />}
         orgCell={
           <FieldBlock
             label="Who makes the call"
-            value={marketDef?.chooser}
+            hideLabel
+            autoGrow
+            value={marketDef?.chooser ?? ""}
             onSave={(v) => saveTextField("chooser", v)}
-            hint="The person who decides which solution to use."
-            rows={2}
             isSaved={savedField === "chooser"}
           />
         }
       />
       <CompareFieldRow
-        label="The job"
+        label="The job they're trying to do"
         alignment={baseline ? alignmentOf(marketDef?.jtbd, baseline.top_hypotheses?.[0]) : undefined}
-        outsideCell={<CmpOutsideValue note="Top inferred hypothesis" value={baseline?.top_hypotheses?.[0]} />}
+        outsideCell={<CmpOutsideValue value={baseline?.top_hypotheses?.[0]} />}
         orgCell={
           <FieldBlock
             label="The job they're trying to do"
-            value={marketDef?.jtbd}
+            hideLabel
+            autoGrow
+            value={marketDef?.jtbd ?? ""}
             onSave={(v) => saveTextField("jtbd", v)}
-            hint="From their perspective. What are they trying to accomplish?"
-            rows={5}
             isSaved={savedField === "jtbd"}
           />
         }
       />
-      <div className="crpv-ws-cmp-support-hd cap">Supporting context</div>
-      <div className="crpv-ws-cmp-support">
-        <div className="crpv-ws-cmp-support-col">
-          {(baseline?.top_hypotheses?.length ?? 0) > 1 && (
-            <ReadonlyList label="All inferred jobs / assumptions" items={baseline!.top_hypotheses!} />
-          )}
-          {(baseline?.open_questions?.length ?? 0) > 0 && (
-            <AnnotatableQuestionList label="Unresolved questions" questions={baseline!.open_questions!} companyId={companyId} />
-          )}
-        </div>
-        <div className="crpv-ws-cmp-support-col">
-          {marketDef && (
+      <CompareFieldRow
+        label="How you'll approach it"
+        outsideCell={<div className="crpv-ws-cmp-none">No outside data</div>}
+        orgCell={
+          marketDef ? (
             <div className="crpv-ws-field">
               <div className="crpv-ws-field-hd">
-                <label className="crpv-ws-label">How you'll approach it</label>
                 {savedField === "innovation_strategy" && <span className="crpv-ws-saved cap">Saved ✓</span>}
               </div>
               <select
@@ -2306,8 +2663,20 @@ function JTBDCompare({
                 ))}
               </select>
             </div>
+          ) : null
+        }
+      />
+      <div className="crpv-ws-cmp-support-hd cap">Supporting context</div>
+      <div className="crpv-ws-cmp-support">
+        <div className="crpv-ws-cmp-support-col">
+          {(baseline?.top_hypotheses?.length ?? 0) > 1 && (
+            <ReadonlyList label="All inferred jobs / assumptions" items={baseline!.top_hypotheses!} />
+          )}
+          {(baseline?.open_questions?.length ?? 0) > 0 && (
+            <AnnotatableQuestionList label="Unresolved questions" questions={baseline!.open_questions!} companyId={companyId} />
           )}
         </div>
+        <div className="crpv-ws-cmp-support-col" />
       </div>
     </>
   );
@@ -2403,11 +2772,13 @@ function CompanySwitcher({
                     onClick={() => { onSelect(c.id); setOpen(false); }}
                   >
                     <span className="crpv-co-option-name">{c.name}</span>
-                    {(c.quarter || c.archetype) && (
-                      <span className="crpv-co-option-meta cap">
-                        {[c.quarter, c.archetype].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
+                    <span className="crpv-co-option-meta cap">
+                      {[
+                        c.quarter,
+                        c.archetype,
+                        c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null,
+                      ].filter(Boolean).join(" · ")}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -2423,7 +2794,7 @@ function CompanySwitcher({
 
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
-  const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
+  const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
   const { activeCompany, hasCompany } = useClientViewData({ actionLimit: 0 });
   const [activeTab,   setActiveTab]   = useState<WorkshopTab>("positioning");
   const [activeStage, setActiveStage] = useState<SignalStage>("outside");
@@ -2431,8 +2802,35 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const companyId = activeCompany?.id;
 
+  const { signals: sourceSignals } = useSourceConfidence({
+    companyId,
+    areaScoresJson: activeCompany?.area_scores_json,
+    evidenceStatus: activeCompany?.evidence_status,
+  });
+
+  const signalExclusion = useSignalExclusion(
+    companyId ?? null,
+    activeCompany?.excluded_signals_json,
+    refetchCompany,
+  );
+  const exclusionControls: ExclusionControls = {
+    isExcluded: signalExclusion.isExcluded,
+    excludeSignal: signalExclusion.excludeSignal,
+    restoreSignal: signalExclusion.restoreSignal,
+  };
+
   const { preferredRun: baselineRun, loading: baselineLoading } = usePublicBaseline(companyId);
   const baseline = baselineOf(baselineRun);
+
+  const exclusionImpact = useMemo(
+    () => computeExclusionImpact(baseline?.evidence_ledger ?? [], signalExclusion.excludedSet, ARTIFACT_TO_TAB),
+    [baseline?.evidence_ledger, signalExclusion.excludedSet],
+  );
+
+  const latestExclusionAt = useMemo(
+    () => computeLatestExclusionAt(signalExclusion.excluded),
+    [signalExclusion.excluded],
+  );
 
   const {
     loading: posLoading,
@@ -2452,6 +2850,7 @@ export default function ClientRefinePreviewWorkshopView() {
     loading: odiLoading,
     marketDefinition,
     needs,
+    error: odiError,
     updateNeedScores,
     updateMarketDefinition,
   } = useOdiNeeds(companyId);
@@ -2502,10 +2901,10 @@ export default function ClientRefinePreviewWorkshopView() {
 
   function renderOutsideTab() {
     if (baselineLoading) return <div className="crpv-ws-placeholder cap">Loading outside signals…</div>;
-    if (activeTab === "positioning") return <PositioningOutside baseline={baseline} companyId={companyId} />;
+    if (activeTab === "positioning") return <PositioningOutside baseline={baseline} companyId={companyId} exclusion={exclusionControls} />;
     if (activeTab === "strategy")   return <StrategyOutside baseline={baseline} companyId={companyId} />;
     if (activeTab === "jtbd")       return <JTBDOutside baseline={baseline} companyId={companyId} />;
-    return <NeedsOutside baseline={baseline} companyId={companyId} />;
+    return <NeedsOutside baseline={baseline} exclusion={exclusionControls} />;
   }
 
   function renderOrgTab() {
@@ -2515,6 +2914,7 @@ export default function ClientRefinePreviewWorkshopView() {
         canvas={positioning}
         loading={posLoading}
         baseline={baseline}
+        signals={sourceSignals}
         updateTextField={updatePosTextField}
         updateItemsField={updatePosItemsField}
       />
@@ -2524,6 +2924,7 @@ export default function ClientRefinePreviewWorkshopView() {
         strategy={strategy}
         loading={stratLoading}
         baseline={baseline}
+        signals={sourceSignals}
         updateNarrativeField={updateNarrativeField}
         updateListField={updateListField}
       />
@@ -2537,12 +2938,21 @@ export default function ClientRefinePreviewWorkshopView() {
         updateMarketDefinition={updateMarketDefinition}
       />
     );
+    if (odiError) return <div className="crpv-ws-placeholder crpv-ws-error cap">Needs query error: {odiError}</div>;
     return (
-      <NeedsOrgPanel
-        needs={needs}
-        loading={odiLoading}
-        updateNeedScores={updateNeedScores}
-      />
+      <>
+        <NeedsOrgPanel
+          needs={needs}
+          loading={odiLoading}
+          updateNeedScores={updateNeedScores}
+          latestExclusionAt={latestExclusionAt}
+        />
+        {!odiLoading && needs.length === 0 && (
+          <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
+            company id: {companyId}
+          </p>
+        )}
+      </>
     );
   }
 
@@ -2575,16 +2985,47 @@ export default function ClientRefinePreviewWorkshopView() {
         updateMarketDefinition={updateMarketDefinition}
       />
     );
-    // Needs — side by side without field rows (evidence vs ODI needs don't map 1:1)
+    // Needs compare — inferred needs from outside vs defined ODI needs
+    const outsideSignals = (baseline?.outside_voice_signals ?? []).filter((s) => s.signal);
     return (
-      <div className="crpv-ws-cmp-support">
-        <div className="crpv-ws-cmp-support-col">
-          <NeedsOutside baseline={baseline} />
+      <>
+        <div className="crpv-ws-cmp-support">
+          <div className="crpv-ws-cmp-support-col">
+            <NeedsOutsideCompare baseline={baseline} />
+          </div>
+          <div className="crpv-ws-cmp-support-col">
+            {odiError
+              ? <div className="crpv-ws-placeholder crpv-ws-error cap">Query error: {odiError}</div>
+              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} />
+            }
+          </div>
         </div>
-        <div className="crpv-ws-cmp-support-col">
-          <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} />
-        </div>
-      </div>
+        {outsideSignals.length > 0 && (
+          <>
+            <div className="crpv-ws-cmp-support-hd cap">Supporting context — outside voice signals</div>
+            <div className="crpv-ws-cmp-support">
+              <div className="crpv-ws-cmp-support-col">
+                <div className="crpv-ws-readonly-list">
+                  {outsideSignals.map((s, i) => (
+                    <div key={i} className="crpv-ws-outside-evidence-item">
+                      <div className="crpv-ws-outside-title">
+                        {s.source_type && <span className="crpv-ws-outside-type cap">{s.source_type}</span>}
+                        {s.sentiment && (
+                          <span className={`crpv-ws-outside-strength cap crpv-ws-strength-${s.sentiment}`}>{s.sentiment}</span>
+                        )}
+                      </div>
+                      <div className="crpv-ws-outside-body">
+                        <span className="crpv-ws-outside-snippet">{s.signal}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="crpv-ws-cmp-support-col" />
+            </div>
+          </>
+        )}
+      </>
     );
   }
 
@@ -2613,19 +3054,25 @@ export default function ClientRefinePreviewWorkshopView() {
         baseline={baseline}
         positioning={positioning}
         strategy={strategy}
+        excludedCount={exclusionImpact.excludedCount}
       />
 
       <nav className="crpv-ws-tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            className={`crpv-ws-tab${activeTab === tab.key ? " active" : ""}`}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {TABS.map((tab) => {
+          const isAffected = activeStage === "outside" && exclusionImpact.affectedTabKeys.has(tab.key);
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              className={`crpv-ws-tab${activeTab === tab.key ? " active" : ""}${isAffected ? " crpv-ws-tab-affected" : ""}`}
+              onClick={() => setActiveTab(tab.key)}
+              title={isAffected ? "Affected by excluded outside signals" : undefined}
+            >
+              {tab.label}
+              {isAffected && <span className="crpv-ws-tab-warn-dot" aria-hidden="true">⚠</span>}
+            </button>
+          );
+        })}
         {activeStage === "org" && activeTab !== "council" && (
           <button
             type="button"
@@ -2637,6 +3084,18 @@ export default function ClientRefinePreviewWorkshopView() {
           </button>
         )}
       </nav>
+
+      {/* Outside Signals impact banner — lives outside the scroll container so it
+          stays visible as the user scrolls through signals. Only shown when on the
+          outside stage and at least one signal (ledger or voice) is excluded. */}
+      {activeStage === "outside" && activeTab !== "council" && (
+        <EvidenceImpactBanner
+          impact={exclusionImpact}
+          evidenceStatus={activeCompany?.evidence_status}
+          hasCompanyEvidence={sourceSignals?.hasCompanyEvidence ?? false}
+          totalSignalCount={signalExclusion.excludedSet.size}
+        />
+      )}
 
       {activeTab === "council" ? (
         <div className="crpv-ws-content">

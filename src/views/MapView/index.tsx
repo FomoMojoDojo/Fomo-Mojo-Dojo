@@ -273,6 +273,7 @@ export default function MapView() {
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
     inputsOverride: inputs,
+    evidenceStatus: activeCompany?.evidence_status,
   });
   const { items: strategicProblems } = useStrategicProblems(activeCompany?.id);
   const { items: jobSteps } = useJobSteps(activeCompany?.id);
@@ -584,7 +585,7 @@ export default function MapView() {
             className="mt-3 max-w-5xl"
             source="companies scores/area_scores_json plus live inputs, job_steps, opportunities, routes, and Strategic Decision System tables."
             evaluation="AI + deterministic logic merge evidence strength, initiative alignment, and source confidence to generate map cards and priorities."
-            scoring="Current/Potential/Projected prefer stored scores; fallback scorer computes gate scores, evidence multipliers, opportunity focus, and constraints."
+            scoring="Current/Reachable/Unlockable prefer stored scores; fallback scorer computes gate scores, evidence multipliers, opportunity focus, and constraints."
             why="This clarifies why each map box exists, how it was derived, and which levers to tune when output feels generic."
           />
         </div>

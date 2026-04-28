@@ -1,3 +1,12 @@
+import {
+  type EvidenceBand,
+  type EvidenceLayerProfile,
+  isPrimaryNeedsSourcePath,
+  computeEvidenceBand,
+  BAND_REACHABLE_CAP,
+  BAND_UNLOCKABLE_CAP,
+} from "../evidenceBands";
+
 export type ScoreableInput = {
   input_key?: string | null;
   group_key?: string | null;
@@ -58,7 +67,16 @@ export type BaselineLedgerItem = {
   confidence?: number | null;
   signal_strength?: string | null;
   bucket?: string | null;
+  snippet?: string | null;
+  url?: string | null;
 };
+
+export function ledgerItemFingerprint(item: BaselineLedgerItem): string {
+  return [item.snippet, item.url, item.bucket, item.signal_strength]
+    .filter(Boolean)
+    .join("|")
+    .slice(0, 200);
+}
 
 export type BaselineRunResult = {
   evidence_ledger?: BaselineLedgerItem[] | null;
@@ -701,13 +719,17 @@ export function computeGateScores(
   baselineRunResultJson?: BaselineRunResult,
   strategicProblems: StrategicProblemInput[] = [],
   routes: ScoreableRoute[] = [],
+  excludedLedgerFingerprints?: ReadonlySet<string>,
 ): GateScoreResult {
   const safeInputs = Array.isArray(inputs) ? inputs : [];
   const safeSteps = Array.isArray(jobSteps) ? jobSteps : [];
   const safeOpps = Array.isArray(opportunities) ? opportunities : [];
-  const ledger = Array.isArray(baselineRunResultJson?.evidence_ledger)
+  const rawLedger = Array.isArray(baselineRunResultJson?.evidence_ledger)
     ? baselineRunResultJson?.evidence_ledger ?? []
     : [];
+  const ledger = excludedLedgerFingerprints?.size
+    ? rawLedger.filter((item) => !excludedLedgerFingerprints.has(ledgerItemFingerprint(item)))
+    : rawLedger;
 
   const ledgerCount = ledger.length;
   const avgConfidence = avg(
@@ -977,10 +999,14 @@ export function computeEvidenceMultiplier(
   inputsCount: number,
   stepsCount: number,
   oppsCount: number,
+  excludedLedgerFingerprints?: ReadonlySet<string>,
 ): EvidenceResult {
-  const ledger = Array.isArray(baselineRunResultJson?.evidence_ledger)
+  const rawLedger = Array.isArray(baselineRunResultJson?.evidence_ledger)
     ? baselineRunResultJson?.evidence_ledger ?? []
     : [];
+  const ledger = excludedLedgerFingerprints?.size
+    ? rawLedger.filter((item) => !excludedLedgerFingerprints.has(ledgerItemFingerprint(item)))
+    : rawLedger;
   const ledgerCount = ledger.length;
   const avgConfidence = avg(
     ledger
@@ -1106,22 +1132,45 @@ export function computeMojoScore(
   };
 }
 
-export function computePotentialProjected(mojo_score: number): PotentialProjectedResult {
+export function computePotentialProjected(
+  mojo_score: number,
+  evidenceBand: EvidenceBand = "directional_not_validated",
+): PotentialProjectedResult {
   const current = clamp(mojo_score, 0, 100);
   const headroom = 100 - current;
+  const reachableCap = BAND_REACHABLE_CAP[evidenceBand];
+  const unlockableCap = BAND_UNLOCKABLE_CAP[evidenceBand];
 
   const potential_score = roundInt(
-    clamp(current + Math.min(22, headroom * 0.35), 0, 100),
+    clamp(current + Math.min(reachableCap, headroom * 0.35), 0, 100),
   );
   const projected_score = roundInt(
     clamp(
-      Math.max(potential_score + 10, current + Math.min(42, headroom * 0.62)),
+      Math.max(potential_score + Math.min(5, headroom * 0.1), current + Math.min(unlockableCap, headroom * 0.62)),
       0,
       100,
     ),
   );
 
   return { potential_score, projected_score };
+}
+
+function buildEvidenceLayerProfile(
+  evidenceBreakdown: EvidenceResult["evidenceBreakdown"],
+  needsSourcePaths: string[],
+): EvidenceLayerProfile {
+  const baselineStrength = evidenceBreakdown.baseline_strength / 100;
+  const artifactCoverage = evidenceBreakdown.artifact_coverage / 100;
+  const ledgerCount = evidenceBreakdown.ledger_count;
+  const hasPrimaryCustomer = needsSourcePaths.some(isPrimaryNeedsSourcePath);
+  const primaryCount = needsSourcePaths.filter(isPrimaryNeedsSourcePath).length;
+  const primaryRatio = needsSourcePaths.length > 0 ? primaryCount / needsSourcePaths.length : 0;
+  return {
+    outside: { present: baselineStrength > 0, strength: baselineStrength },
+    org: { present: artifactCoverage > 0, strength: artifactCoverage },
+    customer: { present: hasPrimaryCustomer, strength: primaryRatio },
+    measurement: { present: ledgerCount >= 20, strength: clamp(ledgerCount / 40, 0, 1) },
+  };
 }
 
 export function scoreCompanyMojo(args: {
@@ -1133,6 +1182,8 @@ export function scoreCompanyMojo(args: {
   strategicProblems?: StrategicProblemInput[];
   baselineRunResultJson?: BaselineRunResult;
   gamma?: number;
+  excludedLedgerFingerprints?: ReadonlySet<string>;
+  needsSourcePaths?: string[];
 }): FullMojoScoreResult {
   const gateResult = computeGateScores(
     args.inputs,
@@ -1142,6 +1193,7 @@ export function scoreCompanyMojo(args: {
     args.baselineRunResultJson,
     args.strategicProblems ?? [],
     args.routes ?? [],
+    args.excludedLedgerFingerprints,
   );
 
   const evidenceResult = computeEvidenceMultiplier(
@@ -1149,6 +1201,7 @@ export function scoreCompanyMojo(args: {
     gateResult.counts.inputs,
     gateResult.counts.job_steps,
     gateResult.counts.opportunities,
+    args.excludedLedgerFingerprints,
   );
 
   const marketBaseline = deriveMarketBaselineCalibration(args.baselineRunResultJson ?? null);
@@ -1161,7 +1214,10 @@ export function scoreCompanyMojo(args: {
     marketBaseline.typical / 100,
   );
 
-  const projectedResult = computePotentialProjected(mojoResult.mojo_score);
+  const evidenceBand = computeEvidenceBand(
+    buildEvidenceLayerProfile(evidenceResult.evidenceBreakdown, args.needsSourcePaths ?? []),
+  );
+  const projectedResult = computePotentialProjected(mojoResult.mojo_score, evidenceBand);
 
   const area_scores_json = {
     scoring_version: "mojo_v3",
@@ -1203,6 +1259,7 @@ export function scoreCompanyMojo(args: {
       mojo_score: mojoResult.mojo_score,
       potential_score: projectedResult.potential_score,
       projected_score: projectedResult.projected_score,
+      evidence_band: evidenceBand,
     },
   };
 
