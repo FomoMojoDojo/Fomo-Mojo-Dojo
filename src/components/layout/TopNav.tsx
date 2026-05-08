@@ -127,6 +127,8 @@ export default function TopNav() {
   const clientRefinePreviewEnabled = isClientRefinePreviewEnabled();
   const showClientRefineVersionSwitch = isAdmin && clientRefinePreviewEnabled;
   const isRefinePreviewActive = isClientRefinePreviewPath(location.pathname);
+  const currentClientVersionLabel =
+    mode === "client" && !isRefinePreviewActive ? "Current" : isRefinePreviewActive ? "Refine" : "Current";
 
   const visibleCore = useMemo(() => (isClientView ? clientCoreItems : coreItems), [isClientView]);
 
@@ -229,6 +231,12 @@ export default function TopNav() {
     }
   };
 
+  const onAdminNavFollow = () => {
+    safeLocalStorageSet("mojo.presentation.mode", "internal");
+    setMode("internal");
+    onNavFollow();
+  };
+
   const onModeChange = (next: "internal" | "client") => {
     safeLocalStorageSet("mojo.presentation.mode", next);
     setMode(next);
@@ -265,13 +273,6 @@ export default function TopNav() {
       setSidebarOpen(false);
     }
   };
-
-  useEffect(() => {
-    if (!isClientView) return;
-    if (!location.pathname.startsWith("/admin")) return;
-    if (location.pathname === "/") return;
-    navigate("/", { replace: true });
-  }, [isClientView, location.pathname, navigate]);
 
   const navItemClass = (path: string) =>
     `group flex items-center rounded-lg py-2 transition-colors ${
@@ -379,13 +380,13 @@ export default function TopNav() {
             {renderGroup("Core", visibleCore)}
             {visibleResources.length > 0 ? renderGroup("Resources", visibleResources) : null}
 
-            {!isClientView && isAdmin ? (
+            {isAdmin ? (
               <div>
                 {sidebarOpen ? (
                   <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">Admin</p>
                 ) : null}
                 <div className="space-y-1">
-                  <Link to="/process/mojomap" className={navItemClass("/process/mojomap")} onClick={onNavFollow}>
+                  <Link to="/process/mojomap" className={navItemClass("/process/mojomap")} onClick={onAdminNavFollow}>
                     <Sparkles className="h-4 w-4 opacity-90" />
                     {sidebarOpen ? (
                       <span className="font-medium">Our Process</span>
@@ -396,7 +397,7 @@ export default function TopNav() {
                   {adminItems.map((item) => {
                     const Icon = item.icon;
                     return (
-                      <Link key={item.path} to={item.path} className={navItemClass(item.path)} onClick={onNavFollow}>
+                      <Link key={item.path} to={item.path} className={navItemClass(item.path)} onClick={onAdminNavFollow}>
                         <Icon className="h-4 w-4 opacity-90" />
                         {sidebarOpen ? (
                           <span className="font-medium">{item.label}</span>
@@ -427,7 +428,7 @@ export default function TopNav() {
                       {adminToolingItems.map((item) => {
                         const Icon = item.icon;
                         return (
-                          <Link key={item.path} to={item.path} className={navItemClass(item.path)} onClick={onNavFollow}>
+                          <Link key={item.path} to={item.path} className={navItemClass(item.path)} onClick={onAdminNavFollow}>
                             <Icon className="h-4 w-4 opacity-90" />
                             {sidebarOpen ? (
                               <span className="font-medium">{item.label}</span>
@@ -573,6 +574,43 @@ export default function TopNav() {
                 </div>
               </div>
             ) : null}
+
+            {!sidebarOpen ? (
+              <div className="flex flex-col items-center gap-2">
+                {showClientRefineVersionSwitch ? (
+                  <button
+                    type="button"
+                    onClick={() => onClientVersionChange(isRefinePreviewActive ? "current" : "refine_preview")}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 font-mono text-[8px] uppercase tracking-[0.08em] text-[#c7cde4] transition-colors hover:bg-white/8 hover:text-white"
+                    title={`Client Version: ${currentClientVersionLabel}. Click to switch.`}
+                    aria-label={`Client version ${currentClientVersionLabel}. Click to switch.`}
+                  >
+                    {isRefinePreviewActive ? "RP" : "CU"}
+                  </button>
+                ) : null}
+                {user ? (
+                  <button
+                    type="button"
+                    onClick={() => signOut()}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#c7cde4] transition-colors hover:bg-white/8 hover:text-white"
+                    title="Sign out"
+                    aria-label="Sign out"
+                  >
+                    SO
+                  </button>
+                ) : (
+                  <Link
+                    to="/login"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#f2a38d] transition-colors hover:bg-white/8 hover:text-[#ffc2b2]"
+                    title="Login"
+                    aria-label="Login"
+                    onClick={onNavFollow}
+                  >
+                    IN
+                  </Link>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <div className={`border-t border-white/10 ${sidebarOpen ? "px-3 py-3" : "px-2 py-3"}`}>
@@ -603,8 +641,12 @@ export default function TopNav() {
                 )}
               </button>
 
-              {showSwitcher && sidebarOpen ? (
-                <div className="absolute bottom-full left-0 right-0 z-[70] mb-2 rounded-lg border border-white/15 bg-[#1a2140] py-1 shadow-2xl">
+              {showSwitcher ? (
+                <div
+                  className={`absolute bottom-full z-[70] mb-2 rounded-lg border border-white/15 bg-[#1a2140] py-1 shadow-2xl ${
+                    sidebarOpen ? "left-0 right-0" : "left-full ml-2 w-56"
+                  }`}
+                >
                   {companies.map((company) => (
                     <button
                       key={company.id}
@@ -644,6 +686,18 @@ export default function TopNav() {
                     Login
                   </Link>
                 )}
+              </div>
+            ) : user ? (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => signOut()}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 font-mono text-[8px] uppercase tracking-[0.08em] text-[#c7cde4] transition-colors hover:bg-white/8 hover:text-white"
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  SO
+                </button>
               </div>
             ) : null}
           </div>

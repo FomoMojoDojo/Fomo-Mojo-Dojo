@@ -42,15 +42,20 @@ function pickPreferredRun(runs: any[]) {
   const latest = runs[0] ?? null;
   if (!latest) return null;
 
-  const latestScore = baselineQualityScore(latest);
-  if (latestScore >= 0) return latest;
-
   const best = [...runs]
     .map((run) => ({ run, score: baselineQualityScore(run) }))
     .sort((a, b) => b.score - a.score)[0];
 
   if (!best) return latest;
-  if (best.score <= latestScore) return latest;
+  const latestScore = baselineQualityScore(latest);
+  const latestOutsideSignals = listCount(asRecord(latest?.result_json)?.outside_voice_signals);
+  const bestOutsideSignals = listCount(asRecord(best.run?.result_json)?.outside_voice_signals);
+
+  // Keep the latest run only when it is not materially worse than the best recent run.
+  // Zero-signal latest runs should not hide an older run with actual outside voice evidence.
+  if (latestScore >= best.score - 6 && (latestOutsideSignals > 0 || bestOutsideSignals === 0)) {
+    return latest;
+  }
   return best.run;
 }
 

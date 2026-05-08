@@ -1,5 +1,11 @@
-import { useMemo, useState, useRef, useEffect, Fragment } from "react";
+import { useMemo, useState, useRef, useEffect, Fragment, type ReactNode } from "react";
 import type { JobStepRow } from "@/hooks/useJobSteps";
+import type { RouteRow } from "@/views/Routes/useRoutes";
+import {
+  checkpointForStepNumber,
+  containsNonOdiProcessLanguage,
+  containsSolutionPrescriptiveLanguage,
+} from "@/lib/jtbdProcess";
 
 const ODI_LABELS = ["DEFINE", "LOCATE", "PREPARE", "EXECUTE", "MONITOR", "MODIFY", "CONCLUDE", "EVALUATE"] as const;
 
@@ -7,7 +13,22 @@ function odiLabel(index: number): string {
   return ODI_LABELS[index % ODI_LABELS.length];
 }
 
-function suggestionScore(s: JobStepRow): number {
+function displayStepLabel(step: JobStepRow): string {
+  const raw = String(step.step_label || "").trim();
+  const fallback = checkpointForStepNumber(step.step_number || 1).canonicalLabel;
+  if (!raw) return fallback;
+  return containsSolutionPrescriptiveLanguage(raw) || containsNonOdiProcessLanguage(raw) ? fallback : raw;
+}
+
+function displayJourneyTitle(value: string | null | undefined, fallbackKey = "") {
+  const raw = String(value || "").trim()
+    .replace(/^(checkpoint map|job map)\s*:\s*/i, "")
+    .trim();
+  if (raw) return raw;
+  return fallbackKey ? fallbackKey.charAt(0).toUpperCase() + fallbackKey.slice(1) : "";
+}
+
+export function suggestionScore(s: JobStepRow): number {
   let n = 0;
   if (s.has_gap) n += 3;
   if (s.evidence_status === "unclear") n += 2;
@@ -18,56 +39,154 @@ function suggestionScore(s: JobStepRow): number {
   return n;
 }
 
-function deriveSuggestedId(steps: JobStepRow[]): string | null {
+export function deriveSuggestedId(steps: JobStepRow[]): string | null {
   if (steps.length === 0) return null;
   const sorted = [...steps].sort((a, b) => suggestionScore(b) - suggestionScore(a));
   const top = sorted[0];
   return top && suggestionScore(top) > 0 ? top.id : null;
 }
 
-// Derives 1–2 supported bullets and 1–2 missing/weak bullets from existing checkpoint fields.
-// "Missing or weak" intentionally avoids gap_note (already shown above in the tile).
-function deriveSupportedGaps(step: JobStepRow): { supported: string[]; weak: string[] } {
-  const supported: string[] = [];
-  const weak: string[] = [];
+// ─── Internal condition generation ──────────────────────────────────────────
+// Priority: gap_note → description → evidence_basis → ownership → ODI phase.
+// Generic fallback lines are used only when none of the descriptive fields exist.
 
-  // --- Currently supported ---
-  if (step.evidence_basis) {
-    const text = step.evidence_basis.replace(/\n+/g, " ").trim();
-    supported.push(text.length > 90 ? text.slice(0, 90) + "…" : text);
+// Strip leading negation markers to expose the core noun phrase.
+function coreOf(text: string): string {
+  return text
+    .replace(/^(there (?:is|are) no|no formal|no clear|no defined|lack of|lacking|missing|unclear|without|not enough|limited|poor|insufficient)\s+/i, "")
+    .replace(/^(?:\w+\s+)?(?:does?\s+not\s+have|do\s+not\s+have|has\s+no)\s+/i, "")
+    .replace(/\s+(?:in place|exists?|available|found|present|currently|yet|documented|established|defined|used|needed|adequate|sufficient)\.?\s*$/i, "")
+    .trim();
+}
+
+function ucFirst(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/\.$/, "") : s;
+}
+
+function trunc(s: string, max = 68): string {
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+function wordTrunc(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut) + "…";
+}
+
+// Convert the first word of a step label to a gerund so "before negotiating terms begins" reads naturally.
+function gerundPhrase(label: string): string {
+  const [first, ...rest] = label.split(/\s+/);
+  const v = first.toLowerCase();
+  const VOWELS = "aeiou";
+  let g: string;
+  if (v.endsWith("ing")) g = v;
+  else if (v.endsWith("ie")) g = v.slice(0, -2) + "ying";
+  else if (v.endsWith("e") && v.length > 3 && !VOWELS.includes(v[v.length - 2])) g = v.slice(0, -1) + "ing";
+  else if (
+    v.length <= 5 &&
+    !VOWELS.includes(v[v.length - 1]) &&
+    v[v.length - 1] !== "y" &&
+    VOWELS.includes(v[v.length - 2]) &&
+    !VOWELS.includes(v[v.length - 3] ?? "")
+  ) {
+    g = v + v[v.length - 1] + "ing";
   }
-  if (step.evidence_status === "evidenced" && supported.length < 2) {
-    supported.push("Step is directly evidenced in customer research");
-  } else if (step.evidence_status === "implied" && supported.length === 0) {
-    supported.push("Some coverage at this step is implied by available research");
+  else g = v + "ing";
+  return rest.length ? `${g} ${rest.join(" ").toLowerCase()}` : g;
+}
+
+// Gap → resolved condition: strips negation, wraps the core noun as a requirement.
+function condFromGap(gap_note: string, step_label: string): string {
+  const core = coreOf(gap_note);
+  if (core.length < 4) return `${step_label} requirements are documented before the step begins`;
+  return `${ucFirst(trunc(core, 62))} is in place before ${gerundPhrase(step_label)} begins`;
+}
+
+const LEADING_SUBJECT_RE = /^(?:the\s+)?(?:teams?|staff|organization|company|we|vendor|supplier|partners?)\s+/i;
+const LEADING_VERB_RE = /^(?:review|confirm|check|negotiate|prepare|finalize|sign|define|identify|assess|evaluate|plan|approve|execute|monitor|coordinate|document|process|manage|complete|establish|ensure|verify)\s+/i;
+
+// Description → what's involved must be confirmed: prefers explicit noun lists, else first clause.
+function condFromDescription(desc: string, step_label: string): string | null {
+  const gp = gerundPhrase(step_label);
+  const stripped = desc.replace(LEADING_SUBJECT_RE, "").replace(LEADING_VERB_RE, "").trim();
+  if (stripped.length < 6) return null;
+  const listRe = /\b([a-z][a-z\s-]{1,20}(?:,\s*[a-z][a-z\s-]{1,20})+(?:,?\s*and\s+[a-z][a-z\s-]{1,20})?)/i;
+  const m = stripped.match(listRe);
+  if (m) {
+    const list = m[1].replace(/\s+(?:with|for|from|to|in|by|at|of)\s.*$/i, "").trim();
+    if (list.length >= 6) return `${ucFirst(wordTrunc(list, 62))} are confirmed before ${gp} begins`;
   }
-  if (supported.length === 0) {
-    supported.push("No direct evidence of current offering at this step");
+  const clause = stripped.replace(/[^\w\s.,]/g, "").split(/[.,]/)[0].trim();
+  if (clause.length >= 10) return `${ucFirst(wordTrunc(clause, 68))} requirements are established`;
+  return null;
+}
+
+// Evidence basis → what must stay tracked: strips research preamble, wraps the subject.
+function condFromBasis(basis: string): string | null {
+  if (/^no\s+direct\s+evidence/i.test(basis.trim())) {
+    const subject = basis
+      .replace(/^no\s+direct\s+evidence\s+(?:on|for|about|of)\s+/i, "")
+      .replace(/\.?\s*$/, "")
+      .trim();
+    if (subject.length > 4) return `Evidence for ${subject.toLowerCase()} is captured before decisions are made`;
+    return null;
+  }
+  const cleaned = basis
+    .replace(/^(?:interviews?|surveys?|customer research|research|data|field data)(?:\s+data)?\s+(?:shows?|indicates?|suggests?|reveals?|found)\s+(?:gap in|lack of|limited|that)?\s*/i, "")
+    .replace(/^(?:based on|from|per|according to)\s+/i, "")
+    .replace(/^(?:gap in|lack of|limited|that)\s+/i, "")
+    .replace(/\s+(?:is missing|are missing|is absent|not found|is unclear)\.?\s*$/i, "")
+    .trim();
+  if (cleaned.length < 6) return null;
+  return `${ucFirst(trunc(cleaned, 68))} is tracked and current`;
+}
+
+// Ownership: uses the core noun from gap_note when available, else the step label.
+function condOwnership(step_label: string, gap_note?: string | null): string {
+  const noun = gap_note ? coreOf(gap_note) : "";
+  const subject = noun.length > 4 ? trunc(noun, 45).toLowerCase() : step_label.toLowerCase();
+  return `Ownership of ${subject} is named and documented`;
+}
+
+// ODI phase fallback — only used when all descriptive fields are empty.
+const ODI_PHASE_COND: Record<string, (l: string) => string> = {
+  DEFINE:   (l) => `The team can state what a successful ${l} looks like before starting`,
+  LOCATE:   (l) => `Where to find what's needed for ${l} is documented, not held by one person`,
+  PREPARE:  (l) => `What must be confirmed before ${l} starts is written down, not assumed`,
+  EXECUTE:  (l) => `The person doing ${l} has the authority to act without escalating`,
+  MONITOR:  (l) => `A named signal — not a gut check — indicates when ${l} is off track`,
+  MODIFY:   (l) => `Changes made during ${l} go through an identified reviewer before taking effect`,
+  CONCLUDE: (l) => `The output of ${l} is handed off in a form the next step can use without explanation`,
+  EVALUATE: (l) => `After ${l}, someone updates the approach based on what happened`,
+};
+
+function deriveInternalConditions(step: JobStepRow, odiLabel: string, limit: number): string[] {
+  const conditions: string[] = [];
+  const l = displayStepLabel(step) || "this step";
+
+  if (step.has_gap && step.gap_note)
+    conditions.push(condFromGap(step.gap_note, l));
+
+  if (step.description && conditions.length < limit) {
+    const c = condFromDescription(step.description, l);
+    if (c) conditions.push(c);
   }
 
-  // --- Missing or weak (derived from evidence quality, not gap_note) ---
-  const conf = step.evidence_confidence ?? 100;
-  if (step.evidence_status === "unclear") {
-    weak.push("Evidence quality at this step is unclear");
-  } else if (step.evidence_status === "implied") {
-    weak.push("Support is inferred rather than directly evidenced");
-  }
-  if (conf < 50 && weak.length < 2) {
-    weak.push("Low confidence in current evidence — direct customer validation needed");
-  } else if (conf < 70 && weak.length < 2 && step.evidence_status !== "evidenced") {
-    weak.push("Moderate confidence — more research would sharpen this signal");
-  }
-  if (!step.evidence_basis && weak.length < 2) {
-    weak.push("No documented evidence basis for this checkpoint");
-  }
-  if (step.has_gap && weak.length < 2) {
-    weak.push("Gap identified — customer need at this step is unmet");
-  }
-  if (weak.length === 0) {
-    weak.push("No gaps flagged — monitor as customer context evolves");
+  if (step.evidence_basis && conditions.length < limit) {
+    const c = condFromBasis(step.evidence_basis);
+    if (c) conditions.push(c);
   }
 
-  return { supported: supported.slice(0, 2), weak: weak.slice(0, 2) };
+  if (conditions.length < limit)
+    conditions.push(condOwnership(l, step.gap_note));
+
+  if (conditions.length < limit) {
+    const pc = ODI_PHASE_COND[odiLabel];
+    if (pc) conditions.push(pc(l.toLowerCase()));
+  }
+
+  return conditions.slice(0, limit);
 }
 
 const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
@@ -91,40 +210,55 @@ function EvidenceStatus({ step }: { step: JobStepRow }) {
   );
 }
 
-function SuggestedTile({ step, odi, num }: { step: JobStepRow; odi: string; num: number }) {
-  const { supported, weak } = deriveSupportedGaps(step);
+function InternalConditions({ conditions }: { conditions: string[] }) {
+  if (conditions.length === 0) return null;
   return (
-    <div className="crpv-ws-jobmap-tile suggested expanded">
+    <div className="crpv-ws-jobmap-tile-cap">
+      <p className="cap crpv-ws-jobmap-tile-cap-lbl">What must be true (internally)</p>
+      {conditions.map((cond, i) => (
+        <p key={i} className="crpv-ws-jobmap-tile-cap-item">
+          <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">•</span>
+          <span>{cond}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function SuggestedTile({
+  step, odi, num, isActive, onSelect, routes, routesReady,
+}: {
+  step: JobStepRow; odi: string; num: number; isActive: boolean; onSelect: () => void;
+  routes: RouteRow[];
+  routesReady?: boolean;
+}) {
+  const conditions = deriveInternalConditions(step, odi, 4);
+  return (
+    <div
+      className={`crpv-ws-jobmap-tile suggested expanded${isActive ? " active" : ""}`}
+      onClick={onSelect}
+      style={{ cursor: "pointer" }}
+    >
       <span className="crpv-ws-jobmap-tile-num">{String(num).padStart(2, "0")}</span>
       <span className="crpv-ws-jobmap-tile-odi">{odi}</span>
-      <p className="crpv-ws-jobmap-tile-name">{step.step_label ?? "Untitled"}</p>
+      <p className="crpv-ws-jobmap-tile-name">{displayStepLabel(step)}</p>
+      <EvidenceStatus step={step} />
       {step.description && (
         <p className="crpv-ws-jobmap-tile-desc">{step.description}</p>
       )}
-      <EvidenceStatus step={step} />
       {step.has_gap && step.gap_note && (
         <p className="crpv-ws-jobmap-tile-gap" style={{ marginTop: 8 }}>{step.gap_note}</p>
       )}
-      <div className="crpv-ws-jobmap-tile-sw">
-        <p className="cap crpv-ws-jobmap-tile-sw-lbl">Currently supported</p>
-        {supported.map((item, i) => (
-          <p key={i} className="crpv-ws-jobmap-tile-sw-item">
-            <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">–</span>
-            <span>{item}</span>
-          </p>
-        ))}
-        <p className="cap crpv-ws-jobmap-tile-sw-lbl crpv-ws-jobmap-tile-sw-lbl-gap">Missing or weak</p>
-        {weak.map((item, i) => (
-          <p key={i} className="crpv-ws-jobmap-tile-sw-item crpv-ws-jobmap-tile-sw-weak">
-            <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">–</span>
-            <span>{item}</span>
-          </p>
-        ))}
+      <div className="crpv-ws-jobmap-tile-lower">
+        <InternalConditions conditions={conditions} />
+        {routesReady && routes.length > 0 && (
+          <SuggestedRoutes routes={routes} step={step} conditions={conditions} />
+        )}
+        {step.evidence_basis && (
+          <p className="crpv-ws-jobmap-tile-basis">Evidence: {step.evidence_basis}</p>
+        )}
+        <p className="crpv-ws-jobmap-tile-focus cap">↑ Highest risk</p>
       </div>
-      {step.evidence_basis && (
-        <p className="crpv-ws-jobmap-tile-basis">Evidence: {step.evidence_basis}</p>
-      )}
-      <p className="crpv-ws-jobmap-tile-focus cap">↑ Highest risk</p>
     </div>
   );
 }
@@ -133,47 +267,159 @@ function RegularTile({
   step,
   odi,
   num,
-  isExpanded,
-  onToggleExpand,
+  isActive,
+  onSelect,
 }: {
   step: JobStepRow;
   odi: string;
   num: number;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
+  isActive: boolean;
+  onSelect: () => void;
 }) {
-  const hasExtra = !!(step.description || step.evidence_basis || (step.has_gap && step.gap_note));
+  const conditions = deriveInternalConditions(step, odi, 2);
 
   return (
-    <div className={`crpv-ws-jobmap-tile${isExpanded ? " expanded" : ""}`}>
+    <div
+      className={`crpv-ws-jobmap-tile${isActive ? " active" : ""}`}
+      onClick={onSelect}
+      style={{ cursor: "pointer" }}
+    >
       <div className="crpv-ws-jobmap-tile-hd">
         <span className="crpv-ws-jobmap-tile-num">{String(num).padStart(2, "0")}</span>
         <span className="crpv-ws-jobmap-tile-odi">{odi}</span>
       </div>
-      <p className="crpv-ws-jobmap-tile-name">{step.step_label ?? "Untitled"}</p>
+      <p className="crpv-ws-jobmap-tile-name">{displayStepLabel(step)}</p>
       <EvidenceStatus step={step} />
       {step.description && (
         <p className="crpv-ws-jobmap-tile-desc">{step.description}</p>
       )}
-      {step.evidence_basis && (
-        <p className="crpv-ws-jobmap-tile-basis">Evidence: {step.evidence_basis}</p>
-      )}
-      {isExpanded && step.has_gap && step.gap_note && (
+      {step.has_gap && step.gap_note && (
         <p className="crpv-ws-jobmap-tile-gap">Gap: {step.gap_note}</p>
       )}
-      {hasExtra && (
-        <button
-          type="button"
-          className="crpv-ws-jobmap-tile-more"
-          onClick={onToggleExpand}
-          aria-expanded={isExpanded}
-        >
-          {isExpanded ? "less ↑" : "more →"}
-        </button>
+      {conditions.length > 0 && (
+        <div className="crpv-ws-jobmap-tile-lower">
+          <InternalConditions conditions={conditions} />
+          {step.evidence_basis && (
+            <p className="crpv-ws-jobmap-tile-basis">Evidence: {step.evidence_basis}</p>
+          )}
+        </div>
       )}
     </div>
   );
 }
+
+// ─── Route matching ──────────────────────────────────────────────────────────
+
+const MATCH_STOP = new Set([
+  "the", "and", "for", "are", "but", "not", "you", "all", "can", "has",
+  "that", "this", "with", "from", "they", "will", "have", "been", "were",
+  "what", "when", "your", "their", "does", "into", "more", "than",
+  "then", "some", "would", "could", "should", "which", "there", "about",
+  "being", "before", "after", "each", "how", "who", "may", "our",
+]);
+
+function tokenSet(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !MATCH_STOP.has(w)),
+  );
+}
+
+type MatchedRoute = { route: RouteRow; reason: string | null };
+
+function matchRoutesToStep(
+  routes: RouteRow[],
+  step: JobStepRow,
+  conditions: string[],
+  limit = 3,
+): MatchedRoute[] {
+  if (routes.length === 0) return [];
+
+  const stepCorpus = [
+    displayStepLabel(step),
+    step.gap_note ?? "",
+    step.description ?? "",
+    ...conditions,
+  ].join(" ");
+  const stepTokens = tokenSet(stepCorpus);
+
+  const scored = routes.map((route) => {
+    const whys = Array.isArray(route.why_this_matters_json)
+      ? (route.why_this_matters_json as string[])
+      : [];
+    const corpus = [route.title, route.short_description ?? "", ...whys].join(" ");
+    const routeTokens = tokenSet(corpus);
+
+    let score = 0;
+    for (const w of routeTokens) if (stepTokens.has(w)) score++;
+
+    // Reason: first why bullet or short_description, capped at 70 chars.
+    // Skip for derived routes whose short_description is internal metadata.
+    let reason: string | null = null;
+    if (!route.id.startsWith("derived-")) {
+      const raw = whys[0] ?? route.short_description ?? null;
+      if (raw && raw.trim().length > 6) {
+        reason = raw.length > 70 ? raw.slice(0, 70) + "…" : raw;
+      }
+    }
+
+    return { route, score, reason };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // Fallback: no text overlap → rank by pts_value descending, no reason shown
+  if (scored[0]?.score === 0) {
+    return [...routes]
+      .sort((a, b) => (b.pts_value ?? 0) - (a.pts_value ?? 0))
+      .slice(0, limit)
+      .map((r) => ({ route: r, reason: null }));
+  }
+
+  return scored.slice(0, limit).map((s) => ({ route: s.route, reason: s.reason }));
+}
+
+const CATEGORY_SHORT: Record<string, string> = { fix: "fix", improve: "improve", create: "create" };
+
+function SuggestedRoutes({
+  routes,
+  step,
+  conditions,
+}: {
+  routes: RouteRow[];
+  step: JobStepRow;
+  conditions: string[];
+}) {
+  const matched = matchRoutesToStep(routes, step, conditions, 3);
+  if (matched.length === 0) return null;
+  return (
+    <div className="crpv-ws-jobmap-tile-routes">
+      <p className="cap crpv-ws-jobmap-tile-routes-lbl">Routes that could help</p>
+      {matched.map(({ route, reason }, i) => (
+        <div key={i} className="crpv-ws-jobmap-tile-routes-item">
+          <p className="crpv-ws-jobmap-tile-routes-title">
+            <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">•</span>
+            <span>
+              {route.title || "Untitled route"}
+              {route.category && CATEGORY_SHORT[route.category] && (
+                <span className="crpv-ws-jobmap-tile-routes-cat">
+                  {" · "}{CATEGORY_SHORT[route.category]}
+                </span>
+              )}
+            </span>
+          </p>
+          {reason && (
+            <p className="crpv-ws-jobmap-tile-routes-reason">{reason}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function JourneySection({
   jk,
@@ -182,8 +428,11 @@ function JourneySection({
   subtitle,
   summaryParts,
   suggestedId,
-  expandedId,
-  toggleExpand,
+  activeStepId,
+  onSelectStep,
+  routes,
+  routesReady,
+  headerControls,
 }: {
   jk: string;
   jSteps: JobStepRow[];
@@ -191,8 +440,11 @@ function JourneySection({
   subtitle: string | null;
   summaryParts: string[];
   suggestedId: string | null;
-  expandedId: string | null;
-  toggleExpand: (id: string) => void;
+  activeStepId: string | null;
+  onSelectStep: (id: string) => void;
+  routes: RouteRow[];
+  routesReady?: boolean;
+  headerControls?: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const railRef   = useRef<HTMLDivElement>(null);
@@ -266,12 +518,16 @@ function JourneySection({
   return (
     <div className="crpv-ws-jobmap-journey" key={jk}>
       <div className="crpv-ws-jobmap-hd">
-        <p className="crpv-ws-jobmap-kicker cap">Checkpoint Map</p>
-        {title && <h2 className="crpv-ws-jobmap-title">{title}</h2>}
-        {subtitle && <p className="crpv-ws-jobmap-sub">{subtitle}</p>}
-        {summaryParts.length > 0 && (
-          <p className="crpv-ws-jobmap-summary">{summaryParts.join(" · ")}</p>
-        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div>
+            {title && <h2 className="crpv-ws-jobmap-title">{title}</h2>}
+            {subtitle && <p className="crpv-ws-jobmap-sub">{subtitle}</p>}
+            {summaryParts.length > 0 && (
+              <p className="crpv-ws-jobmap-summary">{summaryParts.join(" · ")}</p>
+            )}
+          </div>
+          {headerControls ?? null}
+        </div>
       </div>
 
       <div className="crpv-ws-jobmap-bleed">
@@ -296,14 +552,18 @@ function JourneySection({
                       step={step}
                       odi={odiLabel(idx)}
                       num={step.step_number ?? idx + 1}
+                      isActive={activeStepId === step.id}
+                      onSelect={() => onSelectStep(step.id)}
+                      routes={routes}
+                      routesReady={routesReady}
                     />
                   ) : (
                     <RegularTile
                       step={step}
                       odi={odiLabel(idx)}
                       num={step.step_number ?? idx + 1}
-                      isExpanded={expandedId === step.id}
-                      onToggleExpand={() => toggleExpand(step.id)}
+                      isActive={activeStepId === step.id}
+                      onSelect={() => onSelectStep(step.id)}
                     />
                   )}
                   {idx < jSteps.length - 1 && (
@@ -330,19 +590,84 @@ function JourneySection({
   );
 }
 
+function inferRelevantCategory(step: JobStepRow): "fix" | "improve" | "create" | null {
+  if (step.has_gap) return "fix";
+  const conf = step.evidence_confidence ?? 100;
+  if (step.evidence_status === "unclear" || conf < 50) return "fix";
+  if (step.evidence_status === "implied" || conf < 70) return "improve";
+  return null;
+}
+
+const CATEGORY_LABEL: Record<string, string> = { fix: "Fix", improve: "Improve", create: "Create" };
+const CATEGORY_CONTEXT: Record<string, string> = {
+  fix: "This step has gaps — Fix routes address known breakdowns.",
+  improve: "Evidence is thin here — Improve routes build on what's working.",
+  create: "This step looks solid — Create routes expand into new ground.",
+};
+
+function JobMapRoutesSection({
+  routes,
+  activeStep,
+}: {
+  routes: RouteRow[];
+  activeStep: JobStepRow | null;
+}) {
+  if (routes.length === 0) return null;
+  const relevantCategory = activeStep ? inferRelevantCategory(activeStep) : null;
+  const isFiltering = activeStep !== null && relevantCategory !== null;
+
+  return (
+    <div className="crpv-ws-jobmap-routes">
+      <div className="crpv-ws-jobmap-routes-hd">
+        <span className="cap">Recommended routes</span>
+        {isFiltering && relevantCategory && (
+          <span className="crpv-ws-jobmap-routes-ctx">{CATEGORY_CONTEXT[relevantCategory]}</span>
+        )}
+      </div>
+      <div className="crpv-ws-jobmap-routes-list">
+        {routes.map((route) => {
+          const isMatch = !isFiltering || route.category === relevantCategory;
+          const pts = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
+          return (
+            <div
+              key={route.id}
+              className={`crpv-ws-jobmap-route-row${isMatch && isFiltering ? " crpv-ws-jobmap-route-match" : ""}${!isMatch ? " crpv-ws-jobmap-route-muted" : ""}`}
+            >
+              <span className={`crpv-ws-jobmap-route-cat crpv-ws-jobmap-route-cat-${route.category}`}>
+                {CATEGORY_LABEL[route.category] ?? route.category}
+              </span>
+              <span className="crpv-ws-jobmap-route-title">{route.title || "Untitled route"}</span>
+              {pts !== null && (
+                <span className="crpv-ws-jobmap-route-pts cap">{pts > 0 ? `+${pts}` : pts} pts</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function JobMapOrgPanel({
   steps,
   loading,
+  activeStepId,
+  onSelectStep,
+  routes,
+  activeStep,
+  routesReady,
+  headerControls,
 }: {
   steps: JobStepRow[];
   loading: boolean;
+  activeStepId: string | null;
+  onSelectStep: (id: string) => void;
+  routes?: RouteRow[];
+  activeStep?: JobStepRow | null;
+  routesReady?: boolean;
+  headerControls?: ReactNode;
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  function toggleExpand(id: string) {
-    setExpandedId((prev) => (prev === id ? null : id));
-  }
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (steps.length === 0) {
@@ -368,8 +693,7 @@ export default function JobMapOrgPanel({
       {journeyOrder.map((jk) => {
         const jSteps = grouped.get(jk)!;
         const first = jSteps[0];
-        const title = first?.journey_title
-          || (first ? first.journey_key.charAt(0).toUpperCase() + first.journey_key.slice(1) : "");
+        const title = displayJourneyTitle(first?.journey_title, first?.journey_key ?? "");
         const subtitle = first?.journey_subtitle ?? null;
 
         const gapCount = jSteps.filter((s) => s.has_gap).length;
@@ -379,7 +703,7 @@ export default function JobMapOrgPanel({
         const summaryParts: string[] = [];
         if (gapCount > 0) summaryParts.push(`${gapCount} gap${gapCount !== 1 ? "s" : ""} across the system`);
         if (evidencedCount > 0) summaryParts.push(`${evidencedCount} evidenced checkpoint${evidencedCount !== 1 ? "s" : ""}`);
-        if (suggestedStep?.step_label) summaryParts.push(`suggested focus: ${suggestedStep.step_label}`);
+        if (suggestedStep) summaryParts.push(`suggested focus: ${displayStepLabel(suggestedStep)}`);
 
         return (
           <JourneySection
@@ -390,11 +714,17 @@ export default function JobMapOrgPanel({
             subtitle={subtitle}
             summaryParts={summaryParts}
             suggestedId={suggestedId}
-            expandedId={expandedId}
-            toggleExpand={toggleExpand}
+            activeStepId={activeStepId}
+            onSelectStep={onSelectStep}
+            routes={routes ?? []}
+            routesReady={routesReady}
+            headerControls={jk === journeyOrder[0] ? headerControls : undefined}
           />
         );
       })}
+      {routesReady && routes && routes.length > 0 && (
+        <JobMapRoutesSection routes={routes} activeStep={activeStep ?? null} />
+      )}
     </div>
   );
 }

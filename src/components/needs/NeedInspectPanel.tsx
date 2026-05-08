@@ -1,330 +1,227 @@
-import { useMemo } from "react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { useEffect } from "react";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
-import TierAlignmentGrid from "@/components/inspect/TierAlignmentGrid";
-import { needSignalTiers } from "@/lib/strategicObject";
-import { computeNeedUnlockConditions } from "@/lib/evidenceBands";
+import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { EngagementPhase } from "@/lib/engagementPhase";
 
 const c = {
-  charcoal: "#233C4B",
+  panel:     "#FAF7F6",
+  card:      "#FFFFFF",
+  line:      "#DDE6D1",
+  charcoal:  "#233C4B",
   secondary: "#46606D",
-  muted: "#6E847F",
-  line: "#DDE6D1",
-  lineFaint: "#EEF3E9",
-  paper: "#F7FBF8",
-  coral: "#FF7D2D",
-  amber: "#FAC846",
-  teal: "#5F9B8C",
+  muted:     "#6E847F",
+  coral:     "#FF7D2D",
+  teal:      "#5F9B8C",
+  amber:     "#FAC846",
 };
 
-function serviceStateLabel(state: string | null | undefined): { label: string; explanation: string } {
+const MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", monospace';
+
+function serviceStateInfo(state: string | null | undefined): { label: string; observation: string } {
   const s = String(state || "").toLowerCase();
-  if (s === "underserved") return { label: "Currently under-served", explanation: "This need is important to customers but not being met well enough." };
-  if (s === "overserved") return { label: "Currently over-served", explanation: "Resources here may exceed what customers actually need — potential to redeploy effort." };
-  return { label: "Appropriately served", explanation: "Customer importance and satisfaction are reasonably balanced for this need." };
+  if (s === "underserved") return {
+    label: "Underserved",
+    observation: "There appears to be a gap between how important customers find this and how well it's currently being met. If that gap is real, it's worth paying attention to.",
+  };
+  if (s === "overserved") return {
+    label: "Over-served",
+    observation: "The signal suggests customers may be getting more than they need here. That's usually a sign effort could be redirected somewhere with more leverage.",
+  };
+  return {
+    label: "Appropriately served",
+    observation: "The pattern here looks balanced — importance and delivery are roughly in line. Worth monitoring, but probably not the most urgent priority right now.",
+  };
 }
 
-function journeyLabel(key: string) {
-  if (key === "customer") return "Customer";
-  if (key === "revenue") return "Revenue";
-  if (key === "operations") return "Operations";
-  return key.charAt(0).toUpperCase() + key.slice(1);
+function journeyLabel(key: string): string {
+  const map: Record<string, string> = { customer: "Customer", revenue: "Revenue", operations: "Operations" };
+  return map[key] ?? (key.charAt(0).toUpperCase() + key.slice(1));
 }
 
-function sourceSafeLabel(sourcePath: string | null | undefined) {
-  const s = String(sourcePath || "").trim();
-  if (!s) return "Unknown source";
-  const lower = s.toLowerCase();
-  if (lower.startsWith("public") || lower.includes("baseline") || lower.includes("benchmark")) {
-    return `Public signals: ${s}`;
-  }
-  return `Uploaded data: ${s}`;
-}
+const SectionLabel = ({ children }: { children: string }) => (
+  <p style={{ margin: "0 0 10px", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: c.muted }}>
+    {children}
+  </p>
+);
 
-function scoreInterpretation(importance: number, satisfaction: number): string {
-  if (importance >= 7 && satisfaction < 5) return "High-priority gap — important but not well served.";
-  if (importance >= 7 && satisfaction >= 7) return "Well served — monitor for shifts in importance.";
-  if (importance < 4) return "Lower priority — less critical to customer job success.";
-  if (satisfaction >= 7) return "Adequately served — keep an eye on importance trends.";
-  return "Moderate priority — strengthen service quality or re-evaluate importance.";
-}
+const Divider = () => (
+  <div style={{ borderTop: `1px solid ${c.line}` }} />
+);
 
 export default function NeedInspectPanel({
   open,
   onClose,
   need,
   staleNote,
+  currentPhase = "outside_signals",
+  // kept for caller compatibility, not used
+  routes: _routes,
+  onRouteSelect: _onRouteSelect,
 }: {
   open: boolean;
   onClose: () => void;
   need: OdiNeedRow | null;
   staleNote?: string | null;
+  currentPhase?: EngagementPhase;
+  routes?: RouteRow[];
+  onRouteSelect?: (routeId: string) => void;
 }) {
-  if (!need) {
-    return (
-      <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-        <SheetContent side="right" className="sm:max-w-[480px]" />
-      </Sheet>
-    );
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    if (open) document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  const stateInfo = serviceStateInfo(need?.service_state);
+
+  const journeyKey = need?.journey_key ?? "";
+  const stepNumber = need?.step_number ?? null;
+  const stepLabel  = need?.step_label  ?? null;
+
+  const contextParts = [
+    journeyKey ? journeyLabel(journeyKey).toUpperCase() : null,
+    stepNumber ? `CHECKPOINT ${stepNumber}` : null,
+    stepLabel  ? stepLabel.toUpperCase() : null,
+  ].filter(Boolean);
+  const contextLine = contextParts.join(" · ");
+
+  const sourcePath      = String(need?.source_path || "").toLowerCase();
+  const isExternalOnly  = sourcePath.includes("baseline") || sourcePath.includes("public") || sourcePath.includes("benchmark");
+  const state           = String(need?.service_state || "").toLowerCase();
+
+  const stillNeeded: string[] = [];
+  if (isExternalOnly) {
+    stillNeeded.push("This signal comes from outside research. Confirm it with customer interviews or internal data before acting on it.");
   }
-
-  const importance = need.importance ?? 5;
-  const satisfaction = need.satisfaction ?? 5;
-  const oppScore = Math.round(Number(need.opportunity_score ?? 0));
-  const stateInfo = serviceStateLabel(need.service_state);
-  const stepContext = need.step_number ? `Checkpoint ${need.step_number}` : "Checkpoint —";
-  const stepDetail = need.step_label ? ` · ${need.step_label}` : "";
-
-  const changeBullets: string[] = [];
-  if (satisfaction < 5) changeBullets.push("Improving how well this need is served would lower its score and move it off the focus list.");
-  if (importance > 7) changeBullets.push("This need ranks as high-importance — validate the signal with more customer interviews.");
-  if (String(need.service_state || "").toLowerCase() === "overserved") {
-    changeBullets.push("Over-serving this need may indicate misallocated effort — review with strategy.");
+  if (state === "underserved") {
+    stillNeeded.push("Validate that this gap is consistent across customer segments — a single source can overstate it.");
+  } else if (state === "overserved") {
+    stillNeeded.push("Check whether this reflects a real pattern or a specific context. Over-served signals sometimes normalize over time.");
   }
-  if (changeBullets.length === 0) changeBullets.push("Run updated customer research to sharpen this signal.");
-
-  const tierCells = needSignalTiers(need.source_path);
-
-  const unlockConditions = useMemo(() => computeNeedUnlockConditions(
-    {
-      sourcePath: need.source_path,
-      importance,
-      satisfaction,
-      serviceState: need.service_state,
-    },
-    false,
-  ), [need.source_path, importance, satisfaction, need.service_state]);
+  if (stillNeeded.length === 0) {
+    stillNeeded.push("Additional customer research would help confirm or sharpen this read.");
+  }
 
   return (
-    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <SheetContent side="right" className="sm:max-w-[480px] overflow-y-auto flex flex-col gap-0 p-0">
-        <div className="flex flex-col h-full">
+    <>
+      {/* Overlay */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, zIndex: 40,
+          background: "rgba(35,60,75,0.26)",
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? "auto" : "none",
+          transition: "opacity 0.25s",
+        }}
+      />
 
-          {/* Stale banner */}
-          {staleNote && (
-            <div
-              className="px-6 py-2 flex items-center gap-2 border-b"
-              style={{ background: `${c.amber}18`, borderColor: c.amber }}
-            >
-              <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.amber }}>
-                {staleNote}
-              </span>
-            </div>
-          )}
-
-          {/* Header */}
-          <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: c.line }}>
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {journeyLabel(need.journey_key)}
-              </span>
-              <span style={{ color: c.line }}>·</span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {stepContext}
-              </span>
-            </div>
-            <h2 className="font-sans text-[17px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
-              {need.desired_outcome}
-            </h2>
-            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-              {sourceSafeLabel(need.source_path)}
-            </p>
-          </div>
-
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-
-            {/* Section 0: What this claims */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.muted }}>
-                What this claims
-              </p>
-              <p className="font-sans text-[13px] leading-[1.55] mb-1" style={{ color: c.secondary }}>
-                {need.desired_outcome}
-              </p>
-              <p className="font-sans text-[12px] leading-[1.5] mb-3" style={{ color: c.muted }}>
-                Claims this need is {stateInfo.label.toLowerCase()}.
-              </p>
-              <TierAlignmentGrid cells={tierCells} />
-            </div>
-
-            <div className="border-t" style={{ borderColor: c.line }} />
-
-            {/* Section A: What this need is */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.muted }}>
-                Service state
-              </p>
-              <div className="rounded-lg border p-3" style={{ borderColor: c.line, background: c.paper }}>
-                <p className="font-sans text-[13px] font-semibold" style={{ color: c.charcoal }}>
-                  {stateInfo.label}
-                </p>
-                <p className="mt-1 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                  {stateInfo.explanation}
-                </p>
-                {stepDetail && (
-                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                    {stepContext}{stepDetail}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t" style={{ borderColor: c.line }} />
-
-            {/* Section B: How the score was calculated */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.muted }}>
-                How this was scored
-              </p>
-              <p className="font-sans text-[24px] font-bold leading-none mb-1" style={{ color: c.charcoal }}>
-                {oppScore}
-              </p>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] mb-3" style={{ color: c.muted }}>
-                Opportunity score
-              </p>
-              <div className="rounded-lg border p-3 space-y-3" style={{ borderColor: c.line, background: c.paper }}>
-                <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                  Score = (how important it is − how well it's satisfied) × how important it is
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.1em] w-[80px]" style={{ color: c.muted }}>
-                      Importance
-                    </span>
-                    <div className="flex-1 h-[6px] rounded-full" style={{ background: c.lineFaint }}>
-                      <div className="h-full rounded-full" style={{ width: `${importance * 10}%`, background: c.coral }} />
-                    </div>
-                    <span className="font-mono text-[11px] w-4 text-right" style={{ color: c.charcoal }}>{importance}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.1em] w-[80px]" style={{ color: c.muted }}>
-                      Satisfaction
-                    </span>
-                    <div className="flex-1 h-[6px] rounded-full" style={{ background: c.lineFaint }}>
-                      <div className="h-full rounded-full" style={{ width: `${satisfaction * 10}%`, background: c.teal }} />
-                    </div>
-                    <span className="font-mono text-[11px] w-4 text-right" style={{ color: c.charcoal }}>{satisfaction}</span>
-                  </div>
-                </div>
-                <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                  {scoreInterpretation(importance, satisfaction)}
-                </p>
-              </div>
-            </div>
-
-            <div className="border-t" style={{ borderColor: c.line }} />
-
-            {/* Section C: What would change this */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.muted }}>
-                What would change this
-              </p>
-              <ul className="space-y-2">
-                {changeBullets.map((b, i) => (
-                  <li key={i} className="flex items-start gap-2 font-sans text-[13px] leading-[1.55]" style={{ color: c.secondary }}>
-                    <span style={{ color: c.muted, flexShrink: 0 }}>·</span>
-                    <span>{b}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="border-t" style={{ borderColor: c.line }} />
-
-            {/* Section D: What would strengthen this */}
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.muted }}>
-                What would strengthen this
-              </p>
-
-              {/* Current evidence state */}
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span
-                  className="rounded px-2 py-[2px] font-mono text-[9px] uppercase tracking-[0.08em] border"
-                  style={{ color: c.amber, borderColor: c.amber, background: `${c.amber}18` }}
-                >
-                  {unlockConditions.currentBandLabel}
+      {/* Panel */}
+      <div
+        style={{
+          position: "fixed", top: 0, right: 0, zIndex: 50,
+          display: "flex", flexDirection: "column",
+          width: 520, maxWidth: "100vw", height: "100vh",
+          transform: open ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+          background: c.panel,
+          borderLeft: `1px solid ${c.line}`,
+        }}
+      >
+        {need && (
+          <>
+            {staleNote && (
+              <div style={{ padding: "7px 20px", borderBottom: `1px solid ${c.line}`, background: `${c.amber}18` }}>
+                <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: c.muted }}>
+                  {staleNote}
                 </span>
-                {unlockConditions.nextBandLabel && (
-                  <>
-                    <span className="font-mono text-[10px]" style={{ color: c.muted }}>→</span>
-                    <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                      {unlockConditions.nextBandLabel}
-                    </span>
-                  </>
-                )}
               </div>
-              <p className="font-sans text-[12px] leading-[1.5] mb-3" style={{ color: c.secondary }}>
-                {unlockConditions.currentStateDescription}
-              </p>
+            )}
 
-              {/* Missing items */}
-              {unlockConditions.missingItems.length > 0 && (
-                <div className="mb-3">
-                  <p className="font-mono text-[9px] uppercase tracking-[0.1em] mb-1.5" style={{ color: c.coral }}>
-                    Current evidence state
-                  </p>
-                  <div className="space-y-1.5">
-                    {unlockConditions.missingItems.map((item, i) => (
-                      <div key={i} className="flex items-start gap-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.muted }}>
-                        <span style={{ color: c.coral, flexShrink: 0 }}>○</span>
-                        <span>{item.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            {/* Header */}
+            <div style={{ position: "relative", padding: "20px 52px 16px 20px", borderBottom: `1px solid ${c.line}` }}>
+              {contextLine && (
+                <p style={{ margin: "0 0 6px", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: c.muted }}>
+                  {contextLine}
+                </p>
               )}
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, lineHeight: 1.3, color: c.charcoal }}>
+                {need.desired_outcome}
+              </h2>
+              <button
+                type="button" onClick={onClose} aria-label="Close"
+                style={{
+                  position: "absolute", top: 16, right: 16,
+                  width: 32, height: 32,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: `1px solid ${c.line}`, borderRadius: 6,
+                  background: c.card, color: c.secondary,
+                  cursor: "pointer", fontSize: 13,
+                }}
+              >
+                ✕
+              </button>
+            </div>
 
-              {/* Restore items */}
-              {unlockConditions.restoreItems.length > 0 && (
-                <div className="mb-3">
-                  <p className="font-mono text-[9px] uppercase tracking-[0.1em] mb-1.5" style={{ color: c.amber }}>
-                    Restorable
-                  </p>
-                  <div className="space-y-1.5">
-                    {unlockConditions.restoreItems.map((item, i) => (
-                      <div key={i} className="flex items-start gap-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.amber }}>
-                        <span style={{ flexShrink: 0 }}>↩</span>
-                        <span>{item.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", display: "flex", flexDirection: "column", gap: 24 }}>
 
-              {/* Unlock items — next evidence threshold */}
-              {unlockConditions.unlockItems.length > 0 && (
-                <div className="rounded border p-3 space-y-2" style={{ borderColor: c.line, borderStyle: "dashed" }}>
-                  <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-                    Next evidence threshold
-                  </p>
-                  {unlockConditions.unlockItems.map((item, i) => (
-                    <div key={i} className="flex items-start gap-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                      <span style={{ color: c.teal, flexShrink: 0 }}>·</span>
-                      <span>{item.label}</span>
+              {/* What we're noticing */}
+              <section>
+                <SectionLabel>What we're noticing</SectionLabel>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: c.secondary }}>
+                  This need appears to be{" "}
+                  <strong style={{ color: c.charcoal, fontWeight: 600 }}>{stateInfo.label.toLowerCase()}</strong>.
+                </p>
+              </section>
+
+              <Divider />
+
+              {/* Why it matters */}
+              <section>
+                <SectionLabel>Why it matters</SectionLabel>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: c.secondary }}>
+                  {stateInfo.observation}
+                </p>
+              </section>
+
+              <Divider />
+
+              {/* What we still need */}
+              <section>
+                <SectionLabel>What we still need</SectionLabel>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {stillNeeded.map((item, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                      <span style={{ color: c.muted, flexShrink: 0, lineHeight: 1.6 }}>○</span>
+                      <span style={{ fontSize: 13, lineHeight: 1.6, color: c.secondary }}>{item}</span>
                     </div>
                   ))}
                 </div>
-              )}
+              </section>
+
             </div>
 
-          </div>
-
-          {/* Footer */}
-          <div className="px-6 py-4 border-t" style={{ borderColor: c.line }}>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full rounded-full border py-2 font-mono text-[10px] uppercase tracking-[0.08em]"
-              style={{ borderColor: c.line, color: c.secondary }}
-            >
-              Close
-            </button>
-          </div>
-
-        </div>
-      </SheetContent>
-    </Sheet>
+            {/* Footer */}
+            <div style={{ padding: "16px 20px", borderTop: `1px solid ${c.line}` }}>
+              <button
+                type="button" onClick={onClose}
+                style={{
+                  display: "block", width: "100%",
+                  padding: "10px 16px",
+                  border: `1px solid ${c.line}`, borderRadius: 6,
+                  background: c.card, color: c.secondary,
+                  fontFamily: MONO, fontSize: 10,
+                  textTransform: "uppercase", letterSpacing: "0.08em",
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }

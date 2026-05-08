@@ -1,10 +1,22 @@
 import { useEffect } from "react";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { ActiveCheckpoint } from "./types";
+import {
+  checkpointForStepNumber,
+  containsNonOdiProcessLanguage,
+  containsSolutionPrescriptiveLanguage,
+} from "@/lib/jtbdProcess";
 
 function journeyLabel(step: JobStepRow) {
   return step.journey_title
     || (step.journey_key.charAt(0).toUpperCase() + step.journey_key.slice(1));
+}
+
+function displayStepLabel(step: JobStepRow) {
+  const raw = String(step.step_label || "").trim();
+  const fallback = checkpointForStepNumber(step.step_number || 1).canonicalLabel;
+  if (!raw) return fallback;
+  return containsSolutionPrescriptiveLanguage(raw) || containsNonOdiProcessLanguage(raw) ? fallback : raw;
 }
 
 function EvidenceBadge({
@@ -83,7 +95,7 @@ export default function JobMapPanel({
           onSelect({
             journeyKey: step.journey_key,
             stepNum: step.step_number ?? 0,
-            stepLabel: step.step_label ?? "",
+            stepLabel: displayStepLabel(step),
             jobStepId: step.id,
           });
           onClose();
@@ -103,7 +115,7 @@ export default function JobMapPanel({
             color: isActive ? "#fff" : "#111",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
-            {step.step_label ?? "Untitled checkpoint"}
+            {displayStepLabel(step)}
           </span>
           {isSuggested && !isActive && (
             <span style={{

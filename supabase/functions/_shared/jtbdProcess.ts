@@ -31,58 +31,58 @@ export const JTBD_ODI_CHECKPOINTS: ReadonlyArray<JtbdCheckpoint> = [
   {
     stepNumber: 1,
     key: "define",
-    canonicalLabel: "Define success clearly",
+    canonicalLabel: "Define desired progress",
     description:
-      "State the result the customer is trying to achieve and what good looks like.",
+      "Clarify the progress the job executor is trying to make and the result that would count as success.",
   },
   {
     stepNumber: 2,
     key: "locate",
-    canonicalLabel: "Find the best path",
+    canonicalLabel: "Locate viable options",
     description:
-      "Find the options, information, and resources most likely to move this job forward.",
+      "Identify the options, resources, and sources of information that could help accomplish the job.",
   },
   {
     stepNumber: 3,
     key: "prepare",
-    canonicalLabel: "Get ready to act",
+    canonicalLabel: "Prepare required conditions",
     description:
-      "Gather prerequisites, align the right people, and remove blockers before starting.",
+      "Get the prerequisites, inputs, and conditions in place before the core task begins.",
   },
   {
     stepNumber: 4,
     key: "confirm",
-    canonicalLabel: "Check before committing",
+    canonicalLabel: "Confirm readiness",
     description:
-      "Confirm the chosen path is feasible, credible, and worth committing to.",
+      "Confirm the chosen path, inputs, and conditions are good enough to proceed.",
   },
   {
     stepNumber: 5,
     key: "execute",
-    canonicalLabel: "Do the core work",
+    canonicalLabel: "Perform the core task",
     description:
-      "Carry out the key actions that move the customer toward the target result.",
+      "Carry out the core task required to create the intended progress.",
   },
   {
     stepNumber: 6,
     key: "monitor",
-    canonicalLabel: "Track progress in real time",
+    canonicalLabel: "Monitor results",
     description:
-      "Track progress, quality, and confidence signals while work is underway.",
+      "Track progress, quality, and emerging signals while the job is underway.",
   },
   {
     stepNumber: 7,
     key: "modify",
-    canonicalLabel: "Adjust when reality changes",
+    canonicalLabel: "Adjust the approach",
     description:
-      "Adjust quickly when conditions change or results fall behind expectations.",
+      "Adjust the approach when conditions shift or outcomes fall short.",
   },
   {
     stepNumber: 8,
     key: "conclude",
-    canonicalLabel: "Finish and capture lessons",
+    canonicalLabel: "Conclude and learn",
     description:
-      "Confirm the result, close open loops, and record what to repeat or improve next time.",
+      "Confirm the result, close the effort cleanly, and capture what should change next time.",
   },
 ] as const;
 
@@ -93,10 +93,10 @@ const CHECKPOINT_BY_NUMBER = new Map(
 );
 
 const SOLUTION_PRESCRIPTIVE_PATTERN =
-  /\b(feature|dashboard|portal|campaign|launch|tool|app|platform|build|implement|rollout|workflow automation|automation workflow|template)\b/i;
+  /\b(feature|dashboard|portal|campaign|launch|tool|app|platform|build|implement|rollout|workflow automation|automation workflow|template|mvp|ui|productize|standardize|integrate|promote|negotiate|supplier|vendor|pricing|terms|partnership|onboarding|mojomap|mojoscore|coffee)\b/i;
 
 const NON_ODI_PROCESS_PATTERN =
-  /\b(awareness|acquisition|activation|retention|engagement|pipeline stage|marketing funnel|sales funnel)\b/i;
+  /\b(awareness|acquisition|activation|retention|engagement|pipeline stage|marketing funnel|sales funnel|consulting process|delivery process|implementation plan)\b/i;
 
 function safeStepNumber(value: number | null | undefined) {
   const numeric = Number(value);
@@ -113,6 +113,7 @@ function validateActionLabel(value: string) {
   if (!compact) return "";
   const words = compact.split(/\s+/);
   if (words.length < 2 || words.length > 8) return "";
+  if (containsSolutionPrescriptiveLanguage(compact) || containsNonOdiProcessLanguage(compact)) return "";
   return compact;
 }
 

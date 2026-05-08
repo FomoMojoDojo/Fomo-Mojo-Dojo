@@ -60,6 +60,29 @@ async function releaseCompanyRunLock(supabase: ReturnType<typeof createClient>, 
   }
 }
 
+function waitUntil(promise: Promise<unknown>) {
+  const edgeRuntime = (globalThis as unknown as {
+    EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
+  }).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(promise);
+}
+
+async function triggerMojoAnalysis(companyId: string, supabaseUrl: string, serviceRoleKey: string) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/run-mojo-analysis`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceRoleKey}`,
+      },
+      body: JSON.stringify({ company_id: companyId, trigger_type: "baseline_complete" }),
+    });
+    console.log("[baseline] triggered mojo analysis, status:", res.status);
+  } catch (err) {
+    console.error("[baseline] failed to trigger mojo analysis:", err);
+  }
+}
+
 function startCompanyRunLockHeartbeat(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
@@ -2480,6 +2503,12 @@ Deno.serve(async (req) => {
     if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
+
+    waitUntil(triggerMojoAnalysis(
+      company_id,
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    ));
 
     return json({
       message: "Public baseline complete",

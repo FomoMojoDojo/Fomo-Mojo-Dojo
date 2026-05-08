@@ -13,6 +13,8 @@ export const PLACEHOLDER_PATTERNS = [
   /^referenced in (page )?metadata/i,
   /^present in (page )?metadata/i,
   /^mentioned in (page )?metadata/i,
+  /^referenced in (script|asset)\s*(asset|file|resource)?/i,
+  /^no public content found/i,
 ];
 
 export function cleanSnippet(snippet: string | null | undefined): string | null {

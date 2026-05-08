@@ -651,7 +651,7 @@ export default function AdminCompanies() {
     });
   };
 
-  const handleCreate = async (useAI: boolean) => {
+  const handleCreate = async (mode: "create_only" | "baseline_only" | "baseline_and_research" | "research_only") => {
     if (!name.trim() || !user) return;
 
     setCreating(true);
@@ -676,12 +676,20 @@ export default function AdminCompanies() {
     if (data) {
       setActiveCompanyId(data.id);
       await refetch();
-      if (useAI) {
+      if (mode === "baseline_and_research") {
         if (sanitizedWebsite) {
           await runBaselineAndResearch(data.id, data.name, sanitizedWebsite);
         } else {
           await runResearch(data.id, data.name, "");
         }
+      } else if (mode === "baseline_only") {
+        if (sanitizedWebsite) {
+          await runPublicBaseline(data.id, data.name, sanitizedWebsite);
+        } else {
+          showPersistentError("Website Required", `Add a website for ${data.name} before running the public baseline.`);
+        }
+      } else if (mode === "research_only") {
+        await runResearch(data.id, data.name, sanitizedWebsite || "");
       } else {
         toast({
           title: "Company Created",
@@ -1162,17 +1170,28 @@ export default function AdminCompanies() {
               <button
                 type="button"
                 disabled={creating}
-                onClick={() => handleCreate(true)}
+                onClick={() => handleCreate("baseline_and_research")}
                 className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50"
                 style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
               >
-                {creating ? "Creating…" : "Create + AI Research"}
+                {creating ? "Creating…" : "Create + Baseline + Research"}
               </button>
 
               <button
                 type="button"
                 disabled={creating}
-                onClick={() => handleCreate(false)}
+                onClick={() => handleCreate("baseline_only")}
+                className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50 flex items-center gap-1"
+                style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
+              >
+                <Globe className="w-3 h-3" />
+                {creating ? "Creating…" : "Create + Web Baseline"}
+              </button>
+
+              <button
+                type="button"
+                disabled={creating}
+                onClick={() => handleCreate("create_only")}
                 className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50 flex items-center gap-1"
                 style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
               >

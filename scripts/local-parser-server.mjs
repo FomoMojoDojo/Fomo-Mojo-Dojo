@@ -11,8 +11,24 @@ function extensionFromName(name) {
   return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
+function normalizeUnicodeArtifacts(text) {
+  return String(text || "")
+    .normalize("NFKC")
+    .replace(/\u00ad/g, "")
+    .replace(/[\u2000-\u200b\u202f\u205f\u3000]/g, " ")
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201c|\u201d/g, '"')
+    .replace(/\u2013|\u2014/g, " - ")
+    .replace(/\u2026/g, "...")
+    .replace(/\t/g, " ");
+}
+
 function normalizeText(text, maxChars = 120_000) {
-  const compact = String(text || "").replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const compact = normalizeUnicodeArtifacts(text)
+    .replace(/\r/g, "\n")
+    .replace(/[ ]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (compact.length <= maxChars) return compact;
   return `${compact.slice(0, maxChars).trimEnd()}\n\n[truncated]`;
 }

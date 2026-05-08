@@ -567,11 +567,14 @@ export type Database = {
           id: string
           importance: number
           journey_key: string
+          notes: string | null
           opportunity_score: number
+          social_extraction_json: Json | null
           sort_order: number
           satisfaction: number
           service_state: string
           source_path: string
+          source_url: string | null
           step_label: string
           step_number: number
           tier: string
@@ -585,11 +588,14 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          notes?: string | null
           opportunity_score?: number
+          social_extraction_json?: Json | null
           sort_order?: number
           satisfaction?: number
           service_state?: string
           source_path?: string
+          source_url?: string | null
           step_label?: string
           step_number?: number
           tier?: string
@@ -603,11 +609,14 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          notes?: string | null
           opportunity_score?: number
+          social_extraction_json?: Json | null
           sort_order?: number
           satisfaction?: number
           service_state?: string
           source_path?: string
+          source_url?: string | null
           step_label?: string
           step_number?: number
           tier?: string

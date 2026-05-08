@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { safeLocalStorageGet, safeLocalStorageSet } from '@/lib/safeLocalStorage';
+import { type EngagementPhase, normalizeEngagementPhase } from '@/lib/engagementPhase';
 
 type AreaScoresJson = Record<string, unknown> | null;
 
@@ -30,7 +31,13 @@ export interface Company {
   area_scores_json: AreaScoresJson;
   public_source_filters_json?: Record<string, unknown> | null;
   program_phase?: string | null;
+  // Normalised, always-valid engagement phase derived from program_phase on read.
+  // Use this instead of casting program_phase directly.
+  engagement_phase: EngagementPhase;
   excluded_signals_json?: ExcludedSignal[] | null;
+  selected_route_id?: string | null;
+  selected_route_summary_json?: Record<string, unknown> | null;
+  selected_route_updated_at?: string | null;
 }
 
 interface CompanyCtx {
@@ -60,7 +67,12 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
   last_scored_at: null,
   area_scores_json: null,
   public_source_filters_json: null,
+  program_phase: "outside_signals",
+  engagement_phase: "outside_signals",
   excluded_signals_json: [],
+  selected_route_id: null,
+  selected_route_summary_json: null,
+  selected_route_updated_at: null,
 };
 
 function pickDefaultCompanyId(companies: Company[]): string | null {
@@ -104,7 +116,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
     const baseSelect =
       "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
-    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json`;
+    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at`;
 
     let { data, error } = await supabase
       .from("companies")
@@ -129,6 +141,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
           ...row,
           public_source_filters_json: null,
           excluded_signals_json: [],
+          selected_route_id: null,
+          selected_route_summary_json: null,
+          selected_route_updated_at: null,
         }));
       }
     }
@@ -141,7 +156,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setCompanies((data as Company[]) || []);
+    const companies = ((data as Company[]) || []).map((row) => ({
+      ...row,
+      engagement_phase: normalizeEngagementPhase(row.program_phase),
+    }));
+    setCompanies(companies);
     setLoading(false);
   }, [user, isAdmin, authLoading, setFallbackPublicCompany]);
 

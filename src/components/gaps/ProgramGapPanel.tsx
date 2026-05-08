@@ -1,7 +1,10 @@
 import type { InputItem } from "@/lib/types";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
 import type { StrategicAssumption } from "@/hooks/useStrategicAssumptions";
-import type { ProgramPhase } from "@/components/journey/StrategyPhaseStrip";
+import { PHASE_ORDER, type EngagementPhase } from "@/lib/engagementPhase";
+
+// Re-export for any legacy consumers.
+export type { EngagementPhase as ProgramPhase };
 
 const c = {
   charcoal: "#233C4B",
@@ -20,7 +23,7 @@ type GapCheck = {
   label: string;
   status: CheckStatus;
   note?: string;
-  phase: "outside" | "diagnose" | "focus" | "flow";
+  phase: EngagementPhase;
 };
 
 function statusDot(status: CheckStatus) {
@@ -51,51 +54,16 @@ function CheckRow({ check }: { check: GapCheck }) {
   );
 }
 
-function PhaseGroup({
-  phase,
-  checks,
-}: {
-  phase: string;
-  checks: GapCheck[];
-}) {
-  const complete = checks.filter((c) => c.status === "complete").length;
-  const total = checks.length;
-  const allDone = complete === total;
-  const pct = total > 0 ? Math.round((complete / total) * 100) : 0;
-
-  return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <p
-          className="font-mono text-[9px] uppercase tracking-[0.1em]"
-          style={{ color: allDone ? c.teal : c.muted }}
-        >
-          {phase}
-        </p>
-        <span className="font-mono text-[9px]" style={{ color: c.muted }}>
-          {complete}/{total}
-        </span>
-      </div>
-      <div
-        className="h-[3px] w-full rounded-full overflow-hidden mb-2"
-        style={{ background: c.lineFaint }}
-      >
-        <div
-          className="h-full rounded-full transition-all"
-          style={{
-            width: `${pct}%`,
-            background: allDone ? c.teal : pct > 50 ? c.amber : c.coral,
-          }}
-        />
-      </div>
-      {checks.map((check) => (
-        <CheckRow key={check.label} check={check} />
-      ))}
-    </div>
-  );
-}
-
-const PHASE_ORDER: GapCheck["phase"][] = ["outside", "diagnose", "focus", "flow"];
+const PHASE_LABELS: Record<EngagementPhase, string> = {
+  outside_signals:  "Outside",
+  validate_outside: "Validate · Outside",
+  diagnose:         "Diagnose",
+  validate_diagnose:"Validate · Diagnose",
+  focus:            "Focus",
+  validate_focus:   "Validate · Focus",
+  flow:             "Flow",
+  validate_flow:    "Validate · Flow",
+};
 
 function Column({
   title,
@@ -108,7 +76,7 @@ function Column({
   subtitle: string;
   accent: string;
   checks: GapCheck[];
-  currentPhase: GapCheck["phase"];
+  currentPhase: EngagementPhase;
 }) {
   const complete = checks.filter((ch) => ch.status === "complete").length;
   const total = checks.length;
@@ -116,6 +84,7 @@ function Column({
     (a, b) => PHASE_ORDER.indexOf(a) - PHASE_ORDER.indexOf(b),
   );
   const multiPhase = phases.length > 1;
+  const curIdx = PHASE_ORDER.indexOf(currentPhase);
 
   return (
     <div
@@ -147,10 +116,10 @@ function Column({
           {multiPhase ? (
             phases.map((phase) => {
               const phaseChecks = checks.filter((ch) => ch.phase === phase);
-              const isPrior = PHASE_ORDER.indexOf(phase) < PHASE_ORDER.indexOf(currentPhase);
+              const isPrior = PHASE_ORDER.indexOf(phase) < curIdx;
               const label = isPrior
-                ? `${phase.charAt(0).toUpperCase() + phase.slice(1)} (carried over)`
-                : phase.charAt(0).toUpperCase() + phase.slice(1);
+                ? `${PHASE_LABELS[phase]} (carried over)`
+                : PHASE_LABELS[phase];
               return (
                 <div key={phase} className="mb-3">
                   <p
@@ -207,7 +176,7 @@ export default function ProgramGapPanel({
   hasPublicEvidence: boolean;
   hasCompanyEvidence: boolean;
   hasPrimaryEvidence: boolean;
-  currentPhase: ProgramPhase;
+  currentPhase: EngagementPhase;
 }) {
   const focusOpps = opportunities.filter((o) => o.priority_tier === "focus");
   const linkedOpps = opportunities.filter((o) => o.managed_outcome_id);
@@ -221,14 +190,28 @@ export default function ProgramGapPanel({
       label: "Public evidence gathered",
       status: hasPublicEvidence ? "complete" : "missing",
       note: hasPublicEvidence ? undefined : "Run Web Baseline to generate public evidence.",
-      phase: "outside",
+      phase: "outside_signals",
     },
     {
       label: "Competitive landscape documented",
       status: hasPublicEvidence ? "partial" : "missing",
       note: "Verify competitor claims are in the evidence ledger.",
-      phase: "outside",
+      phase: "outside_signals",
     },
+    // validate_outside checkpoint
+    {
+      label: "External findings presented to client",
+      status: hasPublicEvidence ? "partial" : "missing",
+      note: "Present signals, gaps, and contradictions found from outside research.",
+      phase: "validate_outside",
+    },
+    {
+      label: "Client perspective and fit assessed",
+      status: "missing",
+      note: "Capture corrections, surprises, and confirm the engagement is well-scoped.",
+      phase: "validate_outside",
+    },
+    // diagnose
     {
       label: "Strategic problem documented",
       status: strategicProblemCount > 0 ? "complete" : "missing",
@@ -272,6 +255,20 @@ export default function ProgramGapPanel({
       note: `${assumptions.length} assumption${assumptions.length !== 1 ? "s" : ""} recorded.`,
       phase: "diagnose",
     },
+    // validate_diagnose checkpoint
+    {
+      label: "Working hypotheses documented and shared",
+      status: strategicProblemCount > 0 && hasCompanyEvidence ? "partial" : "missing",
+      note: "State what the evidence points to — clearly and in client language.",
+      phase: "validate_diagnose",
+    },
+    {
+      label: "Evidence separated from assumption",
+      status: assumptions.length >= 2 ? "partial" : "missing",
+      note: "Label each claim as evidence-supported or still assumed.",
+      phase: "validate_diagnose",
+    },
+    // focus
     {
       label: "Customer needs scored",
       status: odiNeedCount >= 5 ? "complete" : odiNeedCount > 0 ? "partial" : "missing",
@@ -296,11 +293,38 @@ export default function ProgramGapPanel({
       note: `${routeCount} route${routeCount !== 1 ? "s" : ""} defined.`,
       phase: "focus",
     },
+    // validate_focus checkpoint
+    {
+      label: "Chosen outcome presented with evidence",
+      status: focusOpps.length > 0 && routeCount > 0 ? "partial" : "missing",
+      note: "Show why this outcome was selected and what backs the decision.",
+      phase: "validate_focus",
+    },
+    {
+      label: "Stakeholder alignment confirmed",
+      status: "missing",
+      note: "All stakeholders committed before execution begins.",
+      phase: "validate_focus",
+    },
+    // flow
     {
       label: "Solutions defined for top opportunities",
       status: solutionIdeaCount >= 3 ? "complete" : solutionIdeaCount > 0 ? "partial" : "missing",
       note: `${solutionIdeaCount} solution idea${solutionIdeaCount !== 1 ? "s" : ""} documented.`,
       phase: "flow",
+    },
+    // validate_flow checkpoint
+    {
+      label: "Leading indicators reviewed against baseline",
+      status: "missing",
+      note: "Compare current signals against the starting baseline.",
+      phase: "validate_flow",
+    },
+    {
+      label: "Continue, adjust, or close decision made",
+      status: "missing",
+      note: "Make an explicit call on whether to continue, adjust the route, or close the loop.",
+      phase: "validate_flow",
     },
   ];
 
@@ -309,7 +333,7 @@ export default function ProgramGapPanel({
       label: "Public and internal claims compared",
       status: hasPublicEvidence && hasCompanyEvidence ? "complete" : "missing",
       note: "Need both public and company evidence to cross-reference.",
-      phase: "outside",
+      phase: "outside_signals",
     },
     {
       label: "Opportunities linked to desired outcomes",
@@ -327,6 +351,12 @@ export default function ProgramGapPanel({
       status: jobStepDesignedCount > 0 ? "partial" : "missing",
       note: "Review step labels against interview transcripts.",
       phase: "diagnose",
+    },
+    {
+      label: "Contradictions surfaced and resolved",
+      status: hasPublicEvidence && hasCompanyEvidence ? "partial" : "missing",
+      note: "Note any signals that conflict and bring them to the client.",
+      phase: "validate_diagnose",
     },
     {
       label: "Innovation strategy set and reflected in priorities",
@@ -353,6 +383,12 @@ export default function ProgramGapPanel({
       phase: "focus",
     },
     {
+      label: "Tradeoffs acknowledged and accepted",
+      status: routeCount > 0 ? "partial" : "missing",
+      note: "Document what is being deprioritised and why.",
+      phase: "validate_focus",
+    },
+    {
       label: "Chosen branch documented and shared",
       status: routeCount >= 1 && solutionIdeaCount >= 1 ? "partial" : "missing",
       note: "Document the chosen route narrative and rationale.",
@@ -364,6 +400,12 @@ export default function ProgramGapPanel({
       note: "Assign owners and dates to each route workstream step.",
       phase: "flow",
     },
+    {
+      label: "Operating cadence in place and reviewed",
+      status: "missing",
+      note: "Confirm the team has a regular review cadence and is following it.",
+      phase: "validate_flow",
+    },
   ];
 
   const evidenceChecks: GapCheck[] = [
@@ -371,13 +413,13 @@ export default function ProgramGapPanel({
       label: "Public evidence collected",
       status: hasPublicEvidence ? "complete" : "missing",
       note: hasPublicEvidence ? "Public baseline run." : "Run Web Baseline.",
-      phase: "outside",
+      phase: "outside_signals",
     },
     {
       label: "Customer reviews / public feedback analyzed",
       status: hasPublicEvidence ? "partial" : "missing",
       note: "Verify G2, Trustpilot, or interview excerpts are in the ledger.",
-      phase: "outside",
+      phase: "outside_signals",
     },
     {
       label: "Company strategy documents uploaded",
@@ -426,24 +468,22 @@ export default function ProgramGapPanel({
       note: "Refresh evidence after each strategy or route change.",
       phase: "flow",
     },
+    {
+      label: "Drift signals identified",
+      status: "missing",
+      note: "Note any signals that suggest re-examination of the chosen path is needed.",
+      phase: "validate_flow",
+    },
   ];
 
-  const phaseLabel: Record<ProgramPhase, string> = {
-    outside: "Outside",
-    diagnose: "Diagnose",
-    focus: "Focus",
-    flow: "Flow",
-  };
-
-  const phaseOrder: ProgramPhase[] = ["outside", "diagnose", "focus", "flow"];
-  const currentPhaseIndex = phaseOrder.indexOf(currentPhase);
+  const curIdx = PHASE_ORDER.indexOf(currentPhase);
 
   function filterForPhase(checks: GapCheck[]): GapCheck[] {
     return checks.filter((ch) => {
-      const chIndex = phaseOrder.indexOf(ch.phase);
-      if (chIndex === currentPhaseIndex) return true; // current stage: show all
-      if (chIndex < currentPhaseIndex) return ch.status !== "complete"; // prior stages: only incomplete
-      return false; // future stages: hide
+      const chIdx = PHASE_ORDER.indexOf(ch.phase);
+      if (chIdx === curIdx) return true;            // current phase: show all
+      if (chIdx < curIdx) return ch.status !== "complete"; // prior phases: only incomplete
+      return false;                                  // future phases: hide
     });
   }
 
@@ -469,7 +509,7 @@ export default function ProgramGapPanel({
           </p>
         </div>
         <p className="font-sans text-[11px]" style={{ color: c.muted }}>
-          Stage: {phaseLabel[currentPhase]}
+          Stage: {PHASE_LABELS[currentPhase]}
         </p>
       </div>
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">

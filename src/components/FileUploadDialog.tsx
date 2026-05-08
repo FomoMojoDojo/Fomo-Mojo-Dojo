@@ -1,6 +1,6 @@
 import { type DragEvent, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useCompany } from '@/hooks/useCompany';
 import { useInputs, useUploadInputFile } from '@/hooks/useInputs';
 import type { InputItem } from '@/lib/types';
@@ -713,6 +713,7 @@ export default function FileUploadDialog({
 
     if (successCount > 0) {
       void queryClient.invalidateQueries({ queryKey: ['inputs', selectedCompanyId] });
+      void queryClient.invalidateQueries({ queryKey: ['company-files', selectedCompanyId] });
     }
 
     if (successCount > 0 && selectedCompanyId) {
@@ -750,20 +751,22 @@ export default function FileUploadDialog({
   const canUpload = files.length > 0 && hasInputs && !uploading;
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[560px] border-[#dde6d1] bg-[#faf7f6] text-[#233c4b] shadow-[0_20px_60px_rgba(35,60,75,0.16)]">
-        <DialogHeader>
-          <DialogTitle className="font-sans text-[22px] font-semibold text-[#233c4b]">Upload Client Files</DialogTitle>
-        </DialogHeader>
-
-        <div className="mt-2 space-y-4">
-          <div className="rounded-[14px] border px-3 py-2.5" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
+      <SheetContent side="right" className="w-[560px] sm:max-w-[560px] overflow-y-auto p-0 border-l border-[#dde6d1]" style={{ background: '#faf7f6' }}>
+        <div className="px-7 pb-10 pt-8 space-y-4">
+          <p
+            className="font-mono text-[10px] uppercase tracking-[0.14em]"
+            style={{ color: '#6e847f', borderBottom: '1px solid #dde6d1', paddingBottom: 14, marginBottom: 0 }}
+          >
+            Upload Files
+          </p>
+          <div className="border px-3 py-2.5" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
             <div className="flex items-center justify-between gap-2">
               <div className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>
                 Company
               </div>
               <span
-                className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em]"
+                className="border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em]"
                 style={{ color: '#46606d', borderColor: '#dde6d1', background: '#ffffff' }}
               >
                 Queue Upload
@@ -798,7 +801,7 @@ export default function FileUploadDialog({
               }}
               onDragLeave={() => setIsDraggingFile(false)}
               onDrop={handleDrop}
-              className="w-full rounded-[16px] border border-dashed py-5 text-center transition-colors"
+              className="w-full border border-dashed py-5 text-center transition-colors"
               style={{
                 borderColor: isDraggingFile ? '#5f9b8c' : '#cfdace',
                 background: isDraggingFile ? '#f6fbfa' : '#ffffff',
@@ -826,7 +829,7 @@ export default function FileUploadDialog({
                     setUploadSummaries([]);
                     clearNativeInputValue();
                   }}
-                  className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                  className="border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
                   style={{ borderColor: '#dde6d1', color: '#46606d', background: '#ffffff' }}
                 >
                   Clear
@@ -834,7 +837,7 @@ export default function FileUploadDialog({
               ) : null}
             </div>
             {files.length > 0 ? (
-              <div className="mt-2 rounded-[12px] border px-3 py-2" style={{ borderColor: '#dde6d1', background: '#ffffff' }}>
+              <div className="mt-2 border px-3 py-2" style={{ borderColor: '#dde6d1', background: '#ffffff' }}>
                 <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: '#6e847f' }}>
                   Selected
                 </p>
@@ -855,7 +858,7 @@ export default function FileUploadDialog({
           </div>
 
           {!hasInputs ? (
-            <div className="rounded-[16px] border px-3 py-3" style={{ background: '#fff8f5', borderColor: '#e6cfc2' }}>
+            <div className="border px-3 py-3" style={{ background: '#fff8f5', borderColor: '#e6cfc2' }}>
               <div className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#915e46' }}>
                 Missing Inputs
               </div>
@@ -866,7 +869,7 @@ export default function FileUploadDialog({
           ) : null}
 
           {files.length > 0 ? (
-            <div className="rounded-[16px] border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
+            <div className="border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>
                 Source Tags (Optional)
               </div>
@@ -878,7 +881,7 @@ export default function FileUploadDialog({
                       key={tag}
                       type="button"
                       onClick={() => toggleProvenanceTag(tag)}
-                      className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors"
+                      className="border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors"
                       style={
                         active
                           ? { background: '#233c4b', color: '#faf7f6', borderColor: '#233c4b' }
@@ -897,7 +900,7 @@ export default function FileUploadDialog({
           ) : null}
 
           {progress ? (
-            <div className="rounded-[16px] border px-3 py-3" style={{ background: '#f6fbfa', borderColor: '#cde1da' }}>
+            <div className="border px-3 py-3" style={{ background: '#f6fbfa', borderColor: '#cde1da' }}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: '#4c7f73' }}>
                   {uploading ? 'Upload in progress' : 'Upload complete'}
@@ -906,9 +909,9 @@ export default function FileUploadDialog({
                   {progress.completed}/{progress.total}
                 </span>
               </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full" style={{ background: '#d7ebe4' }}>
+              <div className="mt-2 h-2 overflow-hidden" style={{ background: '#d7ebe4' }}>
                 <div
-                  className="h-2 rounded-full transition-all duration-300"
+                  className="h-2 transition-all duration-300"
                   style={{ width: `${progressPercent}%`, background: '#5f9b8c' }}
                 />
               </div>
@@ -944,7 +947,7 @@ export default function FileUploadDialog({
           ) : null}
 
           {alignmentRunning ? (
-            <div className="rounded-[16px] border px-3 py-2" style={{ background: '#fffdf7', borderColor: '#e4d8ac' }}>
+            <div className="border px-3 py-2" style={{ background: '#fffdf7', borderColor: '#e4d8ac' }}>
               <p className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: '#8a6b12' }}>
                 Running local strategy/positioning comparison…
               </p>
@@ -955,7 +958,7 @@ export default function FileUploadDialog({
             type="button"
             onClick={handleUpload}
             disabled={!canUpload}
-            className="w-full rounded-[16px] py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             style={{ background: '#233c4b', border: '1px solid #233c4b', color: '#faf7f6' }}
           >
             {uploading
@@ -968,7 +971,7 @@ export default function FileUploadDialog({
           </button>
 
           {uploadSummaries.length > 0 ? (
-            <div className="rounded-[16px] border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
+            <div className="border px-3 py-3" style={{ background: '#ffffff', borderColor: '#dde6d1' }}>
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#6e847f' }}>
                 Upload Results
               </div>
@@ -976,7 +979,7 @@ export default function FileUploadDialog({
                 {uploadSummaries.slice(0, 8).map((summary) => (
                   <div
                     key={`${summary.fileName}-${summary.status}-${summary.inputLabel ?? 'none'}`}
-                    className="rounded-[10px] border px-2.5 py-2"
+                    className="border px-2.5 py-2"
                     style={{
                       borderColor: summary.status === 'uploaded' ? '#cde1da' : '#e6cfc2',
                       background: summary.status === 'uploaded' ? '#f6fbfa' : '#fff8f5',
@@ -1026,10 +1029,10 @@ export default function FileUploadDialog({
           ) : null}
 
           <p className="text-center font-mono text-[10px] text-[#6e847f]">
-            Queue mode uploads all selected files and shows exact progress.
+            Files will appear in Inputs once processed.
           </p>
         </div>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

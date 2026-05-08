@@ -1,6 +1,11 @@
 import type { InputItem } from "@/lib/types";
 import type { SourceConfidenceSignals } from "@/lib/sourceConfidence";
+import type { EngagementPhase } from "@/lib/engagementPhase";
 
+// WorkflowPhase is the inferred phase derived from evidence signals.
+// It is a subset of EngagementPhase — the 3 phases the inference logic can produce.
+// When an admin has explicitly set a phase (including validate checkpoints or
+// outside_signals), the adminPhase override takes precedence.
 export type WorkflowPhase = "diagnose" | "focus" | "flow";
 
 export type WorkflowStep = {
@@ -10,7 +15,8 @@ export type WorkflowStep = {
 };
 
 export type WorkflowGuidance = {
-  phase: WorkflowPhase;
+  // The resolved phase — may be any EngagementPhase when adminPhase is provided.
+  phase: EngagementPhase;
   title: string;
   detail: string;
   steps: WorkflowStep[];
@@ -26,6 +32,67 @@ function firstIncompleteStep(steps: WorkflowStep[]) {
   return steps.find((step) => !step.done) ?? steps[0];
 }
 
+// Phase-specific guidance for outside_signals and validate checkpoints.
+// These phases are admin-set only (never inferred from signals).
+const ADMIN_PHASE_GUIDANCE: Partial<Record<EngagementPhase, WorkflowGuidance>> = {
+  outside_signals: {
+    phase: "outside_signals",
+    title: "Build the external evidence picture",
+    detail: "Gather public signals, map the competitive landscape, and identify possible gaps before interpreting constraints or making recommendations.",
+    steps: [
+      { title: "Run public baseline", detail: "Complete the public research and evidence ledger.", done: false },
+      { title: "Map competitive landscape", detail: "Document how competitors position and what claims they make.", done: false },
+      { title: "Document public claims", detail: "Capture website, press, and review signals.", done: false },
+      { title: "Identify possible gaps", detail: "Surface contradictions and missing signals.", done: false },
+      { title: "Draft first-conversation questions", detail: "Prepare questions for the initial client meeting.", done: false },
+    ],
+  },
+  validate_outside: {
+    phase: "validate_outside",
+    title: "Present external findings to the client",
+    detail: "Show what was observed from the outside. Gather the client's perspective. Assess fit before diagnosis begins.",
+    steps: [
+      { title: "Present external findings", detail: "Walk the client through signals, gaps, and contradictions found.", done: false },
+      { title: "Capture client reaction", detail: "Note corrections, surprises, and confirmations.", done: false },
+      { title: "Assess engagement fit", detail: "Confirm the engagement is well-scoped for the problems surfaced.", done: false },
+      { title: "Confirm move to Diagnose", detail: "Agree on next steps before beginning full diagnosis.", done: false },
+    ],
+  },
+  validate_diagnose: {
+    phase: "validate_diagnose",
+    title: "Align on working hypotheses",
+    detail: "Present what the evidence suggests. Separate confirmed signals from assumptions. Confirm readiness to commit to a direction.",
+    steps: [
+      { title: "Document working hypotheses", detail: "State what the evidence points to, clearly.", done: false },
+      { title: "Separate evidence from assumption", detail: "Label each claim as supported or still assumed.", done: false },
+      { title: "Surface contradictions", detail: "Bring unresolved contradictions to the client.", done: false },
+      { title: "Confirm alignment", detail: "Agree on direction before moving to Focus.", done: false },
+    ],
+  },
+  validate_focus: {
+    phase: "validate_focus",
+    title: "Confirm the chosen path",
+    detail: "Present the chosen desired outcome and route. Ensure evidence supports the decision and all stakeholders are aligned before execution.",
+    steps: [
+      { title: "Present chosen outcome with evidence", detail: "Show why this outcome was selected and what backs it.", done: false },
+      { title: "Confirm route", detail: "Agree on the specific route or path forward.", done: false },
+      { title: "Acknowledge tradeoffs", detail: "Surface what is being deprioritised and why.", done: false },
+      { title: "Confirm stakeholder alignment", detail: "Ensure everyone is committed before execution begins.", done: false },
+    ],
+  },
+  validate_flow: {
+    phase: "validate_flow",
+    title: "Review measurement and habits",
+    detail: "Check whether the route is producing results. Assess whether the right habits and cadence are in place.",
+    steps: [
+      { title: "Review leading indicators", detail: "Compare current signals against the baseline.", done: false },
+      { title: "Answer habit questions", detail: "Is the operating cadence in place and working?", done: false },
+      { title: "Identify drift signals", detail: "Note any signals that suggest re-examination is needed.", done: false },
+      { title: "Decide: continue, adjust, or close", detail: "Make an explicit call on the next cycle.", done: false },
+    ],
+  },
+};
+
 export function computeWorkflowGuidance(args: {
   inputs: InputItem[];
   sourceSignals: SourceConfidenceSignals;
@@ -34,7 +101,13 @@ export function computeWorkflowGuidance(args: {
   routeCount: number;
   strategicProblemCount?: number;
   reconciledStrategicProblemCount?: number;
+  // When the admin has explicitly set a phase, it overrides the inferred result.
+  adminPhase?: EngagementPhase | null;
 }): WorkflowGuidance {
+  // Admin-set phases that have fixed guidance — return immediately, no inference needed.
+  if (args.adminPhase && ADMIN_PHASE_GUIDANCE[args.adminPhase]) {
+    return ADMIN_PHASE_GUIDANCE[args.adminPhase]!;
+  }
   const inputs = Array.isArray(args.inputs) ? args.inputs : [];
   const completePct = percentComplete(inputs);
   const publicEvidenceStatus = String(args.publicEvidenceStatus || "").trim().toLowerCase();

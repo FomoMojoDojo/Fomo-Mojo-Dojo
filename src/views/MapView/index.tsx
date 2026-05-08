@@ -14,7 +14,9 @@ import { useSolutionIdeas } from "@/hooks/useSolutionIdeas";
 import MethodologyPanel from "@/components/methodology/MethodologyPanel";
 import DeepDivePanel from "@/views/DeepDive/DeepDivePanel";
 import StrategyJourneyMapAlt from "./StrategyJourneyMapAlt";
-import StrategyPhaseStrip, { type ProgramPhase } from "@/components/journey/StrategyPhaseStrip";
+import StrategyPhaseStrip from "@/components/journey/StrategyPhaseStrip";
+import { type EngagementPhase, normalizeEngagementPhase } from "@/lib/engagementPhase";
+import { buildPhaseNarrative } from "@/lib/phaseNarrative";
 import WhatsChangedPanel from "@/components/changelog/WhatsChangedPanel";
 import ProgramGapPanel from "@/components/gaps/ProgramGapPanel";
 import AssumptionSnapshot from "@/components/assumptions/AssumptionSnapshot";
@@ -130,13 +132,13 @@ function MiniBar({ value }: { value: number }) {
   );
 }
 
-/** Derive the 4-phase program stage from available signals. */
+/** Derive the engagement phase from available signals. Admin-set phase takes precedence. */
 function deriveAutoPhase(args: {
   hasPublicEvidence: boolean;
   hasCompanyEvidence: boolean;
   workflowPhase: "diagnose" | "focus" | "flow";
-}): ProgramPhase {
-  if (!args.hasPublicEvidence && !args.hasCompanyEvidence) return "outside";
+}): EngagementPhase {
+  if (!args.hasPublicEvidence && !args.hasCompanyEvidence) return "outside_signals";
   if (args.workflowPhase === "diagnose") return "diagnose";
   if (args.workflowPhase === "focus") return "focus";
   return "flow";
@@ -365,6 +367,9 @@ export default function MapView() {
     [routeItems],
   );
 
+  // Admin-set phase (already normalised by useCompany)
+  const adminPhase: EngagementPhase | null = activeCompany?.engagement_phase ?? null;
+
   const workflow = useMemo(
     () =>
       computeWorkflowGuidance({
@@ -377,30 +382,35 @@ export default function MapView() {
         routeCount: mapRoutes.length,
         strategicProblemCount: strategicProblems.length,
         reconciledStrategicProblemCount: strategicProblems.filter((item) => item.status === "reconciled").length,
+        adminPhase,
       }),
-    [inputs, sourceSignals, activeCompany?.evidence_status, oppItems, mapRoutes.length, strategicProblems],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [inputs, sourceSignals, activeCompany?.evidence_status, oppItems, mapRoutes.length, strategicProblems, adminPhase],
   );
 
-  // Program phase: prefer admin-set value, fallback to auto-derived
+  // Program phase: prefer admin-set value, fallback to auto-derived from signals
   const autoPhase = useMemo(
     () =>
       deriveAutoPhase({
         hasPublicEvidence: sourceSignals.hasPublicEvidence,
         hasCompanyEvidence: sourceSignals.hasCompanyEvidence,
-        workflowPhase: workflow.phase,
+        workflowPhase: (workflow.phase === "diagnose" || workflow.phase === "focus" || workflow.phase === "flow")
+          ? workflow.phase
+          : "diagnose",
       }),
     [sourceSignals.hasPublicEvidence, sourceSignals.hasCompanyEvidence, workflow.phase],
   );
-  const currentPhase = (activeCompany?.program_phase as ProgramPhase | null | undefined) ?? autoPhase;
+  const currentPhase: EngagementPhase = adminPhase ?? autoPhase;
 
-  const handlePhaseChange = async (phase: ProgramPhase) => {
+  const handlePhaseChange = async (phase: EngagementPhase) => {
     if (!activeCompany?.id) return;
     setSavingPhase(true);
     try {
-      await (supabase as any)
+      const { error } = await (supabase as any)
         .from("companies")
         .update({ program_phase: phase })
         .eq("id", activeCompany.id);
+      if (error) console.error("[handlePhaseChange] DB write failed:", error.message, { phase });
       await refetchCompany();
     } finally {
       setSavingPhase(false);
@@ -429,65 +439,19 @@ export default function MapView() {
       .sort((a, b) => safeNumber(b.score_impact, 0) - safeNumber(a.score_impact, 0))[0] ?? null;
   }, [inputs]);
 
-  const researchFinding = useMemo(() => {
-    const topFocus = focusOpps[0];
-    if (topFocus) {
-      const stepContext =
-        topFocus.step_label && topFocus.step_number
-          ? `${topFocus.journey_key} checkpoint ${topFocus.step_number}: ${topFocus.step_label}`
-          : topFocus.step_label || topFocus.journey_key || "current workflow";
-      const evidencePrefix = sourceSignals.hasPrimaryEvidence
-        ? "Research evidence"
-        : sourceSignals.hasCompanyEvidence
-          ? "Uploaded company evidence"
-          : "Public evidence";
-      return {
-        label: "Highest-Impact Finding",
-        headline: String(topFocus.outcome || "A high-impact opportunity was identified."),
-        detail: `${evidencePrefix} points to ${stepContext} as the biggest leverage point for ${initiativeContext.primaryJourneyTitle}.`,
-        whyItMatters:
-          "This checkpoint is likely creating the most drag right now, so improving it should unlock progress across the rest of the journey.",
-        whatNext: sourceSignals.hasPrimaryEvidence
-          ? "Open this opportunity, define one testable change, and set clear success criteria for the next cycle."
-          : "Strengthen evidence for this checkpoint first, then rerun baseline + analysis to confirm priority.",
-        opportunityId: topFocus.id,
-        chips: [] as Array<{ label: string; value: number }>,
-      };
-    }
-    if (weakestArea) {
-      return {
-        label: "Weakest Area",
-        headline: `${areaDisplayLabel(weakestArea)} is the current constraint.`,
-        detail: weakestArea.status_note || "This area is the lowest-scoring part and the most likely drag on overall confidence.",
-        whyItMatters: null,
-        whatNext: null,
-        opportunityId: null,
-        chips: [{ label: "Score", value: Math.round(safeNumber(weakestArea.score, 0)) }],
-      };
-    }
-    if (topInputGap) {
-      return {
-        label: "Largest Missing Input",
-        headline: topInputGap.input_label || "A critical input is still missing.",
-        detail: topInputGap.why_it_matters || "This input is still incomplete and needs attention before strategy becomes reliable.",
-        whyItMatters: null,
-        whatNext: null,
-        opportunityId: null,
-        chips: [{ label: "Impact", value: Math.round(safeNumber(topInputGap.score_impact, 0)) }],
-      };
-    }
-    const insights = isClientSummary(summary) ? summary.key_insights : [];
-    const topInsight = insights?.[0];
-    return {
-      label: "Research Finding",
-      headline: topInsight?.headline?.replace(/\*/g, "") || "No research finding yet.",
-      detail: topInsight?.detail || "Run Web Baseline + AI analysis to generate an evidence-backed finding.",
-      whyItMatters: null,
-      whatNext: null,
-      opportunityId: null,
-      chips: [] as Array<{ label: string; value: number }>,
-    };
-  }, [focusOpps, weakestArea, topInputGap, summary, initiativeContext, sourceSignals]);
+  const researchFinding = useMemo(
+    () =>
+      buildPhaseNarrative({
+        phase: currentPhase,
+        focusOpps,
+        weakestArea,
+        topInputGap,
+        summary,
+        initiativeContext,
+        sourceSignals,
+      }),
+    [currentPhase, focusOpps, weakestArea, topInputGap, summary, initiativeContext, sourceSignals],
+  );
 
   const areaList: ScoreArea[] = Array.isArray(areas) ? areas : [];
   const topAreas = areaList.slice().sort((a, b) => safeNumber(b.score, 0) - safeNumber(a.score, 0));
@@ -726,8 +690,22 @@ export default function MapView() {
             </div>
           </div>
 
-          {/* ── Routes (Fix / Improve / Create) ── */}
-          <RoutesStrip routes={routeItems} companyId={activeCompany?.id} />
+          {/* ── Routes (Fix / Improve / Create) — shown from Focus phase onward ── */}
+          {researchFinding.showRouteRecommendations ? (
+            <RoutesStrip routes={routeItems} companyId={activeCompany?.id} />
+          ) : (
+            <div
+              className="mt-4 rounded-xl p-4"
+              style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
+            >
+              <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
+                Routes
+              </p>
+              <p className="font-sans text-[12px] mt-1" style={{ color: c.muted }}>
+                Available from Focus — route recommendations appear once the engagement moves into the prioritisation phase.
+              </p>
+            </div>
+          )}
 
           {/* ── Program Gaps ── */}
           <div className="mt-4">

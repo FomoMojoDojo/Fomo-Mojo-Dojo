@@ -1,3 +1,5 @@
+import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
+
 export type SignalTier = "outside" | "org" | "customer" | "market";
 
 export type TierLabel =
@@ -52,12 +54,12 @@ export function routeSignalTiers({
 }
 
 // Derive source-layer cells for a need based on source_path.
-// Customer Signals cell is omitted if source_path doesn't clearly indicate primary research.
+// Customer Signals cell is omitted unless isPrimaryNeedsSourcePath confirms primary research.
 export function needSignalTiers(sourcePath: string | null | undefined): TierCellData[] {
   const s = String(sourcePath || "").trim().toLowerCase();
-  const isOutside = s.includes("baseline") || s.includes("public");
+  const isOutside = s.includes("baseline") || s.includes("public") || s.includes("social");
   const isOrg = !isOutside && (s.includes("upload") || s.includes("org") || s.includes("company") || s.includes("file"));
-  const isCustomer = s.includes("interview") || s.includes("primary") || s.includes("research") || s.includes("survey");
+  const isCustomer = isPrimaryNeedsSourcePath(sourcePath);
 
   const cells: TierCellData[] = [
     { tier: "outside", label: "Outside Signals", present: isOutside },

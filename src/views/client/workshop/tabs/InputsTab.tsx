@@ -1,9 +1,21 @@
-import { useState, Fragment, useMemo, useEffect } from "react";
+import { useState, Fragment, useMemo, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import mammoth from "mammoth";
 import { useQuery } from "@tanstack/react-query";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import { useCompanyFiles } from "@/hooks/useCompanyFiles";
-import { useUpdateFileTags, useDeleteInputFile } from "@/hooks/useInputs";
-import { useFileProposals, type FileProposalRow, type CandidateNeed } from "@/hooks/useFileProposals";
+import { useUpdateFileTags, useDeleteInputFile, getFileSignedUrl } from "@/hooks/useInputs";
+import {
+  useFileProposals,
+  type FileProposalRow,
+  type CandidateNeed,
+  type CandidateJobStep,
+  type CandidateOutcome,
+  type CandidatePositioningUpdate,
+  type ExperimentToRun,
+  type FrameworkResult,
+  type PossibleRoute,
+  type ProposalContradiction,
+} from "@/hooks/useFileProposals";
 import SocialSignalsPanel from "./SocialSignalsPanel";
 import { relativeTime } from "../helpers";
 import { visibleFileTags, readAreaSupportTags, makeAreaSupportTag, isInternalFileTag } from "@/lib/fileTags";
@@ -13,24 +25,18 @@ import { supabase } from "@/integrations/supabase/client";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
-type NeedAction =
-  | { kind: "add";   need: CandidateNeed }
-  | { kind: "merge"; need: CandidateNeed; targetId: string };
-
-type GapAction =
-  | { kind: "add";    gap: string }
-  | { kind: "attach"; gap: string; targetId: string };
-
-type RouteAction = { route: string };
-
 type ProposalAcceptPayload = {
-  areas:        FoundationArea[];
-  needActions:  NeedAction[];
-  gapActions:   GapAction[];
-  routeActions: RouteAction[];
+  areas: FoundationArea[];
+  selectedCounts: {
+    positioningUpdates: number;
+    jobSteps: number;
+    needs: number;
+    outcomes: number;
+    gaps: number;
+    routes: number;
+    experiments: number;
+  };
 };
-
-type BriefNeed = { id: string; desired_outcome: string; source_path: string };
 
 // ── Foundation areas ───────────────────────────────────────────────────────────
 
@@ -200,22 +206,146 @@ function areaDisplayLabel(area: FoundationArea): string {
   return area === "Model" ? "Strategy" : area;
 }
 
-function fileProposalStatusLabel(proposal: FileProposalRow): string {
+function fileProposalProcessingBadgeStyle(proposal: FileProposalRow): React.CSSProperties {
   switch (proposal.processing_state) {
     case "queued":
-      return "Dify queued…";
+      return {
+        ...MONO,
+        fontSize: 8,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: "#8b5e00",
+        background: "#fff6db",
+        border: "1px solid #edd48b",
+        borderRadius: 999,
+        padding: "2px 6px",
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+      };
     case "running":
-      return "Dify processing…";
+      return {
+        ...MONO,
+        fontSize: 8,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: "#9a4f00",
+        background: "#fff1e2",
+        border: "1px solid #efc28f",
+        borderRadius: 999,
+        padding: "2px 6px",
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+      };
     case "failed":
-      return "Dify failed — review";
+      return {
+        ...MONO,
+        fontSize: 8,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: "#a5281f",
+        background: "#fdeceb",
+        border: "1px solid #efb6b1",
+        borderRadius: 999,
+        padding: "2px 6px",
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+      };
     case "ready":
     default:
-      return "Review proposal →";
+      return {
+        ...MONO,
+        fontSize: 8,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: "#1a8f5a",
+        background: "#ebf8f1",
+        border: "1px solid #b8d8c8",
+        borderRadius: 999,
+        padding: "2px 6px",
+        display: "inline-flex",
+        alignItems: "center",
+        width: "fit-content",
+      };
   }
+}
+
+function fileProposalProcessingBadgeText(proposal: FileProposalRow): string {
+  switch (proposal.processing_state) {
+    case "queued":
+      return "Dify queued";
+    case "running":
+      return "Dify running";
+    case "failed":
+      return "Dify failed";
+    case "ready":
+    default:
+      return "Dify ready";
+  }
+}
+
+function fileProposalReviewCountsText(proposal: FileProposalRow): string {
+  const parts: string[] = [];
+  const needCount = proposal.candidate_needs.length;
+  const routeCount = proposal.possible_routes.length;
+  const gapCount = proposal.possible_gaps.length;
+  const frameworkCount = proposal.framework_results.reduce((sum, framework) => sum + framework.findings.length, 0);
+  const experimentCount = proposal.experiments_to_run.length;
+
+  if (needCount > 0) parts.push(`${needCount} opp${needCount === 1 ? "" : "s"}`);
+  if (routeCount > 0) parts.push(`${routeCount} route${routeCount === 1 ? "" : "s"}`);
+  if (gapCount > 0) parts.push(`${gapCount} gap${gapCount === 1 ? "" : "s"}`);
+  if (frameworkCount > 0) parts.push(`${frameworkCount} finding${frameworkCount === 1 ? "" : "s"}`);
+  if (experimentCount > 0) parts.push(`${experimentCount} experiment${experimentCount === 1 ? "" : "s"}`);
+
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
+
+function isProposalStale(proposal: FileProposalRow): boolean {
+  if (proposal.processing_state !== "queued" && proposal.processing_state !== "running") return false;
+  const startedAt = proposal.processing_started_at ?? proposal.created_at;
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedMs)) return false;
+  return Date.now() - startedMs > 10 * 60 * 1000;
 }
 
 function isQueuedPlaceholderSummary(summary: string): boolean {
   return summary.trim() === "Dify analysis queued. Results will appear when processing finishes.";
+}
+
+function proposalPriority(proposal: FileProposalRow): number {
+  if (proposal.processing_state === "ready") return 4;
+  if (proposal.processing_state === "failed") return 3;
+  if (proposal.processing_state === "running") return 2;
+  if (proposal.processing_state === "queued") return 1;
+  return 0;
+}
+
+function inferSuggestedAreasFromProposal(proposal: FileProposalRow): FoundationArea[] {
+  const areas = new Set<FoundationArea>();
+  if (proposal.candidate_positioning_updates.length > 0) areas.add("Positioning");
+  if (proposal.candidate_job_steps.length > 0) areas.add("Job Map");
+  if (proposal.candidate_needs.length > 0) areas.add("Opportunities");
+  if (proposal.candidate_outcomes.length > 0) areas.add("Model");
+  if (proposal.possible_routes.length > 0 || proposal.experiments_to_run.length > 0) areas.add("Routes");
+  return FOUNDATION_AREAS.filter((area) => areas.has(area));
+}
+
+function proposalProgressPercent(proposal: FileProposalRow): number {
+  if (proposal.processing_state === "ready") return 100;
+  if (proposal.processing_state === "failed") return 100;
+  const startedAt = proposal.processing_started_at ?? proposal.created_at;
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedMs)) {
+    return proposal.processing_state === "queued" ? 8 : 18;
+  }
+  const elapsedSeconds = Math.max(0, (Date.now() - startedMs) / 1000);
+  if (proposal.processing_state === "queued") {
+    return Math.min(20, 6 + elapsedSeconds * 0.5);
+  }
+  return Math.min(92, 18 + elapsedSeconds * 0.45);
 }
 
 // Derives processing status purely from tags — no DB column needed.
@@ -496,123 +626,98 @@ function DeleteConfirmPanel({
   );
 }
 
-// Dify proposal review panel — rendered as an inline table row expansion.
-// Shows the full proposal output and lets the user selectively apply areas,
-// insert needs/gaps, and create draft routes before accepting.
 function ProposalReviewPanel({
   proposal,
-  existingNeeds,
   onClose,
   onAccept,
+  onDismiss,
   onReject,
 }: {
   proposal: FileProposalRow;
-  existingNeeds: BriefNeed[];
   onClose: () => void;
   onAccept: (payload: ProposalAcceptPayload) => void;
+  onDismiss: () => void;
   onReject: () => void;
 }) {
   const isProcessing = proposal.processing_state === "queued" || proposal.processing_state === "running";
   const isFailed = proposal.processing_state === "failed";
   const isReady = proposal.processing_state === "ready";
   const showSummary = Boolean(proposal.summary) && !(isProcessing && isQueuedPlaceholderSummary(proposal.summary));
-  const initialAreas = proposal.suggested_areas
-    .map((a) => AREA_KEY_TO_FOUNDATION[a])
-    .filter((a): a is FoundationArea => !!a);
+  const initialAreas = inferSuggestedAreasFromProposal(proposal);
 
-  const [selectedAreas, setSelectedAreas] = useState<Set<FoundationArea>>(
-    () => new Set(initialAreas),
-  );
+  const evidence = proposal.evidence;
+  const frameworkResults = proposal.framework_results;
+  const positioningUpdates = proposal.candidate_positioning_updates;
+  const jobSteps = proposal.candidate_job_steps;
+  const needs = proposal.candidate_needs;
+  const outcomes = proposal.candidate_outcomes;
+  const gaps = proposal.possible_gaps;
+  const routes = proposal.possible_routes;
+  const experiments = proposal.experiments_to_run;
+  const contradictions = proposal.contradictions;
+  const questions = proposal.questions_to_verify;
 
-  const needs  = proposal.candidate_needs   as CandidateNeed[];
-  const gaps   = proposal.possible_gaps     as string[];
-  const routes = proposal.possible_routes   as string[];
-  const questions = proposal.questions_to_verify as string[];
-
-  // Per-need: checked + optional merge target (empty string = "add new")
-  const [needChecked,     setNeedChecked]     = useState<Set<number>>(() => new Set());
-  const [needMergeTarget, setNeedMergeTarget] = useState<Map<number, string>>(() => new Map());
-
-  // Per-gap: checked + optional attach target
-  const [gapChecked,      setGapChecked]      = useState<Set<number>>(() => new Set());
-  const [gapAttachTarget, setGapAttachTarget] = useState<Map<number, string>>(() => new Map());
-
-  // Per-route: checked
-  const [routeChecked, setRouteChecked] = useState<Set<number>>(() => new Set());
+  const [selectedAreas, setSelectedAreas] = useState<Set<FoundationArea>>(() => new Set(initialAreas));
+  const [positioningChecked, setPositioningChecked] = useState<Set<number>>(() => new Set(positioningUpdates.map((_, i) => i)));
+  const [jobStepChecked, setJobStepChecked] = useState<Set<number>>(() => new Set(jobSteps.map((_, i) => i)));
+  const [needChecked, setNeedChecked] = useState<Set<number>>(() => new Set(needs.map((_, i) => i)));
+  const [outcomeChecked, setOutcomeChecked] = useState<Set<number>>(() => new Set(outcomes.map((_, i) => i)));
+  const [gapChecked, setGapChecked] = useState<Set<number>>(() => new Set());
+  const [routeChecked, setRouteChecked] = useState<Set<number>>(() => new Set(routes.map((_, i) => i)));
+  const [experimentChecked, setExperimentChecked] = useState<Set<number>>(() => new Set(experiments.map((_, i) => i)));
 
   useEffect(() => {
     setSelectedAreas(new Set(initialAreas));
-    setNeedChecked(new Set());
-    setNeedMergeTarget(new Map());
+    setPositioningChecked(new Set(positioningUpdates.map((_, i) => i)));
+    setJobStepChecked(new Set(jobSteps.map((_, i) => i)));
+    setNeedChecked(new Set(needs.map((_, i) => i)));
+    setOutcomeChecked(new Set(outcomes.map((_, i) => i)));
     setGapChecked(new Set());
-    setGapAttachTarget(new Map());
-    setRouteChecked(new Set());
-  }, [proposal.id, proposal.processing_state, proposal.suggested_areas]);
+    setRouteChecked(new Set(routes.map((_, i) => i)));
+    setExperimentChecked(new Set(experiments.map((_, i) => i)));
+  }, [proposal.id, proposal.processing_state, positioningUpdates, jobSteps, needs, outcomes, routes, experiments]);
 
   function toggleArea(area: FoundationArea) {
     setSelectedAreas((prev) => {
       const next = new Set(prev);
-      if (next.has(area)) next.delete(area); else next.add(area);
+      if (next.has(area)) next.delete(area);
+      else next.add(area);
       return next;
     });
   }
 
-  function toggleNeed(i: number) {
-    setNeedChecked((prev) => {
+  function toggleChecked(index: number, setter: Dispatch<SetStateAction<Set<number>>>) {
+    setter((prev) => {
       const next = new Set(prev);
-      if (next.has(i)) { next.delete(i); } else { next.add(i); }
-      return next;
-    });
-  }
-
-  function toggleGap(i: number) {
-    setGapChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) { next.delete(i); } else { next.add(i); }
-      return next;
-    });
-  }
-
-  function toggleRoute(i: number) {
-    setRouteChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) { next.delete(i); } else { next.add(i); }
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
       return next;
     });
   }
 
   const totalSelected =
-    selectedAreas.size + needChecked.size + gapChecked.size + routeChecked.size;
+    selectedAreas.size +
+    positioningChecked.size +
+    jobStepChecked.size +
+    needChecked.size +
+    outcomeChecked.size +
+    gapChecked.size +
+    routeChecked.size +
+    experimentChecked.size;
 
   function buildPayload(): ProposalAcceptPayload {
-    const needActions: NeedAction[] = [];
-    needs.forEach((need, i) => {
-      if (!needChecked.has(i)) return;
-      const targetId = needMergeTarget.get(i) ?? "";
-      if (targetId) {
-        needActions.push({ kind: "merge", need, targetId });
-      } else {
-        needActions.push({ kind: "add", need });
-      }
-    });
-
-    const gapActions: GapAction[] = [];
-    gaps.forEach((gap, i) => {
-      if (!gapChecked.has(i)) return;
-      const targetId = gapAttachTarget.get(i) ?? "";
-      if (targetId) {
-        gapActions.push({ kind: "attach", gap, targetId });
-      } else {
-        gapActions.push({ kind: "add", gap });
-      }
-    });
-
-    const routeActions: RouteAction[] = [];
-    routes.forEach((route, i) => {
-      if (routeChecked.has(i)) routeActions.push({ route });
-    });
-
-    return { areas: [...selectedAreas], needActions, gapActions, routeActions };
+    return {
+      areas: [...selectedAreas],
+      selectedCounts: {
+        positioningUpdates: positioningChecked.size,
+        jobSteps: jobStepChecked.size,
+        needs: needChecked.size,
+        outcomes: outcomeChecked.size,
+        gaps: gapChecked.size,
+        routes: routeChecked.size,
+        experiments: experimentChecked.size,
+      },
+    };
   }
 
   const confidenceColor =
@@ -620,12 +725,10 @@ function ProposalReviewPanel({
     : proposal.confidence === "medium" ? "#c97700"
     : "#888";
 
-  const SELECT_STYLE: React.CSSProperties = {
-    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    fontSize: 10, color: "#555",
-    border: "1px solid #c8d8c8", borderRadius: 3,
-    padding: "2px 4px", background: "#fff",
-    maxWidth: 280, cursor: "pointer",
+  const CHECKBOX_STYLE: React.CSSProperties = {
+    marginTop: 2,
+    cursor: "pointer",
+    accentColor: "#2d8a60",
   };
 
   return (
@@ -633,7 +736,6 @@ function ProposalReviewPanel({
       background: "#f5faf7", border: "1px solid #b8d8c8", borderRadius: 4,
       padding: "16px 20px", margin: "2px 0 8px",
     }}>
-      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
         <div style={{ ...LABEL_TINY }}>Dify Analysis</div>
         <span style={{ ...MONO, fontSize: 9, color: confidenceColor, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700 }}>
@@ -653,12 +755,62 @@ function ProposalReviewPanel({
         </p>
       )}
 
+      {evidence.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 6 }}>Evidence from file</div>
+          <ul style={{ margin: 0, padding: "0 0 0 14px" }}>
+            {evidence.map((item, i) => (
+              <li key={i} style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5, marginBottom: 4 }}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {frameworkResults.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Framework findings</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {frameworkResults.map((framework, i) => (
+              <div key={`${framework.framework}-${i}`}>
+                <div style={{ ...MONO, fontSize: 10, color: "#444", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  {framework.framework.replace(/_/g, " ")}
+                </div>
+                {framework.findings.length > 0 ? (
+                  <ul style={{ margin: 0, padding: "0 0 0 14px" }}>
+                    {framework.findings.map((finding, idx) => (
+                      <li key={idx} style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5, marginBottom: 4 }}>
+                        <span style={{ color: "#333" }}>{finding.claim}</span>
+                        {finding.evidence && <span style={{ color: "#888" }}> — {finding.evidence}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ ...MONO, fontSize: 10, color: "#999", margin: 0 }}>No findings returned.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {isProcessing && (
-        <p style={{ ...MONO, fontSize: 10, color: "#888", margin: "0 0 14px", lineHeight: 1.6 }}>
-          {proposal.processing_state === "queued"
-            ? "Dify analysis is queued. This panel will refresh automatically when processing finishes."
-            : "Dify analysis is running. This panel will refresh automatically when processing finishes."}
-        </p>
+        <div style={{ margin: "0 0 14px" }}>
+          <p style={{ ...MONO, fontSize: 10, color: "#888", margin: "0 0 8px", lineHeight: 1.6 }}>
+            {proposal.processing_state === "queued"
+              ? "Dify analysis is queued. This panel updates automatically."
+              : "Dify analysis is running. This panel updates automatically."}
+          </p>
+          <div style={{ height: 6, borderRadius: 999, background: "#dcebe3", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${proposalProgressPercent(proposal)}%`,
+                background: "#2d8a60",
+                transition: "width 0.6s ease",
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {isFailed && proposal.processing_error && (
@@ -667,9 +819,8 @@ function ProposalReviewPanel({
         </p>
       )}
 
-      {/* Foundation areas */}
       <div style={{ marginBottom: 16 }}>
-        <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Foundation areas</div>
+        <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Suggested foundation areas</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px" }}>
           {FOUNDATION_AREAS.map((area) => {
             const isSuggested = initialAreas.includes(area);
@@ -680,7 +831,7 @@ function ProposalReviewPanel({
                   checked={selectedAreas.has(area)}
                   onChange={() => toggleArea(area)}
                   disabled={!isReady}
-                  style={{ cursor: "pointer", accentColor: "#2d8a60" }}
+                  style={CHECKBOX_STYLE}
                 />
                 <span style={{ ...MONO, fontSize: 11, color: selectedAreas.has(area) ? "#333" : "#aaa" }}>
                   {areaDisplayLabel(area)}
@@ -691,116 +842,22 @@ function ProposalReviewPanel({
         </div>
       </div>
 
-      {/* Opportunities */}
-      {needs.length > 0 && (
+      {positioningUpdates.length > 0 && (
         <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
-          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Opportunities</div>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Positioning updates</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {needs.map((n, i) => (
-              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
-                  <input
-                    type="checkbox"
-                    checked={needChecked.has(i)}
-                    onChange={() => toggleNeed(i)}
-                    disabled={!isReady}
-                    style={{ marginTop: 2, cursor: "pointer", accentColor: "#2d8a60" }}
-                  />
-                  <span style={{ ...MONO, fontSize: 10, color: "#444", lineHeight: 1.5, flex: 1 }}>
-                    {n.desired_outcome}
-                    {typeof n.importance === "number" && (
-                      <span style={{ color: "#bbb", marginLeft: 6 }}>imp {n.importance}/10</span>
-                    )}
-                  </span>
-                </label>
-                {needChecked.has(i) && (
-                  <div style={{ marginLeft: 22 }}>
-                    <select
-                      value={needMergeTarget.get(i) ?? ""}
-                      disabled={!isReady}
-                      onChange={(e) => setNeedMergeTarget((prev) => {
-                        const next = new Map(prev);
-                        if (e.target.value) next.set(i, e.target.value); else next.delete(i);
-                        return next;
-                      })}
-                      style={SELECT_STYLE}
-                    >
-                      <option value="">Add as new opportunity</option>
-                      {existingNeeds.map((en) => (
-                        <option key={en.id} value={en.id}>
-                          Merge with: {en.desired_outcome.slice(0, 55)}{en.desired_outcome.length > 55 ? "…" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Gaps */}
-      {gaps.length > 0 && (
-        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
-          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Gaps</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {gaps.map((g, i) => (
-              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
-                  <input
-                    type="checkbox"
-                    checked={gapChecked.has(i)}
-                    onChange={() => toggleGap(i)}
-                    disabled={!isReady}
-                    style={{ marginTop: 2, cursor: "pointer", accentColor: "#2d8a60" }}
-                  />
-                  <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5, flex: 1 }}>{g}</span>
-                </label>
-                {gapChecked.has(i) && (
-                  <div style={{ marginLeft: 22 }}>
-                    <select
-                      value={gapAttachTarget.get(i) ?? ""}
-                      disabled={!isReady}
-                      onChange={(e) => setGapAttachTarget((prev) => {
-                        const next = new Map(prev);
-                        if (e.target.value) next.set(i, e.target.value); else next.delete(i);
-                        return next;
-                      })}
-                      style={SELECT_STYLE}
-                    >
-                      <option value="">Add as standalone gap</option>
-                      {existingNeeds.map((en) => (
-                        <option key={en.id} value={en.id}>
-                          Attach to: {en.desired_outcome.slice(0, 55)}{en.desired_outcome.length > 55 ? "…" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Routes */}
-      {routes.length > 0 && (
-        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
-          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Routes</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {routes.map((r, i) => (
+            {positioningUpdates.map((update, i) => (
               <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
                 <input
                   type="checkbox"
-                  checked={routeChecked.has(i)}
-                  onChange={() => toggleRoute(i)}
+                  checked={positioningChecked.has(i)}
+                  onChange={() => toggleChecked(i, setPositioningChecked)}
                   disabled={!isReady}
-                  style={{ marginTop: 2, cursor: "pointer", accentColor: "#2d8a60" }}
+                  style={CHECKBOX_STYLE}
                 />
-                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5, flex: 1 }}>
-                  {r}
-                  <span style={{ color: "#bbb", marginLeft: 6 }}>→ draft route</span>
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <span style={{ color: "#333" }}>{update.field}</span>: {update.suggested_update}
+                  {update.current_issue && <span style={{ color: "#888" }}> — {update.current_issue}</span>}
                 </span>
               </label>
             ))}
@@ -808,19 +865,168 @@ function ProposalReviewPanel({
         </div>
       )}
 
-      {/* Questions to verify */}
+      {jobSteps.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Job map updates</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {jobSteps.map((step, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={jobStepChecked.has(i)}
+                  onChange={() => toggleChecked(i, setJobStepChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <span style={{ color: "#333" }}>{step.step_label}</span>
+                  {step.step_description && <span style={{ color: "#888" }}> — {step.step_description}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {needs.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Opportunities / needs</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {needs.map((n, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={needChecked.has(i)}
+                  onChange={() => toggleChecked(i, setNeedChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#444", lineHeight: 1.5 }}>
+                  {n.desired_outcome}
+                  {typeof n.importance === "number" && <span style={{ color: "#bbb", marginLeft: 6 }}>imp {n.importance}/10</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {outcomes.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Outcomes</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {outcomes.map((outcome, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={outcomeChecked.has(i)}
+                  onChange={() => toggleChecked(i, setOutcomeChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <span style={{ color: "#333" }}>{outcome.outcome}</span>
+                  {outcome.related_opportunities.length > 0 && (
+                    <span style={{ color: "#888" }}> — linked to {outcome.related_opportunities.join(", ")}</span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {routes.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Routes</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {routes.map((route, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={routeChecked.has(i)}
+                  onChange={() => toggleChecked(i, setRouteChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <span style={{ color: "#333" }}>{route.title}</span>
+                  {route.why_this_could_matter && <span style={{ color: "#888" }}> — {route.why_this_could_matter}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {experiments.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Experiments to run</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {experiments.map((experiment, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={experimentChecked.has(i)}
+                  onChange={() => toggleChecked(i, setExperimentChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <span style={{ color: "#333" }}>{experiment.experiment}</span>
+                  {experiment.what_it_tests && <span style={{ color: "#888" }}> — tests {experiment.what_it_tests}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {gaps.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Gaps</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {gaps.map((gap, i) => (
+              <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={gapChecked.has(i)}
+                  onChange={() => toggleChecked(i, setGapChecked)}
+                  disabled={!isReady}
+                  style={CHECKBOX_STYLE}
+                />
+                <span style={{ ...MONO, fontSize: 10, color: "#555", lineHeight: 1.5 }}>{gap}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {contradictions.length > 0 && (
+        <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 6 }}>Contradictions</div>
+          <ul style={{ margin: 0, padding: "0 0 0 12px" }}>
+            {contradictions.map((item, i) => (
+              <li key={i} style={{ ...MONO, fontSize: 10, color: "#888", marginBottom: 3, lineHeight: 1.4 }}>
+                <span style={{ color: "#555" }}>{item.claim}</span>
+                {item.conflicts_with && <span> — conflicts with {item.conflicts_with}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {questions.length > 0 && (
         <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
           <div style={{ ...LABEL_TINY, marginBottom: 6 }}>Questions to verify</div>
           <ul style={{ margin: 0, padding: "0 0 0 12px" }}>
-            {questions.slice(0, 4).map((q, i) => (
+            {questions.map((q, i) => (
               <li key={i} style={{ ...MONO, fontSize: 10, color: "#888", marginBottom: 3, fontStyle: "italic", lineHeight: 1.4 }}>{q}</li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* Actions */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
         <button
           type="button"
@@ -835,21 +1041,35 @@ function ProposalReviewPanel({
             cursor: !isReady || totalSelected === 0 ? "default" : "pointer",
           }}
         >
-          Accept{totalSelected > 0 ? ` & apply ${totalSelected} selected` : ""}
+          Accept{totalSelected > 0 ? ` ${totalSelected} selected` : ""}
         </button>
-        <button
-          type="button"
-          disabled={isProcessing}
-          onClick={onReject}
-          style={{
-            ...MONO, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase",
-            color: isProcessing ? "#ccc" : "#c0392b",
-            background: "#f5faf7", border: "1px solid #b8d8c8",
-            borderRadius: 3, padding: "6px 14px", cursor: isProcessing ? "default" : "pointer",
-          }}
-        >
-          Reject
-        </button>
+        {isProcessing ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            style={{
+              ...MONO, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase",
+              color: "#c0392b",
+              background: "#f5faf7", border: "1px solid #b8d8c8",
+              borderRadius: 3, padding: "6px 14px", cursor: "pointer",
+            }}
+          >
+            Dismiss run
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onReject}
+            style={{
+              ...MONO, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase",
+              color: "#c0392b",
+              background: "#f5faf7", border: "1px solid #b8d8c8",
+              borderRadius: 3, padding: "6px 14px", cursor: "pointer",
+            }}
+          >
+            Reject
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -863,10 +1083,10 @@ function ProposalReviewPanel({
       </div>
       <p style={{ ...MONO, fontSize: 9, color: "#c8c2ba", margin: "12px 0 0", lineHeight: 1.5 }}>
         {isReady
-          ? "Only checked items will be applied. Nothing is created without your selection."
+          ? "Checked items are accepted for review. Only area tags are applied for now; structured items are not auto-created."
           : isFailed
             ? "This proposal did not complete cleanly. Retry Dify analysis from the file row if needed."
-            : "This proposal is not reviewable yet. Wait for Dify processing to finish before accepting or rejecting it."}
+            : "This proposal is still processing. You can dismiss it if it is stuck, or wait for Dify processing to finish."}
       </p>
     </div>
   );
@@ -893,32 +1113,6 @@ export default function InputsTab({
 
   const { data: companyFiles = [], refetch: refetchFiles } = useCompanyFiles(companyId);
   const updateFileTags = useUpdateFileTags();
-
-  // Lightweight fetch of all company needs to build source_path → desired_outcomes map
-  // and to populate merge/attach dropdowns in ProposalReviewPanel.
-  const { data: allNeeds = [] } = useQuery({
-    queryKey: ['company-needs-brief', companyId],
-    queryFn: async (): Promise<BriefNeed[]> => {
-      if (!companyId) return [];
-      const { data } = await supabase
-        .from('odi_needs')
-        .select('id, desired_outcome, source_path')
-        .eq('company_id', companyId);
-      return (data ?? []) as BriefNeed[];
-    },
-    enabled: !!companyId,
-  });
-
-  const linkedNeedsByFilePath = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const need of allNeeds) {
-      if (!need.source_path) continue;
-      const existing = map.get(need.source_path) ?? [];
-      existing.push(need.desired_outcome);
-      map.set(need.source_path, existing);
-    }
-    return map;
-  }, [allNeeds]);
 
   // Minimal inputs list — needed to resolve cross_area_input_ids from analyze-file response.
   const { data: companyInputs = [] } = useQuery({
@@ -964,7 +1158,25 @@ export default function InputsTab({
   const proposalByFileId = useMemo(() => {
     const map = new Map<string, FileProposalRow>();
     for (const p of fileProposals) {
-      if (!map.has(p.file_id)) map.set(p.file_id, p);
+      const current = map.get(p.file_id);
+      if (!current) {
+        map.set(p.file_id, p);
+        continue;
+      }
+
+      const currentPriority = proposalPriority(current);
+      const nextPriority = proposalPriority(p);
+      if (nextPriority > currentPriority) {
+        map.set(p.file_id, p);
+        continue;
+      }
+      if (nextPriority === currentPriority) {
+        const currentCreatedAt = Date.parse(current.created_at);
+        const nextCreatedAt = Date.parse(p.created_at);
+        if (!Number.isFinite(currentCreatedAt) || (Number.isFinite(nextCreatedAt) && nextCreatedAt > currentCreatedAt)) {
+          map.set(p.file_id, p);
+        }
+      }
     }
     return map;
   }, [fileProposals]);
@@ -972,6 +1184,9 @@ export default function InputsTab({
   const [proposalPanelId,     setProposalPanelId]     = useState<string | null>(null);
   const [difyAnalyzingFileId, setDifyAnalyzingFileId] = useState<string | null>(null);
   const [difyFailedIds,       setDifyFailedIds]       = useState<ReadonlySet<string>>(new Set());
+  const [openingFileId,       setOpeningFileId]       = useState<string | null>(null);
+  const [syncingProposalId,   setSyncingProposalId]   = useState<string | null>(null);
+  const lastProposalSyncAtRef = useRef<Record<string, number>>({});
 
   async function handleDifyAnalyze(row: SourceRow) {
     if (!row.filePath || !companyId) return;
@@ -1000,93 +1215,131 @@ export default function InputsTab({
     }
   }
 
+  async function handleOpenFile(row: SourceRow) {
+    if (!row.filePath) return;
+    const previewWindow = window.open("about:blank", "_blank");
+    if (!previewWindow) return;
+    previewWindow.opener = null;
+    previewWindow.document.write(
+      `<!doctype html><html><head><title>${row.title}</title></head><body style="font-family: monospace; padding: 24px; color: #444;">Loading file preview…</body></html>`,
+    );
+    previewWindow.document.close();
+    setOpeningFileId(row.id);
+    try {
+      const signedUrl = await getFileSignedUrl(row.filePath);
+      const lowerPath = row.filePath.toLowerCase();
+      const fileType = String(row.fileType || "").toLowerCase();
+      const isDocx = fileType.includes("wordprocessingml") || lowerPath.endsWith(".docx");
+      const isPdf = fileType.includes("pdf") || lowerPath.endsWith(".pdf");
+      const isImage = fileType.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/i.test(lowerPath);
+      const isText = fileType.startsWith("text/") || /\.(txt|md|csv|json)$/i.test(lowerPath);
+
+      if (!isDocx && !isPdf && !isImage && !isText) {
+        previewWindow.location.href = signedUrl;
+        return;
+      }
+
+      const response = await fetch(signedUrl);
+      if (!response.ok) {
+        throw new Error(`Could not fetch file preview (${response.status})`);
+      }
+
+      const blob = await response.blob();
+
+      if (isDocx) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        const html = `<!doctype html><html><head><title>${row.title}</title><style>body{font-family: Georgia, serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6;} img{max-width: 100%; height: auto;} table{border-collapse: collapse;} td,th{border:1px solid #ddd; padding:6px 8px;} p{margin:0 0 1em;}</style></head><body>${result.value}</body></html>`;
+        const htmlUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        previewWindow.location.replace(htmlUrl);
+        window.setTimeout(() => URL.revokeObjectURL(htmlUrl), 5 * 60 * 1000);
+        return;
+      }
+
+      if (isText) {
+        const text = await blob.text();
+        const escapedText = text.replace(/[&<>]/g, (char) => {
+          if (char === "&") return "&amp;";
+          if (char === "<") return "&lt;";
+          return "&gt;";
+        });
+        const html = `<!doctype html><html><head><title>${row.title}</title><style>body{margin:0;background:#faf8f4;color:#222;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;} pre{white-space:pre-wrap; word-break:break-word; padding:24px; margin:0; line-height:1.5;}</style></head><body><pre>${escapedText}</pre></body></html>`;
+        const htmlUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        previewWindow.location.replace(htmlUrl);
+        window.setTimeout(() => URL.revokeObjectURL(htmlUrl), 5 * 60 * 1000);
+        return;
+      }
+
+      if (isPdf || isImage) {
+        const objectUrl = URL.createObjectURL(blob);
+        previewWindow.location.replace(objectUrl);
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60 * 1000);
+        return;
+      }
+
+      previewWindow.location.href = signedUrl;
+    } catch {
+      previewWindow.document.open();
+      previewWindow.document.write(
+        `<!doctype html><html><head><title>${row.title}</title></head><body style="font-family: monospace; padding: 24px; color: #a33;">Could not preview this file in the browser window.</body></html>`,
+      );
+      previewWindow.document.close();
+    } finally {
+      setOpeningFileId(null);
+    }
+  }
+
+  async function handleSyncProposal(proposal: FileProposalRow) {
+    setSyncingProposalId(proposal.id);
+    try {
+      await supabase.functions.invoke("dify-analyze-file", {
+        body: {
+          mode: "sync",
+          proposalId: proposal.id,
+        },
+      });
+      await refetchProposals();
+    } finally {
+      setSyncingProposalId(null);
+    }
+  }
+
+  useEffect(() => {
+    const active = fileProposals.filter(
+      (proposal) =>
+        proposal.status !== "rejected" &&
+        (proposal.processing_state === "queued" || proposal.processing_state === "running"),
+    );
+    if (active.length === 0) return;
+
+    const now = Date.now();
+    for (const proposal of active) {
+      const lastSyncAt = lastProposalSyncAtRef.current[proposal.id] ?? 0;
+      if (now - lastSyncAt < 5000) continue;
+      lastProposalSyncAtRef.current[proposal.id] = now;
+      void supabase.functions.invoke("dify-analyze-file", {
+        body: {
+          mode: "sync",
+          proposalId: proposal.id,
+        },
+      }).then(() => {
+        void refetchProposals();
+      }).catch(() => {
+        // Keep the row in running/failed state from the server; the normal
+        // proposal poll loop will continue retrying.
+      });
+    }
+  }, [fileProposals, refetchProposals]);
+
   async function handleAcceptProposal(row: SourceRow, proposal: FileProposalRow, payload: ProposalAcceptPayload) {
     setProposalPanelId(null);
 
-    // 1. Apply area tags to the source file
+    // Apply area tags to the source file. Structured proposal items remain
+    // review-only until full apply flows exist for the expanded schema.
     if (payload.areas.length > 0) {
       const newTags = applyAreaTags(row.rawTags, payload.areas);
       await supabase.from("input_files").update({ tags: newTags }).eq("id", row.id);
     }
-
-    // 2. Get current user id for DB inserts
-    const { data: { user } } = await supabase.auth.getUser();
-    const userId = user?.id;
-
-    // 3. Insert new needs / append to existing via notes
-    for (const action of payload.needActions) {
-      if (action.kind === "add" && userId && companyId) {
-        const imp = Math.max(0, Math.min(10, action.need.importance ?? 0));
-        const sat = Math.max(0, Math.min(10, action.need.satisfaction ?? 0));
-        const oppScore = imp + Math.max(0, imp - sat);
-        const serviceState = oppScore >= 10 ? "underserved" : sat > imp + 1 ? "overserved" : "served";
-        await supabase.from("odi_needs").insert({
-          company_id:        companyId,
-          user_id:           userId,
-          desired_outcome:   action.need.desired_outcome,
-          importance:        imp,
-          satisfaction:      sat,
-          opportunity_score: oppScore,
-          service_state:     serviceState,
-          source_path:       row.filePath ?? "dify_analysis",
-          frameworks_used:   ["dify_analysis"],
-          tier:              "need",
-          journey_key:       "customer",
-          step_number:       0,
-          step_label:        "",
-        });
-      } else if (action.kind === "merge") {
-        const { data: existing } = await supabase
-          .from("odi_needs").select("notes").eq("id", action.targetId).single();
-        const appended = `${((existing?.notes as string | null) ?? "").trimEnd()}\n[Dify proposal] ${action.need.desired_outcome}`.trimStart();
-        await supabase.from("odi_needs").update({ notes: appended }).eq("id", action.targetId);
-      }
-    }
-
-    // 4. Insert gap needs / attach to existing via notes
-    for (const action of payload.gapActions) {
-      if (action.kind === "add" && userId && companyId) {
-        await supabase.from("odi_needs").insert({
-          company_id:        companyId,
-          user_id:           userId,
-          desired_outcome:   action.gap,
-          importance:        0,
-          satisfaction:      0,
-          opportunity_score: 0,
-          service_state:     "served",
-          source_path:       row.filePath ?? "dify_analysis",
-          frameworks_used:   ["dify_analysis"],
-          tier:              "want",
-          journey_key:       "customer",
-          step_number:       0,
-          step_label:        "Gap identified by Dify",
-        });
-      } else if (action.kind === "attach") {
-        const { data: existing } = await supabase
-          .from("odi_needs").select("notes").eq("id", action.targetId).single();
-        const appended = `${((existing?.notes as string | null) ?? "").trimEnd()}\n[Gap] ${action.gap}`.trimStart();
-        await supabase.from("odi_needs").update({ notes: appended }).eq("id", action.targetId);
-      }
-    }
-
-    // 5. Insert draft routes
-    if (userId && companyId) {
-      for (const action of payload.routeActions) {
-        await supabase.from("routes").insert({
-          company_id:        companyId,
-          user_id:           userId,
-          title:             action.route,
-          category:          "improve",
-          type:              "Improve",
-          short_description: "",
-          pts_value:         0,
-          effort:            "medium",
-          sort_order:        1,
-        });
-      }
-    }
-
-    // 6. Mark proposal accepted
     await supabase.from("file_proposals").update({
       status:        "accepted",
       applied_areas: payload.areas.map((a) => FOUNDATION_AREA_TO_AREA_KEY[a]),
@@ -1098,11 +1351,35 @@ export default function InputsTab({
   }
 
   async function handleRejectProposal(proposal: FileProposalRow) {
+    if (proposal.processing_state === "queued" || proposal.processing_state === "running" || proposal.processing_state === "failed") {
+      await handleDismissProposal(proposal);
+      return;
+    }
+
     setProposalPanelId(null);
     await supabase.from("file_proposals").update({
       status:      "rejected",
       reviewed_at: new Date().toISOString(),
     }).eq("id", proposal.id);
+    await refetchProposals();
+  }
+
+  async function handleDismissProposal(proposal: FileProposalRow) {
+    setProposalPanelId(null);
+    if (proposal.processing_state === "queued" || proposal.processing_state === "running") {
+      await supabase.from("file_proposals").update({
+        status: "rejected",
+        reviewed_at: new Date().toISOString(),
+        processing_state: "failed",
+        processing_error: proposal.processing_error || "Dismissed after timeout/stale run.",
+        processing_completed_at: new Date().toISOString(),
+      }).eq("id", proposal.id);
+    } else {
+      await supabase.from("file_proposals").update({
+        status: "rejected",
+        reviewed_at: new Date().toISOString(),
+      }).eq("id", proposal.id);
+    }
     await refetchProposals();
   }
 
@@ -1210,7 +1487,7 @@ export default function InputsTab({
       workshopTag,
       suggestedTag:     suggestWorkshopTag(f.file_name),
       processingStatus: deriveProcessingStatus(f.tags, f.uploaded_at),
-      linkedNeeds:      linkedNeedsByFilePath.get(f.file_path) ?? [],
+      linkedNeeds:      [],
       filePath:         f.file_path,
       fileType:         f.file_type,
     };
@@ -1387,6 +1664,22 @@ export default function InputsTab({
                           <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }} title={row.title}>
                             {row.title || "—"}
                           </span>
+                          {row.type === "file" && row.filePath && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenFile(row)}
+                              disabled={openingFileId === row.id}
+                              style={{
+                                ...MONO, fontSize: 9, color: openingFileId === row.id ? "#aaa" : "#7a9e90",
+                                background: "none", border: "none", padding: 0, marginTop: 4,
+                                cursor: openingFileId === row.id ? "default" : "pointer",
+                                textDecoration: "underline", textDecorationStyle: "dashed",
+                                textUnderlineOffset: 3,
+                              }}
+                            >
+                              {openingFileId === row.id ? "Opening file…" : "View file →"}
+                            </button>
+                          )}
                         </td>
                         <td style={{ ...TD, color: "#aaa", whiteSpace: "nowrap" }}>{row.source || "—"}</td>
                         <td style={{ ...TD, color: "#ccc", whiteSpace: "nowrap" }}>{row.date}</td>
@@ -1395,6 +1688,10 @@ export default function InputsTab({
                             {/* Main processing status */}
                             {row.type !== "file" ? (
                               <span style={{ ...MONO, fontSize: 9, color: "#e0dcd8" }}>—</span>
+                            ) : proposalByFileId.has(row.id) ? (
+                              <span style={fileProposalProcessingBadgeStyle(proposalByFileId.get(row.id)!)}>
+                                {fileProposalProcessingBadgeText(proposalByFileId.get(row.id)!)}
+                              </span>
                             ) : row.processingStatus === "processed" ? (
                               <span style={{ ...MONO, fontSize: 9, color: "#1a8f5a" }}>Processed</span>
                             ) : row.processingStatus === "uploading" ? (
@@ -1431,23 +1728,63 @@ export default function InputsTab({
                             {row.type === "file" && (() => {
                               const proposal = proposalByFileId.get(row.id);
                               if (proposal) {
+                                const isActiveProposal = proposal.processing_state === "queued" || proposal.processing_state === "running";
+                                const isFailedProposal = proposal.processing_state === "failed";
                                 return (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setProposalPanelId(proposalPanelOpen ? null : row.id);
-                                      setUseThisId(null);
-                                      setDeleteConfirmId(null);
-                                    }}
-                                    style={{
-                                      ...MONO, fontSize: 9, color: proposal.processing_state === "failed" ? "#c0392b" : "#2d8a60", background: "none",
-                                      border: "none", padding: 0, cursor: "pointer",
-                                      textDecoration: "underline", textDecorationStyle: "dashed",
-                                      textUnderlineOffset: 3,
-                                    }}
-                                  >
-                                    {proposalPanelOpen ? "↑ Close review" : fileProposalStatusLabel(proposal)}
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setProposalPanelId(proposalPanelOpen ? null : row.id);
+                                        setUseThisId(null);
+                                        setDeleteConfirmId(null);
+                                      }}
+                                      style={{
+                                        ...MONO, fontSize: 9, color: proposal.processing_state === "failed" ? "#c0392b" : "#2d8a60", background: "none",
+                                        border: "none", padding: 0, cursor: "pointer",
+                                        textDecoration: "underline", textDecorationStyle: "dashed",
+                                        textUnderlineOffset: 3,
+                                      }}
+                                      >
+                                      {proposalPanelOpen
+                                        ? `↑ Close review${fileProposalReviewCountsText(proposal)}`
+                                        : `Review proposal →${fileProposalReviewCountsText(proposal)}`}
+                                    </button>
+                                    {isActiveProposal ? (
+                                      <span style={{ ...MONO, fontSize: 9, color: syncingProposalId === proposal.id ? "#7a9e90" : "#9aa79f" }}>
+                                        {syncingProposalId === proposal.id ? "Updating automatically…" : "Updating automatically…"}
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDifyAnalyze(row)}
+                                          disabled={difyAnalyzingFileId === row.id}
+                                          style={{
+                                            ...MONO, fontSize: 9, color: difyAnalyzingFileId === row.id ? "#aaa" : "#7a9e90", background: "none",
+                                            border: "none", padding: 0, cursor: difyAnalyzingFileId === row.id ? "default" : "pointer",
+                                            textDecoration: "underline", textDecorationStyle: "dashed",
+                                            textUnderlineOffset: 3,
+                                          }}
+                                        >
+                                          {difyAnalyzingFileId === row.id ? "Dify analyzing…" : "Run Dify again →"}
+                                        </button>
+                                        {isFailedProposal ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDismissProposal(proposal)}
+                                            style={{
+                                              ...MONO, fontSize: 9, color: "#c0392b", background: "none",
+                                              border: "none", padding: 0, cursor: "pointer",
+                                              textDecoration: "underline", textUnderlineOffset: 3,
+                                            }}
+                                          >
+                                            Dismiss failed run →
+                                          </button>
+                                        ) : null}
+                                      </>
+                                    )}
+                                  </>
                                 );
                               }
                               if (difyAnalyzingFileId === row.id) {
@@ -1550,9 +1887,9 @@ export default function InputsTab({
                           <td colSpan={7} style={{ padding: "0 0 4px" }}>
                             <ProposalReviewPanel
                               proposal={proposalByFileId.get(row.id)!}
-                              existingNeeds={allNeeds}
                               onClose={() => setProposalPanelId(null)}
                               onAccept={(payload) => handleAcceptProposal(row, proposalByFileId.get(row.id)!, payload)}
+                              onDismiss={() => handleDismissProposal(proposalByFileId.get(row.id)!)}
                               onReject={() => handleRejectProposal(proposalByFileId.get(row.id)!)}
                             />
                           </td>

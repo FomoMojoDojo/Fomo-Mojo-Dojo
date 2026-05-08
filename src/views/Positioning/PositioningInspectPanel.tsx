@@ -4,6 +4,8 @@ import type { TierCellData } from "@/lib/strategicObject";
 import { generationContextLabel } from "@/lib/strategicObject";
 import type { PositioningCanvas } from "@/lib/types";
 import type { SourceConfidenceSignals } from "@/lib/sourceConfidence";
+import { buildPositioningSources } from "@/lib/sourceLinks";
+import SourcesUsedSection from "@/components/inspect/SourcesUsedSection";
 
 const MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", monospace';
 
@@ -143,6 +145,7 @@ export default function PositioningInspectPanel({
   const present = fields.filter((f) => f.present);
   const missing = fields.filter((f) => !f.present);
   const bullets = changeBullets(canvas, signals);
+  const positioningSources = buildPositioningSources(canvas);
 
   return (
     <StrategicInspectShell
@@ -223,6 +226,13 @@ export default function PositioningInspectPanel({
             </li>
           ))}
         </ul>
+      </div>
+
+      <div style={DIVIDER} />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <p style={SECTION_LABEL}>Sources used</p>
+        <SourcesUsedSection sources={positioningSources} />
       </div>
     </StrategicInspectShell>
   );

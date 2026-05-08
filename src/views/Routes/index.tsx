@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { Wrench, LineChart, Rocket } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
@@ -24,6 +24,13 @@ import {
   type FocusClassification,
 } from "@/lib/initiativeFocus";
 import { routeDetail } from "./routeDetail";
+import {
+  routeRelativeTime,
+  buildDecisionBullets,
+  persistSelectedRouteDecision,
+  clearSelectedRouteDecision,
+  insertRouteDecisionEvent,
+} from "./routeDecision";
 import { computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
 
 const c = {
@@ -80,6 +87,8 @@ function RoutesColumn({
   opportunityFocusById,
   routeOutcomeMap,
   onInspect,
+  selectedRouteId,
+  onSelect,
 }: {
   category: string;
   items: RouteRow[];
@@ -89,6 +98,8 @@ function RoutesColumn({
   opportunityFocusById: Map<string, FocusClassification>;
   routeOutcomeMap: Map<string, { statement: string; leadingIndicator: string }>;
   onInspect?: (route: RouteRow) => void;
+  selectedRouteId?: string | null;
+  onSelect?: (route: RouteRow) => void;
 }) {
   const meta = CATEGORY_META[category] ?? {
     title: category,
@@ -148,6 +159,9 @@ function RoutesColumn({
               linkedDesiredOutcome={routeOutcomeMap.get(route.id) || null}
               focus={detail.focus}
               onInspect={onInspect ? () => onInspect(route) : undefined}
+              isSelected={selectedRouteId === route.id}
+              isOtherSelected={!!selectedRouteId && selectedRouteId !== route.id}
+              onSelect={onSelect ? () => onSelect(route) : undefined}
             />
           );
         })}
@@ -221,10 +235,99 @@ function StatBand({
   );
 }
 
+function DecisionSummaryBanner({
+  route,
+  detail,
+  linkedOutcome,
+  savedAt,
+  onClear,
+}: {
+  route: RouteRow;
+  detail: ReturnType<typeof routeDetail>;
+  linkedOutcome: { statement: string; leadingIndicator: string } | null;
+  savedAt: string | null;
+  onClear: () => void;
+}) {
+  const bullets = buildDecisionBullets(detail, linkedOutcome);
+  const catKey = String(route.category || "improve").toLowerCase();
+  const catMeta = CATEGORY_META[catKey] ?? CATEGORY_META.improve;
+  const points = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
+
+  return (
+    <section
+      className="rounded-[18px] border px-5 py-4"
+      style={{ borderColor: c.teal, background: "#F0FAF7" }}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.teal }}>
+              Chosen path
+            </span>
+            <span
+              className="rounded-full border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
+              style={{ background: `${catMeta.accent}15`, color: catMeta.accent, borderColor: `${catMeta.accent}40` }}
+            >
+              {catMeta.title}
+            </span>
+            {points !== null && (
+              <span className="font-mono text-[10px] font-semibold" style={{ color: catMeta.accent }}>
+                +{points} pts potential
+              </span>
+            )}
+          </div>
+
+          <h3 className="mb-2 font-sans text-[18px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+            {route.title || "Untitled route"}
+          </h3>
+
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.teal }}>
+            We chose this route because:
+          </p>
+          <ul className="space-y-1.5">
+            {bullets.map((bullet, i) => (
+              <li
+                key={i}
+                className="flex items-start gap-2 font-sans text-[13px] leading-[1.5]"
+                style={{ color: c.secondary }}
+              >
+                <span style={{ color: c.teal }}>·</span>
+                <span>{bullet}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted }}>
+            {savedAt
+              ? `Saved decision · last updated ${routeRelativeTime(savedAt)}`
+              : "Saving…"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClear}
+          className="mt-1 shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]"
+          style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+        >
+          Clear ✕
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export default function RoutesView() {
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
   const [inspectRoute, setInspectRoute] = useState<RouteRow | null>(null);
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
+
+  // Sync from DB when company changes
+  useEffect(() => {
+    setSelectedRouteId(activeCompany?.selected_route_id ?? null);
+    setDecisionSavedAt(activeCompany?.selected_route_updated_at ?? null);
+  }, [activeCompany?.id]);
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
@@ -284,6 +387,58 @@ export default function RoutesView() {
     () => computeLatestExclusionAt(activeCompany?.excluded_signals_json ?? []),
     [activeCompany?.excluded_signals_json],
   );
+
+  const selectedRoute = useMemo(
+    () => items.find((r) => r.id === selectedRouteId) ?? null,
+    [items, selectedRouteId],
+  );
+
+  const selectedDetail = useMemo(() => {
+    if (!selectedRoute) return null;
+    return routeDetail({ route: selectedRoute, opportunities, steps, initiativeContext, opportunityFocusById });
+  }, [selectedRoute, opportunities, steps, initiativeContext, opportunityFocusById]);
+
+  const selectedOutcome = selectedRoute ? (routeOutcomeMap.get(selectedRoute.id) ?? null) : null;
+
+  async function handleSelectRoute(route: RouteRow) {
+    if (selectedRouteId === route.id) {
+      handleClearDecision();
+      return;
+    }
+
+    // Capture prior selection before optimistic update for history event
+    const eventType = selectedRouteId ? "changed" : "selected";
+
+    // Optimistic
+    const now = new Date().toISOString();
+    setSelectedRouteId(route.id);
+    setDecisionSavedAt(now);
+
+    if (!activeCompany?.id) return;
+
+    const detail = routeDetail({ route, opportunities, steps, initiativeContext, opportunityFocusById });
+    const linkedOutcome = routeOutcomeMap.get(route.id) ?? null;
+    const bullets = buildDecisionBullets(detail, linkedOutcome);
+    const summary = { bullets, route_title: route.title, route_category: route.category };
+
+    await persistSelectedRouteDecision(activeCompany.id, route.id, summary, now);
+    await insertRouteDecisionEvent(activeCompany.id, route.id, eventType, summary);
+  }
+
+  async function handleClearDecision() {
+    // Capture prior selection before optimistic update for history event
+    const priorRouteId = selectedRouteId;
+    const priorSummary = activeCompany?.selected_route_summary_json ?? {};
+
+    // Optimistic
+    setSelectedRouteId(null);
+    setDecisionSavedAt(null);
+
+    if (!activeCompany?.id) return;
+
+    await clearSelectedRouteDecision(activeCompany.id);
+    await insertRouteDecisionEvent(activeCompany.id, priorRouteId, "cleared", priorSummary);
+  }
 
   const currentScore = Math.round(Number(activeCompany?.mojo_score ?? 0));
   const potentialScore = Math.round(Number(activeCompany?.potential_score ?? 0));
@@ -414,6 +569,33 @@ export default function RoutesView() {
               <StatBand label="Evidence" percent={evidenceStats.percent} text={evidenceStats.text} accent={c.coral} />
             </section>
 
+            {selectedRoute && selectedDetail && (
+              <DecisionSummaryBanner
+                route={selectedRoute}
+                detail={selectedDetail}
+                linkedOutcome={selectedOutcome}
+                savedAt={decisionSavedAt}
+                onClear={handleClearDecision}
+              />
+            )}
+
+            {latestExclusionAt && (
+              <div
+                className="rounded-md border px-4 py-3"
+                style={{ borderColor: "#FAC846", background: "#FAC84618" }}
+              >
+                <p
+                  className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold"
+                  style={{ color: "#FAC846" }}
+                >
+                  Outside signals have been excluded. Route confidence may have changed.
+                </p>
+                <p className="font-sans text-[12px] mt-1" style={{ color: "#6E847F" }}>
+                  Review affected recommendations before making a decision.
+                </p>
+              </div>
+            )}
+
             <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               <RoutesColumn
                 category="fix"
@@ -424,6 +606,8 @@ export default function RoutesView() {
                 opportunityFocusById={opportunityFocusById}
                 routeOutcomeMap={routeOutcomeMap}
                 onInspect={setInspectRoute}
+                selectedRouteId={selectedRouteId}
+                onSelect={handleSelectRoute}
               />
               <RoutesColumn
                 category="improve"
@@ -434,6 +618,8 @@ export default function RoutesView() {
                 opportunityFocusById={opportunityFocusById}
                 routeOutcomeMap={routeOutcomeMap}
                 onInspect={setInspectRoute}
+                selectedRouteId={selectedRouteId}
+                onSelect={handleSelectRoute}
               />
               <RoutesColumn
                 category="create"
@@ -444,6 +630,8 @@ export default function RoutesView() {
                 opportunityFocusById={opportunityFocusById}
                 routeOutcomeMap={routeOutcomeMap}
                 onInspect={setInspectRoute}
+                selectedRouteId={selectedRouteId}
+                onSelect={handleSelectRoute}
               />
             </section>
           </div>
@@ -460,6 +648,7 @@ export default function RoutesView() {
         opportunityFocusById={opportunityFocusById}
         areaScoresJson={activeCompany?.area_scores_json}
         linkedDesiredOutcome={inspectRoute ? (routeOutcomeMap.get(inspectRoute.id) || null) : null}
+        currentPhase={activeCompany?.engagement_phase ?? "outside_signals"}
         staleNote={
           inspectRoute && latestExclusionAt && isArtifactStale(inspectRoute, latestExclusionAt)
             ? "Needs review after excluded inputs"

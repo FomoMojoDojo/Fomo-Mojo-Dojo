@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
+import { useFileProposals } from "@/hooks/useFileProposals";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useStrategicAssumptions } from "@/hooks/useStrategicAssumptions";
+import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
+import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
 import "@/styles/client-refine-preview.css";
 
@@ -9,6 +18,7 @@ type LayerState = "command" | "map" | "narrative" | "drawer";
 type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "branching" | "waiting";
 type DrawerKey = "why" | "blocking" | "signals" | "progress";
 type RouteCategory = "Fix" | "Improve" | "Create";
+type TweakTab = "evidence" | "claims" | "foundation" | "assumptions" | "rerun" | "access";
 
 type AccessModes = {
   pills: boolean;
@@ -27,6 +37,7 @@ type DrawerSection = {
   headline: string;
   big?: string;
   rows: DrawerRow[];
+  compact?: boolean;
 };
 
 const MODE_STORAGE_KEY = "phase5-modes";
@@ -133,10 +144,10 @@ function statusLabel(value: string) {
 }
 
 function stageLabel(value: string) {
-  if (value === "outside") return "outside signals";
-  if (value === "diagnosis" || value === "diagnose") return "diagnose";
-  if (value === "focus") return "focus";
-  if (value === "execution" || value === "flow") return "flow";
+  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "outside signals";
+  if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
+  if (value === "focus" || value === "validate_focus") return "focus";
+  if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
   return "diagnose";
 }
 
@@ -149,6 +160,7 @@ function stateLabel(layer: LayerState) {
 
 export default function ClientRefinePreviewView() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const {
     activeCompany,
@@ -161,9 +173,454 @@ export default function ClientRefinePreviewView() {
     evidence,
     inputCoverage,
     signalStrength,
-    phase,
     primaryDesiredOutcome,
+    rerunAnalysis: refetchClientViewData,
   } = useClientViewData({ actionLimit: 5 });
+
+  const phase = activeCompany?.engagement_phase ?? "outside_signals";
+  const isEarlyPhase = phase === "outside_signals" || phase === "validate_outside" || phase === "diagnose" || phase === "validate_diagnose";
+
+  // ── Strategic state analysis ────────────────────────────────────────────────
+  const queryClient = useQueryClient();
+  const { data: fileProposals = [] } = useFileProposals(activeCompany?.id);
+  const { run: latestBaselineRun, preferredRun: baselineRun, loading: baselineLoading } = usePublicBaseline(activeCompany?.id);
+  const {
+    items: strategicAssumptions,
+    loading: assumptionsLoading,
+    saving: assumptionSaving,
+    updatingId: assumptionUpdatingId,
+    addAssumption,
+    setAssumptionStatus,
+  } = useStrategicAssumptions(activeCompany?.id);
+
+  const analysisRunning = fileProposals.some(
+    (p) => p.processing_state === "queued" || p.processing_state === "running",
+  );
+
+  // Elapsed seconds counter — resets when analysis stops
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!analysisRunning) { setElapsedSeconds(0); return; }
+    setElapsedSeconds(0);
+    const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [analysisRunning]);
+
+  const prevAnalysisRunning = useRef(false);
+  useEffect(() => {
+    if (prevAnalysisRunning.current && !analysisRunning) {
+      const latest = fileProposals[0];
+      if (latest?.processing_state === "ready") {
+        toast.success("Analysis complete — diagnostic updated.");
+      } else if (latest?.processing_state === "failed") {
+        toast.error("Analysis failed. Check the pipeline and try again.");
+      }
+    }
+    prevAnalysisRunning.current = analysisRunning;
+  }, [analysisRunning, fileProposals]);
+
+  // Poll check-mojo-analysis every 5s while a proposal is running.
+  // The edge function background monitor is unreliable in the local runtime —
+  // this drives result capture from the frontend instead.
+  useEffect(() => {
+    if (!analysisRunning || !activeCompany?.id) return;
+    const runningProposal = fileProposals.find((p) => p.processing_state === "running");
+    if (!runningProposal) return;
+
+    const interval = setInterval(async () => {
+      try {
+        await supabase.functions.invoke("check-mojo-analysis", {
+          body: { proposal_id: runningProposal.id },
+        });
+        queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+      } catch { /* ignore — next tick will retry */ }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [analysisRunning, activeCompany?.id, fileProposals, queryClient]);
+
+  const runAnalysis = useCallback(async () => {
+    if (!activeCompany?.id) {
+      toast.error("No company selected.");
+      return;
+    }
+    if (analysisRunning) return;
+    toast.loading("Starting analysis…", { id: "run-analysis" });
+    const { error } = await supabase.functions.invoke("run-mojo-analysis", {
+      body: { company_id: activeCompany.id, trigger_type: "manual" },
+    });
+    if (error) {
+      console.error("[run-mojo-analysis]", error);
+      toast.error(`Could not start analysis: ${error.message}`, { id: "run-analysis" });
+    } else {
+      toast.success("Analysis started.", { id: "run-analysis" });
+      queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+    }
+  }, [activeCompany?.id, analysisRunning, queryClient]);
+
+  const cancelAnalysis = useCallback(async () => {
+    if (!activeCompany?.id) return;
+    const stuckIds = fileProposals
+      .filter((p) => p.processing_state === "queued" || p.processing_state === "running")
+      .map((p) => p.id);
+    if (stuckIds.length === 0) return;
+    await supabase.from("file_proposals")
+      .update({ processing_state: "failed", processing_error: "Cancelled by user" })
+      .in("id", stuckIds);
+    queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+  }, [activeCompany?.id, fileProposals, queryClient]);
+
+  const runOutsideSignals = useCallback(async () => {
+    if (!activeCompany?.id || !activeCompany?.website?.trim()) {
+      toast.error("Add a website before running outside signals.");
+      return;
+    }
+    toast.loading("Running outside signals…", { id: "run-outside-signals" });
+    const { error } = await supabase.functions.invoke("public-baseline", {
+      body: {
+        company_id: activeCompany.id,
+        company_name: activeCompany.name,
+        website: activeCompany.website,
+      },
+    });
+    if (error) {
+      toast.error(error.message || "Outside signals failed.", { id: "run-outside-signals" });
+      return;
+    }
+    toast.success("Outside signals updated.", { id: "run-outside-signals" });
+    queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+  }, [activeCompany?.id, activeCompany?.name, activeCompany?.website, queryClient]);
+
+  const rerunFoundationScope = useCallback(async () => {
+    if (!activeCompany?.id || !activeCompany?.name) {
+      toast.error("No company selected.");
+      return;
+    }
+    toast.loading("Rebuilding foundation and routes…", { id: "rerun-foundation-scope" });
+    const { error } = await supabase.functions.invoke("research-company", {
+      body: {
+        company_id: activeCompany.id,
+        company_name: activeCompany.name,
+        website: activeCompany.website ?? "",
+        journey_key: "customer",
+        review_mode: "advisory",
+      },
+    });
+    if (error) {
+      toast.error(error.message || "Foundation rerun failed.", { id: "rerun-foundation-scope" });
+      return;
+    }
+    await refetchClientViewData();
+    toast.success("Foundation and routes refreshed.", { id: "rerun-foundation-scope" });
+    queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+  }, [activeCompany?.id, activeCompany?.name, activeCompany?.website, queryClient, refetchClientViewData]);
+
+  const rerunOdiJobMapScope = useCallback(async () => {
+    if (!activeCompany?.id) {
+      toast.error("No company selected.");
+      return;
+    }
+    toast.loading("Regenerating ODI job map…", { id: "rerun-jobmap-scope" });
+    const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
+      body: {
+        company_id: activeCompany.id,
+        selected_job_maps: [
+          {
+            journey_key: "customer",
+            journey_title: "Customer Progress",
+            journey_subtitle: "How the primary job performer moves through the core job.",
+          },
+        ],
+        trigger: "command_workbench_scoped_rerun",
+      },
+    });
+    if (error) {
+      toast.error(error.message || "ODI job map rerun failed.", { id: "rerun-jobmap-scope" });
+      return;
+    }
+    if (data && typeof data === "object" && "error" in data && data.error) {
+      toast.error(String(data.error), { id: "rerun-jobmap-scope" });
+      return;
+    }
+    await refetchClientViewData();
+    toast.success("ODI job map regenerated.", { id: "rerun-jobmap-scope" });
+  }, [activeCompany?.id, refetchClientViewData]);
+  const diagnostic = useMemo((): MojoMapDiagnostic | null => {
+    const best = selectBestProposal(fileProposals);
+    if (!best) return null;
+    return normalizeToDiagnostic(best);
+  }, [fileProposals]);
+
+  const baselineSummary = useMemo(() => {
+    const result = (baselineRun?.result_json ?? {}) as Record<string, unknown>;
+    return {
+      outsideSignals: Array.isArray(result.outside_voice_signals) ? result.outside_voice_signals.length : 0,
+      evidenceLedger: Array.isArray(result.evidence_ledger) ? result.evidence_ledger.length : 0,
+      hypotheses: Array.isArray(result.top_hypotheses) ? result.top_hypotheses.length : 0,
+      questions: Array.isArray(result.open_questions) ? result.open_questions.length : 0,
+    };
+  }, [baselineRun]);
+
+  const latestBaselineSummary = useMemo(() => {
+    const result = (latestBaselineRun?.result_json ?? {}) as Record<string, unknown>;
+    return {
+      outsideSignals: Array.isArray(result.outside_voice_signals) ? result.outside_voice_signals.length : 0,
+      evidenceLedger: Array.isArray(result.evidence_ledger) ? result.evidence_ledger.length : 0,
+      hypotheses: Array.isArray(result.top_hypotheses) ? result.top_hypotheses.length : 0,
+      questions: Array.isArray(result.open_questions) ? result.open_questions.length : 0,
+    };
+  }, [latestBaselineRun]);
+
+  const baselineSelectionReason = useMemo(() => {
+    if (!baselineRun) return "No public baseline selected yet.";
+    if (!latestBaselineRun) return "Using the strongest available public baseline.";
+    if (baselineRun.id === latestBaselineRun.id) {
+      return "Latest run is also the strongest usable public baseline.";
+    }
+    if (latestBaselineSummary.outsideSignals === 0 && baselineSummary.outsideSignals > 0) {
+      return "Latest run had no outside voice signals, so the stronger recent baseline is active.";
+    }
+    return "A stronger recent baseline is active because it carries better evidence quality than the latest run.";
+  }, [baselineRun, latestBaselineRun, latestBaselineSummary.outsideSignals, baselineSummary.outsideSignals]);
+
+  const signalPosture = useMemo(() => {
+    const outside =
+      baselineSummary.outsideSignals > 0
+        ? "Present"
+        : baselineSummary.evidenceLedger > 0 || baselineSummary.hypotheses > 0
+          ? "Thin"
+          : "Missing";
+    const organization = fileProposals.length > 0 ? "Present" : "Thin";
+    const customer = evidence.sources.some((source) => /customer|interview|survey/i.test(source.label) && source.present)
+      ? "Present"
+      : "Missing";
+    return { outside, organization, customer };
+  }, [baselineSummary, fileProposals.length, evidence.sources]);
+
+  const evidenceGuidance = useMemo(() => {
+    const usable: string[] = [];
+    const revalidate: string[] = [];
+
+    if (signalPosture.outside === "Present") {
+      usable.push("market language and public positioning cues");
+    } else if (signalPosture.outside === "Thin") {
+      usable.push("light public context only");
+    }
+
+    if (signalPosture.organization === "Present") {
+      usable.push("internal strategy and uploaded company context");
+    }
+
+    if (signalPosture.customer === "Present") {
+      usable.push("existing customer evidence, with framing checks");
+    } else {
+      revalidate.push("customer priorities under the current framing");
+    }
+
+    if (baselineRun && latestBaselineRun && baselineRun.id !== latestBaselineRun.id) {
+      revalidate.push("the latest public baseline before treating it as authoritative");
+    }
+
+    return {
+      usable: usable.length > 0 ? usable.join(", ") : "no strong evidence is safe to use yet",
+      revalidate: revalidate.length > 0 ? revalidate.join(", ") : "no immediate revalidation flags",
+    };
+  }, [signalPosture, baselineRun, latestBaselineRun]);
+
+  const frameworkClaimPreview = useMemo(
+    () => (diagnostic?.frameworkFindings ?? []).slice(0, 6),
+    [diagnostic],
+  );
+
+  const claimWorkbenchPreview = useMemo(() => {
+    return frameworkClaimPreview.map((finding) => {
+      const framework = finding.framework.toLowerCase();
+      const customerSensitive = framework === "jtbd" || framework === "odi";
+      const marketSensitive = framework === "april_dunford";
+      const hasOutside = signalPosture.outside === "Present";
+      const hasOrganization = signalPosture.organization === "Present";
+      const hasCustomer = signalPosture.customer === "Present";
+
+      let supportLevel = "Thin";
+      let supportReason = "Evidence is still too incomplete to trust this claim yet.";
+      let validationNote = "Gather stronger supporting evidence before treating this as durable.";
+
+      if (customerSensitive) {
+        if (hasCustomer && hasOrganization) {
+          supportLevel = "Customer-backed";
+          supportReason = "Direct customer signal exists and internal context supports the same read.";
+          validationNote = hasOutside
+            ? "Pressure-test this against market context if the framing has changed."
+            : "Keep it, but add outside context if the market read still matters.";
+        } else if (hasCustomer) {
+          supportLevel = "Direct but narrow";
+          supportReason = "Customer evidence exists, but it is not yet reinforced by enough surrounding context.";
+          validationNote = "Check whether current company context still fits what customers are saying.";
+        } else if (hasOrganization) {
+          supportLevel = "Internal proxy only";
+          supportReason = "This reads more like an internal interpretation than a validated customer truth.";
+          validationNote = "Revalidate with direct customer evidence before using it as foundational truth.";
+        }
+      } else if (marketSensitive) {
+        if (hasOutside && hasOrganization) {
+          supportLevel = "Market-backed";
+          supportReason = "Public market context and internal positioning signals point in the same direction.";
+          validationNote = hasCustomer
+            ? "Customer evidence can sharpen this, but it is already usable as a positioning read."
+            : "Useful for positioning now, but still worth checking against direct customer response.";
+        } else if (hasOutside) {
+          supportLevel = "Market-facing only";
+          supportReason = "Public evidence supports the claim, but internal proof is still thin.";
+          validationNote = "Confirm the company can actually support this claim internally.";
+        } else if (hasOrganization) {
+          supportLevel = "Internal positioning claim";
+          supportReason = "This is coming mainly from company material, not external market response.";
+          validationNote = "Treat as directional until outside signals or customer response support it.";
+        }
+      } else {
+        if (hasOrganization && hasOutside) {
+          supportLevel = "Directional";
+          supportReason = "Internal evidence and public context align enough to treat this as a working claim.";
+          validationNote = hasCustomer
+            ? "Customer evidence should refine this before it becomes a hard commitment."
+            : "Customer validation is still the missing step.";
+        } else if (hasOrganization) {
+          supportLevel = "Internal only";
+          supportReason = "This is currently supported mostly by company-side interpretation.";
+          validationNote = "Use as a working hypothesis, not as a settled strategic truth.";
+        }
+      }
+
+      return {
+        ...finding,
+        supportLevel,
+        supportReason,
+        validationNote,
+      };
+    });
+  }, [frameworkClaimPreview, signalPosture]);
+
+  const foundationWorkbenchPreview = useMemo(() => {
+    const positioningStatement =
+      diagnostic?.headline ||
+      (baselineSummary.outsideSignals > 0
+        ? "Public market context is present, but the positioning read still needs sharpening."
+        : "No clear external positioning read yet.");
+
+    const strategyStatement =
+      toSentence(primaryConstraint?.title) ||
+      toSentence(primaryConstraint?.detail) ||
+      "No clear strategic constraint has been formed yet.";
+
+    const outcomeStatement =
+      toSentence(primaryDesiredOutcome?.statement) ||
+      "No primary outcome is being held consistently yet.";
+
+    const routeStatement =
+      toSentence(nextMove?.title) ||
+      toSentence(nextMove?.detail) ||
+      "No active route is leading yet.";
+
+    return [
+      {
+        area: "Positioning",
+        statement: positioningStatement,
+        evidenceShape:
+          signalPosture.outside === "Present" && signalPosture.organization === "Present"
+            ? "Outside + organization"
+            : signalPosture.outside === "Present"
+              ? "Outside-led"
+              : "Thin",
+        nextCheck:
+          signalPosture.customer === "Present"
+            ? "Check whether current customer signal still fits the positioning read."
+            : "Add direct customer response before hardening this into a positioning truth.",
+      },
+      {
+        area: "Strategy",
+        statement: strategyStatement,
+        evidenceShape:
+          signalPosture.organization === "Present"
+            ? signalPosture.outside === "Present"
+              ? "Organization + outside"
+              : "Organization-led"
+            : "Thin",
+        nextCheck:
+          "Confirm this constraint still reflects the real decision bottleneck, not only internal interpretation.",
+      },
+      {
+        area: "Outcome",
+        statement: outcomeStatement,
+        evidenceShape:
+          signalPosture.customer === "Present"
+            ? "Customer-supported"
+            : signalPosture.organization === "Present"
+              ? "Internal proxy"
+              : "Thin",
+        nextCheck:
+          signalPosture.customer === "Present"
+            ? "Keep outcome language tied to actual customer progress."
+            : "Revalidate this outcome with direct customer evidence before overcommitting.",
+      },
+      {
+        area: "Route",
+        statement: routeStatement,
+        evidenceShape: "Current move",
+        nextCheck:
+          "Make the core route assumption explicit before treating this as locked.",
+      },
+    ];
+  }, [
+    baselineSummary.outsideSignals,
+    diagnostic?.headline,
+    nextMove?.detail,
+    nextMove?.title,
+    primaryConstraint?.detail,
+    primaryConstraint?.title,
+    primaryDesiredOutcome?.statement,
+    signalPosture,
+  ]);
+
+  const assumptionWorkbenchPreview = useMemo(() => {
+    return strategicAssumptions.map((assumption) => {
+      const normalized = assumption.assumption.toLowerCase();
+      const gates: string[] = [];
+
+      if (/(customer|buyer|user|interview|survey|demand|need|priority)/i.test(normalized)) {
+        gates.push("Customer signal");
+      }
+      if (/(position|message|category|brand|proof|differentiat|value proposition|market)/i.test(normalized)) {
+        gates.push("Positioning");
+      }
+      if (/(route|launch|deliver|execute|pilot|channel|distribution|partner|sales|rollout)/i.test(normalized)) {
+        gates.push("Current route");
+      }
+      if (/(team|owner|ops|process|workflow|execution|capacity|resource)/i.test(normalized)) {
+        gates.push("Execution path");
+      }
+      if (gates.length === 0 && primaryConstraint?.title) {
+        gates.push(`Constraint: ${shorten(primaryConstraint.title, 56)}`);
+      }
+      if (gates.length === 0 && diagnostic?.headline) {
+        gates.push(`Diagnostic: ${shorten(diagnostic.headline, 56)}`);
+      }
+
+      let impact = "Still a live assumption behind the current direction.";
+      if (assumption.status === "validating") {
+        impact = "In testing now. Keep dependent decisions flexible until the result settles.";
+      } else if (assumption.status === "validated") {
+        impact = "Supported enough to stop treating it as a primary blocker.";
+      } else if (assumption.status === "invalidated") {
+        impact = "Broken assumption. Recheck the dependent route or strategic read.";
+      }
+
+      return {
+        ...assumption,
+        gates: gates.slice(0, 2),
+        impact,
+      };
+    });
+  }, [strategicAssumptions, primaryConstraint?.title, diagnostic?.headline]);
 
   const [layer, setLayer] = useState<LayerState>("command");
   const [commitState, setCommitState] = useState<CommitState>("idle");
@@ -173,12 +630,26 @@ export default function ClientRefinePreviewView() {
   const [systemLine, setSystemLine] = useState("");
   const [systemLineOn, setSystemLineOn] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [tweakTab, setTweakTab] = useState<TweakTab>("evidence");
   const [specOpen, setSpecOpen] = useState(false);
   const [accessModes, setAccessModes] = useState<AccessModes>(DEFAULT_ACCESS_MODES);
+  const [newAssumption, setNewAssumption] = useState("");
   const [confidenceFrom, setConfidenceFrom] = useState(42);
   const [confidenceTo, setConfidenceTo] = useState(42);
   const [evidenceChecks, setEvidenceChecks] = useState<boolean[]>([false, false, false]);
   const [hoverTip, setHoverTip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  const handleAddAssumption = useCallback(async () => {
+    const assumption = toSentence(newAssumption);
+    if (!assumption) return;
+    try {
+      await addAssumption({ assumption, source: "client", status: "untested" });
+      setNewAssumption("");
+      toast.success("Assumption added.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to add assumption.");
+    }
+  }, [addAssumption, newAssumption]);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
@@ -186,10 +657,18 @@ export default function ClientRefinePreviewView() {
   const rafRef = useRef<number | null>(null);
 
   const actionHeadline = useMemo(() => {
+    if (isEarlyPhase) {
+      const missing = evidence.sources.filter((s) => !s.present).map((s) => s.label);
+      if (missing.length > 0) {
+        const listed = missing.slice(0, 2).join(" and ");
+        return `${listed} ${missing.length === 1 ? "is" : "are"} still missing`;
+      }
+      return "What internal evidence would confirm or challenge this read";
+    }
     const detail = toSentence(nextMove?.detail);
     if (detail) return detail;
-    return "Validate the top two customer needs through 8 to 10 customer interviews in two weeks.";
-  }, [nextMove?.detail]);
+    return "Define the next high-leverage move with clearer evidence.";
+  }, [isEarlyPhase, nextMove?.detail, evidence.sources]);
 
   const impactValue = useMemo(() => {
     const lift = Math.round((signalStrength.proof.value + signalStrength.execution.value) / 12);
@@ -226,9 +705,9 @@ export default function ClientRefinePreviewView() {
   }, [activeCompany?.mojo_score, baseConfidence]);
 
   const stageIndex = useMemo(() => {
-    if (phase === "outside") return 0;
-    if (phase === "diagnosis" || phase === "diagnose") return 1;
-    if (phase === "focus") return 2;
+    if (phase === "outside_signals" || phase === "validate_outside") return 0;
+    if (phase === "diagnose" || phase === "validate_diagnose") return 1;
+    if (phase === "focus" || phase === "validate_focus") return 2;
     return 3;
   }, [phase]);
 
@@ -238,6 +717,30 @@ export default function ClientRefinePreviewView() {
   );
 
   const strongestAction = topActions[0] ?? null;
+
+  const commandActionTitle = useMemo(() => {
+    const actionTitle = toSentence(strongestAction?.title);
+    if (actionTitle) return actionTitle;
+
+    const moveTitle = toSentence(nextMove?.title);
+    if (moveTitle && moveTitle.toLowerCase() !== "in progress") return moveTitle;
+
+    return actionHeadline;
+  }, [actionHeadline, nextMove?.title, strongestAction?.title]);
+
+  const commandActionSupport = useMemo(() => {
+    const detail = toSentence(nextMove?.detail);
+    if (detail && detail !== commandActionTitle) return detail;
+
+    const supportParts: string[] = [];
+    const constraintTitle = toSentence(primaryConstraint?.title);
+    const desiredOutcome = toSentence(primaryDesiredOutcome?.statement);
+
+    if (constraintTitle) supportParts.push(`Constraint: ${constraintTitle}.`);
+    if (desiredOutcome) supportParts.push(`Target outcome: ${desiredOutcome}.`);
+
+    return supportParts.join(" ");
+  }, [commandActionTitle, nextMove?.detail, primaryConstraint?.title, primaryDesiredOutcome?.statement]);
 
   const routeOptions = useMemo(() => {
     const buckets: Record<RouteCategory, typeof allActions> = {
@@ -302,136 +805,335 @@ export default function ClientRefinePreviewView() {
     [evidence.sources],
   );
 
-  const drawerSections = useMemo<Record<DrawerKey, DrawerSection>>(
-    () => ({
-      why: {
-        title: "WHY THIS MOVE",
-        headline: "It is the one move all follow-on moves depend on.",
-        big:
-          toSentence(strongestAction?.whyItMatters) ||
-          "Every path forward depends on validating this decision before execution scales.",
-        rows: [
-          { key: "Paths this unblocks", value: `${Math.max(1, Math.min(3, allActions.length))} of 3` },
-          { key: "Confidence lift", value: `+${confidenceLift}` },
-          {
-            key: "Owner",
-            value: toSentence(strongestAction?.primaryOwner) || "Unassigned",
-          },
-        ],
-      },
-      blocking: {
-        title: "WHAT IS BLOCKING",
-        headline: toSentence(primaryConstraint?.title) || "Core blocker is still unresolved.",
-        big: toSentence(primaryConstraint?.detail) || "No validated blocker statement has been captured yet.",
-        rows: [
-          {
-            key: "Open assumptions",
-            value: String(Math.max(1, strongestAction?.assumptions.length ?? 0)),
-          },
-          {
-            key: "Critical actions without owner",
-            value: String(allActions.filter((item) => !item.isOwned).length),
-          },
-          {
-            key: "Execution risk",
-            value: confidence.level === "High" ? "LOW" : confidence.level === "Medium" ? "MEDIUM" : "HIGH",
-          },
-        ],
-      },
-      signals: {
-        title: "SIGNALS",
-        headline: "Three signal streams, one operating verdict.",
-        big:
-          evidencePresentLabels.length > 0
-            ? `Active evidence: ${evidencePresentLabels.join(", ")}.`
-            : "No evidence streams are currently present.",
-        rows: [
-          { key: "Proof", value: `${Math.round(signalStrength.proof.value)} · ${signalStrength.proof.level.toUpperCase()}` },
-          {
-            key: "Ownership",
-            value: `${Math.round(signalStrength.ownership.value)} · ${signalStrength.ownership.level.toUpperCase()}`,
-          },
-          {
-            key: "Execution",
-            value: `${Math.round(signalStrength.execution.value)} · ${signalStrength.execution.level.toUpperCase()}`,
-          },
-        ],
-      },
-      progress: {
-        title: "PROGRESS",
-        headline: `${baseConfidence} now → ${confidenceTarget} target`,
-        big:
-          toSentence(primaryDesiredOutcome?.statement) ||
-          "Desired outcome is not fully defined yet. Capture it before moving stages.",
-        rows: [
-          { key: "Now", value: String(baseConfidence) },
-          { key: "After this move", value: String(baseConfidence + confidenceLift) },
-          { key: "Target", value: String(confidenceTarget) },
-        ],
-      },
-    }),
+  const evidenceMissingLabels = useMemo(
+    () => evidence.sources.filter((source) => !source.present).map((source) => source.label),
+    [evidence.sources],
+  );
+
+  const criticalActionCount = useMemo(
+    () => allActions.filter((item) => item.category === "Fix" || item.category === "Improve").length,
+    [allActions],
+  );
+
+  const unownedCriticalCount = useMemo(
+    () => allActions.filter((item) => (item.category === "Fix" || item.category === "Improve") && !item.isOwned).length,
+    [allActions],
+  );
+
+  const plannedCriticalCount = useMemo(
+    () => allActions.filter((item) => (item.category === "Fix" || item.category === "Improve") && item.status === "planned").length,
+    [allActions],
+  );
+
+  const topAssumption = useMemo(
+    () => toSentence(strongestAction?.assumptions?.[0]),
+    [strongestAction?.assumptions],
+  );
+
+  const topOutcomeIfSolved = useMemo(
+    () => toSentence(strongestAction?.ifSolved?.[0]),
+    [strongestAction?.ifSolved],
+  );
+
+  const topSuccessCriterion = useMemo(
+    () => toSentence(strongestAction?.successCriteria?.[0]),
+    [strongestAction?.successCriteria],
+  );
+
+  const signalRows = useMemo(
+    () => [
+      { key: "Proof", value: `${Math.round(signalStrength.proof.value)} · ${signalStrength.proof.level.toUpperCase()}` },
+      { key: "Ownership", value: `${Math.round(signalStrength.ownership.value)} · ${signalStrength.ownership.level.toUpperCase()}` },
+      { key: "Execution", value: `${Math.round(signalStrength.execution.value)} · ${signalStrength.execution.level.toUpperCase()}` },
+    ],
     [
-      allActions,
-      baseConfidence,
-      confidence.level,
-      confidenceLift,
-      confidenceTarget,
-      evidencePresentLabels,
-      primaryConstraint?.detail,
-      primaryConstraint?.title,
-      primaryDesiredOutcome?.statement,
       signalStrength.execution.level,
       signalStrength.execution.value,
       signalStrength.ownership.level,
       signalStrength.ownership.value,
       signalStrength.proof.level,
       signalStrength.proof.value,
-      strongestAction?.assumptions.length,
-      strongestAction?.isOwned,
-      strongestAction?.primaryOwner,
-      strongestAction?.whyItMatters,
     ],
   );
 
-  const narrativeRows = useMemo(
-    () => [
-      {
-        label: "Where we are",
-        lead: `You are in the ${stageLabel(phase)} stage. `,
-        emphasis: `Confidence in the plan is ${confidence.level.toLowerCase()}`,
-        tail: " — the strategy still needs stronger evidence.",
-      },
-      {
-        label: "What's wrong",
-        lead: "You cannot move forward because ",
-        emphasis: toSentence(primaryConstraint?.detail) || "the primary blocker is still not clearly validated",
-        tail: ". Every onward path depends on this being resolved.",
-      },
-      {
-        label: "What to do",
-        lead: "The next move is to ",
-        emphasis: actionHeadline,
-        tail: ` This is the single move that can lift confidence from ${baseConfidence} toward ${confidenceTarget}.`,
-      },
-      {
-        label: "If we don't",
-        lead: "Confidence stays flat and the next phase is delayed. ",
-        emphasis:
-          toSentence(strongestAction?.ifMissed?.[0]) ||
-          "Execution decisions continue with assumption-heavy evidence",
-        tail: ".",
-      },
-    ],
+  const weakestSignalRow = useMemo(
+    () =>
+      [...signalRows].sort((a, b) => {
+        const aValue = Number(a.value.split("·")[0]?.trim() || 0);
+        const bValue = Number(b.value.split("·")[0]?.trim() || 0);
+        return aValue - bValue;
+      })[0] ?? null,
+    [signalRows],
+  );
+
+  const drawerSections = useMemo<Record<DrawerKey, DrawerSection>>(
+    () => {
+      if (isEarlyPhase) {
+        const diagHeadline  = diagnostic?.headline  || toSentence(primaryConstraint?.title) || "The picture is still forming.";
+        const diagSubhead   = diagnostic?.subhead   || toSentence(primaryConstraint?.detail) || "More evidence is needed before a clear direction can be confirmed.";
+        const diagObs       = diagnostic?.observations.filter(Boolean) ?? [];
+        const diagTensions  = diagnostic?.tensions.filter(Boolean) ?? [];
+        const diagMissing   = diagnostic?.missingEvidence.filter(Boolean) ?? [];
+        const diagQuestions = diagnostic?.questionsToInvestigate.filter(Boolean) ?? [];
+        const missingLabel  = diagMissing.length > 0
+          ? diagMissing.slice(0, 3).join(" · ")
+          : evidenceMissingLabels.length > 0 ? evidenceMissingLabels.join(", ") : "None identified";
+        const nextLearning  = diagnostic?.recommendedNextLearningStep ?? null;
+
+        return {
+          why: {
+            title: "WHAT WE'RE SEEING",
+            headline: diagHeadline,
+            big: diagSubhead,
+            rows: [
+              { key: "Pattern", value: diagObs.length > 0 ? diagObs[0] : (toSentence(primaryConstraint?.title) || "Still emerging") },
+              { key: "Tensions", value: diagTensions.length > 0 ? diagTensions[0] : "None identified yet" },
+              { key: "Evidence present", value: evidencePresentLabels.length > 0 ? evidencePresentLabels.join(", ") : "None captured yet" },
+            ],
+          },
+          blocking: {
+            title: "WHAT'S STILL MISSING",
+            headline: diagMissing.length > 0 ? `${diagMissing.length} gap${diagMissing.length === 1 ? "" : "s"} flagged by analysis.` : evidenceMissingLabels.length > 0 ? `${evidenceMissingLabels.length} evidence type${evidenceMissingLabels.length === 1 ? "" : "s"} not yet captured.` : "No obvious evidence gap identified.",
+            big: nextLearning || "These evidence types would materially sharpen the diagnosis.",
+            compact: true,
+            rows: [
+              { key: "Missing", value: missingLabel },
+              { key: "Proof signal", value: signalRows.find((r) => r.key === "Proof")?.value ?? "Not yet measured" },
+            ],
+          },
+          signals: {
+            title: "SIGNAL LEVELS",
+            headline: weakestSignalRow ? `${weakestSignalRow.key} is the weakest signal right now.` : "Signal read not available.",
+            compact: true,
+            rows: [
+              { key: "Missing evidence", value: evidenceMissingLabels.length > 0 ? evidenceMissingLabels.join(", ") : "No obvious gap" },
+              { key: "Signal levels", value: signalRows.map((row) => `${row.key} ${row.value}`).join(" · ") },
+            ],
+          },
+          progress: {
+            title: "QUESTIONS TO INVESTIGATE",
+            headline: diagQuestions.length > 0
+              ? diagQuestions[0]
+              : evidencePresentLabels.length > 0
+                ? `${evidencePresentLabels.length} of ${evidencePresentLabels.length + evidenceMissingLabels.length} evidence types present`
+                : "No evidence captured yet",
+            compact: true,
+            rows: [
+              ...(diagQuestions.length > 1 ? [{ key: "Also", value: diagQuestions.slice(1, 3).join(" · ") }] : []),
+              { key: "Present", value: evidencePresentLabels.length > 0 ? evidencePresentLabels.join(", ") : "None" },
+              { key: "Missing", value: evidenceMissingLabels.length > 0 ? evidenceMissingLabels.join(", ") : "None" },
+            ],
+          },
+        };
+      }
+
+      return {
+        why: {
+          title: "WHY THIS MOVE",
+          headline: commandActionTitle || "This is the next move with the highest leverage right now.",
+          big:
+            toSentence(strongestAction?.whyItMatters) ||
+            "This is the move most likely to improve the current decision path.",
+          rows: [
+            {
+              key: "If this lands",
+              value: topOutcomeIfSolved || "A clearer next action becomes possible.",
+            },
+            {
+              key: "Success signal",
+              value: topSuccessCriterion || `Confidence moves by +${confidenceLift}.`,
+            },
+            {
+              key: "Owner",
+              value: toSentence(strongestAction?.primaryOwner) || "Unassigned",
+            },
+          ],
+        },
+        blocking: {
+          title: "WHAT IS BLOCKING",
+          headline: toSentence(primaryConstraint?.title) || "Core blocker is still unresolved.",
+          big: toSentence(primaryConstraint?.detail) || "No validated blocker statement has been captured yet.",
+          compact: true,
+          rows: [
+            {
+              key: "Assumption",
+              value: topAssumption || "The key assumption has not been made explicit yet.",
+            },
+            {
+              key: "Execution state",
+              value:
+                unownedCriticalCount > 0
+                  ? `${unownedCriticalCount} of ${Math.max(1, criticalActionCount)} critical actions are unowned`
+                  : plannedCriticalCount > 0
+                    ? `${plannedCriticalCount} critical actions are still planned`
+                    : "Critical work is already moving",
+            },
+          ],
+        },
+        signals: {
+          title: "SIGNALS",
+          headline:
+            weakestSignalRow ? `${weakestSignalRow.key} is the weakest signal right now.` : "Signal read not available.",
+          compact: true,
+          rows: [
+            {
+              key: "Missing evidence",
+              value: evidenceMissingLabels.length > 0 ? evidenceMissingLabels.join(", ") : "No obvious evidence gap",
+            },
+            {
+              key: "Signal levels",
+              value: signalRows.map((row) => `${row.key} ${row.value}`).join(" · "),
+            },
+          ],
+        },
+        progress: {
+          title: "PROGRESS",
+          headline: `${baseConfidence} → ${baseConfidence + confidenceLift} → ${confidenceTarget}`,
+          compact: true,
+          rows: [
+            { key: "Movement", value: `${baseConfidence} → ${baseConfidence + confidenceLift} → ${confidenceTarget}` },
+          ],
+        },
+      };
+    },
     [
-      actionHeadline,
+      isEarlyPhase,
       baseConfidence,
-      confidence.level,
+      confidenceLift,
       confidenceTarget,
-      phase,
+      commandActionTitle,
+      criticalActionCount,
+      evidencePresentLabels,
+      evidenceMissingLabels,
       primaryConstraint?.detail,
-      strongestAction?.ifMissed,
+      primaryConstraint?.title,
+      primaryDesiredOutcome?.leadingIndicator,
+      primaryDesiredOutcome?.statement,
+      strongestAction?.primaryOwner,
+      strongestAction?.whyItMatters,
+      plannedCriticalCount,
+      signalRows,
+      topAssumption,
+      topOutcomeIfSolved,
+      topSuccessCriterion,
+      unownedCriticalCount,
+      weakestSignalRow,
+      diagnostic,
     ],
   );
+
+  const combinedDrawerSections = useMemo(
+    () => [drawerSections.why, drawerSections.blocking, drawerSections.signals, drawerSections.progress],
+    [drawerSections],
+  );
+
+  const narrativeRows = useMemo(() => {
+    const obs    = toSentence(primaryConstraint?.title);
+    const detail = toSentence(primaryConstraint?.detail) || obs;
+    const ifMissed = toSentence(strongestAction?.ifMissed?.[0]);
+
+    // For early phases, prefer diagnostic data from Dify when available
+    const diagObs     = diagnostic?.observations?.[0] ?? "";
+    const diagObs2    = diagnostic?.observations?.[1] ?? "";
+    const diagTension = diagnostic?.tensions?.[0] ?? "";
+    const diagMissing = diagnostic?.missingEvidence?.[0] ?? "";
+    const diagQ       = diagnostic?.questionsToInvestigate?.[0] ?? "";
+    const diagImpl    = diagnostic?.possibleImplications?.[0] ?? "";
+
+    if (phase === "outside_signals") {
+      const row1 = diagObs  || obs    || "Outside signals are still forming";
+      const row2 = diagObs2 || detail || "A second signal appears in the same area";
+      const row3 = diagMissing || diagQ  || actionHeadline || "Still unclear what the company's own evidence shows";
+      const row4 = diagTension || ifMissed || "Company or customer evidence would confirm or contradict this";
+      return [
+        { label: "What keeps appearing",         lead: "", emphasis: row1, tail: row1 === obs && !obs ? " — more signals needed." : "." },
+        { label: "",                             lead: "", emphasis: row2, tail: diagObs2 ? "." : " — not yet confirmed." },
+        { label: "What's still unclear",         lead: "", emphasis: row3, tail: ". Without that, this is a hypothesis." },
+        { label: "What would sharpen confidence",lead: "", emphasis: row4, tail: "." },
+      ].filter((r) => r.emphasis);
+    }
+
+    if (phase === "validate_outside") {
+      const row1 = diagObs     || obs    || "The external signals are consistent enough to share";
+      const row2 = diagTension || detail || "The outside read may not match how the company sees itself";
+      const row3 = diagMissing || diagQ  || actionHeadline;
+      const row4 = ifMissed || "The next phase starts from a shared understanding";
+      return [
+        { label: "What the outside view says", lead: "", emphasis: row1, tail: ". This is what the outside read looks like before the client weighs in." },
+        { label: "Why it matters to check",    lead: "", emphasis: row2, tail: ". The client's reaction shapes what comes next." },
+        { label: "What we haven't heard",      lead: "", emphasis: row3, tail: ". That's the gap this moment closes." },
+        { label: "What changes if we get it",  lead: "", emphasis: row4, tail: ", not an untested assumption." },
+      ];
+    }
+
+    if (phase === "diagnose") {
+      const row1 = diagObs  || obs    || "A pattern is emerging but not yet confirmed";
+      const row2 = diagObs2 || detail || "A second signal points in the same direction";
+      const row3 = diagMissing || diagQ  || diagTension || actionHeadline || "Still unclear what would confirm or change this";
+      const row4 = ifMissed || diagMissing || "Direct customer evidence would move this from likely to clear";
+      const row5 = diagImpl || diagTension || "If this holds, the focus likely shifts to closing that gap";
+      return [
+        { label: "Why this is surfacing",        lead: "", emphasis: row1, tail: diagObs  ? "." : (obs ? "." : " — not yet confirmed.") },
+        { label: "",                             lead: "", emphasis: row2, tail: diagObs2 ? "." : "." },
+        { label: "What's still unclear",         lead: "", emphasis: row3, tail: "." },
+        { label: "What would sharpen confidence",lead: "", emphasis: row4, tail: "." },
+        { label: "Possible implication",         lead: "", emphasis: row5, tail: " — not a recommendation yet." },
+      ].filter((r) => r.emphasis);
+    }
+
+    if (phase === "validate_diagnose") {
+      const row1 = diagObs  || obs    || "A working direction is in place";
+      const row2 = diagObs2 || detail || "A second signal reinforces it";
+      const row3 = diagMissing || diagQ  || diagTension || actionHeadline || "Still unclear what would confirm or change this";
+      const row4 = ifMissed || diagMissing || "Getting the client's read separates confirmed from still-open";
+      const row5 = diagImpl || diagTension || "If confirmed, the next phase starts from a shared foundation";
+      return [
+        { label: "Why this is surfacing",        lead: "", emphasis: row1, tail: diagObs  ? "." : (obs ? " — some of it backed by evidence, some still assumed." : " — parts are still assumed.") },
+        { label: "",                             lead: "", emphasis: row2, tail: diagObs2 ? "." : "." },
+        { label: "What's still unclear",         lead: "", emphasis: row3, tail: " — that's what needs settling before the direction gets locked." },
+        { label: "What would sharpen confidence",lead: "", emphasis: row4, tail: "." },
+        { label: "Possible implication",         lead: "", emphasis: row5, tail: " — not a decision yet." },
+      ].filter((r) => r.emphasis);
+    }
+
+    if (phase === "focus") return [
+      { label: "What the evidence says",        lead: "", emphasis: obs    || "A clear direction has emerged",                   tail: obs ? ". This is the highest-leverage point the data has surfaced." : "." },
+      { label: "Why this, not something else",  lead: "", emphasis: detail || "The evidence here is stronger than anywhere else", tail: ". That's the reason this is the focus." },
+      { label: "The priority",                  lead: "", emphasis: actionHeadline,                                               tail: `. That's what moves the score from ${baseConfidence} toward ${confidenceTarget}.` },
+      { label: "What would shift it",           lead: "", emphasis: ifMissed || "If the evidence changes, so does the direction — right now, it hasn't", tail: "." },
+    ];
+
+    if (phase === "validate_focus") return [
+      { label: "What the evidence says",  lead: "", emphasis: obs    || "A direction has been chosen",       tail: obs ? ". Before locking in, it needs one more pass." : " — confirm it holds." },
+      { label: "What needs to be true",   lead: "", emphasis: detail || "The route assumptions hold",        tail: ". If they do, execution starts from solid ground. If they don't, now is the time to know." },
+      { label: "The last open question",  lead: "", emphasis: actionHeadline,                               tail: ". That's the one thing to confirm." },
+      { label: "What happens if we skip", lead: "", emphasis: ifMissed || "Execution begins with an open assumption", tail: " — the kind that's expensive to discover mid-flow." },
+    ];
+
+    if (phase === "flow") return [
+      { label: "What's in motion", lead: "", emphasis: obs    || "The route is in execution",                     tail: obs ? ". That's what the work is built around." : "." },
+      { label: "Why it matters",   lead: "", emphasis: detail || "Keeping this visible keeps execution on track", tail: "." },
+      { label: "The priority",     lead: "", emphasis: actionHeadline,                                           tail: ". That drives the outcome." },
+      { label: "What to watch",    lead: "", emphasis: ifMissed || "If progress stalls without explanation, the assumptions need a look", tail: "." },
+    ];
+
+    // validate_flow
+    return [
+      { label: "What the data shows",     lead: "", emphasis: obs    || "Execution is in progress",         tail: obs ? ". Step back and check whether it's working." : " — step back and measure." },
+      { label: "What to measure",         lead: "", emphasis: detail || "Results should be visible by now", tail: ". If they're flat, that's worth knowing." },
+      { label: "The question",            lead: "", emphasis: actionHeadline,                              tail: ". That's what this moment is for." },
+      { label: "What changes with drift", lead: "", emphasis: ifMissed || "The route gets examined, not abandoned", tail: " — small corrections here prevent larger ones later." },
+    ];
+  }, [
+    actionHeadline,
+    baseConfidence,
+    confidenceTarget,
+    diagnostic,
+    phase,
+    primaryConstraint?.detail,
+    primaryConstraint?.title,
+    strongestAction?.ifMissed,
+  ]);
 
   const clearAsync = useCallback(() => {
     if (typingRef.current !== null) {
@@ -603,7 +1305,7 @@ export default function ClientRefinePreviewView() {
     [baseConfidence, commitAgree],
   );
 
-  const openDrawer = useCallback((key: DrawerKey) => {
+  const openDrawer = useCallback((key: DrawerKey = "why") => {
     setDrawerKey(key);
     setLayer("drawer");
   }, []);
@@ -636,6 +1338,11 @@ export default function ClientRefinePreviewView() {
   const goToWorkshop = useCallback(() => {
     navigate(CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE);
   }, [navigate]);
+
+  const goToWorkshopInputs = useCallback(() => {
+    const stage = (phase === "outside_signals" || phase === "validate_outside") ? "outside" : "org";
+    navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?stage=${stage}`);
+  }, [navigate, phase]);
 
   const showHoverTip = useCallback((event: ReactMouseEvent<HTMLElement>, text: string) => {
     const stageBounds = stageRef.current?.getBoundingClientRect();
@@ -787,12 +1494,40 @@ export default function ClientRefinePreviewView() {
           </article>
         ) : (
           <div ref={stageRef} className={stageClassName}>
+            {analysisRunning && (
+              <div className="crpv-analysis-bar" aria-hidden>
+                <div className="crpv-analysis-bar-fill" />
+              </div>
+            )}
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
                 <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {stageLabel(phase).toUpperCase()}</span>
               </div>
               <div className="crpv-header-tools">
+                {analysisRunning ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="cap" style={{ color: "#999" }}>
+                      Analyzing{elapsedSeconds > 0 ? ` · ${elapsedSeconds}s` : "…"}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => { void cancelAnalysis(); }}
+                      style={{ fontSize: 10, opacity: 0.6 }}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => { void runAnalysis(); }}
+                  >
+                    Run Analysis
+                  </button>
+                )}
                 <button type="button" className="btn ghost" onClick={goToWorkshop}>Edit strategy →</button>
                 <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToRoutesPreview}>
                   Routes page
@@ -822,138 +1557,149 @@ export default function ClientRefinePreviewView() {
             <section className="crpv-command-layer">
               {!commitState || commitState !== "next-revealed" ? (
                 <div className="crpv-command-main">
-                  <p className="cap">THE NEXT MOVE</p>
+                  {isEarlyPhase ? (
+                    <>
+                      <p className="cap">
+                        {(phase === "diagnose" || phase === "validate_diagnose") ? "KEY TENSIONS" : "WHAT WE'RE SEEING"}
+                      </p>
 
-                  <p className="crpv-action" role="status">
-                    Validate the{" "}
-                    <span
-                      className="hot"
-                      onClick={() => onHotPhraseActivate("signals")}
-                      onMouseEnter={(event) => showHoverTip(event, "Why these two needs are the highest-leverage signal gap right now.")}
-                      onMouseMove={(event) => moveHoverTip(event, "Why these two needs are the highest-leverage signal gap right now.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      top two customer needs
-                    </span>{" "}
-                    through{" "}
-                    <span
-                      className="hot"
-                      onClick={() => onHotPhraseActivate("why")}
-                      onMouseEnter={(event) => showHoverTip(event, "Interview volume needed to validate demand direction before committing execution spend.")}
-                      onMouseMove={(event) => moveHoverTip(event, "Interview volume needed to validate demand direction before committing execution spend.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      8 to 10 customer interviews
-                    </span>{" "}
-                    in{" "}
-                    <span
-                      className="hot"
-                      onClick={() => onHotPhraseActivate("progress")}
-                      onMouseEnter={(event) => showHoverTip(event, "Decision timebox to produce evidence and raise confidence for stage progression.")}
-                      onMouseMove={(event) => moveHoverTip(event, "Decision timebox to produce evidence and raise confidence for stage progression.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      two weeks
-                    </span>
-                    .
-                  </p>
+                      {diagnostic ? (
+                        <>
+                          <p className="crpv-action" role="status">
+                            {diagnostic.headline || "The picture is still forming."}
+                          </p>
+                          {diagnostic.subhead && (
+                            <p className="crpv-action-support">{diagnostic.subhead}</p>
+                          )}
+                          {!diagnostic.isAccepted && (
+                            <p style={{ fontSize: 10, color: "#6E847F", fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 8 }}>
+                              Working analysis · not yet accepted
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="crpv-action" role="status" style={{ opacity: 0.6 }}>
+                          No diagnostic analysis has been run yet.
+                        </p>
+                      )}
 
-                  <div className="crpv-meta-row">
-                    <div
-                      className="meta"
-                      onClick={() => (accessModes.inline ? openDrawer("progress") : undefined)}
-                      onMouseEnter={(event) => showHoverTip(event, "Estimated confidence lift after this action is complete.")}
-                      onMouseMove={(event) => moveHoverTip(event, "Estimated confidence lift after this action is complete.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      <span className="cap">Impact</span>
-                      <span className="v">{impactValue}</span>
-                    </div>
-                    <div
-                      className="meta"
-                      onClick={() => (accessModes.inline ? openDrawer("blocking") : undefined)}
-                      onMouseEnter={(event) => showHoverTip(event, "Expected execution time and coordination load for this move.")}
-                      onMouseMove={(event) => moveHoverTip(event, "Expected execution time and coordination load for this move.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      <span className="cap">Effort</span>
-                      <span className="v">{effortValue}</span>
-                    </div>
-                    <div
-                      className="meta"
-                      onClick={() => (accessModes.inline ? openDrawer("signals") : undefined)}
-                      onMouseEnter={(event) => showHoverTip(event, "How reliable the current evidence is for making this decision now.")}
-                      onMouseMove={(event) => moveHoverTip(event, "How reliable the current evidence is for making this decision now.")}
-                      onMouseLeave={hideHoverTip}
-                    >
-                      <span className="cap">Certainty</span>
-                      <span className="v">{certaintyValue}</span>
-                    </div>
-                  </div>
+                      <div className="crpv-secondary-links">
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          data-go="narrative"
+                          onClick={() => { setLayer("narrative"); setDrawerKey(null); }}
+                        >
+                          ✎ Full picture
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={goToRoutesPreview}
+                        >
+                          ⧉ Routes page
+                        </button>
+                        <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
+                          Edit inputs →
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="cap">THE NEXT MOVE</p>
 
-                  {accessModes.pills ? (
-                    <div className="crpv-pill-row">
-                      <button type="button" className="pill" onClick={() => openDrawer("why")}>
-                        <span className="dot" /> Why this <span className="count">3</span>
-                      </button>
-                      <button type="button" className="pill" onClick={() => openDrawer("blocking")}>
-                        <span className="dot" /> What is blocking <span className="count">2</span>
-                      </button>
-                      <button type="button" className="pill" onClick={() => openDrawer("signals")}>
-                        <span className="dot" /> Signals <span className="count">5</span>
-                      </button>
-                      <button type="button" className="pill" onClick={() => openDrawer("progress")}>
-                        <span className="dot" /> Progress <span className="count">{baseConfidence}/{confidenceTarget}</span>
-                      </button>
-                    </div>
-                  ) : null}
+                      <p className="crpv-action" role="status">{commandActionTitle}</p>
+                      {commandActionSupport ? <p className="crpv-action-support">{commandActionSupport}</p> : null}
 
-                  <div className="crpv-cta-row">
-                    <button type="button" className="btn primary" data-commit="agree" onClick={() => commitAgree()}>
-                      ✓ Agree — do this
-                    </button>
-                    <button type="button" className="btn" data-commit="disagree" onClick={commitDisagree}>
-                      Disagree
-                    </button>
-                    <button type="button" className="btn" data-commit="evidence" onClick={commitNeedEvidence}>
-                      Need more evidence
-                    </button>
-                  </div>
+                      <div className="crpv-meta-row">
+                        <div
+                          className="meta"
+                          onClick={() => (accessModes.inline ? openDrawer("progress") : undefined)}
+                          onMouseEnter={(event) => showHoverTip(event, "Estimated confidence lift after this action is complete.")}
+                          onMouseMove={(event) => moveHoverTip(event, "Estimated confidence lift after this action is complete.")}
+                          onMouseLeave={hideHoverTip}
+                        >
+                          <span className="cap">Impact</span>
+                          <span className="v">{impactValue}</span>
+                        </div>
+                        <div
+                          className="meta"
+                          onClick={() => (accessModes.inline ? openDrawer("blocking") : undefined)}
+                          onMouseEnter={(event) => showHoverTip(event, "Expected execution time and coordination load for this move.")}
+                          onMouseMove={(event) => moveHoverTip(event, "Expected execution time and coordination load for this move.")}
+                          onMouseLeave={hideHoverTip}
+                        >
+                          <span className="cap">Effort</span>
+                          <span className="v">{effortValue}</span>
+                        </div>
+                        <div
+                          className="meta"
+                          onClick={() => (accessModes.inline ? openDrawer("signals") : undefined)}
+                          onMouseEnter={(event) => showHoverTip(event, "How reliable the current evidence is for making this decision now.")}
+                          onMouseMove={(event) => moveHoverTip(event, "How reliable the current evidence is for making this decision now.")}
+                          onMouseLeave={hideHoverTip}
+                        >
+                          <span className="cap">Certainty</span>
+                          <span className="v">{certaintyValue}</span>
+                        </div>
+                      </div>
 
-                  <div className="crpv-secondary-links">
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      onClick={goToRoutesPreview}
-                    >
-                      ⧉ Routes page
-                    </button>
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      data-go="map"
-                      onClick={() => {
-                        setLayer("map");
-                        setDrawerKey(null);
-                      }}
-                    >
-                      ◎ View Map
-                    </button>
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      data-go="narrative"
-                      onClick={() => {
-                        setLayer("narrative");
-                        setDrawerKey(null);
-                      }}
-                    >
-                      ✎ Explain this decision
-                    </button>
-                    <button type="button" className="btn ghost" onClick={() => setLayer("narrative")}>
-                      ↗ Share with team
-                    </button>
-                  </div>
+                      {accessModes.pills ? (
+                        <div className="crpv-pill-row">
+                          <button type="button" className="pill" onClick={() => openDrawer()}>
+                            <span className="dot" /> Decision context <span className="count">{combinedDrawerSections.length}</span>
+                          </button>
+                        </div>
+                      ) : null}
+
+                      <div className="crpv-cta-row">
+                        <button type="button" className="btn primary" data-commit="agree" onClick={() => commitAgree()}>
+                          ✓ Agree — do this
+                        </button>
+                        <button type="button" className="btn" data-commit="disagree" onClick={commitDisagree}>
+                          Disagree
+                        </button>
+                        <button type="button" className="btn" data-commit="evidence" onClick={commitNeedEvidence}>
+                          Need more evidence
+                        </button>
+                      </div>
+
+                      <div className="crpv-secondary-links">
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={goToRoutesPreview}
+                        >
+                          ⧉ Routes page
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          data-go="map"
+                          onClick={() => {
+                            setLayer("map");
+                            setDrawerKey(null);
+                          }}
+                        >
+                          ◎ View Map
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          data-go="narrative"
+                          onClick={() => {
+                            setLayer("narrative");
+                            setDrawerKey(null);
+                          }}
+                        >
+                          ✎ Explain this decision
+                        </button>
+                        <button type="button" className="btn ghost" onClick={() => setLayer("narrative")}>
+                          ↗ Share with team
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : null}
 
@@ -1233,8 +1979,8 @@ export default function ClientRefinePreviewView() {
                 <p className="cap crpv-narrative-cap">
                   THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52
                 </p>
-                {narrativeRows.map((item) => (
-                  <div key={item.label} className="step">
+                {narrativeRows.map((item, i) => (
+                  <div key={i} className="step">
                     <div className="n">{item.label}</div>
                     <p>
                       {item.lead}
@@ -1244,39 +1990,34 @@ export default function ClientRefinePreviewView() {
                   </div>
                 ))}
                 <div className="crpv-narrative-cta">
-                  <button type="button" className="btn primary" onClick={() => commitAgree()}>
-                    ✓ Commit
-                  </button>
+                  {!isEarlyPhase && (
+                    <button type="button" className="btn primary" onClick={() => commitAgree()}>
+                      ✓ Commit
+                    </button>
+                  )}
                   <button type="button" className="btn" onClick={() => setLayer("map") }>
                     ◎ Show on map
                   </button>
-                  <button type="button" className="btn ghost" onClick={() => setLayer("narrative") }>
-                    ↗ Share as memo
-                  </button>
                   <button type="button" className="btn ghost" onClick={() => setLayer("command") }>
-                    ← Back to Command
+                    ← Back
                   </button>
                 </div>
               </div>
             </section>
 
             <div className="crpv-edge-tabs">
-              {EDGE_DRAWERS.map((item) => (
-                <button key={item.key} type="button" onClick={() => openDrawer(item.key)}>
-                  {item.label}
-                </button>
-              ))}
+              <button type="button" onClick={() => openDrawer()}>
+                Decision Context
+              </button>
             </div>
 
             {accessModes.footer ? (
               <div className="crpv-footer-drawers">
-                <div className="left cap">WHY · 2 OF 5 RESPONDED</div>
+                <div className="left cap">DECISION CONTEXT</div>
                 <div className="right">
-                  {EDGE_DRAWERS.map((item) => (
-                    <button key={item.key} type="button" className="btn ghost" onClick={() => openDrawer(item.key)}>
-                      {item.label}
-                    </button>
-                  ))}
+                  <button type="button" className="btn ghost" onClick={() => openDrawer()}>
+                    Open context
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -1288,7 +2029,7 @@ export default function ClientRefinePreviewView() {
               <h4>Layer stack</h4>
               <p>Command defaults. Map and Narrative are progressive disclosure layers. Drawers expose context on demand.</p>
               <h4>Keyboard</h4>
-              <p>M map · N narrative · Esc command · 1-4 drawers.</p>
+              <p>M map · N narrative · Esc command · 1-4 open context.</p>
               <h4>Commit model</h4>
               <p>Agree logs commit, Disagree branches alternatives, Need evidence pauses until checks are satisfied.</p>
             </aside>
@@ -1302,71 +2043,316 @@ export default function ClientRefinePreviewView() {
               <span className="sep">·</span>
               <span><span className="k">N</span> NARRATIVE</span>
               <span className="sep">·</span>
-              <span><span className="k">1-4</span> DRAWERS</span>
+              <span><span className="k">1-4</span> CONTEXT</span>
               <span className="sep">·</span>
               <span><span className="k">Esc</span> BACK</span>
             </div>
 
             <aside className={`crpv-tweaks ${tweaksOpen ? "open" : ""}`}>
               <div className="hdr">
-                <span>Tweaks · Drawer Access</span>
+                <span>{isAdmin ? "Admin Workbench" : "Tweaks · Drawer Access"}</span>
                 <button type="button" className="x" onClick={() => setTweaksOpen(false)}>
                   ✕
                 </button>
               </div>
-              <div className="section">
-                <div className="sect-title">Access patterns</div>
-                <label className="tweak-toggle">
-                  <span className="lbl">Pill row<span className="sub">Explicit chips under meta row</span></span>
-                  <input
-                    type="checkbox"
-                    checked={accessModes.pills}
-                    onChange={(event) =>
-                      setAccessModes((prev) => ({ ...prev, pills: event.target.checked }))
-                    }
-                  />
-                  <span className="sw" />
-                </label>
-                <label className="tweak-toggle">
-                  <span className="lbl">Inline hot-phrase<span className="sub">Dashes open related drawer</span></span>
-                  <input
-                    type="checkbox"
-                    checked={accessModes.inline}
-                    onChange={(event) =>
-                      setAccessModes((prev) => ({ ...prev, inline: event.target.checked }))
-                    }
-                  />
-                  <span className="sw" />
-                </label>
-                <label className="tweak-toggle">
-                  <span className="lbl">Right-edge tabs<span className="sub">Pinned vertical access</span></span>
-                  <input
-                    type="checkbox"
-                    checked={accessModes.edge}
-                    onChange={(event) =>
-                      setAccessModes((prev) => ({ ...prev, edge: event.target.checked }))
-                    }
-                  />
-                  <span className="sw" />
-                </label>
-                <label className="tweak-toggle">
-                  <span className="lbl">Footer row<span className="sub">Bottom context strip</span></span>
-                  <input
-                    type="checkbox"
-                    checked={accessModes.footer}
-                    onChange={(event) =>
-                      setAccessModes((prev) => ({ ...prev, footer: event.target.checked }))
-                    }
-                  />
-                  <span className="sw" />
-                </label>
-              </div>
-              <div className="section">
-                <div className="sect-title">Navigation</div>
-                <button type="button" className="btn" onClick={goToMainSite}>
-                  ← Main site
-                </button>
-              </div>
+              {isAdmin ? (
+                <>
+                  <div className="section">
+                    <div className="crpv-tweaks-tabs">
+                      {([
+                        ["evidence", "Evidence"],
+                        ["claims", "Claims"],
+                        ["foundation", "Foundation"],
+                        ["assumptions", "Assumptions"],
+                        ["rerun", "Rerun"],
+                        ["access", "Access"],
+                      ] as Array<[TweakTab, string]>).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`crpv-tweaks-tab ${tweakTab === key ? "active" : ""}`}
+                          onClick={() => setTweakTab(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {tweakTab === "evidence" && (
+                    <div className="section">
+                      <div className="sect-title">Evidence state</div>
+                      <div className="crpv-tweaks-stat">
+                        <span>Preferred run</span>
+                        <strong>
+                          {baselineRun?.created_at ? new Date(baselineRun.created_at).toLocaleString() : "None"}
+                        </strong>
+                      </div>
+                      <div className="crpv-tweaks-stat">
+                        <span>Latest run</span>
+                        <strong>
+                          {latestBaselineRun?.created_at ? new Date(latestBaselineRun.created_at).toLocaleString() : "None"}
+                        </strong>
+                      </div>
+                      <div className="crpv-tweaks-stat"><span>Outside signals</span><strong>{baselineLoading ? "…" : baselineSummary.outsideSignals}</strong></div>
+                      <div className="crpv-tweaks-stat"><span>Evidence ledger</span><strong>{baselineLoading ? "…" : baselineSummary.evidenceLedger}</strong></div>
+                      <div className="crpv-tweaks-stat"><span>Top hypotheses</span><strong>{baselineLoading ? "…" : baselineSummary.hypotheses}</strong></div>
+                      <div className="crpv-tweaks-stat"><span>Open questions</span><strong>{baselineLoading ? "…" : baselineSummary.questions}</strong></div>
+                      <div className="crpv-tweaks-note">{baselineSelectionReason}</div>
+                      <div className="crpv-tweaks-list">
+                        <div className="crpv-tweaks-list-item">
+                          <div className="crpv-tweaks-list-meta">Signal posture</div>
+                          <div className="crpv-tweaks-list-text">
+                            Outside: {signalPosture.outside} · Organization: {signalPosture.organization} · Customer: {signalPosture.customer}
+                          </div>
+                        </div>
+                        <div className="crpv-tweaks-list-item">
+                          <div className="crpv-tweaks-list-meta">Safe to use now</div>
+                          <div className="crpv-tweaks-list-text">{evidenceGuidance.usable}</div>
+                        </div>
+                        <div className="crpv-tweaks-list-item">
+                          <div className="crpv-tweaks-list-meta">Needs revalidation</div>
+                          <div className="crpv-tweaks-list-text">{evidenceGuidance.revalidate}</div>
+                        </div>
+                      </div>
+                      <div className="crpv-tweaks-note">
+                        Treat outside signals as market-facing evidence. Customer truth still needs direct validation when framing changes.
+                      </div>
+                    </div>
+                  )}
+
+                  {tweakTab === "claims" && (
+                    <div className="section">
+                      <div className="sect-title">Current claims</div>
+                      {claimWorkbenchPreview.length === 0 ? (
+                        <div className="crpv-tweaks-note">No framework claims available yet. Run analysis first.</div>
+                      ) : (
+                        <div className="crpv-tweaks-list">
+                          {claimWorkbenchPreview.map((finding, index) => (
+                            <div key={`${finding.framework}-${index}`} className="crpv-tweaks-list-item">
+                              <div className="crpv-tweaks-list-meta">
+                                {finding.framework} · {finding.mojoArea} · {finding.confidence} · {finding.supportLevel}
+                              </div>
+                              <div className="crpv-tweaks-list-text">{finding.claim}</div>
+                              <div className="crpv-tweaks-list-sub">{finding.supportReason}</div>
+                              {finding.evidence ? <div className="crpv-tweaks-list-sub">Evidence: {shorten(finding.evidence, 110)}</div> : null}
+                              <div className="crpv-tweaks-list-sub">Next check: {finding.validationNote}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tweakTab === "foundation" && (
+                    <div className="section">
+                      <div className="sect-title">Foundation read</div>
+                      <div className="crpv-tweaks-note">
+                        This is the current working foundation the command view is using. It is not the final truth. It is the best current read from the available evidence shape.
+                      </div>
+                      <div className="crpv-tweaks-list">
+                        {foundationWorkbenchPreview.map((item) => (
+                          <div key={item.area} className="crpv-tweaks-list-item">
+                            <div className="crpv-tweaks-list-meta">{item.area} · {item.evidenceShape}</div>
+                            <div className="crpv-tweaks-list-text">{item.statement}</div>
+                            <div className="crpv-tweaks-list-sub">Next check: {item.nextCheck}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {tweakTab === "assumptions" && (
+                    <div className="section">
+                      <div className="sect-title">Assumptions</div>
+                      <div className="crpv-tweaks-assumption-form">
+                        <textarea
+                          value={newAssumption}
+                          onChange={(event) => setNewAssumption(event.target.value)}
+                          placeholder="Add a testable what-must-be-true statement"
+                          className="crpv-tweaks-textarea"
+                        />
+                        <button type="button" className="btn" onClick={() => void handleAddAssumption()} disabled={assumptionSaving}>
+                          {assumptionSaving ? "Saving…" : "Add assumption"}
+                        </button>
+                      </div>
+                      {assumptionsLoading ? (
+                        <div className="crpv-tweaks-note">Loading assumptions…</div>
+                      ) : assumptionWorkbenchPreview.length === 0 ? (
+                        <div className="crpv-tweaks-note">No assumptions stored yet.</div>
+                      ) : (
+                        <div className="crpv-tweaks-list">
+                          {assumptionWorkbenchPreview.slice(0, 8).map((assumption) => (
+                            <div key={assumption.id} className="crpv-tweaks-list-item">
+                              <div className="crpv-tweaks-list-text">{assumption.assumption}</div>
+                              <div className="crpv-tweaks-list-meta">
+                                {assumption.source} · {assumption.status}
+                                {assumption.gates.length > 0 ? ` · gates ${assumption.gates.join(" · ")}` : ""}
+                              </div>
+                              <div className="crpv-tweaks-list-sub">{assumption.impact}</div>
+                              {assumption.note ? <div className="crpv-tweaks-list-sub">Note: {assumption.note}</div> : null}
+                              <div className="crpv-tweaks-chip-row">
+                                {(["untested", "validating", "validated", "invalidated"] as const).map((status) => (
+                                  <button
+                                    key={status}
+                                    type="button"
+                                    className={`crpv-tweaks-chip ${assumption.status === status ? "active" : ""}`}
+                                    disabled={assumptionUpdatingId === assumption.id}
+                                    onClick={() => void setAssumptionStatus(assumption.id, status)}
+                                  >
+                                    {status}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tweakTab === "rerun" && (
+                    <div className="section">
+                      <div className="sect-title">Rerun controls</div>
+                      <div className="crpv-tweaks-note">
+                        Scoped reruns are preferred here. Only the full analysis button rebuilds the broader diagnostic layer.
+                      </div>
+                      <button type="button" className="btn" onClick={() => void runOutsideSignals()}>
+                        Refresh outside evidence
+                      </button>
+                      <button type="button" className="btn" onClick={() => void rerunFoundationScope()}>
+                        Rebuild foundation + routes
+                      </button>
+                      <button type="button" className="btn" onClick={() => void rerunOdiJobMapScope()}>
+                        Regenerate ODI job map
+                      </button>
+                      <button type="button" className="btn" onClick={() => void runAnalysis()} disabled={analysisRunning}>
+                        {analysisRunning ? "Full analysis running…" : "Run full analysis"}
+                      </button>
+                      <button type="button" className="btn" onClick={() => void cancelAnalysis()} disabled={!analysisRunning}>
+                        Cancel running analysis
+                      </button>
+                      <button type="button" className="btn" onClick={() => navigate(CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE)}>
+                        Open workshop
+                      </button>
+                    </div>
+                  )}
+
+                  {tweakTab === "access" && (
+                    <>
+                      <div className="section">
+                        <div className="sect-title">Access patterns</div>
+                        <label className="tweak-toggle">
+                          <span className="lbl">Pill row<span className="sub">Explicit chips under meta row</span></span>
+                          <input
+                            type="checkbox"
+                            checked={accessModes.pills}
+                            onChange={(event) =>
+                              setAccessModes((prev) => ({ ...prev, pills: event.target.checked }))
+                            }
+                          />
+                          <span className="sw" />
+                        </label>
+                        <label className="tweak-toggle">
+                          <span className="lbl">Inline hot-phrase<span className="sub">Dashes open related drawer</span></span>
+                          <input
+                            type="checkbox"
+                            checked={accessModes.inline}
+                            onChange={(event) =>
+                              setAccessModes((prev) => ({ ...prev, inline: event.target.checked }))
+                            }
+                          />
+                          <span className="sw" />
+                        </label>
+                        <label className="tweak-toggle">
+                          <span className="lbl">Right-edge tabs<span className="sub">Pinned vertical access</span></span>
+                          <input
+                            type="checkbox"
+                            checked={accessModes.edge}
+                            onChange={(event) =>
+                              setAccessModes((prev) => ({ ...prev, edge: event.target.checked }))
+                            }
+                          />
+                          <span className="sw" />
+                        </label>
+                        <label className="tweak-toggle">
+                          <span className="lbl">Footer row<span className="sub">Bottom context strip</span></span>
+                          <input
+                            type="checkbox"
+                            checked={accessModes.footer}
+                            onChange={(event) =>
+                              setAccessModes((prev) => ({ ...prev, footer: event.target.checked }))
+                            }
+                          />
+                          <span className="sw" />
+                        </label>
+                      </div>
+                      <div className="section">
+                        <div className="sect-title">Navigation</div>
+                        <button type="button" className="btn" onClick={goToMainSite}>
+                          ← Main site
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="section">
+                    <div className="sect-title">Access patterns</div>
+                    <label className="tweak-toggle">
+                      <span className="lbl">Pill row<span className="sub">Explicit chips under meta row</span></span>
+                      <input
+                        type="checkbox"
+                        checked={accessModes.pills}
+                        onChange={(event) =>
+                          setAccessModes((prev) => ({ ...prev, pills: event.target.checked }))
+                        }
+                      />
+                      <span className="sw" />
+                    </label>
+                    <label className="tweak-toggle">
+                      <span className="lbl">Inline hot-phrase<span className="sub">Dashes open related drawer</span></span>
+                      <input
+                        type="checkbox"
+                        checked={accessModes.inline}
+                        onChange={(event) =>
+                          setAccessModes((prev) => ({ ...prev, inline: event.target.checked }))
+                        }
+                      />
+                      <span className="sw" />
+                    </label>
+                    <label className="tweak-toggle">
+                      <span className="lbl">Right-edge tabs<span className="sub">Pinned vertical access</span></span>
+                      <input
+                        type="checkbox"
+                        checked={accessModes.edge}
+                        onChange={(event) =>
+                          setAccessModes((prev) => ({ ...prev, edge: event.target.checked }))
+                        }
+                      />
+                      <span className="sw" />
+                    </label>
+                    <label className="tweak-toggle">
+                      <span className="lbl">Footer row<span className="sub">Bottom context strip</span></span>
+                      <input
+                        type="checkbox"
+                        checked={accessModes.footer}
+                        onChange={(event) =>
+                          setAccessModes((prev) => ({ ...prev, footer: event.target.checked }))
+                        }
+                      />
+                      <span className="sw" />
+                    </label>
+                  </div>
+                  <div className="section">
+                    <div className="sect-title">Navigation</div>
+                    <button type="button" className="btn" onClick={goToMainSite}>
+                      ← Main site
+                    </button>
+                  </div>
+                </>
+              )}
             </aside>
 
             <button type="button" className={`crpv-tweaks-fab ${tweaksOpen ? "hidden" : "visible"}`} onClick={() => setTweaksOpen(true)}>
@@ -1381,15 +2367,26 @@ export default function ClientRefinePreviewView() {
               </button>
               {currentDrawer ? (
                 <>
-                  <p className="cap">{currentDrawer.title}</p>
-                  <h3>{currentDrawer.headline}</h3>
-                  {currentDrawer.big ? <p className="big">{currentDrawer.big}</p> : null}
-                  <div className="rows">
-                    {currentDrawer.rows.map((row) => (
-                      <div key={`${row.key}-${row.value}`} className="row">
-                        <span>{row.key}</span>
-                        <span>{row.value}</span>
-                      </div>
+                  <p className="cap">DECISION CONTEXT</p>
+                  <h3>{commandActionTitle || currentDrawer.headline}</h3>
+                  {commandActionSupport ? <p className="big">{commandActionSupport}</p> : null}
+                  <div className="crpv-drawer-sections">
+                    {combinedDrawerSections.map((section) => (
+                      <section key={section.title} className={`crpv-drawer-section ${section.compact ? "compact" : ""}`.trim()}>
+                        <div className="crpv-drawer-section-header">
+                          <p className="cap">{section.title}</p>
+                          {!section.compact ? <h4>{section.headline}</h4> : null}
+                        </div>
+                        {section.big ? <p className="big">{section.big}</p> : null}
+                        <div className="rows">
+                          {section.rows.map((row) => (
+                            <div key={`${section.title}-${row.key}-${row.value}`} className="row">
+                              <span className="label">{row.key}</span>
+                              <span className="value">{row.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     ))}
                   </div>
                 </>

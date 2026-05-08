@@ -61,7 +61,7 @@ export function useRoutes(companyId?: string) {
       const { data, error } = await supabase
         .from("routes")
         .select(
-          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, assumptions_json, created_at"
+          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at"
         )
         .eq("company_id", companyId)
         .order("sort_order", { ascending: true })

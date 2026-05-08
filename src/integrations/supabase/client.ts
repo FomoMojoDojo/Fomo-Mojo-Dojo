@@ -14,7 +14,29 @@ const HAS_NON_PLACEHOLDER_FALLBACK =
   FALLBACK_SUPABASE_PUBLISHABLE_KEY !== 'public-anon-key';
 export const HAS_SUPABASE_CREDENTIALS = HAS_CONFIGURED_SUPABASE || HAS_NON_PLACEHOLDER_FALLBACK;
 
-const resolvedSupabaseUrl = HAS_CONFIGURED_SUPABASE ? SUPABASE_URL! : FALLBACK_SUPABASE_URL;
+function resolveSupabaseUrl() {
+  const configuredUrl = HAS_CONFIGURED_SUPABASE ? SUPABASE_URL! : FALLBACK_SUPABASE_URL;
+
+  if (typeof window === "undefined") return configuredUrl;
+
+  try {
+    const parsed = new URL(configuredUrl);
+    const localHosts = new Set(["127.0.0.1", "localhost"]);
+    const browserHost = window.location.hostname;
+
+    // In dev, allow pages opened via LAN/Tailscale IP to talk to the same host's local Supabase.
+    if (import.meta.env.DEV && localHosts.has(parsed.hostname) && browserHost && !localHosts.has(browserHost)) {
+      parsed.hostname = browserHost;
+      return parsed.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // Ignore malformed URL parsing and fall back to configured value.
+  }
+
+  return configuredUrl;
+}
+
+export const RESOLVED_SUPABASE_URL = resolveSupabaseUrl();
 const resolvedSupabasePublishableKey = HAS_CONFIGURED_SUPABASE
   ? SUPABASE_PUBLISHABLE_KEY!
   : FALLBACK_SUPABASE_PUBLISHABLE_KEY;
@@ -22,7 +44,7 @@ const resolvedSupabasePublishableKey = HAS_CONFIGURED_SUPABASE
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(resolvedSupabaseUrl, resolvedSupabasePublishableKey, {
+export const supabase = createClient<Database>(RESOLVED_SUPABASE_URL, resolvedSupabasePublishableKey, {
   auth: {
     storage: localStorage,
     persistSession: true,

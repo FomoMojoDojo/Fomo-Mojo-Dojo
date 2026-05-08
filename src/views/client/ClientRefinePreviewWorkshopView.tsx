@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
@@ -7,18 +9,21 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
-import JobMapOrgPanel from "./workshop/tabs/JobMapOrgPanel";
+import JobMapOrgPanel, { deriveSuggestedId } from "./workshop/tabs/JobMapOrgPanel";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useSignalExclusion } from "@/hooks/useSignalExclusion";
 import { computeExclusionImpact, computeLatestExclusionAt } from "@/lib/evidenceImpact";
-import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
+import { supabase } from "@/integrations/supabase/client";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
 
 import PositioningOrgPanel from "./workshop/tabs/PositioningOrgPanel";
 import StrategyOrgPanel from "./workshop/tabs/StrategyOrgPanel";
 import NeedsOrgPanel from "./workshop/tabs/NeedsOrgPanel";
+import InputsTab from "./workshop/tabs/InputsTab";
+import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
 import { StrategyCompare, PositioningCompare } from "./workshop/tabs/ComparePanel";
 import { CustomerPlaceholder, SignalBar, PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
@@ -36,6 +41,61 @@ import {
   EvidenceImpactBanner,
   ARTIFACT_TO_TAB,
 } from "./workshop/primitives";
+import { deriveNextBestMove, type EvidenceReadiness } from "@/lib/nextBestMove";
+
+function cleanText(value: string | null | undefined) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeWebsite(url?: string) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function sentenceCase(value: string) {
+  const text = cleanText(value).replace(/\.$/, "");
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function lowerFirst(value: string) {
+  const text = cleanText(value);
+  if (!text) return "";
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function extractCoreJobClause(value: string) {
+  const text = cleanText(value).replace(/\.$/, "");
+  if (!text) return "";
+  const patterns = [
+    /\bneed(?:s)? to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
+    /\bwant(?:s)? to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
+    /\btrying to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
+    /\bhelp\s+.+?\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return sentenceCase(match[1]);
+  }
+  return sentenceCase(text);
+}
+
+function MarketFoundationSection({
+  marketDefinition,
+}: {
+  marketDefinition: string;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <p className="cap" style={{ margin: 0, color: "#6e847f" }}>Market definition</p>
+      <p style={{ margin: "6px 0 0", color: "#233c4b", fontSize: 15, lineHeight: 1.55, maxWidth: 980 }}>
+        {marketDefinition}
+      </p>
+    </div>
+  );
+}
 
 
 
@@ -153,12 +213,28 @@ function CompanySwitcher({
 
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user, isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 0 });
-  const { items: routes } = useRoutes(activeCompany?.id);
-  const [activeTab,   setActiveTab]   = useState<WorkshopTab>("positioning");
-  const [activeStage, setActiveStage] = useState<SignalStage>("outside");
-  const [showCompare, setShowCompare] = useState(false);
+  const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
+
+  const initialTab   = (searchParams.get("tab")   as WorkshopTab | null) ?? "positioning";
+  const initialStage = (searchParams.get("stage") as SignalStage | null) ?? "outside";
+
+  const [activeTab,         setActiveTab]         = useState<WorkshopTab>(initialTab);
+  const [activeStage,       setActiveStage]       = useState<SignalStage>(initialStage);
+  const [showCompare,       setShowCompare]       = useState(false);
+  const [activeStepId,      setActiveStepId]      = useState<string | null>(null);
+  const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
+  const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
+  const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
+  const [showAllJourneys, setShowAllJourneys] = useState(false);
+  const [showCreateClient, setShowCreateClient] = useState(false);
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientWebsite, setNewClientWebsite] = useState("");
+  const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
 
   const companyId = activeCompany?.id;
 
@@ -208,18 +284,262 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const {
     loading: odiLoading,
+    marketDefinition,
     needs,
     error: odiError,
     updateNeedScores,
-  } = useOdiNeeds(companyId);
+  } = useOdiNeeds(companyId, needsRefreshKey);
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
   const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
+  const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
+  const handleRouteSelect = useCallback(
+    (routeId: string) => { setPendingInspectRouteId(routeId); setActiveTab("routes"); },
+    [],
+  );
 
-  const { items: jobSteps, loading: jobStepsLoading } = useJobSteps(companyId);
+  const { items: jobSteps, loading: jobStepsLoading, refetch: refetchJobSteps } = useJobSteps(companyId);
 
   // Compare mode only makes sense on the org stage
   const compareActive = showCompare && activeStage === "org";
+
+  const evidenceReadiness = useMemo((): EvidenceReadiness => ({
+    hasPrimaryEvidence: sourceSignals.hasPrimaryEvidence,
+    primaryEvidenceSignals: sourceSignals.primaryEvidenceSignals,
+    hasCompanyEvidence: sourceSignals.hasCompanyEvidence,
+  }), [sourceSignals.hasPrimaryEvidence, sourceSignals.primaryEvidenceSignals, sourceSignals.hasCompanyEvidence]);
+
+  const selectedJobMapsForSynthesis = useMemo(() => {
+    const grouped = new Map<string, { journey_key: string; journey_title: string; journey_subtitle: string }>();
+    for (const step of jobSteps) {
+      if (!grouped.has(step.journey_key)) {
+        grouped.set(step.journey_key, {
+          journey_key: step.journey_key,
+          journey_title:
+            String(step.journey_title || "").trim() ||
+            (step.journey_key.charAt(0).toUpperCase() + step.journey_key.slice(1)),
+          journey_subtitle: String(step.journey_subtitle || "").trim(),
+        });
+      }
+    }
+    if (grouped.size === 0) {
+      return [
+        {
+          journey_key: "customer",
+          journey_title: "Customer Progress",
+          journey_subtitle: "Universal progress the customer is trying to make",
+        },
+      ];
+    }
+    return Array.from(grouped.values());
+  }, [jobSteps]);
+
+  const journeyOptions = useMemo(() => {
+    const grouped = new Map<string, { key: string; title: string }>();
+    for (const step of jobSteps) {
+      if (!grouped.has(step.journey_key)) {
+        grouped.set(step.journey_key, {
+          key: step.journey_key,
+          title: cleanText(step.journey_title) || step.journey_key,
+        });
+      }
+    }
+    return Array.from(grouped.values());
+  }, [jobSteps]);
+
+  useEffect(() => {
+    if (journeyOptions.length === 0) {
+      setFocusedJourneyKey(null);
+      return;
+    }
+    const preferred =
+      journeyOptions.find((journey) => journey.key !== "customer")?.key ??
+      journeyOptions[0]?.key ??
+      null;
+    setFocusedJourneyKey((current) => {
+      if (current && journeyOptions.some((journey) => journey.key === current)) return current;
+      return preferred;
+    });
+    if (journeyOptions.some((journey) => journey.key !== "customer")) {
+      setShowAllJourneys(false);
+    }
+  }, [journeyOptions]);
+
+  const filteredJobSteps = useMemo(() => {
+    if (showAllJourneys || !focusedJourneyKey) return jobSteps;
+    return jobSteps.filter((step) => step.journey_key === focusedJourneyKey);
+  }, [jobSteps, focusedJourneyKey, showAllJourneys]);
+
+  const filteredNeeds = useMemo(() => {
+    if (showAllJourneys || !focusedJourneyKey) return needs;
+    const matching = needs.filter((need) => String(need.journey_key || "").toLowerCase() === focusedJourneyKey.toLowerCase());
+    return matching.length > 0 ? matching : needs;
+  }, [needs, focusedJourneyKey, showAllJourneys]);
+
+  const filteredRoutes = useMemo(() => {
+    if (showAllJourneys || !focusedJourneyKey) return routes;
+    return routes.filter((route) => {
+      if (!String(route.id || "").startsWith("derived-")) return true;
+      const description = cleanText(route.short_description);
+      return description.toLowerCase().startsWith(`${focusedJourneyKey.toLowerCase()} journey`);
+    });
+  }, [routes, focusedJourneyKey, showAllJourneys]);
+
+  const activeStep = activeStepId ? (filteredJobSteps.find((s) => s.id === activeStepId) ?? null) : null;
+  const clearStep = () => setActiveStepId(null);
+
+  const suggestedStep = useMemo(() => {
+    const id = deriveSuggestedId(filteredJobSteps);
+    return id ? (filteredJobSteps.find((s) => s.id === id) ?? null) : null;
+  }, [filteredJobSteps]);
+  const contextStep = activeStep ?? suggestedStep;
+
+  useEffect(() => {
+    if (!activeStepId) return;
+    if (filteredJobSteps.some((step) => step.id === activeStepId)) return;
+    setActiveStepId(null);
+  }, [activeStepId, filteredJobSteps]);
+
+  const selectedRoute = useMemo(
+    () => filteredRoutes.find((r) => r.id === (activeCompany?.selected_route_id ?? "")) ?? null,
+    [filteredRoutes, activeCompany?.selected_route_id],
+  );
+
+  const nextBestMove = useMemo(
+    () => deriveNextBestMove({ needs: filteredNeeds, routes: filteredRoutes, jobSteps: filteredJobSteps, evidenceState: evidenceReadiness, selectedRoute }),
+    [filteredNeeds, filteredRoutes, filteredJobSteps, evidenceReadiness, selectedRoute],
+  );
+
+  const marketFoundation = useMemo(() => {
+    const primaryJobStatement = cleanText(marketDefinition?.jtbd);
+    const primaryJob = extractCoreJobClause(primaryJobStatement) || "Accomplish the core job with less uncertainty and rework.";
+    const jobExecutor = sentenceCase(
+      cleanText(marketDefinition?.job_executor) || cleanText(positioning?.best_fit_customers) || "Primary job performer",
+    );
+    const marketDefinitionText = sentenceCase(
+      cleanText(primaryJobStatement)
+        ? `Market defined by ${lowerFirst(jobExecutor)} trying to ${lowerFirst(primaryJob)}.`
+        : `Market defined by the job performer trying to ${lowerFirst(primaryJob)}.`
+    ) || "Market defined by the stable job the actor is trying to accomplish.";
+
+    return {
+      marketDefinition: marketDefinitionText,
+    };
+  }, [marketDefinition?.jtbd, marketDefinition?.job_executor, positioning]);
+
+  const rerunLocalJobMapSynthesis = useCallback(async () => {
+    if (!companyId) {
+      toast.error("Select a company before regenerating the ODI job map.");
+      return;
+    }
+
+    setRegeneratingJobMap(true);
+    toast.loading("Regenerating ODI job map…", { id: "rerun-jobmap" });
+    try {
+      const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
+        body: {
+          company_id: companyId,
+          selected_job_maps: selectedJobMapsForSynthesis,
+          trigger: "refine_preview_jobmap_regenerate",
+        },
+      });
+
+      if (error) throw error;
+      if (data && typeof data === "object" && "error" in data && data.error) {
+        throw new Error(String(data.error));
+      }
+
+      await refetchJobSteps();
+      await refetchCompany();
+      setNeedsRefreshKey((current) => current + 1);
+      setActiveStepId(null);
+      toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to regenerate ODI job map.", {
+        id: "rerun-jobmap",
+      });
+    } finally {
+      setRegeneratingJobMap(false);
+    }
+  }, [companyId, refetchCompany, refetchJobSteps, selectedJobMapsForSynthesis]);
+
+  const runPublicBaseline = useCallback(async (targetCompanyId: string, companyName: string, companyWebsite: string) => {
+    if (!cleanText(companyWebsite)) {
+      throw new Error(`Add a website for ${companyName} before running the public baseline.`);
+    }
+
+    const { error } = await supabase.functions.invoke("public-baseline", {
+      body: {
+        company_id: targetCompanyId,
+        company_name: companyName,
+        website: companyWebsite,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message || "Failed to run public baseline.");
+    }
+  }, []);
+
+  const handleCreateClient = useCallback(async () => {
+    if (!isAdmin || !user?.id) return;
+    const name = cleanText(newClientName);
+    if (!name) {
+      toast.error("Client name is required.");
+      return;
+    }
+
+    setCreatingClient(true);
+    const sanitizedWebsite = sanitizeWebsite(newClientWebsite);
+
+    try {
+      const { data, error } = await supabase
+        .from("companies")
+        .insert({
+          name,
+          website: sanitizedWebsite || null,
+          created_by: user.id,
+        })
+        .select("id,name,website")
+        .single();
+
+      if (error || !data?.id) {
+        throw new Error(error?.message || "Failed to create client.");
+      }
+
+      setActiveCompanyId(data.id);
+      await refetchCompany();
+
+      if (newClientRunBaseline) {
+        if (!sanitizedWebsite) {
+          throw new Error("Website required to run outside-signals baseline.");
+        }
+        toast.loading(`Running outside signals for ${data.name}…`, { id: "create-client-baseline" });
+        await runPublicBaseline(data.id, data.name, sanitizedWebsite);
+        toast.success(`Outside signals captured for ${data.name}.`, { id: "create-client-baseline" });
+      } else {
+        toast.success(`Client created: ${data.name}`);
+      }
+
+      setNewClientName("");
+      setNewClientWebsite("");
+      setNewClientRunBaseline(true);
+      setShowCreateClient(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create client.");
+    } finally {
+      setCreatingClient(false);
+    }
+  }, [
+    isAdmin,
+    user?.id,
+    newClientName,
+    newClientWebsite,
+    newClientRunBaseline,
+    refetchCompany,
+    runPublicBaseline,
+    setActiveCompanyId,
+  ]);
 
   if (!hasCompany) {
     return (
@@ -256,6 +576,7 @@ export default function ClientRefinePreviewWorkshopView() {
     { key: "jobmap",      label: "Job Map" },
     { key: "strategy",    label: "Strategy" },
     { key: "needs",       label: "Needs" },
+    { key: "routes",      label: "Routes" },
     { key: "council",     label: "Council" },
   ];
 
@@ -264,6 +585,7 @@ export default function ClientRefinePreviewWorkshopView() {
     if (activeTab === "positioning") return <PositioningOutside baseline={baseline} companyId={companyId} exclusion={exclusionControls} />;
     if (activeTab === "strategy")   return <StrategyOutside baseline={baseline} companyId={companyId} />;
     if (activeTab === "jobmap")     return null;
+    if (activeTab === "routes")     return null;
     return <NeedsOutside baseline={baseline} exclusion={exclusionControls} />;
   }
 
@@ -280,7 +602,14 @@ export default function ClientRefinePreviewWorkshopView() {
       />
     );
     if (activeTab === "jobmap") return (
-      <JobMapOrgPanel steps={jobSteps} loading={jobStepsLoading} />
+      <JobMapOrgPanel
+        steps={filteredJobSteps}
+        loading={jobStepsLoading}
+        activeStepId={activeStepId}
+        onSelectStep={(id) => setActiveStepId((prev) => (prev === id ? null : id))}
+        routes={filteredRoutes}
+        activeStep={activeStep}
+      />
     );
     if (activeTab === "strategy") return (
       <StrategyOrgPanel
@@ -296,12 +625,18 @@ export default function ClientRefinePreviewWorkshopView() {
     return (
       <>
         <NeedsOrgPanel
-          needs={needs}
+          needs={filteredNeeds}
           loading={odiLoading}
           updateNeedScores={updateNeedScores}
           latestExclusionAt={latestExclusionAt}
+          activeStep={activeStep}
+          onClearStep={clearStep}
+          routes={filteredRoutes}
+          onRouteSelect={handleRouteSelect}
+          companyId={companyId ?? undefined}
+          currentPhase={activeCompany?.engagement_phase}
         />
-        {!odiLoading && needs.length === 0 && (
+        {!odiLoading && filteredNeeds.length === 0 && (
           <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
             company id: {companyId}
           </p>
@@ -341,7 +676,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <div className="crpv-ws-cmp-support-col">
             {odiError
               ? <div className="crpv-ws-placeholder crpv-ws-error cap">Query error: {odiError}</div>
-              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} />
+              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} />
             }
           </div>
         </div>
@@ -386,12 +721,66 @@ export default function ClientRefinePreviewWorkshopView() {
             onSelect={(id) => { setActiveCompanyId(id); setShowCompare(false); }}
             suffix={`· WORKSHOP · ${activeStage.toUpperCase()}`}
           />
+          {isAdmin && (
+            <button type="button" className="btn ghost" onClick={() => setShowCreateClient((current) => !current)}>
+              {showCreateClient ? "Close add client" : "+ Add client"}
+            </button>
+          )}
         </div>
         <div className="crpv-header-tools">
           <button type="button" className="btn ghost" onClick={goToRefineHome}>← Refine Home</button>
           <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>← Main site</button>
         </div>
       </header>
+
+      {isAdmin && showCreateClient && (
+        <section
+          style={{
+            margin: "12px 24px 0",
+            padding: 16,
+            border: "1px solid #dde6d1",
+            borderRadius: 12,
+            background: "#fff",
+          }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
+            <div>
+              <p className="cap" style={{ margin: 0, color: "#6e847f" }}>Client name</p>
+              <input
+                value={newClientName}
+                onChange={(event) => setNewClientName(event.target.value)}
+                placeholder="Company name"
+                style={{ width: "100%", marginTop: 6, border: "1px solid #dde6d1", borderRadius: 6, padding: "9px 10px" }}
+              />
+            </div>
+            <div>
+              <p className="cap" style={{ margin: 0, color: "#6e847f" }}>Website</p>
+              <input
+                value={newClientWebsite}
+                onChange={(event) => setNewClientWebsite(event.target.value)}
+                placeholder="https://example.com"
+                style={{ width: "100%", marginTop: 6, border: "1px solid #dde6d1", borderRadius: 6, padding: "9px 10px" }}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={creatingClient}
+              onClick={() => void handleCreateClient()}
+            >
+              {creatingClient ? "Creating…" : newClientRunBaseline ? "Create + baseline" : "Create client"}
+            </button>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, color: "#46606d", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={newClientRunBaseline}
+              onChange={(event) => setNewClientRunBaseline(event.target.checked)}
+            />
+            Run outside-signals baseline immediately after create
+          </label>
+        </section>
+      )}
 
       <ScoreContextBar
         currentScore={Math.round(Number(activeCompany?.mojo_score ?? 0))}
@@ -411,6 +800,28 @@ export default function ClientRefinePreviewWorkshopView() {
       />
 
       <nav className="crpv-ws-tabs">
+        {/* INPUTS — source library, visually separated from the reasoning tabs */}
+        <button
+          type="button"
+          onClick={() => setActiveTab("inputs")}
+          style={{
+            fontSize: 9,
+            fontFamily: "monospace",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: activeTab === "inputs" ? "#5a3fc0" : "#888",
+            background: activeTab === "inputs" ? "#f5f2ff" : "none",
+            border: activeTab === "inputs" ? "1px solid #c4b5fd" : "1px solid #d9d9d9",
+            borderRadius: 3,
+            padding: "3px 10px",
+            cursor: "pointer",
+            flexShrink: 0,
+            alignSelf: "center",
+          }}
+        >
+          Inputs
+        </button>
+        <span style={{ color: "#ddd", margin: "0 6px", alignSelf: "center", flexShrink: 0, fontSize: 14 }}>|</span>
         {TABS.map((tab) => {
           const isAffected = activeStage === "outside" && exclusionImpact.affectedTabKeys.has(tab.key);
           return (
@@ -426,7 +837,7 @@ export default function ClientRefinePreviewWorkshopView() {
             </button>
           );
         })}
-        {activeStage === "org" && activeTab !== "council" && activeTab !== "jobmap" && (
+        {activeStage === "org" && activeTab !== "council" && activeTab !== "jobmap" && activeTab !== "routes" && activeTab !== "inputs" && (
           <button
             type="button"
             className={`crpv-ws-tab crpv-ws-compare-toggle${showCompare ? " active" : ""}`}
@@ -441,7 +852,7 @@ export default function ClientRefinePreviewWorkshopView() {
       {/* Outside Signals impact banner — lives outside the scroll container so it
           stays visible as the user scrolls through signals. Only shown when on the
           outside stage and at least one signal (ledger or voice) is excluded. */}
-      {activeStage === "outside" && activeTab !== "council" && (
+      {activeStage === "outside" && activeTab !== "council" && activeTab !== "inputs" && (
         <EvidenceImpactBanner
           impact={exclusionImpact}
           evidenceStatus={activeCompany?.evidence_status}
@@ -450,7 +861,16 @@ export default function ClientRefinePreviewWorkshopView() {
         />
       )}
 
-      {activeTab === "council" ? (
+      {activeTab === "inputs" ? (
+        <div className="crpv-ws-content">
+          <InputsTab
+            companyId={companyId ?? null}
+            companyName={activeCompany?.name}
+            socialNeeds={needs.filter((n) => String(n.source_path).startsWith("social_"))}
+            onAdded={() => setNeedsRefreshKey((k) => k + 1)}
+          />
+        </div>
+      ) : activeTab === "council" ? (
         <div className="crpv-ws-content">
           {companyId ? (
             <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} />
@@ -460,7 +880,74 @@ export default function ClientRefinePreviewWorkshopView() {
         </div>
       ) : activeTab === "jobmap" ? (
         <div className="crpv-ws-content">
-          <JobMapOrgPanel steps={jobSteps} loading={jobStepsLoading} />
+          <MarketFoundationSection
+            marketDefinition={marketFoundation.marketDefinition}
+          />
+          {journeyOptions.length > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span className="cap" style={{ color: "#6e847f" }}>Map</span>
+              <select
+                value={showAllJourneys ? "__all__" : focusedJourneyKey ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "__all__") {
+                    setShowAllJourneys(true);
+                    return;
+                  }
+                  setShowAllJourneys(false);
+                  setFocusedJourneyKey(value || null);
+                }}
+                style={{
+                  minWidth: 320,
+                  border: "1px solid #dde6d1",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: "#233c4b",
+                  fontSize: 13,
+                  padding: "7px 10px",
+                }}
+              >
+                {journeyOptions.map((journey) => (
+                  <option key={journey.key} value={journey.key}>
+                    {journey.title}
+                  </option>
+                ))}
+                <option value="__all__">Show all maps</option>
+              </select>
+            </div>
+          )}
+          <JobMapOrgPanel
+            steps={filteredJobSteps}
+            loading={jobStepsLoading}
+            activeStepId={activeStepId}
+            onSelectStep={(id) => setActiveStepId((prev) => (prev === id ? null : id))}
+            routes={filteredRoutes}
+            activeStep={activeStep}
+            routesReady={!nextBestMove || nextBestMove.type === "start_route"}
+            headerControls={
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => void rerunLocalJobMapSynthesis()}
+                disabled={regeneratingJobMap || jobStepsLoading}
+              >
+                {regeneratingJobMap ? "Regenerating…" : "Regenerate ODI Job Map"}
+              </button>
+            }
+          />
+        </div>
+      ) : activeTab === "routes" ? (
+        <div className="crpv-ws-content">
+          <RoutesOrgPanel
+            routes={filteredRoutes}
+            loading={routesLoading}
+            activeCompany={activeCompany}
+            routeIdParam={pendingInspectRouteId}
+            onClearRouteIdParam={() => setPendingInspectRouteId(null)}
+            contextStep={contextStep}
+            nextBestMove={nextBestMove}
+            needs={filteredNeeds}
+          />
         </div>
       ) : activeStage === "customer" ? (
         <div className="crpv-ws-content">

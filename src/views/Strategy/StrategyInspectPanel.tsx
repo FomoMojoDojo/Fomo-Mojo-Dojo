@@ -4,6 +4,8 @@ import type { TierCellData } from "@/lib/strategicObject";
 import { generationContextLabel } from "@/lib/strategicObject";
 import type { StrategyCascade, CascadeItem, CascadeAssumption } from "@/lib/types";
 import type { SourceConfidenceSignals } from "@/lib/sourceConfidence";
+import { buildStrategySources } from "@/lib/sourceLinks";
+import SourcesUsedSection from "@/components/inspect/SourcesUsedSection";
 
 const MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", monospace';
 
@@ -50,41 +52,36 @@ const DIVIDER: React.CSSProperties = {
   background: c.line,
 };
 
-// Framework keys that represent publicly-validated methodology.
-// Strategy routing plan uses strategy_cascade, working_playbook, april_dunford, etc. —
-// all publicly-validated frameworks, but none match the old "public"/"odi" keyword check.
-const PUBLIC_FRAMEWORK_KEYS = new Set([
-  "odi", "jtbd", "public_baseline", "public_research",
-  "april_dunford", "strategy_cascade", "heath_brothers",
-  "working_playbook", "positioning_first", "sxd",
-  "market_validation", "strategic_goal_cards", "teresa_torres",
-]);
-
 function deriveTierCells(
-  frameworksUsed: string[],
   signals: SourceConfidenceSignals,
   cascade: StrategyCascade,
-  hasBaseline = false,
+  hasBaseline: boolean,
 ): TierCellData[] {
-  const fw = frameworksUsed.map((f) => f.toLowerCase());
-  const outsidePresent =
-    hasBaseline ||
-    fw.some((f) => PUBLIC_FRAMEWORK_KEYS.has(f) || f.includes("public") || f.includes("baseline") || f.includes("jtbd") || f.includes("odi"));
-  const hasItemEvidence = cascade.capabilities.some((c) => c.evidence) || cascade.management_systems.some((m) => m.evidence);
-  const hasTestedAssumptions = cascade.assumptions.some((a) => a.tested && a.outcome);
+  // Outside: public web, scraping, or external research only.
+  // Framework names are methodology — not a signal source.
+  const outsidePresent = hasBaseline;
 
-  const outsideDetail = outsidePresent ? "Published strategy frameworks" : undefined;
+  // Organization: uploaded files, internal documents, or strategy items backed by evidence.
+  const hasItemEvidence =
+    cascade.capabilities.some((c) => c.evidence) ||
+    cascade.management_systems.some((m) => m.evidence);
+  const orgPresent = signals.hasCompanyEvidence || hasItemEvidence;
+
+  // Market Validation: customer interviews or ODI survey only.
+  // Internal assumption testing does NOT qualify.
+  const marketPresent = signals.hasPrimaryEvidence && signals.primaryEvidenceSignals > 0;
 
   const cells: TierCellData[] = [
-    { tier: "outside", label: "Outside Signals", present: outsidePresent, detail: outsideDetail },
-    { tier: "org", label: "Organization Signals", present: signals.hasCompanyEvidence || hasItemEvidence },
+    { tier: "outside", label: "Outside Signals",      present: outsidePresent },
+    { tier: "org",     label: "Organization Signals", present: orgPresent     },
   ];
 
   if (signals.hasPrimaryEvidence) {
     cells.push({ tier: "customer", label: "Customer Signals", present: true });
   }
 
-  cells.push({ tier: "market", label: "Market Validation", present: hasTestedAssumptions || signals.hasImplementedTested });
+  cells.push({ tier: "market", label: "Market Validation", present: marketPresent });
+
   return cells;
 }
 
@@ -142,8 +139,9 @@ export default function StrategyInspectPanel({
   if (!cascade) return null;
 
   const genContext = generationContextLabel(frameworksUsed);
-  const tierCells = deriveTierCells(frameworksUsed, signals, cascade, hasBaseline);
+  const tierCells = deriveTierCells(signals, cascade, hasBaseline);
   const bullets = changeBullets(cascade, signals);
+  const strategySources = buildStrategySources(cascade);
 
   const strongCapabilities = cascade.capabilities.filter((c) => c.status === "strong");
   const developingCapabilities = cascade.capabilities.filter((c) => c.status === "developing");
@@ -246,6 +244,13 @@ export default function StrategyInspectPanel({
             </li>
           ))}
         </ul>
+      </div>
+
+      <div style={DIVIDER} />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <p style={SECTION_LABEL}>Sources used</p>
+        <SourcesUsedSection sources={strategySources} />
       </div>
     </StrategicInspectShell>
   );

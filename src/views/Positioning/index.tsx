@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import PositioningInspectPanel from "./PositioningInspectPanel";
@@ -15,6 +15,12 @@ import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNot
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
+import {
+  evaluatePositioningStrength,
+  getCategoryHighlightWords,
+  getDifferentiatorHighlightWords,
+  getOutcomeHighlightPhrases,
+} from "@/lib/positioningStrength";
 import {
   AlertTriangle,
   Building2,
@@ -276,11 +282,93 @@ function SuggestionActions({
   );
 }
 
+function InlineHighlight({
+  text,
+  words,
+  tooltip,
+}: {
+  text: string;
+  words: string[];
+  tooltip: { explanation: string; suggestion: string };
+}) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
+  if (!words.length || !text) return <>{text}</>;
+
+  const sorted = [...words].sort((a, b) => b.length - a.length);
+  const escaped = sorted.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`(${escaped.join("|")})`, "gi");
+
+  const parts: { text: string; highlighted: boolean }[] = [];
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index! > last) parts.push({ text: text.slice(last, match.index), highlighted: false });
+    parts.push({ text: match[0], highlighted: true });
+    last = match.index! + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), highlighted: false });
+  if (parts.length === 0) return <>{text}</>;
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.highlighted ? (
+          <span
+            key={i}
+            style={{
+              textDecoration: "underline",
+              textDecorationStyle: "wavy",
+              textDecorationColor: "#F59E0B",
+              textDecorationThickness: "1.5px",
+              position: "relative",
+              cursor: "help",
+            }}
+            onMouseEnter={() => setHoveredIdx(i)}
+            onMouseLeave={() => setHoveredIdx(null)}
+          >
+            {part.text}
+            {hoveredIdx === i && (
+              <span
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 6px)",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "#1F2937",
+                  color: "#F9FAFB",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  whiteSpace: "normal",
+                  width: 220,
+                  zIndex: 50,
+                  pointerEvents: "none",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                }}
+              >
+                <span style={{ display: "block", fontWeight: 600, marginBottom: 3 }}>
+                  {tooltip.explanation}
+                </span>
+                <span style={{ opacity: 0.85 }}>{tooltip.suggestion}</span>
+              </span>
+            )}
+          </span>
+        ) : (
+          <span key={i}>{part.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
 function OptionCard({
   title,
   detail,
   accent,
   highlighted = false,
+  highlightWords,
+  highlightTooltip,
   onAcceptSuggestion,
   onIgnoreSuggestion,
   saving,
@@ -289,11 +377,14 @@ function OptionCard({
   detail: string;
   accent: string;
   highlighted?: boolean;
+  highlightWords?: string[];
+  highlightTooltip?: { explanation: string; suggestion: string };
   onAcceptSuggestion?: (suggested: string) => void | Promise<void>;
   onIgnoreSuggestion?: (primary: string) => void | Promise<void>;
   saving?: boolean;
 }) {
   const parsedDetail = parseClaritySuggestion(detail);
+  const hasHL = highlightWords && highlightWords.length > 0 && highlightTooltip;
   return (
     <div
       className="rounded-[18px] border p-4"
@@ -304,7 +395,9 @@ function OptionCard({
       }}
     >
       <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-        {title}
+        {hasHL
+          ? <InlineHighlight text={title} words={highlightWords!} tooltip={highlightTooltip!} />
+          : title}
       </p>
       <p className="mojo-under-title font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
         {parsedDetail.primary || detail}
@@ -388,16 +481,23 @@ function AlternativesBlock({
 function AttributesBlock({
   input,
   items,
+  highlightsByIndex,
   onAcceptSuggestion,
   onIgnoreSuggestion,
   saving,
 }: {
   input: InputItem | null;
   items?: PositioningCanvas["unique_attributes"];
+  highlightsByIndex?: Map<number, string[]>;
   onAcceptSuggestion?: (index: number, suggested: string) => void | Promise<void>;
   onIgnoreSuggestion?: (index: number, primary: string) => void | Promise<void>;
   saving?: boolean;
 }) {
+  const diffTooltip = {
+    explanation: "This claim is hard to defend. Competitors can say the same thing.",
+    suggestion: "Replace it with a mechanism, proof point, or structural constraint.",
+  };
+
   if (Array.isArray(items) && items.length > 0) {
     return (
       <div className="space-y-3">
@@ -408,6 +508,8 @@ function AttributesBlock({
             detail={item.description || "Needs stronger proof from public or client evidence."}
             accent={META.unique_attributes.accent}
             highlighted={!!item.highlighted}
+            highlightWords={highlightsByIndex?.get(index)}
+            highlightTooltip={highlightsByIndex?.has(index) ? diffTooltip : undefined}
             onAcceptSuggestion={
               onAcceptSuggestion ? (suggested) => onAcceptSuggestion(index, suggested) : undefined
             }
@@ -780,6 +882,18 @@ export default function PositioningView() {
   const canvas = storedCanvas ?? fallbackCanvas;
   const hasStoredCanvas = !!storedCanvas;
   const frameworksUsed = Array.isArray(canvas.frameworks_used) ? canvas.frameworks_used : [];
+  const strengthResult = useMemo(() => evaluatePositioningStrength(canvas), [canvas]);
+  const [showIssues, setShowIssues] = useState(false);
+  const categoryHighlights = useMemo(() => getCategoryHighlightWords(canvas.market_category), [canvas.market_category]);
+  const outcomeHighlights = useMemo(() => getOutcomeHighlightPhrases(canvas.value_for_customer), [canvas.value_for_customer]);
+  const attrHighlightsByIndex = useMemo(() => {
+    const map = new Map<number, string[]>();
+    canvas.unique_attributes.forEach((attr, i) => {
+      const words = getDifferentiatorHighlightWords(attr.name);
+      if (words.length > 0) map.set(i, words);
+    });
+    return map;
+  }, [canvas.unique_attributes]);
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
@@ -966,6 +1080,67 @@ export default function PositioningView() {
               </section>
             ) : null}
 
+            {(strengthResult.level === "weak" || strengthResult.level === "generic") && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowIssues((v) => !v)}
+                  className="flex items-center gap-2 rounded-full border px-3 py-1.5"
+                  style={{ borderColor: "#F4A56A", background: "#FFF4EC", cursor: "pointer" }}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: "#A5512E" }} />
+                  <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
+                    Positioning clarity: Needs refinement
+                  </span>
+                  <span className="font-mono text-[9px]" style={{ color: "#A5512E" }}>
+                    {showIssues ? "▲" : "▼"}
+                  </span>
+                </button>
+
+                {showIssues && (
+                  <div
+                    className="mt-2 rounded-[14px] border px-4 py-3"
+                    style={{ borderColor: "#F4A56A", background: "#FFF9F3" }}
+                  >
+                    <p className="font-sans text-[13px] leading-[1.6]" style={{ color: "#7A3B20" }}>
+                      Your current positioning may be hard for customers to understand or differentiate.
+                    </p>
+                    {strengthResult.issues.length > 0 && (
+                      <div className="mt-2.5">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
+                          What we're seeing
+                        </p>
+                        <ul className="mt-1.5 space-y-1 pl-5">
+                          {strengthResult.issues.map((issue) => (
+                            <li key={issue} className="font-sans text-[12px] leading-[1.6]" style={{ color: "#7A3B20", listStyleType: "disc" }}>
+                              {issue}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {strengthResult.suggestions.length > 0 && (
+                      <div className="mt-2.5">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
+                          What to improve
+                        </p>
+                        <ul className="mt-1.5 space-y-1 pl-5">
+                          {strengthResult.suggestions.map((suggestion) => (
+                            <li key={suggestion} className="font-sans text-[12px] leading-[1.65]" style={{ color: "#7A3B20", listStyleType: "disc" }}>
+                              {suggestion}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <p className="mt-2.5 font-sans text-[11px] leading-[1.6]" style={{ color: "#A5512E" }}>
+                      This is normal at this stage — clarity improves as evidence and focus increase.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <section
               className="rounded-[28px] border border-dashed p-4 sm:p-5"
               style={{ borderColor: c.line, background: `${c.paper}80` }}
@@ -1003,6 +1178,7 @@ export default function PositioningView() {
                   <AttributesBlock
                     input={uniqueAttributes}
                     items={hasStoredCanvas ? canvas.unique_attributes : undefined}
+                    highlightsByIndex={attrHighlightsByIndex}
                     saving={savingField === "unique_attributes_json"}
                     onAcceptSuggestion={
                       hasStoredCanvas
@@ -1028,7 +1204,17 @@ export default function PositioningView() {
                     {hasStoredCanvas ? "Value Statement" : valueProposition?.input_label || "Value statement not set"}
                   </p>
                   <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
-                    {valueForCustomerText.primary || "No value proposition has been generated yet."}
+                    {outcomeHighlights.length > 0 && valueForCustomerText.primary
+                      ? <InlineHighlight
+                          text={valueForCustomerText.primary}
+                          words={outcomeHighlights}
+                          tooltip={{
+                            explanation: "This describes a benefit but not a specific customer change.",
+                            suggestion: "Frame it as a before/after result — what they can now do that they couldn't before.",
+                          }}
+                        />
+                      : (valueForCustomerText.primary || "No value proposition has been generated yet.")
+                    }
                   </p>
                   <SuggestionActions
                     raw={canvas.value_for_customer}
@@ -1071,7 +1257,17 @@ export default function PositioningView() {
                   input={marketCategory}
                 >
                   <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {marketCategoryText.primary || "Market category not set"}
+                    {categoryHighlights.length > 0 && marketCategoryText.primary
+                      ? <InlineHighlight
+                          text={marketCategoryText.primary}
+                          words={categoryHighlights}
+                          tooltip={{
+                            explanation: "This category is too broad. Buyers may not know what to compare you against.",
+                            suggestion: "Name the specific job, buyer, or context.",
+                          }}
+                        />
+                      : (marketCategoryText.primary || "Market category not set")
+                    }
                   </p>
                   <SuggestionActions
                     raw={canvas.market_category}

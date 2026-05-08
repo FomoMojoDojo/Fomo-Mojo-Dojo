@@ -3,6 +3,11 @@ import {
   buildFrameworkBrief,
   getFrameworkRoutingPlan,
 } from "../_shared/frameworkLibrary.ts";
+import {
+  getFrameworksForPhase,
+  getPhaseGuardrailText,
+  type EngagementPhase,
+} from "../_shared/phaseFrameworks.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -554,6 +559,89 @@ function stageLabel(stage: ProcessStage) {
   return "Flow";
 }
 
+const VALID_ENGAGEMENT_PHASES = new Set<string>([
+  "outside_signals", "validate_outside", "diagnose", "validate_diagnose",
+  "focus", "validate_focus", "flow", "validate_flow",
+]);
+const LEGACY_ENGAGEMENT_PHASE_MAP: Record<string, EngagementPhase> = {
+  outside:   "outside_signals",
+  diagnosis: "diagnose",
+  execution: "flow",
+  validate:  "validate_outside",
+};
+
+function normalizeEngagementPhase(raw: unknown): EngagementPhase {
+  const s = String(raw || "").trim();
+  if (VALID_ENGAGEMENT_PHASES.has(s)) return s as EngagementPhase;
+  return LEGACY_ENGAGEMENT_PHASE_MAP[s] ?? "outside_signals";
+}
+
+// Returns the deterministic fallback first recommendation for a validate checkpoint.
+function buildCheckpointFirstRecommendation(
+  phase: EngagementPhase,
+  evidenceSummary: string,
+  nextGate: string,
+): RecommendationRow | null {
+  const base = {
+    confidence: 85,
+    source_basis: `engagement_phase.${phase}`,
+    references: [evidenceSummary, nextGate],
+  };
+  if (phase === "validate_outside") {
+    return {
+      ...base,
+      title: "Checkpoint: present external findings and assess fit",
+      recommendation:
+        "Present what was found from outside research to the client. Surface gaps, contradictions, and open questions. " +
+        "Assess whether the engagement is well-scoped before entering Diagnose.",
+      rationale:
+        "This is the initial client meeting checkpoint — the goal is to show what was observed and confirm fit, not to recommend actions.",
+      category: "checkpoint",
+      priority: "high",
+    };
+  }
+  if (phase === "validate_diagnose") {
+    return {
+      ...base,
+      title: "Checkpoint: align on working hypotheses before committing direction",
+      recommendation:
+        "Present working hypotheses clearly. Separate evidence-supported claims from assumptions. " +
+        "Surface unresolved contradictions and confirm the client is ready to move to Focus.",
+      rationale:
+        "This checkpoint exists to avoid committing to a direction before the client is aligned — do not recommend routes yet.",
+      category: "checkpoint",
+      priority: "high",
+    };
+  }
+  if (phase === "validate_focus") {
+    return {
+      ...base,
+      title: "Checkpoint: confirm chosen outcome and path forward",
+      recommendation:
+        "Present the chosen desired outcome with evidence. Confirm the route, acknowledge tradeoffs, " +
+        "and secure stakeholder alignment before execution begins.",
+      rationale:
+        "This checkpoint is about confirmation and alignment — execution guidance is premature until all stakeholders have committed.",
+      category: "checkpoint",
+      priority: "high",
+    };
+  }
+  if (phase === "validate_flow") {
+    return {
+      ...base,
+      title: "Checkpoint: review measurement, habits, and cadence",
+      recommendation:
+        "Review leading indicators against the baseline, assess whether the operating cadence is in place, " +
+        "identify drift signals, and make an explicit continue/adjust/close decision.",
+      rationale:
+        "This is a reflection checkpoint — the goal is honest assessment of whether the route is producing results.",
+      category: "checkpoint",
+      priority: "high",
+    };
+  }
+  return null;
+}
+
 function buildProcessStageProfile(args: {
   company: Record<string, unknown>;
   contextPayload: Record<string, unknown>;
@@ -676,6 +764,7 @@ function buildDeterministicCouncilOutput(args: {
     hasTestingEvidence: boolean;
     strategicGoalCard: StrategicGoalCardProfile;
   };
+  engagementPhase?: EngagementPhase;
   modelFailure?: string;
 }) {
   const companyName = asText(args.company.name, "Company");
@@ -695,6 +784,17 @@ function buildDeterministicCouncilOutput(args: {
   };
 
   const sourceCounts = args.stageProfile.sourceCounts;
+
+  // Validate-checkpoint phase: emit a checkpoint-specific first recommendation
+  // before any stage-based logic, for both council profiles.
+  if (args.engagementPhase) {
+    const checkpointRec = buildCheckpointFirstRecommendation(
+      args.engagementPhase,
+      args.stageProfile.evidenceSummary,
+      args.stageProfile.nextGate,
+    );
+    if (checkpointRec) addRecommendation(checkpointRec);
+  }
 
   if (args.councilProfile.key === "mojo_council") {
     const openAssumptions = assumptions.filter((row) => asText(row.status, "open").toLowerCase() !== "reconciled");
@@ -1339,7 +1439,7 @@ Deno.serve(async (req) => {
 
     const { data: company, error: companyErr } = await serviceClient
       .from("companies")
-      .select("id,name,website,archetype,quarter,tier,mojo_score,potential_score,projected_score,evidence_status,evidence_note,area_scores_json,last_scored_at")
+      .select("id,name,website,archetype,quarter,tier,mojo_score,potential_score,projected_score,evidence_status,evidence_note,area_scores_json,last_scored_at,program_phase")
       .eq("id", companyId)
       .maybeSingle();
 
@@ -1553,11 +1653,23 @@ Deno.serve(async (req) => {
       contextPayload: contextPayload as Record<string, unknown>,
     });
 
+    // Admin-set engagement phase — overrides inferred stage for guardrails.
+    const engagementPhase = normalizeEngagementPhase(
+      (company as Record<string, unknown>).program_phase,
+    );
+    const phaseGuardrailText = getPhaseGuardrailText(engagementPhase);
+    const activeFrameworks = getFrameworksForPhase(engagementPhase);
+
     sourceSnapshot = {
       started_at: startedAtIso,
       company_id: companyId,
       council_key: councilProfile.key,
       council_label: councilProfile.label,
+      engagement_phase: {
+        key: engagementPhase,
+        active_frameworks: activeFrameworks,
+        guardrail_applied: phaseGuardrailText.slice(0, 140),
+      },
       process_stage: {
         key: processStageProfile.stage,
         label: processStageProfile.label,
@@ -1613,16 +1725,20 @@ Deno.serve(async (req) => {
     const contextJson = truncateText(JSON.stringify(contextPayload, null, 2), councilProfile.contextMaxChars);
     const sourceSnapshotJson = JSON.stringify(sourceSnapshot, null, 2);
 
-    const systemText = councilProfile.systemText;
+    // Inject phase guardrail directly into system text so it constrains ALL model output.
+    const systemText = councilProfile.systemText + "\n\n" + phaseGuardrailText;
+
     const stageGuidanceText = [
-      `Process stage: ${processStageProfile.label} (${processStageProfile.stage})`,
+      `Engagement phase (admin-set): ${engagementPhase}`,
+      `Active frameworks for this phase: ${activeFrameworks.join(", ")}`,
+      `Process stage (inferred from data): ${processStageProfile.label} (${processStageProfile.stage})`,
       `Stage objective: ${processStageProfile.objective}`,
       `Stage next gate: ${processStageProfile.nextGate}`,
       `Evidence profile: ${processStageProfile.evidenceSummary}`,
       `Inferred strategic goal card: ${processStageProfile.strategicGoalCard.label} (confidence ${processStageProfile.strategicGoalCard.confidence})`,
       "Stage-specific recommendation rules:",
       ...processStageProfile.stageGuidance.map((rule, index) => `${index + 1}. ${rule}`),
-      "Always drive decisions toward evidence-based progression: Diagnose -> Focus -> Flow.",
+      "Always drive decisions toward evidence-based progression: Outside Signals -> Diagnose -> Focus -> Flow.",
     ].join("\n");
 
     const staleArtifactNote = latestExclusionAt
@@ -1634,7 +1750,7 @@ Deno.serve(async (req) => {
 
     const userText =
       `Company context snapshot:\n${sourceSnapshotJson}\n\n` +
-      (staleArtifactNote ? `${staleArtifactNote}`) +
+      (staleArtifactNote ? `${staleArtifactNote}` : "") +
       `Current process stage guidance:\n${stageGuidanceText}\n\n` +
       `Applied framework guidance:\n${frameworkGuidance}\n\n` +
       `Full company context JSON:\n${contextJson}\n\n` +
@@ -1660,6 +1776,7 @@ Deno.serve(async (req) => {
         company: company as Record<string, unknown>,
         contextPayload: contextPayload as Record<string, unknown>,
         stageProfile: processStageProfile,
+        engagementPhase,
         modelFailure,
       });
     }
@@ -1673,6 +1790,7 @@ Deno.serve(async (req) => {
         company: company as Record<string, unknown>,
         contextPayload: contextPayload as Record<string, unknown>,
         stageProfile: processStageProfile,
+        engagementPhase,
         modelFailure: "Model returned empty recommendations.",
       });
       summary = asText(fallbackOutput.summary, summary);

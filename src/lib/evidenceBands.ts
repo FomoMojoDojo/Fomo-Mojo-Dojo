@@ -215,7 +215,7 @@ export function computeNeedUnlockConditions(
 // TODO: Replace isPrimaryNeedsSourcePath with typed evidence_signals in v2 once
 //       odi_needs.source_path is superseded by a typed evidence_signals relation.
 
-const NON_PRIMARY_MARKERS = ["public", "baseline", "benchmark", "generated", "research-company", "uploaded_file"];
+const NON_PRIMARY_MARKERS = ["public", "baseline", "benchmark", "generated", "research-company", "uploaded_file", "social"];
 const PRIMARY_MARKERS = ["interview", "survey", "primary", "qualitative", "focus-group"];
 
 export function isPrimaryNeedsSourcePath(sourcePath: string | null | undefined): boolean {

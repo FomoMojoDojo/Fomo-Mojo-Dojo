@@ -37,6 +37,7 @@ import ClientDecisionSystemView from "./views/client/ClientDecisionSystemView";
 import ClientRefinePreviewView from "./views/client/ClientRefinePreviewView";
 import ClientRefinePreviewRoutesView from "./views/client/ClientRefinePreviewRoutesView";
 import ClientRefinePreviewWorkshopView from "./views/client/ClientRefinePreviewWorkshopView";
+import ClientRefinePreviewPathView from "./views/client/ClientRefinePreviewPathView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
@@ -44,6 +45,7 @@ import {
   CLIENT_REFINE_PREVIEW_ROUTE,
   CLIENT_REFINE_PREVIEW_ROUTES_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
+  CLIENT_REFINE_PREVIEW_PATH_ROUTE,
   isClientRefinePreviewEnabled,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
@@ -72,6 +74,8 @@ function ClientModePathSync() {
 
   useEffect(() => {
     if (mode !== "client") return;
+    if (location.pathname.startsWith("/admin")) return;
+    if (location.pathname === "/login" || location.pathname === "/reset-password") return;
     if (isClientPhasePath(location.pathname)) return;
     // Client mode is a single-page experience; always route to root.
     navigate("/", { replace: true });
@@ -118,8 +122,6 @@ function ModeAwareStrategyRoute() {
 }
 
 function AdminModeRoute({ children }: { children: JSX.Element }) {
-  const { mode } = usePresentationMode();
-  if (mode === "client") return <Navigate to="/" replace />;
   return <AdminGuard>{children}</AdminGuard>;
 }
 
@@ -156,6 +158,17 @@ function ClientRefinePreviewWorkshopRoute() {
   );
 }
 
+function ClientRefinePreviewPathRoute() {
+  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <ClientRefinePreviewPathView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -180,6 +193,7 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTE} element={<ClientRefinePreviewRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTES_ROUTE} element={<ClientRefinePreviewRoutesRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE} element={<ClientRefinePreviewWorkshopRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_PATH_ROUTE} element={<ClientRefinePreviewPathRoute />} />
                 <Route path="/strategy" element={<ModeAwareStrategyRoute />} />
                 <Route path="/opportunities" element={<ModeAwareFocusRoute />} />
                 <Route path="/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />

@@ -111,7 +111,7 @@ function defaultJourneyTitle(key: string) {
 }
 
 function defaultJourneySubtitle(key: string) {
-  if (key === "customer") return "How the primary job performer moves through all 8 customer checkpoints.";
+  if (key === "customer") return "How the primary job performer moves through the stable ODI steps required to accomplish the job.";
   if (key === "revenue") return "How demand turns into recurring economic outcomes.";
   if (key === "operations") return "How delivery operations coordinate execution and quality.";
   return "How this journey progresses from clear intent to measurable outcomes.";
@@ -465,7 +465,10 @@ async function callLocalSynthesis(args: {
     "Output must be clean JSON only. " +
     "Use April Dunford framing for market context: frame of reference first (market category), then differentiation context. " +
     "For customer journeys, enforce the 8 ODI checkpoints in exact order: Define, Locate, Prepare, Confirm, Execute, Monitor, Modify, Conclude. " +
-    "Keep step labels action-oriented and solution-agnostic. Avoid feature prescriptions. " +
+    "Keep step labels stable over time, solution-agnostic, customer-job-centric, and independent of current implementation. " +
+    "Describe what must be accomplished, not how this company currently does it. " +
+    "Reject operational tasks, implementation ideas, company-specific activities, and proposed solutions as step labels. " +
+    "Avoid words like negotiate, integrate, promote, supplier, campaign, UI, MVP, onboarding, pricing, partnership, MojoMap, or coffee in customer step labels unless they appear only inside evidence notes. " +
     "Use plain language a client can read quickly; avoid consulting jargon, placeholders, and generic filler. " +
     "For market_definition.market_context, use a standard category anchor from common categories before any custom wording.";
 
@@ -567,7 +570,8 @@ function normalizeCustomerJourney(args: {
       args.forceContextualDescriptions ||
       !rawDescription ||
       rawDescription === checkpoint.description ||
-      containsSolutionPrescriptiveLanguage(rawDescription);
+      containsSolutionPrescriptiveLanguage(rawDescription) ||
+      containsNonOdiProcessLanguage(rawDescription);
     const repairedDescription = shouldUseContextual ? contextualDescription : description;
 
     return {

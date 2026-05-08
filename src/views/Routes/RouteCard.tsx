@@ -49,6 +49,9 @@ export default function RouteCard({
   linkedDesiredOutcome,
   focus,
   onInspect,
+  isSelected = false,
+  isOtherSelected = false,
+  onSelect,
 }: {
   route: RouteRow;
   accent: string;
@@ -62,6 +65,9 @@ export default function RouteCard({
   } | null;
   focus?: FocusClassification;
   onInspect?: () => void;
+  isSelected?: boolean;
+  isOtherSelected?: boolean;
+  onSelect?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const completedSteps = useMemo(
@@ -83,7 +89,15 @@ export default function RouteCard({
   return (
     <div
       className="overflow-hidden rounded-xl border"
-      style={{ borderColor: c.line, background: c.paperRaised, boxShadow: "0 1px 1px rgba(0,0,0,0.03)" }}
+      style={{
+        borderColor: isSelected ? c.teal : c.line,
+        background: c.paperRaised,
+        boxShadow: isSelected
+          ? `0 0 0 2px ${c.teal}30, 0 2px 8px rgba(0,0,0,0.06)`
+          : "0 1px 1px rgba(0,0,0,0.03)",
+        opacity: isOtherSelected ? 0.42 : 1,
+        transition: "opacity 0.2s, border-color 0.15s, box-shadow 0.15s",
+      }}
     >
       <button
         type="button"
@@ -92,9 +106,19 @@ export default function RouteCard({
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <h3 className="font-sans text-[16px] font-semibold leading-tight" style={{ color: c.charcoal }}>
-              {route.title || "Untitled route"}
-            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-sans text-[16px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+                {route.title || "Untitled route"}
+              </h3>
+              {isSelected && (
+                <span
+                  className="font-mono text-[9px] uppercase tracking-[0.12em] rounded-full px-2 py-[2px]"
+                  style={{ background: `${c.teal}18`, color: c.teal, border: `1px solid ${c.teal}50` }}
+                >
+                  Chosen path
+                </span>
+              )}
+            </div>
             <p className="mt-2 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
               {route.short_description || "No route description yet."}
             </p>
@@ -234,16 +258,34 @@ export default function RouteCard({
             {frameworks.slice(0, 2).map((framework) => (
               <MetaBadge key={`${route.id}-${framework}`}>{framework}</MetaBadge>
             ))}
-            {onInspect && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onInspect(); }}
-                className="ml-auto font-mono text-[10px] underline"
-                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
-              >
-                Inspect why →
-              </button>
-            )}
+            <div className="ml-auto flex items-center gap-3">
+              {onSelect && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onSelect(); }}
+                  className="font-mono text-[10px] underline"
+                  style={{
+                    color: isSelected ? c.coral : c.teal,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {isSelected ? "Deselect" : "Choose this path →"}
+                </button>
+              )}
+              {onInspect && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onInspect(); }}
+                  className="font-mono text-[10px] underline"
+                  style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  Inspect why →
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ) : null}

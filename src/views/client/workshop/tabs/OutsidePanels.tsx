@@ -282,13 +282,22 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
 
   const { outside_voice_signals = [], evidence_ledger = [] } = baseline;
 
-  const activeLedger   = exclusion ? evidence_ledger.filter((item) => !exclusion.isExcluded(ledgerItemFingerprint(item))) : evidence_ledger;
-  const excludedLedger = exclusion ? evidence_ledger.filter((item) =>  exclusion.isExcluded(ledgerItemFingerprint(item))) : [];
+  // Filter out placeholder and empty voice signals — only show rows with real text.
+  const validVoiceSignals = outside_voice_signals.filter((s) =>
+    !!cleanSnippet(s.signal || s.perspective || ""),
+  );
+
+  const allActiveLedger   = exclusion ? evidence_ledger.filter((item) => !exclusion.isExcluded(ledgerItemFingerprint(item))) : evidence_ledger;
+  const allExcludedLedger = exclusion ? evidence_ledger.filter((item) =>  exclusion.isExcluded(ledgerItemFingerprint(item))) : [];
+
+  // Drop ledger items whose snippet is empty or a system placeholder.
+  const activeLedger   = allActiveLedger.filter((item) => !!cleanSnippet(item.snippet));
+  const excludedLedger = allExcludedLedger.filter((item) => !!cleanSnippet(item.snippet));
   const hasExcluded    = excludedLedger.length > 0;
 
   function renderLedgerItem(item: BaselineEvidenceItem, i: number, isExcludedItem: boolean) {
+    const snippet = cleanSnippet(item.snippet)!;
     const fp = ledgerItemFingerprint(item);
-    const isSuspicious = item.signal_strength === "weak" || !cleanSnippet(item.snippet);
     return (
       <div key={i} className={`crpv-ws-outside-evidence-item${isExcludedItem ? " crpv-ws-excluded-item" : ""}`}>
         <div className="crpv-ws-outside-title">
@@ -297,9 +306,7 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
           )}
         </div>
         <div className="crpv-ws-outside-body">
-          {cleanSnippet(item.snippet)
-            ? <span className="crpv-ws-outside-snippet">{cleanSnippet(item.snippet)}</span>
-            : <span className="crpv-ws-outside-snippet crpv-ws-snippet-none">No public content found</span>}
+          <span className="crpv-ws-outside-snippet">{snippet}</span>
         </div>
         <div className="crpv-ws-outside-chips">
           {item.signal_strength && (
@@ -318,14 +325,16 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
         ) : exclusion ? (
           <button
             type="button"
-            className={`crpv-rv-btn crpv-rv-flag${isSuspicious ? " crpv-rv-suspicious-flag" : ""}`}
-            title={isSuspicious ? "Needs review — exclude if from the wrong source. Affects scoring." : "Exclude from analysis — affects scoring"}
+            className="crpv-rv-btn crpv-rv-flag"
+            title="Exclude from analysis — affects scoring"
             onClick={() => exclusion.excludeSignal(fp)}
           >✗</button>
         ) : null}
       </div>
     );
   }
+
+  const hasAnyValid = validVoiceSignals.length > 0 || activeLedger.length > 0;
 
   return (
     <div className="crpv-ws-section crpv-ws-section-wide">
@@ -334,12 +343,12 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
         title="Needs · Outside Signals"
         desc="What the market is saying about their experience and frustrations."
       />
-      {outside_voice_signals.length > 0 && (
-        <OutsideSignalItems label="Sentiment signals" signals={outside_voice_signals} exclusion={exclusion} />
+      {validVoiceSignals.length > 0 && (
+        <OutsideSignalItems label="Sentiment signals" signals={validVoiceSignals} exclusion={exclusion} />
       )}
-      {evidence_ledger.length > 0 && (
+      {activeLedger.length > 0 && (
         <div className="crpv-ws-field">
-          <label className="crpv-ws-label">Evidence items ({activeLedger.length}{excludedLedger.length > 0 ? ` of ${evidence_ledger.length}` : ""})</label>
+          <label className="crpv-ws-label">Evidence items ({activeLedger.length})</label>
           <div className="crpv-ws-readonly-list">
             {activeLedger.slice(0, 15).map((item, i) => renderLedgerItem(item, i, false))}
             {activeLedger.length > 15 && (
@@ -355,8 +364,8 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
           </div>
         </div>
       )}
-      {outside_voice_signals.length === 0 && evidence_ledger.length === 0 && (
-        <div className="crpv-ws-placeholder">No evidence found in outside signals.</div>
+      {!hasAnyValid && (
+        <div className="crpv-ws-placeholder">No outside customer signals yet.</div>
       )}
     </div>
   );

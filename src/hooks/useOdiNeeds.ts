@@ -28,6 +28,9 @@ export type OdiNeedRow = {
   sort_order?: number | null;
   service_state: "underserved" | "served" | "overserved" | string;
   source_path: string;
+  source_url?: string | null;
+  notes?: string | null;
+  social_extraction_json?: unknown | null;
   frameworks_used: string[];
   created_at: string;
 };

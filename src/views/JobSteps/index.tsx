@@ -19,14 +19,8 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import type { InputItem, PositioningCanvas } from "@/lib/types";
 import { opportunityActionFromNeedScore, opportunityActionTone } from "@/lib/opportunityLabels";
 import {
-  bestFitStrategicMarketCategory,
-  buildMarketFitCheckpointSpine,
-  buildMarketFitMapOption,
-} from "@/lib/marketTaxonomy";
-import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
-  buildDefaultCheckpointSeed,
   deriveMarketDefinitionCanvas,
 } from "@/lib/jtbdProcess";
 import { MetaBadge, ScoreChip, StateBadge } from "@/components/ui/semantic-badges";
@@ -36,6 +30,73 @@ import PageContextStatus from "@/components/layout/PageContextStatus";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
+import {
+  safeText,
+  isPublicSourcePath,
+  sourcePathLabel,
+  formatNeedScore,
+  normalizeAudienceSignal,
+  normalizeClause,
+  joinWithAnd,
+  trimToWordLimit,
+  stripLeadIn,
+  firstClause,
+  concisePhrase,
+  parseJtbdParts,
+  normalizeFrameOfReference,
+  normalizeRoleLabel,
+  shouldUseLocalMapFallback,
+  shouldAttemptBaselineRetry,
+  isMissingTableError,
+} from "./helpers/textUtils";
+import {
+  isGenericAudienceLabel,
+  isLikelyJobActionLabel,
+  isInvalidAudienceLabel,
+  isGenericJtbdStatement,
+  isGenericJourneySubtitle,
+  isTraditionalMarketDefinition,
+  isGenericRoleLabel,
+  isOrganizationSegmentLabel,
+  isDraftPlaceholderStep,
+  hasAssessedGap,
+} from "./helpers/validation";
+import {
+  type JourneyKey,
+  type JourneyGroup,
+  normalizeJourneyKey,
+  titleFromKey,
+  subtitleFromKey,
+  titleCaseFromKey,
+  fallbackStyleForJourney,
+  LOCAL_ODI_STEP_SEED,
+  checkpointSeedForJourneyKey,
+  groupJourneys,
+} from "./helpers/journeyUtils";
+import {
+  rankedNeedsByOpportunity,
+  audienceFromJourneyTitle,
+  jtbdFromJourneyTitle,
+  chooserFromJourneyTitle,
+  marketContextFromJourney,
+  deriveBestGuessJtbd,
+  deriveOdiDunfordMarketContext,
+  deriveAbstractedExecutor,
+  deriveFunctionOfProductStatement,
+  deriveAbstractedJobStatement,
+  deriveOtherProductsContext,
+  type OtherProductsContextGroup,
+  deriveOtherProductsContextGroups,
+  deriveExecutorDetermination,
+  firstSpecificRole,
+  inferRolesFromSignals,
+  inferRoleFromBestFitCustomers,
+} from "./helpers/derivation";
+import {
+  type SuggestedJourneyOption,
+  inferRevenueMapTitle,
+  inferSuggestedJourneyOptions,
+} from "./helpers/inferenceUtils";
 
 const c = {
   bg: "#faf7f6",
@@ -59,22 +120,6 @@ const c = {
 const STEP_CARD_WIDTH = "250px";
 const STEP_DETAIL_BLOCK_HEIGHT = "96px";
 
-type JourneyKey = string;
-
-type JourneyGroup = {
-  key: JourneyKey;
-  title: string;
-  subtitle: string;
-  steps: JobStepRow[];
-};
-
-type SuggestedJourneyOption = {
-  key: JourneyKey;
-  title: string;
-  subtitle: string;
-  confidence: number;
-  rationale: string;
-};
 
 type JourneyDraftMap = Record<string, { title: string; subtitle: string }>;
 
@@ -87,25 +132,6 @@ const JOURNEY_STYLE: Record<
   operations: { rail: c.slate, dot: c.slate },
 };
 
-function safeText(value: string | null | undefined, fallback = "") {
-  return value?.trim() || fallback;
-}
-
-function isPublicSourcePath(sourcePath?: string | null) {
-  return String(sourcePath || "").toLowerCase().includes("public");
-}
-
-function sourcePathLabel(sourcePath?: string | null) {
-  const value = String(sourcePath || "").trim();
-  if (!value) return "Unknown source";
-  return isPublicSourcePath(value) ? `Public: ${value}` : `Uploaded/company: ${value}`;
-}
-
-function formatNeedScore(value: number | null | undefined) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
-}
 
 function NeedActionBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
   const tone = opportunityActionTone(label);
@@ -119,520 +145,10 @@ function NeedActionBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
   );
 }
 
-function normalizeAudienceSignal(value: string | null | undefined) {
-  const normalized = String(value || "")
-    .replace(/\s+/g, " ")
-    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
-    .trim();
-  if (!normalized) return "";
-  if (/^(unknown|n\/a|na|none|unset)$/i.test(normalized)) return "";
-  return normalized;
-}
 
-function isGenericAudienceLabel(value: string | null | undefined) {
-  const normalized = normalizeAudienceSignal(value).toLowerCase();
-  if (!normalized) return true;
-  return (
-    normalized === "core audience" ||
-    normalized === "audience" ||
-    normalized === "target audience" ||
-    normalized === "customer" ||
-    normalized === "customers" ||
-    normalized === "primary customer" ||
-    normalized === "primary buyer" ||
-    normalized === "user" ||
-    normalized === "users" ||
-    normalized === "buyer" ||
-    normalized === "buyers" ||
-    normalized === "progress" ||
-    normalized === "customer progress" ||
-    normalized === "job progress" ||
-    normalized === "decision maker" ||
-    normalized === "decision-maker" ||
-    normalized === "unknown from public evidence" ||
-    normalized === "unknown from uploaded evidence"
-  );
-}
 
-function isLikelyJobActionLabel(value: string | null | undefined) {
-  const normalized = normalizeAudienceSignal(value).toLowerCase();
-  if (!normalized) return false;
-  const hasRoleNoun = /\b(owner|manager|director|lead|officer|team|department|specialist|buyer|user|customer|consumer|operator|administrator|executive|committee|sponsor|partner|staff|organization|organisation|enterprise|company|client|debtor|creditor|collector|agent|analyst|founder|ceo|cfo|coo|vp|head)\b/.test(normalized);
-  if (hasRoleNoun) return false;
-  if (/^(getting|securing|converting|delivering|improving|optimizing|building|driving|increasing|reducing|achieving|executing|obtaining|winning|raising|funding|acquiring)\b/.test(normalized)) {
-    return true;
-  }
-  if (/(financial investment|revenue outcomes|qualified demand|recurring economic outcomes)/.test(normalized)) {
-    return true;
-  }
-  return false;
-}
 
-function isInvalidAudienceLabel(value: string | null | undefined) {
-  return isGenericAudienceLabel(value) || isLikelyJobActionLabel(value);
-}
 
-function isGenericJtbdStatement(value: string | null | undefined) {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (!normalized) return true;
-  return (
-    normalized.includes("when trying to complete this job") ||
-    normalized.includes("move from defining outcomes to executing and monitoring progress") ||
-    normalized === "understand and complete the core job progress for this offering"
-  );
-}
-
-function isGenericJourneySubtitle(value: string | null | undefined) {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (!normalized) return true;
-  return (
-    normalized.includes("how the primary job performer") ||
-    normalized.includes("define, locate, prepare, execute, monitor, and conclude progress") ||
-    normalized.includes("secures, converts, and retains economic value") ||
-    normalized.includes("demand converts into sustained economic outcomes")
-  );
-}
-
-function audienceFromJourneyTitle(title: string | null | undefined) {
-  const raw = safeText(title, "");
-  if (!raw) return "";
-  const withoutMapPrefix = raw.replace(/^job\s*map\s*:\s*/i, "").trim();
-  const withoutCustomerPrefix = withoutMapPrefix.replace(/^customer\s+/i, "").trim();
-  const withoutJourneySuffix = withoutCustomerPrefix.replace(/\s+journey$/i, "").trim();
-  const candidate = normalizeAudienceSignal(withoutJourneySuffix || withoutCustomerPrefix || withoutMapPrefix || raw);
-  return isInvalidAudienceLabel(candidate) ? "" : candidate;
-}
-
-function jtbdFromJourneyTitle(title: string | null | undefined) {
-  const audience = audienceFromJourneyTitle(title);
-  if (!audience) return "";
-  const lower = audience.toLowerCase();
-
-  if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
-    return "When choosing and managing a coffee partner, cafe owners and specialty venue buyers want to secure consistent quality, reliable supply, and responsive support, so they can deliver a strong guest experience and protect margins.";
-  }
-  if (/(debt|collection|debtor|repayment|arrears|delinquen|past due)/.test(lower)) {
-    return "When resolving outstanding debt, consumers want to understand options, choose a workable repayment path, and complete payments with confidence, so they can regain financial control with minimal stress.";
-  }
-  if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
-    return `When seeking growth capital, ${lower} want to identify, evaluate, and win the right funding partner, so they can execute their strategy on workable terms.`;
-  }
-  if (/(donor|grant|philanthrop)/.test(lower)) {
-    return `When securing mission funding, ${lower} want to win and retain aligned donors and grant partners, so they can sustain impact without constant funding risk.`;
-  }
-
-  return `When trying to complete this job, ${lower} want to move from defining outcomes to executing and monitoring progress, so they can achieve the intended result with less risk and rework.`;
-}
-
-function chooserFromJourneyTitle(title: string | null | undefined) {
-  const audience = audienceFromJourneyTitle(title);
-  const lower = audience.toLowerCase();
-  if (!audience) return "";
-
-  if (/(cafe|coffee|specialty venue|venue buyer)/.test(lower)) {
-    return "Cafe owner, beverage lead, or venue operator";
-  }
-  if (/(financial investment|investor|capital|funding|raise)/.test(lower)) {
-    return "CEO, CFO, or finance lead";
-  }
-  if (/(donor|grant|philanthrop)/.test(lower)) {
-    return "Executive director, development lead, or board sponsor";
-  }
-  return audience;
-}
-
-function marketContextFromJourney(args: {
-  title?: string | null;
-  subtitle?: string | null;
-  fallback?: string | null;
-}) {
-  const title = audienceFromJourneyTitle(args.title);
-  const subtitleRaw = safeText(args.subtitle, "");
-  const subtitle = isGenericJourneySubtitle(subtitleRaw) ? "" : subtitleRaw;
-  const fallback = safeText(args.fallback, "");
-
-  if (fallback) return fallback;
-  if (title && subtitle) return `${title}: ${subtitle}`;
-  if (subtitle) return subtitle;
-  if (title) return title;
-  return "";
-}
-
-function isTraditionalMarketDefinition(value: string | null | undefined) {
-  const normalized = safeText(value, "").toLowerCase();
-  if (!normalized) return false;
-  if (/^\s*category\s*:/.test(normalized)) return true;
-  return /^(b2b saas|b2c saas|marketplace|e-?commerce|professional services|healthcare services|financial services|education services|nonprofit services|hospitality \/ foodservice|logistics & transportation|manufacturing|public sector \/ government)$/.test(normalized);
-}
-
-function rankedNeedsByOpportunity(needs: OdiNeedRow[]) {
-  return needs.slice().sort((a, b) => {
-    const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
-    if (scoreDiff !== 0) return scoreDiff;
-    const sortDiff = (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER);
-    if (sortDiff !== 0) return sortDiff;
-    return String(a.id).localeCompare(String(b.id));
-  });
-}
-
-function normalizeClause(value: string | null | undefined) {
-  const normalized = safeText(value, "").replace(/\.+$/g, "").trim();
-  if (!normalized) return "";
-  return normalized.charAt(0).toLowerCase() + normalized.slice(1);
-}
-
-function joinWithAnd(values: string[]) {
-  if (values.length <= 1) return values[0] ?? "";
-  if (values.length === 2) return `${values[0]} and ${values[1]}`;
-  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
-}
-
-function isGenericRoleLabel(value: string | null | undefined) {
-  const normalized = safeText(value, "").toLowerCase();
-  if (!normalized) return true;
-  return (
-    normalized === "primary job performer" ||
-    normalized === "buying/decision lead" ||
-    normalized === "buying or decision lead" ||
-    normalized === "decision owner" ||
-    normalized === "decision maker" ||
-    normalized === "job performer" ||
-    normalized === "customer" ||
-    normalized === "customers"
-  );
-}
-
-function trimToWordLimit(value: string | null | undefined, maxWords: number) {
-  const normalized = safeText(value, "");
-  if (!normalized) return "";
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return normalized.replace(/\s+/g, " ").trim();
-  let trimmed = words.slice(0, maxWords);
-  while (
-    trimmed.length > 3 &&
-    /^(a|an|the|to|for|with|by|and|or|of|on|in|that|which|who|using)$/i.test(trimmed[trimmed.length - 1] || "")
-  ) {
-    trimmed = trimmed.slice(0, -1);
-  }
-  return trimmed.join(" ").replace(/\s+/g, " ").trim();
-}
-
-function stripLeadIn(value: string | null | undefined) {
-  return safeText(value, "")
-    .replace(/^(customers?|users?|teams?|organizations?|enterprises?|companies|clients)\s+can\s+/i, "")
-    .replace(/^(for|to)\s+/i, "")
-    .replace(/^the\s+/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function firstClause(value: string | null | undefined) {
-  const normalized = safeText(value, "");
-  if (!normalized) return "";
-  const sentence = normalized.split(/[.;:]/)[0] || normalized;
-  const clause = sentence.split(/\b(that|who|which|while|because|so that|by using|using|via)\b/i)[0] || sentence;
-  return safeText(clause, "");
-}
-
-function concisePhrase(value: string | null | undefined, options?: { maxWords?: number; fallback?: string; stripIntro?: boolean }) {
-  const maxWords = options?.maxWords ?? 10;
-  const fallback = options?.fallback ?? "";
-  const base = firstClause(value);
-  const stripped = options?.stripIntro ? stripLeadIn(base) : base;
-  const compact = trimToWordLimit(stripped, maxWords);
-  return compact || fallback;
-}
-
-function parseJtbdParts(value: string | null | undefined) {
-  const text = safeText(value, "");
-  if (!text) return null;
-  const match = text.match(
-    /when\s+(.+?)\s+needs\s+to\s+(.+?),\s*they\s+want\s+to\s+(.+?),\s*so\s+they\s+can\s+(.+?)(?:[.]|$)/i,
-  );
-  if (!match) return null;
-  return {
-    executor: safeText(match[1], ""),
-    situation: safeText(match[2], ""),
-    motivation: safeText(match[3], ""),
-    outcome: safeText(match[4], ""),
-  };
-}
-
-function normalizeFrameOfReference(frameCandidate: string | null | undefined) {
-  const raw = safeText(frameCandidate, "");
-  if (!raw) return "";
-  const noLabel = raw.replace(/^\s*category\s*:\s*/i, "").trim();
-  const beforeDelimiter = noLabel.split(/[;:]/)[0] || noLabel;
-  const withoutFocusedOn = beforeDelimiter.split(/\bfocused on\b/i)[0] || beforeDelimiter;
-  const compact = safeText(withoutFocusedOn, "");
-  if (!compact) return "";
-
-  const forParts = compact.split(/\s+for\s+/i).map((part) => safeText(part, "")).filter(Boolean);
-  if (forParts.length <= 2) return compact;
-  return `${forParts[0]} for ${forParts[1]}`;
-}
-
-function isOrganizationSegmentLabel(value: string | null | undefined) {
-  const normalized = safeText(value, "").toLowerCase();
-  if (!normalized) return true;
-  const hasRoleNoun = /\b(owner|founder|director|head|vp|chief|officer|manager|lead|buyer|procurement|executive|partner|operator|coordinator|specialist|analyst|staff|agent|practitioner|admin|consultant|strategist)\b/.test(normalized);
-  if (hasRoleNoun) return false;
-  return /\b(organization|enterprise|business|company|client|customer|segment|market|teams|mid|large|small|smb)\b/.test(normalized);
-}
-
-function inferRolesFromSignals(args: {
-  bestFitCustomers?: string | null;
-  valueForCustomer?: string | null;
-  marketContext?: string | null;
-  needs: OdiNeedRow[];
-}) {
-  const topNeed = rankedNeedsByOpportunity(args.needs)[0];
-  const signal = [
-    safeText(args.bestFitCustomers, ""),
-    safeText(args.valueForCustomer, ""),
-    safeText(args.marketContext, ""),
-    safeText(topNeed?.desired_outcome, ""),
-    safeText(topNeed?.step_label, ""),
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  if (/\b(strategy|strategic decision|decision framework|consulting|advisory)\b/.test(signal)) {
-    return { executor: "Strategy lead", chooser: "Executive sponsor" };
-  }
-  if (/\bdebt|collection|repayment|delinquen|arrears\b/.test(signal)) {
-    return { executor: "Repayment customer", chooser: "Collections manager" };
-  }
-  if (/\bcafe|coffee|restaurant|foodservice|venue\b/.test(signal)) {
-    return { executor: "Operations lead", chooser: "Owner or general manager" };
-  }
-  if (/\binvestor|investment|capital|funding|raise\b/.test(signal)) {
-    return { executor: "Finance lead", chooser: "CEO or founder" };
-  }
-  if (/\bdonor|grant|philanthrop|fundraising\b/.test(signal)) {
-    return { executor: "Development lead", chooser: "Executive director" };
-  }
-  return { executor: "", chooser: "" };
-}
-
-function inferRoleFromBestFitCustomers(bestFitCustomers: string | null | undefined, options: { chooser: boolean }) {
-  const text = safeText(bestFitCustomers, "");
-  if (!text) return "";
-
-  const candidates = text
-    .split(/[,;/]|\band\b/gi)
-    .map((part) => safeText(part, ""))
-    .filter(Boolean)
-    .slice(0, 8);
-
-  if (options.chooser) {
-    const chooserHit = candidates.find((part) =>
-      /\b(owner|founder|director|head|vp|chief|officer|manager|lead|buyer|procurement|executive|partner)\b/i.test(part),
-    );
-    if (chooserHit) return chooserHit;
-    const first = candidates[0] || "";
-    return isOrganizationSegmentLabel(first) ? "" : first;
-  }
-
-  const executorHit = candidates.find((part) =>
-    /\b(operator|coordinator|specialist|analyst|team|staff|rep|agent|manager|lead|practitioner|admin)\b/i.test(part),
-  );
-  if (executorHit) return executorHit;
-  const first = candidates[0] || "";
-  return isOrganizationSegmentLabel(first) ? "" : first;
-}
-
-function firstSpecificRole(...candidates: Array<string | null | undefined>) {
-  const cleaned = candidates.map((value) => safeText(value, "")).filter(Boolean);
-  for (const candidate of cleaned) {
-    if (
-      !isGenericRoleLabel(candidate) &&
-      !isInvalidAudienceLabel(candidate) &&
-      !isOrganizationSegmentLabel(candidate)
-    ) {
-      return candidate;
-    }
-  }
-  return "";
-}
-
-function deriveBestGuessJtbd(args: {
-  storedJtbd?: string | null;
-  derivedJtbd?: string | null;
-  executor?: string | null;
-  needs: OdiNeedRow[];
-  valueForCustomer?: string | null;
-}) {
-  const stored = safeText(args.storedJtbd, "");
-  if (
-    stored &&
-    !isGenericJtbdStatement(stored) &&
-    stored.length <= 200 &&
-    /when\b.+\b(want|need)s?\b.+\bso\b.+\bcan\b/i.test(stored)
-  ) {
-    return stored.replace(/\s+/g, " ").trim();
-  }
-
-  const derived = safeText(args.derivedJtbd, "");
-  if (
-    derived &&
-    !isGenericJtbdStatement(derived) &&
-    derived.length <= 200 &&
-    /when\b.+\b(want|need)s?\b.+\bso\b.+\bcan\b/i.test(derived)
-  ) {
-    return derived.replace(/\s+/g, " ").trim();
-  }
-
-  const rankedNeeds = rankedNeedsByOpportunity(args.needs);
-  const topNeed = rankedNeeds[0];
-  const topNeedOutcome = normalizeClause(topNeed?.desired_outcome);
-  const topNeedStep = normalizeClause(topNeed?.step_label);
-  const valueForCustomer = normalizeClause(args.valueForCustomer);
-  const executor = safeText(args.executor, "the customer").toLowerCase();
-
-  const situation = concisePhrase(valueForCustomer || topNeedOutcome || topNeedStep || "make progress on the core job", {
-    maxWords: 7,
-    stripIntro: true,
-    fallback: "make progress on the core job",
-  });
-  const motivation = concisePhrase(topNeedOutcome || valueForCustomer || "achieve the desired outcome with less effort", {
-    maxWords: 9,
-    stripIntro: true,
-    fallback: "achieve the desired outcome with less effort",
-  });
-  const outcome =
-    concisePhrase(valueForCustomer && valueForCustomer !== motivation ? valueForCustomer : "", {
-      maxWords: 9,
-      stripIntro: true,
-      fallback: "",
-    }) ||
-    "get reliable results with less risk";
-
-  return `When ${executor} needs to ${situation}, they want to ${motivation}, so they can ${outcome}.`;
-}
-
-function deriveOdiDunfordMarketContext(args: {
-  marketContext?: string | null;
-  jobExecutor?: string | null;
-  chooser?: string | null;
-  jtbd?: string | null;
-  needs: OdiNeedRow[];
-  positioningCanvas?: PositioningCanvas | null;
-}) {
-  const marketContext = safeText(args.marketContext, "");
-  const frameOfReference = safeText(args.positioningCanvas?.market_category, "");
-  const bestFitCustomers = safeText(args.positioningCanvas?.best_fit_customers, "");
-  const valueForCustomer = safeText(args.positioningCanvas?.value_for_customer, "");
-  const topNeedOutcome = normalizeClause(rankedNeedsByOpportunity(args.needs)[0]?.desired_outcome);
-  const jtbd = safeText(args.jtbd, "");
-  const executor = safeText(args.jobExecutor, "primary job performer");
-  const chooser = safeText(args.chooser, "buying or decision lead");
-  const inferredRoles = inferRolesFromSignals({
-    bestFitCustomers,
-    valueForCustomer,
-    marketContext,
-    needs: args.needs,
-  });
-
-  const parsedJtbd = parseJtbdParts(jtbd);
-  const frame = normalizeFrameOfReference(
-    frameOfReference
-      || (isTraditionalMarketDefinition(marketContext) ? marketContext : "")
-      || marketContext,
-  );
-  const specificCustomerRole = firstSpecificRole(
-    bestFitCustomers,
-    inferredRoles.executor,
-    parsedJtbd?.executor,
-    chooser,
-    executor,
-  );
-  const customers = safeText(
-    specificCustomerRole,
-    concisePhrase(bestFitCustomers, {
-      maxWords: 6,
-      stripIntro: true,
-      fallback: safeText(inferredRoles.executor, safeText(executor, "target customers")),
-    }),
-  );
-  const value = valueForCustomer || topNeedOutcome || "reliable progress on the core job";
-  const coreJob = parsedJtbd?.situation || concisePhrase(valueForCustomer || topNeedOutcome || "", {
-    maxWords: 7,
-    stripIntro: true,
-    fallback: "make progress on the core job",
-  });
-  const outcome = parsedJtbd?.outcome || concisePhrase(value, {
-    maxWords: 8,
-    stripIntro: true,
-    fallback: "reliable strategic outcomes",
-  });
-
-  if (!frame && !jtbd && !valueForCustomer && !topNeedOutcome) {
-    return marketContext;
-  }
-
-  const compactFrame = concisePhrase(frame || "Current market category", { maxWords: 6 });
-  const compactCustomers = concisePhrase(customers, { maxWords: 6 });
-  const compactJob = concisePhrase(coreJob, { maxWords: 7, stripIntro: true, fallback: "core job progress" });
-  const compactOutcome = concisePhrase(outcome, { maxWords: 8, stripIntro: true, fallback: "reliable strategic outcomes" });
-  return `${compactFrame}: ${compactCustomers} trying to ${compactJob}, so they can ${compactOutcome}.`;
-}
-
-function isDraftPlaceholderStep(step: JobStepRow) {
-  const basis = safeText(step.evidence_basis, "").toLowerCase();
-  return (
-    step.evidence_status === "unclear" &&
-    Number(step.evidence_confidence ?? 0) <= 25 &&
-    basis.includes("local draft step generated without external model run")
-  );
-}
-
-function hasAssessedGap(step: JobStepRow) {
-  return Boolean(step.has_gap) && !isDraftPlaceholderStep(step);
-}
-
-function normalizeJourneyKey(value: string) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-}
-
-function titleFromKey(key: JourneyKey) {
-  if (key === "customer") return "Customer Journey";
-  if (key === "revenue") return "Revenue Journey";
-  if (key === "operations") return "Operations Journey";
-  return `${titleCaseFromKey(key)} Journey`;
-}
-
-function subtitleFromKey(key: JourneyKey) {
-  if (key === "customer") return "How a customer experiences the end-to-end service.";
-  if (key === "revenue") return "How the company secures and grows revenue.";
-  if (key === "operations") return "How the company builds and operates the service.";
-  return `How ${titleCaseFromKey(key).toLowerCase()} progress through the work from start to finish.`;
-}
-
-function titleCaseFromKey(key: string) {
-  return key
-    .split("-")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || "Custom Journey";
-}
-
-function fallbackStyleForJourney(key: string) {
-  const palette = [
-    { rail: c.coral, dot: c.coral },
-    { rail: c.teal, dot: c.teal },
-    { rail: c.slate, dot: c.slate },
-    { rail: "#A0C382", dot: "#A0C382" },
-    { rail: "#FAC846", dot: "#FAC846" },
-  ];
-  const hash = Array.from(key).reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-  return palette[hash % palette.length];
-}
 
 async function describeJobMapInvokeError(error: unknown) {
   const maybeContext = (() => {
@@ -671,40 +187,6 @@ async function describeJobMapInvokeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function shouldUseLocalMapFallback(message: string) {
-  const text = String(message || "").toLowerCase();
-  return (
-    text.includes("missing openai_api_key") ||
-    text.includes("missing openai") ||
-    text.includes("openai") && text.includes("non-2xx") ||
-    text.includes("edge function returned a non-2xx status code") ||
-    text.includes("public baseline is not strong enough") ||
-    text.includes("evidence check blocked") ||
-    text.includes("insufficient_public_evidence") ||
-    text.includes("ambiguous_public_evidence") ||
-    text.includes("customer_job_map_required")
-  );
-}
-
-function shouldAttemptBaselineRetry(message: string) {
-  const text = String(message || "").toLowerCase();
-  return (
-    text.includes("baseline review needed") ||
-    text.includes("public baseline") ||
-    text.includes("insufficient_public_evidence") ||
-    text.includes("ambiguous_public_evidence") ||
-    text.includes("not enough extractable evidence")
-  );
-}
-
-function isMissingTableError(message: string, tableName: string) {
-  const text = String(message || "").toLowerCase();
-  const table = String(tableName || "").toLowerCase();
-  return (
-    (text.includes("could not find the table") && text.includes(table)) ||
-    (text.includes(table) && text.includes("schema cache"))
-  );
-}
 
 class InvokeTimeoutError extends Error {
   constructor(message: string) {
@@ -736,455 +218,6 @@ async function invokeFunctionWithTimeout<T>(
   }
 }
 
-const LOCAL_ODI_STEP_SEED = buildDefaultCheckpointSeed().map((checkpoint) => ({
-  label: checkpoint.step_label,
-  description: checkpoint.description,
-}));
-
-function checkpointSeedForJourneyKey(journeyKey: string) {
-  const normalizedKey = normalizeJourneyKey(journeyKey);
-  if (normalizedKey.startsWith("market-fit-")) {
-    const categoryKey = normalizedKey.replace(/^market-fit-/, "");
-    const marketSeed = buildMarketFitCheckpointSpine(categoryKey);
-    if (marketSeed.length === JTBD_CHECKPOINT_COUNT) return marketSeed;
-  }
-  return LOCAL_ODI_STEP_SEED;
-}
-
-function groupJourneys(items: JobStepRow[]): JourneyGroup[] {
-  const byKey = new Map<string, JobStepRow[]>();
-  for (const item of items) {
-    const key = safeText(item.journey_key, "").toLowerCase();
-    if (!key) continue;
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key)!.push(item);
-  }
-
-  const preferredOrder = ["customer", "revenue", "operations"];
-  const orderedKeys = [
-    ...preferredOrder.filter((key) => byKey.has(key)),
-    ...Array.from(byKey.keys())
-      .filter((key) => !preferredOrder.includes(key))
-      .sort((a, b) => a.localeCompare(b)),
-  ];
-
-  return orderedKeys.map((key) => {
-    const steps = (byKey.get(key) ?? []).slice().sort((a, b) => (a.step_number ?? 0) - (b.step_number ?? 0));
-    const first = steps[0];
-    return {
-      key,
-      title: safeText(first?.journey_title, key === "customer" || key === "revenue" || key === "operations" ? titleFromKey(key) : `Checkpoint Map: ${titleCaseFromKey(key)}`),
-      subtitle: safeText(first?.journey_subtitle, key === "customer" || key === "revenue" || key === "operations" ? subtitleFromKey(key) : `How ${titleCaseFromKey(key).toLowerCase()} define, prepare, execute, monitor, and improve progress.`),
-      steps,
-    };
-  });
-}
-
-function normalizeRoleLabel(value: string) {
-  const cleaned = value
-    .replace(/\s+/g, " ")
-    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
-    .trim();
-  if (!cleaned) return "Primary Job Performer";
-  return cleaned;
-}
-
-function deriveAbstractedExecutor(executor: string) {
-  const normalized = safeText(executor, "Primary job performer");
-  const lower = normalized.toLowerCase();
-  if (/(director|manager|lead|officer|head|vp|chief|owner|founder|coordinator|specialist)/.test(lower)) {
-    return "Decision owner";
-  }
-  if (/(customer|client|buyer|user|member|consumer|participant)/.test(lower)) {
-    return "Primary job performer";
-  }
-  if (/(team|department|organization|organisation|company|staff)/.test(lower)) {
-    return "Operating team";
-  }
-  return "Primary job performer";
-}
-
-function deriveFunctionOfProductStatement(jtbd: string, executor: string) {
-  const trimmed = safeText(jtbd, "");
-  if (!trimmed) {
-    return `Help ${safeText(executor, "the job performer").toLowerCase()} make progress with less risk and rework.`;
-  }
-  const wantMatch = trimmed.match(/\bwant to\b(.*?)(?:,\s*so they can| so they can|$)/i);
-  if (wantMatch?.[1]) {
-    const clause = wantMatch[1].replace(/^[\s,:-]+|[\s,:-]+$/g, "");
-    if (clause) {
-      return `Help ${safeText(executor, "the job performer").toLowerCase()} ${clause}.`;
-    }
-  }
-  return trimmed;
-}
-
-function deriveAbstractedJobStatement(jtbd: string, abstractedExecutor: string) {
-  const trimmed = safeText(jtbd, "");
-  if (!trimmed) {
-    return `${abstractedExecutor} can complete the core job reliably with clear evidence of progress.`;
-  }
-  const soMatch = trimmed.match(/\bso they can\b(.*?)(?:\.|$)/i);
-  if (soMatch?.[1]) {
-    const outcomeClause = soMatch[1].replace(/^[\s,:-]+|[\s,:-]+$/g, "");
-    if (outcomeClause) {
-      return `${abstractedExecutor} can ${outcomeClause}.`;
-    }
-  }
-  return trimmed;
-}
-
-function deriveOtherProductsContext(marketContext: string, needs: OdiNeedRow[]) {
-  const context = safeText(marketContext, "");
-  if (context) {
-    return `Compared against current alternatives in this market context: ${context}`;
-  }
-  const topNeed = needs
-    .slice()
-    .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
-  if (topNeed?.step_label) {
-    return `Compared against existing ways teams currently handle "${topNeed.step_label}".`;
-  }
-  return "Compared against existing alternatives customers use to complete the same job.";
-}
-
-type OtherProductsContextGroup = {
-  alternative: string;
-  context: string;
-  comparisonPressure: string;
-};
-
-function deriveOtherProductsContextGroups(args: {
-  marketContext?: string | null;
-  needs: OdiNeedRow[];
-  positioningCanvas?: PositioningCanvas | null;
-}): OtherProductsContextGroup[] {
-  const context = safeText(args.marketContext, "");
-  const topNeed = rankedNeedsByOpportunity(args.needs)[0];
-  const pressure =
-    normalizeClause(topNeed?.desired_outcome) ||
-    "reliable progress on the core job with less risk and rework";
-
-  const alternatives = (args.positioningCanvas?.competitive_alternatives ?? [])
-    .map((entry) => ({
-      name: safeText(entry.name, ""),
-      description: safeText(entry.description, ""),
-    }))
-    .filter((entry) => Boolean(entry.name));
-
-  if (alternatives.length > 0) {
-    return alternatives.map((entry) => ({
-      alternative: entry.name,
-      context: entry.description || "No detailed context captured yet for this alternative.",
-      comparisonPressure: pressure,
-    }));
-  }
-
-  if (context) {
-    return [
-      {
-        alternative: "Current market alternatives",
-        context,
-        comparisonPressure: pressure,
-      },
-    ];
-  }
-
-  if (topNeed?.step_label) {
-    return [
-      {
-        alternative: "Current workaround options",
-        context: `Teams currently patch together ways to handle "${topNeed.step_label}".`,
-        comparisonPressure: pressure,
-      },
-    ];
-  }
-
-  return [
-    {
-      alternative: "Existing alternatives",
-      context: "Customers use current alternatives to complete the same job.",
-      comparisonPressure: pressure,
-    },
-  ];
-}
-
-function deriveExecutorDetermination(args: {
-  activeCustomerJourneyTitle?: string | null;
-  marketDefinitionExecutor?: string | null;
-  marketDefinitionChooser?: string | null;
-}) {
-  const titleExecutor = audienceFromJourneyTitle(args.activeCustomerJourneyTitle);
-  const storedExecutor = safeText(args.marketDefinitionExecutor, "");
-  const chooser = safeText(args.marketDefinitionChooser, "");
-
-  const notes: string[] = [];
-  if (titleExecutor) notes.push(`Customer map title suggests "${titleExecutor}".`);
-  if (storedExecutor) notes.push(`Strategic Decision System market row currently stores "${storedExecutor}".`);
-  if (chooser) notes.push(`Chooser context: "${chooser}".`);
-  return notes.join(" ");
-}
-
-function inferRevenueMapTitle(economicEngine: string, publicSignalText: string, allowNonprofitFunding: boolean) {
-  const text = `${economicEngine} ${publicSignalText}`.toLowerCase();
-  if (/(investment|investor|capital|funding|raise)/.test(text)) {
-    return "Checkpoint Map: Getting Financial Investment";
-  }
-  if (allowNonprofitFunding && /(donor|grant|philanthrop|fundraising)/.test(text)) {
-    return "Checkpoint Map: Securing Donor and Grant Support";
-  }
-  if (/(referral|pipeline|conversion|enrollment)/.test(text)) {
-    return "Checkpoint Map: Converting Qualified Demand";
-  }
-  return "Checkpoint Map: Securing Revenue Outcomes";
-}
-
-function inferSuggestedJourneyOptions(args: {
-  baselineRun: { result_json?: unknown } | null;
-  journeys: JourneyGroup[];
-  inputs: InputItem[];
-  strategicProblems: Array<{ statement: string; status?: string; source?: string }>;
-  whereToPlay?: string | null;
-  howToWin?: string | null;
-}): SuggestedJourneyOption[] {
-  const existingJourneyKeys = new Set(args.journeys.map((journey) => journey.key));
-  const baseline = args.baselineRun?.result_json as {
-    lens_card?: {
-      primary_buyer?: string;
-      chooser?: string;
-      user?: string;
-      value_chain?: string;
-      economic_engine?: string;
-      adoption_constraints?: string;
-      risk_surface?: string;
-    };
-    evidence_ledger?: Array<{ bucket?: string; snippet?: string }>;
-  } | null;
-
-  const lens = baseline?.lens_card ?? {};
-  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-
-  const uploadedSignalText = args.inputs
-    .flatMap((input) => [
-      input.input_label,
-      input.sub_group,
-      input.description,
-      input.why_it_matters,
-      ...input.files.flatMap((file) => [file.file_name, ...(file.tags ?? [])]),
-    ])
-    .join(" ")
-    .toLowerCase();
-  const strategicProblemText = args.strategicProblems
-    .map((item) => String(item?.statement || ""))
-    .join(" ")
-    .toLowerCase();
-
-  const publicSignalText = [
-    String(lens.value_chain || ""),
-    String(lens.economic_engine || ""),
-    String(lens.adoption_constraints || ""),
-    String(lens.risk_surface || ""),
-    ...ledger.slice(0, 14).map((entry) => `${String(entry?.bucket || "")} ${String(entry?.snippet || "")}`),
-    String(args.whereToPlay || ""),
-    String(args.howToWin || ""),
-    uploadedSignalText,
-    strategicProblemText,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  const marketSignalText = [
-    String(lens.user || ""),
-    String(lens.primary_buyer || ""),
-    String(lens.chooser || ""),
-    String(lens.value_chain || ""),
-    String(args.whereToPlay || ""),
-    String(args.howToWin || ""),
-    strategicProblemText,
-  ]
-    .join(" ")
-    .toLowerCase();
-  const nonprofitSignalText = [
-    String(lens.value_chain || ""),
-    String(lens.economic_engine || ""),
-    String(args.whereToPlay || ""),
-    String(args.howToWin || ""),
-    strategicProblemText,
-  ]
-    .join(" ")
-    .toLowerCase();
-  const hasNonprofitFundingSignal = /\b(nonprofit|charity|foundation|mission|philanthrop|donor|grant|fundraising)\b/.test(nonprofitSignalText);
-  const hasCommercialMarketSignal = /\b(saas|software|telecom|enterprise|b2b|subscription|arr|contract|procurement|retail|cafe|restaurant|venue)\b/.test(nonprofitSignalText);
-  const allowDonorGrantRevenueMap = hasNonprofitFundingSignal && !hasCommercialMarketSignal;
-
-  const fileSignals = args.inputs.flatMap((input) =>
-    input.files.map((file) => ({
-      fileName: String(file.file_name || ""),
-      tags: (file.tags ?? []).map((tag) => String(tag || "")),
-    })),
-  );
-
-  const matchingProblemSnippets = (matcher: RegExp) =>
-    args.strategicProblems
-      .map((problem) => String(problem?.statement || "").trim())
-      .filter((statement) => matcher.test(statement))
-      .map((statement) => statement.split(/\n+/)[0].trim())
-      .filter(Boolean)
-      .slice(0, 2);
-
-  const matchingFileSnippets = (matcher: RegExp) =>
-    fileSignals
-      .map((file) => `${file.fileName} ${file.tags.join(" ")}`.trim())
-      .filter((snippet) => matcher.test(snippet))
-      .map((snippet) => snippet.split(/\s+/).slice(0, 10).join(" "))
-      .slice(0, 2);
-
-  const countMatches = (terms: string[]) =>
-    terms.reduce((sum, term) => (publicSignalText.includes(term) ? sum + 1 : sum), 0);
-
-  const options: SuggestedJourneyOption[] = [];
-  const addOption = (option: SuggestedJourneyOption) => {
-    if (existingJourneyKeys.has(option.key)) return;
-    if (options.some((item) => item.key === option.key)) return;
-    options.push(option);
-  };
-
-  if (!existingJourneyKeys.has("customer")) {
-    const customerSignalRaw = safeText(lens.user || lens.primary_buyer || lens.chooser, "");
-    const normalizedCustomerSignal = normalizeAudienceSignal(customerSignalRaw);
-    const customerSignal = normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
-      ? normalizeRoleLabel(normalizedCustomerSignal)
-      : "Primary Job Performer";
-    addOption({
-      key: "customer",
-      title: `Checkpoint Map: ${customerSignal}`,
-      subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
-      confidence: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
-      rationale: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
-        ? `Public signal identifies primary job performer context: ${normalizedCustomerSignal}`
-        : "Customer checkpoint map is required first and should define the core functional job performer.",
-    });
-  }
-
-  if (!existingJourneyKeys.has("revenue")) {
-    const revenueMatches = countMatches([
-      "revenue",
-      "pricing",
-      "contract",
-      "renewal",
-      "payer",
-      "reimbursement",
-      "referral",
-      "pipeline",
-      "conversion",
-    ]);
-    const nonprofitRevenueMatches = allowDonorGrantRevenueMap
-      ? countMatches(["donor", "fundraising", "grant", "philanthrop"])
-      : 0;
-    const revenueSignalScore = revenueMatches + nonprofitRevenueMatches;
-    const economicEngine = safeText(lens.economic_engine, "");
-    const hasEconomicSignal =
-      economicEngine.length > 0 && economicEngine.toLowerCase() !== "unknown";
-
-    if (revenueSignalScore >= 2 || hasEconomicSignal) {
-      const revenueTitle = inferRevenueMapTitle(economicEngine, publicSignalText, allowDonorGrantRevenueMap);
-      addOption({
-        key: "revenue",
-        title: revenueTitle,
-        subtitle: "How the company secures, converts, and retains economic value for the chosen market.",
-        confidence: Math.min(92, 50 + revenueSignalScore * 8 + (hasEconomicSignal ? 12 : 0)),
-        rationale: hasEconomicSignal
-          ? `Public signal in economic engine: ${economicEngine}`
-          : "Public signals suggest monetization, funding, or referral conversion dynamics.",
-      });
-    }
-  }
-
-  if (!existingJourneyKeys.has("operations")) {
-    const operationsMatches = countMatches([
-      "operations",
-      "delivery",
-      "capacity",
-      "workflow",
-      "staffing",
-      "compliance",
-      "quality",
-      "handoff",
-      "throughput",
-      "support",
-      "service continuity",
-    ]);
-    const adoptionConstraints = safeText(lens.adoption_constraints, "");
-    const riskSurface = safeText(lens.risk_surface, "");
-    const hasOpsSignal =
-      (adoptionConstraints.length > 0 && adoptionConstraints.toLowerCase() !== "unknown") ||
-      (riskSurface.length > 0 && riskSurface.toLowerCase() !== "unknown");
-
-    if (operationsMatches >= 2 || hasOpsSignal) {
-      addOption({
-        key: "operations",
-        title: "Checkpoint Map: Delivering Consistent Service",
-        subtitle: "How delivery systems coordinate define, prepare, execute, monitor, and adjust work at quality.",
-        confidence: Math.min(92, 50 + operationsMatches * 8 + (hasOpsSignal ? 10 : 0)),
-        rationale: hasOpsSignal
-          ? `Public signal in constraints/risk: ${safeText(adoptionConstraints || riskSurface)}`
-          : "Public signals suggest delivery, quality, or operational coordination risk.",
-      });
-    }
-  }
-
-  const audienceCandidates = new Set<string>();
-  const baselineRoleCandidates = [lens.user, lens.primary_buyer, lens.chooser]
-    .map((value) => normalizeAudienceSignal(String(value || "")))
-    .filter((value) => Boolean(value) && !isInvalidAudienceLabel(value))
-    .map((value) => normalizeRoleLabel(value));
-  for (const role of baselineRoleCandidates) {
-    audienceCandidates.add(role);
-  }
-  if (/\binvestor|investment committee|capital partner\b/.test(marketSignalText)) {
-    audienceCandidates.add("Investors and Investment Committee");
-  }
-  if (/\bchannel partner|distribution partner|reseller|procurement lead\b/.test(marketSignalText)) {
-    audienceCandidates.add("Channel and Distribution Partners");
-  }
-
-  for (const candidate of audienceCandidates) {
-    const key = `customer-${candidate.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)}`;
-    const roleMatcher = new RegExp(candidate.split(/\s+/).slice(0, 3).join("|"), "i");
-    const candidateEvidence = [
-      ...matchingProblemSnippets(roleMatcher).map((source) => `Problem: ${source}`),
-      ...matchingFileSnippets(roleMatcher).map((source) => `File: ${source}`),
-    ].slice(0, 3);
-    const rationale = candidateEvidence.length > 0
-      ? `Derived from uploaded/client evidence: ${candidateEvidence.join(" • ")}`
-      : "Derived from baseline role signals and market context.";
-    addOption({
-      key,
-      title: `Checkpoint Map: ${candidate}`,
-      subtitle: `How ${candidate.toLowerCase()} define, evaluate, select, execute, and monitor progress.`,
-      confidence: candidateEvidence.length > 0 ? 90 : 78,
-      rationale,
-    });
-  }
-
-  const bestFitCategory = bestFitStrategicMarketCategory([
-    publicSignalText,
-    marketSignalText,
-    nonprofitSignalText,
-    String(args.whereToPlay || ""),
-    String(args.howToWin || ""),
-  ].join(" "));
-  const marketFitOption = buildMarketFitMapOption(bestFitCategory.label);
-  addOption({
-    key: marketFitOption.key,
-    title: marketFitOption.title,
-    subtitle: marketFitOption.subtitle,
-    confidence: 86,
-    rationale: `Best-fit market category: ${marketFitOption.categoryLabel}. Adds a market-specific checkpoint spine option.`,
-  });
-
-  return options.sort((a, b) => b.confidence - a.confidence);
-}
 
 function TimelineRow({
   steps,
@@ -2168,6 +1201,7 @@ function OdiNeedsListSection({
   onUpdateNeedText,
   updatingNeedId,
   onUpdateNeedScores,
+  currentPhase,
 }: {
   companyId?: string;
   needs: OdiNeedRow[];
@@ -2180,6 +1214,7 @@ function OdiNeedsListSection({
   onUpdateNeedText?: (needId: string, values: { desired_outcome: string }) => Promise<void>;
   updatingNeedId?: string | null;
   onUpdateNeedScores?: (needId: string, importance: number, satisfaction: number) => Promise<void>;
+  currentPhase?: import("@/lib/engagementPhase").EngagementPhase;
 }) {
   type NeedOrderMode = "suggested" | "custom";
   const hasManualNeedOverride = (rows: OdiNeedRow[]) =>
@@ -2672,6 +1707,7 @@ function OdiNeedsListSection({
         open={!!inspectNeed}
         onClose={() => setInspectNeed(null)}
         need={inspectNeed}
+        currentPhase={currentPhase}
       />
     </section>
   );
@@ -4319,6 +3355,7 @@ export default function JobStepsView() {
               onUpdateNeedText={handleUpdateNeedText}
               updatingNeedId={updatingNeedId}
               onUpdateNeedScores={handleUpdateNeedScores}
+              currentPhase={activeCompany?.engagement_phase}
             />
           </div>
         )}

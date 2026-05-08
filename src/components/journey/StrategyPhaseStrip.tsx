@@ -1,70 +1,18 @@
 import { useState } from "react";
+import { PHASE_DEFS as ENGINE_PHASE_DEFS, type EngagementPhase } from "@/lib/engagementPhase";
 
-export type ProgramPhase = "outside" | "diagnose" | "focus" | "flow";
+// Re-export for any remaining consumers that import ProgramPhase from this file.
+export type ProgramPhase = EngagementPhase;
 
-export const PHASE_DEFS: Array<{
-  key: ProgramPhase;
-  label: string;
-  tagline: string;
-  description: string;
-  steps: string[];
-}> = [
-  {
-    key: "outside",
-    label: "Outside",
-    tagline: "Public available info",
-    description:
-      "Gather publicly available evidence: market research, competitive landscape, public claims, and initial signal on how the market sees the client.",
-    steps: [
-      "Public baseline run and evidence ledger complete",
-      "Competitive landscape mapped",
-      "Public claims documented (website, press, reviews)",
-      "Customer evidence sources identified",
-    ],
-  },
-  {
-    key: "diagnose",
-    label: "Diagnose",
-    tagline: "Company docs · interviews · initial strategy draft",
-    description:
-      "Upload company documents, run stakeholder and customer interviews, produce an initial draft of strategy, positioning, needs, pain points, and desires.",
-    steps: [
-      "Company strategy / brand documents uploaded",
-      "Stakeholder interviews conducted",
-      "Customer interviews or surveys done",
-      "Initial strategy and positioning draft complete",
-      "Needs, pain points, and desires mapped",
-    ],
-  },
-  {
-    key: "focus",
-    label: "Focus",
-    tagline: "Customer needs research · importance / satisfaction · prioritized solutions",
-    description:
-      "Run the customer needs survey, score importance and satisfaction for each need, assign opportunities to desired outcomes, apply and test solutions against the highest-priority opportunities.",
-    steps: [
-      "Customer needs survey fielded and results recorded",
-      "Importance and satisfaction scored for all needs",
-      "Opportunities mapped to desired outcomes",
-      "Top opportunities prioritized by opportunity score",
-      "Solutions assigned and initial tests designed",
-    ],
-  },
-  {
-    key: "flow",
-    label: "Flow",
-    tagline: "Track · check in · clear next steps",
-    description:
-      "Track progress on the chosen branch, run regular check-ins, vote on approach adjustments, and maintain a clear record of why it matters and how each action addresses the core problem.",
-    steps: [
-      "Chosen branch / route locked in",
-      "Why it matters and how it addresses the problem documented",
-      "Clear next steps with owners defined",
-      "Check-in and voting cadence established",
-      "Progress and outcome metrics tracked",
-    ],
-  },
-];
+// Flatten engine defs into the strip's expected shape.
+export const PHASE_DEFS = ENGINE_PHASE_DEFS.map((d) => ({
+  key:         d.key,
+  label:       d.label,
+  tagline:     d.tagline,
+  description: d.description,
+  steps:       d.steps,
+  isValidate:  d.isValidate,
+}));
 
 const c = {
   charcoal: "#233C4B",
@@ -78,10 +26,13 @@ const c = {
   amber: "#FAC846",
 };
 
-function phaseColors(phase: ProgramPhase) {
-  if (phase === "outside") return { accent: "#6E847F", bg: "#F4F6F5", border: "#B8CCCA", dot: "#6E847F" };
-  if (phase === "diagnose") return { accent: "#C48A2A", bg: "#FFFCE8", border: "#F3D77A", dot: "#C48A2A" };
-  if (phase === "focus") return { accent: c.coral, bg: "#FFF4EC", border: "#FFD1B4", dot: c.coral };
+function phaseColors(phase: EngagementPhase) {
+  if (phase === "outside_signals" || phase === "validate_outside")
+    return { accent: "#6E847F", bg: "#F4F6F5", border: "#B8CCCA", dot: "#6E847F" };
+  if (phase === "diagnose" || phase === "validate_diagnose")
+    return { accent: "#C48A2A", bg: "#FFFCE8", border: "#F3D77A", dot: "#C48A2A" };
+  if (phase === "focus" || phase === "validate_focus")
+    return { accent: c.coral, bg: "#FFF4EC", border: "#FFD1B4", dot: c.coral };
   return { accent: c.teal, bg: "#EFF7F3", border: "#B5D9CC", dot: c.teal };
 }
 
@@ -90,15 +41,22 @@ export default function StrategyPhaseStrip({
   isAdmin = false,
   onPhaseChange,
 }: {
-  currentPhase: ProgramPhase;
+  currentPhase: EngagementPhase;
   isAdmin?: boolean;
-  onPhaseChange?: (phase: ProgramPhase) => void;
+  onPhaseChange?: (phase: EngagementPhase) => void;
 }) {
-  const [hoveredPhase, setHoveredPhase] = useState<ProgramPhase | null>(null);
+  const [hoveredPhase, setHoveredPhase] = useState<EngagementPhase | null>(null);
 
   const displayPhase = hoveredPhase ?? currentPhase;
-  const displayDef = PHASE_DEFS.find((p) => p.key === displayPhase) ?? PHASE_DEFS[1];
+  const displayDef = PHASE_DEFS.find((p) => p.key === displayPhase) ?? PHASE_DEFS[0];
   const currentIndex = PHASE_DEFS.findIndex((p) => p.key === currentPhase);
+
+  // Ordinal numbers for main phases only (1–4)
+  let mainOrdinalCounter = 0;
+  const mainOrdinals = PHASE_DEFS.map((p) => {
+    if (!p.isValidate) { mainOrdinalCounter++; return mainOrdinalCounter; }
+    return null;
+  });
 
   return (
     <div
@@ -111,14 +69,19 @@ export default function StrategyPhaseStrip({
           const isCurrent = phase.key === currentPhase;
           const isHovered = hoveredPhase === phase.key;
           const isPast = index < currentIndex;
+          const isValidate = phase.isValidate;
           const colors = phaseColors(phase.key);
+          const ordinal = mainOrdinals[index];
 
           return (
             <button
               key={phase.key}
               type="button"
-              className="relative flex-1 flex flex-col items-center gap-1 px-3 py-3 transition-all focus:outline-none"
+              className="relative flex flex-col items-center justify-center gap-1 py-3 transition-all focus:outline-none"
               style={{
+                flex: isValidate ? "0 0 52px" : "1 1 0",
+                minWidth: isValidate ? 48 : 0,
+                padding: isValidate ? "12px 4px" : "12px 12px",
                 background: isCurrent || isHovered ? colors.bg : "transparent",
                 borderRight: index < PHASE_DEFS.length - 1 ? `1px solid ${c.line}` : "none",
                 cursor: isAdmin ? "pointer" : "default",
@@ -137,33 +100,49 @@ export default function StrategyPhaseStrip({
                 />
               )}
 
-              <div className="flex items-center gap-1.5">
-                {/* Step dot */}
+              {isValidate ? (
+                /* Validate checkpoint — compact gateway indicator */
                 <span
-                  className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border font-mono text-[9px]"
+                  className="font-mono text-[9px] uppercase tracking-[0.04em]"
                   style={{
-                    borderColor: isCurrent ? colors.accent : isPast ? c.teal : c.line,
-                    background: isCurrent ? colors.bg : isPast ? "#EFF7F3" : "transparent",
                     color: isCurrent ? colors.accent : isPast ? c.teal : c.muted,
+                    opacity: isCurrent || isHovered ? 1 : 0.65,
+                    lineHeight: 1,
                   }}
                 >
-                  {isPast ? "✓" : index + 1}
+                  {isPast ? "✓" : "▾"}
                 </span>
-                <span
-                  className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold"
-                  style={{
-                    color: isCurrent ? colors.accent : isHovered ? colors.accent : isPast ? c.secondary : c.muted,
-                  }}
-                >
-                  {phase.label}
-                </span>
-              </div>
-              <span
-                className="font-sans text-[10px] leading-tight text-center hidden sm:block"
-                style={{ color: isCurrent ? colors.accent : c.muted }}
-              >
-                {phase.tagline}
-              </span>
+              ) : (
+                /* Main phase — full treatment */
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border font-mono text-[9px]"
+                      style={{
+                        borderColor: isCurrent ? colors.accent : isPast ? c.teal : c.line,
+                        background: isCurrent ? colors.bg : isPast ? "#EFF7F3" : "transparent",
+                        color: isCurrent ? colors.accent : isPast ? c.teal : c.muted,
+                      }}
+                    >
+                      {isPast ? "✓" : ordinal}
+                    </span>
+                    <span
+                      className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold"
+                      style={{
+                        color: isCurrent ? colors.accent : isHovered ? colors.accent : isPast ? c.secondary : c.muted,
+                      }}
+                    >
+                      {phase.label}
+                    </span>
+                  </div>
+                  <span
+                    className="font-sans text-[10px] leading-tight text-center hidden sm:block"
+                    style={{ color: isCurrent ? colors.accent : c.muted }}
+                  >
+                    {phase.tagline}
+                  </span>
+                </>
+              )}
             </button>
           );
         })}
@@ -173,6 +152,11 @@ export default function StrategyPhaseStrip({
       <div className="px-4 py-3" style={{ background: phaseColors(displayPhase).bg }}>
         <div className="flex flex-col sm:flex-row sm:items-start gap-4">
           <div className="flex-1 min-w-0">
+            {displayDef.isValidate && (
+              <p className="font-mono text-[9px] uppercase tracking-[0.08em] mb-1" style={{ color: phaseColors(displayPhase).accent }}>
+                Checkpoint
+              </p>
+            )}
             <p className="font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
               {displayDef.description}
             </p>
