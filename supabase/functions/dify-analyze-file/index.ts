@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encode as encodeBase64 } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,7 +11,7 @@ const corsHeaders = {
 
 // Source types that represent primary customer research — only these may be
 // treated as customer-validated in candidate needs outputs.
-const CUSTOMER_VALIDATED_SOURCE_TYPES = new Set(["interview", "survey"]);
+const CUSTOMER_VALIDATED_SOURCE_TYPES = new Set(["interview", "survey", "transcript", "customer_research"]);
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 const DIFY_STARTUP_TIMEOUT_MS = 180000;
 const DIFY_MONITOR_MAX_ATTEMPTS = 540;
@@ -545,6 +546,28 @@ async function persistDifyResult(params: {
   if (updateError) {
     console.log("[dify-analyze-file] update error:", updateError.message);
     throw new Error(`Failed to save proposal: ${updateError.message}`);
+  }
+
+  const { data: proposalRow } = await supabase
+    .from("file_proposals")
+    .select("company_id, file_name, source_type")
+    .eq("id", proposalId)
+    .maybeSingle();
+
+  if (proposalRow?.company_id) {
+    await ingestDifyProposalSignals({
+      supabase,
+      companyId: String(proposalRow.company_id),
+      proposalId,
+      sourceType: String(proposalRow.source_type ?? sourceType ?? "file_proposal"),
+      sourceTitle: String(proposalRow.file_name ?? "Dify proposal"),
+      summary,
+      evidence,
+      contradictions,
+      frameworkResults,
+      questionsToVerify,
+      rawPayload: structuredOutputs,
+    });
   }
 
   console.log("[dify-analyze-file] proposal updated, id:", proposalId);

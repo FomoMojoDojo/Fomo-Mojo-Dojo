@@ -8,6 +8,7 @@ import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import { SectionHeader } from "../primitives";
 import { getOutcomeFocus, setOutcomeFocus, clearOutcomeFocus } from "@/lib/activeOutcomeFocus";
+import { useAuth } from "@/hooks/useAuth";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,12 @@ const MONO: React.CSSProperties = {
   letterSpacing: "0.1em",
   textTransform: "uppercase",
 };
+
+const REVIEW_STATES = new Set(["needs_review", "stale", "contradicted", "revalidate"]);
+
+function needsReviewState(value: string | null | undefined) {
+  return REVIEW_STATES.has(String(value || "").trim().toLowerCase());
+}
 
 // Maps well-known journey_key values to plain outcome statements.
 // Unknown keys get title-cased automatically.
@@ -96,6 +103,7 @@ function NeedRow({
   isMuted,
   isHighlighted,
   isFocused,
+  reviewState,
 }: {
   need: OdiNeedRow;
   idx: number;
@@ -109,6 +117,7 @@ function NeedRow({
   isMuted: boolean;
   isHighlighted: boolean;
   isFocused: boolean;
+  reviewState: boolean;
 }) {
   const [imp, setImp] = useState(need.importance);
   const [sat, setSat] = useState(need.satisfaction);
@@ -124,6 +133,14 @@ function NeedRow({
       <span className="crpv-ws-need-num">{num}</span>
       <div className="crpv-ws-need-outcome">
         <span>{need.desired_outcome}</span>
+        {reviewState && (
+          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ ...MONO, color: "#b06a3c" }}>Needs review</span>
+            <span style={{ fontSize: 11, color: "#7d6a5c", lineHeight: 1.45 }}>
+              {need.stale_reason || "This need may need to be checked because the job map changed."}
+            </span>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
           {onFocus && (
             <button
@@ -201,6 +218,8 @@ export default function NeedsOrgPanel({
   onRouteSelect,
   companyId,
   currentPhase,
+  reviewNeedId,
+  onReviewNeedHandled,
 }: {
   needs: OdiNeedRow[];
   loading: boolean;
@@ -212,10 +231,14 @@ export default function NeedsOrgPanel({
   onRouteSelect?: (routeId: string) => void;
   companyId?: string;
   currentPhase?: import("@/lib/engagementPhase").EngagementPhase;
+  reviewNeedId?: string | null;
+  onReviewNeedHandled?: () => void;
 }) {
+  const { user } = useAuth();
   const [localNeeds, setLocalNeeds] = useState<OdiNeedRow[]>(initialNeeds);
   const [reorderingId, setReorderingId] = useState<string | null>(null);
   const [inspectNeed, setInspectNeed] = useState<OdiNeedRow | null>(null);
+  const [highlightReviewSection, setHighlightReviewSection] = useState(false);
   const [focusedOutcome, setFocusedOutcomeRaw] = useState<string | null>(null);
   const [focusedOpportunityId, setFocusedOpportunityIdRaw] = useState<string | null>(null);
 
@@ -245,6 +268,130 @@ export default function NeedsOrgPanel({
   }
 
   useEffect(() => { setLocalNeeds(initialNeeds); }, [initialNeeds]);
+
+  useEffect(() => {
+    if (!reviewNeedId) return;
+    const matchedNeed = initialNeeds.find((need) => need.id === reviewNeedId) ?? null;
+    if (matchedNeed) {
+      setInspectNeed(matchedNeed);
+      setHighlightReviewSection(true);
+    }
+    onReviewNeedHandled?.();
+  }, [initialNeeds, onReviewNeedHandled, reviewNeedId]);
+
+  const applyNeedPatch = useCallback((needId: string, patch: Partial<OdiNeedRow>) => {
+    setLocalNeeds((prev) => prev.map((need) => (need.id === needId ? { ...need, ...patch } : need)));
+    setInspectNeed((prev) => (prev?.id === needId ? { ...prev, ...patch } : prev));
+  }, []);
+
+  const createNeedReviewEvent = useCallback(async (needId: string, eventType: "refreshed" | "updated", reason: string, newValue: Record<string, unknown>) => {
+    if (!companyId) throw new Error("Company context missing for need review event.");
+    const { error } = await supabase.from("strategic_events").insert({
+      company_id: companyId,
+      event_type: eventType,
+      actor_type: user?.id ? "user" : "system",
+      actor_id: user?.id ?? null,
+      source_run_id: inspectNeed?.source_run_id ?? null,
+      object_type: "odi_need",
+      object_id: needId,
+      previous_value: null,
+      new_value: newValue,
+      reason,
+    });
+    if (error) throw new Error(error.message || "Failed to record need review event.");
+  }, [companyId, inspectNeed?.source_run_id, user?.id]);
+
+  const handleMarkReviewed = useCallback(async (needId: string) => {
+    const previousNeed = localNeeds.find((need) => need.id === needId);
+    if (!previousNeed) throw new Error("Need not found.");
+    const reviewedAt = new Date().toISOString();
+    const patch = {
+      dependency_state: "fresh",
+      last_reviewed_at: reviewedAt,
+      stale_reason: null,
+      stale_since_event_id: null,
+      updated_at: reviewedAt,
+    } satisfies Partial<OdiNeedRow>;
+
+    const { error } = await supabase
+      .from("odi_needs")
+      .update(patch)
+      .eq("id", needId);
+    if (error) throw new Error(error.message || "Failed to mark need reviewed.");
+
+    try {
+      await createNeedReviewEvent(
+        needId,
+        "refreshed",
+        "Need reviewed after job map change",
+        {
+          dependency_state: "fresh",
+          last_reviewed_at: reviewedAt,
+        },
+      );
+    } catch (eventError) {
+      await supabase
+        .from("odi_needs")
+        .update({
+          dependency_state: previousNeed.dependency_state ?? "needs_review",
+          last_reviewed_at: previousNeed.last_reviewed_at ?? null,
+          stale_reason: previousNeed.stale_reason ?? null,
+          stale_since_event_id: previousNeed.stale_since_event_id ?? null,
+          updated_at: previousNeed.updated_at ?? null,
+        })
+        .eq("id", needId);
+      throw eventError;
+    }
+
+    applyNeedPatch(needId, patch);
+    setHighlightReviewSection(false);
+  }, [applyNeedPatch, createNeedReviewEvent, localNeeds]);
+
+  const handleSendBackToReview = useCallback(async (needId: string) => {
+    const previousNeed = localNeeds.find((need) => need.id === needId);
+    if (!previousNeed) throw new Error("Need not found.");
+    const reviewedAt = new Date().toISOString();
+    const patch = {
+      dependency_state: "needs_review",
+      stale_reason: "Manual review requested",
+      last_reviewed_at: reviewedAt,
+      updated_at: reviewedAt,
+    } satisfies Partial<OdiNeedRow>;
+
+    const { error } = await supabase
+      .from("odi_needs")
+      .update(patch)
+      .eq("id", needId);
+    if (error) throw new Error(error.message || "Failed to send need back to review.");
+
+    try {
+      await createNeedReviewEvent(
+        needId,
+        "updated",
+        "Manual review requested",
+        {
+          dependency_state: "needs_review",
+          stale_reason: "Manual review requested",
+          last_reviewed_at: reviewedAt,
+        },
+      );
+    } catch (eventError) {
+      await supabase
+        .from("odi_needs")
+        .update({
+          dependency_state: previousNeed.dependency_state ?? "fresh",
+          last_reviewed_at: previousNeed.last_reviewed_at ?? null,
+          stale_reason: previousNeed.stale_reason ?? null,
+          stale_since_event_id: previousNeed.stale_since_event_id ?? null,
+          updated_at: previousNeed.updated_at ?? null,
+        })
+        .eq("id", needId);
+      throw eventError;
+    }
+
+    applyNeedPatch(needId, patch);
+    setHighlightReviewSection(true);
+  }, [applyNeedPatch, createNeedReviewEvent, localNeeds]);
 
   // ── Derived state ───────────────────────────────────────────────────────────
 
@@ -481,6 +628,7 @@ export default function NeedsOrgPanel({
               const isMuted = isStepActive && !isStepMatch(need);
               const isHighlighted = isStepActive && isStepMatch(need);
               const isFocused = focusedOpportunityId === need.id;
+              const reviewState = needsReviewState(need.dependency_state);
 
               return (
                 <NeedRow
@@ -497,6 +645,7 @@ export default function NeedsOrgPanel({
                   isMuted={isMuted}
                   isHighlighted={isHighlighted}
                   isFocused={isFocused}
+                  reviewState={reviewState}
                 />
               );
             })}
@@ -511,11 +660,18 @@ export default function NeedsOrgPanel({
         routes={routes}
         onRouteSelect={onRouteSelect}
         currentPhase={currentPhase}
+        reviewHighlighted={highlightReviewSection}
+        onMarkReviewed={handleMarkReviewed}
+        onSendBackToReview={handleSendBackToReview}
         staleNote={
           inspectNeed && latestExclusionAt && isArtifactStale(inspectNeed, latestExclusionAt)
             ? "Needs review after excluded inputs"
             : null
         }
+        onClose={() => {
+          setInspectNeed(null);
+          setHighlightReviewSection(false);
+        }}
       />
     </div>
   );

@@ -61,58 +61,58 @@ export const JTBD_ODI_CHECKPOINTS: ReadonlyArray<JtbdCheckpoint> = [
   {
     stepNumber: 1,
     key: "define",
-    canonicalLabel: "Define desired progress",
+    canonicalLabel: "Determine what a successful outcome looks like",
     description:
-      "Clarify the progress the job executor is trying to make and the result that would count as success.",
+      "Clarify what the job executor is trying to accomplish and what would count as success from their perspective.",
   },
   {
     stepNumber: 2,
     key: "locate",
-    canonicalLabel: "Locate viable options",
+    canonicalLabel: "Identify available options and evaluate fit",
     description:
-      "Identify the options, resources, and sources of information that could help accomplish the job.",
+      "Identify the options, resources, and information sources available and evaluate which best fits the intended outcome.",
   },
   {
     stepNumber: 3,
     key: "prepare",
-    canonicalLabel: "Prepare required conditions",
+    canonicalLabel: "Validate conditions are in place before committing",
     description:
-      "Get the prerequisites, inputs, and conditions in place before the core task begins.",
+      "Validate that the right inputs, dependencies, and conditions are in place before the core work begins.",
   },
   {
     stepNumber: 4,
     key: "confirm",
-    canonicalLabel: "Confirm readiness",
+    canonicalLabel: "Confirm the approach is sound",
     description:
-      "Confirm the chosen path, inputs, and conditions are good enough to proceed.",
+      "Confirm the chosen path is credible and the conditions are good enough to proceed.",
   },
   {
     stepNumber: 5,
     key: "execute",
-    canonicalLabel: "Perform the core task",
+    canonicalLabel: "Carry out the work to achieve the outcome",
     description:
-      "Carry out the core task required to create the intended progress.",
+      "Carry out the core work in a way that reliably produces the intended outcome.",
   },
   {
     stepNumber: 6,
     key: "monitor",
-    canonicalLabel: "Monitor results",
+    canonicalLabel: "Detect early signals of progress or risk",
     description:
-      "Track progress, quality, and emerging signals while the job is underway.",
+      "Detect whether the outcome is being achieved and identify early signals that something may be off.",
   },
   {
     stepNumber: 7,
     key: "modify",
-    canonicalLabel: "Adjust the approach",
+    canonicalLabel: "Adjust when the outcome is not on track",
     description:
-      "Adjust the approach when conditions shift or outcomes fall short.",
+      "Adjust the approach when signals suggest the intended outcome is at risk or falling short.",
   },
   {
     stepNumber: 8,
     key: "conclude",
-    canonicalLabel: "Conclude and learn",
+    canonicalLabel: "Evaluate what worked and carry it forward",
     description:
-      "Confirm the result, close the effort cleanly, and capture what should change next time.",
+      "Evaluate what was achieved, determine what worked, and identify what should carry into the next cycle.",
   },
 ] as const;
 

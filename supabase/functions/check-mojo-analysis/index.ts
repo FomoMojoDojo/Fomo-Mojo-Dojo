@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,6 +183,28 @@ serve(async (req) => {
       if (error) {
         console.error("[check-mojo-analysis] save error:", error.message);
         return jsonResponse({ status: "running" });
+      }
+
+      const { data: proposalRow } = await supabase
+        .from("file_proposals")
+        .select("company_id, file_name, source_type")
+        .eq("id", proposal_id)
+        .maybeSingle();
+
+      if (proposalRow?.company_id) {
+        await ingestDifyProposalSignals({
+          supabase,
+          companyId: String(proposalRow.company_id),
+          proposalId: proposal_id,
+          sourceType: String(proposalRow.source_type ?? "mojo_analysis"),
+          sourceTitle: String(proposalRow.file_name ?? "Mojo analysis proposal"),
+          summary,
+          evidence,
+          contradictions,
+          frameworkResults,
+          questionsToVerify,
+          rawPayload: outputs,
+        });
       }
       return jsonResponse({ status: "ready" });
     }

@@ -60,6 +60,7 @@ import {
   isOrganizationSegmentLabel,
   isDraftPlaceholderStep,
   hasAssessedGap,
+  isBareOdiStageLabel,
 } from "./helpers/validation";
 import {
   type JourneyKey,
@@ -366,7 +367,7 @@ function StepCard({
           {!isEditing ? (
             <>
               <p className="mt-2 font-sans text-[14px] font-bold leading-tight" style={{ color: c.charcoal }}>
-                {safeText(step.step_label, "Untitled checkpoint")}
+                {isBareOdiStageLabel(step.step_label) ? "Untitled checkpoint" : safeText(step.step_label, "Untitled checkpoint")}
               </p>
               <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
                 {safeText(step.description, "No description yet.")}
@@ -1106,7 +1107,7 @@ function ProcessFidelitySection({
                         Checkpoint {checkpoint.stepNumber} · {checkpoint.key.toUpperCase()}
                       </p>
                       <p className="mt-1 font-sans text-[15px] font-semibold leading-[1.35]" style={{ color: c.charcoal }}>
-                        {safeText(row?.step_label, checkpoint.canonicalLabel)}
+                        {isBareOdiStageLabel(row?.step_label) ? checkpoint.canonicalLabel : safeText(row?.step_label, checkpoint.canonicalLabel)}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1159,9 +1160,10 @@ function ProcessFidelitySection({
               const anchorNumber = Number.isFinite(stepNumber)
                 ? Math.max(1, Math.min(JTBD_CHECKPOINT_COUNT, Math.round(stepNumber)))
                 : 1;
-              const stepLabel =
-                safeText(need.step_label, "") ||
-                safeText(customerStepByNumber.get(anchorNumber)?.step_label, JTBD_ODI_CHECKPOINTS[anchorNumber - 1].canonicalLabel);
+              const rawStepLabelFromNeed = isBareOdiStageLabel(need.step_label) ? "" : safeText(need.step_label, "");
+              const rawStepLabelFromStep = customerStepByNumber.get(anchorNumber)?.step_label;
+              const resolvedStepLabel = isBareOdiStageLabel(rawStepLabelFromStep) ? "" : safeText(rawStepLabelFromStep, "");
+              const stepLabel = rawStepLabelFromNeed || resolvedStepLabel || JTBD_ODI_CHECKPOINTS[anchorNumber - 1].canonicalLabel;
               return (
                 <div
                   key={need.id}
@@ -1784,9 +1786,11 @@ function JourneySection({
             <h2 className="font-sans text-[24px] font-semibold leading-tight" style={{ color: c.charcoal }}>
               {journey.title}
             </h2>
-            <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
-              {journey.subtitle}
-            </p>
+            {!isGenericJourneySubtitle(journey.subtitle) && (
+              <p className="mt-1 max-w-4xl font-sans text-[14px]" style={{ color: c.secondary }}>
+                {journey.subtitle}
+              </p>
+            )}
           </div>
 
           <div className="mt-1 flex items-center gap-5 whitespace-nowrap">
@@ -2190,6 +2194,7 @@ export default function JobStepsView() {
               journeys_generated?: number;
               steps_inserted?: number;
               odi_needs_inserted?: number;
+              affected_artifacts_marked?: number;
             };
             artifacts?: {
               journeys?: Array<{ journey_key?: string; journey_title?: string; step_count?: number }>;
@@ -2329,6 +2334,7 @@ export default function JobStepsView() {
                 summary?: {
                   journeys_generated?: number;
                   odi_needs_inserted?: number;
+                  affected_artifacts_marked?: number;
                 };
                 artifacts?: {
                   journeys?: Array<{ journey_key?: string }>;
@@ -2365,10 +2371,11 @@ export default function JobStepsView() {
             });
           }
 
-          await Promise.all([refetchJobSteps(), refetchBaseline()]);
+            await Promise.all([refetchJobSteps(), refetchBaseline()]);
           if (generatedJourneyKeys.has(key)) {
+            const affectedArtifacts = Number(localSynthesisPayload?.summary?.affected_artifacts_marked ?? 0);
             toast.success(
-              `${titleCaseJourney(key)} map generated from local synthesis (${localSynthesisPayload?.summary?.journeys_generated ?? 0} map(s), ${localSynthesisPayload?.summary?.odi_needs_inserted ?? 0} need(s)).`,
+              `${titleCaseJourney(key)} map generated from local synthesis (${localSynthesisPayload?.summary?.journeys_generated ?? 0} map(s), ${affectedArtifacts} dependent item${affectedArtifacts === 1 ? "" : "s"} marked for review).`,
             );
           } else if (insertedDraft) {
             toast.success(`${titleCaseJourney(key)} map added as a local draft.`);

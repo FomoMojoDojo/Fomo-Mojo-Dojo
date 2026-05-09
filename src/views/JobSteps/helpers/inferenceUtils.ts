@@ -147,7 +147,7 @@ export function inferSuggestedJourneyOptions(args: {
     addOption({
       key: "customer",
       title: `Checkpoint Map: ${customerSignal}`,
-      subtitle: `How ${customerSignal.toLowerCase()} define, locate, prepare, execute, monitor, and conclude progress.`,
+      subtitle: `The 8-checkpoint job progression for ${customerSignal.toLowerCase()}.`,
       confidence: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal) ? 95 : 80,
       rationale: normalizedCustomerSignal && !isInvalidAudienceLabel(normalizedCustomerSignal)
         ? `Public signal identifies primary job performer context: ${normalizedCustomerSignal}`

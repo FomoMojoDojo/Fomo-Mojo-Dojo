@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +10,7 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
+import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
 import JobMapOrgPanel, { deriveSuggestedId } from "./workshop/tabs/JobMapOrgPanel";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
@@ -93,6 +95,121 @@ function MarketFoundationSection({
       <p style={{ margin: "6px 0 0", color: "#233c4b", fontSize: 15, lineHeight: 1.55, maxWidth: 980 }}>
         {marketDefinition}
       </p>
+    </div>
+  );
+}
+
+function StrategicChangeBanner({
+  total,
+  scoreNote,
+  affectedArtifacts,
+  onOpenArtifact,
+}: {
+  total: number;
+  scoreNote: string | null;
+  affectedArtifacts: Array<{
+    object_type: "odi_need" | "route" | "desired_outcome";
+    object_id: string;
+    label: string;
+    dependency_state: string;
+    stale_reason: string | null;
+    updated_at: string | null;
+  }>;
+  onOpenArtifact: (artifact: {
+    object_type: "odi_need" | "route" | "desired_outcome";
+    object_id: string;
+    label: string;
+    dependency_state: string;
+    stale_reason: string | null;
+    updated_at: string | null;
+  }) => void;
+}) {
+  if (total <= 0) return null;
+
+  return (
+    <div style={{ marginBottom: 16, border: "1px solid #d7ded1", background: "#f8f7f2", padding: "14px 16px" }}>
+      <div className="cap" style={{ color: "#6e847f" }}>Change notice</div>
+      <div style={{ marginTop: 6, color: "#233c4b", fontSize: 15, fontWeight: 600 }}>
+        Job map updated. {total} dependent item{total === 1 ? "" : "s"} need review.
+      </div>
+      {scoreNote ? (
+        <div style={{ marginTop: 6, color: "#54656a", fontSize: 13, lineHeight: 1.5 }}>
+          {scoreNote}
+        </div>
+      ) : null}
+      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+        {affectedArtifacts.slice(0, 10).map((artifact) => (
+          <button
+            key={`${artifact.object_type}:${artifact.object_id}`}
+            type="button"
+            onClick={() => onOpenArtifact(artifact)}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "140px 1fr 110px",
+              gap: 12,
+              textAlign: "left",
+              border: "1px solid #d7ded1",
+              background: "#fff",
+              padding: "10px 12px",
+            }}
+          >
+            <span className="cap" style={{ color: "#6e847f" }}>
+              {artifact.object_type === "odi_need" ? "Need" : artifact.object_type === "route" ? "Route" : "Desired outcome"}
+            </span>
+            <span>
+              <span style={{ color: "#233c4b", fontSize: 13, display: "block" }}>{artifact.label}</span>
+              <span style={{ color: "#6e847f", fontSize: 11, display: "block", marginTop: 3 }}>
+                {artifact.stale_reason || "Needs review"}{artifact.updated_at ? ` · ${new Date(artifact.updated_at).toLocaleString()}` : ""}
+              </span>
+            </span>
+            <span className="cap" style={{ color: "#6e847f" }}>{artifact.dependency_state}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StrategicDebugSummary({
+  latestEventId,
+  latestEventAt,
+  affectedCount,
+  artifactVersionCount,
+  dependenciesCreatedCount,
+}: {
+  latestEventId: string | null;
+  latestEventAt: string | null;
+  affectedCount: number;
+  artifactVersionCount: number;
+  dependenciesCreatedCount: number;
+}) {
+  if (!latestEventId) return null;
+
+  return (
+    <div style={{ marginBottom: 16, border: "1px dashed #d7ded1", background: "#fbfaf6", padding: "12px 14px" }}>
+      <div className="cap" style={{ color: "#6e847f" }}>Strategic graph debug</div>
+      <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
+          <span className="cap" style={{ color: "#6e847f" }}>Latest event</span>
+          <span style={{ color: "#233c4b", fontSize: 13 }}>{latestEventId}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
+          <span className="cap" style={{ color: "#6e847f" }}>Event timestamp</span>
+          <span style={{ color: "#233c4b", fontSize: 13 }}>{latestEventAt || "—"}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
+          <span className="cap" style={{ color: "#6e847f" }}>Affected artifacts</span>
+          <span style={{ color: "#233c4b", fontSize: 13 }}>{affectedCount}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
+          <span className="cap" style={{ color: "#6e847f" }}>Artifact versions</span>
+          <span style={{ color: "#233c4b", fontSize: 13 }}>{artifactVersionCount}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
+          <span className="cap" style={{ color: "#6e847f" }}>Dependencies in scope</span>
+          <span style={{ color: "#233c4b", fontSize: 13 }}>{dependenciesCreatedCount}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -213,6 +330,7 @@ function CompanySwitcher({
 
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const { user, isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
@@ -293,12 +411,14 @@ export default function ClientRefinePreviewWorkshopView() {
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
   const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
   const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
+  const [pendingReviewNeedId, setPendingReviewNeedId] = useState<string | null>(null);
   const handleRouteSelect = useCallback(
     (routeId: string) => { setPendingInspectRouteId(routeId); setActiveTab("routes"); },
     [],
   );
 
   const { items: jobSteps, loading: jobStepsLoading, refetch: refetchJobSteps } = useJobSteps(companyId);
+  const { data: strategicChangeSummary } = useStrategicChangeSummary(companyId);
 
   // Compare mode only makes sense on the org stage
   const compareActive = showCompare && activeStage === "org";
@@ -309,30 +429,6 @@ export default function ClientRefinePreviewWorkshopView() {
     hasCompanyEvidence: sourceSignals.hasCompanyEvidence,
   }), [sourceSignals.hasPrimaryEvidence, sourceSignals.primaryEvidenceSignals, sourceSignals.hasCompanyEvidence]);
 
-  const selectedJobMapsForSynthesis = useMemo(() => {
-    const grouped = new Map<string, { journey_key: string; journey_title: string; journey_subtitle: string }>();
-    for (const step of jobSteps) {
-      if (!grouped.has(step.journey_key)) {
-        grouped.set(step.journey_key, {
-          journey_key: step.journey_key,
-          journey_title:
-            String(step.journey_title || "").trim() ||
-            (step.journey_key.charAt(0).toUpperCase() + step.journey_key.slice(1)),
-          journey_subtitle: String(step.journey_subtitle || "").trim(),
-        });
-      }
-    }
-    if (grouped.size === 0) {
-      return [
-        {
-          journey_key: "customer",
-          journey_title: "Customer Progress",
-          journey_subtitle: "Universal progress the customer is trying to make",
-        },
-      ];
-    }
-    return Array.from(grouped.values());
-  }, [jobSteps]);
 
   const journeyOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; title: string }>();
@@ -433,27 +529,90 @@ export default function ClientRefinePreviewWorkshopView() {
       return;
     }
 
+    const journeyKey = focusedJourneyKey || "customer";
+
     setRegeneratingJobMap(true);
-    toast.loading("Regenerating ODI job map…", { id: "rerun-jobmap" });
+    toast.loading("Starting job map analysis… (~1 min)", { id: "rerun-jobmap" });
     try {
-      const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
+      const { data, error } = await supabase.functions.invoke("run-mojo-analysis", {
         body: {
           company_id: companyId,
-          selected_job_maps: selectedJobMapsForSynthesis,
-          trigger: "refine_preview_jobmap_regenerate",
+          trigger_type: "jobmap_regenerate",
+          journey_key: journeyKey,
         },
       });
 
       if (error) throw error;
-      if (data && typeof data === "object" && "error" in data && data.error) {
-        throw new Error(String(data.error));
+
+      const proposalId = (data as { proposal_id?: string } | null)?.proposal_id;
+      if (!proposalId) throw new Error("Analysis did not start — no proposal ID returned.");
+
+      toast.loading("Analyzing job map… (~2–3 min)", { id: "rerun-jobmap" });
+
+      const startedAt = new Date().toISOString();
+
+      // Poll for completion — up to 5 minutes (60 × 5s).
+      // Primary: check file_proposals processing_state.
+      // Fallback: if file_proposals returns null (RLS), check job_steps directly for new Dify steps.
+      const MAX_ATTEMPTS = 60;
+      let nullProposalStreak = 0;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, 5000));
+
+        if (attempt === 18) {
+          toast.loading("Still analyzing… almost there.", { id: "rerun-jobmap" });
+        }
+
+        // Primary: proposal status
+        const { data: proposal } = await supabase
+          .from("file_proposals")
+          .select("processing_state, processing_error")
+          .eq("id", proposalId)
+          .maybeSingle();
+
+        const state = (proposal as { processing_state?: string; processing_error?: string } | null)?.processing_state;
+        if (state === "ready") {
+          await refetchJobSteps();
+          await refetchCompany();
+          setNeedsRefreshKey((current) => current + 1);
+          await queryClient.invalidateQueries({ queryKey: ["strategic-change-summary", companyId] });
+          setActiveStepId(null);
+          toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+          return;
+        }
+        if (state === "failed") {
+          const msg = (proposal as { processing_error?: string } | null)?.processing_error || "Analysis failed.";
+          throw new Error(msg);
+        }
+
+        // Fallback: if proposal is unreadable (RLS), detect completion via job_steps
+        if (!proposal) {
+          nullProposalStreak++;
+          if (nullProposalStreak >= 3) {
+            const { data: newSteps } = await supabase
+              .from("job_steps")
+              .select("id")
+              .eq("company_id", companyId)
+              .eq("journey_key", journeyKey)
+              .contains("frameworks_used", ["dify_mojo_analysis"])
+              .gte("created_at", startedAt)
+              .limit(1);
+            if (newSteps && newSteps.length > 0) {
+              await refetchJobSteps();
+              await refetchCompany();
+              setNeedsRefreshKey((current) => current + 1);
+              await queryClient.invalidateQueries({ queryKey: ["strategic-change-summary", companyId] });
+              setActiveStepId(null);
+              toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+              return;
+            }
+          }
+        } else {
+          nullProposalStreak = 0;
+        }
       }
 
-      await refetchJobSteps();
-      await refetchCompany();
-      setNeedsRefreshKey((current) => current + 1);
-      setActiveStepId(null);
-      toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+      throw new Error("Analysis is taking longer than expected. The map will update automatically — refresh the page in a moment.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to regenerate ODI job map.", {
         id: "rerun-jobmap",
@@ -461,7 +620,23 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setRegeneratingJobMap(false);
     }
-  }, [companyId, refetchCompany, refetchJobSteps, selectedJobMapsForSynthesis]);
+  }, [companyId, focusedJourneyKey, queryClient, refetchCompany, refetchJobSteps]);
+
+  const openAffectedArtifact = useCallback((artifact: {
+    object_type: "odi_need" | "route" | "desired_outcome";
+    object_id: string;
+  }) => {
+    if (artifact.object_type === "route") {
+      setActiveTab("routes");
+      return;
+    }
+    if (artifact.object_type === "desired_outcome") {
+      setActiveTab("strategy");
+      return;
+    }
+    setPendingReviewNeedId(artifact.object_id);
+    setActiveTab("needs");
+  }, []);
 
   const runPublicBaseline = useCallback(async (targetCompanyId: string, companyName: string, companyWebsite: string) => {
     if (!cleanText(companyWebsite)) {
@@ -635,6 +810,8 @@ export default function ClientRefinePreviewWorkshopView() {
           onRouteSelect={handleRouteSelect}
           companyId={companyId ?? undefined}
           currentPhase={activeCompany?.engagement_phase}
+          reviewNeedId={pendingReviewNeedId}
+          onReviewNeedHandled={() => setPendingReviewNeedId(null)}
         />
         {!odiLoading && filteredNeeds.length === 0 && (
           <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
@@ -676,7 +853,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <div className="crpv-ws-cmp-support-col">
             {odiError
               ? <div className="crpv-ws-placeholder crpv-ws-error cap">Query error: {odiError}</div>
-              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} />
+              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} reviewNeedId={pendingReviewNeedId} onReviewNeedHandled={() => setPendingReviewNeedId(null)} />
             }
           </div>
         </div>
@@ -883,6 +1060,21 @@ export default function ClientRefinePreviewWorkshopView() {
           <MarketFoundationSection
             marketDefinition={marketFoundation.marketDefinition}
           />
+          <StrategicChangeBanner
+            total={strategicChangeSummary?.affectedCounts.total ?? 0}
+            scoreNote={strategicChangeSummary?.scoreNote ?? null}
+            affectedArtifacts={strategicChangeSummary?.affectedArtifacts ?? []}
+            onOpenArtifact={openAffectedArtifact}
+          />
+          {isAdmin ? (
+            <StrategicDebugSummary
+              latestEventId={strategicChangeSummary?.debug.latestEventId ?? null}
+              latestEventAt={strategicChangeSummary?.debug.latestEventAt ?? null}
+              affectedCount={strategicChangeSummary?.affectedCounts.total ?? 0}
+              artifactVersionCount={strategicChangeSummary?.debug.latestArtifactVersionCount ?? 0}
+              dependenciesCreatedCount={strategicChangeSummary?.debug.dependenciesCreatedCount ?? 0}
+            />
+          ) : null}
           {journeyOptions.length > 1 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <span className="cap" style={{ color: "#6e847f" }}>Map</span>

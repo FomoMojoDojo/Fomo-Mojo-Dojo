@@ -32,6 +32,14 @@ export type OdiNeedRow = {
   notes?: string | null;
   social_extraction_json?: unknown | null;
   frameworks_used: string[];
+  dependency_state?: string | null;
+  validation_state?: string | null;
+  evidence_state?: string | null;
+  last_reviewed_at?: string | null;
+  stale_reason?: string | null;
+  stale_since_event_id?: string | null;
+  source_run_id?: string | null;
+  updated_at?: string | null;
   created_at: string;
 };
 

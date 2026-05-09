@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -413,14 +414,14 @@ function contextualStepDescription(
 ) {
   const context = shortPhrase(stepFocus?.[stepNumber] || "", 10) || compactContextHint(contextHint) || "the target customer outcome";
   const byStep: Record<number, string> = {
-    1: `Define clear, measurable success criteria for ${context}.`,
-    2: `Locate the strongest evidence sources to guide decisions on ${context}.`,
-    3: `Prepare owners, inputs, and timing before execution on ${context}.`,
-    4: `Confirm the planned approach for ${context} is credible before committing.`,
-    5: `Execute the core actions tied to ${context} in a consistent way.`,
-    6: `Monitor live progress and evidence quality signals for ${context}.`,
-    7: `Adjust quickly when results for ${context} are weaker than expected.`,
-    8: `Conclude what was proven about ${context} and what should repeat next cycle.`,
+    1: `Determine what a successful outcome looks like for ${context}.`,
+    2: `Identify which available options best serve ${context}.`,
+    3: `Validate that the right inputs, dependencies, and conditions are in place for ${context}.`,
+    4: `Confirm the approach is sound before fully committing to ${context}.`,
+    5: `Carry out the work in a way that reliably achieves ${context}.`,
+    6: `Detect early signals of whether the desired outcome for ${context} is being achieved.`,
+    7: `Adjust the approach when signals suggest ${context} is at risk.`,
+    8: `Evaluate what worked for ${context} and determine what should carry forward.`,
   };
   return byStep[clampInt(stepNumber, 1, JTBD_CHECKPOINT_COUNT)] || byStep[1];
 }
@@ -464,29 +465,40 @@ async function callLocalSynthesis(args: {
     "Use only the provided context JSON and do not invent external evidence. " +
     "Output must be clean JSON only. " +
     "Use April Dunford framing for market context: frame of reference first (market category), then differentiation context. " +
-    "For customer journeys, enforce the 8 ODI checkpoints in exact order: Define, Locate, Prepare, Confirm, Execute, Monitor, Modify, Conclude. " +
-    "Keep step labels stable over time, solution-agnostic, customer-job-centric, and independent of current implementation. " +
-    "Describe what must be accomplished, not how this company currently does it. " +
-    "Reject operational tasks, implementation ideas, company-specific activities, and proposed solutions as step labels. " +
-    "Avoid words like negotiate, integrate, promote, supplier, campaign, UI, MVP, onboarding, pricing, partnership, MojoMap, or coffee in customer step labels unless they appear only inside evidence notes. " +
+    "For customer journeys, generate exactly 8 stable job-progression checkpoints numbered 1 to 8. " +
+    "Each step label must answer: what is the actor trying to accomplish at this point in the job? " +
+    "Use verbs like: determine, identify, evaluate, validate, confirm, detect, adjust. " +
+    "Avoid: execute, launch, deploy, implement, rollout, negotiate, integrate, promote, supplier, campaign, UI, MVP, onboarding, pricing, partnership. " +
+    "Labels must be solution-agnostic, stable over time, and tied to the actual job — not operational phases, implementation stages, or startup workflow. " +
+    "Describe what the actor is trying to accomplish, not what the company is doing. " +
     "Use plain language a client can read quickly; avoid consulting jargon, placeholders, and generic filler. " +
-    "For market_definition.market_context, use a standard category anchor from common categories before any custom wording.";
+    "For market_definition.market_context, frame around the job executor and their primary goal — who is trying to accomplish what outcome. Do not start with 'Category:' — job-defined framing is preferred.";
+
+  const odiCtx = (args.contextJson as Record<string, unknown>)?.odi_context as Record<string, string> | undefined;
+  const odiContextBlock = odiCtx && (odiCtx.job_performer || odiCtx.primary_job || odiCtx.desired_outcome)
+    ? `\nODI grounding inputs (use these as the foundation — do not invent a different job or performer):\n` +
+      (odiCtx.job_performer ? `- Job performer: ${odiCtx.job_performer}\n` : "") +
+      (odiCtx.primary_job ? `- Primary job: ${odiCtx.primary_job}\n` : "") +
+      (odiCtx.desired_outcome ? `- Primary desired outcome: ${odiCtx.desired_outcome}\n` : "") +
+      (odiCtx.recurring_progress_challenge ? `- Recurring progress challenge: ${odiCtx.recurring_progress_challenge}\n` : "")
+    : "";
 
   const userText =
     `Company: ${args.companyName}\n` +
     `Website: ${args.website || "unknown"}\n` +
-    `Selected job maps: ${JSON.stringify(args.selectedJobMaps)}\n\n` +
-    `Context JSON:\n${JSON.stringify(args.contextJson)}\n\n` +
+    `Selected job maps: ${JSON.stringify(args.selectedJobMaps)}\n` +
+    odiContextBlock +
+    `\nContext JSON:\n${JSON.stringify(args.contextJson)}\n\n` +
     "Return JSON with keys: market_definition, journeys, needs, summary.\n" +
     "market_definition: { job_executor, chooser, jtbd, market_context }\n" +
     "journeys: array of { journey_key, journey_title, journey_subtitle, steps }\n" +
     "step shape: { step_number, step_label, description, evidence_status, evidence_basis, evidence_confidence, has_gap, gap_note, designed }\n" +
     "needs: array of { desired_outcome, step_number, importance, satisfaction, opportunity_score, evidence_basis }\n" +
     `market_definition rules:\n` +
-    `- market_context must start with \"Category: <well-known category>\".\n` +
-    `- Use one of these category anchors when possible: ${STANDARD_MARKET_CATEGORY_LIST}.\n` +
-    `- If a custom niche is needed, format as \"<well-known category> for <specific job executor/job>\".\n` +
-    `- Keep market_context to 1-2 sentences and tie it to job executor + ODI job.\n` +
+    `- market_context must be framed around the job executor and the job they are trying to accomplish — not a product category.\n` +
+    `- Format: \"[Job executor plural] trying to [accomplish the job]\" — e.g. \"Independent cafe operators trying to create a repeatable premium coffee experience.\"\n` +
+    `- Do NOT start market_context with \"Category:\" or name a product/industry category.\n` +
+    `- Keep market_context to 1-2 sentences.\n` +
     "Customer journeys must contain exactly 8 checkpoints numbered 1..8.\n" +
     "Desired outcomes must be clear ODI-style statements in common language: directional verb (Minimize/Increase/Reduce/Improve) + measurable object + context.";
 
@@ -792,7 +804,13 @@ Deno.serve(async (req) => {
     const runUserId = requesterUserId || safeText((companyRow as Record<string, unknown>)?.created_by);
     if (!runUserId) return json({ error: "Could not resolve acting user." }, 500);
 
-    const [{ data: baselineRow }, { data: strategicProblemsData }, { data: inputRows }] = await Promise.all([
+    const [
+      { data: baselineRow },
+      { data: strategicProblemsData },
+      { data: inputRows },
+      { data: marketDefRow },
+      { data: primaryOutcomeRow },
+    ] = await Promise.all([
       supabase
         .from("public_baseline_runs")
         .select("id,created_at,result_json")
@@ -812,6 +830,20 @@ Deno.serve(async (req) => {
         .eq("company_id", companyId)
         .order("updated_at", { ascending: false })
         .limit(60),
+      supabase
+        .from("odi_market_definitions")
+        .select("job_executor,chooser,jtbd,market_context")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("managed_outcomes")
+        .select("outcome_statement,leading_indicator,context")
+        .eq("company_id", companyId)
+        .order("is_primary", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     const inputIds = Array.isArray(inputRows)
@@ -832,8 +864,25 @@ Deno.serve(async (req) => {
     const strategicProblems = Array.isArray(strategicProblemsData) ? strategicProblemsData : [];
     const inputs = Array.isArray(inputRows) ? inputRows : [];
     const files = Array.isArray(inputFiles) ? inputFiles : [];
+    const marketDef = asRecord(marketDefRow as Record<string, unknown> | null);
+    const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
 
     const evidenceContext = {
+      // Explicit ODI context — job performer, primary job, desired outcome, recurring challenge
+      // These are the four inputs the ODI stage needs to generate a grounded job map
+      odi_context: {
+        job_performer: safeText(marketDef?.job_executor),
+        primary_job: safeText(marketDef?.jtbd),
+        market_context: safeText(marketDef?.market_context),
+        chooser: safeText(marketDef?.chooser),
+        desired_outcome: safeText(primaryOutcome?.outcome_statement),
+        outcome_leading_indicator: safeText(primaryOutcome?.leading_indicator),
+        recurring_progress_challenge: safeText(
+          strategicProblems[0]
+            ? (strategicProblems[0] as Record<string, unknown>)?.statement
+            : undefined
+        ),
+      },
       strategic_problems: strategicProblems.map((row) => ({
         statement: safeText((row as Record<string, unknown>)?.statement),
         status: safeText((row as Record<string, unknown>)?.status) || "open",
@@ -972,98 +1021,55 @@ Deno.serve(async (req) => {
       contextHint,
     });
 
-    const journeyKeys = [...new Set(normalizedJourneys.map((journey) => journey.journey_key))];
-    if (journeyKeys.length > 0) {
-      const { error: deleteStepsError } = await supabase
-        .from("job_steps")
-        .delete()
-        .eq("company_id", companyId)
-        .in("journey_key", journeyKeys);
-      if (deleteStepsError) {
-        return json({ error: `Failed clearing previous journey rows: ${deleteStepsError.message}` }, 500);
-      }
-    }
-
-    let stepsInserted = 0;
+    // Per-journey write: check for Dify-sourced steps before overwriting.
+    // If a journey was generated by run-mojo-analysis (Dify), local synthesis skips it
+    // to prevent lower-quality Ollama output from clobbering the Dify output.
+    const difyProtectedKeys = new Set<string>();
     for (const journey of normalizedJourneys) {
-      for (const step of journey.steps) {
-        const stepPayload = {
-          company_id: companyId,
-          user_id: runUserId,
-          frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
-          journey_key: journey.journey_key,
-          journey_title: journey.journey_title,
-          journey_subtitle: journey.journey_subtitle,
-          step_number: step.step_number,
-          step_label: step.step_label,
-          description: step.description,
-          designed: step.designed,
-          has_gap: step.has_gap,
-          evidence_status: step.evidence_status,
-          evidence_basis: step.evidence_basis,
-          evidence_confidence: clampInt(step.evidence_confidence, 0, 100),
-          gap_note: step.has_gap ? safeText(step.gap_note) : "",
-        };
-
-        let { error: stepInsertError } = await supabase.from("job_steps").insert(stepPayload);
-        if (stepInsertError && isJobStepEvidenceColumnError(stepInsertError.message || "")) {
-          const fallback = await supabase.from("job_steps").insert({
-            company_id: companyId,
-            user_id: runUserId,
-            frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
-            journey_key: journey.journey_key,
-            journey_title: journey.journey_title,
-            journey_subtitle: journey.journey_subtitle,
-            step_number: step.step_number,
-            step_label: step.step_label,
-            description: step.description,
-            designed: step.designed,
-            has_gap: step.has_gap,
-            gap_note: step.has_gap ? safeText(step.gap_note) : "",
-          });
-          stepInsertError = fallback.error;
-        }
-
-        if (stepInsertError) {
-          return json({ error: `Failed inserting synthesized step: ${stepInsertError.message}` }, 500);
-        }
-        stepsInserted += 1;
+      const { data: difySeed } = await supabase
+        .from("job_steps")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("journey_key", journey.journey_key)
+        .contains("frameworks_used", ["dify_mojo_analysis"])
+        .limit(1);
+      if (difySeed && difySeed.length > 0) {
+        difyProtectedKeys.add(journey.journey_key);
+        console.log(`[local-jobmap-synthesis] journey "${journey.journey_key}" has Dify-sourced steps — skipping overwrite`);
       }
     }
 
-    const customerKeys = [...new Set(journeyKeys.filter((key) => isCustomerJourneyKey(key)).concat("customer"))];
-    const { error: deleteNeedsError } = await supabase
-      .from("odi_needs")
-      .delete()
-      .eq("company_id", companyId)
-      .in("journey_key", customerKeys);
-    if (deleteNeedsError) {
-      return json({ error: `Failed clearing previous ODI needs: ${deleteNeedsError.message}` }, 500);
-    }
-
-    let needsInserted = 0;
-    for (let index = 0; index < normalizedNeeds.length; index += 1) {
-      const need = normalizedNeeds[index];
-      const { error: needInsertError } = await supabase.from("odi_needs").insert({
-        company_id: companyId,
-        user_id: runUserId,
-        tier: "need",
-        desired_outcome: need.desired_outcome,
-        journey_key: primaryCustomerJourney.journey_key,
-        step_number: need.step_number,
-        step_label: need.step_label,
-        importance: need.importance,
-        satisfaction: need.satisfaction,
-        opportunity_score: need.opportunity_score,
-        sort_order: index + 1,
-        service_state: serviceState(need.importance, need.satisfaction),
-        source_path: "local_jobmap_synthesis",
-        frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
+    const sourceRunId = crypto.randomUUID();
+    const journeysToWrite = normalizedJourneys
+      .filter((j) => !difyProtectedKeys.has(j.journey_key))
+      .sort((a, b) => Number(isCustomerJourneyKey(a.journey_key)) - Number(isCustomerJourneyKey(b.journey_key)));
+    let stepsInserted = 0;
+    let affectedArtifactsMarked = 0;
+    let dependenciesCreated = 0;
+    for (const journey of journeysToWrite) {
+      const result = await regenerateJobMapJourney({
+        supabase,
+        companyId,
+        userId: runUserId,
+        actorType: "system",
+        actorId: runUserId,
+        journeyKey: journey.journey_key,
+        journeyTitle: journey.journey_title,
+        journeySubtitle: journey.journey_subtitle,
+        steps: journey.steps,
+        sourceRunId,
+        sourceLabel: "local_jobmap_synthesis",
+        frameworksUsed: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
+        claimTopic: "job",
       });
-      if (needInsertError) {
-        return json({ error: `Failed inserting synthesized ODI need: ${needInsertError.message}` }, 500);
-      }
-      needsInserted += 1;
+      stepsInserted += result.insertedStepCount;
+      affectedArtifactsMarked += result.affectedArtifactCount;
+      dependenciesCreated += result.dependencyCount;
+      console.log(`[local-jobmap-synthesis] wrote journey "${journey.journey_key}" with ${result.insertedStepCount} steps | affected artifacts: ${result.affectedArtifactCount}`);
+    }
+
+    if (normalizedNeeds.length > 0) {
+      console.log("[local-jobmap-synthesis] synthesized ODI needs were computed for context only and not written.");
     }
 
     let marketDefinitionAction = "inserted";
@@ -1110,7 +1116,9 @@ Deno.serve(async (req) => {
         selected_maps: requestedMaps.length,
         journeys_generated: normalizedJourneys.length,
         steps_inserted: stepsInserted,
-        odi_needs_inserted: needsInserted,
+        odi_needs_inserted: 0,
+        affected_artifacts_marked: affectedArtifactsMarked,
+        dependencies_created: dependenciesCreated,
         market_definition: marketDefinitionAction,
       },
       artifacts: {

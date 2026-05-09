@@ -5621,7 +5621,7 @@ Deno.serve(async (req) => {
       `${journeyTypeGuidance}\n` +
       noIndustrySwitchConstraint +
       `- Journey bottlenecks should connect to the client-stated strategic problems when provided\n` +
-      `- For customer journey keys, enforce all ${JTBD_CHECKPOINT_COUNT} ODI checkpoints in order: define, locate, prepare, confirm, execute, monitor, modify, conclude\n` +
+      `- For customer journey keys, generate exactly ${JTBD_CHECKPOINT_COUNT} stable job-progression checkpoints numbered 1–8. Each step label must answer: what is the actor trying to accomplish at this point in the job? Use verbs like: determine, identify, evaluate, validate, confirm, detect, adjust. Do NOT use operational lifecycle labels like Define, Locate, Prepare, Execute, Monitor, Modify, Conclude as bare step names.\n` +
       `- Non-customer journeys may use 6-8 steps, but must remain action-based and ODI/JTBD compatible\n` +
       `- step_label 2–5 words, action-oriented, no generic funnel labels\n` +
       `- description 18–40 words, concrete, sequential, and tied to the selected job performer context\n` +
@@ -6264,7 +6264,7 @@ Deno.serve(async (req) => {
       `- Strategy choices should directly resolve or reduce the client-stated strategic problem(s) when provided\n` +
       noIndustrySwitchConstraint +
       `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
-      `- where_to_play must start with "Category: <well-known category>" and then describe segment + job context\n` +
+      `- where_to_play must be framed around the job executor and job context — not a product category. Format: who the job executor is, what job they are trying to accomplish, and the specific segment or context where this company competes.\n` +
       `- where_to_play should align with April Dunford frame of reference and ODI role/job context\n` +
       `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
       `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +

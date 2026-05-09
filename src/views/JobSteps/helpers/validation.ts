@@ -1,6 +1,19 @@
 import { normalizeAudienceSignal, safeText } from "./textUtils";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 
+const BARE_ODI_STAGE_LABELS = new Set([
+  "define", "locate", "prepare", "confirm", "execute", "monitor", "modify", "conclude",
+]);
+
+export function isBareOdiStageLabel(value: string | null | undefined): boolean {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (BARE_ODI_STAGE_LABELS.has(normalized)) return true;
+  for (const stage of BARE_ODI_STAGE_LABELS) {
+    if (normalized.startsWith(stage + " ")) return true;
+  }
+  return false;
+}
+
 export function isGenericAudienceLabel(value: string | null | undefined) {
   const normalized = normalizeAudienceSignal(value).toLowerCase();
   if (!normalized) return true;

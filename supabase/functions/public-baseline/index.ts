@@ -1,5 +1,6 @@
 // supabase/functions/public-baseline/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2050,6 +2051,14 @@ Deno.serve(async (req) => {
         .single();
 
       if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+      await ingestPublicBaselineSignals({
+        supabase,
+        companyId: company_id,
+        runId: inserted?.id ?? "",
+        companyName: company_name,
+        website,
+        resultJson: withRunLedger(resultJson, runLedger),
+      });
 
       return json({
         message: "Public baseline: insufficient public evidence",
@@ -2118,6 +2127,14 @@ Deno.serve(async (req) => {
         .single();
 
       if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+      await ingestPublicBaselineSignals({
+        supabase,
+        companyId: company_id,
+        runId: inserted?.id ?? "",
+        companyName: company_name,
+        website,
+        resultJson: withRunLedger(resultJson, runLedger),
+      });
 
       return json({
         message: "Public baseline: insufficient public evidence",
@@ -2189,6 +2206,14 @@ Deno.serve(async (req) => {
         .single();
 
       if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+      await ingestPublicBaselineSignals({
+        supabase,
+        companyId: company_id,
+        runId: inserted?.id ?? "",
+        companyName: company_name,
+        website,
+        resultJson: withRunLedger(resultJson, runLedger),
+      });
 
       return json({
         message: "Public baseline: ambiguous evidence (possible different company)",
@@ -2439,6 +2464,14 @@ Deno.serve(async (req) => {
         .single();
 
       if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+      await ingestPublicBaselineSignals({
+        supabase,
+        companyId: company_id,
+        runId: inserted?.id ?? "",
+        companyName: company_name,
+        website,
+        resultJson: withRunLedger(resultJson, runLedger),
+      });
 
       return json({
         message: "Public baseline: insufficient public evidence",
@@ -2501,6 +2534,17 @@ Deno.serve(async (req) => {
       .single();
 
     if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+    await ingestPublicBaselineSignals({
+      supabase,
+      companyId: company_id,
+      runId: inserted?.id ?? "",
+      companyName: company_name,
+      website,
+      resultJson: withRunLedger(
+        resultWithDiscoveredSources,
+        runLedger,
+      ),
+    });
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
 
