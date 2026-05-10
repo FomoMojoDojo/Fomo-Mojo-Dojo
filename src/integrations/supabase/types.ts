@@ -1341,6 +1341,78 @@ export type Database = {
           },
         ]
       }
+      strategic_hypotheses: {
+        Row: {
+          company_id: string
+          confidence: string
+          created_at: string
+          hypothesis_key: string
+          hypothesis_kind: string
+          hypothesis_state: string
+          id: string
+          is_active: boolean
+          raw_payload: Json
+          reframed_from_hypothesis_id: string | null
+          source_run_id: string | null
+          statement: string
+          topic: string | null
+          updated_at: string
+          validation_state: string
+          what_must_be_true: Json
+        }
+        Insert: {
+          company_id: string
+          confidence?: string
+          created_at?: string
+          hypothesis_key: string
+          hypothesis_kind: string
+          hypothesis_state?: string
+          id?: string
+          is_active?: boolean
+          raw_payload?: Json
+          reframed_from_hypothesis_id?: string | null
+          source_run_id?: string | null
+          statement: string
+          topic?: string | null
+          updated_at?: string
+          validation_state?: string
+          what_must_be_true?: Json
+        }
+        Update: {
+          company_id?: string
+          confidence?: string
+          created_at?: string
+          hypothesis_key?: string
+          hypothesis_kind?: string
+          hypothesis_state?: string
+          id?: string
+          is_active?: boolean
+          raw_payload?: Json
+          reframed_from_hypothesis_id?: string | null
+          source_run_id?: string | null
+          statement?: string
+          topic?: string | null
+          updated_at?: string
+          validation_state?: string
+          what_must_be_true?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategic_hypotheses_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategic_hypotheses_reframed_from_hypothesis_id_fkey"
+            columns: ["reframed_from_hypothesis_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_hypotheses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       strategic_events: {
         Row: {
           actor_id: string | null

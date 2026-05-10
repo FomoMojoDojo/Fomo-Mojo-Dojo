@@ -431,8 +431,8 @@ export function summarizePrimaryConstraint(
   }
 
   return {
-    title: "Focus is drifting",
-    detail: "Clear focus keeps momentum.",
+    title: "The direction is still unsettled",
+    detail: "The current evidence is not yet strong enough to treat this as settled.",
     type,
   };
 }

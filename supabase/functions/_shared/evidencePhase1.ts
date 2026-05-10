@@ -9,6 +9,10 @@ import {
   scoreClaimToNeedMatch,
 } from "../../../src/lib/evidenceMappers.ts";
 import { upsertDependenciesForArtifact } from "./strategicGraph.ts";
+import {
+  rebuildRouteHypothesisDependencies,
+  rebuildStrategicHypothesesForCompany,
+} from "./strategicHypotheses.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -338,10 +342,21 @@ export async function persistSignalsAndRebuildClaims(args: {
 
   const claimStats = await rebuildClaimsForCompany(supabase, companyId);
   const dependencyStats = await rebuildFoundationDependenciesForCompany(supabase, companyId);
+  const hypothesisStats = await rebuildStrategicHypothesesForCompany({
+    supabase,
+    companyId,
+    sourceRunId: normalizedSourceId,
+  });
+  const routeHypothesisStats = await rebuildRouteHypothesisDependencies({
+    supabase,
+    companyId,
+  });
   return {
     signalCount: signals.length,
     ...claimStats,
     ...dependencyStats,
+    ...hypothesisStats,
+    ...routeHypothesisStats,
   };
 }
 
@@ -367,7 +382,7 @@ export async function ingestPublicBaselineSignals(args: {
     sourceType: "public_baseline_run",
     signals,
   });
-  console.log(`[evidence] public baseline ingested company=${args.companyId} run=${args.runId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount}`);
+  console.log(`[evidence] public baseline ingested company=${args.companyId} run=${args.runId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount} hypotheses=${stats.hypothesisCount} hypothesisDeps=${stats.dependencyCount} routeHypothesisDeps=${stats.routeDependencyCount} graphLinkedRoutes=${stats.graphLinkedRouteCount}`);
   return stats;
 }
 
@@ -404,6 +419,6 @@ export async function ingestDifyProposalSignals(args: {
     sourceType: String(args.sourceType ?? "file_proposal"),
     signals,
   });
-  console.log(`[evidence] dify proposal ingested company=${args.companyId} proposal=${args.proposalId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount}`);
+  console.log(`[evidence] dify proposal ingested company=${args.companyId} proposal=${args.proposalId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount} hypotheses=${stats.hypothesisCount} hypothesisDeps=${stats.dependencyCount} routeHypothesisDeps=${stats.routeDependencyCount} graphLinkedRoutes=${stats.graphLinkedRouteCount}`);
   return stats;
 }

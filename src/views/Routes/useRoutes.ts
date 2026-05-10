@@ -36,6 +36,11 @@ export type RouteRow = {
   evidence_json?: StoredDetailItem[] | null;
   why_this_matters_json?: string[] | null;
   assumptions_json?: RouteAssumption[] | null;
+  dependency_state?: string | null;
+  validation_state?: string | null;
+  evidence_state?: string | null;
+  stale_reason?: string | null;
+  updated_at?: string | null;
   created_at?: string;
 };
 
@@ -58,15 +63,51 @@ export function useRoutes(companyId?: string) {
       setLoading(true);
       setError(null);
 
-      const { data, error } = await supabase
+      const primarySelect =
+        "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, assumptions_json, dependency_state, validation_state, evidence_state, stale_reason, updated_at, created_at";
+      const legacySelect =
+        "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at";
+
+      let { data, error } = await supabase
         .from("routes")
-        .select(
-          "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at"
-        )
+        .select(primarySelect)
         .eq("company_id", companyId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(500);
+
+      if (error) {
+        const message = String(error.message || "").toLowerCase();
+        if (
+          message.includes("assumptions_json") ||
+          message.includes("dependency_state") ||
+          message.includes("validation_state") ||
+          message.includes("evidence_state") ||
+          message.includes("stale_reason") ||
+          message.includes("updated_at")
+        ) {
+          const legacyResult = await supabase
+            .from("routes")
+            .select(legacySelect)
+            .eq("company_id", companyId)
+            .order("sort_order", { ascending: true })
+            .order("created_at", { ascending: true })
+            .limit(500);
+          data = (legacyResult.data ?? []) as RouteRow[];
+          error = legacyResult.error;
+          if (!error) {
+            data = (data ?? []).map((route) => ({
+              ...route,
+              assumptions_json: null,
+              dependency_state: null,
+              validation_state: null,
+              evidence_state: null,
+              stale_reason: null,
+              updated_at: null,
+            }));
+          }
+        }
+      }
 
       if (cancelled) return;
 

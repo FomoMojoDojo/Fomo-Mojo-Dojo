@@ -47,6 +47,7 @@ export const EVIDENCE_STATES = ["partial", "sufficient", "thin", "contradicted"]
 export const STRATEGIC_OBJECT_TYPES = [
   "signal",
   "claim",
+  "strategic_hypothesis",
   "job_map",
   "job_step",
   "odi_need",
@@ -134,7 +135,7 @@ export function isDependencyState(value: unknown): value is DependencyState {
 }
 
 export function strategicObjectTable(objectType: string) {
+  if (objectType === "strategic_hypothesis") return "strategic_hypotheses";
   if (objectType === "desired_outcome") return "managed_outcomes";
   return `${objectType}s`.replace("job_stepss", "job_steps").replace("odi_needss", "odi_needs");
 }
-

@@ -13,6 +13,7 @@ export default function StrategyOrgPanel({
   updatedAt,
   baseline,
   signals,
+  directionContextNote,
   updateNarrativeField,
   updateListField,
 }: {
@@ -21,6 +22,7 @@ export default function StrategyOrgPanel({
   updatedAt?: string;
   baseline: BaselineResult | null;
   signals: SourceConfidenceSignals;
+  directionContextNote?: string | null;
   updateNarrativeField: (field: "winning_aspiration" | "where_to_play" | "how_to_win", value: string) => Promise<void>;
   updateListField: (field: "capabilities_json" | "management_systems_json", items: CascadeItem[]) => Promise<void>;
 }) {
@@ -38,6 +40,14 @@ export default function StrategyOrgPanel({
         desc="Where you're going, where you'll compete, and how you'll win."
         updatedAt={updatedAt}
       />
+
+      {directionContextNote ? (
+        <div style={{ marginBottom: 14, padding: "10px 12px", border: "1px solid #d7ded1", background: "#f8f7f2" }}>
+          <p style={{ margin: 0, color: "#54656a", fontSize: 13, lineHeight: 1.55 }}>
+            {directionContextNote}
+          </p>
+        </div>
+      ) : null}
 
       <StatementField
         label="Where you're headed"

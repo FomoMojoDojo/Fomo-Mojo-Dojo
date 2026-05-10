@@ -11,6 +11,7 @@ import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
+import { useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import JobMapOrgPanel, { deriveSuggestedId } from "./workshop/tabs/JobMapOrgPanel";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
@@ -44,6 +45,9 @@ import {
   ARTIFACT_TO_TAB,
 } from "./workshop/primitives";
 import { deriveNextBestMove, type EvidenceReadiness } from "@/lib/nextBestMove";
+import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
+import { detectStrategicThemes, normalizeAuthorityPhase } from "@/lib/signalAuthority";
+import { inferStrategicCenter } from "@/lib/strategicCenter";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -336,6 +340,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 0 });
   const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
+  const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
 
   const initialTab   = (searchParams.get("tab")   as WorkshopTab | null) ?? "positioning";
   const initialStage = (searchParams.get("stage") as SignalStage | null) ?? "outside";
@@ -399,6 +404,58 @@ export default function ClientRefinePreviewWorkshopView() {
     updateNarrativeField,
     updateListField,
   } = useStrategyCascade(companyId);
+  const workshopRouteSeeds = useMemo(
+    () =>
+      routes.map((route) => {
+        const evidence = deriveClientEvidence(route);
+        const assumptions = deriveClientAssumptions(route, evidence);
+        return { route, evidence, assumptions };
+      }),
+    [routes],
+  );
+  const workshopStrategicCenter = useMemo(
+    () =>
+      inferStrategicCenter({
+        activeRows: strategicHypothesisRows,
+        routeSeeds: workshopRouteSeeds,
+        phase: activeCompany?.engagement_phase ?? "diagnose",
+      }),
+    [activeCompany?.engagement_phase, strategicHypothesisRows, workshopRouteSeeds],
+  );
+  const strategyContextNote = useMemo(() => {
+    if (!strategy) return null;
+    if (normalizeAuthorityPhase(activeCompany?.engagement_phase ?? "diagnose") === "pre_diagnosis") return null;
+    if (!workshopStrategicCenter.shouldLeadExplanations || !workshopStrategicCenter.label) return null;
+
+    const strategyText = cleanText(
+      [
+        strategy.winning_aspiration,
+        strategy.where_to_play,
+        strategy.how_to_win,
+        ...strategy.capabilities.map((item) => item.name),
+        ...strategy.management_systems.map((item) => item.name),
+      ].join(" "),
+    );
+    if (!strategyText) return null;
+
+    const strategyThemes = detectStrategicThemes(strategyText);
+    const centerThemes = workshopStrategicCenter.supportingThemes.slice(0, 2).map((theme) => theme.key);
+    if (centerThemes.length === 0 || strategyThemes.length === 0) return null;
+
+    const overlaps = centerThemes.some((theme) => strategyThemes.includes(theme));
+    const craftLedStrategy = strategyThemes.includes("craft_quality");
+    const nonCraftCenter = centerThemes.some((theme) =>
+      theme === "partner_outcomes" || theme === "operational_reliability" || theme === "proof_trust",
+    );
+
+    if (!overlaps && nonCraftCenter) {
+      return "Current strategy language may no longer reflect the strongest emerging direction.";
+    }
+    if (craftLedStrategy && nonCraftCenter && !centerThemes.includes("craft_quality")) {
+      return "Current strategy language may no longer reflect the strongest emerging direction.";
+    }
+    return null;
+  }, [activeCompany?.engagement_phase, strategy, workshopStrategicCenter]);
 
   const {
     loading: odiLoading,
@@ -792,6 +849,7 @@ export default function ClientRefinePreviewWorkshopView() {
         loading={stratLoading}
         baseline={baseline}
         signals={sourceSignals}
+        directionContextNote={strategyContextNote}
         updateNarrativeField={updateNarrativeField}
         updateListField={updateListField}
       />

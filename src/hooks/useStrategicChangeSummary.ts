@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { AffectedArtifactSummary, StrategicEvent } from "@/lib/strategicGraphDomain";
 
-type StrategicChangeSummary = {
+export type StrategicChangeSummary = {
   latestJobMapEvent: StrategicEvent | null;
   affectedArtifacts: AffectedArtifactSummary[];
   affectedCounts: {

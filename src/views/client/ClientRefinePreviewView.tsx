@@ -9,9 +9,25 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useFileProposals } from "@/hooks/useFileProposals";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useStrategicAssumptions } from "@/hooks/useStrategicAssumptions";
+import RefinePreviewHypothesesSection from "@/components/client/RefinePreviewHypothesesSection";
+import RefinePreviewWhatChangedSection from "@/components/client/RefinePreviewWhatChangedSection";
+import RefinePreviewConfidenceLandscapeSection from "@/components/client/RefinePreviewConfidenceLandscapeSection";
+import RefinePreviewReconciliationSection from "@/components/client/RefinePreviewReconciliationSection";
+import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
+import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
+import { getRefinePreviewActiveHypotheses } from "@/components/client/RefinePreviewHypothesesSection";
 import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
+import { inferIdentityNarrative } from "@/lib/identityNarrative";
+import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
+import { buildRouteRationales } from "@/lib/routeRationale";
+import { buildRefinePreviewConfidenceLandscape } from "@/lib/refinePreviewConfidenceLandscape";
+import { buildReconciliationNarrative } from "@/lib/reconciliationNarrative";
+import { phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
+import { selectRecommendedRoute } from "@/lib/routeScoring";
+import { inferStrategicCenter } from "@/lib/strategicCenter";
+import { useRoutes } from "@/views/Routes/useRoutes";
 import "@/styles/client-refine-preview.css";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
@@ -108,9 +124,80 @@ function toSentence(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function lowerFirst(value: string | null | undefined) {
+  const text = toSentence(value);
+  return text ? text.charAt(0).toLowerCase() + text.slice(1) : "";
+}
+
+function stripTerminalPunctuation(value: string | null | undefined) {
+  return toSentence(value).replace(/[.?!]+$/g, "");
+}
+
+function buildCenterHeroSupport(args: {
+  publicIdentity: string | null;
+  customerLag: boolean;
+}) {
+  const parts: string[] = [];
+  if (args.publicIdentity) {
+    parts.push(`Publicly, the company still reads as ${lowerFirst(args.publicIdentity)}.`);
+  }
+  if (args.customerLag) {
+    parts.push("Customer proof is still missing.");
+  }
+  if (parts.length === 0) {
+    return "The direction is becoming clearer, but it still needs customer validation.";
+  }
+  return parts.join(" ");
+}
+
 function shorten(value: string, max = 72) {
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1).trimEnd()}…`;
+}
+
+function normalizeCompare(value: string | null | undefined) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hypothesisSourceMixSummary(row: {
+  supportingClaims: Array<{
+    supportShape: { outside: number; organization: number; customer: number };
+  }>;
+}) {
+  const sourceMix = row.supportingClaims.reduce(
+    (acc, claim) => {
+      acc.outside += claim.supportShape.outside;
+      acc.organization += claim.supportShape.organization;
+      acc.customer += claim.supportShape.customer;
+      return acc;
+    },
+    { outside: 0, organization: 0, customer: 0 },
+  );
+
+  const hasOutside = sourceMix.outside > 0;
+  const hasOrganization = sourceMix.organization > 0;
+  const hasCustomer = sourceMix.customer > 0;
+
+  if (hasCustomer) {
+    if (hasOutside || hasOrganization) {
+      return "Customer evidence is starting to support this, but the pattern still needs more validation.";
+    }
+    return "Customer evidence is starting to support this, but the pattern still needs more validation.";
+  }
+  if (hasOutside && hasOrganization) {
+    return "Public and internal evidence point in this direction, but customer proof is still missing.";
+  }
+  if (hasOutside) {
+    return "This is showing up in public signals, but we have not validated it with the team or customers yet.";
+  }
+  if (hasOrganization) {
+    return "This is surfacing in internal evidence, but we have not validated it with customers yet.";
+  }
+  return "This is an early read from the evidence we have so far.";
 }
 
 function parseAccessModes(raw: string | null): AccessModes {
@@ -179,6 +266,10 @@ export default function ClientRefinePreviewView() {
 
   const phase = activeCompany?.engagement_phase ?? "outside_signals";
   const isEarlyPhase = phase === "outside_signals" || phase === "validate_outside" || phase === "diagnose" || phase === "validate_diagnose";
+  const earlyHypothesisPhaseLabel = phase === "outside_signals" || phase === "validate_outside" ? "Pre-Diagnosis" : "Diagnose";
+  const sectionVisibility = phaseSectionVisibility(phase);
+  const phasePriority = phaseNarrativePriority(phase);
+  const confidencePrimaryKeys = phaseConfidenceEmphasis(phase);
 
   // ── Strategic state analysis ────────────────────────────────────────────────
   const queryClient = useQueryClient();
@@ -192,6 +283,10 @@ export default function ClientRefinePreviewView() {
     addAssumption,
     setAssumptionStatus,
   } = useStrategicAssumptions(activeCompany?.id);
+  const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
+  const { data: routeHypothesisDependencies = [], isLoading: routeLinksLoading } = useRouteHypothesisDependencies(activeCompany?.id);
+  const { data: strategicChangeSummary, isLoading: strategicChangeLoading } = useStrategicChangeSummary(activeCompany?.id);
+  const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
 
   const analysisRunning = fileProposals.some(
     (p) => p.processing_state === "queued" || p.processing_state === "running",
@@ -717,6 +812,152 @@ export default function ClientRefinePreviewView() {
   );
 
   const strongestAction = topActions[0] ?? null;
+  const earlyPhaseHypotheses = useMemo(
+    () => getRefinePreviewActiveHypotheses(
+      strategicHypothesisRows,
+      phasePriority.hypotheses.maxItems,
+      phasePriority.hypotheses.priorityMode,
+    ),
+    [phasePriority.hypotheses.maxItems, phasePriority.hypotheses.priorityMode, strategicHypothesisRows],
+  );
+  const leadEarlyHypothesis = earlyPhaseHypotheses[0] ?? null;
+  const confidenceHypotheses = useMemo(() => {
+    if (isEarlyPhase) return earlyPhaseHypotheses;
+    const maxItems = phasePriority.phase === "flow" ? 4 : 3;
+    const mode = phasePriority.phase === "flow" ? "tension_first" : "assumption_pressure";
+    return getRefinePreviewActiveHypotheses(strategicHypothesisRows, maxItems, mode);
+  }, [earlyPhaseHypotheses, isEarlyPhase, phasePriority.phase, strategicHypothesisRows]);
+  const routeSeeds = useMemo(
+    () =>
+      routes.map((route) => {
+        const evidence = deriveClientEvidence(route);
+        const assumptions = deriveClientAssumptions(route, evidence);
+        return { route, evidence, assumptions };
+      }),
+    [routes],
+  );
+  const strategicCenter = useMemo(
+    () =>
+      inferStrategicCenter({
+        activeRows: strategicHypothesisRows,
+        routeSeeds,
+        phase,
+      }),
+    [phase, routeSeeds, strategicHypothesisRows],
+  );
+  const identityNarrative = useMemo(
+    () =>
+      inferIdentityNarrative({
+        activeRows: strategicHypothesisRows,
+        routeSeeds,
+        phase,
+        strategicCenter,
+      }),
+    [phase, routeSeeds, strategicCenter, strategicHypothesisRows],
+  );
+  const recommendedRouteId = useMemo(
+    () => selectRecommendedRoute(routes, null, null)?.id ?? null,
+    [routes],
+  );
+  const routeRationales = useMemo(
+    () =>
+      buildRouteRationales({
+        seeds: routeSeeds,
+        hypotheses: strategicHypothesisRows,
+        routeLinks: routeHypothesisDependencies,
+        recommendedRouteId,
+        phase,
+      }),
+    [phase, recommendedRouteId, routeHypothesisDependencies, routeSeeds, strategicHypothesisRows],
+  );
+  const routeRationaleMap = useMemo(
+    () => new Map(routeRationales.map((rationale) => [rationale.routeId, rationale])),
+    [routeRationales],
+  );
+  const phaseSortedRoutes = useMemo(
+    () => sortRoutesForPhase({ items: routes, rationales: routeRationaleMap, phase, recommendedRouteId }),
+    [phase, recommendedRouteId, routeRationaleMap, routes],
+  );
+  const leadMainRoute = phaseSortedRoutes[0] ?? null;
+  const leadMainRationale = leadMainRoute ? (routeRationaleMap.get(leadMainRoute.id) ?? null) : null;
+  const leadRouteHypothesisRows = useMemo(() => {
+    if (!leadMainRationale) return [];
+    const linkedIds = new Set(leadMainRationale.matchedHypothesisIds);
+    if (linkedIds.size === 0) return [];
+    return strategicHypothesisRows.filter((row) => row.hypothesis.is_active && linkedIds.has(row.hypothesis.id));
+  }, [leadMainRationale, strategicHypothesisRows]);
+  const focusOrFlowHypotheses = useMemo(() => {
+    if (isEarlyPhase) return [];
+
+    const linkedRows = leadRouteHypothesisRows;
+    if (phasePriority.phase === "focus") {
+      const sourceRows = linkedRows.length > 0
+        ? linkedRows.filter(
+            (row) =>
+              row.hypothesis.hypothesis_kind === "candidate_assumption" ||
+              row.hypothesis.hypothesis_kind === "inferred_tension" ||
+              row.weakeningClaims.length > 0,
+          )
+        : strategicHypothesisRows.filter(
+            (row) =>
+              row.hypothesis.is_active &&
+              (row.hypothesis.hypothesis_kind === "candidate_assumption" ||
+                row.hypothesis.hypothesis_kind === "inferred_tension" ||
+                row.weakeningClaims.length > 0),
+          );
+      return getRefinePreviewActiveHypotheses(sourceRows, phasePriority.hypotheses.maxItems, phasePriority.hypotheses.priorityMode);
+    }
+
+    const sourceRows = linkedRows.length > 0
+      ? linkedRows.filter(
+          (row) =>
+            row.hypothesis.hypothesis_kind === "inferred_tension" ||
+            row.weakeningClaims.length > 0 ||
+            row.hypothesis.hypothesis_state === "contradicted" ||
+            row.hypothesis.hypothesis_state === "emerging",
+        )
+      : strategicHypothesisRows.filter(
+          (row) =>
+            row.hypothesis.is_active &&
+            (row.hypothesis.hypothesis_kind === "inferred_tension" ||
+              row.weakeningClaims.length > 0 ||
+              row.hypothesis.hypothesis_state === "contradicted" ||
+              row.hypothesis.hypothesis_state === "emerging"),
+        );
+    return getRefinePreviewActiveHypotheses(sourceRows, phasePriority.hypotheses.maxItems, phasePriority.hypotheses.priorityMode);
+  }, [
+    isEarlyPhase,
+    leadRouteHypothesisRows,
+    phasePriority.hypotheses.maxItems,
+    phasePriority.hypotheses.priorityMode,
+    phasePriority.phase,
+    strategicHypothesisRows,
+  ]);
+  const confidenceLandscape = useMemo(
+    () =>
+      buildRefinePreviewConfidenceLandscape({
+        activeRows: confidenceHypotheses,
+        allRows: strategicHypothesisRows,
+        changeSummary: strategicChangeSummary ?? null,
+        routeRationales,
+        routeSeeds,
+        phase,
+      }),
+    [confidenceHypotheses, phase, routeRationales, routeSeeds, strategicChangeSummary, strategicHypothesisRows],
+  );
+  const confidenceLandscapeLoading = routesLoading || routeLinksLoading || strategicChangeLoading;
+  const reconciliationNarrative = useMemo(
+    () =>
+      buildReconciliationNarrative({
+        activeRows: strategicHypothesisRows,
+        routeRationales,
+        routeSeeds,
+        phase,
+        leadRouteRationale: leadMainRationale,
+      }),
+    [leadMainRationale, phase, routeRationales, routeSeeds, strategicHypothesisRows],
+  );
+  const renderReconciliation = sectionVisibility.showHypotheses && Boolean(reconciliationNarrative?.shouldRender);
 
   const commandActionTitle = useMemo(() => {
     const actionTitle = toSentence(strongestAction?.title);
@@ -741,6 +982,91 @@ export default function ClientRefinePreviewView() {
 
     return supportParts.join(" ");
   }, [commandActionTitle, nextMove?.detail, primaryConstraint?.title, primaryDesiredOutcome?.statement]);
+
+  const centerLedEarlyHero = useMemo(() => {
+    if (!(phase === "diagnose" || phase === "validate_diagnose")) return null;
+    if (!strategicCenter.shouldLeadExplanations || !strategicCenter.label) return null;
+    return {
+      headline: `The strategy appears to be cohering around ${strategicCenter.label}.`,
+      support: buildCenterHeroSupport({
+        publicIdentity: identityNarrative.publicIdentity,
+        customerLag: strategicCenter.customerLag,
+      }),
+    };
+  }, [identityNarrative.publicIdentity, phase, strategicCenter.customerLag, strategicCenter.label, strategicCenter.shouldLeadExplanations]);
+  const showEarlyHero = Boolean(centerLedEarlyHero || leadEarlyHypothesis);
+
+  const earlyPhaseHeadline = useMemo(() => {
+    if (centerLedEarlyHero?.headline) return centerLedEarlyHero.headline;
+    if (leadEarlyHypothesis?.hypothesis.statement) return toSentence(leadEarlyHypothesis.hypothesis.statement);
+    return diagnostic?.headline || "The picture is still forming.";
+  }, [centerLedEarlyHero?.headline, diagnostic?.headline, leadEarlyHypothesis?.hypothesis.statement]);
+
+  const earlyPhaseSupport = useMemo(() => {
+    if (centerLedEarlyHero?.support) {
+      return centerLedEarlyHero.support;
+    }
+    if (leadEarlyHypothesis) {
+      return hypothesisSourceMixSummary(leadEarlyHypothesis);
+    }
+
+    const leadText = normalizeCompare(diagnostic?.headline);
+    const candidates = [
+      diagnostic?.subhead,
+      toSentence(primaryConstraint?.detail),
+      toSentence(primaryConstraint?.title),
+    ]
+      .map((value) => toSentence(value))
+      .filter(Boolean);
+
+    for (const candidate of candidates) {
+      const normalized = normalizeCompare(candidate);
+      if (!normalized) continue;
+      if (leadText && (normalized === leadText || normalized.includes(leadText) || leadText.includes(normalized))) {
+        continue;
+      }
+      return candidate;
+    }
+
+    return "";
+  }, [centerLedEarlyHero?.support, diagnostic?.headline, diagnostic?.subhead, leadEarlyHypothesis, primaryConstraint?.detail, primaryConstraint?.title]);
+  const latePhaseLabel = useMemo(() => {
+    if (phasePriority.phase === "focus") return "Focus";
+    if (phasePriority.phase === "flow") return "Flow";
+    if (phasePriority.phase === "diagnose") return "Diagnose";
+    return "Pre-Diagnosis";
+  }, [phasePriority.phase]);
+  const latePhaseHeadline = useMemo(() => {
+    if ((phasePriority.phase === "focus" || phasePriority.phase === "flow") && leadMainRoute?.title) {
+      return toSentence(leadMainRoute.title);
+    }
+    return commandActionTitle;
+  }, [commandActionTitle, leadMainRoute?.title, phasePriority.phase]);
+  const latePhaseSupport = useMemo(() => {
+    if (phasePriority.phase === "focus" && leadMainRationale) {
+      return leadMainRationale.whatSupportsIt;
+    }
+    if (phasePriority.phase === "flow" && leadMainRationale) {
+      if (leadMainRationale.movement === "weaken" || leadMainRationale.readiness === "Hold") {
+        return leadMainRationale.couldWeaken || leadMainRationale.uncertainty;
+      }
+      if (leadMainRationale.movement === "strengthen" || leadMainRationale.movement === "narrow") {
+        return leadMainRationale.whatSupportsIt;
+      }
+      return leadMainRationale.uncertainty || leadMainRationale.whatSupportsIt;
+    }
+    return commandActionSupport;
+  }, [commandActionSupport, leadMainRationale, phasePriority.phase]);
+  const latePhaseStatus = useMemo(() => {
+    if (!leadMainRationale) return "";
+    if (phasePriority.phase === "focus") {
+      return `Route posture · ${leadMainRationale.readiness} · ${leadMainRationale.readinessMeaning}`;
+    }
+    if (phasePriority.phase === "flow") {
+      return `Route health · ${leadMainRationale.movementLabel} · ${leadMainRationale.confidenceLabel}`;
+    }
+    return "";
+  }, [leadMainRationale, phasePriority.phase]);
 
   const routeOptions = useMemo(() => {
     const buckets: Record<RouteCategory, typeof allActions> = {
@@ -1067,14 +1393,34 @@ export default function ClientRefinePreviewView() {
     }
 
     if (phase === "diagnose") {
-      const row1 = diagObs  || obs    || "A pattern is emerging but not yet confirmed";
-      const row2 = diagObs2 || detail || "A second signal points in the same direction";
-      const row3 = diagMissing || diagQ  || diagTension || actionHeadline || "Still unclear what would confirm or change this";
-      const row4 = ifMissed || diagMissing || "Direct customer evidence would move this from likely to clear";
-      const row5 = diagImpl || diagTension || "If this holds, the focus likely shifts to closing that gap";
+      const row1 =
+        strategicCenter.shouldLeadExplanations && strategicCenter.label
+          ? `The read is increasingly centered on ${strategicCenter.label}`
+          : diagObs || obs || "A pattern is emerging but not yet confirmed";
+      const row2 =
+        identityNarrative.publicIdentity
+          ? `Publicly, the company still reads as ${lowerFirst(identityNarrative.publicIdentity)}`
+          : diagObs2 || detail || "A second signal points in the same direction";
+      const row3 =
+        reconciliationNarrative?.unresolvedQuestion ||
+        (strategicCenter.customerLag && strategicCenter.label
+          ? `Customer proof has not yet confirmed whether ${strategicCenter.label} changes real decisions`
+          : diagMissing || diagQ || diagTension || actionHeadline || "Still unclear what would confirm or change this");
+      const row4 =
+        strategicCenter.shouldLeadExplanations && strategicCenter.label
+          ? `We still need direct customer evidence that ${strategicCenter.label} change partner choice or repeat buying`
+          : leadMainRationale?.mustBecomeTrue ||
+            ifMissed ||
+            diagMissing ||
+            "Direct customer evidence would move this from likely to clear";
+      const row5 =
+        leadMainRationale?.whyThisRouteExists ||
+        (strategicCenter.label
+          ? `If this holds, the focus is likely to shift toward routes built around ${strategicCenter.label}`
+          : diagImpl || diagTension || "If this holds, the focus likely shifts to closing that gap");
       return [
         { label: "Why this is surfacing",        lead: "", emphasis: row1, tail: diagObs  ? "." : (obs ? "." : " — not yet confirmed.") },
-        { label: "",                             lead: "", emphasis: row2, tail: diagObs2 ? "." : "." },
+        { label: "Public context",               lead: "", emphasis: row2, tail: "." },
         { label: "What's still unclear",         lead: "", emphasis: row3, tail: "." },
         { label: "What would sharpen confidence",lead: "", emphasis: row4, tail: "." },
         { label: "Possible implication",         lead: "", emphasis: row5, tail: " — not a recommendation yet." },
@@ -1097,17 +1443,57 @@ export default function ClientRefinePreviewView() {
     }
 
     if (phase === "focus") return [
-      { label: "What the evidence says",        lead: "", emphasis: obs    || "A clear direction has emerged",                   tail: obs ? ". This is the highest-leverage point the data has surfaced." : "." },
-      { label: "Why this, not something else",  lead: "", emphasis: detail || "The evidence here is stronger than anywhere else", tail: ". That's the reason this is the focus." },
-      { label: "The priority",                  lead: "", emphasis: actionHeadline,                                               tail: `. That's what moves the score from ${baseConfidence} toward ${confidenceTarget}.` },
-      { label: "What would shift it",           lead: "", emphasis: ifMissed || "If the evidence changes, so does the direction — right now, it hasn't", tail: "." },
+      {
+        label: "What the evidence says",
+        lead: "",
+        emphasis: leadMainRationale?.whyThisRouteExists || obs || "A direction is beginning to stand out",
+        tail: ".",
+      },
+      {
+        label: "What supports this focus",
+        lead: "",
+        emphasis: leadMainRationale?.whatSupportsIt || detail || "The current focus has more support than the alternatives",
+        tail: ".",
+      },
+      {
+        label: "The priority",
+        lead: "",
+        emphasis: actionHeadline,
+        tail: `. This is the route currently worth validating before stronger commitment.`,
+      },
+      {
+        label: "What would shift it",
+        lead: "",
+        emphasis: leadMainRationale?.uncertainty || leadMainRationale?.couldWeaken || ifMissed || "If the evidence changes, the focus should change with it",
+        tail: ".",
+      },
     ];
 
     if (phase === "validate_focus") return [
-      { label: "What the evidence says",  lead: "", emphasis: obs    || "A direction has been chosen",       tail: obs ? ". Before locking in, it needs one more pass." : " — confirm it holds." },
-      { label: "What needs to be true",   lead: "", emphasis: detail || "The route assumptions hold",        tail: ". If they do, execution starts from solid ground. If they don't, now is the time to know." },
-      { label: "The last open question",  lead: "", emphasis: actionHeadline,                               tail: ". That's the one thing to confirm." },
-      { label: "What happens if we skip", lead: "", emphasis: ifMissed || "Execution begins with an open assumption", tail: " — the kind that's expensive to discover mid-flow." },
+      {
+        label: "What the evidence says",
+        lead: "",
+        emphasis: leadMainRationale?.whyThisRouteExists || obs || "A direction has been chosen",
+        tail: ".",
+      },
+      {
+        label: "What needs to be true",
+        lead: "",
+        emphasis: leadMainRationale?.mustBecomeTrue || detail || "The route assumptions still need one more pass",
+        tail: ".",
+      },
+      {
+        label: "The last open question",
+        lead: "",
+        emphasis: leadMainRationale?.uncertainty || actionHeadline,
+        tail: ".",
+      },
+      {
+        label: "What happens if we skip",
+        lead: "",
+        emphasis: leadMainRationale?.couldWeaken || ifMissed || "Execution would begin with an untested assumption still open",
+        tail: ".",
+      },
     ];
 
     if (phase === "flow") return [
@@ -1126,12 +1512,16 @@ export default function ClientRefinePreviewView() {
     ];
   }, [
     actionHeadline,
-    baseConfidence,
-    confidenceTarget,
     diagnostic,
+    identityNarrative.publicIdentity,
+    leadMainRationale,
     phase,
     primaryConstraint?.detail,
     primaryConstraint?.title,
+    reconciliationNarrative?.unresolvedQuestion,
+    strategicCenter.customerLag,
+    strategicCenter.label,
+    strategicCenter.shouldLeadExplanations,
     strongestAction?.ifMissed,
   ]);
 
@@ -1450,6 +1840,7 @@ export default function ClientRefinePreviewView() {
 
   const stageClassName = [
     "crpv-stage",
+    layer === "command" ? "state-command" : "",
     layer === "map" ? "state-map" : "",
     layer === "narrative" ? "state-narrative" : "",
     layer === "drawer" ? "state-drawer" : "",
@@ -1530,7 +1921,7 @@ export default function ClientRefinePreviewView() {
                 )}
                 <button type="button" className="btn ghost" onClick={goToWorkshop}>Edit strategy →</button>
                 <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToRoutesPreview}>
-                  Routes page
+                  Routes
                 </button>
                 <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>
                   ← Main site
@@ -1559,11 +1950,36 @@ export default function ClientRefinePreviewView() {
                 <div className="crpv-command-main">
                   {isEarlyPhase ? (
                     <>
-                      <p className="cap">
-                        {(phase === "diagnose" || phase === "validate_diagnose") ? "KEY TENSIONS" : "WHAT WE'RE SEEING"}
-                      </p>
+                      {showEarlyHero ? (
+                        <div className="crpv-hypotheses-hero">
+                          <p className="cap">What appears true · {earlyHypothesisPhaseLabel}</p>
+                          <h2>Early read</h2>
+                          <p className="crpv-hypotheses-copy">
+                            These are early reads from the evidence we have so far. They should change as we learn more.
+                          </p>
+                          <p className="crpv-hypotheses-note">Use these as conversation starters, not conclusions.</p>
+                        </div>
+                      ) : (
+                        <p className="cap">
+                          {(phase === "diagnose" || phase === "validate_diagnose") ? "KEY TENSIONS" : "WHAT WE'RE SEEING"}
+                        </p>
+                      )}
 
-                      {diagnostic ? (
+                      {showEarlyHero ? (
+                        <>
+                          <p className="crpv-action" role="status">
+                            {earlyPhaseHeadline}
+                          </p>
+                          {earlyPhaseSupport && (
+                            <p className="crpv-action-support">{earlyPhaseSupport}</p>
+                          )}
+                          {diagnostic && !diagnostic.isAccepted && (
+                            <p style={{ fontSize: 10, color: "#6E847F", fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 8 }}>
+                              Early read · not validated yet
+                            </p>
+                          )}
+                        </>
+                      ) : diagnostic ? (
                         <>
                           <p className="crpv-action" role="status">
                             {diagnostic.headline || "The picture is still forming."}
@@ -1573,7 +1989,7 @@ export default function ClientRefinePreviewView() {
                           )}
                           {!diagnostic.isAccepted && (
                             <p style={{ fontSize: 10, color: "#6E847F", fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 8 }}>
-                              Working analysis · not yet accepted
+                              Early read · not validated yet
                             </p>
                           )}
                         </>
@@ -1583,33 +1999,157 @@ export default function ClientRefinePreviewView() {
                         </p>
                       )}
 
-                      <div className="crpv-secondary-links">
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          data-go="narrative"
-                          onClick={() => { setLayer("narrative"); setDrawerKey(null); }}
-                        >
-                          ✎ Full picture
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={goToRoutesPreview}
-                        >
-                          ⧉ Routes page
-                        </button>
-                        <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
-                          Edit inputs →
-                        </button>
+                      <RefinePreviewHypothesesSection
+                        rows={showEarlyHero ? earlyPhaseHypotheses : undefined}
+                        companyId={showEarlyHero ? undefined : activeCompany?.id}
+                        phaseLabel={earlyHypothesisPhaseLabel}
+                        maxItems={phasePriority.hypotheses.maxItems}
+                        showHeader={!showEarlyHero}
+                        excludeHypothesisId={centerLedEarlyHero ? null : leadEarlyHypothesis?.hypothesis.id ?? null}
+                        introCopy={phasePriority.hypotheses.introCopy}
+                        note={phasePriority.hypotheses.note}
+                        priorityMode={phasePriority.hypotheses.priorityMode}
+                        compressAfterLead
+                      />
+
+                      {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "after_hypotheses" ? (
+                        <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
+                      ) : null}
+
+                      <div className="crpv-early-next">
+                        {sectionVisibility.showMovement ? (
+                          <RefinePreviewWhatChangedSection
+                            companyId={activeCompany?.id}
+                            phaseLabel={earlyHypothesisPhaseLabel}
+                            rows={strategicHypothesisRows}
+                            routeRationales={routeRationales}
+                            introCopy={phasePriority.movement.introCopy}
+                            defaultVisibleCount={sectionVisibility.movementVisibleCount}
+                            defaultExpanded={sectionVisibility.movementExpandedByDefault}
+                            suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
+                          />
+                        ) : null}
+
+                        {sectionVisibility.showConfidence ? (
+                          <RefinePreviewConfidenceLandscapeSection
+                            domains={confidenceLandscape}
+                            loading={confidenceLandscapeLoading}
+                            primaryKeys={confidencePrimaryKeys}
+                            summaryLine="Where confidence is strongest and where it still needs proof."
+                            phase={phase}
+                          />
+                        ) : null}
+
+                        <div className="crpv-next-moves">
+                          <p className="cap">Next moves</p>
+                          <div className="crpv-secondary-links crpv-secondary-links-attached">
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              data-go="narrative"
+                              onClick={() => { setLayer("narrative"); setDrawerKey(null); }}
+                            >
+                              ◎ View Map
+                            </button>
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              onClick={goToRoutesPreview}
+                            >
+                              ⧉ Routes
+                            </button>
+                            <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
+                              Add Evidence →
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </>
                   ) : (
                     <>
-                      <p className="cap">THE NEXT MOVE</p>
+                      <p className="cap">{phasePriority.lateCommand.label}</p>
 
-                      <p className="crpv-action" role="status">{commandActionTitle}</p>
-                      {commandActionSupport ? <p className="crpv-action-support">{commandActionSupport}</p> : null}
+                      <p className="crpv-action" role="status">{latePhaseHeadline}</p>
+                      {latePhaseSupport ? <p className="crpv-action-support">{latePhaseSupport}</p> : null}
+                      {latePhaseStatus ? <p className="crpv-phase-status">{latePhaseStatus}</p> : null}
+
+                      <div className="crpv-late-orientation">
+                        {phasePriority.mainPage.showMovementFirst ? (
+                          <>
+                            {sectionVisibility.showMovement ? (
+                              <RefinePreviewWhatChangedSection
+                                companyId={activeCompany?.id}
+                                phaseLabel={latePhaseLabel}
+                                rows={strategicHypothesisRows}
+                                routeRationales={routeRationales}
+                                introCopy={phasePriority.movement.introCopy}
+                                defaultVisibleCount={sectionVisibility.movementVisibleCount}
+                                defaultExpanded={sectionVisibility.movementExpandedByDefault}
+                                suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
+                              />
+                            ) : null}
+
+                            {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "after_movement" ? (
+                              <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
+                            ) : null}
+
+                            {sectionVisibility.showConfidence ? (
+                              <RefinePreviewConfidenceLandscapeSection
+                                domains={confidenceLandscape}
+                                loading={confidenceLandscapeLoading}
+                                primaryKeys={confidencePrimaryKeys}
+                                summaryLine={phasePriority.mainPage.confidenceSummaryLine}
+                                phase={phase}
+                              />
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "before_confidence" ? (
+                              <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
+                            ) : null}
+
+                            {sectionVisibility.showConfidence ? (
+                              <RefinePreviewConfidenceLandscapeSection
+                                domains={confidenceLandscape}
+                                loading={confidenceLandscapeLoading}
+                                primaryKeys={confidencePrimaryKeys}
+                                summaryLine={phasePriority.mainPage.confidenceSummaryLine}
+                                phase={phase}
+                              />
+                            ) : null}
+
+                            {sectionVisibility.showMovement ? (
+                              <RefinePreviewWhatChangedSection
+                                companyId={activeCompany?.id}
+                                phaseLabel={latePhaseLabel}
+                                rows={strategicHypothesisRows}
+                                routeRationales={routeRationales}
+                                introCopy={phasePriority.movement.introCopy}
+                                defaultVisibleCount={sectionVisibility.movementVisibleCount}
+                                defaultExpanded={sectionVisibility.movementExpandedByDefault}
+                                suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
+                              />
+                            ) : null}
+                          </>
+                        )}
+
+                        {sectionVisibility.showHypotheses && focusOrFlowHypotheses.length > 0 ? (
+                          <RefinePreviewHypothesesSection
+                            rows={focusOrFlowHypotheses}
+                            phaseLabel={latePhaseLabel}
+                            maxItems={phasePriority.hypotheses.maxItems}
+                            showHeader
+                            sectionLabel={phasePriority.mainPage.hypothesisLabel}
+                            title={phasePriority.mainPage.hypothesisTitle}
+                            introCopy={phasePriority.hypotheses.introCopy}
+                            note={phasePriority.hypotheses.note}
+                            priorityMode={phasePriority.hypotheses.priorityMode}
+                            emptyCopy="No active tensions or assumptions are shaping this phase yet."
+                            compressAfterLead
+                          />
+                        ) : null}
+                      </div>
 
                       <div className="crpv-meta-row">
                         <div
@@ -1670,7 +2210,7 @@ export default function ClientRefinePreviewView() {
                           className="btn ghost"
                           onClick={goToRoutesPreview}
                         >
-                          ⧉ Routes page
+                          ⧉ Routes
                         </button>
                         <button
                           type="button"
@@ -1984,7 +2524,7 @@ export default function ClientRefinePreviewView() {
                     <div className="n">{item.label}</div>
                     <p>
                       {item.lead}
-                      <em>{item.emphasis}</em>
+                      <em>{/^[.?!,:;—-]/.test(item.tail.trim()) ? stripTerminalPunctuation(item.emphasis) : item.emphasis}</em>
                       {item.tail}
                     </p>
                   </div>

@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company, ExcludedSignal } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
+import { useRoutes, type RouteAssumption } from "@/views/Routes/useRoutes";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE } from "@/lib/clientRefinePreview";
 import { setActivePath } from "@/lib/activePath";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -33,6 +34,9 @@ import { buildRouteSourceLinks } from "@/lib/sourceLinks";
 import SourcesUsedSection from "@/components/inspect/SourcesUsedSection";
 import { selectRecommendedRoute, impactReason } from "@/lib/routeScoring";
 import { type NextBestMove } from "@/lib/nextBestMove";
+import { buildRouteRationales, type RouteRationale } from "@/lib/routeRationale";
+import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
+import { buildRouteEditorialRoles, phaseNarrativePriority, softenRouteForPhase, sortRoutesForPhase, type RouteEditorialRole } from "@/lib/refinePreviewPhaseOrchestration";
 import "@/styles/client-refine-preview.css";
 
 type RouteCategory = "fix" | "improve" | "create";
@@ -82,36 +86,7 @@ function deriveClientWhyReasons(route: RouteRow): string[] {
 }
 
 type EvidenceItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
-
-function deriveClientEvidence(route: RouteRow): EvidenceItem[] {
-  const stored = (Array.isArray(route.evidence_json) ? route.evidence_json : []) as EvidenceItem[];
-  if (stored.length > 0) return stored;
-  const category = String(route.category || "").toLowerCase();
-  if (category === "fix") {
-    return [
-      { id: `${route.id}-ev-1`, title: "Current-state evidence for the identified gap", status: "missing" },
-      { id: `${route.id}-ev-2`, title: "Decision owner and turnaround timing confirmed", status: "missing" },
-    ];
-  }
-  if (category === "improve") {
-    return [
-      { id: `${route.id}-ev-1`, title: "Improvement owner and baseline metric defined", status: "in_progress" },
-      { id: `${route.id}-ev-2`, title: "Target state and success metric confirmed", status: "missing" },
-    ];
-  }
-  return [
-    { id: `${route.id}-ev-1`, title: "New capability owner and pilot scope defined", status: "missing" },
-    { id: `${route.id}-ev-2`, title: "Demand validation evidence gathered", status: "missing" },
-  ];
-}
-
-type ClientAssumption = {
-  id: string;
-  statement: string;
-  status: "supported" | "partial" | "unproven";
-  layer: "outside" | "org" | "customer" | "market";
-  critical?: boolean;
-};
+type ClientAssumption = RouteAssumption;
 
 const CLIENT_LAYER_LABELS: Record<ClientAssumption["layer"], string> = {
   outside:  "Outside Signals",
@@ -138,105 +113,6 @@ const CLIENT_STATUS_GLYPHS: Record<ClientAssumption["status"], string> = {
   unproven:  "○",
 };
 
-function deriveClientAssumptions(route: RouteRow, evidence: EvidenceItem[]): ClientAssumption[] {
-  // Prefer stored assumptions_json when present
-  if (Array.isArray(route.assumptions_json) && route.assumptions_json.length > 0) {
-    const validLayers = new Set(["outside", "org", "customer", "market"]);
-    const validStatuses = new Set(["supported", "partial", "unproven"]);
-    return route.assumptions_json.map((a) => ({
-      id: String(a.id ?? Math.random()),
-      statement: String(a.statement ?? ""),
-      status: (validStatuses.has(String(a.status)) ? a.status : "unproven") as ClientAssumption["status"],
-      layer: (validLayers.has(String(a.layer)) ? a.layer : "outside") as ClientAssumption["layer"],
-      critical: a.critical ?? false,
-    }));
-  }
-
-  // Derive from blob fields — no rankedOpps available in client view
-  const category = String(route.category || "").toLowerCase();
-  const frameworks = Array.isArray(route.frameworks_used) ? route.frameworks_used.map(String) : [];
-  const hasOutsideSignals = frameworks.some((f) =>
-    ["odi", "jtbd", "public", "baseline"].some((m) => f.toLowerCase().includes(m)),
-  );
-  const supportingCount = evidence.filter((e) => e.status !== "missing").length;
-  const missingCount = evidence.filter((e) => e.status === "missing").length;
-  const hasEvidence = supportingCount > 0;
-
-  const assumptions: ClientAssumption[] = [];
-
-  if (category === "fix") {
-    assumptions.push({
-      id: "fix-gap-real",
-      statement: "The identified gap directly limits customer or business outcomes.",
-      layer: "outside",
-      status: hasOutsideSignals || hasEvidence ? "supported" : "partial",
-      critical: true,
-    });
-    assumptions.push({
-      id: "fix-highest-leverage",
-      statement: "Addressing this gap is the highest-leverage move available right now.",
-      layer: "customer",
-      status: "unproven",
-      critical: true,
-    });
-    assumptions.push({
-      id: "fix-capacity",
-      statement: "The team has the capacity and ownership to close this gap.",
-      layer: "org",
-      status: "unproven",
-      critical: false,
-    });
-  } else if (category === "improve") {
-    assumptions.push({
-      id: "improve-can-strengthen",
-      statement: "The current approach can be meaningfully strengthened without replacing it.",
-      layer: "outside",
-      status: hasEvidence ? "partial" : "unproven",
-      critical: true,
-    });
-    assumptions.push({
-      id: "improve-customer-value",
-      statement: "Customers will notice and benefit from this improvement.",
-      layer: "customer",
-      status: "unproven",
-      critical: true,
-    });
-  } else {
-    assumptions.push({
-      id: "create-demand",
-      statement: "There is validated demand for this new capability.",
-      layer: "customer",
-      status: "unproven",
-      critical: true,
-    });
-    assumptions.push({
-      id: "create-timing",
-      statement: "The market timing is right for this investment.",
-      layer: "market",
-      status: hasOutsideSignals ? "partial" : "unproven",
-      critical: false,
-    });
-    assumptions.push({
-      id: "create-sustain",
-      statement: "The organization can sustain this after the initial build.",
-      layer: "org",
-      status: "unproven",
-      critical: false,
-    });
-  }
-
-  if (missingCount > 0) {
-    assumptions.push({
-      id: "evidence-gaps-closed",
-      statement: `The ${missingCount} flagged evidence gap${missingCount !== 1 ? "s" : ""} will be resolved before executing this route.`,
-      layer: "org",
-      status: "unproven",
-      critical: false,
-    });
-  }
-
-  return assumptions;
-}
 
 function deriveStrengthMoves(
   evidence: EvidenceItem[],
@@ -616,6 +492,98 @@ function ClientDecisionBanner({
   );
 }
 
+function RouteWhyRisingPanel({
+  route,
+  rationale,
+  title,
+  safeNowLabel,
+}: {
+  route: RouteRow;
+  rationale: RouteRationale;
+  title: string;
+  safeNowLabel: string;
+}) {
+  const [showEvidence, setShowEvidence] = useState(false);
+  const combinedEvidence = useMemo(
+    () => [...rationale.supportingEvidenceLines, ...rationale.weakeningEvidenceLines].slice(0, 4),
+    [rationale.supportingEvidenceLines, rationale.weakeningEvidenceLines],
+  );
+
+  return (
+    <section className="crpv-r-why-rising" aria-label="Why this route is rising">
+      <div className="crpv-r-why-rising-header">
+        <p className="cap">{title}</p>
+        <h2>{route.title || "Untitled route"}</h2>
+        <div className="crpv-r-why-rising-meta">
+          <span className="crpv-r-readiness-state">{rationale.readiness}</span>
+          <span>{rationale.movementLabel}</span>
+          <span>{rationale.confidenceLabel}</span>
+        </div>
+      </div>
+
+      <div className="crpv-r-why-rising-grid">
+        <div>
+          <p className="crpv-r-why-rising-label">{safeNowLabel}</p>
+          <p>{rationale.readinessMeaning}</p>
+        </div>
+        <div>
+          <p className="crpv-r-why-rising-label">Why this route exists</p>
+          <p>{rationale.whyThisRouteExists}</p>
+        </div>
+        <div>
+          <p className="crpv-r-why-rising-label">What evidence supports it</p>
+          <p>{rationale.whatSupportsIt}</p>
+        </div>
+        <div>
+          <p className="crpv-r-why-rising-label">What uncertainty still exists</p>
+          <p>{rationale.uncertainty}</p>
+        </div>
+        <div>
+          <p className="crpv-r-why-rising-label">What must become true</p>
+          <p>{rationale.mustBecomeTrue}</p>
+        </div>
+        <div>
+          <p className="crpv-r-why-rising-label">What could weaken it</p>
+          <p>{rationale.couldWeaken}</p>
+        </div>
+      </div>
+
+      {combinedEvidence.length > 0 ? (
+        <div className="crpv-r-why-rising-actions">
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => setShowEvidence((current) => !current)}
+          >
+            {showEvidence ? "Hide evidence" : "See evidence"}
+          </button>
+        </div>
+      ) : null}
+
+      {showEvidence ? (
+        <div className="crpv-r-why-rising-evidence">
+          {rationale.supportingEvidenceLines.length > 0 ? (
+            <div className="crpv-r-why-rising-evidence-block">
+              <p className="crpv-r-why-rising-label">Supporting evidence</p>
+              {rationale.supportingEvidenceLines.slice(0, 3).map((line) => (
+                <div key={line} className="crpv-r-why-rising-evidence-line">{line}</div>
+              ))}
+            </div>
+          ) : null}
+          {rationale.weakeningEvidenceLines.length > 0 ? (
+            <div className="crpv-r-why-rising-evidence-block">
+              <p className="crpv-r-why-rising-label">Possible weakening evidence</p>
+              {rationale.weakeningEvidenceLines.slice(0, 2).map((line) => (
+                <div key={line} className="crpv-r-why-rising-evidence-line">{line}</div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 // ─── Route card ───────────────────────────────────────────────────────────────
 
 type DetailItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
@@ -634,6 +602,7 @@ function statusTip(status: DetailItem["status"]) {
 
 function RouteCard({
   route,
+  rationale,
   onInspect,
   isSelected,
   isOtherSelected,
@@ -644,8 +613,11 @@ function RouteCard({
   isContextMatch,
   isContextDim,
   isReady,
+  phaseSoftened,
+  editorialRole,
 }: {
   route: RouteRow;
+  rationale?: RouteRationale | null;
   onInspect?: () => void;
   isSelected?: boolean;
   isOtherSelected?: boolean;
@@ -656,6 +628,8 @@ function RouteCard({
   isContextMatch?: boolean;
   isContextDim?: boolean;
   isReady?: boolean;
+  phaseSoftened?: boolean;
+  editorialRole?: RouteEditorialRole;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -676,6 +650,15 @@ function RouteCard({
     : isHovered
     ? hoverShadow
     : undefined;
+  const editorialQuiet = editorialRole === "default" && !expanded && !isSelected && !isHovered;
+  const editorialLabel =
+    editorialRole === "recommended"
+      ? "Lead route"
+      : editorialRole === "improving"
+        ? "Strengthening"
+        : editorialRole === "risk"
+          ? "Needs watching"
+          : null;
 
   return (
     <div
@@ -690,7 +673,7 @@ function RouteCard({
           : "1.5px solid transparent",
         outlineOffset: isSelected ? -2 : -1,
         boxShadow,
-        opacity: isOtherSelected ? 0.42 : isOtherHovered ? 0.72 : isContextDim ? 0.85 : undefined,
+        opacity: isOtherSelected ? 0.42 : isOtherHovered ? 0.72 : editorialQuiet ? 0.54 : phaseSoftened ? 0.62 : isContextDim ? 0.85 : undefined,
         transition: "opacity 0.2s, outline 0.15s, box-shadow 0.15s",
       }}
     >
@@ -711,8 +694,22 @@ function RouteCard({
           </div>
         </div>
 
+        {editorialLabel ? <p className="crpv-r-card-editorial-label">{editorialLabel}</p> : null}
+
         {route.short_description ? (
           <p className="crpv-r-card-desc">{route.short_description}</p>
+        ) : null}
+
+        {rationale ? (
+          <div className="crpv-r-card-rationale">
+            <div className="crpv-r-card-rationale-top">
+              <span className="crpv-r-readiness-state">{rationale.readiness}</span>
+              <span className="crpv-r-card-rationale-state">{rationale.movementLabel}</span>
+              <span className="crpv-r-card-rationale-state">{rationale.confidenceLabel}</span>
+            </div>
+            {!editorialQuiet ? <p className="crpv-r-card-rationale-copy">{rationale.whyThisRouteExists}</p> : null}
+            {!editorialQuiet ? <p className="crpv-r-card-rationale-note">{rationale.readinessMeaning}</p> : null}
+          </div>
         ) : null}
 
         <div className="crpv-r-card-meta">
@@ -728,6 +725,38 @@ function RouteCard({
 
       {expanded ? (
         <div className="crpv-r-card-detail">
+          {rationale ? (
+            <div className="crpv-r-detail-section">
+              <p className="crpv-r-detail-label">Why this route</p>
+              <div className="crpv-r-rationale-stack">
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">Readiness</span>
+                  <p>{rationale.readinessMeaning}</p>
+                </div>
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">Confidence</span>
+                  <p>{rationale.confidenceLabel}</p>
+                </div>
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">What supports it</span>
+                  <p>{rationale.whatSupportsIt}</p>
+                </div>
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">What still feels uncertain</span>
+                  <p>{rationale.uncertainty}</p>
+                </div>
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">What still needs proof</span>
+                  <p>{rationale.mustBecomeTrue}</p>
+                </div>
+                <div className="crpv-r-rationale-row">
+                  <span className="crpv-r-rationale-key">What could weaken it</span>
+                  <p>{rationale.couldWeaken}</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {steps.length > 0 ? (
             <div className="crpv-r-detail-section">
               <p className="crpv-r-detail-label">Steps</p>
@@ -804,6 +833,7 @@ function RouteCard({
 function RoutesColumn({
   category,
   items,
+  rationales,
   onInspect,
   selectedRouteId,
   onSelect,
@@ -817,9 +847,15 @@ function RoutesColumn({
   isDeemphasized,
   isReady,
   hypothesisPhase,
+  phase,
+  subtitleOverride,
+  recommendedLabel,
+  recommendedReasonPrefix,
+  editorialRoles,
 }: {
   category: RouteCategory;
   items: RouteRow[];
+  rationales: Map<string, RouteRationale>;
   onInspect?: (route: RouteRow) => void;
   selectedRouteId?: string | null;
   onSelect?: (route: RouteRow) => void;
@@ -833,18 +869,27 @@ function RoutesColumn({
   isDeemphasized?: boolean;
   isReady?: boolean;
   hypothesisPhase?: boolean;
+  phase: string;
+  subtitleOverride?: string;
+  recommendedLabel?: string;
+  recommendedReasonPrefix?: string;
+  editorialRoles?: Map<string, RouteEditorialRole>;
 }) {
   const meta = CATEGORY_META[category];
 
   const sortedItems = useMemo(() => {
-    if (!recommendedRouteId) return items;
-    const idx = items.findIndex((r) => r.id === recommendedRouteId);
-    if (idx <= 0) return items;
-    const reordered = [...items];
-    const [rec] = reordered.splice(idx, 1);
-    reordered.unshift(rec);
-    return reordered;
-  }, [items, recommendedRouteId]);
+    return sortRoutesForPhase({
+      items,
+      rationales,
+      phase,
+      recommendedRouteId,
+    });
+  }, [items, phase, rationales, recommendedRouteId]);
+
+  const recommendedRationale = useMemo(
+    () => (recommendedRouteId ? rationales.get(recommendedRouteId) ?? null : null),
+    [rationales, recommendedRouteId],
+  );
 
   return (
     <section className="crpv-r-column">
@@ -853,7 +898,7 @@ function RoutesColumn({
           <span className="crpv-r-col-label">{meta.label}</span>
           <span className="crpv-r-col-count">{items.length}</span>
         </div>
-        <p className="crpv-r-col-subtitle">{hypothesisPhase ? meta.hypothesisSubtitle : meta.subtitle}</p>
+        <p className="crpv-r-col-subtitle">{subtitleOverride || (hypothesisPhase ? meta.hypothesisSubtitle : meta.subtitle)}</p>
         {(isContextMatch || isContextDim) && (
           <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 10px", visibility: isContextMatch ? "visible" : "hidden" }}>
             Most relevant to this step
@@ -869,11 +914,11 @@ function RoutesColumn({
               {route.id === recommendedRouteId && isReady && !hypothesisPhase && (
                 <div style={{ marginBottom: 6 }}>
                   <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 3px 0" }}>
-                    Recommended starting point
+                    {recommendedLabel || "Recommended starting point"}
                   </p>
-                  {recommendedReason && (
+                  {(recommendedRationale?.whatSupportsIt || recommendedReason) && (
                     <p style={{ fontSize: 11, color: "#888", margin: 0, lineHeight: 1.4 }}>
-                      <span style={{ fontWeight: 600, color: "#666" }}>Why this: </span>{recommendedReason}
+                      <span style={{ fontWeight: 600, color: "#666" }}>{recommendedReasonPrefix || "Why this: "}</span>{recommendedRationale?.whatSupportsIt || recommendedReason}
                     </p>
                   )}
                 </div>
@@ -881,17 +926,18 @@ function RoutesColumn({
               {route.id === recommendedRouteId && hypothesisPhase && (
                 <div style={{ marginBottom: 6 }}>
                   <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#aaa", textTransform: "uppercase", margin: "0 0 3px 0" }}>
-                    Strongest signal
+                    {recommendedLabel || "Strongest signal"}
                   </p>
-                  {recommendedReason && (
+                  {(recommendedRationale?.whyThisRouteExists || recommendedReason) && (
                     <p style={{ fontSize: 11, color: "#aaa", margin: 0, lineHeight: 1.4 }}>
-                      <span style={{ fontWeight: 600 }}>If this is true: </span>{recommendedReason}
+                      <span style={{ fontWeight: 600 }}>{recommendedReasonPrefix || "If this is true: "}</span>{recommendedRationale?.whyThisRouteExists || recommendedReason}
                     </p>
                   )}
                 </div>
               )}
               <RouteCard
                 route={route}
+                rationale={rationales.get(route.id) ?? null}
                 onInspect={onInspect ? () => onInspect(route) : undefined}
                 isSelected={selectedRouteId === route.id}
                 isOtherSelected={!!selectedRouteId && selectedRouteId !== route.id}
@@ -902,6 +948,14 @@ function RoutesColumn({
                 isContextMatch={isContextMatch}
                 isContextDim={isContextDim}
                 isReady={isReady}
+                editorialRole={editorialRoles?.get(route.id) ?? "default"}
+                phaseSoftened={softenRouteForPhase({
+                  phase,
+                  route,
+                  rationale: rationales.get(route.id) ?? null,
+                  recommendedRouteId,
+                  selectedRouteId,
+                })}
               />
               {route.id === recommendedRouteId && onStartRoute && !hypothesisPhase && (
                 <button
@@ -1072,6 +1126,8 @@ export function RoutesOrgPanel({
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
   const [hoveredRouteId, setHoveredRouteId]   = useState<string | null>(null);
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
+  const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
+  const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
 
   useEffect(() => {
     setSelectedRouteId(activeCompany?.selected_route_id ?? null);
@@ -1091,6 +1147,7 @@ export function RoutesOrgPanel({
 
   const phase        = activeCompany?.engagement_phase ?? "outside_signals";
   const hypothesisPh = isHypothesisPhase(phase);
+  const phasePriority = phaseNarrativePriority(phase);
 
   const fix     = useMemo(() => routes.filter((r) => String(r.category).toLowerCase() === "fix"),     [routes]);
   const improve = useMemo(() => routes.filter((r) => String(r.category).toLowerCase() === "improve"), [routes]);
@@ -1156,11 +1213,64 @@ export function RoutesOrgPanel({
   const recommendedRouteId = recommended?.id ?? null;
   const recommendedReason = recommended ? impactReason(recommended.breakdown.expectedImpact) : null;
 
+  const routeSeeds = useMemo(
+    () =>
+      routes.map((route) => {
+        const evidence = deriveClientEvidence(route);
+        const assumptions = deriveClientAssumptions(route, evidence);
+        return { route, evidence, assumptions };
+      }),
+    [routes],
+  );
+
+  const routeRationales = useMemo(
+    () =>
+      buildRouteRationales({
+        seeds: routeSeeds,
+        hypotheses: strategicHypothesisRows,
+        routeLinks: routeHypothesisDependencies,
+        selectedRouteId,
+        recommendedRouteId,
+        phase,
+      }),
+    [phase, recommendedRouteId, routeHypothesisDependencies, routeSeeds, selectedRouteId, strategicHypothesisRows],
+  );
+
+  const routeRationaleMap = useMemo(
+    () => new Map(routeRationales.map((rationale) => [rationale.routeId, rationale])),
+    [routeRationales],
+  );
+  const editorialRoles = useMemo(
+    () => buildRouteEditorialRoles({
+      items: routes,
+      rationales: routeRationaleMap,
+      phase,
+      recommendedRouteId,
+    }),
+    [phase, recommendedRouteId, routeRationaleMap, routes],
+  );
+
   const isReady = !nextBestMove || nextBestMove.type === "start_route";
 
   const topNeed = useMemo(
     () => [...(needs ?? [])].sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0] ?? null,
     [needs],
+  );
+
+  const leadRoute = useMemo(
+    () =>
+      selectedRoute ??
+      routes.find((route) => route.id === recommendedRouteId) ??
+      routeSeeds
+        .map((seed) => seed.route)
+        .find(Boolean) ??
+      null,
+    [recommendedRouteId, routeSeeds, routes, selectedRoute],
+  );
+
+  const leadRouteRationale = useMemo(
+    () => (leadRoute ? routeRationaleMap.get(leadRoute.id) ?? null : null),
+    [leadRoute, routeRationaleMap],
   );
 
 
@@ -1169,7 +1279,7 @@ export function RoutesOrgPanel({
       {nextBestMove && (
         <div style={{ marginBottom: 40 }}>
           <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 8px" }}>
-            {hypothesisPh ? "Most in focus" : "Do this next"}
+            {hypothesisPh ? "Most in focus" : phasePriority.phase === "flow" ? "What is shifting now" : "Do this next"}
           </p>
           {nextBestMove.type === "validate_needs" && topNeed ? (
             <>
@@ -1204,12 +1314,10 @@ export function RoutesOrgPanel({
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 4px" }}>
-          {hypothesisPh ? "Possible paths" : "Routes"}
+          {phasePriority.routes.introLabel}
         </p>
         <p style={{ fontSize: 12, color: "#888", margin: 0, lineHeight: 1.5 }}>
-          {hypothesisPh
-            ? "Candidate directions suggested by the evidence — not yet validated or prioritized."
-            : "These are possible ways to solve the problem — once we're confident we understand it."}
+          {phasePriority.routes.introCopy}
         </p>
       </div>
 
@@ -1235,19 +1343,30 @@ export function RoutesOrgPanel({
         </div>
       )}
 
+      {leadRoute && leadRouteRationale ? (
+        <div style={{ marginBottom: 24 }}>
+          <RouteWhyRisingPanel
+            route={leadRoute}
+            rationale={leadRouteRationale}
+            title={phasePriority.routes.panelTitle}
+            safeNowLabel={phasePriority.routes.safeNowLabel}
+          />
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="crpv-ws-placeholder cap">Loading routes…</div>
       ) : (
         <>
           {!isReady && (
             <p style={{ fontSize: 11, color: "#999", margin: "0 0 14px", fontStyle: "italic" }}>
-              You're not ready to choose yet — focus on learning first.
+              {phasePriority.routes.unreadyNote}
             </p>
           )}
           <div className="crpv-r-columns">
-            <RoutesColumn category="fix"     items={fix}     onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} />
-            <RoutesColumn category="improve" items={improve} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} />
-            <RoutesColumn category="create"  items={create}  onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} />
+            <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
+            <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
+            <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
           </div>
         </>
       )}

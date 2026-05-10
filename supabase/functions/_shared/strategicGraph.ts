@@ -49,6 +49,7 @@ type StatusRow = {
 };
 
 const OBJECT_TABLES: Record<string, string> = {
+  strategic_hypothesis: "strategic_hypotheses",
   job_step: "job_steps",
   odi_need: "odi_needs",
   route: "routes",
@@ -90,22 +91,36 @@ export async function upsertDependenciesForArtifact(
   companyId: string,
   artifact: { objectType: string; objectIds: string[] },
   dependencies: DependencyTarget[],
+  options?: {
+    deleteScope?: {
+      downstreamUpstreamObjectTypes?: string[];
+      upstreamDownstreamObjectTypes?: string[];
+    };
+  },
 ) {
   if (artifact.objectIds.length > 0) {
-    const { error: deleteDownstreamError } = await supabase
+    let downstreamDelete = supabase
       .from("object_dependencies")
       .delete()
       .eq("company_id", companyId)
       .eq("downstream_object_type", artifact.objectType)
       .in("downstream_object_id", artifact.objectIds);
+    if ((options?.deleteScope?.downstreamUpstreamObjectTypes?.length ?? 0) > 0) {
+      downstreamDelete = downstreamDelete.in("upstream_object_type", options!.deleteScope!.downstreamUpstreamObjectTypes!);
+    }
+    const { error: deleteDownstreamError } = await downstreamDelete;
     if (deleteDownstreamError) throw new Error(deleteDownstreamError.message || "Failed clearing downstream object dependencies.");
 
-    const { error: deleteUpstreamError } = await supabase
+    let upstreamDelete = supabase
       .from("object_dependencies")
       .delete()
       .eq("company_id", companyId)
       .eq("upstream_object_type", artifact.objectType)
       .in("upstream_object_id", artifact.objectIds);
+    if ((options?.deleteScope?.upstreamDownstreamObjectTypes?.length ?? 0) > 0) {
+      upstreamDelete = upstreamDelete.in("downstream_object_type", options!.deleteScope!.upstreamDownstreamObjectTypes!);
+    }
+    const { error: deleteUpstreamError } = await upstreamDelete;
     if (deleteUpstreamError) throw new Error(deleteUpstreamError.message || "Failed clearing upstream object dependencies.");
   }
 

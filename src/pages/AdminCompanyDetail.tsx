@@ -6,6 +6,7 @@ import FrameworkProvenancePanel from "@/components/admin/FrameworkProvenancePane
 import CompanyFilesPanel from "@/components/admin/CompanyFilesPanel";
 import CouncilRecommendationsPanel from "@/components/admin/CouncilRecommendationsPanel";
 import EvidenceInspectorPanel from "@/components/admin/EvidenceInspectorPanel";
+import StrategicHypothesesPanel from "@/components/admin/StrategicHypothesesPanel";
 import PublicSourceFiltersPanel from "@/components/admin/PublicSourceFiltersPanel";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import TopNav from "@/components/layout/TopNav";
@@ -196,6 +197,8 @@ export default function AdminCompanyDetail() {
         />
 
         <EvidenceInspectorPanel companyId={company.id} />
+
+        <StrategicHypothesesPanel companyId={company.id} />
 
         <CompanyFilesPanel companyId={company.id} companyName={company.name} mode="preview" />
 

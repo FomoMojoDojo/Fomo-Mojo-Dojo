@@ -29,6 +29,10 @@ import {
   type ProblemType,
   type EvidenceLevel,
 } from "../_shared/desiredOutcome.ts";
+import {
+  buildRouteWhyThisMattersNarrative,
+  rewriteRouteLanguage,
+} from "../../../src/lib/routeLanguage.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -2258,15 +2262,21 @@ function buildRouteDetailPayload(args: {
     },
   ].slice(0, 4);
 
-  const why_this_matters: string[] = [
-    routeShortDescription || "This route addresses a meaningful strategic gap.",
-    rankedOpps.length > 0
-      ? `Linked to ${rankedOpps.length} opportunity ${rankedOpps.length === 1 ? "signal" : "signals"}, led by ${rankedOpps[0].outcome}.`
-      : "No route-to-opportunity linkage exists yet, so this needs stronger evidence before prioritization.",
-    uniqueSteps.some((s) => s.has_gap)
-      ? "At least one related job step is still marked as a gap, so this route reduces visible execution risk."
-      : "Related checkpoints are already partly designed, so this route can tighten and scale what exists.",
-  ];
+  const why_this_matters = buildRouteWhyThisMattersNarrative({
+    category,
+    title: routeTitle,
+    shortDescription: routeShortDescription,
+    whyThisMatters: [
+      rankedOpps[0]?.outcome
+        ? `This path is worth testing if it changes ${String(rankedOpps[0].outcome || "").replace(/[.?!]+$/g, "")}.`
+        : null,
+      uniqueSteps.some((s) => s.has_gap)
+        ? `This path stays provisional until the linked gap in ${uniqueSteps[0]?.step_label || "the customer job"} is resolved.`
+        : null,
+    ].filter(Boolean) as string[],
+    opportunityOutcome: rankedOpps[0]?.outcome || "",
+    stepLabel: uniqueSteps[0]?.step_label || "",
+  });
 
   return { steps, evidence, why_this_matters };
 }
@@ -6043,10 +6053,13 @@ Deno.serve(async (req) => {
       `Framework guidance:\n${buildFrameworkBrief("routes", getFrameworkRoutingPlan("routes"))}\n\n` +
       `Rules:\n` +
       `- Create 4-12 routes total across fix, improve, create\n` +
-      `- Use the journey and opportunity context provided; routes should feel like logical initiatives, not raw issues\n` +
+      `- Use the journey and opportunity context provided; routes should feel like possible paths through a strategic tension, not capability buckets or project names\n` +
       `- Prioritize routes that directly reduce the client-stated strategic problems when provided\n` +
-      `- title should be 3-7 words and action-oriented\n` +
-      `- short_description should be 16-32 words and mention why the route matters\n` +
+      `- title should be 5-10 words, verb-led, and specific enough to imply a tradeoff, tension, or visible outcome\n` +
+      `- short_description should be 14-28 words and explain what tension the route is trying to change without turning into an implementation task\n` +
+      `- Favor titles like 'Reduce trust loss before operational value is experienced' or 'Make proof of reliability visible earlier in the buyer journey'\n` +
+      `- Avoid generic consulting language such as improve, enhance, strengthen, optimize, alignment, communication flow, capability building, or transformation unless the route also names a concrete business tension\n` +
+      `- Routes should not sound like roadmap tasks, feature lists, or internal project code names\n` +
       `- pts_value should be 1..10 and reflect likely score impact\n` +
       `- sort_order should rank strongest routes first within the whole set\n` +
       noIndustrySwitchConstraint +
@@ -7239,14 +7252,20 @@ Deno.serve(async (req) => {
       const effort = ["low", "medium", "high"].includes(String(route?.effort))
         ? String(route.effort)
         : "medium";
+      const rewrittenRoute = rewriteRouteLanguage({
+        category,
+        title: String(route?.title || ""),
+        shortDescription: String(route?.short_description || ""),
+        whyThisMatters: [],
+      });
 
       const routePayload = {
         company_id,
         user_id: user.id,
         frameworks_used: ensureRequiredFrameworkKeys(routeFrameworkKeys),
         category,
-        title: String(route?.title || ""),
-        short_description: String(route?.short_description || ""),
+        title: rewrittenRoute.title,
+        short_description: rewrittenRoute.shortDescription,
         pts_value: clamp(Number(route?.pts_value) || 1, 1, 10),
         effort,
         type: String(route?.type || routeType),
@@ -7264,8 +7283,8 @@ Deno.serve(async (req) => {
           company_id,
           user_id: user.id,
           category,
-          title: String(route?.title || ""),
-          short_description: String(route?.short_description || ""),
+          title: rewrittenRoute.title,
+          short_description: rewrittenRoute.shortDescription,
           pts_value: clamp(Number(route?.pts_value) || 1, 1, 10),
           effort,
           type: String(route?.type || routeType),
@@ -7284,7 +7303,7 @@ Deno.serve(async (req) => {
           id: insertedId,
           category: String(row.category || category),
           title: String(row.title || ""),
-          short_description: String(row.short_description || ""),
+          short_description: String(row.short_description || rewrittenRoute.shortDescription),
           effort: String(row.effort || effort),
           frameworks_used: ensureRequiredFrameworkKeys(Array.isArray(row.frameworks_used) ? row.frameworks_used as string[] : routeFrameworkKeys),
           sort_order: Math.max(1, Number(row.sort_order) || routesInserted + 1),
@@ -7293,8 +7312,8 @@ Deno.serve(async (req) => {
         if (insertedId) {
           const details = buildRouteDetailPayload({
             routeId: insertedId,
-            routeTitle: String(route?.title || ""),
-            routeShortDescription: String(route?.short_description || ""),
+            routeTitle: rewrittenRoute.title,
+            routeShortDescription: rewrittenRoute.shortDescription,
             category,
             opportunities: insertedOpportunities,
             allSteps: allFlatSteps,
