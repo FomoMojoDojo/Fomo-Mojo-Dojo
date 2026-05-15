@@ -12,13 +12,28 @@ export type RouteAssumption = {
   statement: string;
   status: "unproven" | "partial" | "supported";
   layer: "outside" | "org" | "customer" | "market";
-  // critical: true means this assumption gates the next evidence band.
-  // Unproven critical assumptions surface in "What would strengthen this".
   critical?: boolean;
-  // v1: free-text labels only — not linked to evidence_json ids.
-  // TODO v2: replace with evidence_signal_refs: Array<{signal_id, signal_type, confirmed}>
-  //          so assumption status can be auto-derived from linked signal confirmation state.
   evidence_refs?: string[];
+};
+
+export type RouteEvidenceSnippet = {
+  text: string;
+  source_file_id?: string | null;
+  source_label?: string | null;
+  confidence?: "direct" | "inferred";
+};
+
+export type RouteInsightsJson = {
+  pressure?: string | null;
+  pressure_short?: string | null;
+  evidence_snippets?: RouteEvidenceSnippet[] | null;
+  uncertainty?: string | null;
+  weakening_conditions?: string[] | null;
+  prerequisites?: string[] | null;
+  customer_impact?: string | null;
+  operational_impact?: string | null;
+  confidence_posture?: string | null;
+  movement_condition?: string | null;
 };
 
 export type RouteRow = {
@@ -27,6 +42,7 @@ export type RouteRow = {
   category: "fix" | "improve" | "create" | string;
   title: string;
   short_description?: string | null;
+  claim_id?: string | null;
   frameworks_used?: string[] | null;
   pts_value?: number | null;
   effort?: string | null;
@@ -42,6 +58,11 @@ export type RouteRow = {
   stale_reason?: string | null;
   updated_at?: string | null;
   created_at?: string;
+  // Phase 79 evidence graph fields
+  route_insights_json?: RouteInsightsJson | null;
+  source_file_ids?: string[] | null;
+  linked_tension_ids?: string[] | null;
+  linked_need_ids?: string[] | null;
 };
 
 export function useRoutes(companyId?: string) {
@@ -58,58 +79,23 @@ export function useRoutes(companyId?: string) {
     }
 
     let cancelled = false;
+    const controller = new AbortController();
 
     (async () => {
       setLoading(true);
       setError(null);
 
-      const primarySelect =
-        "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, assumptions_json, dependency_state, validation_state, evidence_state, stale_reason, updated_at, created_at";
-      const legacySelect =
-        "id, company_id, category, title, short_description, frameworks_used, pts_value, effort, type, sort_order, steps_json, evidence_json, why_this_matters_json, created_at";
-
       let { data, error } = await supabase
         .from("routes")
-        .select(primarySelect)
+        .select("*")
+        .abortSignal(controller.signal)
         .eq("company_id", companyId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(500);
 
-      if (error) {
-        const message = String(error.message || "").toLowerCase();
-        if (
-          message.includes("assumptions_json") ||
-          message.includes("dependency_state") ||
-          message.includes("validation_state") ||
-          message.includes("evidence_state") ||
-          message.includes("stale_reason") ||
-          message.includes("updated_at")
-        ) {
-          const legacyResult = await supabase
-            .from("routes")
-            .select(legacySelect)
-            .eq("company_id", companyId)
-            .order("sort_order", { ascending: true })
-            .order("created_at", { ascending: true })
-            .limit(500);
-          data = (legacyResult.data ?? []) as RouteRow[];
-          error = legacyResult.error;
-          if (!error) {
-            data = (data ?? []).map((route) => ({
-              ...route,
-              assumptions_json: null,
-              dependency_state: null,
-              validation_state: null,
-              evidence_state: null,
-              stale_reason: null,
-              updated_at: null,
-            }));
-          }
-        }
-      }
-
       if (cancelled) return;
+      if (controller.signal.aborted) return;
 
       if (error) {
         const { data: opps, error: oppError } = await supabase
@@ -175,7 +161,15 @@ export function useRoutes(companyId?: string) {
           setError(null);
         }
       } else {
-        const routeRows = (data as RouteRow[]) ?? [];
+        const routeRows = ((data as RouteRow[]) ?? []).map((route) => ({
+          ...route,
+          assumptions_json: route.assumptions_json ?? null,
+          dependency_state: route.dependency_state ?? null,
+          validation_state: route.validation_state ?? null,
+          evidence_state: route.evidence_state ?? null,
+          stale_reason: route.stale_reason ?? null,
+          updated_at: route.updated_at ?? null,
+        }));
 
         if (routeRows.length > 0) {
           setItems(routeRows);
@@ -248,6 +242,7 @@ export function useRoutes(companyId?: string) {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [companyId]);
 

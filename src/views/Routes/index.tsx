@@ -1,19 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
-import { Wrench, LineChart, Rocket } from "lucide-react";
 import { useCompany } from "@/hooks/useCompany";
+import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useOpportunities } from "@/hooks/useOpportunities";
 import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useSolutionIdeas } from "@/hooks/useSolutionIdeas";
-import { useInputs } from "@/hooks/useInputs";
 import { useRoutes } from "@/views/Routes/useRoutes";
+import { useStrategyCascade } from "@/hooks/useStrategyCascade";
+import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import { useOdiNeeds } from "@/hooks/useOdiNeeds";
+import { useStrategicHypotheses, useRouteHypothesisDependencies } from "@/hooks/useStrategicHypotheses";
+import { useInspectionStack } from "@/hooks/useInspectionStack";
 import { MetaBadge } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import RouteCard from "./RouteCard";
-import RouteInspectPanel from "./RouteInspectPanel";
+import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
+import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
+import StrategicDirectionInspectPanel from "@/components/direction/StrategicDirectionInspectPanel";
+import InspectionShell from "@/components/inspection/InspectionShell";
 import type { RouteRow } from "./useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
@@ -24,6 +32,7 @@ import {
   type FocusClassification,
 } from "@/lib/initiativeFocus";
 import { routeDetail } from "./routeDetail";
+import { buildRouteRationales } from "@/lib/routeRationale";
 import {
   routeRelativeTime,
   buildDecisionBullets,
@@ -32,6 +41,38 @@ import {
   insertRouteDecisionEvent,
 } from "./routeDecision";
 import { computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
+import { inferStrategicCenter } from "@/lib/strategicCenter";
+import { buildCustomerRealityNarrative } from "@/lib/customerRealityNarrative";
+import { buildPositioningLensNarrative } from "@/lib/positioningLensNarrative";
+import { buildDecisionPortfolio } from "@/lib/decisionSystem";
+import type { RouteDecision } from "@/lib/decisionSystem";
+import { evaluatePositioningStrength } from "@/lib/positioningStrength";
+import { useDerivedTensions } from "@/hooks/useDerivedTensions";
+import TensionBlock from "@/components/tensions/TensionBlock";
+import type { StrategicTension } from "@/lib/tensionTypes";
+import { useStrategicDecisions } from "@/hooks/useStrategicDecisions";
+import {
+  deriveDecisionFieldCondition,
+  confidenceMovementColor,
+  confidenceMovementLabel,
+  decisionStateColor,
+  decisionStateBorderColor,
+  type NarrativeDecision,
+} from "@/lib/decisionPostureNarrative";
+import { DECISION_STATE_LABELS, CONFIDENCE_STATE_LABELS, latestConfidenceDirection, latestMemoryEntry, type DecisionRouteRelationship } from "@/lib/strategicDecisionDomain";
+import {
+  buildConfidenceAnatomyReport,
+  buildDecisionOnlyContext,
+  isPostureAtRisk,
+  POSTURE_RANK,
+} from "@/lib/confidenceAnatomy";
+import { buildMojoScoreReadinessReport } from "@/lib/mojoScoreFromAnatomy";
+import {
+  buildStrategicMovementEvents,
+  deriveTopMovementItems,
+  REVERSIBILITY_GLYPHS,
+  POSTURE_IMPACT_COLORS,
+} from "@/lib/strategicMovementNarrative";
 
 const c = {
   bg: "#faf7f6",
@@ -47,23 +88,164 @@ const c = {
   teal: "#5F9B8C",
 };
 
-const CATEGORY_META: Record<string, { title: string; subtitle: string; accent: string }> = {
-  fix: {
-    title: "Fix",
-    subtitle: "Address gaps that are holding back your score.",
+function DecisionContextBlock({ decisions }: { decisions: NarrativeDecision[] }) {
+  const active = decisions.filter((d) => d.decision_state !== "retired");
+  if (active.length === 0) return null;
+
+  return (
+    <section style={{ paddingTop: 14, paddingBottom: 14, borderBottom: `1px solid ${c.lineFaint}` }}>
+      <p className="mb-3 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.6 }}>
+        Active Decisions · {active.length}
+      </p>
+      <div className="space-y-[10px]">
+        {active.slice(0, 5).map((d, i) => {
+          const borderColor = decisionStateBorderColor(d.decision_state);
+          const stateColor = decisionStateColor(d.decision_state);
+          const stateLabel = DECISION_STATE_LABELS[d.decision_state] ?? d.decision_state;
+          const confidenceLabel = CONFIDENCE_STATE_LABELS[d.confidence_state] ?? d.confidence_state;
+          const latestDir = latestConfidenceDirection(d.confidence_movement);
+          const movColor = confidenceMovementColor(latestDir);
+          const movLabel = confidenceMovementLabel(latestDir);
+          const latestMem = latestMemoryEntry(d.decision_memory);
+          return (
+            <div
+              key={i}
+              style={{ borderLeft: `2px solid ${borderColor}`, paddingLeft: 14 }}
+            >
+              <div className="flex items-start gap-3 flex-wrap">
+                <p className="flex-1 font-sans text-[14px] font-medium leading-[1.4]" style={{ color: c.charcoal }}>
+                  {d.title}
+                </p>
+                <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: stateColor }}>
+                  {stateLabel}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center gap-3 flex-wrap">
+                <span className="font-mono text-[9px]" style={{ color: c.muted, opacity: 0.7 }}>
+                  {confidenceLabel}
+                </span>
+                {movLabel && (
+                  <span className="font-mono text-[9px]" style={{ color: movColor }}>
+                    {movLabel}
+                  </span>
+                )}
+                {d.current_posture && (
+                  <span className="font-sans text-[12px] leading-[1.4]" style={{ color: c.secondary }}>
+                    {d.current_posture}
+                  </span>
+                )}
+              </div>
+              {latestMem && (
+                <p className="mt-1 font-sans text-[11px] leading-[1.4]" style={{ color: c.muted, fontStyle: "italic" }}>
+                  {latestMem.entry}
+                </p>
+              )}
+              {(() => {
+                const anatomy = buildConfidenceAnatomyReport(buildDecisionOnlyContext(d));
+                const topPressure = anatomy.pressurePoints[0] ?? null;
+                const topUnlock = anatomy.unlockPaths[0] ?? null;
+                const atRisk = isPostureAtRisk(anatomy.overallPosture);
+                if (!atRisk && !anatomy.temporalNote) return null;
+                return (
+                  <div className="mt-2 space-y-[3px]">
+                    {atRisk && topPressure && (
+                      <p className="font-sans text-[11px] leading-[1.4]" style={{ color: "#b06a3c", fontStyle: "italic" }}>
+                        {topPressure}
+                      </p>
+                    )}
+                    {atRisk && topUnlock && (
+                      <p className="font-sans text-[11px] leading-[1.4]" style={{ color: c.muted }}>
+                        → {topUnlock.action}
+                      </p>
+                    )}
+                    {anatomy.temporalNote && (
+                      <p className="font-sans text-[10px] leading-[1.4]" style={{ color: c.muted, fontStyle: "italic", opacity: 0.65 }}>
+                        {anatomy.temporalNote}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+type PressureGroupKey = "under_pressure" | "active_commitment" | "under_validation" | "competing" | "directional";
+
+const PRESSURE_GROUP_ORDER: PressureGroupKey[] = [
+  "under_pressure",
+  "active_commitment",
+  "under_validation",
+  "competing",
+  "directional",
+];
+
+const PRESSURE_GROUP_META: Record<PressureGroupKey, { label: string; description: string; accent: string }> = {
+  under_pressure: {
+    label: "Under pressure",
+    description: "Commitment is weakening or paused — confidence has shifted.",
     accent: c.coral,
   },
-  improve: {
-    title: "Improve",
-    subtitle: "Strengthen what's partially in place.",
-    accent: c.amber,
-  },
-  create: {
-    title: "Create",
-    subtitle: "Build new capabilities for growth.",
+  active_commitment: {
+    label: "Active commitments",
+    description: "Sufficient confidence to continue investing in these paths.",
     accent: c.teal,
   },
+  under_validation: {
+    label: "Under validation",
+    description: "Enough signal to pursue — not yet safe to commit broadly.",
+    accent: c.amber,
+  },
+  competing: {
+    label: "Competing interpretations",
+    description: "Paths in tension with each other — one may undermine or contradict the other.",
+    accent: "#9298B5",
+  },
+  directional: {
+    label: "Directional paths",
+    description: "Early-direction signal — investigation without commitment.",
+    accent: c.muted,
+  },
 };
+
+const EDITORIAL_CONDITION_LABELS: Record<string, string> = {
+  fragmented:         "Confidence is fragmented across paths — no clear lead.",
+  validation_heavy:   "Most paths are stacked in validation — commitment not yet safe.",
+  over_concentrated:  "Investment is over-concentrated — spreading risk unevenly.",
+  converging:         "Paths are converging toward commitment.",
+  scaling_ahead:      "Committing faster than confidence currently supports.",
+  balanced:           "Commitment posture looks balanced.",
+};
+
+function pressureGroupKey(
+  decision: RouteDecision | undefined,
+  relationship: DecisionRouteRelationship | null,
+): PressureGroupKey {
+  if (relationship === "contradicting") return "competing";
+  if (!decision) return "directional";
+  if (
+    decision.commitmentState === "pause" ||
+    decision.commitmentState === "unwind" ||
+    decision.sequencingPosture === "operationally_blocked" ||
+    decision.blockedReason !== null
+  ) return "under_pressure";
+  if (decision.commitmentState === "commit" || decision.commitmentState === "scale") return "active_commitment";
+  if (decision.commitmentState === "validate") return "under_validation";
+  return "directional";
+}
+
+function consequenceSortValue(commitmentState: string | undefined): number {
+  if (commitmentState === "unwind") return 5;
+  if (commitmentState === "pause") return 4;
+  if (commitmentState === "explore") return 2;
+  if (commitmentState === "validate") return 1;
+  if (commitmentState === "commit" || commitmentState === "scale") return 0;
+  return 3;
+}
 
 function focusSortValue(focus: FocusClassification | undefined) {
   if (!focus) return 0;
@@ -72,166 +254,97 @@ function focusSortValue(focus: FocusClassification | undefined) {
   return 0;
 }
 
-function categoryIcon(category: string) {
-  if (category === "fix") return <Wrench className="h-4 w-4" />;
-  if (category === "improve") return <LineChart className="h-4 w-4" />;
-  return <Rocket className="h-4 w-4" />;
-}
-
-function RoutesColumn({
-  category,
-  items,
+function PressureGroupSection({
+  groupKey,
+  routes,
   opportunities,
   steps,
   initiativeContext,
   opportunityFocusById,
   routeOutcomeMap,
+  routeDecisionMap,
+  routeDecisionAttributionMap,
+  allTensions,
   onInspect,
   selectedRouteId,
   onSelect,
+  claimsMap,
 }: {
-  category: string;
-  items: RouteRow[];
+  groupKey: PressureGroupKey;
+  routes: RouteRow[];
   opportunities: OpportunityRow[];
   steps: JobStepRow[];
   initiativeContext: ReturnType<typeof deriveInitiativeContext>;
   opportunityFocusById: Map<string, FocusClassification>;
   routeOutcomeMap: Map<string, { statement: string; leadingIndicator: string }>;
+  routeDecisionMap: Map<string, RouteDecision>;
+  routeDecisionAttributionMap: Map<string, { title: string; decision_state: string }>;
+  allTensions: StrategicTension[];
   onInspect?: (route: RouteRow) => void;
   selectedRouteId?: string | null;
   onSelect?: (route: RouteRow) => void;
+  claimsMap?: Map<string, import("@/lib/claims/useCompanyClaims").ClaimRow>;
 }) {
-  const meta = CATEGORY_META[category] ?? {
-    title: category,
-    subtitle: "Routes with a non-standard category.",
-    accent: c.amber,
-  };
+  const meta = PRESSURE_GROUP_META[groupKey];
 
   return (
-    <section
-      className="overflow-hidden rounded-[18px] border p-4"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
+    <section style={{ borderTop: `1px solid ${meta.accent}40`, paddingTop: 16, paddingBottom: 8 }}>
       <div className="mb-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span style={{ color: meta.accent }}>{categoryIcon(category)}</span>
-            <h2 className="font-sans text-[32px] font-semibold leading-[1.05]" style={{ color: c.charcoal }}>
-              {meta.title}
-            </h2>
-          </div>
-          <MetaBadge>{items.length}</MetaBadge>
-        </div>
-
-        <p className="mt-2 font-sans text-[14px] leading-[1.55]" style={{ color: c.secondary }}>
-          {meta.subtitle}
+        <h2 className="font-sans text-[16px] font-semibold leading-[1.1]" style={{ color: c.charcoal }}>
+          {meta.label}
+        </h2>
+        <p className="mt-1 font-sans text-[12px] leading-[1.5]" style={{ color: c.muted }}>
+          {meta.description}
         </p>
-        <div className="mt-3 border-b" style={{ borderColor: c.line }} />
       </div>
 
-      <div className="space-y-3">
-        {[...items]
+      <div className="space-y-0">
+        {[...routes]
           .map((route) => ({
             route,
-            detail: routeDetail({
-              route,
-              opportunities,
-              steps,
-              initiativeContext,
-              opportunityFocusById,
-            }),
+            detail: routeDetail({ route, opportunities, steps, initiativeContext, opportunityFocusById }),
           }))
           .sort((a, b) => {
+            const aDecision = routeDecisionMap.get(a.route.id);
+            const bDecision = routeDecisionMap.get(b.route.id);
+            const consequenceRank = consequenceSortValue(bDecision?.commitmentState) - consequenceSortValue(aDecision?.commitmentState);
+            if (consequenceRank !== 0) return consequenceRank;
             const focusRank = focusSortValue(b.detail.focus) - focusSortValue(a.detail.focus);
             if (focusRank !== 0) return focusRank;
             return Number(a.route.sort_order ?? 999) - Number(b.route.sort_order ?? 999);
           })
           .map(({ route, detail }) => {
-          return (
-            <RouteCard
-              key={route.id}
-              route={route}
-              accent={meta.accent}
-              steps={detail.steps}
-              evidence={detail.evidence}
-              whyThisMatters={detail.whyThisMatters}
-              frameworks={detail.frameworks}
-              linkedDesiredOutcome={routeOutcomeMap.get(route.id) || null}
-              focus={detail.focus}
-              onInspect={onInspect ? () => onInspect(route) : undefined}
-              isSelected={selectedRouteId === route.id}
-              isOtherSelected={!!selectedRouteId && selectedRouteId !== route.id}
-              onSelect={onSelect ? () => onSelect(route) : undefined}
-            />
-          );
-        })}
-        {items.length === 0 ? (
-          <div
-            className="rounded-lg border px-3 py-4 text-center font-sans text-[13px]"
-            style={{ borderColor: c.line, color: c.secondary, background: c.panelTint }}
-          >
-            No routes in this category yet.
-          </div>
-        ) : null}
+            const decision = routeDecisionMap.get(route.id);
+            const routeTensions = allTensions.filter((t) => t.affected_routes.includes(route.id)).slice(0, 2);
+            const decisionAttribution = routeDecisionAttributionMap.get(route.id) ?? null;
+            return (
+              <RouteCard
+                key={route.id}
+                route={route}
+                accent={meta.accent}
+                steps={detail.steps}
+                evidence={detail.evidence}
+                whyThisMatters={detail.whyThisMatters}
+                frameworks={detail.frameworks}
+                linkedDesiredOutcome={routeOutcomeMap.get(route.id) || null}
+                focus={detail.focus}
+                onInspect={onInspect ? () => onInspect(route) : undefined}
+                isSelected={selectedRouteId === route.id}
+                isOtherSelected={!!selectedRouteId && selectedRouteId !== route.id}
+                onSelect={onSelect ? () => onSelect(route) : undefined}
+                commitmentState={decision?.commitmentState}
+                sequencingNarrative={decision?.sequencingNarrative ?? null}
+                commitmentRationale={decision?.commitmentRationale ?? null}
+                routeTensions={routeTensions}
+                parentDecisionLabel={decisionAttribution?.title ?? null}
+                isParentDestabilizing={decisionAttribution?.decision_state === "destabilizing"}
+                claimId={route.claim_id ?? null}
+                claimState={route.claim_id ? (claimsMap?.get(route.claim_id)?.state ?? null) : null}
+              />
+            );
+          })}
       </div>
     </section>
-  );
-}
-
-function groupStats(
-  inputs: Array<{ group_key: string; completeness: number; status: string; input_label: string; score_impact: number }>,
-  groupKey: string,
-) {
-  const group = inputs.filter((item) => item.group_key === groupKey);
-  if (group.length === 0) {
-    return {
-      percent: 0,
-      text: "No mapped inputs yet for this section.",
-    };
-  }
-
-  const percent = Math.round(group.reduce((sum, item) => sum + Number(item.completeness || 0), 0) / group.length);
-  const gaps = group
-    .filter((item) => item.status === "gap" || item.status === "not_started")
-    .sort((a, b) => Number(b.score_impact || 0) - Number(a.score_impact || 0));
-
-  return {
-    percent,
-    text: gaps[0]
-      ? `${gaps[0].input_label} is currently the highest-impact gap.`
-      : "Core inputs are in place; keep evidence current.",
-  };
-}
-
-function StatBand({
-  label,
-  percent,
-  text,
-  accent,
-}: {
-  label: string;
-  percent: number;
-  text: string;
-  accent: string;
-}) {
-  const bounded = Math.max(0, Math.min(100, percent));
-  return (
-    <div className="rounded-xl border p-4" style={{ borderColor: c.line, background: c.panel }}>
-      <div className="mb-2 flex items-center justify-between">
-        <p className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: c.charcoal }}>
-          {label}
-        </p>
-        <span className="font-mono text-[12px] font-semibold" style={{ color: accent }}>
-          {bounded}%
-        </span>
-      </div>
-      <div className="h-[6px] w-full rounded-full" style={{ background: c.lineFaint }}>
-        <div className="h-full rounded-full" style={{ width: `${bounded}%`, background: accent }} />
-      </div>
-      <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
-        {text}
-      </p>
-    </div>
   );
 }
 
@@ -249,41 +362,27 @@ function DecisionSummaryBanner({
   onClear: () => void;
 }) {
   const bullets = buildDecisionBullets(detail, linkedOutcome);
-  const catKey = String(route.category || "improve").toLowerCase();
-  const catMeta = CATEGORY_META[catKey] ?? CATEGORY_META.improve;
   const points = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
 
   return (
-    <section
-      className="rounded-[18px] border px-5 py-4"
-      style={{ borderColor: c.teal, background: "#F0FAF7" }}
-    >
+    <section style={{ borderLeft: `3px solid ${c.teal}`, paddingLeft: 20, paddingTop: 4, paddingBottom: 4 }}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-3">
             <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.teal }}>
-              Chosen path
-            </span>
-            <span
-              className="rounded-full border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
-              style={{ background: `${catMeta.accent}15`, color: catMeta.accent, borderColor: `${catMeta.accent}40` }}
-            >
-              {catMeta.title}
+              Lead commitment
             </span>
             {points !== null && (
-              <span className="font-mono text-[10px] font-semibold" style={{ color: catMeta.accent }}>
-                +{points} pts potential
+              <span className="font-mono text-[10px] font-semibold" style={{ color: c.teal }}>
+                +{points} pts
               </span>
             )}
           </div>
 
-          <h3 className="mb-2 font-sans text-[18px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+          <h3 className="mb-3 font-sans text-[26px] font-semibold leading-tight" style={{ color: c.charcoal }}>
             {route.title || "Untitled route"}
           </h3>
 
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.teal }}>
-            We chose this route because:
-          </p>
           <ul className="space-y-1.5">
             {bullets.map((bullet, i) => (
               <li
@@ -296,7 +395,7 @@ function DecisionSummaryBanner({
               </li>
             ))}
           </ul>
-          <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted }}>
+          <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted, opacity: 0.65 }}>
             {savedAt
               ? `Saved decision · last updated ${routeRelativeTime(savedAt)}`
               : "Saving…"}
@@ -309,9 +408,148 @@ function DecisionSummaryBanner({
           className="mt-1 shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]"
           style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
         >
-          Clear ✕
+          Clear
         </button>
       </div>
+    </section>
+  );
+}
+
+function CommitmentReviewBlock({
+  portfolio,
+  routeOutcomeMap,
+  items,
+  opportunities,
+  steps,
+  initiativeContext,
+  opportunityFocusById,
+  onSelect,
+}: {
+  portfolio: { safeToCommit: string[]; blocked: string[]; routes: RouteDecision[]; escalations: { detail: string }[] };
+  routeOutcomeMap: Map<string, { statement: string; leadingIndicator: string }>;
+  items: RouteRow[];
+  opportunities: OpportunityRow[];
+  steps: JobStepRow[];
+  initiativeContext: ReturnType<typeof deriveInitiativeContext>;
+  opportunityFocusById: Map<string, FocusClassification>;
+  onSelect: (route: RouteRow) => void;
+}) {
+  const supportableDecision = useMemo(() => {
+    return portfolio.routes.find(
+      (d) => d.commitmentState === "commit" || d.commitmentState === "scale",
+    ) ?? null;
+  }, [portfolio.routes]);
+
+  const supportableRoute = useMemo(() => {
+    if (!supportableDecision) return null;
+    return items.find((r) => r.id === supportableDecision.routeId) ?? null;
+  }, [supportableDecision, items]);
+
+  const blockedCount = portfolio.blocked.length;
+  const validatingCount = portfolio.routes.filter((r) => r.commitmentState === "validate").length;
+  const primaryBlocker = portfolio.escalations[0]?.detail ?? null;
+  const catKey = String(supportableRoute?.category || "improve").toLowerCase();
+  const catMeta = CATEGORY_META[catKey] ?? CATEGORY_META.improve;
+  const points = supportableRoute && typeof supportableRoute.pts_value === "number" ? Math.round(supportableRoute.pts_value) : null;
+
+  const saferIfLine = useMemo(() => {
+    if (!supportableDecision) return null;
+    if (supportableDecision.blockedReason) return supportableDecision.blockedReason;
+    if (supportableDecision.sequencingPosture === "waiting_on_customer_confirmation") {
+      return "Additional customer interviews would strengthen confidence before committing.";
+    }
+    if (supportableDecision.sequencingPosture === "needs_prerequisite_proof") {
+      return "One foundational route needs to prove out first.";
+    }
+    if (supportableDecision.sequencingPosture === "sequencing_conflict") {
+      return "A conflicting commitment exists — resolve sequencing before proceeding.";
+    }
+    return null;
+  }, [supportableDecision]);
+
+  if (!supportableRoute) {
+    return (
+      <section style={{ paddingTop: 12, paddingBottom: 16, borderBottom: `1px solid ${c.lineFaint}` }}>
+        <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+          Commitment review
+        </p>
+        <p className="mt-2 font-sans text-[16px] leading-[1.45]" style={{ color: c.secondary }}>
+          {validatingCount > 0
+            ? `${validatingCount} ${validatingCount === 1 ? "route remains" : "routes remain"} in validation — commitment readiness hasn't settled yet.`
+            : "No route has reached a supportable state. Validation continues."}
+        </p>
+        {primaryBlocker && (
+          <p className="mt-2 font-sans text-[13px] leading-[1.5]" style={{ color: c.muted }}>
+            {primaryBlocker}
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  const detail = routeDetail({ route: supportableRoute, opportunities, steps, initiativeContext, opportunityFocusById });
+  const linkedOutcome = routeOutcomeMap.get(supportableRoute.id) ?? null;
+  const bullets = buildDecisionBullets(detail, linkedOutcome);
+
+  return (
+    <section style={{ borderLeft: `3px solid ${c.teal}`, paddingLeft: 20, paddingTop: 16, paddingBottom: 16 }}>
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.teal }}>
+          Most supportable route
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: catMeta.accent }}>
+          {catMeta.title}
+        </span>
+        {points !== null && (
+          <span className="font-mono text-[10px] font-semibold" style={{ color: catMeta.accent }}>
+            +{points} pts potential
+          </span>
+        )}
+        {blockedCount > 0 && (
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.coral }}>
+            {blockedCount} {blockedCount === 1 ? "route" : "routes"} blocked
+          </span>
+        )}
+        {validatingCount > 0 && (
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.amber }}>
+            {validatingCount} validating
+          </span>
+        )}
+      </div>
+
+      <h2 className="mb-3 font-sans text-[26px] font-semibold leading-tight" style={{ color: c.charcoal }}>
+        {supportableRoute.title || "Untitled route"}
+      </h2>
+
+      {bullets.length > 0 && (
+        <ul className="mb-3 space-y-1.5">
+          {bullets.slice(0, 3).map((bullet, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-2 font-sans text-[14px] leading-[1.6]"
+              style={{ color: c.secondary }}
+            >
+              <span style={{ color: c.teal }}>·</span>
+              <span>{bullet}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {saferIfLine && (
+        <p className="mb-3 font-sans text-[12px] leading-[1.5]" style={{ color: c.muted, fontStyle: "italic" }}>
+          {saferIfLine}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onSelect(supportableRoute)}
+        className="font-mono text-[10px] uppercase tracking-[0.1em] underline"
+        style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+      >
+        Select as chosen path →
+      </button>
     </section>
   );
 }
@@ -319,7 +557,7 @@ function DecisionSummaryBanner({
 export default function RoutesView() {
   const { activeCompany } = useCompany();
   const auditMode = isGenericAuditCompany(activeCompany);
-  const [inspectRoute, setInspectRoute] = useState<RouteRow | null>(null);
+  const { stack, top, open: openFrame, push: pushFrame, pop: popFrame, clear: clearFrame, updateTopLens } = useInspectionStack();
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
 
@@ -329,17 +567,21 @@ export default function RoutesView() {
     setDecisionSavedAt(activeCompany?.selected_route_updated_at ?? null);
   }, [activeCompany?.id]);
   const { loading, items, error } = useRoutes(activeCompany?.id);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const { item: cascade } = useStrategyCascade(activeCompany?.id);
+  const { item: positioning } = usePositioningCanvas(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
   const { items: opportunities } = useOpportunities(activeCompany?.id);
+  const { needs } = useOdiNeeds(activeCompany?.id);
   const { items: managedOutcomes } = useManagedOutcomes(activeCompany?.id);
   const { items: solutionIdeas } = useSolutionIdeas(activeCompany?.id);
-  const { query: inputsQuery } = useInputs(activeCompany?.id);
-  const inputs = inputsQuery.data ?? [];
   const { signals: sourceSignals } = useSourceConfidence({
     companyId: activeCompany?.id,
     areaScoresJson: activeCompany?.area_scores_json,
     evidenceStatus: activeCompany?.evidence_status,
   });
+  // Must be declared before any useMemo that references decisions (avoids temporal dead zone)
+  const { decisions } = useStrategicDecisions(activeCompany?.id);
   const initiativeContext = useMemo(
     () =>
       deriveInitiativeContext({
@@ -356,9 +598,16 @@ export default function RoutesView() {
     return map;
   }, [initiativeContext, opportunities]);
 
-  const fix = items.filter((route) => String(route.category).toLowerCase() === "fix");
-  const improve = items.filter((route) => String(route.category).toLowerCase() === "improve");
-  const create = items.filter((route) => String(route.category).toLowerCase() === "create");
+  const routeRelationshipMap = useMemo(() => {
+    const map = new Map<string, DecisionRouteRelationship>();
+    for (const d of decisions) {
+      for (const r of d.routes) {
+        if (!map.has(r.route_id)) map.set(r.route_id, r.relationship);
+      }
+    }
+    return map;
+  }, [decisions]);
+
   const routeOutcomeMap = useMemo(() => {
     const managedById = new Map(
       managedOutcomes.map((outcome) => [
@@ -392,6 +641,180 @@ export default function RoutesView() {
     () => items.find((r) => r.id === selectedRouteId) ?? null,
     [items, selectedRouteId],
   );
+
+  // Rationale hooks — loaded alongside routes; needed for inspect panel confidence posture
+  const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
+  const { data: routeHypothesisDeps = [] } = useRouteHypothesisDependencies(activeCompany?.id);
+
+  const routeSeeds = useMemo(
+    () => items.map((route) => ({
+      route,
+      evidence: Array.isArray(route.evidence_json) ? route.evidence_json : [],
+      assumptions: Array.isArray(route.assumptions_json) ? route.assumptions_json : [],
+    })),
+    [items],
+  );
+
+  const routeRationales = useMemo(
+    () => buildRouteRationales({
+      seeds: routeSeeds,
+      hypotheses: strategicHypothesisRows,
+      routeLinks: routeHypothesisDeps,
+      selectedRouteId,
+      phase: activeCompany?.engagement_phase ?? "outside_signals",
+    }),
+    [routeSeeds, strategicHypothesisRows, routeHypothesisDeps, selectedRouteId, activeCompany?.engagement_phase],
+  );
+
+  const routeRationaleMap = useMemo(
+    () => new Map(routeRationales.map((r) => [r.routeId, r])),
+    [routeRationales],
+  );
+
+  const strategicCenter = useMemo(
+    () => inferStrategicCenter({ activeRows: strategicHypothesisRows, routeSeeds, phase: activeCompany?.engagement_phase ?? "outside_signals" }),
+    [strategicHypothesisRows, routeSeeds, activeCompany?.engagement_phase],
+  );
+
+  const customerRealityNarrative = useMemo(
+    () => buildCustomerRealityNarrative(needs, items, cascade ?? null),
+    [needs, items, cascade],
+  );
+
+  const positioningNarrative = useMemo(
+    () => buildPositioningLensNarrative(positioning ?? null, cascade ?? null, items),
+    [positioning, cascade, items],
+  );
+
+  const portfolio = useMemo(
+    () => buildDecisionPortfolio({
+      routes: items,
+      rationales: routeRationales,
+      strategicCenter,
+      customerReality: customerRealityNarrative,
+      positioningNarrative,
+      phase: activeCompany?.engagement_phase ?? "outside_signals",
+    }),
+    [items, routeRationales, strategicCenter, customerRealityNarrative, positioningNarrative, activeCompany?.engagement_phase],
+  );
+
+  const routeDecisionMap = useMemo(
+    () => new Map(portfolio.routes.map((d) => [d.routeId, d])),
+    [portfolio.routes],
+  );
+
+  const pressureGroups = useMemo(() => {
+    const groups = new Map<PressureGroupKey, RouteRow[]>(
+      PRESSURE_GROUP_ORDER.map((k) => [k, []]),
+    );
+    for (const route of items) {
+      const decision = routeDecisionMap.get(route.id);
+      const relationship = routeRelationshipMap.get(route.id) ?? null;
+      const key = pressureGroupKey(decision, relationship);
+      groups.get(key)!.push(route);
+    }
+    return PRESSURE_GROUP_ORDER
+      .map((key) => ({ key, routes: groups.get(key)! }))
+      .filter((g) => g.routes.length > 0);
+  }, [items, routeDecisionMap, routeRelationshipMap]);
+
+  const needsById = useMemo(() => new Map(needs.map((n) => [n.id, n])), [needs]);
+  const REVIEW_STATES = ["needs_review", "stale", "contradicted", "revalidate"];
+
+  const positioningStrength = useMemo(
+    () => positioning ? evaluatePositioningStrength(positioning) : undefined,
+    [positioning],
+  );
+
+  const decisionFieldCondition = useMemo(
+    () => deriveDecisionFieldCondition(decisions),
+    [decisions],
+  );
+
+  const routeDecisionAttributionMap = useMemo(() => {
+    const map = new Map<string, { title: string; decision_state: string }>();
+    for (const d of decisions) {
+      for (const r of d.routes) {
+        if (!map.has(r.route_id)) {
+          map.set(r.route_id, { title: d.title, decision_state: d.decision_state });
+        }
+      }
+    }
+    return map;
+  }, [decisions]);
+
+  const readinessReport = useMemo(() => {
+    const active = decisions.filter((d) => d.decision_state !== "retired");
+    if (active.length === 0) return null;
+    // Pick the decision with the worst posture (most in need of attention)
+    const anatomies = active.map((d) => ({
+      d,
+      anatomy: buildConfidenceAnatomyReport(buildDecisionOnlyContext(d)),
+    }));
+    const worst = anatomies.reduce((prev, curr) =>
+      POSTURE_RANK[curr.anatomy.overallPosture] < POSTURE_RANK[prev.anatomy.overallPosture] ? curr : prev,
+    );
+    return buildMojoScoreReadinessReport(worst.anatomy, worst.d.confidence_movement);
+  }, [decisions]);
+
+  const topMovementItems = useMemo(() => {
+    if (decisions.length === 0) return [];
+    const events = buildStrategicMovementEvents(decisions);
+    return deriveTopMovementItems(events, 2);
+  }, [decisions]);
+
+  const { all: allTensions, forContext: tensionsForContext, blockers: tensionBlockers } = useDerivedTensions({
+    routes: items,
+    needs,
+    canvas: positioning ?? null,
+    cascade: cascade ?? null,
+    sourceSignals,
+    portfolio,
+    hypotheses: strategicHypothesisRows,
+    positioningStrength,
+  });
+  const routeTensions = tensionsForContext("routes", 3);
+
+  // Derive the route/need objects being inspected from the top stack frame
+  const topRoute = useMemo(
+    () => top?.kind === "route" ? (items.find((r) => r.id === top.objectId) ?? null) : null,
+    [top, items],
+  );
+  const topNeed = useMemo(
+    () => top?.kind === "need" ? (needsById.get(top.objectId) ?? null) : null,
+    [top, needsById],
+  );
+
+  const inspectDetail = useMemo<RouteInspectDetail | null>(() => {
+    if (!topRoute) return null;
+    const d = routeDetail({ route: topRoute, opportunities, steps, initiativeContext, opportunityFocusById });
+    return { steps: d.steps, evidence: d.evidence, whyThisMatters: d.whyThisMatters, frameworks: d.frameworks, rankedOpps: d.rankedOpps };
+  }, [topRoute, opportunities, steps, initiativeContext, opportunityFocusById]);
+
+  const inspectRationale = useMemo(
+    () => topRoute ? (routeRationaleMap.get(topRoute.id) ?? null) : null,
+    [topRoute, routeRationaleMap],
+  );
+
+  const inspectRouteDecision = useMemo(
+    () => topRoute ? (portfolio.routes.find((d) => d.routeId === topRoute.id) ?? null) : null,
+    [topRoute, portfolio],
+  );
+
+  const topDirectionCompanyId = useMemo(
+    () => top?.kind === "direction" ? top.objectId : null,
+    [top],
+  );
+
+  const topNeedStaleNote = useMemo(() => {
+    if (!topNeed) return null;
+    if (latestExclusionAt && isArtifactStale(topNeed, latestExclusionAt)) return "Needs review after excluded inputs";
+    const state = String((topNeed as unknown as Record<string, unknown>).dependency_state ?? "").toLowerCase();
+    if (REVIEW_STATES.includes(state)) {
+      return (String((topNeed as unknown as Record<string, unknown>).stale_reason ?? "") || "This need may need review.");
+    }
+    return null;
+  }, [topNeed, latestExclusionAt]);
 
   const selectedDetail = useMemo(() => {
     if (!selectedRoute) return null;
@@ -443,17 +866,18 @@ export default function RoutesView() {
   const currentScore = Math.round(Number(activeCompany?.mojo_score ?? 0));
   const potentialScore = Math.round(Number(activeCompany?.potential_score ?? 0));
   const totalPts = items.reduce((sum, route) => sum + Math.max(0, Number(route.pts_value || 0)), 0);
-  const inputTotal = inputs.length;
-  const inputComplete = inputs.filter((item) => item.status === "complete").length;
-  const criticalGaps = inputs.filter((item) => item.status === "gap" || item.status === "not_started").length;
 
-  const foundationStats = groupStats(inputs, "foundation");
-  const executionStats = groupStats(inputs, "execution");
-  const evidenceStats = groupStats(inputs, "market_evidence");
+  const flaggedNeedsCount = needs.filter((n) =>
+    REVIEW_STATES.includes(String((n as unknown as Record<string, unknown>).dependency_state ?? "").toLowerCase())
+  ).length;
+  const editorialHeadline = decisionFieldCondition ?? EDITORIAL_CONDITION_LABELS[portfolio.portfolioState] ?? "Commitment posture is uncertain.";
+  const primaryPressure = readinessReport?.ceilingReason ?? portfolio.escalations[0]?.detail ?? null;
+  const safestCommitment = portfolio.safeToCommit[0] ?? null;
+  const activeSignals = strategicHypothesisRows.filter((h) => h.hypothesis.is_active).slice(0, 5);
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-screen strategic-surface"
       style={{
         background: c.bg,
         backgroundImage:
@@ -465,23 +889,17 @@ export default function RoutesView() {
       <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
         <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
-        <div className="mb-6">
-          <div className="flex flex-wrap items-start gap-3">
-            <div>
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {activeCompany?.name || "No company selected"}
-              </div>
-              <h1 className="mt-1 font-sans text-[34px] font-semibold leading-[1.1]" style={{ color: c.charcoal }}>
-                Routes
-              </h1>
-              <p className="mojo-under-title font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
-                Click any route to expand steps, evidence needed, and why this matters.
-              </p>
-              <div className="mt-3">
-                <MetaBadge>{`Initiative: ${initiativeContext.primaryJourneyTitle}`}</MetaBadge>
-              </div>
-            </div>
-          </div>
+        <div className="mb-1" style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9298B5" }}>
+            Commitment Review · {activeCompany?.name || "No company selected"} · {initiativeContext.primaryJourneyTitle}
+          </p>
+          <Link
+            to="/preview/client-refine/workshop?tab=council"
+            className="font-mono text-[10px] uppercase tracking-[0.1em] underline"
+            style={{ color: "#6a9e94", opacity: 0.7 }}
+          >
+            Council →
+          </Link>
           <GenericAuditTraceNote
             active={auditMode}
             className="mt-3 max-w-5xl"
@@ -493,83 +911,176 @@ export default function RoutesView() {
         </div>
 
         {!activeCompany?.id ? (
-          <div className="rounded-[24px] border px-6 py-12 text-center" style={{ borderColor: c.line, background: c.panel }}>
+          <div className="px-0 py-12 text-center">
             <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
               Select a company to view route data.
             </p>
           </div>
         ) : loading ? (
-          <div className="rounded-[24px] border px-6 py-12 text-center" style={{ borderColor: c.line, background: c.panel }}>
+          <div className="px-0 py-12 text-center">
             <p className="font-mono text-[12px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
               Loading routes…
             </p>
           </div>
         ) : error ? (
-          <div className="rounded-[24px] border px-6 py-12 text-center" style={{ borderColor: c.line, background: c.panel }}>
+          <div className="px-0 py-12 text-center">
             <p className="font-sans text-[15px]" style={{ color: c.coral }}>
               Failed to load routes: {error}
             </p>
           </div>
         ) : (
-          <div className="space-y-5">
-            <section className="rounded-[18px] border px-5 py-4" style={{ borderColor: c.line, background: c.panel }}>
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex min-w-[220px] items-center gap-4">
-                  <div>
-                    <p className="font-sans text-[54px] font-black leading-none tracking-tight" style={{ color: c.charcoal }}>
-                      {currentScore}
-                    </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-                      Current
-                    </p>
-                  </div>
-                  <div className="h-10 w-px" style={{ background: c.line }} />
-                  <div>
-                    <p className="font-mono text-[11px]" style={{ color: c.teal }}>
-                      {`+${Math.max(0, potentialScore - currentScore)} reachable`}
-                    </p>
-                    <p className="mt-1 font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                      {inputComplete} of {inputTotal} inputs complete · {criticalGaps} critical gaps
-                    </p>
-                  </div>
-                </div>
+          <div className="space-y-0">
 
-                <div className="flex items-end gap-6">
-                  <div className="text-right">
-                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.teal }}>
-                      {potentialScore}
-                    </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-                      Reachable
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.amber }}>
-                      {items.length}
-                    </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-                      Routes
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-sans text-[34px] font-bold leading-none" style={{ color: c.coral }}>
-                      {Math.round(totalPts)}
-                    </p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-                      Total Pts
-                    </p>
-                  </div>
+            {/* ── FIELD CONDITION + DECISION POSTURE ───────────────────── */}
+            <section style={{ paddingTop: 14, paddingBottom: 24, borderBottom: `1px solid ${c.line}` }}>
+              <div className="flex items-center gap-3 flex-wrap">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: readinessReport ? (readinessReport.readinessCeiling < 35 ? c.coral : readinessReport.readinessCeiling < 55 ? c.amber : c.muted) : c.muted }}>
+                  {readinessReport ? readinessReport.postureLabel : "Commitment posture"}
+                </p>
+                {readinessReport && (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: readinessReport.movementColor }}>
+                    {readinessReport.movementLabel}
+                  </p>
+                )}
+              </div>
+              <h2 className="mt-3 font-sans font-semibold leading-[1.2] max-w-3xl" style={{ fontSize: 44, color: c.charcoal }}>
+                {editorialHeadline}
+              </h2>
+              {primaryPressure && (
+                <p className="mt-2 font-sans text-[13px] leading-[1.45] max-w-2xl" style={{ color: c.coral, fontStyle: "italic", opacity: 0.85 }}>
+                  {primaryPressure}
+                </p>
+              )}
+              {portfolio.escalations.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {portfolio.escalations.map((esc, i) => (
+                    <span key={i} className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${esc.severity === "warning" ? c.coral : c.line}`, color: esc.severity === "warning" ? c.coral : c.muted }}>
+                      {esc.title.toUpperCase()}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* ── COMMITMENT CONDITION ROWS ─────────────────────────────── */}
+            <section style={{ paddingTop: 14, paddingBottom: 6 }}>
+              <div className="grid grid-cols-1 gap-x-10 gap-y-3 md:grid-cols-[56%_44%]">
+                <div>
+                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.55 }}>Condition</p>
+                  <p className="font-sans text-[15px] leading-[1.5]" style={{ color: c.charcoal }}>{portfolio.portfolioNarrative}</p>
+                </div>
+                <div>
+                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.teal, opacity: 0.75 }}>Safest commitment</p>
+                  <p className="font-sans text-[14px] font-medium leading-[1.5]" style={{ color: c.charcoal }}>
+                    {safestCommitment ?? portfolio.portfolioNextMove}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 md:grid-cols-2" style={{ opacity: 0.72 }}>
+                <div>
+                  <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+                    {flaggedNeedsCount > 0
+                      ? `${flaggedNeedsCount} ${flaggedNeedsCount === 1 ? "proof point" : "proof points"} flagged — re-validate before committing.`
+                      : "No active escalations."}
+                  </p>
+                </div>
+                <div>
+                  <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+                    {customerRealityNarrative.postureHeadline}
+                  </p>
                 </div>
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <StatBand label="Foundation" percent={foundationStats.percent} text={foundationStats.text} accent={c.amber} />
-              <StatBand label="Execution" percent={executionStats.percent} text={executionStats.text} accent="#5D9B58" />
-              <StatBand label="Evidence" percent={evidenceStats.percent} text={evidenceStats.text} accent={c.coral} />
-            </section>
+            {/* ── CONTEXT BAR ───────────────────────────────────────────── */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1" style={{ paddingTop: 6, paddingBottom: 6, borderBottom: `1px solid ${c.lineFaint}` }}>
+              {flaggedNeedsCount > 0 && (
+                <Link to="/job-steps#needs" className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral, textDecoration: "underline" }}>
+                  {flaggedNeedsCount} {flaggedNeedsCount === 1 ? "proof point" : "proof points"} need review →
+                </Link>
+              )}
+              <span className="font-mono text-[9px]" style={{ color: c.muted, opacity: 0.55 }}>
+                {currentScore} readiness · +{Math.max(0, potentialScore - currentScore)} reachable · {items.length} {items.length === 1 ? "path" : "paths"}
+              </span>
+            </div>
 
-            {selectedRoute && selectedDetail && (
+            {/* ── STRATEGIC SIGNALS ─────────────────────────────────────── */}
+            {activeSignals.length > 0 && (
+              <section style={{ paddingTop: 10, paddingBottom: 10, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <div className="space-y-[10px]">
+                  {activeSignals.map((card) => {
+                    const isBlocked = card.weakeningClaims.length > 0 || card.hypothesis.hypothesis_state === "contradicted";
+                    const stateLabel =
+                      card.hypothesis.hypothesis_state === "strengthened" ? "GAINING"
+                      : card.hypothesis.hypothesis_state === "contradicted" ? "CRITICAL"
+                      : card.hypothesis.hypothesis_state === "reframed"    ? "REFRAMED"
+                      : "HOLDING";
+                    const stateColor = stateLabel === "GAINING" ? c.teal : stateLabel === "CRITICAL" ? c.coral : c.muted;
+                    return (
+                      <div key={card.hypothesis.id} className="flex items-start gap-3">
+                        <span className="mt-[6px] h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: isBlocked ? c.coral : c.teal }} />
+                        <p className="flex-1 font-sans text-[13px] leading-[1.45]" style={{ color: c.charcoal }}>
+                          {card.hypothesis.statement}
+                        </p>
+                        <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.12em]" style={{ color: stateColor }}>
+                          {stateLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* ── STRATEGIC TENSIONS ────────────────────────────────────── */}
+            {routeTensions.length > 0 && (
+              <section style={{ paddingTop: 16, paddingBottom: 16, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <TensionBlock
+                  tensions={routeTensions}
+                  context="routes"
+                  showBlockerCallout={tensionBlockers.length > 0}
+                />
+              </section>
+            )}
+
+            {/* ── DECISION CONTEXT ──────────────────────────────────────── */}
+            {decisions.length > 0 && (
+              <DecisionContextBlock decisions={decisions} />
+            )}
+
+            {/* ── MOVEMENT SIGNALS ──────────────────────────────────────── */}
+            {topMovementItems.length > 0 && (
+              <section style={{ paddingTop: 12, paddingBottom: 12, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.6 }}>
+                    Field conditions
+                  </p>
+                  <Link to="/movement" className="font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.5, textDecoration: "none" }}>
+                    All movement →
+                  </Link>
+                </div>
+                <div className="space-y-[6px]">
+                  {topMovementItems.map((item) => (
+                    <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                      <span aria-hidden style={{ flexShrink: 0, fontSize: 12, paddingTop: 2, color: POSTURE_IMPACT_COLORS[item.postureImpact] }}>
+                        {REVERSIBILITY_GLYPHS[item.reversibility]}
+                      </span>
+                      <div>
+                        <p style={{ fontSize: 12, fontWeight: 500, color: c.charcoal, margin: 0, lineHeight: "1.4" }}>
+                          {item.headline}
+                        </p>
+                        <p style={{ fontSize: 11, color: c.secondary, margin: "2px 0 0", lineHeight: "1.4" }}>
+                          {item.meaning}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* ── DECISION BANNER OR COMMITMENT REVIEW ──────────────────── */}
+            {selectedRoute && selectedDetail ? (
               <DecisionSummaryBanner
                 route={selectedRoute}
                 detail={selectedDetail}
@@ -577,17 +1088,22 @@ export default function RoutesView() {
                 savedAt={decisionSavedAt}
                 onClear={handleClearDecision}
               />
+            ) : (
+              <CommitmentReviewBlock
+                portfolio={portfolio}
+                routeOutcomeMap={routeOutcomeMap}
+                items={items}
+                opportunities={opportunities}
+                steps={steps}
+                initiativeContext={initiativeContext}
+                opportunityFocusById={opportunityFocusById}
+                onSelect={handleSelectRoute}
+              />
             )}
 
             {latestExclusionAt && (
-              <div
-                className="rounded-md border px-4 py-3"
-                style={{ borderColor: "#FAC846", background: "#FAC84618" }}
-              >
-                <p
-                  className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold"
-                  style={{ color: "#FAC846" }}
-                >
+              <div style={{ borderLeft: `2px solid #FAC846`, paddingLeft: 12, paddingTop: 4, paddingBottom: 4 }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#FAC846" }}>
                   Outside signals have been excluded. Route confidence may have changed.
                 </p>
                 <p className="font-sans text-[12px] mt-1" style={{ color: "#6E847F" }}>
@@ -596,64 +1112,99 @@ export default function RoutesView() {
               </div>
             )}
 
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-              <RoutesColumn
-                category="fix"
-                items={fix}
-                opportunities={opportunities}
-                steps={steps}
-                initiativeContext={initiativeContext}
-                opportunityFocusById={opportunityFocusById}
-                routeOutcomeMap={routeOutcomeMap}
-                onInspect={setInspectRoute}
-                selectedRouteId={selectedRouteId}
-                onSelect={handleSelectRoute}
-              />
-              <RoutesColumn
-                category="improve"
-                items={improve}
-                opportunities={opportunities}
-                steps={steps}
-                initiativeContext={initiativeContext}
-                opportunityFocusById={opportunityFocusById}
-                routeOutcomeMap={routeOutcomeMap}
-                onInspect={setInspectRoute}
-                selectedRouteId={selectedRouteId}
-                onSelect={handleSelectRoute}
-              />
-              <RoutesColumn
-                category="create"
-                items={create}
-                opportunities={opportunities}
-                steps={steps}
-                initiativeContext={initiativeContext}
-                opportunityFocusById={opportunityFocusById}
-                routeOutcomeMap={routeOutcomeMap}
-                onInspect={setInspectRoute}
-                selectedRouteId={selectedRouteId}
-                onSelect={handleSelectRoute}
-              />
-            </section>
+            {/* ── DECISION PRESSURE GROUPS ──────────────────────────────── */}
+            <div className="space-y-2" style={{ paddingTop: 12 }}>
+              {pressureGroups.length === 0 ? (
+                <p className="font-sans text-[13px] py-4" style={{ color: c.muted }}>
+                  No commitment paths defined yet.
+                </p>
+              ) : (
+                pressureGroups.map(({ key, routes }) => (
+                  <PressureGroupSection
+                    key={key}
+                    groupKey={key}
+                    routes={routes}
+                    opportunities={opportunities}
+                    steps={steps}
+                    initiativeContext={initiativeContext}
+                    opportunityFocusById={opportunityFocusById}
+                    routeOutcomeMap={routeOutcomeMap}
+                    routeDecisionMap={routeDecisionMap}
+                    routeDecisionAttributionMap={routeDecisionAttributionMap}
+                    allTensions={allTensions}
+                    onInspect={(route) => openFrame({ kind: "route", objectId: route.id, lens: "overview" })}
+                    selectedRouteId={selectedRouteId}
+                    onSelect={handleSelectRoute}
+                    claimsMap={claimsMap}
+                  />
+                ))
+              )}
+            </div>
           </div>
         )}
       </main>
 
-      <RouteInspectPanel
-        open={!!inspectRoute}
-        onClose={() => setInspectRoute(null)}
-        route={inspectRoute}
-        opportunities={opportunities}
-        steps={steps}
-        initiativeContext={initiativeContext}
-        opportunityFocusById={opportunityFocusById}
-        areaScoresJson={activeCompany?.area_scores_json}
-        linkedDesiredOutcome={inspectRoute ? (routeOutcomeMap.get(inspectRoute.id) || null) : null}
-        currentPhase={activeCompany?.engagement_phase ?? "outside_signals"}
-        staleNote={
-          inspectRoute && latestExclusionAt && isArtifactStale(inspectRoute, latestExclusionAt)
-            ? "Needs review after excluded inputs"
-            : null
-        }
+      <InspectionShell
+        stack={stack}
+        onPop={popFrame}
+        onClear={clearFrame}
+        renderRoute={(frame) => (
+          <RouteInspectPanel
+            key={frame.objectId}
+            shellMode
+            initialLens={frame.lens}
+            onLensChange={updateTopLens}
+            open
+            onClose={clearFrame}
+            route={topRoute}
+            detail={inspectDetail}
+            rationale={inspectRationale}
+            areaScoresJson={activeCompany?.area_scores_json}
+            linkedDesiredOutcome={topRoute ? (routeOutcomeMap.get(topRoute.id) || null) : null}
+            currentPhase={activeCompany?.engagement_phase ?? "outside_signals"}
+            staleNote={topRoute && latestExclusionAt && isArtifactStale(topRoute, latestExclusionAt) ? "Needs review after excluded inputs" : null}
+            linkedNeeds={needs}
+            onInspectNeed={(needId) => pushFrame({ kind: "need", objectId: needId, lens: "overview" })}
+            onInspectDirection={activeCompany?.id ? () => pushFrame({ kind: "direction", objectId: activeCompany.id, lens: "overview" }) : undefined}
+            cascade={cascade}
+            positioning={positioning}
+            routeDecision={inspectRouteDecision}
+          />
+        )}
+        renderNeed={(frame) => {
+          const prevFrame = stack.length > 1 ? stack[stack.length - 2] : null;
+          const linkedRouteIds = prevFrame?.kind === "route" ? [prevFrame.objectId] : [];
+          return (
+            <NeedInspectPanel
+              key={frame.objectId}
+              shellMode
+              initialLens={frame.lens}
+              onLensChange={updateTopLens}
+              open
+              onClose={clearFrame}
+              need={topNeed}
+              routes={items}
+              onInspectRoute={(routeId) => pushFrame({ kind: "route", objectId: routeId, lens: "overview" })}
+              currentPhase={activeCompany?.engagement_phase ?? "outside_signals"}
+              staleNote={topNeedStaleNote}
+              linkedRouteIds={linkedRouteIds}
+            />
+          );
+        }}
+        renderDirection={(frame) => (
+          <StrategicDirectionInspectPanel
+            key={frame.objectId}
+            shellMode
+            initialLens={frame.lens}
+            onLensChange={updateTopLens}
+            open
+            onClose={clearFrame}
+            companyId={topDirectionCompanyId}
+            routes={items}
+            needs={needs}
+            onInspectRoute={(routeId) => pushFrame({ kind: "route", objectId: routeId, lens: "overview" })}
+          />
+        )}
       />
     </div>
   );

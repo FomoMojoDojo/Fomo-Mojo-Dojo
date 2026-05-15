@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Circle } from "lucide-react";
-import { MetaBadge } from "@/components/ui/semantic-badges";
 import type { RouteRow } from "./useRoutes";
 import { alignmentLevelFromFocus, type FocusClassification } from "@/lib/initiativeFocus";
 import AlignmentCircle from "@/components/ui/AlignmentCircle";
+import type { StrategicTension } from "@/lib/tensionTypes";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
+import type { ClaimState } from "@/lib/claimState";
 
 const c = {
   line: "#DDE6D1",
@@ -18,6 +20,15 @@ const c = {
   teal: "#5F9B8C",
 };
 
+const COMMITMENT_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  commit:   { label: "Holding",           color: "#5F9B8C" },
+  scale:    { label: "Holding",           color: "#5F9B8C" },
+  validate: { label: "Validating",        color: "#FAC846" },
+  explore:  { label: "Not yet warranted", color: "#9298B5" },
+  pause:    { label: "Fragile",           color: "#FF7D2D" },
+  unwind:   { label: "Remains blocked",   color: "#c44233" },
+};
+
 type DetailStep = {
   id: string;
   title: string;
@@ -30,11 +41,11 @@ type DetailEvidence = {
   status: "complete" | "in_progress" | "missing";
 };
 
-function effortTone(effort: string | null | undefined) {
+function effortColor(effort: string | null | undefined) {
   const key = String(effort || "").toLowerCase();
-  if (key === "low") return { bg: "#EEF6E7", fg: "#5F9B8C", border: "#BDD8CF" };
-  if (key === "high") return { bg: "#FFF0E6", fg: "#FF7D2D", border: "#FFD1B4" };
-  return { bg: "#FFF6D8", fg: "#C68B00", border: "#F3D77A" };
+  if (key === "low") return c.teal;
+  if (key === "high") return c.coral;
+  return c.amber;
 }
 
 export type { DetailStep, DetailEvidence };
@@ -52,6 +63,12 @@ export default function RouteCard({
   isSelected = false,
   isOtherSelected = false,
   onSelect,
+  commitmentState,
+  sequencingNarrative,
+  commitmentRationale,
+  routeTensions = [],
+  claimId,
+  claimState,
 }: {
   route: RouteRow;
   accent: string;
@@ -68,7 +85,21 @@ export default function RouteCard({
   isSelected?: boolean;
   isOtherSelected?: boolean;
   onSelect?: () => void;
+  commitmentState?: string;
+  sequencingNarrative?: string | null;
+  commitmentRationale?: string | null;
+  routeTensions?: StrategicTension[];
+  parentDecisionLabel?: string | null;
+  isParentDestabilizing?: boolean;
+  claimId?: string | null;
+  claimState?: ClaimState | null;
 }) {
+  // TEMP DIAGNOSTIC — remove after badge confirmed visible
+  console.warn("[RouteCard]", route?.title ?? "unknown", {
+    claimId: route?.claim_id,
+    claimState: claimState,
+  });
+
   const [expanded, setExpanded] = useState(false);
   const completedSteps = useMemo(
     () => steps.filter((step) => step.status === "complete").length,
@@ -76,33 +107,36 @@ export default function RouteCard({
   );
   const totalSteps = steps.length;
   const points = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
-  const effort = String(route.effort || "medium").toUpperCase();
-  const effortStyle = effortTone(route.effort);
-  const dependencyLabel =
-    String(route.category || "").toLowerCase() === "fix"
-      ? "Foundation"
-      : String(route.category || "").toLowerCase() === "improve"
-        ? "Execution"
-        : "Evidence";
+  const effort = String(route.effort || "medium");
+  const effortCol = effortColor(route.effort);
   const alignmentLevel = alignmentLevelFromFocus(focus);
+  const commitmentStatus = commitmentState ? (COMMITMENT_STATUS_LABELS[commitmentState] ?? null) : null;
+  const missingCount = evidence.filter((e) => e.status === "missing").length;
+  const hasBlocker = routeTensions.some((t) => t.isCommitmentBlocker);
+  const isCommitted = commitmentState === "commit" || commitmentState === "scale";
+  const contentOpacity =
+    commitmentState === "commit" || commitmentState === "scale" ? 1.0 :
+    commitmentState === "validate" ? 0.96 :
+    commitmentState === "explore"  ? 0.91 :
+    commitmentState === "pause"    ? 0.85 :
+    commitmentState === "unwind"   ? 0.80 : 1.0;
 
   return (
     <div
-      className="overflow-hidden rounded-xl border"
+      className="overflow-hidden"
       style={{
-        borderColor: isSelected ? c.teal : c.line,
-        background: c.paperRaised,
-        boxShadow: isSelected
-          ? `0 0 0 2px ${c.teal}30, 0 2px 8px rgba(0,0,0,0.06)`
-          : "0 1px 1px rgba(0,0,0,0.03)",
-        opacity: isOtherSelected ? 0.42 : 1,
-        transition: "opacity 0.2s, border-color 0.15s, box-shadow 0.15s",
+        borderLeft: isSelected ? `3px solid ${c.teal}` : `1px solid transparent`,
+        borderBottom: `1px solid ${c.lineFaint}`,
+        paddingLeft: isSelected ? 1 : 3,
+        background: "transparent",
+        opacity: isOtherSelected ? (isCommitted ? 0.65 : 0.35) : 1,
+        transition: "opacity 0.2s, border-color 0.15s",
       }}
     >
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="w-full cursor-pointer p-4 text-left"
+        className="w-full cursor-pointer px-4 pt-4 pb-3 text-left"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
@@ -112,71 +146,95 @@ export default function RouteCard({
               </h3>
               {isSelected && (
                 <span
-                  className="font-mono text-[9px] uppercase tracking-[0.12em] rounded-full px-2 py-[2px]"
-                  style={{ background: `${c.teal}18`, color: c.teal, border: `1px solid ${c.teal}50` }}
+                  className="font-mono text-[9px] uppercase tracking-[0.12em]"
+                  style={{ color: c.teal }}
                 >
                   Chosen path
                 </span>
               )}
+              {commitmentStatus && !isSelected && (
+                <span
+                  className="font-mono text-[9px] uppercase tracking-[0.1em]"
+                  style={{ color: commitmentStatus.color }}
+                >
+                  {commitmentStatus.label}
+                </span>
+              )}
             </div>
+            {parentDecisionLabel && (
+              <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: isParentDestabilizing ? "#c44233" : c.muted, opacity: 0.75 }}>
+                {isParentDestabilizing ? "⊗ " : "· "}{parentDecisionLabel}
+              </p>
+            )}
             <p className="mt-2 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
               {route.short_description || "No route description yet."}
             </p>
-            <p className="mt-2 font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                Desired outcome:
-              </span>{" "}
-              {linkedDesiredOutcome?.statement || "Not linked yet."}
-            </p>
-            <p className="mt-1 font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                Indicator:
-              </span>{" "}
-              {linkedDesiredOutcome?.leadingIndicator || "Missing until outcome link exists."}
-            </p>
+            {linkedDesiredOutcome?.statement && (
+              <p className="mt-1.5 font-sans text-[12px] leading-[1.45]" style={{ color: c.muted }}>
+                {linkedDesiredOutcome.statement}
+              </p>
+            )}
+            {!expanded && whyThisMatters.length > 0 && (
+              <p className="mt-2 font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary, fontStyle: "italic" }}>
+                <span style={{ color: accent, fontStyle: "normal", marginRight: 5 }}>·</span>
+                {whyThisMatters[0]}
+              </p>
+            )}
 
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              {claimId && claimState && (
+                <ClaimStateBadge state={claimState} claimId={claimId} size="sm" />
+              )}
               <span className="font-mono text-[11px] font-semibold" style={{ color: accent }}>
                 {points !== null ? `+${points} pts` : "+0 pts"}
               </span>
+              <AlignmentCircle
+                level={alignmentLevel}
+                title={`Goal alignment ${alignmentLevel * 25}%`}
+              />
               <span
-                className="inline-flex items-center rounded-full border px-1.5 py-1"
-                style={{ borderColor: c.line, color: c.secondary, background: "#FFFFFF" }}
+                className="font-mono text-[10px] uppercase tracking-[0.08em]"
+                style={{ color: effortCol }}
               >
-                <AlignmentCircle
-                  level={alignmentLevel}
-                  title={`Goal alignment ${alignmentLevel * 25}%`}
-                />
+                {effort}
               </span>
-              <span
-                className="rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
-                style={{ background: effortStyle.bg, color: effortStyle.fg, borderColor: effortStyle.border }}
-              >
-                {effort} effort
-              </span>
-              <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {completedSteps}/{totalSteps} steps
-              </span>
+              <div className="ml-auto flex items-center gap-2">
+                {missingCount > 0 && (
+                  <span className="font-mono text-[9px] uppercase tracking-[0.07em]" style={{ color: c.muted, opacity: 0.6 }}>
+                    {commitmentState === "pause" || commitmentState === "unwind"
+                      ? "still unresolved"
+                      : commitmentState === "commit" || commitmentState === "scale"
+                        ? "gaps remain"
+                        : "unresolved"}
+                  </span>
+                )}
+                {hasBlocker && (
+                  <span className="font-mono text-[9px]" style={{ color: c.coral, opacity: 0.5 }}>⊗</span>
+                )}
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                  {completedSteps}/{totalSteps} steps
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-0.5 shrink-0" style={{ color: c.muted }}>
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <div className="mt-0.5 shrink-0" style={{ color: c.muted, opacity: 0.5 }}>
+            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </div>
         </div>
       </button>
 
       {expanded ? (
-        <div className="border-t px-4 pb-4 pt-3 animate-fade-in-up" style={{ borderColor: c.line, background: c.paper }}>
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+        <div className="px-4 pb-4 pt-0" style={{ borderTop: `1px solid ${c.lineFaint}`, background: "transparent", opacity: contentOpacity }}>
+          <div className="pt-3" style={{ opacity: 0.9 }}>
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.65 }}>
               Steps
             </p>
-            <div className="mt-2 space-y-2">
+            <div className="mt-1.5 space-y-1.5">
               {steps.map((step) => (
                 <div key={step.id} className="flex items-start gap-2">
                   <Circle
-                    className="mt-[2px] h-3.5 w-3.5"
+                    className="mt-[2px] h-3 w-3 shrink-0"
                     style={{
                       color:
                         step.status === "complete"
@@ -187,7 +245,13 @@ export default function RouteCard({
                       fill: step.status === "complete" ? c.teal : "transparent",
                     }}
                   />
-                  <span className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+                  <span
+                    className="font-sans text-[11.5px] leading-[1.5]"
+                    style={{
+                      color: step.status === "complete" ? c.secondary : c.muted,
+                      opacity: step.status === "complete" ? 1 : step.status === "in_progress" ? 0.82 : 0.65,
+                    }}
+                  >
                     {step.title}
                   </span>
                 </div>
@@ -195,15 +259,15 @@ export default function RouteCard({
             </div>
           </div>
 
-          <div className="mt-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-              Evidence Needed
+          <div className="mt-3" style={{ opacity: 0.9 }}>
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.65 }}>
+              Evidence
             </p>
-            <div className="mt-2 space-y-2">
+            <div className="mt-1.5 space-y-1.5">
               {evidence.map((item) => (
                 <div key={item.id} className="flex items-start gap-2">
                   <Circle
-                    className="mt-[2px] h-3.5 w-3.5"
+                    className="mt-[2px] h-3 w-3 shrink-0"
                     style={{
                       color:
                         item.status === "complete"
@@ -215,14 +279,10 @@ export default function RouteCard({
                     }}
                   />
                   <span
-                    className="font-sans text-[12px] leading-[1.5]"
+                    className="font-sans text-[11.5px] leading-[1.5]"
                     style={{
-                      color:
-                        item.status === "complete"
-                          ? c.secondary
-                          : item.status === "in_progress"
-                            ? c.secondary
-                            : c.coral,
+                      color: item.status === "missing" ? c.coral : item.status === "complete" ? c.secondary : c.muted,
+                      opacity: item.status === "missing" ? 0.75 : item.status === "in_progress" ? 0.82 : 1,
                     }}
                   >
                     {item.title}
@@ -232,33 +292,72 @@ export default function RouteCard({
             </div>
           </div>
 
-          <div className="mt-4 rounded-xl border p-3" style={{ borderColor: c.line, background: c.lineFaint }}>
-            <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: accent }}>
-              Why This Matters
-            </p>
-            <ul className="mt-2 space-y-1.5">
-              {whyThisMatters.map((reason, index) => (
-                <li
-                  key={`${route.id}-why-${index}`}
-                  className="flex items-start gap-2 font-sans text-[12px] leading-[1.45]"
-                  style={{ color: c.secondary }}
-                >
-                  <span style={{ color: accent }}>·</span>
-                  <span>{reason}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+          {whyThisMatters.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p className="font-mono text-[9px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.75 }}>
+                Why this matters
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {whyThisMatters.map((reason, index) => (
+                  <p
+                    key={`${route.id}-why-${index}`}
+                    className="font-sans leading-[1.5]"
+                    style={{
+                      fontSize: index === 0 ? 13 : 12,
+                      fontWeight: index === 0 ? 500 : 400,
+                      color: c.secondary,
+                      opacity: index === 0 ? 1 : 0.82,
+                    }}
+                  >
+                    <span style={{ color: accent, marginRight: 5 }}>·</span>
+                    {reason}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          {(sequencingNarrative || commitmentRationale) && (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${c.lineFaint}` }}>
+              {sequencingNarrative && (
+                <p className="font-sans leading-[1.5]" style={{
+                  fontSize: hasBlocker ? 13 : 12,
+                  fontWeight: hasBlocker ? 500 : 400,
+                  color: c.secondary,
+                }}>
+                  <span className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Sequencing · </span>
+                  {sequencingNarrative}
+                </p>
+              )}
+              {commitmentRationale && !sequencingNarrative && (
+                <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
+                  {commitmentRationale}
+                </p>
+              )}
+            </div>
+          )}
+
+          {routeTensions.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              {routeTensions.map((tension) => {
+                const isBlocker = tension.isCommitmentBlocker;
+                const tensionColor = isBlocker ? "#c44233" : tension.pressure === "high" ? "#b56c1a" : c.muted;
+                return (
+                  <div key={tension.id} style={{ paddingLeft: 10, borderLeft: `2px solid ${tensionColor}`, marginBottom: 6 }}>
+                    <p className="font-sans text-[11px] leading-[1.45]" style={{ color: tensionColor }}>
+                      {isBlocker ? "⊗ " : "· "}{tension.statement}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-              Depends on:
+              {frameworks.length > 0 ? frameworks.slice(0, 2).join(" · ") : "Research inputs"}
             </span>
-            <MetaBadge>{dependencyLabel}</MetaBadge>
-            {frameworks.slice(0, 2).map((framework) => (
-              <MetaBadge key={`${route.id}-${framework}`}>{framework}</MetaBadge>
-            ))}
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex items-center gap-4">
               {onSelect && (
                 <button
                   type="button"

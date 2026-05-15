@@ -1,3 +1,4 @@
+Connecting to db 5432
 export type Json =
   | string
   | number
@@ -7,72 +8,271 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.1"
-  }
   public: {
     Tables: {
-      companies: {
+      agent_flow_runs: {
         Row: {
-          archetype: string
-          area_scores_json: Json | null
+          company_id: string
+          completed_at: string | null
           created_at: string
-          created_by: string
-          evidence_note: string | null
-          evidence_status: string | null
           id: string
-          last_scored_at: string | null
-          last_updated: string
-          mojo_score: number | null
-          name: string
-          potential_score: number | null
-          projected_score: number | null
-          public_source_filters_json: Json | null
-          quarter: string
-          tier: number
-          website: string | null
+          input_json: Json
+          mode: string
+          selected_context_mode: string | null
+          status: string
+          summary_json: Json
+          trigger: string
+          updated_at: string
+          user_id: string
         }
         Insert: {
-          archetype?: string
-          area_scores_json?: Json | null
+          company_id: string
+          completed_at?: string | null
           created_at?: string
-          created_by: string
-          evidence_note?: string | null
-          evidence_status?: string | null
           id?: string
-          last_scored_at?: string | null
-          last_updated?: string
-          mojo_score?: number | null
-          name: string
-          potential_score?: number | null
-          projected_score?: number | null
-          public_source_filters_json?: Json | null
-          quarter?: string
-          tier?: number
-          website?: string | null
+          input_json?: Json
+          mode?: string
+          selected_context_mode?: string | null
+          status?: string
+          summary_json?: Json
+          trigger?: string
+          updated_at?: string
+          user_id: string
         }
         Update: {
-          archetype?: string
-          area_scores_json?: Json | null
+          company_id?: string
+          completed_at?: string | null
           created_at?: string
-          created_by?: string
-          evidence_note?: string | null
-          evidence_status?: string | null
           id?: string
-          last_scored_at?: string | null
-          last_updated?: string
-          mojo_score?: number | null
-          name?: string
-          potential_score?: number | null
-          projected_score?: number | null
-          public_source_filters_json?: Json | null
-          quarter?: string
-          tier?: number
-          website?: string | null
+          input_json?: Json
+          mode?: string
+          selected_context_mode?: string | null
+          status?: string
+          summary_json?: Json
+          trigger?: string
+          updated_at?: string
+          user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "agent_flow_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_flow_stage_runs: {
+        Row: {
+          company_id: string
+          created_at: string
+          duration_ms: number | null
+          error_text: string
+          finished_at: string | null
+          id: string
+          input_json: Json
+          output_json: Json
+          run_id: string
+          stage_key: string
+          stage_order: number
+          started_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error_text?: string
+          finished_at?: string | null
+          id?: string
+          input_json?: Json
+          output_json?: Json
+          run_id: string
+          stage_key: string
+          stage_order?: number
+          started_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error_text?: string
+          finished_at?: string | null
+          id?: string
+          input_json?: Json
+          output_json?: Json
+          run_id?: string
+          stage_key?: string
+          stage_order?: number
+          started_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_flow_stage_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_flow_stage_runs_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_flow_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      artifact_versions: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          object_id: string
+          object_type: string
+          snapshot: Json
+          source_event_id: string | null
+          source_run_id: string | null
+          version_number: number
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          object_id: string
+          object_type: string
+          snapshot: Json
+          source_event_id?: string | null
+          source_run_id?: string | null
+          version_number: number
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          object_id?: string
+          object_type?: string
+          snapshot?: Json
+          source_event_id?: string | null
+          source_run_id?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "artifact_versions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "artifact_versions_source_event_id_fkey"
+            columns: ["source_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claim_events: {
+        Row: {
+          claim_id: string
+          company_id: string
+          evidence_delta: Json
+          from_state: string | null
+          id: string
+          occurred_at: string
+          to_state: string
+          triggered_by_event: string
+        }
+        Insert: {
+          claim_id: string
+          company_id: string
+          evidence_delta?: Json
+          from_state?: string | null
+          id?: string
+          occurred_at?: string
+          to_state: string
+          triggered_by_event?: string
+        }
+        Update: {
+          claim_id?: string
+          company_id?: string
+          evidence_delta?: Json
+          from_state?: string | null
+          id?: string
+          occurred_at?: string
+          to_state?: string
+          triggered_by_event?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_events_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_events_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claim_job_step_refs: {
+        Row: {
+          claim_id: string
+          company_id: string
+          created_at: string
+          id: string
+          job_step_id: string
+        }
+        Insert: {
+          claim_id: string
+          company_id: string
+          created_at?: string
+          id?: string
+          job_step_id: string
+        }
+        Update: {
+          claim_id?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          job_step_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_job_step_refs_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_job_step_refs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_job_step_refs_job_step_id_fkey"
+            columns: ["job_step_id"]
+            isOneToOne: false
+            referencedRelation: "job_steps"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       claim_signal_refs: {
         Row: {
@@ -88,7 +288,7 @@ export type Database = {
           company_id: string
           created_at?: string
           id?: string
-          relationship: string
+          relationship?: string
           signal_id: string
         }
         Update: {
@@ -125,48 +325,57 @@ export type Database = {
       }
       claims: {
         Row: {
+          action_category: string | null
           claim_type: string
           company_id: string
           confidence: string
           created_at: string
           customer_support_count: number
           id: string
+          need_statement: string | null
           organization_support_count: number
           outside_support_count: number
           raw_payload: Json
           revalidation_flag: boolean
+          state: string
           statement: string
           topic: string | null
           triangulation_state: string
           updated_at: string
         }
         Insert: {
-          claim_type: string
+          action_category?: string | null
+          claim_type?: string
           company_id: string
           confidence?: string
           created_at?: string
           customer_support_count?: number
           id?: string
+          need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
           raw_payload?: Json
           revalidation_flag?: boolean
+          state?: string
           statement: string
           topic?: string | null
           triangulation_state?: string
           updated_at?: string
         }
         Update: {
+          action_category?: string | null
           claim_type?: string
           company_id?: string
           confidence?: string
           created_at?: string
           customer_support_count?: number
           id?: string
+          need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
           raw_payload?: Json
           revalidation_flag?: boolean
+          state?: string
           statement?: string
           topic?: string | null
           triangulation_state?: string
@@ -175,6 +384,122 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "claims_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      companies: {
+        Row: {
+          archetype: string
+          area_scores_json: Json | null
+          created_at: string
+          created_by: string
+          evidence_note: string | null
+          evidence_status: string | null
+          excluded_signals_json: Json
+          human_decision: string | null
+          id: string
+          last_scored_at: string | null
+          last_updated: string
+          mojo_score: number | null
+          name: string
+          potential_score: number | null
+          program_phase: string | null
+          projected_score: number | null
+          public_source_filters_json: Json
+          quarter: string
+          review_source: string | null
+          review_status: string | null
+          selected_route_id: string | null
+          selected_route_summary_json: Json
+          selected_route_updated_at: string | null
+          tier: number
+          website: string | null
+        }
+        Insert: {
+          archetype?: string
+          area_scores_json?: Json | null
+          created_at?: string
+          created_by: string
+          evidence_note?: string | null
+          evidence_status?: string | null
+          excluded_signals_json?: Json
+          human_decision?: string | null
+          id?: string
+          last_scored_at?: string | null
+          last_updated?: string
+          mojo_score?: number | null
+          name: string
+          potential_score?: number | null
+          program_phase?: string | null
+          projected_score?: number | null
+          public_source_filters_json?: Json
+          quarter?: string
+          review_source?: string | null
+          review_status?: string | null
+          selected_route_id?: string | null
+          selected_route_summary_json?: Json
+          selected_route_updated_at?: string | null
+          tier?: number
+          website?: string | null
+        }
+        Update: {
+          archetype?: string
+          area_scores_json?: Json | null
+          created_at?: string
+          created_by?: string
+          evidence_note?: string | null
+          evidence_status?: string | null
+          excluded_signals_json?: Json
+          human_decision?: string | null
+          id?: string
+          last_scored_at?: string | null
+          last_updated?: string
+          mojo_score?: number | null
+          name?: string
+          potential_score?: number | null
+          program_phase?: string | null
+          projected_score?: number | null
+          public_source_filters_json?: Json
+          quarter?: string
+          review_source?: string | null
+          review_status?: string | null
+          selected_route_id?: string | null
+          selected_route_summary_json?: Json
+          selected_route_updated_at?: string | null
+          tier?: number
+          website?: string | null
+        }
+        Relationships: []
+      }
+      company_members: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_members_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -210,6 +535,186 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: true
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      council_recommendations: {
+        Row: {
+          category: string
+          company_id: string
+          confidence: number
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_id: string | null
+          decision_note: string | null
+          id: string
+          priority: string
+          rationale: string
+          recommendation: string
+          run_id: string | null
+          source_basis: string
+          source_context_json: Json
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string
+          company_id: string
+          confidence?: number
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_id?: string | null
+          decision_note?: string | null
+          id?: string
+          priority?: string
+          rationale?: string
+          recommendation: string
+          run_id?: string | null
+          source_basis?: string
+          source_context_json?: Json
+          status?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          company_id?: string
+          confidence?: number
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_id?: string | null
+          decision_note?: string | null
+          id?: string
+          priority?: string
+          rationale?: string
+          recommendation?: string
+          run_id?: string | null
+          source_basis?: string
+          source_context_json?: Json
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "council_recommendations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "council_recommendations_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_decisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "council_recommendations_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "council_review_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      council_review_runs: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          model: string
+          recommendation_count: number
+          source_snapshot_json: Json
+          status: string
+          summary: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          model?: string
+          recommendation_count?: number
+          source_snapshot_json?: Json
+          status: string
+          summary?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          model?: string
+          recommendation_count?: number
+          source_snapshot_json?: Json
+          status?: string
+          summary?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "council_review_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      decision_routes: {
+        Row: {
+          company_id: string
+          created_at: string
+          decision_id: string
+          id: string
+          relationship: string
+          route_id: string
+          sort_order: number
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          decision_id: string
+          id?: string
+          relationship?: string
+          route_id: string
+          sort_order?: number
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          decision_id?: string
+          id?: string
+          relationship?: string
+          route_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_routes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_routes_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_decisions"
             referencedColumns: ["id"]
           },
         ]
@@ -264,79 +769,109 @@ export type Database = {
           },
         ]
       }
-      signals: {
+      file_proposals: {
         Row: {
-          claim_text: string
+          applied_areas: string[]
+          candidate_job_steps: Json
+          candidate_needs: Json
+          candidate_outcomes: Json
+          candidate_positioning_updates: Json
           company_id: string
-          confidence_to_use: string
+          confidence: string
+          confidence_reason: string
+          contradictions: Json
           created_at: string
-          directness: string
-          evidence_excerpt: string
-          evidence_type: string
-          framing_fit: string
-          framework: string | null
+          dify_task_id: string | null
+          dify_workflow_run_id: string | null
+          evidence: Json
+          experiments_to_run: Json
+          file_id: string | null
+          file_name: string
+          framework_results: Json
           id: string
-          raw_payload: Json
-          recency: string | null
-          signal_band: string
-          source_id: string | null
-          source_title: string | null
+          possible_gaps: Json
+          possible_routes: Json
+          processing_completed_at: string | null
+          processing_error: string | null
+          processing_started_at: string | null
+          processing_state: string
+          questions_to_verify: Json
+          reviewed_at: string | null
+          signal_type: string
           source_type: string
-          source_url: string | null
-          structure_level: string
-          topic: string | null
-          updated_at: string
-          validation_status: string
+          status: string
+          suggested_areas: string[]
+          summary: string
         }
         Insert: {
-          claim_text: string
+          applied_areas?: string[]
+          candidate_job_steps?: Json
+          candidate_needs?: Json
+          candidate_outcomes?: Json
+          candidate_positioning_updates?: Json
           company_id: string
-          confidence_to_use?: string
+          confidence?: string
+          confidence_reason?: string
+          contradictions?: Json
           created_at?: string
-          directness?: string
-          evidence_excerpt?: string
-          evidence_type?: string
-          framing_fit?: string
-          framework?: string | null
+          dify_task_id?: string | null
+          dify_workflow_run_id?: string | null
+          evidence?: Json
+          experiments_to_run?: Json
+          file_id?: string | null
+          file_name?: string
+          framework_results?: Json
           id?: string
-          raw_payload?: Json
-          recency?: string | null
-          signal_band: string
-          source_id?: string | null
-          source_title?: string | null
-          source_type: string
-          source_url?: string | null
-          structure_level?: string
-          topic?: string | null
-          updated_at?: string
-          validation_status?: string
+          possible_gaps?: Json
+          possible_routes?: Json
+          processing_completed_at?: string | null
+          processing_error?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          questions_to_verify?: Json
+          reviewed_at?: string | null
+          signal_type?: string
+          source_type?: string
+          status?: string
+          suggested_areas?: string[]
+          summary?: string
         }
         Update: {
-          claim_text?: string
+          applied_areas?: string[]
+          candidate_job_steps?: Json
+          candidate_needs?: Json
+          candidate_outcomes?: Json
+          candidate_positioning_updates?: Json
           company_id?: string
-          confidence_to_use?: string
+          confidence?: string
+          confidence_reason?: string
+          contradictions?: Json
           created_at?: string
-          directness?: string
-          evidence_excerpt?: string
-          evidence_type?: string
-          framing_fit?: string
-          framework?: string | null
+          dify_task_id?: string | null
+          dify_workflow_run_id?: string | null
+          evidence?: Json
+          experiments_to_run?: Json
+          file_id?: string | null
+          file_name?: string
+          framework_results?: Json
           id?: string
-          raw_payload?: Json
-          recency?: string | null
-          signal_band?: string
-          source_id?: string | null
-          source_title?: string | null
+          possible_gaps?: Json
+          possible_routes?: Json
+          processing_completed_at?: string | null
+          processing_error?: string | null
+          processing_started_at?: string | null
+          processing_state?: string
+          questions_to_verify?: Json
+          reviewed_at?: string | null
+          signal_type?: string
           source_type?: string
-          source_url?: string | null
-          structure_level?: string
-          topic?: string | null
-          updated_at?: string
-          validation_status?: string
+          status?: string
+          suggested_areas?: string[]
+          summary?: string
         }
         Relationships: [
           {
-            foreignKeyName: "signals_company_id_fkey"
+            foreignKeyName: "file_proposals_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -346,29 +881,47 @@ export type Database = {
       }
       input_files: {
         Row: {
+          archive_reason: string | null
+          archive_source: string | null
+          archived_at: string | null
+          archived_by: string | null
           file_name: string
           file_path: string
           file_type: string
           id: string
           input_id: string
+          restored_at: string | null
+          restored_by: string | null
           tags: string[]
           uploaded_at: string
         }
         Insert: {
+          archive_reason?: string | null
+          archive_source?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           file_name: string
           file_path: string
           file_type?: string
           id?: string
           input_id: string
+          restored_at?: string | null
+          restored_by?: string | null
           tags?: string[]
           uploaded_at?: string
         }
         Update: {
+          archive_reason?: string | null
+          archive_source?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           file_name?: string
           file_path?: string
           file_type?: string
           id?: string
           input_id?: string
+          restored_at?: string | null
+          restored_by?: string | null
           tags?: string[]
           uploaded_at?: string
         }
@@ -489,7 +1042,10 @@ export type Database = {
           dependency_state: string
           description: string
           designed: boolean
+          evidence_basis: string
+          evidence_confidence: number
           evidence_state: string
+          evidence_status: string
           frameworks_used: string[]
           gap_note: string
           has_gap: boolean
@@ -513,7 +1069,10 @@ export type Database = {
           dependency_state?: string
           description?: string
           designed?: boolean
+          evidence_basis?: string
+          evidence_confidence?: number
           evidence_state?: string
+          evidence_status?: string
           frameworks_used?: string[]
           gap_note?: string
           has_gap?: boolean
@@ -537,7 +1096,10 @@ export type Database = {
           dependency_state?: string
           description?: string
           designed?: boolean
+          evidence_basis?: string
+          evidence_confidence?: number
           evidence_state?: string
+          evidence_status?: string
           frameworks_used?: string[]
           gap_note?: string
           has_gap?: boolean
@@ -563,92 +1125,129 @@ export type Database = {
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "job_steps_stale_since_event_id_fkey"
+            columns: ["stale_since_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
         ]
       }
       managed_outcomes: {
         Row: {
+          action: string
+          actor: string
           company_id: string
-          constraint: string | null
           confidence: number
-          context: string
+          constraint: string | null
+          context: string | null
           created_at: string
           dependency_state: string
-          direction: string
-          evidence_state: string
+          direction: string | null
           evidence_basis: string
+          evidence_level: string | null
+          evidence_state: string
           frameworks_used: string[]
           id: string
           is_primary: boolean
           journey_key: string
+          lagging_indicators: string[] | null
           last_reviewed_at: string | null
           leading_indicator: string
-          metric: string
-          object: string
+          leading_indicators: string[] | null
+          level: string | null
+          metric: string | null
+          object: string | null
           outcome_statement: string
           outcome_title: string
+          related_opportunity_areas: string[] | null
           source_run_id: string | null
+          stage: string | null
           stale_reason: string | null
           stale_since_event_id: string | null
           target_direction: string
           updated_at: string
           user_id: string
           validation_state: string
+          why_behavioral: string | null
+          why_this_level: string | null
         }
         Insert: {
+          action?: string
+          actor?: string
           company_id: string
-          constraint?: string | null
           confidence?: number
-          context?: string
+          constraint?: string | null
+          context?: string | null
           created_at?: string
           dependency_state?: string
-          direction?: string
-          evidence_state?: string
+          direction?: string | null
           evidence_basis?: string
+          evidence_level?: string | null
+          evidence_state?: string
           frameworks_used?: string[]
           id?: string
           is_primary?: boolean
           journey_key?: string
+          lagging_indicators?: string[] | null
           last_reviewed_at?: string | null
           leading_indicator?: string
-          metric?: string
-          object?: string
+          leading_indicators?: string[] | null
+          level?: string | null
+          metric?: string | null
+          object?: string | null
           outcome_statement?: string
           outcome_title?: string
+          related_opportunity_areas?: string[] | null
           source_run_id?: string | null
+          stage?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
           target_direction?: string
           updated_at?: string
           user_id: string
           validation_state?: string
+          why_behavioral?: string | null
+          why_this_level?: string | null
         }
         Update: {
+          action?: string
+          actor?: string
           company_id?: string
-          constraint?: string | null
           confidence?: number
-          context?: string
+          constraint?: string | null
+          context?: string | null
           created_at?: string
           dependency_state?: string
-          direction?: string
-          evidence_state?: string
+          direction?: string | null
           evidence_basis?: string
+          evidence_level?: string | null
+          evidence_state?: string
           frameworks_used?: string[]
           id?: string
           is_primary?: boolean
           journey_key?: string
+          lagging_indicators?: string[] | null
           last_reviewed_at?: string | null
           leading_indicator?: string
-          metric?: string
-          object?: string
+          leading_indicators?: string[] | null
+          level?: string | null
+          metric?: string | null
+          object?: string | null
           outcome_statement?: string
           outcome_title?: string
+          related_opportunity_areas?: string[] | null
           source_run_id?: string | null
+          stage?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
           target_direction?: string
           updated_at?: string
           user_id?: string
           validation_state?: string
+          why_behavioral?: string | null
+          why_this_level?: string | null
         }
         Relationships: [
           {
@@ -656,6 +1255,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "managed_outcomes_stale_since_event_id_fkey"
+            columns: ["stale_since_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
             referencedColumns: ["id"]
           },
         ]
@@ -741,6 +1347,80 @@ export type Database = {
         }
         Relationships: []
       }
+      mojo_maps: {
+        Row: {
+          created_at: string
+          id: string
+          map_json: Json
+          seed_json: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          map_json?: Json
+          seed_json?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          map_json?: Json
+          seed_json?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      object_dependencies: {
+        Row: {
+          company_id: string
+          created_at: string
+          dependency_type: string
+          downstream_object_id: string
+          downstream_object_type: string
+          id: string
+          strength: string
+          updated_at: string
+          upstream_object_id: string
+          upstream_object_type: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          dependency_type: string
+          downstream_object_id: string
+          downstream_object_type: string
+          id?: string
+          strength: string
+          updated_at?: string
+          upstream_object_id: string
+          upstream_object_type: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          dependency_type?: string
+          downstream_object_id?: string
+          downstream_object_type?: string
+          id?: string
+          strength?: string
+          updated_at?: string
+          upstream_object_id?: string
+          upstream_object_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "object_dependencies_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       odi_market_definitions: {
         Row: {
           chooser: string
@@ -748,6 +1428,7 @@ export type Database = {
           created_at: string
           frameworks_used: string[]
           id: string
+          innovation_strategy: string | null
           job_executor: string
           jtbd: string
           source_path: string
@@ -760,6 +1441,7 @@ export type Database = {
           created_at?: string
           frameworks_used?: string[]
           id?: string
+          innovation_strategy?: string | null
           job_executor?: string
           jtbd?: string
           source_path?: string
@@ -772,6 +1454,7 @@ export type Database = {
           created_at?: string
           frameworks_used?: string[]
           id?: string
+          innovation_strategy?: string | null
           job_executor?: string
           jtbd?: string
           source_path?: string
@@ -782,7 +1465,7 @@ export type Database = {
           {
             foreignKeyName: "odi_market_definitions_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -802,10 +1485,10 @@ export type Database = {
           last_reviewed_at: string | null
           notes: string | null
           opportunity_score: number
-          social_extraction_json: Json | null
-          sort_order: number
           satisfaction: number
           service_state: string
+          social_extraction_json: Json | null
+          sort_order: number
           source_path: string
           source_run_id: string | null
           source_url: string | null
@@ -831,10 +1514,10 @@ export type Database = {
           last_reviewed_at?: string | null
           notes?: string | null
           opportunity_score?: number
-          social_extraction_json?: Json | null
-          sort_order?: number
           satisfaction?: number
           service_state?: string
+          social_extraction_json?: Json | null
+          sort_order?: number
           source_path?: string
           source_run_id?: string | null
           source_url?: string | null
@@ -860,10 +1543,10 @@ export type Database = {
           last_reviewed_at?: string | null
           notes?: string | null
           opportunity_score?: number
-          social_extraction_json?: Json | null
-          sort_order?: number
           satisfaction?: number
           service_state?: string
+          social_extraction_json?: Json | null
+          sort_order?: number
           source_path?: string
           source_run_id?: string | null
           source_url?: string | null
@@ -884,6 +1567,13 @@ export type Database = {
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "odi_needs_stale_since_event_id_fkey"
+            columns: ["stale_since_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
         ]
       }
       opportunities: {
@@ -895,9 +1585,9 @@ export type Database = {
           importance: number
           journey_key: string
           managed_outcome_id: string | null
-          parent_opportunity_id: string | null
           opportunity_score: number
           outcome: string
+          parent_opportunity_id: string | null
           priority_tier: string
           satisfaction: number
           step_label: string
@@ -914,9 +1604,9 @@ export type Database = {
           importance?: number
           journey_key?: string
           managed_outcome_id?: string | null
-          parent_opportunity_id?: string | null
           opportunity_score?: number
           outcome?: string
+          parent_opportunity_id?: string | null
           priority_tier?: string
           satisfaction?: number
           step_label?: string
@@ -933,9 +1623,9 @@ export type Database = {
           importance?: number
           journey_key?: string
           managed_outcome_id?: string | null
-          parent_opportunity_id?: string | null
           opportunity_score?: number
           outcome?: string
+          parent_opportunity_id?: string | null
           priority_tier?: string
           satisfaction?: number
           step_label?: string
@@ -968,6 +1658,65 @@ export type Database = {
           },
         ]
       }
+      positioning_canvases: {
+        Row: {
+          best_fit_customers: string
+          category_rationale: string
+          company_id: string
+          competitive_alternatives_json: Json
+          created_at: string
+          current_tagline: string
+          frameworks_used: string[]
+          id: string
+          market_category: string
+          proposed_tagline: string
+          unique_attributes_json: Json
+          updated_at: string
+          user_id: string
+          value_for_customer: string
+        }
+        Insert: {
+          best_fit_customers?: string
+          category_rationale?: string
+          company_id: string
+          competitive_alternatives_json?: Json
+          created_at?: string
+          current_tagline?: string
+          frameworks_used?: string[]
+          id?: string
+          market_category?: string
+          proposed_tagline?: string
+          unique_attributes_json?: Json
+          updated_at?: string
+          user_id: string
+          value_for_customer?: string
+        }
+        Update: {
+          best_fit_customers?: string
+          category_rationale?: string
+          company_id?: string
+          competitive_alternatives_json?: Json
+          created_at?: string
+          current_tagline?: string
+          frameworks_used?: string[]
+          id?: string
+          market_category?: string
+          proposed_tagline?: string
+          unique_attributes_json?: Json
+          updated_at?: string
+          user_id?: string
+          value_for_customer?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "positioning_canvases_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -994,25 +1743,25 @@ export type Database = {
           company_id: string
           company_name: string
           created_at: string
-          id: string
+          id: number
           result_json: Json | null
           sources_json: Json | null
           website: string
         }
         Insert: {
           company_id: string
-          company_name: string
+          company_name?: string
           created_at?: string
-          id?: string
+          id?: number
           result_json?: Json | null
           sources_json?: Json | null
-          website: string
+          website?: string
         }
         Update: {
           company_id?: string
           company_name?: string
           created_at?: string
-          id?: string
+          id?: number
           result_json?: Json | null
           sources_json?: Json | null
           website?: string
@@ -1020,57 +1769,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "public_baseline_runs_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      research_review_runs: {
-        Row: {
-          baseline_run_id: number | null
-          company_id: string
-          created_at: string
-          finalizer_applied: boolean
-          id: string
-          review_summary: string
-          reviews_json: Json
-          status: string
-          user_id: string
-        }
-        Insert: {
-          baseline_run_id?: number | null
-          company_id: string
-          created_at?: string
-          finalizer_applied?: boolean
-          id?: string
-          review_summary?: string
-          reviews_json?: Json
-          status?: string
-          user_id: string
-        }
-        Update: {
-          baseline_run_id?: number | null
-          company_id?: string
-          created_at?: string
-          finalizer_applied?: boolean
-          id?: string
-          review_summary?: string
-          reviews_json?: Json
-          status?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "research_review_runs_baseline_run_id_fkey"
-            columns: ["baseline_run_id"]
-            isOneToOne: false
-            referencedRelation: "public_baseline_runs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "research_review_runs_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1132,58 +1830,85 @@ export type Database = {
           },
         ]
       }
-      positioning_canvases: {
+      research_review_runs: {
         Row: {
-          best_fit_customers: string
-          category_rationale: string
+          baseline_run_id: number | null
           company_id: string
-          competitive_alternatives_json: Json
           created_at: string
-          current_tagline: string
-          frameworks_used: string[]
+          finalizer_applied: boolean
           id: string
-          market_category: string
-          proposed_tagline: string
-          unique_attributes_json: Json
-          updated_at: string
+          review_summary: string
+          reviews_json: Json
+          status: string
           user_id: string
-          value_for_customer: string
         }
         Insert: {
-          best_fit_customers?: string
-          category_rationale?: string
+          baseline_run_id?: number | null
           company_id: string
-          competitive_alternatives_json?: Json
           created_at?: string
-          current_tagline?: string
-          frameworks_used?: string[]
+          finalizer_applied?: boolean
           id?: string
-          market_category?: string
-          proposed_tagline?: string
-          unique_attributes_json?: Json
-          updated_at?: string
+          review_summary?: string
+          reviews_json?: Json
+          status?: string
           user_id: string
-          value_for_customer?: string
         }
         Update: {
-          best_fit_customers?: string
-          category_rationale?: string
+          baseline_run_id?: number | null
           company_id?: string
-          competitive_alternatives_json?: Json
           created_at?: string
-          current_tagline?: string
-          frameworks_used?: string[]
+          finalizer_applied?: boolean
           id?: string
-          market_category?: string
-          proposed_tagline?: string
-          unique_attributes_json?: Json
-          updated_at?: string
+          review_summary?: string
+          reviews_json?: Json
+          status?: string
           user_id?: string
-          value_for_customer?: string
         }
         Relationships: [
           {
-            foreignKeyName: "positioning_canvases_company_id_fkey"
+            foreignKeyName: "research_review_runs_baseline_run_id_fkey"
+            columns: ["baseline_run_id"]
+            isOneToOne: false
+            referencedRelation: "public_baseline_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "research_review_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      route_decision_events: {
+        Row: {
+          company_id: string
+          created_at: string
+          event_type: string
+          id: string
+          route_id: string | null
+          summary_json: Json
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          route_id?: string | null
+          summary_json?: Json
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          route_id?: string | null
+          summary_json?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "route_decision_events_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1194,73 +1919,191 @@ export type Database = {
       routes: {
         Row: {
           category: string
+          claim_id: string | null
           company_id: string
           created_at: string
           dependency_state: string
-          evidence_state: string
           effort: string
+          evidence_json: Json
+          evidence_state: string
           frameworks_used: string[]
           id: string
           last_reviewed_at: string | null
+          linked_need_ids: string[] | null
+          linked_tension_ids: string[] | null
           pts_value: number
+          route_insights_json: Json | null
           short_description: string
           sort_order: number
+          source_file_ids: string[] | null
           source_run_id: string | null
           stale_reason: string | null
           stale_since_event_id: string | null
+          steps_json: Json
           title: string
           type: string
           updated_at: string
           user_id: string
           validation_state: string
+          why_this_matters_json: Json
         }
         Insert: {
           category?: string
+          claim_id?: string | null
           company_id: string
           created_at?: string
           dependency_state?: string
-          evidence_state?: string
           effort?: string
+          evidence_json?: Json
+          evidence_state?: string
           frameworks_used?: string[]
           id?: string
           last_reviewed_at?: string | null
+          linked_need_ids?: string[] | null
+          linked_tension_ids?: string[] | null
           pts_value?: number
+          route_insights_json?: Json | null
           short_description?: string
           sort_order?: number
+          source_file_ids?: string[] | null
           source_run_id?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
+          steps_json?: Json
           title?: string
           type?: string
           updated_at?: string
           user_id: string
           validation_state?: string
+          why_this_matters_json?: Json
         }
         Update: {
           category?: string
+          claim_id?: string | null
           company_id?: string
           created_at?: string
           dependency_state?: string
-          evidence_state?: string
           effort?: string
+          evidence_json?: Json
+          evidence_state?: string
           frameworks_used?: string[]
           id?: string
           last_reviewed_at?: string | null
+          linked_need_ids?: string[] | null
+          linked_tension_ids?: string[] | null
           pts_value?: number
+          route_insights_json?: Json | null
           short_description?: string
           sort_order?: number
+          source_file_ids?: string[] | null
           source_run_id?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
+          steps_json?: Json
           title?: string
           type?: string
           updated_at?: string
           user_id?: string
           validation_state?: string
+          why_this_matters_json?: Json
         }
         Relationships: [
           {
+            foreignKeyName: "routes_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "routes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "routes_stale_since_event_id_fkey"
+            columns: ["stale_since_event_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signals: {
+        Row: {
+          claim_text: string
+          company_id: string
+          confidence_to_use: string
+          created_at: string
+          directness: string
+          evidence_excerpt: string
+          evidence_type: string
+          framework: string | null
+          framing_fit: string
+          id: string
+          raw_payload: Json
+          recency: string | null
+          signal_band: string
+          source_id: string | null
+          source_title: string | null
+          source_type: string
+          source_url: string | null
+          structure_level: string
+          topic: string | null
+          updated_at: string
+          validation_status: string
+        }
+        Insert: {
+          claim_text: string
+          company_id: string
+          confidence_to_use?: string
+          created_at?: string
+          directness?: string
+          evidence_excerpt?: string
+          evidence_type?: string
+          framework?: string | null
+          framing_fit?: string
+          id?: string
+          raw_payload?: Json
+          recency?: string | null
+          signal_band: string
+          source_id?: string | null
+          source_title?: string | null
+          source_type: string
+          source_url?: string | null
+          structure_level?: string
+          topic?: string | null
+          updated_at?: string
+          validation_status?: string
+        }
+        Update: {
+          claim_text?: string
+          company_id?: string
+          confidence_to_use?: string
+          created_at?: string
+          directness?: string
+          evidence_excerpt?: string
+          evidence_type?: string
+          framework?: string | null
+          framing_fit?: string
+          id?: string
+          raw_payload?: Json
+          recency?: string | null
+          signal_band?: string
+          source_id?: string | null
+          source_title?: string | null
+          source_type?: string
+          source_url?: string | null
+          structure_level?: string
+          topic?: string | null
+          updated_at?: string
+          validation_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signals_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1341,74 +2184,161 @@ export type Database = {
           },
         ]
       }
-      strategic_hypotheses: {
+      solution_tests: {
         Row: {
           company_id: string
-          confidence: string
           created_at: string
-          hypothesis_key: string
-          hypothesis_kind: string
-          hypothesis_state: string
+          frameworks_used: string[]
           id: string
-          is_active: boolean
-          raw_payload: Json
-          reframed_from_hypothesis_id: string | null
-          source_run_id: string | null
-          statement: string
-          topic: string | null
+          method: string
+          metric: string
+          solution_idea_id: string
+          sort_order: number
+          success_threshold: string
+          timebox: string
+          title: string
           updated_at: string
-          validation_state: string
-          what_must_be_true: Json
+          user_id: string
         }
         Insert: {
           company_id: string
-          confidence?: string
           created_at?: string
-          hypothesis_key: string
-          hypothesis_kind: string
-          hypothesis_state?: string
+          frameworks_used?: string[]
           id?: string
-          is_active?: boolean
-          raw_payload?: Json
-          reframed_from_hypothesis_id?: string | null
-          source_run_id?: string | null
-          statement: string
-          topic?: string | null
+          method?: string
+          metric?: string
+          solution_idea_id: string
+          sort_order?: number
+          success_threshold?: string
+          timebox?: string
+          title?: string
           updated_at?: string
-          validation_state?: string
-          what_must_be_true?: Json
+          user_id: string
         }
         Update: {
           company_id?: string
-          confidence?: string
           created_at?: string
-          hypothesis_key?: string
-          hypothesis_kind?: string
-          hypothesis_state?: string
+          frameworks_used?: string[]
           id?: string
-          is_active?: boolean
-          raw_payload?: Json
-          reframed_from_hypothesis_id?: string | null
-          source_run_id?: string | null
-          statement?: string
-          topic?: string | null
+          method?: string
+          metric?: string
+          solution_idea_id?: string
+          sort_order?: number
+          success_threshold?: string
+          timebox?: string
+          title?: string
           updated_at?: string
-          validation_state?: string
-          what_must_be_true?: Json
+          user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "strategic_hypotheses_company_id_fkey"
+            foreignKeyName: "solution_tests_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "strategic_hypotheses_reframed_from_hypothesis_id_fkey"
-            columns: ["reframed_from_hypothesis_id"]
+            foreignKeyName: "solution_tests_solution_idea_id_fkey"
+            columns: ["solution_idea_id"]
             isOneToOne: false
-            referencedRelation: "strategic_hypotheses"
+            referencedRelation: "solution_ideas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      strategic_decisions: {
+        Row: {
+          active_tension_ids: string[]
+          affected_capabilities: string[]
+          affected_job_steps: string[]
+          affected_positioning: boolean
+          blocked_by: string[]
+          company_id: string
+          confidence_movement: Json
+          confidence_state: string
+          contradicting_evidence: Json
+          created_at: string
+          current_posture: string | null
+          decision_memory: Json
+          decision_question: string
+          decision_state: string
+          id: string
+          last_meaningful_change_at: string | null
+          linked_claim_id: string | null
+          source: string
+          stale_dependencies: string[]
+          supporting_evidence: Json
+          supporting_hypothesis_ids: string[]
+          title: string
+          updated_at: string
+          validation_requirements: Json
+        }
+        Insert: {
+          active_tension_ids?: string[]
+          affected_capabilities?: string[]
+          affected_job_steps?: string[]
+          affected_positioning?: boolean
+          blocked_by?: string[]
+          company_id: string
+          confidence_movement?: Json
+          confidence_state?: string
+          contradicting_evidence?: Json
+          created_at?: string
+          current_posture?: string | null
+          decision_memory?: Json
+          decision_question: string
+          decision_state?: string
+          id?: string
+          last_meaningful_change_at?: string | null
+          linked_claim_id?: string | null
+          source?: string
+          stale_dependencies?: string[]
+          supporting_evidence?: Json
+          supporting_hypothesis_ids?: string[]
+          title: string
+          updated_at?: string
+          validation_requirements?: Json
+        }
+        Update: {
+          active_tension_ids?: string[]
+          affected_capabilities?: string[]
+          affected_job_steps?: string[]
+          affected_positioning?: boolean
+          blocked_by?: string[]
+          company_id?: string
+          confidence_movement?: Json
+          confidence_state?: string
+          contradicting_evidence?: Json
+          created_at?: string
+          current_posture?: string | null
+          decision_memory?: Json
+          decision_question?: string
+          decision_state?: string
+          id?: string
+          last_meaningful_change_at?: string | null
+          linked_claim_id?: string | null
+          source?: string
+          stale_dependencies?: string[]
+          supporting_evidence?: Json
+          supporting_hypothesis_ids?: string[]
+          title?: string
+          updated_at?: string
+          validation_requirements?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategic_decisions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategic_decisions_linked_claim_id_fkey"
+            columns: ["linked_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
             referencedColumns: ["id"]
           },
         ]
@@ -1466,163 +2396,249 @@ export type Database = {
           },
         ]
       }
-      object_dependencies: {
+      strategic_hypotheses: {
         Row: {
           company_id: string
+          confidence: string
           created_at: string
-          dependency_type: string
-          downstream_object_id: string
-          downstream_object_type: string
+          hypothesis_key: string
+          hypothesis_kind: string
+          hypothesis_state: string
           id: string
-          strength: string
-          updated_at: string
-          upstream_object_id: string
-          upstream_object_type: string
-        }
-        Insert: {
-          company_id: string
-          created_at?: string
-          dependency_type: string
-          downstream_object_id: string
-          downstream_object_type: string
-          id?: string
-          strength: string
-          updated_at?: string
-          upstream_object_id: string
-          upstream_object_type: string
-        }
-        Update: {
-          company_id?: string
-          created_at?: string
-          dependency_type?: string
-          downstream_object_id?: string
-          downstream_object_type?: string
-          id?: string
-          strength?: string
-          updated_at?: string
-          upstream_object_id?: string
-          upstream_object_type?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "object_dependencies_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      artifact_versions: {
-        Row: {
-          company_id: string
-          created_at: string
-          id: string
-          object_id: string
-          object_type: string
-          snapshot: Json
-          source_event_id: string | null
+          is_active: boolean
+          originating_context: string | null
+          raw_payload: Json
+          reframed_from_hypothesis_id: string | null
+          reframed_reason: string | null
           source_run_id: string | null
-          version_number: number
+          statement: string
+          superseded_by_id: string | null
+          topic: string | null
+          updated_at: string
+          validation_state: string
+          what_must_be_true: Json
         }
         Insert: {
           company_id: string
+          confidence?: string
           created_at?: string
+          hypothesis_key: string
+          hypothesis_kind: string
+          hypothesis_state?: string
           id?: string
-          object_id: string
-          object_type: string
-          snapshot: Json
-          source_event_id?: string | null
+          is_active?: boolean
+          originating_context?: string | null
+          raw_payload?: Json
+          reframed_from_hypothesis_id?: string | null
+          reframed_reason?: string | null
           source_run_id?: string | null
-          version_number: number
+          statement: string
+          superseded_by_id?: string | null
+          topic?: string | null
+          updated_at?: string
+          validation_state?: string
+          what_must_be_true?: Json
         }
         Update: {
           company_id?: string
+          confidence?: string
           created_at?: string
+          hypothesis_key?: string
+          hypothesis_kind?: string
+          hypothesis_state?: string
           id?: string
-          object_id?: string
-          object_type?: string
-          snapshot?: Json
-          source_event_id?: string | null
+          is_active?: boolean
+          originating_context?: string | null
+          raw_payload?: Json
+          reframed_from_hypothesis_id?: string | null
+          reframed_reason?: string | null
           source_run_id?: string | null
-          version_number?: number
+          statement?: string
+          superseded_by_id?: string | null
+          topic?: string | null
+          updated_at?: string
+          validation_state?: string
+          what_must_be_true?: Json
         }
         Relationships: [
           {
-            foreignKeyName: "artifact_versions_company_id_fkey"
+            foreignKeyName: "strategic_hypotheses_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "artifact_versions_source_event_id_fkey"
-            columns: ["source_event_id"]
+            foreignKeyName: "strategic_hypotheses_reframed_from_hypothesis_id_fkey"
+            columns: ["reframed_from_hypothesis_id"]
             isOneToOne: false
-            referencedRelation: "strategic_events"
+            referencedRelation: "strategic_hypotheses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategic_hypotheses_superseded_by_id_fkey"
+            columns: ["superseded_by_id"]
+            isOneToOne: false
+            referencedRelation: "strategic_hypotheses"
             referencedColumns: ["id"]
           },
         ]
       }
-      solution_tests: {
+      strategic_tensions: {
         Row: {
+          affected_needs: string[]
+          affected_positioning: boolean
+          affected_routes: string[]
+          affected_strategy: boolean
+          blocked_commitments: string[]
           company_id: string
+          confidence: number
           created_at: string
-          frameworks_used: string[]
+          created_from: string
+          current_interpretation: string | null
+          detail: string | null
           id: string
-          metric: string
-          method: string
-          solution_idea_id: string
-          sort_order: number
-          success_threshold: string
-          timebox: string
-          title: string
+          is_commitment_blocker: boolean
+          pressure: string
+          reframed_from: string | null
+          resolution_signals: string[]
+          source: string
+          statement: string
+          status: string
+          updated_at: string
+          validation_requirements: string[]
+        }
+        Insert: {
+          affected_needs?: string[]
+          affected_positioning?: boolean
+          affected_routes?: string[]
+          affected_strategy?: boolean
+          blocked_commitments?: string[]
+          company_id: string
+          confidence?: number
+          created_at?: string
+          created_from?: string
+          current_interpretation?: string | null
+          detail?: string | null
+          id?: string
+          is_commitment_blocker?: boolean
+          pressure?: string
+          reframed_from?: string | null
+          resolution_signals?: string[]
+          source?: string
+          statement: string
+          status?: string
+          updated_at?: string
+          validation_requirements?: string[]
+        }
+        Update: {
+          affected_needs?: string[]
+          affected_positioning?: boolean
+          affected_routes?: string[]
+          affected_strategy?: boolean
+          blocked_commitments?: string[]
+          company_id?: string
+          confidence?: number
+          created_at?: string
+          created_from?: string
+          current_interpretation?: string | null
+          detail?: string | null
+          id?: string
+          is_commitment_blocker?: boolean
+          pressure?: string
+          reframed_from?: string | null
+          resolution_signals?: string[]
+          source?: string
+          statement?: string
+          status?: string
+          updated_at?: string
+          validation_requirements?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategic_tensions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategic_tensions_reframed_from_fkey"
+            columns: ["reframed_from"]
+            isOneToOne: false
+            referencedRelation: "strategic_tensions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      strategy_assumptions: {
+        Row: {
+          affected_route_ids: string[]
+          assumption: string
+          company_id: string
+          contradicting_evidence: Json
+          created_at: string
+          id: string
+          invalidated_reason: string | null
+          note: string | null
+          prior_statement: string | null
+          reframed_from_id: string | null
+          related_tension_ids: string[]
+          source: string
+          status: string
+          supporting_evidence: Json
           updated_at: string
           user_id: string
         }
         Insert: {
+          affected_route_ids?: string[]
+          assumption: string
           company_id: string
+          contradicting_evidence?: Json
           created_at?: string
-          frameworks_used?: string[]
           id?: string
-          metric?: string
-          method?: string
-          solution_idea_id: string
-          sort_order?: number
-          success_threshold?: string
-          timebox?: string
-          title?: string
+          invalidated_reason?: string | null
+          note?: string | null
+          prior_statement?: string | null
+          reframed_from_id?: string | null
+          related_tension_ids?: string[]
+          source?: string
+          status?: string
+          supporting_evidence?: Json
           updated_at?: string
           user_id: string
         }
         Update: {
+          affected_route_ids?: string[]
+          assumption?: string
           company_id?: string
+          contradicting_evidence?: Json
           created_at?: string
-          frameworks_used?: string[]
           id?: string
-          metric?: string
-          method?: string
-          solution_idea_id?: string
-          sort_order?: number
-          success_threshold?: string
-          timebox?: string
-          title?: string
+          invalidated_reason?: string | null
+          note?: string | null
+          prior_statement?: string | null
+          reframed_from_id?: string | null
+          related_tension_ids?: string[]
+          source?: string
+          status?: string
+          supporting_evidence?: Json
           updated_at?: string
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "solution_tests_company_id_fkey"
+            foreignKeyName: "strategy_assumptions_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "solution_tests_solution_idea_id_fkey"
-            columns: ["solution_idea_id"]
+            foreignKeyName: "strategy_assumptions_reframed_from_id_fkey"
+            columns: ["reframed_from_id"]
             isOneToOne: false
-            referencedRelation: "solution_ideas"
+            referencedRelation: "strategy_assumptions"
             referencedColumns: ["id"]
           },
         ]
@@ -1674,49 +2690,49 @@ export type Database = {
           {
             foreignKeyName: "strategy_cascades_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]
       }
-      strategy_assumptions: {
+      strategy_problem_statements: {
         Row: {
-          assumption: string
           company_id: string
           created_at: string
           id: string
-          note: string | null
+          reconciliation_note: string | null
           source: string
+          statement: string
           status: string
           updated_at: string
           user_id: string
         }
         Insert: {
-          assumption: string
           company_id: string
           created_at?: string
           id?: string
-          note?: string | null
+          reconciliation_note?: string | null
           source?: string
+          statement: string
           status?: string
           updated_at?: string
           user_id: string
         }
         Update: {
-          assumption?: string
           company_id?: string
           created_at?: string
           id?: string
-          note?: string | null
+          reconciliation_note?: string | null
           source?: string
+          statement?: string
           status?: string
           updated_at?: string
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "strategy_assumptions_company_id_fkey"
+            foreignKeyName: "strategy_problem_statements_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1744,7 +2760,20 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      derived_tensions_structural: {
+        Row: {
+          claim_id: string | null
+          claim_type: string | null
+          company_id: string | null
+          route_id: string | null
+          stale_reason: string | null
+          state: string | null
+          statement: string | null
+          tension_type: string | null
+          topic: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       has_role: {
@@ -1754,6 +2783,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "user"
@@ -1894,3 +2924,6 @@ export const Constants = {
     },
   },
 } as const
+
+A new version of Supabase CLI is available: v2.98.2 (currently installed v2.90.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli

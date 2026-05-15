@@ -28,8 +28,13 @@ import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import SdsTerm from "@/components/ui/sds-term";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
+import TensionBlock from "@/components/tensions/TensionBlock";
+import { deriveStrategicTensions, tensionsForContext as filterTensionsForContext } from "@/lib/tensionDerivation";
+import type { StrategicTension } from "@/lib/tensionTypes";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
+import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 import {
   safeText,
   isPublicSourcePath,
@@ -138,8 +143,8 @@ function NeedActionBadge({ label }: { label: "Fix" | "Improve" | "Create" }) {
   const tone = opportunityActionTone(label);
   return (
     <span
-      className="inline-flex items-center rounded-md border px-2 py-[1px] font-mono text-[10px] uppercase tracking-[0.08em]"
-      style={{ borderColor: tone.border, background: tone.bg, color: tone.fg }}
+      className="font-mono text-[9px] uppercase tracking-[0.1em]"
+      style={{ color: tone.fg }}
     >
       {label}
     </span>
@@ -313,12 +318,14 @@ function StepCard({
 
   return (
     <div
-      className="flex h-full w-[250px] shrink-0 flex-col overflow-hidden rounded-2xl"
+      className="flex h-full w-[250px] shrink-0 flex-col overflow-hidden"
       style={{
         width: STEP_CARD_WIDTH,
         background: c.paper,
-        border: `1px solid ${assessedGap ? "#E7C3A4" : c.line}`,
-        boxShadow: assessedGap ? "0 0 0 1px rgba(255,125,45,0.08) inset" : "none",
+        borderLeft: assessedGap ? `3px solid #E7C3A4` : `2px solid ${c.line}`,
+        borderTop: `1px solid ${c.line}`,
+        borderRight: `1px solid ${c.line}`,
+        borderBottom: `1px solid ${c.line}`,
       }}
     >
       <div className="flex min-h-[440px] flex-1 flex-col p-4">
@@ -332,13 +339,13 @@ function StepCard({
                 type="button"
                 onClick={() => setIsEditing(true)}
                 disabled={!!saving}
-                className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
-                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                className="font-mono text-[9px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 Edit
               </button>
             ) : (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -347,8 +354,8 @@ function StepCard({
                     setDescriptionDraft(safeText(step.description, ""));
                   }}
                   disabled={!!saving}
-                  className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
-                  style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                  className="font-mono text-[9px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                  style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   Cancel
                 </button>
@@ -356,8 +363,8 @@ function StepCard({
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={!!saving}
-                  className="rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-50"
-                  style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                  className="font-mono text-[9px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                  style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   {saving ? "Saving…" : "Save"}
                 </button>
@@ -395,19 +402,16 @@ function StepCard({
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span
-            className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-            style={{ color: evidenceTone.color, background: evidenceTone.bg, borderColor: evidenceTone.border }}
+            className="font-mono text-[10px] uppercase tracking-[0.1em]"
+            style={{ color: evidenceTone.color }}
           >
             {evidenceTone.label}
           </span>
           <MetaBadge>Conf {step.evidence_confidence ?? 0}</MetaBadge>
         </div>
 
-        <div
-          className="mt-3 rounded-xl border px-3 py-2"
-          style={{ borderColor: c.line, background: c.lineFaint, minHeight: STEP_DETAIL_BLOCK_HEIGHT }}
-        >
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+        <div className="mt-4" style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }}>
+          <p className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted, opacity: 0.75 }}>
             Evidence Basis
           </p>
           <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
@@ -421,33 +425,17 @@ function StepCard({
         </div>
 
         {assessedGap ? (
-          <div
-            className="mt-3 rounded-xl border px-3 py-2"
-            style={{
-              borderColor: "#E7C3A4",
-              background: "#FFF7F0",
-              minHeight: STEP_DETAIL_BLOCK_HEIGHT,
-            }}
-          >
-            <p
-              className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: c.gap }}
-            >
-              Gap Identified
+          <div className="mt-3" style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }}>
+            <p className="font-mono text-[9px] font-bold uppercase tracking-[0.1em]" style={{ color: c.gap }}>
+              · Gap Identified
             </p>
-            <p
-              className="mt-1 font-sans text-[12px] leading-[1.55]"
-              style={{ color: c.gap }}
-            >
+            <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.gap }}>
               {safeText(step.gap_note, "A gap is flagged here, but we still need clear evidence showing why it is happening.")}
             </p>
           </div>
         ) : draftPlaceholder ? (
-          <div
-            className="mt-3 rounded-xl border px-3 py-2"
-            style={{ borderColor: c.line, background: c.lineFaint, minHeight: STEP_DETAIL_BLOCK_HEIGHT }}
-          >
-            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: c.muted }}>
+          <div className="mt-3" style={{ minHeight: STEP_DETAIL_BLOCK_HEIGHT }}>
+            <p className="font-mono text-[9px] font-bold uppercase tracking-[0.1em]" style={{ color: c.muted }}>
               Needs Assessment
             </p>
             <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
@@ -661,14 +649,15 @@ function OdiContextSection({
 
   return (
     <section
-      className="rounded-[28px] border px-6 py-6"
-      style={{ borderColor: c.line, background: c.panel }}
+      style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
     >
       <div className="mb-5">
         <div className="flex items-center gap-2">
+          <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: "#9298B5" }}>Customer signal layer — what matters and how well it is served</p>
           <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
             <SdsTerm short />{" "}Needs & Market Context
           </h2>
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#B0B8D0" }}>From: job structure · research data &nbsp;·&nbsp; Feeds: strategy priority and route targeting</p>
           <MetaBadge>{marketSource}</MetaBadge>
           <MetaBadge>{`Needs: ${publicNeedCount} public / ${uploadedNeedCount} uploaded`}</MetaBadge>
           {onSaveContextEdits ? (
@@ -686,8 +675,8 @@ function OdiContextSection({
                 setEditingContext(true);
               }}
               disabled={!!savingContextEdits}
-              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+              style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
               {editingContext ? "Cancel Edit" : "Edit Context"}
             </button>
@@ -708,8 +697,8 @@ function OdiContextSection({
                 type="button"
                 onClick={onRemovePublicMarketContextAndRerun}
                 disabled={Boolean(removingPublicMarketContextAction)}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                style={{ borderColor: c.line, color: c.charcoal, background: c.card }}
+                className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 {removingPublicMarketContextAction === "remove_and_rerun"
                   ? "Removing + Re-running…"
@@ -720,8 +709,8 @@ function OdiContextSection({
               type="button"
               onClick={onRemovePublicMarketContext}
               disabled={Boolean(removingPublicMarketContextAction)}
-              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-              style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+              className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+              style={{ color: c.coral, background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
               {removingPublicMarketContextAction === "remove"
                 ? "Removing…"
@@ -737,8 +726,8 @@ function OdiContextSection({
               type="button"
               onClick={onResetPublicResearchArtifacts}
               disabled={Boolean(removingPublicMarketContextAction) || !!resettingPublicResearchArtifacts}
-              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-              style={{ borderColor: "#E6CFC2", color: "#915E46", background: "#FFF8F5" }}
+              className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+              style={{ color: "#915E46", background: "none", border: "none", cursor: "pointer", padding: 0 }}
               title="Remove generated public-research artifacts (map, opportunities, routes, baseline snapshots) while keeping uploaded files"
             >
               {resettingPublicResearchArtifacts ? "Resetting…" : "Reset False Public Research Artifacts"}
@@ -748,7 +737,7 @@ function OdiContextSection({
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <div className="rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+        <div style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Market Context
           </p>
@@ -767,7 +756,7 @@ function OdiContextSection({
           )}
         </div>
 
-        <div className="rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+        <div style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job Executor
           </p>
@@ -802,7 +791,7 @@ function OdiContextSection({
           )}
         </div>
 
-        <div className="rounded-2xl border p-4 lg:col-span-1" style={{ borderColor: c.line, background: c.paper }}>
+        <div className="lg:col-span-1" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Job to Be Done
           </p>
@@ -830,8 +819,8 @@ function OdiContextSection({
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
           <div className="lg:col-start-3">
             <div
-              className="mb-2 rounded-xl border px-3 py-2.5"
-              style={{ borderColor: "#F1C3AC", background: "#FFF4EC" }}
+              className="mb-2"
+              style={{ borderLeft: "2px solid #F1C3AC", paddingLeft: 12, paddingTop: 8, paddingBottom: 8 }}
             >
               <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#915E46" }}>
                 Save Impact
@@ -845,7 +834,7 @@ function OdiContextSection({
                 type="button"
                 onClick={handleSaveContext}
                 disabled={!!savingContextEdits}
-                className="rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                className="border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                 style={{ borderColor: "#D46A2D", color: "#FFFFFF", background: "#D46A2D" }}
               >
                 {savingContextEdits ? "Saving + Refreshing…" : "Save Context"}
@@ -882,9 +871,10 @@ function OdiContextSection({
                       setSavingStrategy(false);
                     }
                   }}
-                  className="rounded-xl border p-3 text-left transition-colors disabled:opacity-60"
+                  className="border p-3 text-left transition-colors disabled:opacity-60"
                   style={{
                     borderColor: isSelected ? c.coral : c.line,
+                    borderLeftWidth: isSelected ? 3 : 1,
                     background: isSelected ? "#FFF4EC" : c.card,
                   }}
                 >
@@ -1013,8 +1003,7 @@ function ProcessFidelitySection({
 
   return (
     <section
-      className="rounded-[28px] border px-6 py-6"
-      style={{ borderColor: c.line, background: c.panel }}
+      style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
     >
       <div className="mb-5">
         <h2 className="font-sans text-[24px] font-semibold" style={{ color: c.charcoal }}>
@@ -1026,13 +1015,13 @@ function ProcessFidelitySection({
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <div className="rounded-2xl border p-4 xl:col-span-5" style={{ borderColor: c.line, background: c.paper }}>
+        <div className="xl:col-span-5" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Derived Market Definition Canvas
           </p>
           <div className="mt-3 space-y-3">
             {canvasFields.map((field) => (
-              <div key={field.key} className="rounded-xl border px-3 py-2.5" style={{ borderColor: c.line, background: "#fff" }}>
+              <div key={field.key} style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 10, paddingTop: 8, paddingBottom: 8 }}>
                 <p className="font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: c.muted }}>
                   {field.label}
                 </p>
@@ -1041,8 +1030,7 @@ function ProcessFidelitySection({
                     {otherProductsContextGroups.map((group, index) => (
                       <div
                         key={`${group.alternative}-${index}`}
-                        className="rounded-lg border px-2.5 py-2"
-                        style={{ borderColor: c.line, background: c.paper }}
+                        style={{ borderLeft: `1px solid ${c.line}`, paddingLeft: 10, paddingTop: 6, paddingBottom: 6 }}
                       >
                         <p className="font-sans text-[13px] font-semibold leading-[1.35]" style={{ color: c.charcoal }}>
                           {group.alternative}
@@ -1066,7 +1054,7 @@ function ProcessFidelitySection({
           </div>
         </div>
 
-        <div className="rounded-2xl border p-4 xl:col-span-7" style={{ borderColor: c.line, background: c.paper }}>
+        <div className="xl:col-span-7" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             8-Checkpoint Spine
           </p>
@@ -1098,8 +1086,7 @@ function ProcessFidelitySection({
               return (
                 <div
                   key={`checkpoint-${checkpoint.stepNumber}`}
-                  className="rounded-xl border px-3 py-2.5"
-                  style={{ borderColor: c.line, background: "#fff" }}
+                  style={{ borderBottom: `1px solid ${c.line}`, paddingTop: 10, paddingBottom: 10 }}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -1112,18 +1099,14 @@ function ProcessFidelitySection({
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span
-                        className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                        style={{ background: statusTone.bg, borderColor: statusTone.border, color: statusTone.color }}
+                        className="font-mono text-[9px] uppercase tracking-[0.1em]"
+                        style={{ color: statusTone.color }}
                       >
                         {statusLabel}
                       </span>
                       <span
-                        className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                        style={{
-                          background: hasGap ? "#FFF0E6" : "#F3F4EF",
-                          borderColor: hasGap ? "#F1C3AC" : c.line,
-                          color: hasGap ? c.gap : c.muted,
-                        }}
+                        className="font-mono text-[9px] uppercase tracking-[0.1em]"
+                        style={{ color: hasGap ? c.gap : c.muted }}
                       >
                         {hasGap ? "Gap Flagged" : row ? "No Gap Flagged" : "Gap Unknown"}
                       </span>
@@ -1142,7 +1125,7 @@ function ProcessFidelitySection({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: c.line, background: c.paper }}>
+      <div className="mt-4" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 16 }}>
         <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
           <SdsTerm short />{" "}Needs Linked To Checkpoints
         </p>
@@ -1167,8 +1150,7 @@ function ProcessFidelitySection({
               return (
                 <div
                   key={need.id}
-                  className="rounded-xl border px-3 py-2.5"
-                  style={{ borderColor: c.line, background: "#fff" }}
+                  style={{ borderBottom: `1px solid ${c.line}`, paddingTop: 10, paddingBottom: 10 }}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
@@ -1204,6 +1186,8 @@ function OdiNeedsListSection({
   updatingNeedId,
   onUpdateNeedScores,
   currentPhase,
+  hasPrimaryEvidence,
+  needsTensions = [],
 }: {
   companyId?: string;
   needs: OdiNeedRow[];
@@ -1217,6 +1201,8 @@ function OdiNeedsListSection({
   updatingNeedId?: string | null;
   onUpdateNeedScores?: (needId: string, importance: number, satisfaction: number) => Promise<void>;
   currentPhase?: import("@/lib/engagementPhase").EngagementPhase;
+  hasPrimaryEvidence?: boolean;
+  needsTensions?: StrategicTension[];
 }) {
   type NeedOrderMode = "suggested" | "custom";
   const hasManualNeedOverride = (rows: OdiNeedRow[]) =>
@@ -1248,6 +1234,7 @@ function OdiNeedsListSection({
     hasManualNeedOverride(needs) ? "custom" : "suggested",
   );
   const [inspectNeed, setInspectNeed] = useState<OdiNeedRow | null>(null);
+  const { claims: claimsMap } = useCompanyClaims(companyId);
   const [draggingNeedId, setDraggingNeedId] = useState<string | null>(null);
   const [dragOverNeedId, setDragOverNeedId] = useState<string | null>(null);
   const [editingNeedId, setEditingNeedId] = useState<string | null>(null);
@@ -1292,6 +1279,27 @@ function OdiNeedsListSection({
 
   const suggestedItems = useMemo(() => sortSuggestedItems(needs), [needs]);
   const suggestedOrderIds = suggestedItems.map((item) => item.id);
+
+  const underservedNeeds = useMemo(() => suggestedItems.filter((n) => n.service_state === "under_served"), [suggestedItems]);
+  const overservedNeeds  = useMemo(() => suggestedItems.filter((n) => n.service_state === "over_served"),  [suggestedItems]);
+  const highScoreNeeds   = useMemo(() => suggestedItems.filter((n) => (n.opportunity_score ?? 0) >= 10),   [suggestedItems]);
+  const topPriorityNeed  = suggestedItems[0] ?? null;
+
+  const needsEditorialHeadline = needs.length === 0
+    ? "No customer needs loaded yet."
+    : underservedNeeds.length > 0
+      ? `${underservedNeeds.length} underserved ${underservedNeeds.length === 1 ? "need" : "needs"} identified.`
+      : highScoreNeeds.length > 0
+        ? `${highScoreNeeds.length} high-priority ${highScoreNeeds.length === 1 ? "need" : "needs"} — score above threshold.`
+        : `${needs.length} customer ${needs.length === 1 ? "need" : "needs"} mapped — no critical gaps at this threshold.`;
+
+  const needsEditorialContext = underservedNeeds.length > 0 && overservedNeeds.length > 0
+    ? `${underservedNeeds.length} under-served and ${overservedNeeds.length} over-served — review allocation balance.`
+    : underservedNeeds.length > 0
+      ? `Focus on ${underservedNeeds.length} under-served ${underservedNeeds.length === 1 ? "outcome" : "outcomes"} before broadening scope.`
+      : overservedNeeds.length > 0
+        ? `${overservedNeeds.length} over-served ${overservedNeeds.length === 1 ? "outcome" : "outcomes"} — may indicate misallocated effort.`
+        : "Customer reality is relatively balanced — monitor for shifts.";
   const customOrderIds = needItems.map((item) => item.id);
   const needNumberById = useMemo(
     () =>
@@ -1311,31 +1319,80 @@ function OdiNeedsListSection({
 
   return (
     <section
-      className="rounded-[28px] border px-6 py-6"
-      style={{ borderColor: c.line, background: c.panel }}
+      style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
     >
-      <div
-        className="rounded-2xl border overflow-hidden"
-        style={{ borderColor: c.line, background: c.paper }}
-      >
-        <div className="h-[5px] w-full" style={{ background: c.coral }} />
-        <div className="p-4">
-          <div className="mb-3">
-            <h3 className="font-sans text-[20px] font-semibold" style={{ color: c.charcoal }}>
-              Needs
-            </h3>
-            <p className="mt-1 font-sans text-[13px]" style={{ color: c.secondary }}>
-              Desired outcome statements from both public and uploaded evidence. Use source labels to remove inaccurate public rows and keep company-grounded needs.
-            </p>
+      <div>
+        <div>
+          <div className="mb-5">
+
+            {/* ── EDITORIAL NEEDS STATE ──────────────────────────────── */}
+            <div style={{ paddingBottom: 20, marginBottom: 20, borderBottom: `2px solid ${c.line}` }}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: c.muted }}>
+                Customer needs · {needs.length} total
+              </p>
+              <h2 className="mt-3 font-sans font-semibold leading-[1.25] max-w-2xl" style={{ fontSize: 36, color: c.charcoal }}>
+                {needsEditorialHeadline}
+              </h2>
+              <p className="mt-2 font-sans text-[14px] leading-[1.5] max-w-xl" style={{ color: c.secondary }}>
+                {needsEditorialContext}
+              </p>
+              <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted }}>
+                Customer research: {hasPrimaryEvidence ? "active" : "incomplete"} · {underservedNeeds.length + overservedNeeds.length > 0 ? `${underservedNeeds.length} under · ${overservedNeeds.length} over` : "no service-state gaps"}
+              </p>
+              {(underservedNeeds.length > 0 || overservedNeeds.length > 0) && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {underservedNeeds.length > 0 && (
+                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${c.coral}`, color: c.coral }}>
+                      {underservedNeeds.length} underserved
+                    </span>
+                  )}
+                  {overservedNeeds.length > 0 && (
+                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${c.line}`, color: c.muted }}>
+                      {overservedNeeds.length} overserved
+                    </span>
+                  )}
+                </div>
+              )}
+              {topPriorityNeed && (
+                <div className="mt-4" style={{ borderLeft: `3px solid ${c.coral}`, paddingLeft: 14 }}>
+                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.coral }}>Top priority</p>
+                  <p className="font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+                    {topPriorityNeed.desired_outcome}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3">
+                    {topPriorityNeed.opportunity_score != null && (
+                      <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                        Score {topPriorityNeed.opportunity_score}
+                      </span>
+                    )}
+                    {topPriorityNeed.importance != null && (
+                      <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                        Importance {topPriorityNeed.importance}
+                      </span>
+                    )}
+                    {topPriorityNeed.service_state === "under_served" && (
+                      <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.coral }}>Underserved</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {needsTensions.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <TensionBlock tensions={needsTensions} context="needs" showBlockerCallout={false} />
+                </div>
+              )}
+            </div>
+
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setOrderMode("suggested")}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                className="font-mono text-[10px] uppercase tracking-[0.08em]"
                 style={{
-                  borderColor: orderMode === "suggested" ? "#E6CFC2" : c.line,
-                  color: orderMode === "suggested" ? c.charcoal : c.secondary,
-                  background: orderMode === "suggested" ? "#FFF4EC" : c.card,
+                  background: "none", border: "none", cursor: "pointer", padding: "6px 0 8px",
+                  color: orderMode === "suggested" ? c.charcoal : c.muted,
+                  borderBottom: orderMode === "suggested" ? `2px solid ${c.coral}` : "2px solid transparent",
+                  marginBottom: -1,
                 }}
               >
                 Generated
@@ -1343,11 +1400,12 @@ function OdiNeedsListSection({
               <button
                 type="button"
                 onClick={() => setOrderMode("custom")}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
+                className="font-mono text-[10px] uppercase tracking-[0.08em]"
                 style={{
-                  borderColor: orderMode === "custom" ? "#D8E4D6" : c.line,
-                  color: orderMode === "custom" ? c.charcoal : c.secondary,
-                  background: orderMode === "custom" ? "#EEF6E7" : c.card,
+                  background: "none", border: "none", cursor: "pointer", padding: "6px 0 8px",
+                  color: orderMode === "custom" ? c.charcoal : c.muted,
+                  borderBottom: orderMode === "custom" ? `2px solid ${c.teal}` : "2px solid transparent",
+                  marginBottom: -1,
                 }}
               >
                 {customOrderLabel}
@@ -1363,8 +1421,8 @@ function OdiNeedsListSection({
                   setCustomLabelDraft(customOrderLabel);
                   setIsRenamingCustomLabel((current) => !current);
                 }}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
-                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                className="font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 {isRenamingCustomLabel ? "Close Rename" : "Rename Custom"}
               </button>
@@ -1389,8 +1447,8 @@ function OdiNeedsListSection({
                       window.localStorage.setItem(customLabelStorageKey, nextLabel);
                     }
                   }}
-                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
-                  style={{ borderColor: c.line, color: c.charcoal, background: "#fff" }}
+                  className="font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                  style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   Save Name
                 </button>
@@ -1409,8 +1467,8 @@ function OdiNeedsListSection({
                   type="button"
                   onClick={onRemovePublicNeeds}
                   disabled={!!removingPublicNeeds}
-                  className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                  style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+                  className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                  style={{ color: c.coral, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   {removingPublicNeeds ? "Removing…" : `Remove Public Needs (${publicNeedCount})`}
                 </button>
@@ -1423,7 +1481,7 @@ function OdiNeedsListSection({
               No Strategic Decision System needs identified yet from current evidence.
             </p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {visibleNeedItems.map((item) => (
                 <div
                   key={item.id}
@@ -1458,12 +1516,10 @@ function OdiNeedsListSection({
                     setDraggingNeedId(null);
                     setDragOverNeedId(null);
                   }}
-                  className="rounded-2xl border overflow-hidden"
                   style={{
-                    borderColor: c.line,
-                    background: c.card,
+                    borderBottom: `1px solid ${c.lineFaint}`,
+                    background: dragOverNeedId === item.id ? "#FFF4EC" : "transparent",
                     cursor: orderMode !== "custom" || reorderingNeeds ? "default" : "grab",
-                    boxShadow: dragOverNeedId === item.id ? "0 0 0 2px rgba(255,125,45,0.32) inset" : "none",
                     opacity: draggingNeedId === item.id ? 0.72 : 1,
                   }}
                 >
@@ -1472,10 +1528,15 @@ function OdiNeedsListSection({
                     const actionTone = opportunityActionTone(actionLabel);
                     const stepContext = item.step_number ? `Checkpoint ${item.step_number}` : "Checkpoint —";
                     const stepDetail = item.step_label ? ` · ${item.step_label}` : "";
+                    const oppScore = item.opportunity_score ?? 0;
+                    const needPressure = oppScore >= 14 ? "high" : oppScore >= 6 ? "medium" : "low";
                     return (
                       <>
-                        <div className="h-[4px] w-full" style={{ background: actionTone.fg }} />
-                        <div className="p-4">
+                        <div style={{
+                          paddingTop: needPressure === "high" ? 22 : needPressure === "medium" ? 16 : 12,
+                          paddingBottom: needPressure === "high" ? 18 : needPressure === "medium" ? 12 : 10,
+                          opacity: needPressure === "low" ? 0.75 : 1,
+                        }}>
                           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
                             <div className="min-w-0">
                               <div className="mb-2 flex items-center gap-2">
@@ -1509,7 +1570,11 @@ function OdiNeedsListSection({
                               placeholder="Desired outcome"
                             />
                           ) : (
-                            <p className="font-sans text-[16px] font-semibold leading-[1.5]" style={{ color: c.charcoal }}>
+                            <p className="font-sans leading-[1.5]" style={{
+                              fontSize: needPressure === "high" ? 18 : needPressure === "medium" ? 17 : 15,
+                              fontWeight: needPressure === "high" ? 600 : 500,
+                              color: c.charcoal,
+                            }}>
                               {item.desired_outcome}
                             </p>
                           )}
@@ -1522,12 +1587,16 @@ function OdiNeedsListSection({
                             {stepDetail}
                           </p>
 
-                          <div className="mt-3 border-t pt-2" style={{ borderColor: c.line }}>
+                          <div className="mt-3 border-t pt-2" style={{ borderColor: c.lineFaint }}>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex min-w-0 flex-wrap items-center gap-2">
                                 <NeedActionBadge label={actionLabel} />
                                 <StateBadge tone={item.service_state} />
                                 <MetaBadge>{sourcePathLabel(item.source_path)}</MetaBadge>
+                                {(() => {
+                                  const claim = claimsMap.get(item.id);
+                                  return claim ? <ClaimStateBadge state={claim.state} claimId={item.id} size="sm" /> : null;
+                                })()}
                               </div>
                               {onUpdateNeedScores ? (() => {
                                 const draft = scoreDrafts[item.id];
@@ -1628,8 +1697,8 @@ function OdiNeedsListSection({
                                   });
                                 }}
                                 disabled={updatingNeedId === item.id}
-                                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                                className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                               >
                                 Cancel
                               </button>
@@ -1661,8 +1730,8 @@ function OdiNeedsListSection({
                                   }
                                 }}
                                 disabled={updatingNeedId === item.id}
-                                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                                style={{ borderColor: c.line, color: "#1F6A5B", background: "#EEF6E7" }}
+                                className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                                style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                               >
                                 {updatingNeedId === item.id ? "Saving…" : "Save"}
                               </button>
@@ -1678,8 +1747,8 @@ function OdiNeedsListSection({
                                 }));
                               }}
                               disabled={updatingNeedId === item.id}
-                              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                              className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                              style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                             >
                               Edit
                             </button>
@@ -1688,8 +1757,8 @@ function OdiNeedsListSection({
                             type="button"
                             onClick={() => onRemoveNeed(item.id)}
                             disabled={removingNeedId === item.id || updatingNeedId === item.id}
-                            className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                            style={{ borderColor: "#F1C3AC", color: c.coral, background: c.card }}
+                            className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                            style={{ color: c.coral, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                           >
                             {removingNeedId === item.id ? "Removing…" : "Remove Need"}
                           </button>
@@ -1764,11 +1833,9 @@ function JourneySection({
 
   return (
     <section
-      className="overflow-hidden rounded-[28px] border p-0"
       style={{
-        background: "#FFFFFF",
-        borderColor: c.line,
-        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+        borderTop: `1px solid ${c.line}`,
+        background: "transparent",
       }}
     >
       <div className="h-full w-[6px]" style={{ background: rail, float: "left" }} />
@@ -1814,8 +1881,8 @@ function JourneySection({
               type="button"
               onClick={() => onRemove(journey.key)}
               disabled={removing}
-              className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+              className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+              style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
               {removing ? "Removing…" : "Remove Map"}
             </button>
@@ -1886,8 +1953,7 @@ function SuggestedMapsSection({
 
   return (
     <section
-      className="rounded-[24px] border px-6 py-5"
-      style={{ borderColor: c.line, background: c.panel }}
+      style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1904,8 +1970,7 @@ function SuggestedMapsSection({
         {options.map((option) => (
           <div
             key={option.key}
-            className="rounded-xl border p-3"
-            style={{ borderColor: c.line, background: c.paper }}
+            style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 14, paddingTop: 12, paddingBottom: 12 }}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <MetaBadge>{titleCaseJourney(option.key)}</MetaBadge>
@@ -1950,7 +2015,7 @@ function SuggestedMapsSection({
                 type="button"
                 onClick={() => onAddMap(option.key)}
                 disabled={runningKey !== null}
-                className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                className="border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                 style={{ borderColor: c.line, color: c.secondary, background: c.card }}
               >
                 {runningKey === option.key ? "Adding…" : "Add Map"}
@@ -1991,6 +2056,11 @@ export default function JobStepsView() {
     areaScoresJson: activeCompany?.area_scores_json,
     evidenceStatus: activeCompany?.evidence_status,
   });
+  const allNeedsTensions = useMemo(
+    () => deriveStrategicTensions({ needs, sourceSignals }),
+    [needs, sourceSignals],
+  );
+  const needsTensions = filterTensionsForContext(allNeedsTensions, "needs", 3);
   const [journeyDrafts, setJourneyDrafts] = useState<JourneyDraftMap>({});
   const [customMapDraft, setCustomMapDraft] = useState({ key: "", title: "", subtitle: "" });
   const [runningJourneyKey, setRunningJourneyKey] = useState<string | null>(null);
@@ -2051,6 +2121,15 @@ export default function JobStepsView() {
     () => journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => hasAssessedGap(step)).length, 0),
     [journeys]
   );
+  const totalStepCount = useMemo(
+    () => journeys.reduce((sum, journey) => sum + journey.steps.length, 0),
+    [journeys]
+  );
+  const jobMapEditorialHeadline =
+    journeys.length === 0 ? "No customer journey checkpoints defined yet."
+    : totalGaps > 0 ? `${totalGaps} confirmed ${totalGaps === 1 ? "gap" : "gaps"} across ${journeys.length} ${journeys.length === 1 ? "journey" : "journeys"}.`
+    : totalStepCount > 0 ? `${totalStepCount} checkpoints defined — no confirmed gaps yet.`
+    : "Journeys defined — run research to generate checkpoints.";
   const pendingAssessmentTotal = useMemo(
     () =>
       journeys.reduce((sum, journey) => sum + journey.steps.filter((step) => isDraftPlaceholderStep(step)).length, 0),
@@ -3050,7 +3129,7 @@ export default function JobStepsView() {
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-screen strategic-surface"
       style={{
         background: c.bg,
         backgroundImage:
@@ -3059,30 +3138,23 @@ export default function JobStepsView() {
     >
       <TopNav />
 
-      <main className="max-w-[1440px] mx-auto px-4 pb-12 pt-6 sm:px-6 md:px-8">
+      <main className="max-w-[1440px] mx-auto px-4 pb-12 pt-3 sm:px-6 md:px-8">
         <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
-        <div className="mb-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {activeCompany?.name || "No company selected"}
-              </div>
-              <h1 className="mt-1 font-sans text-[28px] font-semibold" style={{ color: c.charcoal }}>
-                Job Checkpoints Map
-              </h1>
-              <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                Select and define Strategic Decision System-style checkpoint maps first, then run research to generate checkpoints and aligned opportunities.
+        <div className="mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9298B5" }}>
+                Customer Research · {activeCompany?.name || "No company selected"} · Job structure and needs
               </p>
+              <Link
+                to="/routes"
+                className="font-mono text-[10px] uppercase tracking-[0.1em]"
+                style={{ color: "#6a9e94", textDecoration: "underline", opacity: 0.7 }}
+              >
+                ← Commitment Review
+              </Link>
             </div>
-
-            <Link
-              to="/"
-              className="rounded-full border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em]"
-              style={{ borderColor: c.line, color: c.secondary, background: c.card }}
-            >
-              Back to Map
-            </Link>
           </div>
           <GenericAuditTraceNote
             active={auditMode}
@@ -3097,14 +3169,13 @@ export default function JobStepsView() {
         <AiBoundaryNote
           label="Public Research"
           tone="public"
-          className="mb-6 max-w-[780px]"
+          className="mb-3 max-w-[780px]"
           detail="Map suggestions are inferred from public baseline signals. No checkpoint map is generated until you explicitly choose or define it."
         />
 
         {!activeCompany?.id ? (
           <div
-            className="rounded-[24px] border px-6 py-12 text-center"
-            style={{ borderColor: c.line, background: c.panel }}
+            className="py-8 text-center"
           >
             <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
               Select a company to view its job-checkpoint journey map.
@@ -3112,8 +3183,7 @@ export default function JobStepsView() {
           </div>
         ) : loading ? (
           <div
-            className="rounded-[24px] border px-6 py-12 text-center"
-            style={{ borderColor: c.line, background: c.panel }}
+            className="py-8 text-center"
           >
             <p className="font-mono text-[12px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
               Loading checkpoints…
@@ -3121,8 +3191,7 @@ export default function JobStepsView() {
           </div>
         ) : error ? (
           <div
-            className="rounded-[24px] border px-6 py-12 text-center"
-            style={{ borderColor: c.line, background: c.panel }}
+            className="py-8 text-center"
           >
             <p className="font-sans text-[15px]" style={{ color: c.gap }}>
               Failed to load checkpoints: {error}
@@ -3130,6 +3199,27 @@ export default function JobStepsView() {
           </div>
         ) : (
           <div className="space-y-6">
+
+            {/* ── EDITORIAL JOB MAP STATE ──────────────────────────────── */}
+            <section style={{ paddingBottom: totalGaps > 0 ? 16 : 24, borderBottom: `2px solid ${c.line}` }}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: c.muted }}>
+                Customer journey · {journeys.length} {journeys.length === 1 ? "journey" : "journeys"} · {totalStepCount} checkpoints
+              </p>
+              <h2 className="mt-2 font-sans font-semibold leading-[1.25] max-w-3xl" style={{ fontSize: 32, color: c.charcoal }}>
+                {jobMapEditorialHeadline}
+              </h2>
+              {marketDefinition?.job_executor && (
+                <p className="mt-2 font-sans text-[13px] leading-[1.55] max-w-2xl" style={{ color: c.secondary }}>
+                  Job executor: {marketDefinition.job_executor}
+                </p>
+              )}
+              {totalGaps > 0 && (
+                <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.coral }}>
+                  {totalGaps} confirmed {totalGaps === 1 ? "gap" : "gaps"}{pendingAssessmentTotal > 0 ? ` · ${pendingAssessmentTotal} pending assessment` : ""}
+                </p>
+              )}
+            </section>
+
             <OdiContextSection
               companyName={activeCompany?.name}
               marketDefinition={marketDefinition}
@@ -3182,8 +3272,7 @@ export default function JobStepsView() {
             />
 
             <section
-              className="rounded-[24px] border px-6 py-5"
-              style={{ borderColor: c.line, background: c.panel }}
+              style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -3198,23 +3287,23 @@ export default function JobStepsView() {
                   <button
                     type="button"
                     onClick={() => setShowChooseMaps((current) => !current)}
-                    className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
-                    style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                    className="font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                    style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                   >
-                    {showChooseMaps ? "Hide Choose Checkpoint Maps" : "Show Choose Checkpoint Maps"}
+                    {showChooseMaps ? "Hide Choose Maps" : "Show Choose Maps"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowCustomMapForm((current) => !current)}
-                    className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]"
-                    style={{ borderColor: c.line, color: c.secondary, background: c.card }}
+                    className="font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                    style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                   >
-                    {showCustomMapForm ? "Hide Add Custom" : "Show Add Custom"}
+                    {showCustomMapForm ? "Hide Add Custom" : "Add Custom"}
                   </button>
                 </div>
               </div>
 
-              <div className="mt-4 rounded-xl border px-4 py-3" style={{ borderColor: c.line, background: c.paper }}>
+              <div className="mt-4" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 14, paddingTop: 10, paddingBottom: 10 }}>
                 <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
                   Selected Checkpoint Maps
                 </p>
@@ -3227,8 +3316,7 @@ export default function JobStepsView() {
                     {journeys.map((journey) => (
                       <div
                         key={`selected-${journey.key}`}
-                        className="rounded-xl border px-3 py-2"
-                        style={{ borderColor: c.line, background: "#fff" }}
+                        style={{ borderBottom: `1px solid ${c.line}`, paddingTop: 8, paddingBottom: 8 }}
                       >
                         <p
                           className="font-mono text-[10px] uppercase tracking-[0.1em]"
@@ -3304,7 +3392,7 @@ export default function JobStepsView() {
                       type="button"
                       onClick={addCustomMap}
                       disabled={runningJourneyKey !== null}
-                      className="rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
+                      className="border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
                       style={{ borderColor: c.line, color: c.secondary, background: c.card }}
                     >
                       {runningJourneyKey ? "Adding…" : "Add Custom Map"}
@@ -3316,10 +3404,9 @@ export default function JobStepsView() {
 
             {journeys.length === 0 ? (
               <div
-                className="rounded-[24px] border px-6 py-12 text-center"
-                style={{ borderColor: c.line, background: c.panel }}
+                className="py-8 text-center"
               >
-                <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+                <p className="font-sans text-[13px]" style={{ color: c.muted }}>
                   No checkpoint map exists yet. Choose or define at least one map above, then run research.
                 </p>
               </div>
@@ -3337,8 +3424,7 @@ export default function JobStepsView() {
                 ))}
 
                 <div
-                  className="rounded-[24px] border px-6 py-5"
-                  style={{ borderColor: c.line, background: c.panel }}
+                  style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 24 }}
                 >
                   <p className="font-sans text-[14px] leading-[1.6]" style={{ color: c.secondary }}>
                     <strong style={{ color: c.charcoal }}>{totalGaps} checkpoints have active gaps</strong> across the current map{journeys.length === 1 ? "" : "s"}.
@@ -3363,6 +3449,8 @@ export default function JobStepsView() {
               updatingNeedId={updatingNeedId}
               onUpdateNeedScores={handleUpdateNeedScores}
               currentPhase={activeCompany?.engagement_phase}
+              hasPrimaryEvidence={sourceSignals.hasPrimaryEvidence}
+              needsTensions={needsTensions}
             />
           </div>
         )}

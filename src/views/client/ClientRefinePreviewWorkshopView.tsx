@@ -29,11 +29,10 @@ import InputsTab from "./workshop/tabs/InputsTab";
 import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
 import { StrategyCompare, PositioningCompare } from "./workshop/tabs/ComparePanel";
-import { CustomerPlaceholder, SignalBar, PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
+import { PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
 import "@/styles/client-refine-preview.css";
 import {
   type WorkshopTab,
-  type SignalStage,
   type ExclusionControls,
   type BaselineVoiceSignal,
   type BaselineEvidenceItem,
@@ -48,6 +47,7 @@ import { deriveNextBestMove, type EvidenceReadiness } from "@/lib/nextBestMove";
 import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
 import { detectStrategicThemes, normalizeAuthorityPhase } from "@/lib/signalAuthority";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
+import { deriveStrategicTensions } from "@/lib/tensionDerivation";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -131,42 +131,46 @@ function StrategicChangeBanner({
   if (total <= 0) return null;
 
   return (
-    <div style={{ marginBottom: 16, border: "1px solid #d7ded1", background: "#f8f7f2", padding: "14px 16px" }}>
-      <div className="cap" style={{ color: "#6e847f" }}>Change notice</div>
-      <div style={{ marginTop: 6, color: "#233c4b", fontSize: 15, fontWeight: 600 }}>
-        Job map updated. {total} dependent item{total === 1 ? "" : "s"} need review.
-      </div>
+    <div style={{ marginBottom: 24, borderLeft: "2px solid #b06a3c", paddingLeft: 16 }}>
+      <p style={{ margin: "0 0 4px", fontFamily: "JetBrains Mono, monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "#b06a3c", opacity: 0.75 }}>
+        Interpretation shifted
+      </p>
+      <p style={{ margin: "0 0 6px", color: "#233c4b", fontSize: 14, lineHeight: 1.5 }}>
+        The job map changed — {total} downstream assumption{total === 1 ? "" : "s"} may no longer hold.
+      </p>
       {scoreNote ? (
-        <div style={{ marginTop: 6, color: "#54656a", fontSize: 13, lineHeight: 1.5 }}>
+        <p style={{ margin: "0 0 10px", color: "#54656a", fontSize: 13, lineHeight: 1.55, fontStyle: "italic" }}>
           {scoreNote}
-        </div>
+        </p>
       ) : null}
-      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {affectedArtifacts.slice(0, 10).map((artifact) => (
           <button
             key={`${artifact.object_type}:${artifact.object_id}`}
             type="button"
             onClick={() => onOpenArtifact(artifact)}
             style={{
-              display: "grid",
-              gridTemplateColumns: "140px 1fr 110px",
+              display: "flex",
+              alignItems: "flex-start",
               gap: 12,
               textAlign: "left",
-              border: "1px solid #d7ded1",
-              background: "#fff",
-              padding: "10px 12px",
+              background: "none",
+              border: "none",
+              padding: "4px 0",
+              cursor: "pointer",
             }}
           >
-            <span className="cap" style={{ color: "#6e847f" }}>
-              {artifact.object_type === "odi_need" ? "Need" : artifact.object_type === "route" ? "Route" : "Desired outcome"}
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9ca3af", paddingTop: 2, flexShrink: 0, minWidth: 80 }}>
+              {artifact.object_type === "odi_need" ? "Need" : artifact.object_type === "route" ? "Route" : "Outcome"}
             </span>
             <span>
-              <span style={{ color: "#233c4b", fontSize: 13, display: "block" }}>{artifact.label}</span>
-              <span style={{ color: "#6e847f", fontSize: 11, display: "block", marginTop: 3 }}>
-                {artifact.stale_reason || "Needs review"}{artifact.updated_at ? ` · ${new Date(artifact.updated_at).toLocaleString()}` : ""}
-              </span>
+              <span style={{ color: "#233c4b", fontSize: 13, display: "block", textDecoration: "underline", textDecorationColor: "#d7ded1" }}>{artifact.label}</span>
+              {artifact.stale_reason && (
+                <span style={{ color: "#9ca3af", fontSize: 11, display: "block", marginTop: 2, fontStyle: "italic" }}>
+                  {artifact.stale_reason}
+                </span>
+              )}
             </span>
-            <span className="cap" style={{ color: "#6e847f" }}>{artifact.dependency_state}</span>
           </button>
         ))}
       </div>
@@ -174,48 +178,14 @@ function StrategicChangeBanner({
   );
 }
 
-function StrategicDebugSummary({
-  latestEventId,
-  latestEventAt,
-  affectedCount,
-  artifactVersionCount,
-  dependenciesCreatedCount,
-}: {
+function StrategicDebugSummary(_props: {
   latestEventId: string | null;
   latestEventAt: string | null;
   affectedCount: number;
-  artifactVersionCount: number;
-  dependenciesCreatedCount: number;
+  artifactVersionCount: number | null;
+  dependenciesCreatedCount: number | null;
 }) {
-  if (!latestEventId) return null;
-
-  return (
-    <div style={{ marginBottom: 16, border: "1px dashed #d7ded1", background: "#fbfaf6", padding: "12px 14px" }}>
-      <div className="cap" style={{ color: "#6e847f" }}>Strategic graph debug</div>
-      <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-          <span className="cap" style={{ color: "#6e847f" }}>Latest event</span>
-          <span style={{ color: "#233c4b", fontSize: 13 }}>{latestEventId}</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-          <span className="cap" style={{ color: "#6e847f" }}>Event timestamp</span>
-          <span style={{ color: "#233c4b", fontSize: 13 }}>{latestEventAt || "—"}</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-          <span className="cap" style={{ color: "#6e847f" }}>Affected artifacts</span>
-          <span style={{ color: "#233c4b", fontSize: 13 }}>{affectedCount}</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-          <span className="cap" style={{ color: "#6e847f" }}>Artifact versions</span>
-          <span style={{ color: "#233c4b", fontSize: 13 }}>{artifactVersionCount}</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-          <span className="cap" style={{ color: "#6e847f" }}>Dependencies in scope</span>
-          <span style={{ color: "#233c4b", fontSize: 13 }}>{dependenciesCreatedCount}</span>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 
@@ -332,6 +302,100 @@ function CompanySwitcher({
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
+function deriveFieldCondition({
+  mojoScore,
+  confidenceLevel,
+  tensionsCount,
+  hasPrimaryEvidence,
+}: {
+  mojoScore: number;
+  confidenceLevel: string;
+  tensionsCount: number;
+  hasPrimaryEvidence: boolean;
+}): string {
+  const score = Math.round(mojoScore);
+  if (score < 35 || confidenceLevel === "Low") {
+    return "Outside view · directional read only, validation not yet earned.";
+  }
+  if (score < 58 && tensionsCount > 1) {
+    return "Reframe · competing signals, earlier interpretation weakening.";
+  }
+  if (score < 55 && tensionsCount > 0) {
+    return "Reframe · earlier interpretation weakening.";
+  }
+  if (!hasPrimaryEvidence && score < 68) {
+    return "Diagnose · outside read active, customer proof still thin.";
+  }
+  if (score < 70 && confidenceLevel !== "High") {
+    return "Focus · commitment building, gaps narrowing.";
+  }
+  if (score >= 70 && tensionsCount > 0) {
+    return "Flow · confidence stable, unresolved tensions remain.";
+  }
+  if (score >= 70) {
+    return "Flow · confidence stable, validation holding.";
+  }
+  return "Diagnose · reading the field.";
+}
+
+function deriveStrategicStateLine({
+  phase,
+  underservedHighCount,
+  commitmentBlockerCount,
+  highPressureTensionCount,
+  hasSelectedRoute,
+  selectedRouteCategory,
+  needsCount,
+  topTensionStatement,
+}: {
+  phase: string;
+  underservedHighCount: number;
+  commitmentBlockerCount: number;
+  highPressureTensionCount: number;
+  hasSelectedRoute: boolean;
+  selectedRouteCategory: string | null;
+  needsCount: number;
+  topTensionStatement: string | null;
+}): string {
+  // Primary: describe the current momentum or constraint — not counts, but direction
+  if (commitmentBlockerCount > 0) {
+    if (topTensionStatement) return topTensionStatement;
+    return "A commitment blocker remains unresolved — directional confidence at risk.";
+  }
+
+  if (hasSelectedRoute && selectedRouteCategory) {
+    const anchor = selectedRouteCategory === "fix"
+      ? "Commitment anchored on known friction — execution proof is the open question."
+      : selectedRouteCategory === "create"
+      ? "Expansionary bet committed — outside validation still required to hold this direction."
+      : "Commitment building on incremental signals — continue strengthening the evidence base.";
+    return anchor;
+  }
+
+  if (highPressureTensionCount >= 2) {
+    if (topTensionStatement) return topTensionStatement;
+    return "Competing signals are generating strategic pressure — commitment not yet safe.";
+  }
+
+  if (underservedHighCount >= 4) {
+    return "Customer gaps remain the primary unresolved constraint on directional commitment.";
+  }
+
+  if (phase === "outside_signals" || phase === "validate_outside") {
+    return "Outside signals being collected — too early for directional commitment.";
+  }
+
+  if (phase === "diagnose" || phase === "validate_diagnose") {
+    return needsCount > 0
+      ? "Pattern reading in progress — customer tensions identified, commitment window not yet open."
+      : "Pattern reading in progress — customer tensions not yet mapped.";
+  }
+
+  if (topTensionStatement) return topTensionStatement;
+
+  return "";
+}
+
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -342,13 +406,12 @@ export default function ClientRefinePreviewWorkshopView() {
   const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
 
-  const initialTab   = (searchParams.get("tab")   as WorkshopTab | null) ?? "positioning";
-  const initialStage = (searchParams.get("stage") as SignalStage | null) ?? "outside";
+  const initialTab = (searchParams.get("tab") as WorkshopTab | null) ?? "positioning";
 
-  const [activeTab,         setActiveTab]         = useState<WorkshopTab>(initialTab);
-  const [activeStage,       setActiveStage]       = useState<SignalStage>(initialStage);
-  const [showCompare,       setShowCompare]       = useState(false);
+  const [activeTab,   setActiveTab]   = useState<WorkshopTab>(initialTab);
+  const [showCompare, setShowCompare] = useState(false);
   const [activeStepId,      setActiveStepId]      = useState<string | null>(null);
+  const [activeRouteId,     setActiveRouteId]     = useState<string | null>(null);
   const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
   const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
@@ -394,6 +457,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const {
     loading: posLoading,
     item: positioning,
+    error: posError,
     updateTextField: updatePosTextField,
     updateItemsField: updatePosItemsField,
   } = usePositioningCanvas(companyId);
@@ -475,10 +539,10 @@ export default function ClientRefinePreviewWorkshopView() {
   );
 
   const { items: jobSteps, loading: jobStepsLoading, refetch: refetchJobSteps } = useJobSteps(companyId);
+
   const { data: strategicChangeSummary } = useStrategicChangeSummary(companyId);
 
-  // Compare mode only makes sense on the org stage
-  const compareActive = showCompare && activeStage === "org";
+  const compareActive = showCompare;
 
   const evidenceReadiness = useMemo((): EvidenceReadiness => ({
     hasPrimaryEvidence: sourceSignals.hasPrimaryEvidence,
@@ -486,6 +550,17 @@ export default function ClientRefinePreviewWorkshopView() {
     hasCompanyEvidence: sourceSignals.hasCompanyEvidence,
   }), [sourceSignals.hasPrimaryEvidence, sourceSignals.primaryEvidenceSignals, sourceSignals.hasCompanyEvidence]);
 
+  const councilTensions = useMemo(
+    () => deriveStrategicTensions({ routes, needs, canvas: positioning ?? null, cascade: strategy ?? null, sourceSignals }),
+    [routes, needs, positioning, strategy, sourceSignals],
+  );
+
+  const fieldCondition = deriveFieldCondition({
+    mojoScore: Number(activeCompany?.mojo_score ?? 0),
+    confidenceLevel: confidence.level,
+    tensionsCount: councilTensions.length,
+    hasPrimaryEvidence: sourceSignals.hasPrimaryEvidence,
+  });
 
   const journeyOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; title: string }>();
@@ -538,6 +613,11 @@ export default function ClientRefinePreviewWorkshopView() {
     });
   }, [routes, focusedJourneyKey, showAllJourneys]);
 
+  const activeRoute = useMemo(
+    () => routes.find((r) => r.id === activeRouteId) ?? null,
+    [routes, activeRouteId],
+  );
+
   const activeStep = activeStepId ? (filteredJobSteps.find((s) => s.id === activeStepId) ?? null) : null;
   const clearStep = () => setActiveStepId(null);
 
@@ -563,6 +643,85 @@ export default function ClientRefinePreviewWorkshopView() {
     [filteredNeeds, filteredRoutes, filteredJobSteps, evidenceReadiness, selectedRoute],
   );
 
+  const strategicStateLine = useMemo(() => deriveStrategicStateLine({
+    phase: activeCompany?.engagement_phase ?? "outside_signals",
+    underservedHighCount: filteredNeeds.filter((n) => n.service_state === "underserved" && n.importance >= 7).length,
+    commitmentBlockerCount: councilTensions.filter((t) => t.is_commitment_blocker).length,
+    highPressureTensionCount: councilTensions.filter((t) => t.pressure === "high" || t.pressure === "critical").length,
+    hasSelectedRoute: !!selectedRoute,
+    selectedRouteCategory: selectedRoute?.category ?? null,
+    needsCount: filteredNeeds.length,
+    topTensionStatement: councilTensions.find((t) => t.pressure === "critical" || t.pressure === "high")?.statement ?? null,
+  }), [activeCompany?.engagement_phase, filteredNeeds, councilTensions, selectedRoute]);
+
+  const stateRegionStabilizing = useMemo((): string | null => {
+    if (selectedRoute) return selectedRoute.title;
+    return null;
+  }, [selectedRoute]);
+
+  const stateRegionUnresolved = useMemo((): string | null => {
+    const blocker = councilTensions.find((t) => t.is_commitment_blocker);
+    if (blocker?.detail) return blocker.detail;
+    const high = councilTensions.find((t) => t.pressure === "high" || t.pressure === "critical");
+    if (high?.detail) return high.detail;
+    const topUnderserved = [...filteredNeeds]
+      .filter((n) => n.service_state === "underserved" && n.importance >= 7)
+      .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
+    if (topUnderserved?.desired_outcome) {
+      const o = String(topUnderserved.desired_outcome);
+      return o.length > 90 ? o.slice(0, 90) + "…" : o;
+    }
+    return null;
+  }, [councilTensions, filteredNeeds]);
+
+  const threadStabilizing = useMemo((): string | null => {
+    if (selectedRoute) {
+      const seed = workshopRouteSeeds.find((s) => s.route.id === selectedRoute.id);
+      const nonMissingCount = (seed?.evidence ?? []).filter((e) => e.status !== "missing").length;
+      const cat = String(selectedRoute.category || "").toLowerCase();
+      const catLabel = cat === "fix" ? "Fix" : cat === "create" ? "Create" : "Improve";
+      return nonMissingCount > 0
+        ? `${catLabel} route committed — ${nonMissingCount} supporting signal${nonMissingCount === 1 ? "" : "s"} holding.`
+        : `${catLabel} route committed — execution proof is the current constraint.`;
+    }
+    if (positioning?.value_for_customer && positioning?.best_fit_customers && positioning?.market_category) {
+      return "Positioning grounded — category, buyer, and value all defined.";
+    }
+    if (strategy?.winning_aspiration && strategy?.where_to_play) {
+      return "Strategic direction set — aspiration and arena both defined.";
+    }
+    return null;
+  }, [selectedRoute, workshopRouteSeeds, positioning, strategy]);
+
+  const threadUnresolved = useMemo((): string | null => {
+    const blocker = councilTensions.find((t) => t.is_commitment_blocker);
+    if (blocker?.statement) {
+      const s = blocker.statement;
+      return s.length > 110 ? s.slice(0, 110) + "…" : s;
+    }
+    const high = councilTensions.find((t) => t.pressure === "critical" || t.pressure === "high");
+    if (high?.statement) {
+      const s = high.statement;
+      return s.length > 110 ? s.slice(0, 110) + "…" : s;
+    }
+    const topUnderserved = [...filteredNeeds]
+      .filter((n) => n.service_state === "underserved" && n.importance >= 7)
+      .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
+    if (topUnderserved?.desired_outcome) {
+      const o = String(topUnderserved.desired_outcome);
+      return o.length > 100 ? o.slice(0, 100) + "…" : o;
+    }
+    return null;
+  }, [councilTensions, filteredNeeds]);
+
+  const threadShifting = useMemo((): string | null => {
+    const affected = strategicChangeSummary?.affectedCounts.total ?? 0;
+    if (affected > 0) {
+      return `Interpretation shifted — ${affected} downstream assumption${affected === 1 ? "" : "s"} flagged.`;
+    }
+    return null;
+  }, [strategicChangeSummary]);
+
   const marketFoundation = useMemo(() => {
     const primaryJobStatement = cleanText(marketDefinition?.jtbd);
     const primaryJob = extractCoreJobClause(primaryJobStatement) || "Accomplish the core job with less uncertainty and rework.";
@@ -582,7 +741,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const rerunLocalJobMapSynthesis = useCallback(async () => {
     if (!companyId) {
-      toast.error("Select a company before regenerating the ODI job map.");
+      toast.error("Select a company before generating the job map.");
       return;
     }
 
@@ -634,7 +793,7 @@ export default function ClientRefinePreviewWorkshopView() {
           setNeedsRefreshKey((current) => current + 1);
           await queryClient.invalidateQueries({ queryKey: ["strategic-change-summary", companyId] });
           setActiveStepId(null);
-          toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+          toast.success("Job map generated.", { id: "rerun-jobmap" });
           return;
         }
         if (state === "failed") {
@@ -660,7 +819,7 @@ export default function ClientRefinePreviewWorkshopView() {
               setNeedsRefreshKey((current) => current + 1);
               await queryClient.invalidateQueries({ queryKey: ["strategic-change-summary", companyId] });
               setActiveStepId(null);
-              toast.success("ODI job map regenerated.", { id: "rerun-jobmap" });
+              toast.success("Job map generated.", { id: "rerun-jobmap" });
               return;
             }
           }
@@ -671,7 +830,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
       throw new Error("Analysis is taking longer than expected. The map will update automatically — refresh the page in a moment.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to regenerate ODI job map.", {
+      toast.error(error instanceof Error ? error.message : "Failed to generate job map.", {
         id: "rerun-jobmap",
       });
     } finally {
@@ -804,12 +963,13 @@ export default function ClientRefinePreviewWorkshopView() {
   }
 
   const TABS: { key: WorkshopTab; label: string }[] = [
-    { key: "positioning", label: "Positioning" },
-    { key: "jobmap",      label: "Job Map" },
-    { key: "strategy",    label: "Strategy" },
-    { key: "needs",       label: "Needs" },
     { key: "routes",      label: "Routes" },
     { key: "council",     label: "Council" },
+    { key: "needs",       label: "Needs" },
+    { key: "strategy",    label: "Strategy" },
+    { key: "positioning", label: "Positioning" },
+    { key: "jobmap",      label: "Job Map" },
+    { key: "inputs",      label: "Inputs" },
   ];
 
   function renderOutsideTab() {
@@ -824,14 +984,34 @@ export default function ClientRefinePreviewWorkshopView() {
   function renderOrgTab() {
     if (!companyId) return null;
     if (activeTab === "positioning") return (
-      <PositioningOrgPanel
-        canvas={positioning}
-        loading={posLoading}
-        baseline={baseline}
-        signals={sourceSignals}
-        updateTextField={updatePosTextField}
-        updateItemsField={updatePosItemsField}
-      />
+      <>
+        {posError && !positioning && (
+          <div style={{ padding: "8px 12px", background: "#fef3cd", border: "1px solid #f5d96b", borderRadius: 4, marginBottom: 8, fontSize: 11, color: "#7c5400" }}>
+            Positioning data could not be loaded — connection issue. Reload the page to retry.
+          </div>
+        )}
+        {activeRoute && !posError && (
+          <div style={{ padding: "6px 10px", background: "#f4f7f6", borderRadius: 4, marginBottom: 8, fontSize: 11, color: "#46606d" }}>
+            {(() => {
+              const why = Array.isArray(activeRoute.why_this_matters_json)
+                ? activeRoute.why_this_matters_json.map(String).filter(Boolean) : [];
+              const reason = why[0]?.replace(/\.$/, "").trim();
+              const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+              return reason
+                ? `Route context: ${lc(reason)}.`
+                : `Route context: ${activeRoute.title || "selected route"}.`;
+            })()}
+          </div>
+        )}
+        <PositioningOrgPanel
+          canvas={positioning}
+          loading={posLoading}
+          baseline={baseline}
+          signals={sourceSignals}
+          updateTextField={updatePosTextField}
+          updateItemsField={updatePosItemsField}
+        />
+      </>
     );
     if (activeTab === "jobmap") return (
       <JobMapOrgPanel
@@ -841,40 +1021,78 @@ export default function ClientRefinePreviewWorkshopView() {
         onSelectStep={(id) => setActiveStepId((prev) => (prev === id ? null : id))}
         routes={filteredRoutes}
         activeStep={activeStep}
+        activeRoute={activeRoute}
       />
     );
-    if (activeTab === "strategy") return (
+    if (activeTab === "strategy") {
+      const stratRouteNote = activeRoute
+        ? (() => {
+            const why = Array.isArray(activeRoute.why_this_matters_json)
+              ? activeRoute.why_this_matters_json.map(String).filter(Boolean) : [];
+            const reason = why[0]?.replace(/\.$/, "").trim();
+            const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+            return reason
+              ? `Route context: ${lc(reason)}.`
+              : `Route context: ${activeRoute.title || "selected route"}.`;
+          })()
+        : null;
+      return (
       <StrategyOrgPanel
         strategy={strategy}
         loading={stratLoading}
         baseline={baseline}
         signals={sourceSignals}
-        directionContextNote={strategyContextNote}
+        directionContextNote={stratRouteNote ?? strategyContextNote}
         updateNarrativeField={updateNarrativeField}
         updateListField={updateListField}
       />
-    );
-    if (odiError) return <div className="crpv-ws-placeholder crpv-ws-error cap">Needs query error: {odiError}</div>;
+      );
+    }
+    if (odiError) {
+      console.warn("[Workshop] Needs query error:", odiError, { companyId });
+    }
     return (
       <>
-        <NeedsOrgPanel
-          needs={filteredNeeds}
-          loading={odiLoading}
-          updateNeedScores={updateNeedScores}
-          latestExclusionAt={latestExclusionAt}
-          activeStep={activeStep}
-          onClearStep={clearStep}
-          routes={filteredRoutes}
-          onRouteSelect={handleRouteSelect}
-          companyId={companyId ?? undefined}
-          currentPhase={activeCompany?.engagement_phase}
-          reviewNeedId={pendingReviewNeedId}
-          onReviewNeedHandled={() => setPendingReviewNeedId(null)}
-        />
-        {!odiLoading && filteredNeeds.length === 0 && (
-          <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
-            company id: {companyId}
-          </p>
+        {odiError && (
+          <div style={{ padding: "8px 12px", background: "#fef3cd", border: "1px solid #f5d96b", borderRadius: 4, marginBottom: 8, fontSize: 11, color: "#7c5400" }}>
+            Needs data could not be loaded — connection issue. Reload the page to retry.
+          </div>
+        )}
+        {!odiError && activeRoute && (
+          <div style={{ padding: "6px 10px", background: "#f4f7f6", borderRadius: 4, marginBottom: 8, fontSize: 11, color: "#46606d" }}>
+            {(() => {
+              const why = Array.isArray(activeRoute.why_this_matters_json)
+                ? activeRoute.why_this_matters_json.map(String).filter(Boolean) : [];
+              const reason = why[0]?.replace(/\.$/, "").trim();
+              const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+              return reason
+                ? `Route context: ${lc(reason)}.`
+                : `Route context: ${activeRoute.title || "selected route"}.`;
+            })()}
+          </div>
+        )}
+        {!odiError && (
+          <>
+            <NeedsOrgPanel
+              needs={filteredNeeds}
+              loading={odiLoading}
+              updateNeedScores={updateNeedScores}
+              latestExclusionAt={latestExclusionAt}
+              activeStep={activeStep}
+              onClearStep={clearStep}
+              routes={filteredRoutes}
+              onRouteSelect={handleRouteSelect}
+              companyId={companyId ?? undefined}
+              currentPhase={activeCompany?.engagement_phase}
+              reviewNeedId={pendingReviewNeedId}
+              onReviewNeedHandled={() => setPendingReviewNeedId(null)}
+            />
+            {!odiLoading && filteredNeeds.length === 0 && (
+              <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
+                company id: {companyId}
+              </p>
+            )}
+          </>
         )}
       </>
     );
@@ -954,7 +1172,7 @@ export default function ClientRefinePreviewWorkshopView() {
             companies={companies}
             loading={companiesLoading}
             onSelect={(id) => { setActiveCompanyId(id); setShowCompare(false); }}
-            suffix={`· WORKSHOP · ${activeStage.toUpperCase()}`}
+            suffix="· WORKSHOP"
           />
           {isAdmin && (
             <button type="button" className="btn ghost" onClick={() => setShowCreateClient((current) => !current)}>
@@ -1025,44 +1243,71 @@ export default function ClientRefinePreviewWorkshopView() {
         confidenceLabel={confidence.level}
       />
 
-      <SignalBar
-        activeStage={activeStage}
-        setActiveStage={(s) => { setActiveStage(s); setShowCompare(false); }}
-        baseline={baseline}
-        positioning={positioning}
-        strategy={strategy}
-        excludedCount={exclusionImpact.excludedCount}
-      />
+      {/* ── Strategic State Region — persistent across all tab navigation ── */}
+      <div style={{
+        padding: "20px 24px 18px",
+        background: "#f2f6f4",
+        borderBottom: "2px solid #d8e8e1",
+      }}>
+        <p style={{
+          fontFamily: "monospace",
+          fontSize: 9,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "#7a9e90",
+          margin: "0 0 10px",
+          lineHeight: 1.4,
+        }}>
+          {fieldCondition}
+        </p>
 
+        <p style={{
+          fontSize: 16,
+          fontWeight: 400,
+          color: "#1e3340",
+          lineHeight: 1.5,
+          margin: strategicStateLine ? "0 0 16px" : "0",
+          maxWidth: 700,
+          letterSpacing: "-0.01em",
+        }}>
+          {strategicStateLine || "Reading the strategic field."}
+        </p>
+
+        {(stateRegionStabilizing || stateRegionUnresolved) && (
+          <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+            {stateRegionStabilizing && (
+              <div>
+                <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "#4a9e78", margin: "0 0 3px" }}>
+                  Stabilizing
+                </p>
+                <p style={{ fontSize: 12, color: "#2d5240", margin: 0, lineHeight: 1.4 }}>
+                  {stateRegionStabilizing}
+                </p>
+              </div>
+            )}
+            {stateRegionUnresolved && (
+              <div>
+                <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "#b06a3c", margin: "0 0 3px" }}>
+                  Unresolved
+                </p>
+                <p style={{ fontSize: 12, color: "#4a2a18", margin: 0, lineHeight: 1.4, maxWidth: 380 }}>
+                  {stateRegionUnresolved}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="crpv-ws-body">
       <nav className="crpv-ws-tabs">
-        {/* INPUTS — source library, visually separated from the reasoning tabs */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("inputs")}
-          style={{
-            fontSize: 9,
-            fontFamily: "monospace",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: activeTab === "inputs" ? "#5a3fc0" : "#888",
-            background: activeTab === "inputs" ? "#f5f2ff" : "none",
-            border: activeTab === "inputs" ? "1px solid #c4b5fd" : "1px solid #d9d9d9",
-            borderRadius: 3,
-            padding: "3px 10px",
-            cursor: "pointer",
-            flexShrink: 0,
-            alignSelf: "center",
-          }}
-        >
-          Inputs
-        </button>
-        <span style={{ color: "#ddd", margin: "0 6px", alignSelf: "center", flexShrink: 0, fontSize: 14 }}>|</span>
         {TABS.map((tab) => {
-          const isAffected = activeStage === "outside" && exclusionImpact.affectedTabKeys.has(tab.key);
+          const isAffected = false;
           return (
             <button
               key={tab.key}
               type="button"
+              data-tab={tab.key}
               className={`crpv-ws-tab${activeTab === tab.key ? " active" : ""}${isAffected ? " crpv-ws-tab-affected" : ""}`}
               onClick={() => setActiveTab(tab.key)}
               title={isAffected ? "Affected by excluded outside signals" : undefined}
@@ -1072,7 +1317,7 @@ export default function ClientRefinePreviewWorkshopView() {
             </button>
           );
         })}
-        {activeStage === "org" && activeTab !== "council" && activeTab !== "jobmap" && activeTab !== "routes" && activeTab !== "inputs" && (
+        {activeTab !== "council" && activeTab !== "jobmap" && activeTab !== "routes" && activeTab !== "inputs" && (
           <button
             type="button"
             className={`crpv-ws-tab crpv-ws-compare-toggle${showCompare ? " active" : ""}`}
@@ -1083,11 +1328,60 @@ export default function ClientRefinePreviewWorkshopView() {
           </button>
         )}
       </nav>
-
-      {/* Outside Signals impact banner — lives outside the scroll container so it
-          stays visible as the user scrolls through signals. Only shown when on the
-          outside stage and at least one signal (ledger or voice) is excluded. */}
-      {activeStage === "outside" && activeTab !== "council" && activeTab !== "inputs" && (
+      <div className="crpv-ws-content-col">
+      {(threadStabilizing || threadUnresolved || threadShifting) && (
+        <div style={{
+          display: "flex",
+          alignItems: "stretch",
+          borderBottom: "1px solid #e4ede8",
+          background: "#f9fbfa",
+          flexWrap: "wrap",
+          overflow: "hidden",
+        }}>
+          {threadStabilizing && (
+            <div style={{
+              padding: "6px 20px 6px 24px",
+              borderRight: (threadUnresolved || threadShifting) ? "1px solid #e0eae4" : undefined,
+              flex: "0 1 auto",
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+            }}>
+              <span style={{ fontSize: 11, color: "#3d6e5c", lineHeight: 1.4, letterSpacing: "0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
+                {threadStabilizing}
+              </span>
+            </div>
+          )}
+          {threadUnresolved && (
+            <div style={{
+              padding: "6px 20px",
+              borderRight: threadShifting ? "1px solid #e0eae4" : undefined,
+              flex: "1 1 0",
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+            }}>
+              <span style={{ fontSize: 11, color: "#7a4e30", lineHeight: 1.4, letterSpacing: "0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                {threadUnresolved}
+              </span>
+            </div>
+          )}
+          {threadShifting && (
+            <div style={{
+              padding: "6px 24px 6px 20px",
+              flex: "0 1 auto",
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+            }}>
+              <span style={{ fontSize: 11, color: "#6e5a2a", lineHeight: 1.4, letterSpacing: "0.01em", whiteSpace: "nowrap", display: "block" }}>
+                {threadShifting}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {compareActive && exclusionImpact.excludedCount > 0 && activeTab !== "council" && activeTab !== "inputs" && (
         <EvidenceImpactBanner
           impact={exclusionImpact}
           evidenceStatus={activeCompany?.evidence_status}
@@ -1108,7 +1402,7 @@ export default function ClientRefinePreviewWorkshopView() {
       ) : activeTab === "council" ? (
         <div className="crpv-ws-content">
           {companyId ? (
-            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} />
+            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} tensions={councilTensions} />
           ) : (
             <div className="crpv-ws-placeholder">Select a company to run the council.</div>
           )}
@@ -1173,6 +1467,7 @@ export default function ClientRefinePreviewWorkshopView() {
             onSelectStep={(id) => setActiveStepId((prev) => (prev === id ? null : id))}
             routes={filteredRoutes}
             activeStep={activeStep}
+            activeRoute={activeRoute}
             routesReady={!nextBestMove || nextBestMove.type === "start_route"}
             headerControls={
               <button
@@ -1181,7 +1476,7 @@ export default function ClientRefinePreviewWorkshopView() {
                 onClick={() => void rerunLocalJobMapSynthesis()}
                 disabled={regeneratingJobMap || jobStepsLoading}
               >
-                {regeneratingJobMap ? "Regenerating…" : "Regenerate ODI Job Map"}
+                {regeneratingJobMap ? "Generating…" : "Generate Job Map"}
               </button>
             }
           />
@@ -1197,17 +1492,14 @@ export default function ClientRefinePreviewWorkshopView() {
             contextStep={contextStep}
             nextBestMove={nextBestMove}
             needs={filteredNeeds}
+            onRouteActivate={(id) => setActiveRouteId(id)}
           />
-        </div>
-      ) : activeStage === "customer" ? (
-        <div className="crpv-ws-content">
-          <CustomerPlaceholder />
         </div>
       ) : compareActive ? (
         <div className="crpv-ws-cmp">
           <div className="crpv-ws-cmp-col-headers">
-            <div className="crpv-ws-cmp-col-hd cap">Outside Signals</div>
-            <div className="crpv-ws-cmp-col-hd cap">Organization Signals</div>
+            <div className="crpv-ws-cmp-col-hd cap">Outside read</div>
+            <div className="crpv-ws-cmp-col-hd cap">Your inputs</div>
           </div>
           <div className="crpv-ws-cmp-scroll">
             {renderCompareTab()}
@@ -1215,9 +1507,11 @@ export default function ClientRefinePreviewWorkshopView() {
         </div>
       ) : (
         <div className="crpv-ws-content">
-          {activeStage === "outside" ? renderOutsideTab() : renderOrgTab()}
+          {renderOrgTab()}
         </div>
       )}
+      </div>
+      </div>
     </section>
   );
 }

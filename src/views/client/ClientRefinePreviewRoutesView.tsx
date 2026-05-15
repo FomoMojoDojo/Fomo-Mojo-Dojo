@@ -8,7 +8,9 @@ import { useRoutes, type RouteAssumption } from "@/views/Routes/useRoutes";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE } from "@/lib/clientRefinePreview";
 import { setActivePath } from "@/lib/activePath";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import CanonicalRouteInspectPanel, { type RouteInspectDetail as CanonicalRouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
+import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
 import type { RouteRow } from "@/views/Routes/useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
@@ -34,17 +36,28 @@ import { buildRouteSourceLinks } from "@/lib/sourceLinks";
 import SourcesUsedSection from "@/components/inspect/SourcesUsedSection";
 import { selectRecommendedRoute, impactReason } from "@/lib/routeScoring";
 import { type NextBestMove } from "@/lib/nextBestMove";
-import { buildRouteRationales, type RouteRationale } from "@/lib/routeRationale";
+import { buildRouteRationales, deriveWhyLeading, type RouteRationale } from "@/lib/routeRationale";
+import { buildRouteOrientationRead, deriveCommitmentLegitimacy, type RouteOrientationRead } from "@/lib/routeOrientationRead";
 import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
-import { buildRouteEditorialRoles, phaseNarrativePriority, softenRouteForPhase, sortRoutesForPhase, type RouteEditorialRole } from "@/lib/refinePreviewPhaseOrchestration";
+import { buildRouteEditorialRoles, floorEngagementPhase, phaseNarrativePriority, softenRouteForPhase, sortRoutesForPhase, type RouteEditorialRole } from "@/lib/refinePreviewPhaseOrchestration";
+import { displayConfidenceLabel, commitmentMovementSentence } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
+import { useCompanyClaims, type ClaimRow } from "@/lib/claims/useCompanyClaims";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
+import type { ClaimState } from "@/lib/claimState";
 
 type RouteCategory = "fix" | "improve" | "create";
 
 const CATEGORY_META: Record<RouteCategory, { label: string; subtitle: string; hypothesisSubtitle: string }> = {
-  fix:     { label: "Fix",     subtitle: "Address gaps that are holding back your score.",   hypothesisSubtitle: "Gaps that appear in the evidence — not yet confirmed." },
-  improve: { label: "Improve", subtitle: "Strengthen what is partially in place.",           hypothesisSubtitle: "Areas showing partial progress — worth validating." },
-  create:  { label: "Create",  subtitle: "Build new capabilities for growth.",               hypothesisSubtitle: "New capabilities suggested by the signals — hypothesis only." },
+  fix:     { label: "Under Pressure",    subtitle: "Unresolved friction the evidence flags as actively limiting.",        hypothesisSubtitle: "Gaps that appear in the evidence — not yet confirmed." },
+  improve: { label: "Under Validation",  subtitle: "Areas showing partial progress where evidence suggests continued pressure.", hypothesisSubtitle: "Areas showing partial progress — worth confirming." },
+  create:  { label: "Directional",       subtitle: "New directions suggested by the evidence — no existing path covers this.", hypothesisSubtitle: "New directions suggested by the signals — hypothesis only." },
+};
+
+const CATEGORY_POSTURE_LABEL: Record<string, string> = {
+  fix:     "Under Pressure",
+  improve: "Under Validation",
+  create:  "Directional",
 };
 
 function isHypothesisPhase(phase: string): boolean {
@@ -73,16 +86,45 @@ function deriveClientWhyReasons(route: RouteRow): string[] {
   const reasons: string[] = [];
   if (desc) reasons.push(desc);
   if (category === "fix") {
-    reasons.push("This gap is actively limiting your score and customer outcomes.");
-    if (reasons.length < 2) reasons.push("Addressing this now prevents the gap from compounding over time.");
+    reasons.push("The evidence flags this gap as actively limiting outcomes.");
+    if (reasons.length < 2) reasons.push("Addressing this removes a constraint that the signals say is compounding.");
   } else if (category === "improve") {
-    reasons.push("Strengthening this area would measurably improve your readiness score.");
-    if (reasons.length < 2) reasons.push("Partial progress exists — this route closes the remaining gap.");
+    reasons.push("Evidence shows partial progress — this route targets the remaining gap.");
+    if (reasons.length < 2) reasons.push("Strengthening here removes an active constraint the evidence has surfaced.");
   } else {
-    reasons.push("Building this capability would unlock growth opportunities not currently available.");
-    if (reasons.length < 2) reasons.push("This reflects unmet demand in your customer or market signals.");
+    reasons.push("The signals suggest an unmet need — no existing path currently covers this.");
+    if (reasons.length < 2) reasons.push("This reflects demand visible in the evidence that has no active route.");
   }
   return reasons.slice(0, 3);
+}
+
+function deriveCanonicalRouteSentence(route: RouteRow): string {
+  const category = String(route.category || "").toLowerCase();
+  const why = Array.isArray(route.why_this_matters_json)
+    ? route.why_this_matters_json.map(String).filter(Boolean)
+    : [];
+  const topReason = why[0] ? why[0].replace(/\.$/, "").trim() : null;
+  const isInferred = String(route.id || "").startsWith("derived-");
+  const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+  if (isInferred) {
+    return topReason
+      ? `The evidence points to ${lc(topReason)}.`
+      : "This direction was inferred from the data — no existing path covers it yet.";
+  }
+  if (category === "fix") {
+    return topReason
+      ? `This route exists because ${lc(topReason)}.`
+      : "This route addresses a constraint the evidence flags as actively limiting.";
+  }
+  if (category === "improve") {
+    return topReason
+      ? `This route exists because ${lc(topReason)}.`
+      : "Evidence shows partial progress here. This route targets what's still holding.";
+  }
+  return topReason
+    ? `This direction was surfaced because ${lc(topReason)}.`
+    : "No existing path covers this area. The signals suggest unmet demand.";
 }
 
 type EvidenceItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
@@ -202,9 +244,7 @@ function ClientRouteInspectPanel({
 
           <div className="crpv-inspect-hd" style={{ borderBottom: "1px solid #d9d9d9" }}>
             <div className="crpv-inspect-badges">
-              {category && <span className="crpv-r-badge">{category.toUpperCase()}</span>}
-              {effort && <span className="crpv-r-badge">{effort} EFFORT</span>}
-              {pts !== null && <span className="crpv-r-badge">{pts > 0 ? `+${pts}` : `${pts}`} PTS</span>}
+              {category && <span className="crpv-r-badge">{(CATEGORY_POSTURE_LABEL[category] ?? category).toUpperCase()}</span>}
             </div>
             <p className="crpv-inspect-title" style={{ color: "#111111" }}>{route.title || "Untitled route"}</p>
           </div>
@@ -214,11 +254,11 @@ function ClientRouteInspectPanel({
             {/* What this claims */}
             <div className="crpv-inspect-section">
               <p className="crpv-inspect-section-label" style={{ color: "#999999" }}>What this claims</p>
-              <p style={{ fontSize: 12, color: "#999999", margin: "4px 0 10px", lineHeight: 1.5 }}>
-                This recommendation is based on the following signals.
+              <p style={{ fontSize: 12, color: "#555555", margin: "4px 0 10px", lineHeight: 1.5, fontStyle: "italic" }}>
+                {deriveCanonicalRouteSentence(route)}
               </p>
               <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.08em", color: "#999999", textTransform: "uppercase", margin: "0 0 8px" }}>
-                Generated using: {genContext}
+                {genContext}
               </p>
               <TierAlignmentGrid cells={tierCells} />
             </div>
@@ -287,7 +327,7 @@ function ClientRouteInspectPanel({
 
               {assumptions.length === 0 ? (
                 <p style={{ fontSize: 12, color: "#999999", lineHeight: 1.5 }}>
-                  No conditions have been defined yet. Treat this route as a hypothesis until validated.
+                  No conditions have been defined yet. Treat this route as a working hypothesis until confirmed.
                 </p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -332,7 +372,7 @@ function ClientRouteInspectPanel({
               {moveFactor ? (
                 <>
                   <p style={{ fontSize: 13, color: "#555555", margin: "4px 0 6px", lineHeight: 1.55 }}>
-                    The largest improvement opportunity appears to be:{" "}
+                    The main constraint to resolve appears to be:{" "}
                     <span style={{ fontWeight: 500 }}>{moveFactor}</span>.
                   </p>
                   <p style={{ fontSize: 12, color: "#999999", margin: 0, lineHeight: 1.5 }}>
@@ -341,7 +381,7 @@ function ClientRouteInspectPanel({
                 </>
               ) : (
                 <p style={{ fontSize: 13, color: "#999999", margin: "4px 0 0", lineHeight: 1.55 }}>
-                  Run scoring to see what would most improve this route.
+                  No specific constraint resolved — resolve open proof gaps to see what shifts.
                 </p>
               )}
             </div>
@@ -370,11 +410,11 @@ function ClientRouteInspectPanel({
                     <span style={{ color: "#555555", fontWeight: 500 }}>
                       {criticalUnproven.length} critical condition{criticalUnproven.length !== 1 ? "s" : ""}
                     </span>{" "}
-                    being validated.
+                    being confirmed.
                   </p>
                   <div style={{ border: "1px solid rgba(255,125,45,0.3)", borderRadius: 6, padding: "10px 12px", background: "rgba(255,125,45,0.05)" }}>
                     <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.08em", color: "#FF7D2D", textTransform: "uppercase", margin: "0 0 8px", fontWeight: 600 }}>
-                      Critical conditions to validate
+                      Critical conditions to confirm
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {criticalUnproven.map((a) => (
@@ -445,12 +485,7 @@ function ClientDecisionBanner({
         </span>
         {category && (
           <span style={{ fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em", color: "#5F9B8C", background: "#d5ece7", borderRadius: 3, padding: "1px 6px", textTransform: "uppercase" }}>
-            {category}
-          </span>
-        )}
-        {pts !== null && (
-          <span style={{ fontSize: 10, fontFamily: "monospace", color: "#5F9B8C", marginLeft: 2 }}>
-            {pts > 0 ? `+${pts} pts` : `${pts} pts`}
+            {CATEGORY_POSTURE_LABEL[category] ?? category}
           </span>
         )}
         <button
@@ -497,59 +532,88 @@ function RouteWhyRisingPanel({
   rationale,
   title,
   safeNowLabel,
+  whyLeading,
+  phase,
 }: {
   route: RouteRow;
   rationale: RouteRationale;
   title: string;
   safeNowLabel: string;
+  whyLeading?: string;
+  phase?: string;
 }) {
   const [showEvidence, setShowEvidence] = useState(false);
+  const [detailExpanded, setDetailExpanded] = useState(false);
   const combinedEvidence = useMemo(
     () => [...rationale.supportingEvidenceLines, ...rationale.weakeningEvidenceLines].slice(0, 4),
     [rationale.supportingEvidenceLines, rationale.weakeningEvidenceLines],
   );
 
   return (
-    <section className="crpv-r-why-rising" aria-label="Why this route is rising">
+    <section className="crpv-r-why-rising" aria-label="Why this direction keeps surfacing">
       <div className="crpv-r-why-rising-header">
         <p className="cap">{title}</p>
         <h2>{route.title || "Untitled route"}</h2>
         <div className="crpv-r-why-rising-meta">
           <span className="crpv-r-readiness-state">{rationale.readiness}</span>
           <span>{rationale.movementLabel}</span>
-          <span>{rationale.confidenceLabel}</span>
+          <span>{displayConfidenceLabel(rationale.confidenceLabel)}</span>
         </div>
       </div>
 
+      {phase === "flow" && (
+        <p className="crpv-r-why-rising-movement-intro">
+          {commitmentMovementSentence(rationale.movement)}
+        </p>
+      )}
+
+      {whyLeading && phase !== "flow" && (
+        <p className="crpv-r-why-rising-lead-sentence">{whyLeading}</p>
+      )}
+
+      {/* Primary context — always visible */}
       <div className="crpv-r-why-rising-grid">
         <div>
-          <p className="crpv-r-why-rising-label">{safeNowLabel}</p>
-          <p>{rationale.readinessMeaning}</p>
-        </div>
-        <div>
-          <p className="crpv-r-why-rising-label">Why this route exists</p>
+          <p className="crpv-r-why-rising-label">Why this direction keeps surfacing</p>
           <p>{rationale.whyThisRouteExists}</p>
         </div>
         <div>
-          <p className="crpv-r-why-rising-label">What evidence supports it</p>
+          <p className="crpv-r-why-rising-label">What the evidence shows</p>
           <p>{rationale.whatSupportsIt}</p>
         </div>
         <div>
-          <p className="crpv-r-why-rising-label">What uncertainty still exists</p>
-          <p>{rationale.uncertainty}</p>
-        </div>
-        <div>
-          <p className="crpv-r-why-rising-label">What must become true</p>
+          <p className="crpv-r-why-rising-label">What still needs to be proven</p>
           <p>{rationale.mustBecomeTrue}</p>
-        </div>
-        <div>
-          <p className="crpv-r-why-rising-label">What could weaken it</p>
-          <p>{rationale.couldWeaken}</p>
         </div>
       </div>
 
-      {combinedEvidence.length > 0 ? (
-        <div className="crpv-r-why-rising-actions">
+      {/* Secondary context — behind toggle */}
+      {detailExpanded && (
+        <div className="crpv-r-why-rising-grid crpv-r-why-rising-grid--secondary">
+          <div>
+            <p className="crpv-r-why-rising-label">{safeNowLabel}</p>
+            <p>{rationale.readinessMeaning}</p>
+          </div>
+          <div>
+            <p className="crpv-r-why-rising-label">What the organization hasn't yet settled</p>
+            <p>{rationale.uncertainty}</p>
+          </div>
+          <div>
+            <p className="crpv-r-why-rising-label">What might pull against this</p>
+            <p>{rationale.couldWeaken}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="crpv-r-why-rising-actions">
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => setDetailExpanded((v) => !v)}
+        >
+          {detailExpanded ? "Less context" : "Explore reasoning"}
+        </button>
+        {combinedEvidence.length > 0 && (
           <button
             type="button"
             className="btn ghost"
@@ -557,14 +621,14 @@ function RouteWhyRisingPanel({
           >
             {showEvidence ? "Hide evidence" : "See evidence"}
           </button>
-        </div>
-      ) : null}
+        )}
+      </div>
 
       {showEvidence ? (
         <div className="crpv-r-why-rising-evidence">
           {rationale.supportingEvidenceLines.length > 0 ? (
             <div className="crpv-r-why-rising-evidence-block">
-              <p className="crpv-r-why-rising-label">Supporting evidence</p>
+              <p className="crpv-r-why-rising-label">What backs this direction</p>
               {rationale.supportingEvidenceLines.slice(0, 3).map((line) => (
                 <div key={line} className="crpv-r-why-rising-evidence-line">{line}</div>
               ))}
@@ -572,7 +636,7 @@ function RouteWhyRisingPanel({
           ) : null}
           {rationale.weakeningEvidenceLines.length > 0 ? (
             <div className="crpv-r-why-rising-evidence-block">
-              <p className="crpv-r-why-rising-label">Possible weakening evidence</p>
+              <p className="crpv-r-why-rising-label">What's pulling against this</p>
               {rationale.weakeningEvidenceLines.slice(0, 2).map((line) => (
                 <div key={line} className="crpv-r-why-rising-evidence-line">{line}</div>
               ))}
@@ -615,6 +679,9 @@ function RouteCard({
   isReady,
   phaseSoftened,
   editorialRole,
+  phase,
+  claimId,
+  claimState,
 }: {
   route: RouteRow;
   rationale?: RouteRationale | null;
@@ -630,7 +697,17 @@ function RouteCard({
   isReady?: boolean;
   phaseSoftened?: boolean;
   editorialRole?: RouteEditorialRole;
+  phase?: string;
+  claimId?: string | null;
+  claimState?: ClaimState | null;
 }) {
+  // TEMP DIAGNOSTIC — remove after badge confirmed visible
+  console.warn("[CRPV RouteCard]", route?.title ?? "unknown", {
+    claim_id: route?.claim_id,
+    claimId,
+    claimState,
+  });
+
   const [expanded, setExpanded] = useState(false);
 
   const steps    = (Array.isArray(route.steps_json)    ? route.steps_json    : []) as DetailItem[];
@@ -651,14 +728,27 @@ function RouteCard({
     ? hoverShadow
     : undefined;
   const editorialQuiet = editorialRole === "default" && !expanded && !isSelected && !isHovered;
-  const editorialLabel =
-    editorialRole === "recommended"
+  const isFlow = phase === "flow";
+  const editorialLabel = (() => {
+    if (isFlow) {
+      if (isSelected) {
+        if (rationale?.movement === "weaken") return "Destabilizing";
+        if (rationale?.movement === "strengthen") return "Commitment strengthening";
+        return "Active commitment";
+      }
+      if (rationale?.movement === "weaken") return "Under pressure";
+      if (editorialRole === "improving") return "Strengthening";
+      if (editorialRole === "risk") return "Needs watching";
+      return null;
+    }
+    return editorialRole === "recommended"
       ? "Lead route"
       : editorialRole === "improving"
         ? "Strengthening"
         : editorialRole === "risk"
           ? "Needs watching"
           : null;
+  })();
 
   return (
     <div
@@ -674,7 +764,6 @@ function RouteCard({
         outlineOffset: isSelected ? -2 : -1,
         boxShadow,
         opacity: isOtherSelected ? 0.42 : isOtherHovered ? 0.72 : editorialQuiet ? 0.54 : phaseSoftened ? 0.62 : isContextDim ? 0.85 : undefined,
-        transition: "opacity 0.2s, outline 0.15s, box-shadow 0.15s",
       }}
     >
       <button
@@ -686,13 +775,28 @@ function RouteCard({
           <span className="crpv-r-card-title" style={isContextMatch ? { fontWeight: 600 } : undefined}>{route.title || "Untitled route"}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isSelected && (
-              <span style={{ fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em", color: "#5F9B8C", background: "#d5ece7", borderRadius: 3, padding: "1px 6px", textTransform: "uppercase" }}>
-                {isReady ? "Chosen path" : "Working hypothesis"}
+              <span style={{
+                fontSize: 10,
+                fontFamily: "monospace",
+                letterSpacing: "0.06em",
+                color: isFlow && rationale?.movement === "weaken" ? "#c0634a" : "#5F9B8C",
+                background: isFlow && rationale?.movement === "weaken" ? "#faeae5" : "#d5ece7",
+                borderRadius: 3,
+                padding: "1px 6px",
+                textTransform: "uppercase",
+              }}>
+                {isFlow
+                  ? (rationale?.movement === "weaken" ? "Active — destabilizing" : "Active commitment")
+                  : (isReady ? "Chosen path" : "Working hypothesis")}
               </span>
             )}
             <span className="crpv-r-card-chevron">{expanded ? "▲" : "▼"}</span>
           </div>
         </div>
+
+        {claimId && claimState && (
+          <ClaimStateBadge state={claimState} claimId={claimId} size="sm" variant="inline" />
+        )}
 
         {editorialLabel ? <p className="crpv-r-card-editorial-label">{editorialLabel}</p> : null}
 
@@ -705,18 +809,13 @@ function RouteCard({
             <div className="crpv-r-card-rationale-top">
               <span className="crpv-r-readiness-state">{rationale.readiness}</span>
               <span className="crpv-r-card-rationale-state">{rationale.movementLabel}</span>
-              <span className="crpv-r-card-rationale-state">{rationale.confidenceLabel}</span>
+              <span className="crpv-r-card-rationale-state">{displayConfidenceLabel(rationale.confidenceLabel)}</span>
             </div>
-            {!editorialQuiet ? <p className="crpv-r-card-rationale-copy">{rationale.whyThisRouteExists}</p> : null}
-            {!editorialQuiet ? <p className="crpv-r-card-rationale-note">{rationale.readinessMeaning}</p> : null}
+            {isHovered && !expanded ? <p className="crpv-r-card-rationale-copy">{rationale.whyThisRouteExists}</p> : null}
           </div>
         ) : null}
 
         <div className="crpv-r-card-meta">
-          {pts !== null ? (
-            <span className="crpv-r-badge">{pts > 0 ? `+${pts} PTS` : `${pts} PTS`}</span>
-          ) : null}
-          {effort ? <span className="crpv-r-badge">{effort} EFFORT</span> : null}
           {steps.length > 0 ? (
             <span className="crpv-r-badge-ghost">{completedSteps}/{steps.length} STEPS</span>
           ) : null}
@@ -727,31 +826,15 @@ function RouteCard({
         <div className="crpv-r-card-detail">
           {rationale ? (
             <div className="crpv-r-detail-section">
-              <p className="crpv-r-detail-label">Why this route</p>
+              <p className="crpv-r-detail-label">Why this direction</p>
               <div className="crpv-r-rationale-stack">
                 <div className="crpv-r-rationale-row">
-                  <span className="crpv-r-rationale-key">Readiness</span>
-                  <p>{rationale.readinessMeaning}</p>
-                </div>
-                <div className="crpv-r-rationale-row">
-                  <span className="crpv-r-rationale-key">Confidence</span>
-                  <p>{rationale.confidenceLabel}</p>
-                </div>
-                <div className="crpv-r-rationale-row">
-                  <span className="crpv-r-rationale-key">What supports it</span>
+                  <span className="crpv-r-rationale-key">What the evidence shows</span>
                   <p>{rationale.whatSupportsIt}</p>
-                </div>
-                <div className="crpv-r-rationale-row">
-                  <span className="crpv-r-rationale-key">What still feels uncertain</span>
-                  <p>{rationale.uncertainty}</p>
                 </div>
                 <div className="crpv-r-rationale-row">
                   <span className="crpv-r-rationale-key">What still needs proof</span>
                   <p>{rationale.mustBecomeTrue}</p>
-                </div>
-                <div className="crpv-r-rationale-row">
-                  <span className="crpv-r-rationale-key">What could weaken it</span>
-                  <p>{rationale.couldWeaken}</p>
                 </div>
               </div>
             </div>
@@ -852,6 +935,7 @@ function RoutesColumn({
   recommendedLabel,
   recommendedReasonPrefix,
   editorialRoles,
+  claimsMap,
 }: {
   category: RouteCategory;
   items: RouteRow[];
@@ -874,8 +958,9 @@ function RoutesColumn({
   recommendedLabel?: string;
   recommendedReasonPrefix?: string;
   editorialRoles?: Map<string, RouteEditorialRole>;
+  claimsMap?: Map<string, ClaimRow>;
 }) {
-  const meta = CATEGORY_META[category];
+  const meta = CATEGORY_META[category] ?? CATEGORY_META.improve;
 
   const sortedItems = useMemo(() => {
     return sortRoutesForPhase({
@@ -948,7 +1033,10 @@ function RoutesColumn({
                 isContextMatch={isContextMatch}
                 isContextDim={isContextDim}
                 isReady={isReady}
+                phase={phase}
                 editorialRole={editorialRoles?.get(route.id) ?? "default"}
+                claimId={route.claim_id ?? null}
+                claimState={route.claim_id ? (claimsMap?.get(route.claim_id)?.state ?? null) : null}
                 phaseSoftened={softenRouteForPhase({
                   phase,
                   route,
@@ -982,12 +1070,16 @@ export default function ClientRefinePreviewRoutesView() {
   const navigate = useNavigate();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 5 });
-  const phase = activeCompany?.engagement_phase ?? "outside_signals";
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
   const { needs } = useOdiNeeds(activeCompany?.id);
+  const phase = floorEngagementPhase({
+    phase: activeCompany?.engagement_phase ?? "outside_signals",
+    hasNeedsWithScores: needs.some((n) => n.importance > 0),
+    hasSelectedRoute: !!activeCompany?.selected_route_id,
+  });
   const { preferredRun: baselineRun } = usePublicBaseline(activeCompany?.id);
-  const { canvas: positioning } = usePositioningCanvas(activeCompany?.id);
-  const { cascade: strategy } = useStrategyCascade(activeCompany?.id);
+  const { item: positioning } = usePositioningCanvas(activeCompany?.id);
+  const { item: strategy } = useStrategyCascade(activeCompany?.id);
   const [activeStage, setActiveStage] = useState<SignalStage>("org");
   const [searchParams, setSearchParams] = useSearchParams();
   const routeIdParam = searchParams.get("routeId");
@@ -1008,9 +1100,18 @@ export default function ClientRefinePreviewRoutesView() {
     setSearchParams((prev) => { prev.delete("routeId"); return prev; }, { replace: true });
   }, [setSearchParams]);
 
-  const currentScore    = Math.round(Number(activeCompany?.mojo_score ?? 0));
-  const potentialScore  = Math.round(Number(activeCompany?.potential_score ?? 0));
-  const unlockableScore = Math.round(Number(activeCompany?.projected_score ?? 0));
+  const readiness = useMemo(
+    () => buildReadinessFromCompanySignals({
+      mojoScore:       activeCompany?.mojo_score,
+      evidenceStatus:  activeCompany?.evidence_status,
+    }),
+    [activeCompany?.mojo_score, activeCompany?.evidence_status],
+  );
+  const currentScore    = readiness.currentReadiness;
+  const reachableScore  = readiness.nearTermPotential;
+  const unlockableScore = readiness.structuralUpside;
+  const readinessLabel  = readiness.postureLabel;
+  const ceilingReason   = readiness.ceilingReason;
 
   if (!hasCompany) {
     return (
@@ -1061,10 +1162,11 @@ export default function ClientRefinePreviewRoutesView() {
 
       <ScoreContextBar
         currentScore={currentScore}
-        reachableScore={potentialScore}
+        reachableScore={reachableScore}
         unlockableScore={unlockableScore}
         routesCount={routes.length}
-        confidenceLabel={confidence.level}
+        confidenceLabel={readinessLabel}
+        ceilingReason={ceilingReason}
       />
 
       <SignalBar
@@ -1110,6 +1212,7 @@ export function RoutesOrgPanel({
   contextStep,
   nextBestMove,
   needs,
+  onRouteActivate,
 }: {
   routes: RouteRow[];
   loading: boolean;
@@ -1119,6 +1222,7 @@ export function RoutesOrgPanel({
   contextStep?: JobStepRow | null;
   nextBestMove?: NextBestMove;
   needs?: OdiNeedRow[];
+  onRouteActivate?: (routeId: string) => void;
 }) {
   const navigate = useNavigate();
   const [inspectRoute, setInspectRoute]     = useState<RouteRow | null>(null);
@@ -1128,6 +1232,7 @@ export function RoutesOrgPanel({
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
 
   useEffect(() => {
     setSelectedRouteId(activeCompany?.selected_route_id ?? null);
@@ -1145,7 +1250,11 @@ export function RoutesOrgPanel({
     }
   }, [routeIdParam, routes]);
 
-  const phase        = activeCompany?.engagement_phase ?? "outside_signals";
+  const phase = floorEngagementPhase({
+    phase: activeCompany?.engagement_phase ?? "outside_signals",
+    hasNeedsWithScores: (needs ?? []).some((n) => n.importance > 0),
+    hasSelectedRoute: !!activeCompany?.selected_route_id,
+  });
   const hypothesisPh = isHypothesisPhase(phase);
   const phasePriority = phaseNarrativePriority(phase);
 
@@ -1170,7 +1279,13 @@ export function RoutesOrgPanel({
     return stale || deriveClientAssumptions(selectedRoute, ev).some((a) => a.critical && a.status === "unproven");
   }, [selectedRoute, latestExclusionAt]);
 
+  function handleInspectRoute(route: RouteRow) {
+    setInspectRoute(route);
+    onRouteActivate?.(route.id);
+  }
+
   async function handleSelectRoute(route: RouteRow) {
+    onRouteActivate?.(route.id);
     if (selectedRouteId === route.id) { handleClearDecision(); return; }
     const eventType = selectedRouteId ? "changed" : "selected";
     const now = new Date().toISOString();
@@ -1273,46 +1388,126 @@ export function RoutesOrgPanel({
     [leadRoute, routeRationaleMap],
   );
 
+  const whyLeading = useMemo(
+    () => leadRouteRationale ? deriveWhyLeading(leadRouteRationale, routeRationales) : null,
+    [leadRouteRationale, routeRationales],
+  );
+
+  const orientationRead = useMemo(
+    () =>
+      buildRouteOrientationRead({
+        phase,
+        leadRationale: leadRouteRationale,
+        allRationales: routeRationales,
+        hypothesisRows: strategicHypothesisRows,
+        topNeedOutcome: topNeed?.desired_outcome ?? null,
+      }),
+    [phase, leadRouteRationale, routeRationales, strategicHypothesisRows, topNeed?.desired_outcome],
+  );
+
+  const commitmentLegitimacy = useMemo(
+    () => deriveCommitmentLegitimacy(leadRouteRationale ?? null, !!selectedRoute, phase),
+    [leadRouteRationale, selectedRoute, phase],
+  );
+
+  const dynamicPanelTitle = useMemo(() => {
+    const base = phasePriority.routes.panelTitle;
+    if (phase !== "flow" || !leadRouteRationale) return base;
+    if (leadRouteRationale.movement === "weaken") return "How this commitment is destabilizing";
+    if (leadRouteRationale.movement === "strengthen") return "How this commitment is strengthening";
+    return base;
+  }, [phase, phasePriority.routes.panelTitle, leadRouteRationale]);
+
+  // Canonical inspect panel inputs — built from stored blobs only (no job-step or opportunity data in this view)
+  const inspectDetail = useMemo<CanonicalRouteInspectDetail | null>(() => {
+    if (!inspectRoute) return null;
+    const evidence   = deriveClientEvidence(inspectRoute);
+    const why        = Array.isArray(inspectRoute.why_this_matters_json)
+      ? inspectRoute.why_this_matters_json.map(String).filter(Boolean)
+      : [inspectRoute.short_description || "This route addresses a meaningful strategic gap."];
+    return {
+      steps:           (Array.isArray(inspectRoute.steps_json) ? inspectRoute.steps_json : []) as CanonicalRouteInspectDetail["steps"],
+      evidence:        evidence as CanonicalRouteInspectDetail["evidence"],
+      whyThisMatters:  why,
+      frameworks:      Array.isArray(inspectRoute.frameworks_used) ? inspectRoute.frameworks_used.filter(Boolean) : [],
+      rankedOpps:      [],
+    };
+  }, [inspectRoute]);
+
+  const inspectRationale = useMemo(
+    () => inspectRoute ? (routeRationaleMap.get(inspectRoute.id) ?? null) : null,
+    [inspectRoute, routeRationaleMap],
+  );
 
   return (
-    <div className="crpv-ws-section crpv-ws-section-wide">
-      {nextBestMove && (
-        <div style={{ marginBottom: 40 }}>
-          <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 8px" }}>
-            {hypothesisPh ? "Most in focus" : phasePriority.phase === "flow" ? "What is shifting now" : "Do this next"}
-          </p>
-          {nextBestMove.type === "validate_needs" && topNeed ? (
-            <>
-              <p style={{ fontSize: 14, fontWeight: 700, color: "#111", margin: "0 0 4px", lineHeight: 1.35 }}>
-                Talk to 8–10 customers about:
-              </p>
-              <p style={{ fontSize: 14, color: "#444", margin: "0 0 6px", lineHeight: 1.4, fontStyle: "italic" }}>
-                "{topNeed.desired_outcome}"
-              </p>
-            </>
-          ) : (
-            <p style={{ fontSize: 14, fontWeight: 700, color: "#111", margin: "0 0 6px", lineHeight: 1.35 }}>
-              {nextBestMove.title}
-            </p>
+    <div className="crpv-ws-section crpv-ws-section-wide" data-tone={phasePriority.orientation.tone}>
+      {/* ── Orientation Layer ──────────────────────────────────────────── */}
+      <section
+        className="crpv-r-orientation"
+        data-tone={phasePriority.orientation.tone}
+        aria-label="Current strategic read"
+      >
+        <div className="crpv-r-orientation-header">
+          <p className="crpv-r-orientation-cap">Current Strategic Read</p>
+          <p className="crpv-r-orientation-question">{phasePriority.orientation.question}</p>
+        </div>
+
+        <div className="crpv-r-orientation-body">
+          <div className="crpv-r-orientation-item" data-primary="true">
+            <p className="crpv-r-orientation-label">What currently appears true</p>
+            <p className="crpv-r-orientation-value">{orientationRead.whatAppearsTrue}</p>
+          </div>
+
+          {commitmentLegitimacy && (
+            <div className="crpv-r-orientation-item">
+              <p className="crpv-r-orientation-label">Why the organization is comfortable acting here</p>
+              <p className="crpv-r-orientation-value">{commitmentLegitimacy}</p>
+            </div>
           )}
+
+          {orientationRead.strongestSignal && (
+            <div className="crpv-r-orientation-item">
+              <p className="crpv-r-orientation-label">Strongest signal</p>
+              <p className="crpv-r-orientation-value">{orientationRead.strongestSignal}</p>
+            </div>
+          )}
+
+          <div className="crpv-r-orientation-item">
+            <p className="crpv-r-orientation-label">What remains unresolved</p>
+            <p className="crpv-r-orientation-value">{orientationRead.whatRemains}</p>
+          </div>
+
+          {orientationRead.validating && (
+            <div className="crpv-r-orientation-item">
+              <p className="crpv-r-orientation-label">What we're still working to prove</p>
+              <p className="crpv-r-orientation-value">{orientationRead.validating}</p>
+            </div>
+          )}
+
+          <div className="crpv-r-orientation-item" data-ambient="true">
+            <p className="crpv-r-orientation-label">What could change this</p>
+            <p className="crpv-r-orientation-value">{orientationRead.whatCouldChange}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Focal action (secondary to orientation) ────────────────────── */}
+      {nextBestMove && (
+        <div style={{ marginBottom: 32, paddingTop: 4 }}>
+          <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 6px" }}>
+            {hypothesisPh ? "Most in focus" : phasePriority.phase === "flow" ? "What is shifting now" : phasePriority.orientation.tone === "exploratory" ? "Examine next" : "Do this next"}
+          </p>
+          <p style={{ fontSize: 13, fontWeight: 600, color: "#222", margin: "0 0 4px", lineHeight: 1.35 }}>
+            {nextBestMove.title}
+          </p>
           <p style={{ fontSize: 12, color: "#777", margin: 0, lineHeight: 1.5 }}>
             {nextBestMove.reason}
           </p>
         </div>
       )}
 
-      {topNeed && (
-        <div style={{ marginBottom: 48 }}>
-          <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 10px" }}>
-            Focus area
-          </p>
-          <p style={{ fontSize: 14, color: "#333", margin: 0, lineHeight: 1.5 }}>
-            {topNeed.desired_outcome}
-          </p>
-        </div>
-      )}
-
-      <div style={{ marginBottom: 24 }}>
+      {/* ── Route context ──────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 20 }}>
         <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 4px" }}>
           {phasePriority.routes.introLabel}
         </p>
@@ -1348,8 +1543,10 @@ export function RoutesOrgPanel({
           <RouteWhyRisingPanel
             route={leadRoute}
             rationale={leadRouteRationale}
-            title={phasePriority.routes.panelTitle}
+            title={dynamicPanelTitle}
             safeNowLabel={phasePriority.routes.safeNowLabel}
+            whyLeading={whyLeading ?? undefined}
+            phase={phase}
           />
         </div>
       ) : null}
@@ -1364,9 +1561,9 @@ export function RoutesOrgPanel({
             </p>
           )}
           <div className="crpv-r-columns">
-            <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
-            <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
-            <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={setInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} />
+            <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+            <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+            <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
           </div>
         </>
       )}
@@ -1378,7 +1575,7 @@ export function RoutesOrgPanel({
       {isReroute && (
         <div style={{ border: "1px solid #FAC846", borderRadius: 6, padding: "10px 16px", marginTop: 4, background: "#fef9ec" }}>
           <p style={{ fontSize: 12, color: "#888", margin: "0 0 2px", fontWeight: 500 }}>⚠ This path may need to be reconsidered.</p>
-          <p style={{ fontSize: 11, color: "#999", margin: 0, lineHeight: 1.5 }}>Review alternative paths or validate the open conditions.</p>
+          <p style={{ fontSize: 11, color: "#999", margin: 0, lineHeight: 1.5 }}>Review alternative paths or confirm the open conditions.</p>
         </div>
       )}
 
@@ -1418,12 +1615,20 @@ export function RoutesOrgPanel({
         </>
       )}
 
-      <ClientRouteInspectPanel
+      <CanonicalRouteInspectPanel
         open={!!inspectRoute}
         onClose={() => setInspectRoute(null)}
         route={inspectRoute}
-        excludedSignals={activeCompany?.excluded_signals_json}
+        detail={inspectDetail}
+        rationale={inspectRationale}
         areaScoresJson={activeCompany?.area_scores_json}
+        linkedDesiredOutcome={null}
+        currentPhase={phase}
+        staleNote={
+          inspectRoute && latestExclusionAt && isArtifactStale(inspectRoute, latestExclusionAt)
+            ? "Needs review after excluded inputs"
+            : null
+        }
       />
     </div>
   );
