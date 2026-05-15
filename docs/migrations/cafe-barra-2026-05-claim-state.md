@@ -209,3 +209,56 @@ To advance these route claims back to `focus`, Cafe Barra would need:
   confirming the route direction, a survey result, or a quantitative market signal)
 - That signal linked via `claim_signal_refs.relationship = 'supports'`
 - `triangulation_state` reaching `'customer_backed'`
+
+---
+
+## A5 — Route/Leg Hierarchy + Desired Outcome Migration
+
+**Date:** 2026-05-15  
+**Commit:** (pending)  
+**Script:** `sql/cafe_barra_a5_phase3_route_hierarchy.sql`  
+**Schema migration:** `supabase/migrations/20260603200000_a5_route_leg_action_hierarchy.sql`  
+**Proposal approved:** "Approved as written"
+
+### Phase 1 — Schema (applied prior to this run)
+
+New tables: `desired_outcomes`, `tests`, `mojo_scores`  
+New columns on `routes`: `level`, `parent_id`, `primary_desired_outcome_id`,
+`secondary_desired_outcome_ids`, `rejected_alternatives`, `what_would_have_to_be_true`
+
+### Phase 3 — Data Migration Results
+
+| Object | Created | Notes |
+|--------|---------|-------|
+| `desired_outcomes` | 1 | `is_primary=true`; importance=9, satisfaction=2 |
+| `claims` (route-level) | 3 | A=diagnose, B=diagnose, C=outside_view |
+| `routes` (level='route') | 3 | Route A sort=1, B sort=2, C sort=3 |
+| `routes` (level='leg') | 10 updated | parent_id + sort_order set on all 10 |
+| `claim_events` | 13 | 3 creation + 10 leg-parent-assigned |
+
+### Route Hierarchy
+
+| Route | Level | Legs | State |
+|-------|-------|------|-------|
+| Earn the right to make the exceptional claim | route | A1–A4 (margin, supplier, stock-out, prep quality) | diagnose |
+| Make the Barra Process visible and transferable | route | B1–B4 (template, seasonal brief, signal, comparison test) | diagnose |
+| Win the right partners through evidence, not pitch | route | C1–C2 (pre-qual, proof test) | outside_view |
+
+### Post-A5 Distribution
+
+| State | Pre-A5 | Post-A5 | Delta |
+|-------|--------|---------|-------|
+| outside_view | 4 | 5 | +1 (Route C) |
+| diagnose | 34 | 36 | +2 (Routes A, B) |
+| focus | 0 | 0 | 0 |
+| flow | 0 | 0 | 0 |
+| **total** | **38** | **41** | +3 route-level claims |
+
+### mojo_score Verification: PASS ✓
+
+| Metric | Pre-A5 | Post-A5 |
+|--------|--------|---------|
+| `mojo_score` (stored) | 54 | 54 |
+
+Score computation does not read `claim_state_distribution` and new route-level
+rows have no effect on the existing scoring inputs. Score unchanged as expected.

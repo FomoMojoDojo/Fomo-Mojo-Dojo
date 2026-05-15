@@ -32,13 +32,7 @@ export function useCompanyClaims(companyId?: string) {
           "id, state, claim_type, topic, statement, outside_support_count, organization_support_count, customer_support_count, updated_at",
         )
         .eq("company_id", companyId);
-      console.warn("[useCompanyClaims]", {
-        companyId,
-        error: error?.message ?? null,
-        claimCount: data?.length ?? 0,
-        firstClaimId: data?.[0]?.id ?? null,
-        firstClaimState: data?.[0]?.state ?? null,
-      });
+
       if (cancelled) return;
       const map = new Map(
         (data ?? []).map((r) => [r.id, r as ClaimRow]),

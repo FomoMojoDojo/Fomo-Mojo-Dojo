@@ -94,11 +94,7 @@ export default function RouteCard({
   claimId?: string | null;
   claimState?: ClaimState | null;
 }) {
-  // TEMP DIAGNOSTIC — remove after badge confirmed visible
-  console.warn("[RouteCard]", route?.title ?? "unknown", {
-    claimId: route?.claim_id,
-    claimState: claimState,
-  });
+
 
   const [expanded, setExpanded] = useState(false);
   const completedSteps = useMemo(

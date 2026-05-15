@@ -1,0 +1,332 @@
+{
+  "computed": {
+    "perGateScores": {
+      "positioning": 51.5,
+      "customer_insight": 47,
+      "strategy_cascade": 29,
+      "gtm_execution": 31.5
+    },
+    "gateDetails": {
+      "positioning": {
+        "label": "Positioning",
+        "score": 51.5,
+        "components": {
+          "key_input_coverage": 100,
+          "baseline_support": 0,
+          "evidence_ledger_coverage": 0,
+          "completion_bonus": 15
+        }
+      },
+      "customer_insight": {
+        "label": "Customer Insight",
+        "score": 47,
+        "components": {
+          "key_input_coverage": 0,
+          "opportunity_coverage": 90,
+          "underserved_signal": 47.5,
+          "customer_journey_health": 0,
+          "customer_opportunity_coverage": 100
+        }
+      },
+      "strategy_cascade": {
+        "label": "Strategy Cascade",
+        "score": 29,
+        "components": {
+          "key_input_coverage": 100,
+          "revenue_journey_health": 0,
+          "operations_journey_health": 0,
+          "baseline_support": 0,
+          "strategy_opportunity_coverage": 0,
+          "completion_bonus": 15,
+          "strategic_problem_alignment": 50,
+          "desired_outcome_alignment": 50
+        }
+      },
+      "gtm_execution": {
+        "label": "GTM Execution",
+        "score": 31.5,
+        "components": {
+          "key_input_coverage": 100,
+          "revenue_journey_health": 0,
+          "revenue_opportunity_coverage": 0,
+          "operations_opportunity_coverage": 0,
+          "focus_opportunity_signal": 0,
+          "completion_bonus": 15
+        }
+      }
+    },
+    "counts": {
+      "inputs": 13,
+      "job_steps": 14,
+      "opportunities": 18,
+      "evidence_ledger": 0,
+      "strategic_problems": 0,
+      "desired_outcomes": 0
+    },
+    "desiredOutcomeContext": {
+      "available": false,
+      "score": 50,
+      "primary_statement": null,
+      "coverage_ratio": 0.5,
+      "matched_keywords": [],
+      "missing_keywords": [],
+      "status": "not_available",
+      "behavior_structured": false
+    },
+    "strategicProblemContext": {
+      "score": 50,
+      "token_coverage": 50,
+      "statement_coverage": 50,
+      "matched_keywords": [],
+      "missing_keywords": [],
+      "status": "no_strategic_problem",
+      "strategic_problem_count": 0,
+      "reconciled_count": 0
+    },
+    "initiativeContext": {
+      "primary_journey_key": "primary",
+      "primary_journey_title": "Creating a specialty coffee offering",
+      "initiative_keywords": [
+        "primary",
+        "creating",
+        "specialty",
+        "coffee",
+        "offering",
+        "cafe",
+        "owners",
+        "building",
+        "distinctive",
+        "high-quality",
+        "coffee",
+        "identity",
+        "establishment"
+      ],
+      "opportunity_focus": {
+        "initiative": 12,
+        "related": 1,
+        "other": 5,
+        "initiative_ratio": 66.7,
+        "related_ratio": 5.6
+      },
+      "route_focus": {
+        "initiative": 0,
+        "related": 6,
+        "other": 4,
+        "initiative_ratio": 0,
+        "related_ratio": 60
+      },
+      "step_focus": {
+        "initiative_steps": 6,
+        "initiative_journey_health": 77.5
+      },
+      "initiative_focus_norm": 52.7,
+      "initiative_focus_multiplier": 0.9
+    },
+    "evidenceMultiplier": 0.8,
+    "evidence_status": "generated_no_baseline",
+    "evidence_note": "no baseline ledger, artifacts=87%",
+    "evidenceBreakdown": {
+      "baseline_strength": 0,
+      "artifact_coverage": 87.3,
+      "ledger_count": 0,
+      "avg_confidence": 0,
+      "inputs_count": 13,
+      "steps_count": 14,
+      "opportunities_count": 18
+    },
+    "mojo_score": 17,
+    "gateScore": 38.3,
+    "p_raw": 0.221,
+    "p_curve": 0.036000000000000004,
+    "gamma": 2.2,
+    "market_baseline_points": 12,
+    "benchmark_p_raw": 0.12,
+    "advantage_points": 3.5,
+    "curve_points": 1.6,
+    "failure_correction_norm": 0.457,
+    "failure_correction_multiplier": 0.8,
+    "potential_score": 35,
+    "projected_score": 49,
+    "area_scores_json": {
+      "scoring_version": "mojo_v3",
+      "gate_weights": {
+        "positioning": 0.3,
+        "customer_insight": 0.25,
+        "strategy_cascade": 0.25,
+        "gtm_execution": 0.2
+      },
+      "gate_score": 38.3,
+      "per_gate_scores": {
+        "positioning": {
+          "label": "Positioning",
+          "score": 51.5,
+          "components": {
+            "key_input_coverage": 100,
+            "baseline_support": 0,
+            "evidence_ledger_coverage": 0,
+            "completion_bonus": 15
+          }
+        },
+        "customer_insight": {
+          "label": "Customer Insight",
+          "score": 47,
+          "components": {
+            "key_input_coverage": 0,
+            "opportunity_coverage": 90,
+            "underserved_signal": 47.5,
+            "customer_journey_health": 0,
+            "customer_opportunity_coverage": 100
+          }
+        },
+        "strategy_cascade": {
+          "label": "Strategy Cascade",
+          "score": 29,
+          "components": {
+            "key_input_coverage": 100,
+            "revenue_journey_health": 0,
+            "operations_journey_health": 0,
+            "baseline_support": 0,
+            "strategy_opportunity_coverage": 0,
+            "completion_bonus": 15,
+            "strategic_problem_alignment": 50,
+            "desired_outcome_alignment": 50
+          }
+        },
+        "gtm_execution": {
+          "label": "GTM Execution",
+          "score": 31.5,
+          "components": {
+            "key_input_coverage": 100,
+            "revenue_journey_health": 0,
+            "revenue_opportunity_coverage": 0,
+            "operations_opportunity_coverage": 0,
+            "focus_opportunity_signal": 0,
+            "completion_bonus": 15
+          }
+        }
+      },
+      "evidence": {
+        "multiplier": 0.8,
+        "status": "generated_no_baseline",
+        "note": "no baseline ledger, artifacts=87%",
+        "baseline_strength": 0,
+        "artifact_coverage": 87.3,
+        "ledger_count": 0,
+        "avg_confidence": 0,
+        "inputs_count": 13,
+        "steps_count": 14,
+        "opportunities_count": 18
+      },
+      "counts": {
+        "inputs": 13,
+        "job_steps": 14,
+        "opportunities": 18,
+        "evidence_ledger": 0,
+        "strategic_problems": 0,
+        "desired_outcomes": 0
+      },
+      "desired_outcome_context": {
+        "available": false,
+        "score": 50,
+        "primary_statement": null,
+        "coverage_ratio": 0.5,
+        "matched_keywords": [],
+        "missing_keywords": [],
+        "status": "not_available",
+        "behavior_structured": false
+      },
+      "strategic_problem_context": {
+        "score": 50,
+        "token_coverage": 50,
+        "statement_coverage": 50,
+        "matched_keywords": [],
+        "missing_keywords": [],
+        "status": "no_strategic_problem",
+        "strategic_problem_count": 0,
+        "reconciled_count": 0
+      },
+      "initiative_context": {
+        "primary_journey_key": "primary",
+        "primary_journey_title": "Creating a specialty coffee offering",
+        "initiative_keywords": [
+          "primary",
+          "creating",
+          "specialty",
+          "coffee",
+          "offering",
+          "cafe",
+          "owners",
+          "building",
+          "distinctive",
+          "high-quality",
+          "coffee",
+          "identity",
+          "establishment"
+        ],
+        "opportunity_focus": {
+          "initiative": 12,
+          "related": 1,
+          "other": 5,
+          "initiative_ratio": 66.7,
+          "related_ratio": 5.6
+        },
+        "route_focus": {
+          "initiative": 0,
+          "related": 6,
+          "other": 4,
+          "initiative_ratio": 0,
+          "related_ratio": 60
+        },
+        "step_focus": {
+          "initiative_steps": 6,
+          "initiative_journey_health": 77.5
+        },
+        "initiative_focus_norm": 52.7,
+        "initiative_focus_multiplier": 0.9
+      },
+      "calibration": {
+        "gamma": 2.2,
+        "p_raw": 0.221,
+        "p_curve": 0.036000000000000004,
+        "market_baseline_points": 12,
+        "benchmark_p_raw": 0.12,
+        "advantage_points": 3.5,
+        "curve_points": 1.6,
+        "failure_correction_norm": 0.457,
+        "failure_correction_multiplier": 0.8,
+        "initiative_focus_multiplier": 0.9,
+        "market_statistics": {
+          "typical_success_low_pct": 0,
+          "typical_success_pct": 12,
+          "typical_success_high_pct": 20,
+          "source": "default_range_0_20_unproven",
+          "as_of": null,
+          "proven": false,
+          "interpretation": "Current reality starts from a market baseline and rises as validated readiness improves."
+        }
+      },
+      "outputs": {
+        "mojo_score": 17,
+        "potential_score": 35,
+        "projected_score": 49,
+        "evidence_band": "customer_evidenced"
+      }
+    }
+  },
+  "stored": {
+    "mojo_score": 54,
+    "potential_score": 72,
+    "projected_score": 63,
+    "evidence_status": "mixed",
+    "area_scores_json": null
+  },
+  "input_counts": {
+    "inputs": 13,
+    "job_steps": 14,
+    "opportunities": 18,
+    "routes": 10,
+    "managed_outcomes": 0,
+    "needs_source_paths": 18
+  },
+  "timestamp": "2026-05-15T01:00:12.621Z"
+}

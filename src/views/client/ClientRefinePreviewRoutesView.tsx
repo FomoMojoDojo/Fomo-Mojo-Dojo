@@ -701,12 +701,7 @@ function RouteCard({
   claimId?: string | null;
   claimState?: ClaimState | null;
 }) {
-  // TEMP DIAGNOSTIC — remove after badge confirmed visible
-  console.warn("[CRPV RouteCard]", route?.title ?? "unknown", {
-    claim_id: route?.claim_id,
-    claimId,
-    claimState,
-  });
+
 
   const [expanded, setExpanded] = useState(false);
 
