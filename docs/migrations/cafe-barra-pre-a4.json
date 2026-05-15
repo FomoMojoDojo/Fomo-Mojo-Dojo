@@ -1,0 +1,36 @@
+{
+  "snapshot": "pre-A4",
+  "date": "2026-05-15",
+  "company_id": "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc",
+  "company_name": "Cafe Barra",
+  "claim_state_distribution": {
+    "outside_view": 4,
+    "diagnose": 24,
+    "focus": 10,
+    "flow": 0,
+    "total": 38,
+    "computed_at": "2026-05-15T01:00:13.445Z"
+  },
+  "claim_type_breakdown": {
+    "assumption": { "outside_view": 4 },
+    "customer_outcome": { "diagnose": 18 },
+    "route_candidate": { "focus": 10 },
+    "strategic_belief": { "diagnose": 6 }
+  },
+  "signals_count": 0,
+  "claim_signal_refs_count": 0,
+  "odi_needs_source_paths": {
+    "evidence_derived_78e": { "count": 10, "avg_importance": 0.81, "avg_satisfaction": 0.35, "mapped_band": "organization" },
+    "reconstructed_from_prior_screenshots": { "count": 8, "avg_importance": 0.725, "avg_satisfaction": 0.3375, "mapped_band": "organization" }
+  },
+  "mojo_score": null,
+  "area_scores_json_keys": ["claim_state_distribution"],
+  "notes": [
+    "signals table is empty — no existing signal provenance to link from",
+    "claim_signal_refs table is empty — all claims have zero evidence chain",
+    "All support counts are 0, triangulation_state = 'untested' on all 38 claims",
+    "Both odi_needs source_paths are org-internal: neither maps to customer band",
+    "10 route_candidate claims at focus justified by non-missing evidence_json items (A2 permissive heuristic)",
+    "A4 will create synthetic org-band signals from source_path provenance and re-evaluate with strict gates"
+  ]
+}
