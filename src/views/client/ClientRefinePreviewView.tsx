@@ -11,6 +11,7 @@ import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useStrategicAssumptions } from "@/hooks/useStrategicAssumptions";
 import RefinePreviewHypothesesSection from "@/components/client/RefinePreviewHypothesesSection";
 import RefinePreviewWhatChangedSection from "@/components/client/RefinePreviewWhatChangedSection";
+import StrategicSignalsSection from "@/components/client/StrategicSignalsSection";
 import RefinePreviewConfidenceLandscapeSection from "@/components/client/RefinePreviewConfidenceLandscapeSection";
 import RefinePreviewReconciliationSection from "@/components/client/RefinePreviewReconciliationSection";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
@@ -24,11 +25,49 @@ import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClient
 import { buildRouteRationales } from "@/lib/routeRationale";
 import { buildRefinePreviewConfidenceLandscape } from "@/lib/refinePreviewConfidenceLandscape";
 import { buildReconciliationNarrative } from "@/lib/reconciliationNarrative";
-import { phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
+import { floorEngagementPhase, phaseConfidenceEmphasis, phaseNarrativePriority, phaseSectionVisibility, sortRoutesForPhase } from "@/lib/refinePreviewPhaseOrchestration";
 import { selectRecommendedRoute } from "@/lib/routeScoring";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
+import { buildStrategicCenterSurface } from "@/lib/strategicCenterSurface";
+import { buildCustomerRealityNarrative } from "@/lib/customerRealityNarrative";
+import { buildPositioningLensNarrative } from "@/lib/positioningLensNarrative";
+import { buildDecisionPortfolio } from "@/lib/decisionSystem";
+import { buildStrategicSignals } from "@/lib/strategicSignals";
+import { buildNarrativeConductor } from "@/lib/narrativeConductor";
+import { deriveTemporalPosture } from "@/lib/strategicTemporalState";
+import { deriveRegister } from "@/lib/executiveRegister";
+import { assessConfidenceDiscipline, hasCustomerBehavioralProofFromPosture } from "@/lib/confidenceDiscipline";
+import { buildAttentionContext, ATTENTION_POSTURE_LABELS, SIGNAL_QUOTAS } from "@/lib/strategicAttention";
+import { buildDecayContext } from "@/lib/strategicDecay";
+import { deriveDefaultMode, MODE_CONTENT, type OperatingMode } from "@/lib/operatingMode";
+import { buildCadenceFrame } from "@/lib/executiveCadence";
+import { auditSemanticIntegrity } from "@/lib/semanticIntegrity";
+import { deriveSemanticEnforcement } from "@/lib/semanticIntegrityEnforcement";
+import { OperatingModeBar } from "@/components/client/OperatingModeBar";
+import { disciplinedPostureLabel } from "@/lib/strategicCenterSurface";
+import { useOdiNeeds } from "@/hooks/useOdiNeeds";
+import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useRoutes } from "@/views/Routes/useRoutes";
+import { deriveRouteValidationTitle } from "@/lib/nextBestMove";
+import { deriveStrategicTensions, tensionsForContext } from "@/lib/tensionDerivation";
+import type { StrategicTension } from "@/lib/tensionTypes";
+import { buildStrategicOrientation } from "@/lib/strategicOrientation";
+import { SupportingLensesSection } from "@/components/client/StrategicOrientationLayer";
+import { useStrategicMovement } from "@/hooks/useStrategicMovement";
+import { deriveAssumptionEvolution, buildAssumptionMovementLine } from "@/lib/assumptionEvolution";
+import { displayConfidenceLabel } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
+import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
+import { useMojoScore } from "@/hooks/useMojoScore";
+import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
+import MojoScoreSurface from "@/components/score/MojoScoreStrip";
+import type { MojoScoreResult } from "@/lib/mojoScore/types";
+import type { ClaimState } from "@/lib/claimState";
+import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
+import { useSignalLandscape } from "@/hooks/useSignalLandscape";
+import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
+import { useFoundationStatus } from "@/hooks/useFoundationStatus";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
 type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "branching" | "waiting";
@@ -98,10 +137,16 @@ const BRANCH_OPTIONS = [
 
 const ROUTE_ORDER: RouteCategory[] = ["Fix", "Improve", "Create"];
 
+const ROUTE_DISPLAY_LABEL: Record<RouteCategory, string> = {
+  Fix:     "Under Pressure",
+  Improve: "Under Validation",
+  Create:  "Directional",
+};
+
 const ROUTE_FALLBACK_HEADLINE: Record<RouteCategory, string> = {
-  Fix: "Resolve the highest-friction blocker first.",
-  Improve: "Improve the current route where execution is unstable.",
-  Create: "Create a new path only after core blockers are controlled.",
+  Fix:     "Strongest friction signal — resolution most urgent.",
+  Improve: "Evidence suggests pressure in this area — validation needed.",
+  Create:  "New direction — no existing path covers this signal.",
 };
 
 const MAP_ROUTE_CURVES: Record<RouteCategory, string> = {
@@ -135,19 +180,14 @@ function stripTerminalPunctuation(value: string | null | undefined) {
 
 function buildCenterHeroSupport(args: {
   publicIdentity: string | null;
-  customerLag: boolean;
 }) {
-  const parts: string[] = [];
+  // Only surface public identity context here. Customer proof status is already
+  // addressed in the center headline (strategy_outrunning_proof / customer_validation_converging)
+  // — emitting it here creates within-hero duplication or contradiction.
   if (args.publicIdentity) {
-    parts.push(`Publicly, the company still reads as ${lowerFirst(args.publicIdentity)}.`);
+    return `Outside perception reads as ${lowerFirst(args.publicIdentity)}.`;
   }
-  if (args.customerLag) {
-    parts.push("Customer proof is still missing.");
-  }
-  if (parts.length === 0) {
-    return "The direction is becoming clearer, but it still needs customer validation.";
-  }
-  return parts.join(" ");
+  return null;
 }
 
 function shorten(value: string, max = 72) {
@@ -161,6 +201,21 @@ function normalizeCompare(value: string | null | undefined) {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function uniqueSentences(values: Array<string | null | undefined>, limit = 4) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const item = toSentence(value);
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+    if (output.length >= limit) break;
+  }
+  return output;
 }
 
 function hypothesisSourceMixSummary(row: {
@@ -183,19 +238,16 @@ function hypothesisSourceMixSummary(row: {
   const hasCustomer = sourceMix.customer > 0;
 
   if (hasCustomer) {
-    if (hasOutside || hasOrganization) {
-      return "Customer evidence is starting to support this, but the pattern still needs more validation.";
-    }
-    return "Customer evidence is starting to support this, but the pattern still needs more validation.";
+    return "Customer evidence is starting to support this, but the pattern still needs more confirmation.";
   }
   if (hasOutside && hasOrganization) {
     return "Public and internal evidence point in this direction, but customer proof is still missing.";
   }
   if (hasOutside) {
-    return "This is showing up in public signals, but we have not validated it with the team or customers yet.";
+    return "This is showing up in public signals, but we have not confirmed this with the team or customers yet.";
   }
   if (hasOrganization) {
-    return "This is surfacing in internal evidence, but we have not validated it with customers yet.";
+    return "This is surfacing in internal evidence, but we have not confirmed this with customers yet.";
   }
   return "This is an early read from the evidence we have so far.";
 }
@@ -264,12 +316,7 @@ export default function ClientRefinePreviewView() {
     rerunAnalysis: refetchClientViewData,
   } = useClientViewData({ actionLimit: 5 });
 
-  const phase = activeCompany?.engagement_phase ?? "outside_signals";
-  const isEarlyPhase = phase === "outside_signals" || phase === "validate_outside" || phase === "diagnose" || phase === "validate_diagnose";
-  const earlyHypothesisPhaseLabel = phase === "outside_signals" || phase === "validate_outside" ? "Pre-Diagnosis" : "Diagnose";
-  const sectionVisibility = phaseSectionVisibility(phase);
-  const phasePriority = phaseNarrativePriority(phase);
-  const confidencePrimaryKeys = phaseConfidenceEmphasis(phase);
+  const rawPhase = activeCompany?.engagement_phase ?? "outside_signals";
 
   // ── Strategic state analysis ────────────────────────────────────────────────
   const queryClient = useQueryClient();
@@ -287,9 +334,107 @@ export default function ClientRefinePreviewView() {
   const { data: routeHypothesisDependencies = [], isLoading: routeLinksLoading } = useRouteHypothesisDependencies(activeCompany?.id);
   const { data: strategicChangeSummary, isLoading: strategicChangeLoading } = useStrategicChangeSummary(activeCompany?.id);
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
+  const { needs } = useOdiNeeds(activeCompany?.id);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+
+  // Floor phase to what evidence actually supports — display-only, no DB write.
+  const phase = floorEngagementPhase({
+    phase: rawPhase,
+    hasNeedsWithScores: needs.some((n) => n.importance > 0),
+    hasSelectedRoute: !!activeCompany?.selected_route_id,
+  });
+  const isEarlyPhase = phase === "outside_signals" || phase === "validate_outside" || phase === "diagnose" || phase === "validate_diagnose";
+  const earlyHypothesisPhaseLabel = phase === "outside_signals" || phase === "validate_outside" ? "Pre-Diagnosis" : "Diagnose";
+  const phaseSectionVis = phaseSectionVisibility(phase);
+  const phasePriority = phaseNarrativePriority(phase);
+  const confidencePrimaryKeys = phaseConfidenceEmphasis(phase);
+  // sectionVisibility is redefined after modeConfig is available (later in the component).
+  // Until then, use phaseSectionVis directly for any usages before the mode layer.
+  let sectionVisibility = phaseSectionVis;
+
+  // ── Hierarchy-aware computed values ────────────────────────────────────────
+  const hasHierarchy = useMemo(() => routes.some((r) => r.level === "route"), [routes]);
+  const topLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
+  const dominantClaimState = useMemo((): ClaimState | null => {
+    if (!hasHierarchy || topLevelRoutes.length === 0) return null;
+    const order: ClaimState[] = ["flow", "focus", "diagnose", "outside_view"];
+    const states = topLevelRoutes
+      .map((r) => (r as { claim_id?: string | null }).claim_id ? (claimsMap.get((r as { claim_id?: string | null }).claim_id!)?.state ?? null) : null)
+      .filter((s): s is ClaimState => s !== null);
+    for (const s of order) { if (states.includes(s)) return s; }
+    return states[0] ?? null;
+  }, [hasHierarchy, topLevelRoutes, claimsMap]);
+  const liveMojoScore = useMemo((): MojoScoreResult | null => {
+    if (!hasHierarchy || !activeCompany?.id) return null;
+    return computeMojoScore({
+      companyId: activeCompany.id,
+      claims: Array.from(claimsMap.values()).map((c) => ({
+        id: c.id, state: c.state, claim_type: c.claim_type, topic: c.topic,
+        outside_support_count: c.outside_support_count,
+        organization_support_count: c.organization_support_count,
+        customer_support_count: c.customer_support_count,
+        updated_at: c.updated_at,
+      })),
+      routes: routes.map((r) => ({
+        id: r.id, category: r.category, level: r.level ?? null, parent_id: r.parent_id ?? null,
+        steps_json: (Array.isArray(r.steps_json) ? r.steps_json : null) as Array<{ id: string; title: string; status: string }> | null,
+        evidence_json: (Array.isArray(r.evidence_json) ? r.evidence_json : null) as Array<{ id: string; title: string; status: string }> | null,
+        why_this_matters_json: Array.isArray(r.why_this_matters_json) ? r.why_this_matters_json as string[] : null,
+        rejected_alternatives: Array.isArray(r.rejected_alternatives) ? r.rejected_alternatives : null,
+        what_would_have_to_be_true: Array.isArray(r.what_would_have_to_be_true) ? r.what_would_have_to_be_true : null,
+        linked_need_ids: Array.isArray(r.linked_need_ids) ? r.linked_need_ids : null,
+        updated_at: r.updated_at ?? null,
+      })),
+      needs: (needs ?? []).map((n) => ({
+        id: n.id, desired_outcome: n.desired_outcome, importance: n.importance,
+        satisfaction: n.satisfaction, opportunity_score: n.opportunity_score,
+        service_state: n.service_state, updated_at: n.updated_at ?? null,
+      })),
+      computedAt: new Date().toISOString(),
+    });
+  }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
+  const displayMojoScore: MojoScoreResult | null = dbMojoScore ?? liveMojoScore;
+  // Block 4: pick the need with the largest gap = highest opportunity_score
+  // (opportunity_score = (importance − satisfaction) × importance)
+  const topNeed = useMemo(() => {
+    if (!hasHierarchy || needs.length === 0) return null;
+    return [...needs].sort((a, b) => b.opportunity_score - a.opportunity_score)[0] ?? null;
+  }, [hasHierarchy, needs]);
+
+  const { landscape: signalLandscape } = useSignalLandscape(
+    hasHierarchy ? activeCompany?.id : undefined,
+  );
+  const { evidence: directionEvidence } = useDirectionEvidence(
+    hasHierarchy ? activeCompany?.id : undefined,
+    routes,
+  );
+
+  const { item: positioning } = usePositioningCanvas(activeCompany?.id);
+  const { item: cascade } = useStrategyCascade(activeCompany?.id);
+
+  const foundationStatus = useFoundationStatus(
+    hasHierarchy ? activeCompany?.id : undefined,
+    positioning,
+    cascade,
+    routes,
+    directionEvidence,
+  );
 
   const analysisRunning = fileProposals.some(
     (p) => p.processing_state === "queued" || p.processing_state === "running",
+  );
+  const unresolvedAssumptionsCount = useMemo(
+    () => strategicAssumptions.filter((a) => a.status === "untested" || a.status === "validating").length,
+    [strategicAssumptions],
+  );
+  const unstableAssumptionsCount = useMemo(
+    () => strategicAssumptions.filter((a) => a.status === "unstable").length,
+    [strategicAssumptions],
+  );
+  const contradictedAssumptionsCount = useMemo(
+    () => strategicAssumptions.filter((a) => a.status === "contradicted" || a.status === "invalidated").length,
+    [strategicAssumptions],
   );
 
   // Elapsed seconds counter — resets when analysis stops
@@ -301,12 +446,17 @@ export default function ClientRefinePreviewView() {
     return () => clearInterval(interval);
   }, [analysisRunning]);
 
+  // Stable ref so the analysis-complete effect can call captureMovementSnapshot
+  // without holding a const that is declared later in the component body.
+  const captureMovementSnapshotRef = useRef<(() => void) | null>(null);
+
   const prevAnalysisRunning = useRef(false);
   useEffect(() => {
     if (prevAnalysisRunning.current && !analysisRunning) {
       const latest = fileProposals[0];
       if (latest?.processing_state === "ready") {
         toast.success("Analysis complete — diagnostic updated.");
+        captureMovementSnapshotRef.current?.();
       } else if (latest?.processing_state === "failed") {
         toast.error("Analysis failed. Check the pipeline and try again.");
       }
@@ -553,8 +703,8 @@ export default function ClientRefinePreviewView() {
           validationNote = "Check whether current company context still fits what customers are saying.";
         } else if (hasOrganization) {
           supportLevel = "Internal proxy only";
-          supportReason = "This reads more like an internal interpretation than a validated customer truth.";
-          validationNote = "Revalidate with direct customer evidence before using it as foundational truth.";
+          supportReason = "This reads more like an internal interpretation than a confirmed customer truth.";
+          validationNote = "Return to direct customer evidence before using this as foundational truth.";
         }
       } else if (marketSensitive) {
         if (hasOutside && hasOrganization) {
@@ -578,7 +728,7 @@ export default function ClientRefinePreviewView() {
           supportReason = "Internal evidence and public context align enough to treat this as a working claim.";
           validationNote = hasCustomer
             ? "Customer evidence should refine this before it becomes a hard commitment."
-            : "Customer validation is still the missing step.";
+            : "Customer confirmation is still the missing step.";
         } else if (hasOrganization) {
           supportLevel = "Internal only";
           supportReason = "This is currently supported mostly by company-side interpretation.";
@@ -717,6 +867,7 @@ export default function ClientRefinePreviewView() {
     });
   }, [strategicAssumptions, primaryConstraint?.title, diagnostic?.headline]);
 
+  const [operatingMode, setOperatingMode] = useState<OperatingMode>("scan");
   const [layer, setLayer] = useState<LayerState>("command");
   const [commitState, setCommitState] = useState<CommitState>("idle");
   const [drawerKey, setDrawerKey] = useState<DrawerKey | null>(null);
@@ -728,6 +879,9 @@ export default function ClientRefinePreviewView() {
   const [tweakTab, setTweakTab] = useState<TweakTab>("evidence");
   const [specOpen, setSpecOpen] = useState(false);
   const [accessModes, setAccessModes] = useState<AccessModes>(DEFAULT_ACCESS_MODES);
+  const [showAllPressure, setShowAllPressure] = useState(false);
+  const [expandedClusterKey, setExpandedClusterKey] = useState<string | null>(null);
+  const [showCommitmentDependency, setShowCommitmentDependency] = useState(false);
   const [newAssumption, setNewAssumption] = useState("");
   const [confidenceFrom, setConfidenceFrom] = useState(42);
   const [confidenceTo, setConfidenceTo] = useState(42);
@@ -762,23 +916,9 @@ export default function ClientRefinePreviewView() {
     }
     const detail = toSentence(nextMove?.detail);
     if (detail) return detail;
-    return "Define the next high-leverage move with clearer evidence.";
+    return "The next most useful step is building clearer evidence here.";
   }, [isEarlyPhase, nextMove?.detail, evidence.sources]);
 
-  const impactValue = useMemo(() => {
-    const lift = Math.round((signalStrength.proof.value + signalStrength.execution.value) / 12);
-    return `CONF +${Math.max(6, lift)}`;
-  }, [signalStrength.execution.value, signalStrength.proof.value]);
-
-  const effortValue = useMemo(() => {
-    const detail = toSentence(nextMove?.detail).toLowerCase();
-    if (detail.includes("week")) {
-      const match = detail.match(/\b\d+\s*(?:-|to)?\s*\d*\s*weeks?\b/);
-      if (match) return match[0].replace(/\s+/g, " ");
-      return "2 weeks";
-    }
-    return "2 weeks";
-  }, [nextMove?.detail]);
 
   const baseConfidence = useMemo(() => confidenceBase(confidence.level), [confidence.level]);
 
@@ -793,11 +933,6 @@ export default function ClientRefinePreviewView() {
     [baseConfidence, confidenceTarget],
   );
 
-  const certaintyValue = useMemo(() => {
-    const mojo = Number(activeCompany?.mojo_score ?? 0);
-    if (mojo > 0) return `Mojo ${Math.round(mojo)}`;
-    return `Mojo ${baseConfidence}`;
-  }, [activeCompany?.mojo_score, baseConfidence]);
 
   const stageIndex = useMemo(() => {
     if (phase === "outside_signals" || phase === "validate_outside") return 0;
@@ -807,7 +942,7 @@ export default function ClientRefinePreviewView() {
   }, [phase]);
 
   const stageStrip = useMemo(
-    () => ["Outside Signals", "Diagnose", "Focus", "Flow"],
+    () => ["Outside view", "Diagnose", "Focus", "Flow"],
     [],
   );
 
@@ -957,17 +1092,312 @@ export default function ClientRefinePreviewView() {
       }),
     [leadMainRationale, phase, routeRationales, routeSeeds, strategicHypothesisRows],
   );
+  // renderReconciliation is declared after the mode-merged sectionVisibility below.
+
+  // ── Strategic Center Surface ────────────────────────────────────────────────
+  const customerRealityNarrative = useMemo(
+    () => buildCustomerRealityNarrative(needs, routes, cascade ?? null),
+    [needs, routes, cascade],
+  );
+  const positioningNarrative = useMemo(
+    () => buildPositioningLensNarrative(positioning ?? null, cascade ?? null, routes),
+    [positioning, cascade, routes],
+  );
+  const portfolio = useMemo(
+    () =>
+      buildDecisionPortfolio({
+        routes,
+        rationales: routeRationales,
+        strategicCenter,
+        customerReality: customerRealityNarrative,
+        positioningNarrative,
+        phase,
+      }),
+    [routes, routeRationales, strategicCenter, customerRealityNarrative, positioningNarrative, phase],
+  );
+  const surface = useMemo(
+    () =>
+      buildStrategicCenterSurface({
+        strategicCenter,
+        customerReality: customerRealityNarrative,
+        positioningNarrative,
+        confidenceDomains: confidenceLandscape,
+        routeRationales,
+        leadRationale: leadMainRationale,
+        phase,
+        decisionPortfolio: portfolio,
+      }),
+    [strategicCenter, customerRealityNarrative, positioningNarrative, confidenceLandscape, routeRationales, leadMainRationale, phase, portfolio],
+  );
+
+  const temporalPosture = useMemo(
+    () => deriveTemporalPosture({
+      hypotheses: strategicHypothesisRows,
+      centerStateKey: surface.centerStateKey,
+      confidencePosture: surface.confidencePosture,
+      topContradiction: surface.topContradiction,
+    }),
+    [strategicHypothesisRows, surface.centerStateKey, surface.confidencePosture, surface.topContradiction],
+  );
+
+  const register = useMemo(
+    () => deriveRegister({
+      confidencePosture: surface.confidencePosture,
+      temporalPosture,
+      centerStateKey: surface.centerStateKey,
+      hasEscalations: portfolio.escalations.length > 0,
+      portfolioState: portfolio.portfolioState,
+    }),
+    [surface.confidencePosture, surface.centerStateKey, temporalPosture, portfolio.escalations, portfolio.portfolioState],
+  );
+
+  const discipline = useMemo(
+    () => assessConfidenceDiscipline({
+      confidencePosture: surface.confidencePosture,
+      temporalPosture,
+      register,
+      hasCustomerBehavioralProof: hasCustomerBehavioralProofFromPosture(customerRealityNarrative?.posture),
+      routeCount: routeRationales.length,
+    }),
+    [surface.confidencePosture, temporalPosture, register, customerRealityNarrative?.posture, routeRationales.length],
+  );
+
+  const decay = useMemo(
+    () => buildDecayContext({
+      temporalPosture,
+      confidencePosture: surface.confidencePosture,
+    }),
+    [temporalPosture, surface.confidencePosture],
+  );
+
+  const attention = useMemo(
+    () => buildAttentionContext({
+      register,
+      discipline,
+      temporalPosture,
+      governanceDrift: portfolio.decisionOps.drift,
+      routeDecisions: portfolio.routes.map((r) => ({
+        lifecycleState: r.lifecycleState,
+        commitmentState: r.commitmentState,
+      })),
+      decay,
+    }),
+    [register, discipline, temporalPosture, portfolio.decisionOps.drift, portfolio.routes, decay],
+  );
+
+  // Derive the default mode once on mount (after attention + decisionOps are ready).
+  // Stored in a ref so subsequent re-renders don't re-derive and override user changes.
+  const modeInitialized = useRef(false);
+  useEffect(() => {
+    if (!modeInitialized.current) {
+      setOperatingMode(deriveDefaultMode(attention, portfolio.decisionOps));
+      modeInitialized.current = true;
+    }
+  // Intentionally runs once — attention/decisionOps at mount determine the default.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const modeConfig = MODE_CONTENT[operatingMode];
+
+  // Merge phase visibility with mode suppression rules.
+  // Mode can suppress sections; never expands beyond what phase permits.
+  sectionVisibility = {
+    ...phaseSectionVis,
+    showHypotheses: phaseSectionVis.showHypotheses && modeConfig.showHypotheses,
+    showMovement:   phaseSectionVis.showMovement && modeConfig.showMovement,
+    showConfidence: phaseSectionVis.showConfidence && modeConfig.showConfidenceLandscape,
+  };
+
+  // Computed after mode-merge so it respects showHypotheses suppression.
   const renderReconciliation = sectionVisibility.showHypotheses && Boolean(reconciliationNarrative?.shouldRender);
+
+  const cadenceFrame = useMemo(
+    () => buildCadenceFrame({
+      changeSummary: strategicChangeSummary ?? null,
+      temporalPosture,
+      attention,
+      decisionOps: portfolio.decisionOps,
+    }),
+    [strategicChangeSummary, temporalPosture, attention, portfolio.decisionOps],
+  );
+
+  const integrity = useMemo(
+    () => auditSemanticIntegrity({
+      register,
+      discipline,
+      confidencePosture: surface.confidencePosture,
+      temporalPosture,
+      attention,
+      decay,
+      customerRealityPosture: customerRealityNarrative?.posture ?? null,
+      hasCustomerBehavioralProof: hasCustomerBehavioralProofFromPosture(customerRealityNarrative?.posture),
+      governanceDrift: portfolio.decisionOps.drift,
+      safeToCommit: portfolio.safeToCommit,
+      portfolioHasStalledOrGatedRoutes: portfolio.decisionOps.routes.some(
+        (r) => r.lifecycleState === "stalled" || r.lifecycleState === "gated",
+      ),
+      operatingMode,
+    }),
+    [register, discipline, surface.confidencePosture, temporalPosture, attention, decay, customerRealityNarrative?.posture, portfolio.decisionOps, portfolio.safeToCommit, operatingMode],
+  );
+
+  const enforcement = useMemo(
+    () => deriveSemanticEnforcement({
+      integrity,
+      register,
+      attentionPosture: attention?.posture ?? "stable",
+      confidencePosture: surface.confidencePosture,
+      operatingMode,
+    }),
+    [integrity, register, attention?.posture, surface.confidencePosture, operatingMode],
+  );
+
+  const safeAttention = useMemo(() => {
+    if (!attention || enforcement.safeAttentionPosture === attention.posture) return attention;
+    const p = enforcement.safeAttentionPosture;
+    return { ...attention, posture: p, postureLabel: ATTENTION_POSTURE_LABELS[p], signalQuotas: SIGNAL_QUOTAS[p] };
+  }, [attention, enforcement.safeAttentionPosture]);
+
+  const signals = useMemo(
+    () =>
+      buildStrategicSignals({
+        hypotheses: strategicHypothesisRows,
+        routeRationales,
+        surface,
+        customerReality: customerRealityNarrative,
+        positioningNarrative,
+        portfolio,
+        phase,
+        discipline,
+        governanceSignals: portfolio.decisionOps.governanceSignals,
+        attention: safeAttention,
+        maxSignals: modeConfig.maxSignals,
+        decay,
+        suppressCommitmentLanguage: enforcement.suppressCommitmentLanguage,
+        forceCustomerProofVisibility: enforcement.forceCustomerProofVisibility,
+      }),
+    [strategicHypothesisRows, routeRationales, surface, customerRealityNarrative, positioningNarrative, portfolio, phase, discipline, safeAttention, modeConfig.maxSignals, decay, enforcement.suppressCommitmentLanguage, enforcement.forceCustomerProofVisibility],
+  );
+
+  // ── Strategic orientation layer (Phase 24) ──────────────────────────────────
+  // Derives structural tensions from the full data set, then assembles the
+  // primary orientation surface: commitment readiness, tensions, movement, lenses.
+  const homePageTensions = useMemo(
+    () => deriveStrategicTensions({
+      routes,
+      needs,
+      canvas: positioning ?? null,
+      cascade: cascade ?? null,
+      sourceSignals: {
+        uploadedFiles: fileProposals.length,
+        hasCompanyEvidence: signalPosture.organization === "Present",
+        hasPrimaryEvidence: signalPosture.customer === "Present",
+        primaryEvidenceSignals: signalPosture.customer === "Present" ? 1 : 0,
+        testedSignal: 0,
+        hasImplementedTested: false,
+      },
+    }),
+    [routes, needs, positioning, cascade, fileProposals.length, signalPosture],
+  );
+
+  // Bootstrap orientation — no tensionAnnotations to avoid circular dep:
+  // movementSnapshotInput → useStrategicMovement → annotatedTensions → orientationWithMemory.
+  // This provides validationUrgency for movementSnapshotInput only.
+  const strategicOrientation = useMemo(
+    () => buildStrategicOrientation({ tensions: homePageTensions, portfolio, signals }),
+    [homePageTensions, portfolio, signals],
+  );
+
+  const movementSnapshotInput = useMemo(() => {
+    if (!activeCompany?.id) return null;
+    return {
+      companyId: activeCompany.id,
+      centerStateKey: surface.centerStateKey,
+      confidencePosture: surface.confidencePosture,
+      canCommit: portfolio.safeToCommit.length > 0,
+      safeToCommit: portfolio.safeToCommit,
+      blocked: portfolio.blocked,
+      portfolioState: portfolio.portfolioState,
+      tensions: homePageTensions.map((t) => ({
+        id: t.id,
+        statement: t.statement,
+        pressure: t.pressure,
+        isCommitmentBlocker: t.isCommitmentBlocker,
+      })),
+      validationUrgency: strategicOrientation.validationUrgency,
+      hasContradiction: Boolean(surface.topContradiction),
+      customerProofPresent: signalPosture.customer === "Present",
+      unresolvedAssumptionsCount,
+      contradictedAssumptionsCount: contradictedAssumptionsCount + unstableAssumptionsCount,
+      reframedAssumptionsCount: strategicAssumptions.filter((a) => (a.status as string) === "reframed").length,
+      mojoScore: typeof activeCompany.mojo_score === "number" ? activeCompany.mojo_score : null,
+    };
+  }, [
+    activeCompany?.id,
+    activeCompany?.mojo_score,
+    surface.centerStateKey,
+    surface.confidencePosture,
+    surface.topContradiction,
+    portfolio.safeToCommit,
+    portfolio.blocked,
+    portfolio.portfolioState,
+    homePageTensions,
+    strategicOrientation.validationUrgency,
+    signalPosture.customer,
+    strategicAssumptions,
+    unresolvedAssumptionsCount,
+    contradictedAssumptionsCount,
+    unstableAssumptionsCount,
+  ]);
+
+  const { movementLine, annotatedTensions, captureNow: captureMovementSnapshot } = useStrategicMovement(movementSnapshotInput);
+  captureMovementSnapshotRef.current = captureMovementSnapshot;
+
+  const persistentTensionIds = useMemo(
+    () => new Set(annotatedTensions.filter((a) => a.movementStatus === "persistent").map((a) => a.tensionId)),
+    [annotatedTensions],
+  );
+
+  const weakeningTensionIds = useMemo(
+    () => new Set(annotatedTensions.filter((a) => a.movementStatus === "weakened" || a.movementStatus === "cooling").map((a) => a.tensionId)),
+    [annotatedTensions],
+  );
+
+  const evolvedAssumptions = useMemo(
+    () => deriveAssumptionEvolution(strategicAssumptions),
+    [strategicAssumptions],
+  );
+
+  const assumptionEvolutionLine = useMemo(
+    () => buildAssumptionMovementLine(evolvedAssumptions),
+    [evolvedAssumptions],
+  );
+
+  const orientationWithMemory = useMemo(
+    () => buildStrategicOrientation({ tensions: homePageTensions, portfolio, signals, tensionAnnotations: annotatedTensions }),
+    [homePageTensions, portfolio, signals, annotatedTensions],
+  );
 
   const commandActionTitle = useMemo(() => {
     const actionTitle = toSentence(strongestAction?.title);
     if (actionTitle) return actionTitle;
 
+    // When the lead route is evidence-derived with a movement_condition, surface its
+    // specific validation test rather than a generic action title.
+    if (
+      leadMainRoute &&
+      Array.isArray(leadMainRoute.frameworks_used) &&
+      leadMainRoute.frameworks_used.includes("evidence_derived_79") &&
+      leadMainRoute.route_insights_json?.movement_condition
+    ) {
+      return deriveRouteValidationTitle(leadMainRoute);
+    }
+
     const moveTitle = toSentence(nextMove?.title);
     if (moveTitle && moveTitle.toLowerCase() !== "in progress") return moveTitle;
 
     return actionHeadline;
-  }, [actionHeadline, nextMove?.title, strongestAction?.title]);
+  }, [actionHeadline, leadMainRoute, nextMove?.title, strongestAction?.title]);
 
   const commandActionSupport = useMemo(() => {
     const detail = toSentence(nextMove?.detail);
@@ -987,24 +1417,26 @@ export default function ClientRefinePreviewView() {
     if (!(phase === "diagnose" || phase === "validate_diagnose")) return null;
     if (!strategicCenter.shouldLeadExplanations || !strategicCenter.label) return null;
     return {
-      headline: `The strategy appears to be cohering around ${strategicCenter.label}.`,
+      headline: `The strategy is converging around ${strategicCenter.label}.`,
       support: buildCenterHeroSupport({
         publicIdentity: identityNarrative.publicIdentity,
-        customerLag: strategicCenter.customerLag,
       }),
     };
   }, [identityNarrative.publicIdentity, phase, strategicCenter.customerLag, strategicCenter.label, strategicCenter.shouldLeadExplanations]);
   const showEarlyHero = Boolean(centerLedEarlyHero || leadEarlyHypothesis);
 
   const earlyPhaseHeadline = useMemo(() => {
-    if (centerLedEarlyHero?.headline) return centerLedEarlyHero.headline;
+    // Do not use centerLedEarlyHero.headline here — surface.centerHeadline already carries that message.
+    // Use the support line (secondary context) or the leading hypothesis instead.
+    if (centerLedEarlyHero?.support) return centerLedEarlyHero.support;
     if (leadEarlyHypothesis?.hypothesis.statement) return toSentence(leadEarlyHypothesis.hypothesis.statement);
     return diagnostic?.headline || "The picture is still forming.";
-  }, [centerLedEarlyHero?.headline, diagnostic?.headline, leadEarlyHypothesis?.hypothesis.statement]);
+  }, [centerLedEarlyHero?.support, diagnostic?.headline, leadEarlyHypothesis?.hypothesis.statement]);
 
   const earlyPhaseSupport = useMemo(() => {
+    // earlyPhaseHeadline already renders centerLedEarlyHero.support — skip here to avoid duplicate.
     if (centerLedEarlyHero?.support) {
-      return centerLedEarlyHero.support;
+      return null;
     }
     if (leadEarlyHypothesis) {
       return hypothesisSourceMixSummary(leadEarlyHypothesis);
@@ -1042,6 +1474,45 @@ export default function ClientRefinePreviewView() {
     }
     return commandActionTitle;
   }, [commandActionTitle, leadMainRoute?.title, phasePriority.phase]);
+  const conductor = useMemo(
+    () => buildNarrativeConductor({
+      centerStateKey: surface.centerStateKey,
+      centerHeadline: surface.centerHeadline,
+      secondaryHeadline: isEarlyPhase ? earlyPhaseHeadline : latePhaseHeadline,
+      topContradiction: surface.topContradiction,
+      temporalPosture,
+      register: enforcement.safeRegister,
+      discipline,
+      attention: safeAttention,
+    }),
+    [surface.centerStateKey, surface.centerHeadline, surface.topContradiction, isEarlyPhase, earlyPhaseHeadline, latePhaseHeadline, temporalPosture, enforcement.safeRegister, discipline, safeAttention],
+  );
+
+  const conductedSignals = useMemo(
+    () => conductor.conductSignals(signals),
+    [conductor, signals],
+  );
+
+  const conductedAttentionItems = useMemo(
+    () => conductor.conductAttentionItems(surface.phaseAttentionItems),
+    [conductor, surface.phaseAttentionItems],
+  );
+
+  // When hierarchy is present and no lead route yet, replace "lead route" framing in next moves
+  const displayAttentionItems = useMemo(() => {
+    if (hasHierarchy && (dominantClaimState === "diagnose" || dominantClaimState === "outside_view")) {
+      const n = topLevelRoutes.length;
+      const leadRouteFreeItems = conductedAttentionItems.filter(
+        (item) => !/lead route|weakening signals|pulling positioning/i.test(item),
+      );
+      return [
+        `No lead route yet — ${n} direction${n === 1 ? "" : "s"} under evaluation.`,
+        ...leadRouteFreeItems.slice(0, 1),
+      ];
+    }
+    return conductedAttentionItems;
+  }, [hasHierarchy, dominantClaimState, topLevelRoutes, conductedAttentionItems]);
+
   const latePhaseSupport = useMemo(() => {
     if (phasePriority.phase === "focus" && leadMainRationale) {
       return leadMainRationale.whatSupportsIt;
@@ -1063,10 +1534,1020 @@ export default function ClientRefinePreviewView() {
       return `Route posture · ${leadMainRationale.readiness} · ${leadMainRationale.readinessMeaning}`;
     }
     if (phasePriority.phase === "flow") {
-      return `Route health · ${leadMainRationale.movementLabel} · ${leadMainRationale.confidenceLabel}`;
+      return `Route health · ${leadMainRationale.movementLabel} · ${displayConfidenceLabel(leadMainRationale.confidenceLabel)}`;
     }
     return "";
   }, [leadMainRationale, phasePriority.phase]);
+  const commitmentBlockerTensions = useMemo(
+    () => homePageTensions.filter((tension) => tension.is_commitment_blocker).slice(0, 2),
+    [homePageTensions],
+  );
+  const destabilizingTensions = useMemo(
+    () => homePageTensions.filter((tension) => !tension.is_commitment_blocker).slice(0, 2),
+    [homePageTensions],
+  );
+  const councilPressureTensions = useMemo(
+    () => tensionsForContext(homePageTensions, "council", 1),
+    [homePageTensions],
+  );
+  const destabilizingSignals = useMemo(() => {
+    const groups = conductedSignals.groups.filter((group) =>
+      group.polarity === "blocked" ||
+      group.polarity === "contradictory" ||
+      group.polarity === "weakening" ||
+      group.polarity === "unresolved",
+    );
+    return {
+      ...conductedSignals,
+      groups,
+      totalCount: groups.reduce((sum, group) => sum + group.signals.length, 0),
+      hasBlockingSignals: groups.some((group) => group.polarity === "blocked"),
+      hasConflictingSignals: groups.some((group) => group.polarity === "contradictory"),
+    };
+  }, [conductedSignals]);
+  const strengtheningSignal = useMemo(
+    () =>
+      conductedSignals.groups.find((group) => group.polarity === "reinforcing" || group.polarity === "accelerating")?.signals[0]?.statement ??
+      null,
+    [conductedSignals],
+  );
+  const weakeningSignal = useMemo(
+    () =>
+      conductedSignals.groups.find((group) =>
+        group.polarity === "blocked" ||
+        group.polarity === "contradictory" ||
+        group.polarity === "weakening",
+      )?.signals[0]?.statement ?? null,
+    [conductedSignals],
+  );
+  const commitmentIsFragile =
+    !orientationWithMemory.commitmentReadiness.canCommit ||
+    orientationWithMemory.hasBlockingTensions ||
+    strategicCenter.customerLag ||
+    portfolio.blocked.length > 0;
+  const pressureAlert = useMemo(() => {
+    // When routes use level hierarchy, surface state-aware framing based on dominant claim state
+    if (hasHierarchy && dominantClaimState) {
+      const n = topLevelRoutes.length;
+      if (dominantClaimState === "diagnose") {
+        return {
+          tone: "neutral" as const,
+          headline: `Building the foundation — exploring ${n} direction${n === 1 ? "" : "s"}.`,
+          detail: "Evidence is accumulating around three directions. Customer validation is the next layer needed.",
+        };
+      }
+      if (dominantClaimState === "outside_view") {
+        return {
+          tone: "neutral" as const,
+          headline: "Early engagement — first signals are forming. Internal grounding is still developing.",
+          detail: null,
+        };
+      }
+      if (dominantClaimState === "focus") {
+        return {
+          tone: "stable" as const,
+          headline: "A route is emerging as the primary direction. Evidence continues to strengthen.",
+          detail: "Comparing against alternatives before commitment.",
+        };
+      }
+      if (dominantClaimState === "flow") {
+        return {
+          tone: "stable" as const,
+          headline: "Committed to a direction. Monitoring whether evidence continues to support it.",
+          detail: null,
+        };
+      }
+    }
+    if (orientationWithMemory.hasBlockingTensions) {
+      const blockerCount = commitmentBlockerTensions.length || orientationWithMemory.primaryTensions.filter((tension) => tension.is_commitment_blocker).length;
+      return {
+        tone: "critical" as const,
+        headline: `Commitment blocked — ${blockerCount === 1 ? "a blocking tension is active." : `${Math.max(blockerCount, 2)} blocking tensions are active.`}`,
+        detail: orientationWithMemory.validationUrgency || "Commitment depends on resolving the current blockers first.",
+      };
+    }
+    if (orientationWithMemory.commitmentReadiness.blockedRoutes.length > 0) {
+      const blockedCount = orientationWithMemory.commitmentReadiness.blockedRoutes.length;
+      return {
+        tone: "warning" as const,
+        headline: `Commitment risk elevated — ${blockedCount} route${blockedCount === 1 ? "" : "s"} blocked.`,
+        detail: orientationWithMemory.validationUrgency || "The current path is constrained by unresolved proof pressure.",
+      };
+    }
+    if (orientationWithMemory.commitmentReadiness.canCommit) {
+      const hasBlockedToo = orientationWithMemory.commitmentReadiness.blockedRoutes.length > 0;
+      return {
+        tone: "stable" as const,
+        headline: hasBlockedToo
+          ? "One path is commit-ready — blocked routes remain secondary."
+          : "A commitment path is starting to hold.",
+        detail: hasBlockedToo
+          ? "The primary direction is clear; secondary blockers are contained, not resolved."
+          : "Confidence is stronger here, but it still needs to stay earned.",
+      };
+    }
+    return {
+      tone: "neutral" as const,
+      headline: "The direction is visible, but commitment is still conditional.",
+      detail: orientationWithMemory.validationUrgency || "Commitment depends on how validation moves from here.",
+    };
+  }, [hasHierarchy, dominantClaimState, topLevelRoutes, commitmentBlockerTensions.length, orientationWithMemory, strategicCenter.customerLag]);
+  const commitmentIntro = useMemo(() => {
+    if (hasHierarchy && dominantClaimState === "diagnose") return "Multiple paths are forming — none yet strong enough to prioritize.";
+    if (hasHierarchy && dominantClaimState === "outside_view") return "A first read is forming — not yet ready to choose from.";
+    if (hasHierarchy && dominantClaimState === "focus") return "A lead path is visible — commitment remains conditional.";
+    if (phasePriority.phase === "pre_diagnosis") return "A first read is forming — not yet ready to choose from.";
+    if (phasePriority.phase === "diagnose") return "A direction is forming — still waiting on a few open questions.";
+    if (phasePriority.phase === "focus") return "A lead path is visible — commitment remains conditional.";
+    return "The direction is live under pressure — it can still weaken.";
+  }, [hasHierarchy, dominantClaimState, phasePriority.phase]);
+  const instabilityIntro = useMemo(() => {
+    if (phasePriority.phase === "pre_diagnosis") return "These keep the outside read provisional.";
+    if (phasePriority.phase === "diagnose") return "These keep the diagnosis from hardening too early.";
+    if (phasePriority.phase === "focus") return "These keep the current focus fragile.";
+    return "These can still weaken the direction in motion.";
+  }, [phasePriority.phase]);
+  const validationIntro = useMemo(() => {
+    if (strategicCenter.customerLag) return "Customer proof is still the binding condition.";
+    if (leadMainRationale?.mustBecomeTrue) return leadMainRationale.mustBecomeTrue;
+    if (contradictedAssumptionsCount > 0 || unstableAssumptionsCount > 0) {
+      const count = contradictedAssumptionsCount + unstableAssumptionsCount;
+      return `${count} assumption${count === 1 ? "" : "s"} unsettled — confidence can't harden yet.`;
+    }
+    if (phasePriority.phase === "flow") return "Execution is now either reinforcing or weakening confidence.";
+    return "Proof here either hardens the direction or exposes it.";
+  }, [contradictedAssumptionsCount, leadMainRationale?.mustBecomeTrue, phasePriority.phase, strategicCenter.customerLag, unstableAssumptionsCount]);
+  const safeRightNowLine = useMemo(() => {
+    if (leadMainRationale) {
+      if (leadMainRationale.readiness === "Commit") return "Safe right now: focus around this path.";
+      if (leadMainRationale.readiness === "Validate") return "Safe right now: validate before commitment.";
+      if (leadMainRationale.readiness === "Hold") return "Safe right now: hold until the evidence clears.";
+      return "Safe right now: investigate, not choose.";
+    }
+    if (orientationWithMemory.commitmentReadiness.canCommit) {
+      return "Safe right now: move forward, but keep proof visible.";
+    }
+    return "Safe right now: keep the direction open.";
+  }, [leadMainRationale, orientationWithMemory.commitmentReadiness.canCommit]);
+  const commitmentFragilityLines = useMemo(
+    () =>
+      uniqueSentences(
+        [
+          safeRightNowLine,
+          orientationWithMemory.commitmentReadiness.label,
+          isEarlyPhase ? null : orientationWithMemory.commitmentReadiness.sublabel,
+          strategicCenter.customerLag ? "Customer validation is still gating commitment." : null,
+          portfolio.safeToCommit.length === 0 && portfolio.blocked.length > 0
+            ? `${portfolio.blocked.length} route${portfolio.blocked.length === 1 ? "" : "s"} still depend on unresolved blockers.`
+            : null,
+          portfolio.safeToCommit.length > 0 && !hasCustomerBehavioralProofFromPosture(customerRealityNarrative?.posture)
+            ? "Promising signal — customer behavior not yet confirmed."
+            : null,
+        ],
+        3,
+      ),
+    [customerRealityNarrative?.posture, isEarlyPhase, orientationWithMemory.commitmentReadiness, portfolio.blocked.length, portfolio.safeToCommit.length, safeRightNowLine, strategicCenter.customerLag],
+  );
+
+  // ── Evidence-grounded commitment card metrics (replaces synthetic Impact/Effort/Certainty) ──
+
+  const evidencePostureValue = useMemo(() => {
+    const posture = leadMainRoute?.route_insights_json?.confidence_posture;
+    if (posture) return posture.charAt(0).toUpperCase() + posture.slice(1);
+    if (leadMainRationale?.readiness === "Validate") return "Validation active";
+    if (leadMainRationale?.readiness === "Hold") return "Evidence conditional";
+    if (leadMainRationale?.readiness === "Commit") return "Evidence present";
+    return commitmentIsFragile ? "Evidence conditional" : "Evidence present";
+  }, [commitmentIsFragile, leadMainRationale?.readiness, leadMainRoute?.route_insights_json?.confidence_posture]);
+
+  const commitmentPressureValue = useMemo(() => {
+    if (commitmentBlockerTensions.length > 0) return "Blockers unresolved";
+    if (surface.topContradiction) return "Contradiction active";
+    if (strategicCenter.customerLag) return "Customer validation pending";
+    if (!orientationWithMemory.commitmentReadiness.canCommit) return "Proof incomplete";
+    return "No active blockers";
+  }, [commitmentBlockerTensions.length, orientationWithMemory.commitmentReadiness.canCommit, strategicCenter.customerLag, surface.topContradiction]);
+
+  const readinessPostureValue = useMemo(() => {
+    if (leadMainRationale?.readiness === "Commit") return "Safe to commit";
+    if (leadMainRationale?.readiness === "Validate") return "Validate first";
+    if (leadMainRationale?.readiness === "Hold") return "Hold for now";
+    const label = orientationWithMemory.commitmentReadiness.label;
+    const short = label.split(" — ")[0].split(".")[0].trim();
+    return short || (orientationWithMemory.commitmentReadiness.canCommit ? "Commit window open" : "Conditional");
+  }, [leadMainRationale?.readiness, orientationWithMemory.commitmentReadiness]);
+
+  const pressureClusters = useMemo(() => {
+    const computeRipple = (t: StrategicTension | null | undefined): string[] => {
+      if (!t) return [];
+      const items: string[] = [];
+      if (t.affected_strategy) items.push("Strategy coherence depends on this resolving.");
+      if (t.affected_positioning) items.push("Positioning confidence depends on this resolving.");
+      if (!t.affected_strategy && !t.affected_positioning && t.affected_routes.length > 1) {
+        items.push(`${t.affected_routes.length} route paths remain conditionally committed.`);
+      }
+      return items.slice(0, 2);
+    };
+
+    const groups: Array<{
+      key: string;
+      label: string;
+      tone: "critical" | "warning" | "quiet";
+      headline: string;
+      lines: string[];
+      inspectLabel: string;
+      sourceTension: StrategicTension | null;
+      rippleItems: string[];
+      isPersistent: boolean;
+      isWeakening: boolean;
+      isStructuralPull: boolean;
+    }> = [];
+
+    if (surface.topContradiction || commitmentBlockerTensions.length > 0 || orientationWithMemory.validationUrgency) {
+      groups.push({
+        key: "blocking",
+        label: commitmentBlockerTensions.length > 0 ? "Blocking commitment" : "Proof pressure",
+        tone: surface.topContradiction ? "critical" : "warning",
+        headline: shorten(
+          surface.topContradiction ||
+            commitmentBlockerTensions[0]?.statement ||
+            orientationWithMemory.validationUrgency ||
+            "Validation pressure is still constraining the current direction.",
+          88,
+        ),
+        lines: uniqueSentences([
+          commitmentBlockerTensions[0]?.detail,
+          orientationWithMemory.validationUrgency,
+          commitmentBlockerTensions[0]?.validation_requirements[0],
+          strategicCenter.customerLag ? "Customer validation is still lagging the current direction." : null,
+        ], 2).map((line) => shorten(line, 98)),
+        inspectLabel: "What still blocks this",
+        sourceTension: commitmentBlockerTensions[0] ?? null,
+        rippleItems: computeRipple(commitmentBlockerTensions[0]),
+        isPersistent: persistentTensionIds.has(commitmentBlockerTensions[0]?.id ?? ""),
+        isWeakening: weakeningTensionIds.has(commitmentBlockerTensions[0]?.id ?? ""),
+        isStructuralPull: Boolean(
+          commitmentBlockerTensions[0] &&
+          commitmentBlockerTensions[0].affected_routes.length > 0 &&
+          (commitmentBlockerTensions[0].affected_strategy || commitmentBlockerTensions[0].affected_positioning),
+        ),
+      });
+    }
+
+    if (destabilizingTensions.length > 0) {
+      groups.push({
+        key: "unstable",
+        label: "Keeping the read unstable",
+        tone: destabilizingTensions[0]?.pressure === "critical" || destabilizingTensions[0]?.pressure === "high" ? "warning" : "quiet",
+        headline: shorten(destabilizingTensions[0]?.statement || "The read still carries unresolved instability.", 88),
+        lines: uniqueSentences([
+          destabilizingTensions[0]?.detail,
+          destabilizingTensions[1]?.statement,
+          destabilizingTensions[1]?.detail,
+          portfolio.escalations[0]?.detail,
+        ], 2).map((line) => shorten(line, 98)),
+        inspectLabel: "Why this is unstable",
+        sourceTension: destabilizingTensions[0] ?? null,
+        rippleItems: computeRipple(destabilizingTensions[0]),
+        isPersistent: persistentTensionIds.has(destabilizingTensions[0]?.id ?? ""),
+        isWeakening: weakeningTensionIds.has(destabilizingTensions[0]?.id ?? ""),
+        isStructuralPull: Boolean(
+          destabilizingTensions[0] &&
+          destabilizingTensions[0].affected_routes.length > 0 &&
+          (destabilizingTensions[0].affected_strategy || destabilizingTensions[0].affected_positioning),
+        ),
+      });
+    }
+
+    if (councilPressureTensions[0]) {
+      groups.push({
+        key: "council",
+        label: "Council pressure",
+        tone: "quiet",
+        headline: shorten(councilPressureTensions[0].statement, 88),
+        lines: uniqueSentences([
+          councilPressureTensions[0].detail,
+          councilPressureTensions[0].validation_requirements[0],
+        ], 1).map((line) => shorten(line, 98)),
+        inspectLabel: "What pressure remains",
+        sourceTension: councilPressureTensions[0] ?? null,
+        rippleItems: [],
+        isPersistent: persistentTensionIds.has(councilPressureTensions[0]?.id ?? ""),
+        isWeakening: weakeningTensionIds.has(councilPressureTensions[0]?.id ?? ""),
+        isStructuralPull: Boolean(
+          councilPressureTensions[0] &&
+          councilPressureTensions[0].affected_routes.length > 0 &&
+          (councilPressureTensions[0].affected_strategy || councilPressureTensions[0].affected_positioning),
+        ),
+      });
+    }
+
+    return groups.slice(0, 3);
+  }, [
+    commitmentBlockerTensions,
+    councilPressureTensions,
+    destabilizingTensions,
+    orientationWithMemory.validationUrgency,
+    persistentTensionIds,
+    weakeningTensionIds,
+    portfolio.escalations,
+    strategicCenter.customerLag,
+    surface.topContradiction,
+  ]);
+  const validationSummaryItems = useMemo(
+    () =>
+      [
+        strengtheningSignal
+          ? { label: "Strengthening", text: shorten(strengtheningSignal, 92) }
+          : null,
+        weakeningSignal
+          ? { label: "Weakening", text: shorten(weakeningSignal, 92) }
+          : null,
+        {
+          label: "Needs direct verification",
+          text: shorten(
+            leadMainRationale?.mustBecomeTrue ||
+              customerRealityNarrative?.wouldResolve[0] ||
+              customerRealityNarrative?.unresolved[0] ||
+              (strategicCenter.customerLag ? "We still need direct customer evidence before this direction can harden." : ""),
+            104,
+          ),
+        },
+        contradictedAssumptionsCount > 0 || unstableAssumptionsCount > 0 || unresolvedAssumptionsCount > 0
+          ? {
+              label: "Assumptions still unstable",
+              text: shorten(
+                contradictedAssumptionsCount > 0
+                  ? `${contradictedAssumptionsCount} contradicted or invalidated assumption${contradictedAssumptionsCount === 1 ? "" : "s"} still need resolution.`
+                  : unstableAssumptionsCount > 0
+                    ? `${unstableAssumptionsCount} unstable assumption${unstableAssumptionsCount === 1 ? "" : "s"} still need to settle.`
+                    : `${unresolvedAssumptionsCount} assumption${unresolvedAssumptionsCount === 1 ? "" : "s"} are still under active validation.`,
+                96,
+              ),
+            }
+          : null,
+      ].filter((item): item is { label: string; text: string } => Boolean(item?.text)).slice(0, 3),
+    [
+      contradictedAssumptionsCount,
+      customerRealityNarrative?.unresolved,
+      customerRealityNarrative?.wouldResolve,
+      leadMainRationale?.mustBecomeTrue,
+      strategicCenter.customerLag,
+      strengtheningSignal,
+      unresolvedAssumptionsCount,
+      unstableAssumptionsCount,
+      weakeningSignal,
+    ],
+  );
+  const commitmentAnchorHeadline = isEarlyPhase ? earlyPhaseHeadline : latePhaseHeadline;
+  const commitmentAnchorSupport = isEarlyPhase ? earlyPhaseSupport : latePhaseSupport;
+  const commitmentAnchorStatus = isEarlyPhase
+    ? (diagnostic && !diagnostic.isAccepted ? "Early read · not validated yet" : "")
+    : latePhaseStatus;
+  const fieldHypothesisRows = isEarlyPhase ? earlyPhaseHypotheses : focusOrFlowHypotheses;
+  const fieldHypothesisPhaseLabel = isEarlyPhase ? earlyHypothesisPhaseLabel : latePhaseLabel;
+  const commitmentFieldHeadline = useMemo(() => {
+    // When routes use level hierarchy, feature the strongest top-level route
+    if (hasHierarchy && topLevelRoutes.length > 0) {
+      const best = [...topLevelRoutes].sort((a, b) => (b.pts_value ?? 0) - (a.pts_value ?? 0))[0];
+      if (best?.title) return best.title;
+    }
+    if (phasePriority.phase === "focus" || phasePriority.phase === "flow") {
+      return latePhaseHeadline || surface.centerHeadline;
+    }
+    return surface.centerHeadline;
+  }, [hasHierarchy, topLevelRoutes, latePhaseHeadline, phasePriority.phase, surface.centerHeadline]);
+  const commitmentFieldSupportLines = useMemo(() => {
+    const centerContext =
+      !isEarlyPhase && strategicCenter.label
+        ? `The direction is centering on ${lowerFirst(strategicCenter.label)}.`
+        : null;
+
+    const lines = isEarlyPhase
+      ? [commitmentAnchorHeadline, commitmentAnchorSupport]
+      : [centerContext, latePhaseSupport, commitmentAnchorSupport];
+
+    return uniqueSentences(lines, isEarlyPhase ? 2 : 1).filter((line) => normalizeCompare(line) !== normalizeCompare(commitmentFieldHeadline));
+  }, [
+    commitmentAnchorHeadline,
+    commitmentAnchorSupport,
+    commitmentFieldHeadline,
+    isEarlyPhase,
+    latePhaseSupport,
+    strategicCenter.label,
+  ]);
+  const fieldHypothesisExcludeId = useMemo(() => {
+    const lead = fieldHypothesisRows[0];
+    if (!lead) return null;
+    const headlineKey = normalizeCompare(commitmentFieldHeadline);
+    const leadKey = normalizeCompare(lead.hypothesis.statement);
+    if (!headlineKey || !leadKey) return null;
+    if (headlineKey === leadKey || headlineKey.includes(leadKey) || leadKey.includes(headlineKey)) {
+      return lead.hypothesis.id;
+    }
+    return null;
+  }, [commitmentFieldHeadline, fieldHypothesisRows]);
+  const visiblePressureClusters = useMemo(
+    () => (showAllPressure ? pressureClusters : pressureClusters.slice(0, 1)),
+    [pressureClusters, showAllPressure],
+  );
+  const pressureSignalsPreview = useMemo(() => {
+    const groups = destabilizingSignals.groups
+      .slice(0, showAllPressure ? 2 : 1)
+      .map((group) => ({
+        ...group,
+        signals: group.signals.slice(0, showAllPressure ? 3 : 2),
+      }));
+    return {
+      ...destabilizingSignals,
+      groups,
+      totalCount: groups.reduce((sum, group) => sum + group.signals.length, 0),
+    };
+  }, [destabilizingSignals, showAllPressure]);
+
+  const routeLabelMap = useMemo(
+    () => new Map(routes.map((r) => [r.id, r.title])),
+    [routes],
+  );
+
+  const commitmentDependencyItems = useMemo(() => {
+    const blocker = commitmentBlockerTensions[0];
+    if (!blocker) return [] as string[];
+    const items: string[] = [];
+    const req = blocker.validation_requirements[0];
+    if (req) items.push(req);
+    const res = blocker.resolution_signals[0];
+    if (res && res !== req) items.push(`Resolves if: ${shorten(res, 72)}`);
+    for (const routeId of (blocker.blocked_commitments ?? []).slice(0, 1)) {
+      const label = routeLabelMap.get(routeId);
+      if (label) items.push(`Blocks path to: ${shorten(label, 56)}`);
+    }
+    return items.slice(0, 3);
+  }, [commitmentBlockerTensions, routeLabelMap]);
+
+  const unstableAssumptionLines = useMemo(
+    () => evolvedAssumptions.filter((a) => a.isUnstable).slice(0, 2).map((a) => a.statement),
+    [evolvedAssumptions],
+  );
+
+  // Phase 30 — commitment consequence and validation leverage
+  const commitmentConsequenceItems = useMemo(() => {
+    const items: string[] = [];
+    // Lead route's critical unproven assumptions — dependency framing
+    const assumptions = leadMainRoute?.assumptions_json ?? [];
+    const criticalUnproven = assumptions.filter(
+      (a) => a.critical && (a.status === "unproven" || !a.status),
+    );
+    if (criticalUnproven[0]) {
+      items.push(`This path currently depends on: ${lowerFirst(criticalUnproven[0].statement)}`);
+    }
+    // Blocker tension as dependency (only if assumption didn't fill this already)
+    if (items.length === 0 && commitmentBlockerTensions[0]) {
+      items.push(`Commitment depends on: ${shorten(lowerFirst(commitmentBlockerTensions[0].statement), 84)}`);
+    }
+    // Unstable assumption affecting routes — fragility framing
+    const routeAffecting = evolvedAssumptions.find((a) => a.isUnstable && a.affectedRouteIds.length > 0);
+    if (routeAffecting && items.length < 2) {
+      items.push(`If this weakens: ${shorten(lowerFirst(routeAffecting.statement), 68)} would need reassessment.`);
+    }
+    // Customer lag — condition framing
+    if (strategicCenter.customerLag && items.length < 2) {
+      items.push("Route confidence weakens without direct customer evidence.");
+    }
+    return items.slice(0, 2);
+  }, [commitmentBlockerTensions, evolvedAssumptions, leadMainRoute?.assumptions_json, strategicCenter.customerLag]);
+
+  const validationConsequenceItems = useMemo(() => {
+    const items: string[] = [];
+    // Customer proof leverage
+    if (strategicCenter.customerLag) {
+      const wouldResolve = customerRealityNarrative?.wouldResolve[0];
+      items.push(wouldResolve
+        ? `Customer proof would: ${lowerFirst(wouldResolve)}`
+        : "Customer proof would stabilize all route recommendations simultaneously."
+      );
+    }
+    // Commitment window unlock
+    if (commitmentBlockerTensions.length > 0 && portfolio.safeToCommit.length === 0) {
+      const routeCount = Math.min(routes.length, 3);
+      if (routeCount > 0 && items.length < 2) {
+        items.push(`Resolving this would open the commitment window for up to ${routeCount} route${routeCount === 1 ? "" : "s"}.`);
+      }
+    }
+    // Assumption stabilization leverage
+    const unstableCount = evolvedAssumptions.filter((a) => a.isUnstable).length;
+    if (unstableCount > 0 && items.length < 2) {
+      items.push(`Stabilizing ${unstableCount === 1 ? "this belief" : "these beliefs"} would reduce commitment pressure across the portfolio.`);
+    }
+    return items.slice(0, 2);
+  }, [
+    commitmentBlockerTensions.length,
+    customerRealityNarrative?.wouldResolve,
+    evolvedAssumptions,
+    portfolio.safeToCommit.length,
+    routes.length,
+    strategicCenter.customerLag,
+  ]);
+
+  // ── Strategic field condition derivation ─────────────────────────────────────
+  // Eight condition state memos produce raw condition lines.
+  // conditionDiscipline (below) applies ownership rules and produces the final
+  // deduplicated set. In JSX: use conditionDiscipline.* for commitment posture
+  // condition lines; window renders directly (it has no suppression rule).
+  //
+  // Strategic roles:
+  //   driftSignalLine      — confidence degradation under momentum pressure
+  //   driftContextLines    — proof-aging context for the validation region
+  //   reframingState       — interpretive evolution (beliefs shifted)
+  //   convergenceState     — decision narrowing (viable set is shrinking)
+  //   commitmentWindowState — commitment readiness (a window exists)
+  //   fragilityState       — support breadth (window rests on narrow proof)
+  //   gravityState         — field concentration (signals pulling to one interpretation)
+  //   counterforceState    — residual resistance (competing themes still active)
+
+  // Drift — confidence degradation. Fires when momentum is weakening or contradiction pressure is rising.
+  // Suppressed in commitment posture when canCommit=true (window + drift are contradictory).
+  const driftSignalLine = useMemo((): string | null => {
+    const drift = portfolio.decisionOps.drift;
+    const { momentum, contradictionPressure } = temporalPosture;
+    if (momentum === "weakening" && drift.driftingCommitment) {
+      return "Commitment confidence is drifting under sustained pressure.";
+    }
+    if (contradictionPressure === "entrenched") {
+      return "Contradiction pressure has become entrenched without resolution.";
+    }
+    if (contradictionPressure === "accumulating") {
+      return "Contradiction pressure is accumulating.";
+    }
+    if (momentum === "weakening") {
+      return "Confidence is weakening around this direction.";
+    }
+    if (drift.validationBottleneck) {
+      return "Validation has not kept pace with commitment.";
+    }
+    if (drift.perpetualExploration) {
+      return "Exploration is cycling without converging.";
+    }
+    return null;
+  }, [portfolio.decisionOps.drift, temporalPosture.momentum, temporalPosture.contradictionPressure]);
+
+  const driftContextLines = useMemo((): string[] => {
+    const lines: string[] = [];
+    const { proofGapMaturity, approxCycleCount } = temporalPosture;
+    if (proofGapMaturity === "structural") {
+      lines.push("Proof gaps have become structural rather than temporary.");
+    } else if (proofGapMaturity === "aging") {
+      lines.push("Proof gaps are aging without recent resolution.");
+    }
+    if (decay.backgroundNote && proofGapMaturity !== "structural") {
+      lines.push(decay.backgroundNote);
+    }
+    if (approxCycleCount >= 3 && lines.length < 2) {
+      lines.push("Validation has not kept pace with how far the strategy has committed.");
+    }
+    return lines.slice(0, 2);
+  }, [decay.backgroundNote, temporalPosture.proofGapMaturity, temporalPosture.approxCycleCount]);
+
+  // Reframing — interpretive evolution. Fires when assumptions have been actively reframed
+  // (status=reframed) or when cooling tensions suggest a direction is weakening.
+  const reframingState = useMemo(() => {
+    const reframedBeliefs = evolvedAssumptions.filter((a) => a.hasReframing);
+    const hasCoolingTension = weakeningTensionIds.size > 0;
+
+    // Commitment posture — single interpretive evolution line
+    let commitmentReframingLine: string | null = null;
+    if (reframedBeliefs.length > 0) {
+      commitmentReframingLine = "The interpretation behind this direction is shifting.";
+    } else if (decay.contradictionCooled && hasCoolingTension) {
+      commitmentReframingLine = "The earlier framing is becoming harder to support.";
+    } else if (decay.conditionsStabilizing && hasCoolingTension) {
+      commitmentReframingLine = "The direction is narrowing toward a more specific read.";
+    }
+
+    // Validation region — what became less relevant
+    const consequenceLines: string[] = [];
+    const routeAffectingBelief = reframedBeliefs.find((a) => a.affectedRouteIds.length > 0);
+    if (routeAffectingBelief) {
+      consequenceLines.push("One route's basis has shifted — its relevance may be narrowing.");
+    }
+    if (!strategicCenter.customerLag && decay.conditionsStabilizing && consequenceLines.length < 2) {
+      consequenceLines.push("Customer pressure is concentrating in a more specific direction.");
+    }
+    if (strategicCenter.customerLag && hasCoolingTension && consequenceLines.length < 2) {
+      consequenceLines.push("Customer evidence is narrowing the read.");
+    }
+
+    // Movement memory — compressed editorial line
+    let reframingMovementLine: string | null = null;
+    if (reframedBeliefs.length >= 2) {
+      reframingMovementLine = "The strategic read narrowed.";
+    } else if (reframedBeliefs.length === 1) {
+      reframingMovementLine = "An interpretation shifted.";
+    } else if (hasCoolingTension && decay.conditionsStabilizing) {
+      reframingMovementLine = "The direction is concentrating.";
+    }
+
+    return {
+      commitmentReframingLine,
+      consequenceLines: consequenceLines.slice(0, 2),
+      reframingMovementLine,
+    };
+  }, [decay.conditionsStabilizing, decay.contradictionCooled, evolvedAssumptions, strategicCenter.customerLag, weakeningTensionIds.size]);
+
+  // Convergence — decision narrowing. Fires when the portfolio is converging or
+  // momentum is strengthening alongside weakening alternative tensions.
+  const convergenceState = useMemo(() => {
+    const isConverging = portfolio.portfolioState === "converging";
+    const hasSafeRoutes = portfolio.safeToCommit.length > 0;
+    const hasConvergingRoutes = portfolio.converging.length > 0;
+    const momentumStrengthening = temporalPosture.momentum === "strengthening";
+    const hasWeakening = weakeningTensionIds.size > 0;
+    const noBlockers = commitmentBlockerTensions.length === 0;
+
+    // Commitment posture — directional amplification after the anchor
+    let commitmentConvergenceLine: string | null = null;
+    if (hasSafeRoutes && (momentumStrengthening || isConverging)) {
+      commitmentConvergenceLine = "Signals are increasingly reinforcing this direction.";
+    } else if (isConverging && noBlockers) {
+      commitmentConvergenceLine = "The field is narrowing around a commitment path.";
+    } else if (momentumStrengthening && strengtheningSignal && hasWeakening) {
+      commitmentConvergenceLine = "Validation is concentrating confidence here.";
+    } else if (hasConvergingRoutes && noBlockers && hasWeakening) {
+      commitmentConvergenceLine = "This route is becoming easier to support.";
+    }
+
+    // Instability region — narrowing note, PART 4: convergence despite instability
+    // Only meaningful when pressure clusters are present (enforced in JSX)
+    let narrowingNote: string | null = null;
+    if ((isConverging || hasSafeRoutes) && !noBlockers) {
+      narrowingNote = "Confidence is concentrating on one path even as pressure persists.";
+    } else if (hasConvergingRoutes && hasWeakening && !noBlockers) {
+      narrowingNote = "Alternative interpretations are weakening — the viable set is narrowing.";
+    }
+
+    // Movement memory cadence line
+    let convergenceMovementLine: string | null = null;
+    if (hasSafeRoutes && isConverging) {
+      convergenceMovementLine = "Validation strengthened a narrower commitment set.";
+    } else if (isConverging) {
+      convergenceMovementLine = "Confidence is concentrating around fewer paths.";
+    } else if (momentumStrengthening && hasWeakening) {
+      convergenceMovementLine = "Signals increasingly reinforce the current interpretation.";
+    }
+
+    return { commitmentConvergenceLine, narrowingNote, convergenceMovementLine };
+  }, [
+    commitmentBlockerTensions.length,
+    portfolio.converging.length,
+    portfolio.portfolioState,
+    portfolio.safeToCommit.length,
+    strengtheningSignal,
+    temporalPosture.momentum,
+    weakeningTensionIds.size,
+  ]);
+
+  // Commitment window — readiness. Fires when safeToCommit routes exist and no
+  // blocking tensions are present. Supersedes convergence in commitment posture.
+  const commitmentWindowState = useMemo(() => {
+    const windowPresent = orientationWithMemory.commitmentReadiness.canCommit;
+    const windowForming = portfolio.portfolioState === "converging" && commitmentBlockerTensions.length === 0;
+    // Fragility check within a present window (canCommit may coexist with partial blockage)
+    const windowHasFragility =
+      orientationWithMemory.hasBlockingTensions ||
+      strategicCenter.customerLag ||
+      portfolio.blocked.length > 0;
+
+    // Commitment posture — temporality qualifier, only when window is actually present
+    // (the converging/forming case is already covered by the anchor text)
+    let commitmentWindowLine: string | null = null;
+    if (windowPresent) {
+      if (windowHasFragility) {
+        commitmentWindowLine = "This window still depends on sustained validation.";
+      } else {
+        commitmentWindowLine = "The field is stabilizing around a narrower set of commitments.";
+      }
+    }
+
+    // Movement memory — contextual window state observation
+    let windowMovementLine: string | null = null;
+    if (windowPresent) {
+      windowMovementLine = "Alignment is holding, but still depends on proof.";
+    } else if (windowForming) {
+      windowMovementLine = "Commitment readiness is building.";
+    }
+
+    return { commitmentWindowLine, windowMovementLine };
+  }, [
+    commitmentBlockerTensions.length,
+    orientationWithMemory.commitmentReadiness.canCommit,
+    orientationWithMemory.hasBlockingTensions,
+    portfolio.blocked.length,
+    portfolio.portfolioState,
+    strategicCenter.customerLag,
+  ]);
+
+  // Fragility — support breadth. Fires when a commitment window is open but the
+  // underlying proof is narrow or concentrated. Mutually exclusive with counterforce
+  // in commitment posture — one owns the ambiguity slot.
+  const fragilityState = useMemo(() => {
+    const windowPresent = orientationWithMemory.commitmentReadiness.canCommit;
+    const isConverging = portfolio.portfolioState === "converging";
+
+    // Only meaningful when there is a window or convergence to qualify
+    if (!windowPresent && !isConverging) {
+      return { fragilitySupportLine: null, fragilityMovementLine: null };
+    }
+
+    const safeCount = portfolio.safeToCommit.length;
+    const tooEarlyCount = portfolio.tooEarly.length;
+    const blockedCount = portfolio.blocked.length;
+
+    // Support concentration — what is narrow about the current base
+    let fragilitySupportLine: string | null = null;
+    if (safeCount === 1 && (tooEarlyCount > 1 || blockedCount > 0)) {
+      fragilitySupportLine = "Support remains concentrated around a single viable path.";
+    } else if (isConverging && strategicCenter.customerLag && !windowPresent) {
+      fragilitySupportLine = "Operational support is strengthening unevenly.";
+    } else if (windowPresent && unresolvedAssumptionsCount > 2) {
+      fragilitySupportLine = "The current coherence still relies on unresolved conditions.";
+    } else if (windowPresent && tooEarlyCount > safeCount) {
+      fragilitySupportLine = "Broader portfolio support is still forming.";
+    }
+
+    // Movement memory — concentration/breadth observation
+    // Exclusive with commitmentWindowState.windowMovementLine (enforced in JSX)
+    let fragilityMovementLine: string | null = null;
+    if (windowPresent && strategicCenter.customerLag) {
+      fragilityMovementLine = "Support remains concentrated around a narrow proof base.";
+    } else if (isConverging && strategicCenter.customerLag) {
+      fragilityMovementLine = "Validation strengthened confidence without fully broadening support.";
+    } else if (windowPresent && blockedCount > 0) {
+      fragilityMovementLine = "The commitment window is holding, but still depends on reinforcement.";
+    }
+
+    return { fragilitySupportLine, fragilityMovementLine };
+  }, [
+    orientationWithMemory.commitmentReadiness.canCommit,
+    portfolio.blocked.length,
+    portfolio.portfolioState,
+    portfolio.safeToCommit.length,
+    portfolio.tooEarly.length,
+    strategicCenter.customerLag,
+    unresolvedAssumptionsCount,
+  ]);
+
+  // Phase 36 — strategic center of gravity
+  // Makes visible where the field is concentrating, what interpretation exerts pull,
+  // and which tensions are shaping multiple regions simultaneously.
+  const gravityState = useMemo(() => {
+    const hasCenter = Boolean(strategicCenter.label);
+    const centerHigh = strategicCenter.confidence === "high";
+    const centerMedium = strategicCenter.confidence === "medium";
+    const isConverging = portfolio.portfolioState === "converging";
+    const hasSafeRoutes = portfolio.safeToCommit.length > 0;
+    const momentumStrengthening = temporalPosture.momentum === "strengthening";
+
+    // Commitment posture — directional gravity line (single line, highest resolution)
+    // Only fires when a specific center is identifiable.
+    // Note: "Validation is concentrating confidence here." removed — that text belongs to convergence.
+    // Gravity only produces lines that convergence cannot (specific label, or medium-confidence pull).
+    let commitmentGravityLine: string | null = null;
+    if (hasCenter && strategicCenter.label) {
+      if (centerHigh && (hasSafeRoutes || isConverging)) {
+        commitmentGravityLine = `The field is increasingly organizing around ${lowerFirst(strategicCenter.label)}.`;
+      } else if (centerMedium && isConverging) {
+        commitmentGravityLine = "Signals continue pulling toward this interpretation.";
+      }
+    }
+
+    // Instability — structural pull: which tension is shaping multiple regions at once
+    // (routes + strategy or positioning simultaneously)
+    const structuralTension =
+      homePageTensions.find(
+        (t) =>
+          t.affected_routes.length > 0 &&
+          (t.affected_strategy || t.affected_positioning),
+      ) ?? null;
+    let structuralPullNote: string | null = null;
+    if (structuralTension) {
+      if (structuralTension.affected_strategy && structuralTension.affected_positioning) {
+        structuralPullNote = "This tension is shaping commitments across multiple strategic dimensions.";
+      } else if (structuralTension.affected_routes.length > 1) {
+        structuralPullNote = "This tension is narrowing viability across the current route set.";
+      } else {
+        structuralPullNote = "This tension shapes more than the immediate commitment decision.";
+      }
+    }
+
+    // Validation region — where validation pressure is accumulating
+    let validationGravityLine: string | null = null;
+    if (hasCenter && strategicCenter.confidence !== "low") {
+      if (momentumStrengthening && strengtheningSignal) {
+        validationGravityLine = "Validation pressure is concentrating here.";
+      } else if (isConverging && !strategicCenter.customerLag) {
+        validationGravityLine = "Validation is increasingly aligning around one interpretation.";
+      }
+    }
+
+    // Movement memory — gravity cadence (exclusive with window + fragility in JSX)
+    let gravityMovementLine: string | null = null;
+    if (hasCenter && hasSafeRoutes && momentumStrengthening) {
+      gravityMovementLine = "Validation pressure increasingly reinforced one commitment path.";
+    } else if (hasCenter && isConverging && persistentTensionIds.size > 0) {
+      gravityMovementLine = "Operational gravity strengthened around a narrower route set.";
+    } else if (hasCenter && momentumStrengthening && !hasSafeRoutes) {
+      gravityMovementLine = "Signals continue concentrating around the current interpretation.";
+    } else if (persistentTensionIds.size > 1 && structuralTension) {
+      gravityMovementLine = "Several tensions now pull toward the same interpretation.";
+    }
+
+    return {
+      commitmentGravityLine,
+      structuralPullNote,
+      validationGravityLine,
+      gravityMovementLine,
+    };
+  }, [
+    homePageTensions,
+    persistentTensionIds.size,
+    portfolio.portfolioState,
+    portfolio.safeToCommit.length,
+    strategicCenter.confidence,
+    strategicCenter.customerLag,
+    strategicCenter.label,
+    strengtheningSignal,
+    temporalPosture.momentum,
+  ]);
+
+  // Phase 37 — strategic counterforce + residual ambiguity
+  // Expresses what continues resisting the dominant pull — competing themes, surviving
+  // alternative paths, unresolved interpretive pressure — without undermining convergence.
+  const counterforceState = useMemo(() => {
+    const hasCompetingThemes = strategicCenter.competingThemes.length > 0;
+    const hasMeaningfulDivergence = strategicCenter.hasMeaningfulDivergence;
+    const hasAlternativePaths = portfolio.tooEarly.length > 0;
+    // Only "isolated" — "accumulating"/"entrenched" are already covered by driftSignalLine (Phase 31)
+    const hasResidualContradiction = temporalPosture.contradictionPressure === "isolated";
+    const hasUnstableBeliefs = unstableAssumptionsCount > 0;
+    const leadingCompetingTheme = strategicCenter.competingThemes[0] ?? null;
+    const isConverging = portfolio.portfolioState === "converging";
+    const hasSafeRoutes = portfolio.safeToCommit.length > 0;
+
+    // Commitment posture — residual pull resisting the converging interpretation.
+    // Appears after gravity line — PART 4 coexistence: gravity increasing while ambiguity persists.
+    let commitmentCounterforceLine: string | null = null;
+    if (hasMeaningfulDivergence && leadingCompetingTheme) {
+      commitmentCounterforceLine = "Competing pressures continue shaping the read.";
+    } else if (hasAlternativePaths && hasCompetingThemes) {
+      commitmentCounterforceLine = "The field continues carrying unresolved pull.";
+    } else if (hasResidualContradiction && hasUnstableBeliefs) {
+      commitmentCounterforceLine = "Several signals still resist full stabilization.";
+    }
+
+    // Instability region — surviving alternative interpretation, named when a label is available.
+    let instabilityCounterforceLine: string | null = null;
+    if (hasMeaningfulDivergence && leadingCompetingTheme) {
+      instabilityCounterforceLine = `Alternative pressure remains active around ${lowerFirst(leadingCompetingTheme.label)}.`;
+    } else if (hasAlternativePaths && portfolio.tooEarly.length > 1) {
+      instabilityCounterforceLine = "Alternative routes continue retaining partial support.";
+    }
+
+    // Validation region — where proof concentration is uneven across interpretations.
+    let validationCounterforceLine: string | null = null;
+    if (hasMeaningfulDivergence && (isConverging || hasSafeRoutes)) {
+      // Key PART 4 case: convergence strengthening while alternatives retain evidence support.
+      validationCounterforceLine = "Competing interpretations retain evidence support.";
+    } else if (strategicCenter.customerLag && hasCompetingThemes && !hasMeaningfulDivergence) {
+      validationCounterforceLine = "Validation remains uneven across the broader interpretation.";
+    }
+
+    // Movement memory — counterforce cadence.
+    // Exclusive with window + fragility + gravity in JSX (all four form a priority chain).
+    let counterforceMovementLine: string | null = null;
+    if (hasMeaningfulDivergence && (hasSafeRoutes || isConverging)) {
+      counterforceMovementLine = "Validation strengthened one interpretation without fully resolving the others.";
+    } else if (hasAlternativePaths && strategicCenter.label) {
+      counterforceMovementLine = "Alternative routes continue retaining partial support.";
+    } else if (hasMeaningfulDivergence) {
+      counterforceMovementLine = "Residual pressure continues shaping the field.";
+    } else if (hasResidualContradiction) {
+      counterforceMovementLine = "The broader interpretation remains unevenly stabilized.";
+    }
+
+    return {
+      commitmentCounterforceLine,
+      instabilityCounterforceLine,
+      validationCounterforceLine,
+      counterforceMovementLine,
+    };
+  }, [
+    portfolio.portfolioState,
+    portfolio.safeToCommit.length,
+    portfolio.tooEarly.length,
+    strategicCenter.competingThemes,
+    strategicCenter.customerLag,
+    strategicCenter.hasMeaningfulDivergence,
+    strategicCenter.label,
+    temporalPosture.contradictionPressure,
+    unstableAssumptionsCount,
+  ]);
+
+  // conditionDiscipline — ownership rules + max-3 commitment posture cap
+  // Structural cap: window/convergence (1 slot, mutually exclusive) +
+  //   fragility/counterforce (1 slot, mutually exclusive) +
+  //   gravity (label form shows freely; generic form suppressed when convergence fires)
+  // = up to 3 condition lines in the commitment posture region.
+  // Drift and reframing are additional but deduped against each other (Rule 4/4b).
+  //
+  // Ownership:
+  //   Window    — owns actionability/readiness language
+  //   Gravity   — owns field-concentration language (label form only alongside convergence)
+  //   Fragility — owns narrow-support language (when no meaningful divergence)
+  //   Counterforce — owns competing-theme language (when hasMeaningfulDivergence)
+  //   Drift     — owns confidence-degradation language (suppressed when canCommit)
+  //   Reframing — owns interpretive-evolution language (suppressed when drift fires without actual reframes)
+  const conditionDiscipline = useMemo(() => {
+    const rawWindow = commitmentWindowState.commitmentWindowLine;
+    const rawConvergence = convergenceState.commitmentConvergenceLine;
+    const rawFragility = fragilityState.fragilitySupportLine;
+    const rawGravity = gravityState.commitmentGravityLine;
+    const rawCounterforce = counterforceState.commitmentCounterforceLine;
+    const rawDrift = driftSignalLine;
+    const rawReframing = reframingState.commitmentReframingLine;
+
+    // Rule 1 — Window supersedes convergence.
+    // Window owns actionability; when it fires, convergence is implied by the anchor + window.
+    const convergenceLine = rawWindow ? null : rawConvergence;
+
+    // Rule 2 — Gravity: suppress non-label variants when convergence occupies the same slot.
+    // Gravity's only distinct contribution is the specific theme label. Generic "signals pulling"
+    // variants collide with convergence's semantic territory when both fire.
+    const gravityHasLabel = Boolean(rawGravity?.startsWith("The field is increasingly organizing"));
+    const gravityLine = (convergenceLine && !gravityHasLabel) ? null : rawGravity;
+
+    // Rule 3 — Fragility vs counterforce: one per ambiguity slot.
+    // Both say "ambiguity remains" — express once, clearly (PART 7).
+    // Counterforce wins when hasMeaningfulDivergence: it names the competing theme.
+    // Fragility wins otherwise: support breadth is the more actionable signal.
+    let fragiliteLine = rawFragility;
+    let counterforceLine = rawCounterforce;
+    if (rawFragility && rawCounterforce) {
+      if (strategicCenter.hasMeaningfulDivergence) {
+        fragiliteLine = null;
+      } else {
+        counterforceLine = null;
+      }
+    }
+
+    // Rule 4 — Drift/reframing: reframing suppresses when drift fires without actual reframes.
+    // Drift owns confidence degradation; reframing owns interpretive change.
+    // When drift fires and there are no actual reframed beliefs (only cooling pattern), both
+    // would say "direction is weakening" — suppress the weaker reframing signal.
+    // Rule 4b — Drift suppresses when canCommit: "window open" + "commitment drifting" is
+    // contradictory. Drift signals deterioration; a commitment window means readiness exists.
+    const canCommit = orientationWithMemory.commitmentReadiness.canCommit;
+    const driftLine = canCommit ? null : rawDrift;
+    const reframedCount = evolvedAssumptions.filter((a) => a.hasReframing).length;
+    const reframingLine = (driftLine && reframedCount === 0) ? null : rawReframing;
+
+    // Validation discipline — gravity/counterforce suppressions.
+    // Gravity validation suppresses when drift context already covers proof-aging pressure.
+    // Counterforce validation suppresses when reframing consequence already expresses
+    // interpretation-shifting consequences — same semantic territory.
+    const suppressGravityValidation = driftContextLines.length > 0;
+    const suppressCounterforceValidation = reframingState.consequenceLines.length > 0;
+
+    // Cadence discipline — reframing movement line.
+    // Suppress when: (a) reframing already visible in commitment posture (avoid repetition),
+    // or (b) drift fires without actual reframes (weak signal — cadence should not amplify it).
+    const suppressReframingCadence =
+      Boolean(reframingLine) || (Boolean(rawDrift) && reframedCount === 0);
+
+    return {
+      convergenceLine,
+      fragiliteLine,
+      gravityLine,
+      counterforceLine,
+      driftLine,
+      reframingLine,
+      suppressGravityValidation,
+      suppressCounterforceValidation,
+      suppressReframingCadence,
+    };
+  }, [
+    commitmentWindowState.commitmentWindowLine,
+    convergenceState.commitmentConvergenceLine,
+    counterforceState.commitmentCounterforceLine,
+    driftContextLines.length,
+    driftSignalLine,
+    evolvedAssumptions,
+    fragilityState.fragilitySupportLine,
+    gravityState.commitmentGravityLine,
+    orientationWithMemory.commitmentReadiness.canCommit,
+    reframingState.commitmentReframingLine,
+    reframingState.consequenceLines.length,
+    strategicCenter.hasMeaningfulDivergence,
+  ]);
 
   const routeOptions = useMemo(() => {
     const buckets: Record<RouteCategory, typeof allActions> = {
@@ -1399,7 +2880,7 @@ export default function ClientRefinePreviewView() {
           : diagObs || obs || "A pattern is emerging but not yet confirmed";
       const row2 =
         identityNarrative.publicIdentity
-          ? `Publicly, the company still reads as ${lowerFirst(identityNarrative.publicIdentity)}`
+          ? `Outside perception reads as ${lowerFirst(identityNarrative.publicIdentity)}`
           : diagObs2 || detail || "A second signal points in the same direction";
       const row3 =
         reconciliationNarrative?.unresolvedQuestion ||
@@ -1734,6 +3215,12 @@ export default function ClientRefinePreviewView() {
     navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?stage=${stage}`);
   }, [navigate, phase]);
 
+  const navigateToLens = useCallback((key: string) => {
+    if (key === "routes") navigate(CLIENT_REFINE_PREVIEW_ROUTES_ROUTE);
+    else if (key === "council") navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=council`);
+    else navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${key}`);
+  }, [navigate]);
+
   const showHoverTip = useCallback((event: ReactMouseEvent<HTMLElement>, text: string) => {
     const stageBounds = stageRef.current?.getBoundingClientRect();
     if (!stageBounds) return;
@@ -1849,6 +3336,7 @@ export default function ClientRefinePreviewView() {
     accessModes.inline ? "mode-inline" : "",
     accessModes.edge ? "mode-edge" : "",
     accessModes.footer ? "mode-footer" : "",
+    `mode-${operatingMode}`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -1893,7 +3381,7 @@ export default function ClientRefinePreviewView() {
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
-                <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {stageLabel(phase).toUpperCase()}</span>
+                <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
               </div>
               <div className="crpv-header-tools">
                 {analysisRunning ? (
@@ -1948,296 +3436,679 @@ export default function ClientRefinePreviewView() {
             <section className="crpv-command-layer">
               {!commitState || commitState !== "next-revealed" ? (
                 <div className="crpv-command-main">
-                  {isEarlyPhase ? (
+                  <OperatingModeBar mode={operatingMode} onChange={setOperatingMode} descriptorOverride={enforcement.safeModeDescriptor} />
+                  {hasHierarchy ? (
                     <>
-                      {showEarlyHero ? (
-                        <div className="crpv-hypotheses-hero">
-                          <p className="cap">What appears true · {earlyHypothesisPhaseLabel}</p>
-                          <h2>Early read</h2>
-                          <p className="crpv-hypotheses-copy">
-                            These are early reads from the evidence we have so far. They should change as we learn more.
-                          </p>
-                          <p className="crpv-hypotheses-note">Use these as conversation starters, not conclusions.</p>
+                      {/* Beat 1: WHAT YOU'VE BUILT */}
+                      {foundationStatus && (
+                        <section style={{ marginBottom: 24 }}>
+                          <p className="cap" style={{ marginBottom: 8 }}>What you've built</p>
+                          <p style={{ fontSize: 14, fontWeight: 500, color: "#1e3340", lineHeight: 1.5, margin: "0 0 8px" }}>{foundationStatus.tagline}</p>
+                          <p style={{ fontSize: 13, color: "#5a7470", lineHeight: 1.6, margin: 0 }}>{foundationStatus.narrative}</p>
+                        </section>
+                      )}
+
+                      {/* Beat 2: WHAT YOU'VE FOUND */}
+                      {topNeed && (
+                        <section style={{ marginBottom: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
+                          <p className="cap" style={{ marginBottom: 8 }}>What you've found</p>
+                          <p style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.45, margin: "0 0 12px", color: "#1e3340" }}>{humanizeOdiStatement(topNeed.desired_outcome)}</p>
+                          {needs.length > 1 && (
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              onClick={goToWorkshopInputs}
+                              style={{ fontSize: 11 }}
+                            >
+                              {needs.length - 1} more like this →
+                            </button>
+                          )}
+                        </section>
+                      )}
+
+                      {/* Beat 3: THE SIGNAL PICTURE */}
+                      <section style={{ marginBottom: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
+                        <p className="cap" style={{ marginBottom: 8 }}>The signal picture</p>
+                        {signalLandscape && (
+                          <p style={{ fontSize: 13, lineHeight: 1.5, margin: "0 0 12px", color: "#5a7470" }}>{signalLandscape.narrative}</p>
+                        )}
+                        {displayMojoScore && (
+                          <MojoScoreSurface
+                            result={displayMojoScore}
+                            history={mojoScoreHistory}
+                            companyName={activeCompany?.name ?? undefined}
+                            hideTopAction
+                          />
+                        )}
+                      </section>
+
+                      {/* Beat 4: THE CHOICE AND THE UNLOCK */}
+                      <section style={{ paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
+                        <p className="cap" style={{ marginBottom: 8 }}>The choice and the unlock</p>
+                        {directionEvidence && directionEvidence.directions.length > 0 && (
+                          <>
+                            <p style={{ fontSize: 13, lineHeight: 1.5, margin: "0 0 12px", color: "#1e3340" }}>{directionEvidence.narrative}</p>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                              {directionEvidence.directions.map((dir) => {
+                                const claimState = dir.id
+                                  ? (() => {
+                                      const route = topLevelRoutes.find((r) => r.id === dir.id);
+                                      return route?.claim_id ? claimsMap.get(route.claim_id)?.state ?? null : null;
+                                    })()
+                                  : null;
+                                const isLeaning = dir.isLeaning;
+                                return (
+                                  <div
+                                    key={dir.id}
+                                    style={{
+                                      fontFamily: "monospace",
+                                      opacity: isLeaning ? 1 : 0.55,
+                                      paddingLeft: isLeaning ? 0 : 8,
+                                    }}
+                                  >
+                                    <div style={{
+                                      fontWeight: isLeaning ? 700 : 500,
+                                      color: isLeaning ? "#1e3340" : "#5a7470",
+                                      marginBottom: 2,
+                                      fontSize: isLeaning ? 13 : 11,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}>
+                                      {isLeaning && <span style={{ color: "#5F9B8C" }}>→</span>}
+                                      {dir.title}
+                                      {isLeaning && (
+                                        <span style={{ color: "#5F9B8C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #5F9B8C", borderRadius: 3, padding: "1px 4px" }}>LEANING</span>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: "#5a7470" }}>
+                                      {claimState ? `${claimState.replace(/_/g, " ")} · ` : ""}{dir.legCount} leg{dir.legCount === 1 ? "" : "s"} · Public {dir.signals.outside} · Org {dir.signals.organization} · Customer {dir.signals.customer}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                        {displayMojoScore && displayMojoScore.projected_raisers.length > 0 && (
+                          <div style={{ background: "#f0f7f4", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#5F9B8C", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" }}>Next move</p>
+                            <p style={{ fontSize: 14, fontWeight: 500, margin: "0 0 6px", color: "#1e3340", lineHeight: 1.4 }}>{displayMojoScore.projected_raisers[0].action_description}</p>
+                            <p style={{ fontSize: 11, color: "#5F9B8C" }}>+{displayMojoScore.projected_raisers[0].estimated_points} pts to MojoScore · {displayMojoScore.projected_raisers[0].confidence} confidence</p>
+                          </div>
+                        )}
+                        <div className="crpv-secondary-links crpv-secondary-links-attached">
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            data-go={isEarlyPhase ? "narrative" : "map"}
+                            onClick={() => {
+                              setLayer(isEarlyPhase ? "narrative" : "map");
+                              setDrawerKey(null);
+                            }}
+                          >
+                            ◎ View Map
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={goToRoutesPreview}
+                          >
+                            ⧉ Routes
+                          </button>
+                          <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
+                            Add Evidence →
+                          </button>
                         </div>
-                      ) : (
-                        <p className="cap">
-                          {(phase === "diagnose" || phase === "validate_diagnose") ? "KEY TENSIONS" : "WHAT WE'RE SEEING"}
-                        </p>
+                        <div className="crpv-pressure-lenses">
+                          <SupportingLensesSection onNavigate={navigateToLens} />
+                        </div>
+                      </section>
+                    </>
+                  ) : (
+                    <>
+                      {displayMojoScore && (
+                        <MojoScoreSurface
+                          result={displayMojoScore}
+                          history={mojoScoreHistory}
+                          companyName={activeCompany?.name ?? undefined}
+                        />
                       )}
 
-                      {showEarlyHero ? (
+                  <div className={`crpv-pressure-field phase-${phasePriority.phase} ${commitmentIsFragile ? "is-fragile" : "is-earned"}`.trim()}>
+                    {!hasHierarchy && (
+                      <div className={`crpv-pressure-alert is-${pressureAlert.tone}`}>
+                        <p className="cap">Strategic field</p>
+                        <div className="crpv-pressure-alert-copy">
+                          <p className="crpv-pressure-alert-headline">{pressureAlert.headline}</p>
+                          {pressureAlert.detail ? <p className="crpv-pressure-alert-detail">{pressureAlert.detail}</p> : null}
+                        </div>
+                      </div>
+                    )}
+
+                    {!hasHierarchy && <section className={`crpv-pressure-region crpv-pressure-region-commitment ${commitmentIsFragile ? "is-fragile" : "is-earned"}`.trim()}>
+                      {true && (
                         <>
-                          <p className="crpv-action" role="status">
-                            {earlyPhaseHeadline}
-                          </p>
-                          {earlyPhaseSupport && (
-                            <p className="crpv-action-support">{earlyPhaseSupport}</p>
-                          )}
-                          {diagnostic && !diagnostic.isAccepted && (
-                            <p style={{ fontSize: 10, color: "#6E847F", fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 8 }}>
-                              Early read · not validated yet
+                          <div className="crpv-pressure-region-topline">
+                            <p className="cap">{phasePriority.readinessFraming || "Commitment posture"}</p>
+                            <p className="crpv-pressure-status">
+                              {disciplinedPostureLabel(surface.confidencePosture, discipline)} · {portfolio.portfolioStateLabel}
                             </p>
-                          )}
+                          </div>
+                          <p className="crpv-pressure-intro">{commitmentIntro}</p>
                         </>
-                      ) : diagnostic ? (
-                        <>
-                          <p className="crpv-action" role="status">
-                            {diagnostic.headline || "The picture is still forming."}
-                          </p>
-                          {diagnostic.subhead && (
-                            <p className="crpv-action-support">{diagnostic.subhead}</p>
-                          )}
-                          {!diagnostic.isAccepted && (
-                            <p style={{ fontSize: 10, color: "#6E847F", fontFamily: '"JetBrains Mono", ui-monospace, monospace', textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 8 }}>
-                              Early read · not validated yet
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        <p className="crpv-action" role="status" style={{ opacity: 0.6 }}>
-                          No diagnostic analysis has been run yet.
-                        </p>
                       )}
 
-                      <RefinePreviewHypothesesSection
-                        rows={showEarlyHero ? earlyPhaseHypotheses : undefined}
-                        companyId={showEarlyHero ? undefined : activeCompany?.id}
-                        phaseLabel={earlyHypothesisPhaseLabel}
-                        maxItems={phasePriority.hypotheses.maxItems}
-                        showHeader={!showEarlyHero}
-                        excludeHypothesisId={centerLedEarlyHero ? null : leadEarlyHypothesis?.hypothesis.id ?? null}
-                        introCopy={phasePriority.hypotheses.introCopy}
-                        note={phasePriority.hypotheses.note}
-                        priorityMode={phasePriority.hypotheses.priorityMode}
-                        compressAfterLead
-                      />
+                      <div className="crpv-pressure-anchor">
+                        <p className="crpv-pressure-anchor-headline" role="status">{commitmentFieldHeadline}</p>
+                        {hasHierarchy ? (
+                          <div className="crpv-pressure-anchor-support">
+                            <p>{"The strongest signal so far — but not yet strong enough to commit to. " + (topLevelRoutes.length > 1 ? `${topLevelRoutes.length - 1} other direction${topLevelRoutes.length > 2 ? "s" : ""} ${topLevelRoutes.length > 2 ? "are" : "is"} also being explored.` : "More directions are being explored.")}</p>
+                          </div>
+                        ) : (
+                          <>
+                            {commitmentFieldSupportLines.length > 0 ? (
+                              <div className="crpv-pressure-anchor-support">
+                                {commitmentFieldSupportLines.map((line) => (
+                                  <p key={line}>{line}</p>
+                                ))}
+                              </div>
+                            ) : null}
+                            {commitmentAnchorStatus ? <p className="crpv-phase-status">{commitmentAnchorStatus}</p> : null}
+                          </>
+                        )}
+                      </div>
 
-                      {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "after_hypotheses" ? (
+                      {!hasHierarchy && (
+                        <>
+                          {conditionDiscipline.convergenceLine ? (
+                            <p className="crpv-pressure-convergence-signal">{conditionDiscipline.convergenceLine}</p>
+                          ) : null}
+
+                          {commitmentWindowState.commitmentWindowLine ? (
+                            <p className="crpv-pressure-window-signal">{commitmentWindowState.commitmentWindowLine}</p>
+                          ) : null}
+
+                          {conditionDiscipline.fragiliteLine ? (
+                            <p className="crpv-pressure-fragility-support">{conditionDiscipline.fragiliteLine}</p>
+                          ) : null}
+
+                          {showAllPressure && conditionDiscipline.gravityLine ? (
+                            <p className="crpv-pressure-gravity-line">{conditionDiscipline.gravityLine}</p>
+                          ) : null}
+
+                          {showAllPressure && conditionDiscipline.counterforceLine ? (
+                            <p className="crpv-pressure-counterforce-line">{conditionDiscipline.counterforceLine}</p>
+                          ) : null}
+
+                          {showAllPressure && commitmentConsequenceItems.length > 0 ? (
+                            <div className="crpv-pressure-consequence">
+                              {commitmentConsequenceItems.map((item, i) => (
+                                <p key={i} className="crpv-pressure-consequence-line">{item}</p>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {showAllPressure && commitmentFragilityLines.length > 0 ? (
+                            <div className="crpv-pressure-fragility">
+                              {commitmentFragilityLines.map((line) => (
+                                <p key={line} className="crpv-pressure-fragility-line">{line}</p>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {showAllPressure && pressureAlert.tone === "critical" && commitmentDependencyItems.length > 0 ? (
+                            <div className="crpv-pressure-dependency">
+                              <button
+                                type="button"
+                                className="crpv-pressure-cluster-trigger"
+                                onClick={() => setShowCommitmentDependency((v) => !v)}
+                              >
+                                {showCommitmentDependency ? "Close ↑" : "What still blocks this →"}
+                              </button>
+                              {showCommitmentDependency ? (
+                                <div className="crpv-pressure-dependency-lines">
+                                  {commitmentDependencyItems.map((item, i) => (
+                                    <p key={i} className="crpv-pressure-cluster-detail-line">{item}</p>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {showAllPressure && conditionDiscipline.driftLine ? (
+                            <p className="crpv-pressure-drift-signal">{conditionDiscipline.driftLine}</p>
+                          ) : null}
+
+                          {showAllPressure && conditionDiscipline.reframingLine ? (
+                            <p className="crpv-pressure-reframing-signal">{conditionDiscipline.reframingLine}</p>
+                          ) : null}
+
+                          {sectionVisibility.showHypotheses && fieldHypothesisRows.length > 0 ? (
+                            <div className="crpv-pressure-subsection">
+                              <div className="crpv-pressure-subsection-header">
+                                <p className="cap">
+                                  {isEarlyPhase ? `What appears true · ${fieldHypothesisPhaseLabel}` : phasePriority.phase === "focus" ? "What this focus depends on" : "What still feels unresolved"}
+                                </p>
+                                <p className="crpv-pressure-subsection-copy">
+                                  {isEarlyPhase
+                                    ? "Use these as conversation starters, not conclusions."
+                                    : phasePriority.phase === "focus"
+                                      ? "These are the tensions and assumptions still shaping whether this focus is safe to commit around."
+                                      : "These are the tensions still capable of weakening the direction in motion."}
+                                </p>
+                              </div>
+                              <RefinePreviewHypothesesSection
+                                companyId={activeCompany?.id}
+                                phaseLabel={fieldHypothesisPhaseLabel}
+                                rows={fieldHypothesisRows}
+                                showHeader={false}
+                                maxItems={phasePriority.hypotheses.maxItems}
+                                priorityMode={phasePriority.hypotheses.priorityMode}
+                                compressAfterLead
+                                excludeHypothesisId={fieldHypothesisExcludeId}
+                              />
+                            </div>
+                          ) : null}
+
+                          {!isEarlyPhase ? (
+                            <div className="crpv-pressure-commitment-footer">
+                              <div className="crpv-meta-row">
+                                <div
+                                  className="meta"
+                                  onClick={() => (accessModes.inline ? openDrawer("signals") : undefined)}
+                                  onMouseEnter={(event) => showHoverTip(event, "What the evidence currently supports about this route.")}
+                                  onMouseMove={(event) => moveHoverTip(event, "What the evidence currently supports about this route.")}
+                                  onMouseLeave={hideHoverTip}
+                                >
+                                  <span className="cap">Evidence</span>
+                                  <span className="v">{evidencePostureValue}</span>
+                                </div>
+                                <div
+                                  className="meta"
+                                  onClick={() => (accessModes.inline ? openDrawer("blocking") : undefined)}
+                                  onMouseEnter={(event) => showHoverTip(event, "Active tensions or proof gaps that affect safe commitment.")}
+                                  onMouseMove={(event) => moveHoverTip(event, "Active tensions or proof gaps that affect safe commitment.")}
+                                  onMouseLeave={hideHoverTip}
+                                >
+                                  <span className="cap">Pressure</span>
+                                  <span className="v">{commitmentPressureValue}</span>
+                                </div>
+                                <div
+                                  className="meta"
+                                  onClick={() => (accessModes.inline ? openDrawer("progress") : undefined)}
+                                  onMouseEnter={(event) => showHoverTip(event, "Whether the current evidence supports safe commitment to this path.")}
+                                  onMouseMove={(event) => moveHoverTip(event, "Whether the current evidence supports safe commitment to this path.")}
+                                  onMouseLeave={hideHoverTip}
+                                >
+                                  <span className="cap">Posture</span>
+                                  <span className="v">{readinessPostureValue}</span>
+                                </div>
+                              </div>
+
+                              {accessModes.pills ? (
+                                <div className="crpv-pill-row crpv-pill-row-attached">
+                                  <button type="button" className="pill" onClick={() => openDrawer()}>
+                                    <span className="dot" /> Decision context <span className="count">{combinedDrawerSections.length}</span>
+                                  </button>
+                                </div>
+                              ) : null}
+
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </section>}
+
+                    {hasHierarchy && topNeed && (
+                      <section className="crpv-pressure-region" style={{ marginTop: 28, paddingTop: 20, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
+                        <p className="cap" style={{ marginBottom: 10 }}>Customer finding</p>
+                        <p style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.45, margin: "0 0 14px", color: "#1e3340" }}>{humanizeOdiStatement(topNeed.desired_outcome)}</p>
+                        {needs.length > 1 && (
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={goToWorkshopInputs}
+                            style={{ fontSize: 11 }}
+                          >
+                            {needs.length - 1} more like this →
+                          </button>
+                        )}
+                      </section>
+                    )}
+
+                    {!hasHierarchy && <aside className="crpv-pressure-region crpv-pressure-region-instability">
+                      <div className="crpv-pressure-region-topline">
+                        <p className="cap">Destabilizing pressures</p>
+                        <p className="crpv-pressure-status">
+                          {destabilizingSignals.hasBlockingSignals ? "Blocking pressure visible" : destabilizingSignals.hasConflictingSignals ? "Conflict still active" : "Instability still open"}
+                        </p>
+                      </div>
+                      <p className="crpv-pressure-intro">{instabilityIntro}</p>
+
+                      {renderReconciliation ? (
                         <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
                       ) : null}
 
-                      <div className="crpv-early-next">
-                        {sectionVisibility.showMovement ? (
-                          <RefinePreviewWhatChangedSection
-                            companyId={activeCompany?.id}
-                            phaseLabel={earlyHypothesisPhaseLabel}
-                            rows={strategicHypothesisRows}
-                            routeRationales={routeRationales}
-                            introCopy={phasePriority.movement.introCopy}
-                            defaultVisibleCount={sectionVisibility.movementVisibleCount}
-                            defaultExpanded={sectionVisibility.movementExpandedByDefault}
-                            suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
+                      {visiblePressureClusters.length > 0 ? (
+                        <div className="crpv-pressure-clusters">
+                          {visiblePressureClusters.map((cluster) => (
+                            <div key={cluster.key} className={`crpv-pressure-cluster is-${cluster.tone}`}>
+                              <p className="crpv-pressure-cluster-label">{cluster.label}</p>
+                              <p className="crpv-pressure-cluster-headline">{cluster.headline}</p>
+                              {cluster.lines.length > 0 ? (
+                                <div className="crpv-pressure-cluster-lines">
+                                  {cluster.lines.map((line) => (
+                                    <p key={line}>{line}</p>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {cluster.isStructuralPull && gravityState.structuralPullNote ? (
+                                <p className="crpv-pressure-cluster-structural-pull">{gravityState.structuralPullNote}</p>
+                              ) : null}
+                              {cluster.sourceTension ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="crpv-pressure-cluster-trigger"
+                                    onClick={() => setExpandedClusterKey(expandedClusterKey === cluster.key ? null : cluster.key)}
+                                  >
+                                    {expandedClusterKey === cluster.key ? "Close ↑" : `${cluster.inspectLabel} →`}
+                                  </button>
+                                  {expandedClusterKey === cluster.key ? (
+                                    <div className="crpv-pressure-cluster-detail">
+                                      {cluster.sourceTension.validation_requirements.filter(Boolean).slice(0, 2).length > 0 ? (
+                                        <div className="crpv-pressure-cluster-detail-group">
+                                          <p className="cap">Needs validation</p>
+                                          {cluster.sourceTension.validation_requirements.slice(0, 2).map((req, i) => (
+                                            <p key={i} className="crpv-pressure-cluster-detail-line">{req}</p>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {cluster.sourceTension.resolution_signals.filter(Boolean).slice(0, 1).length > 0 ? (
+                                        <div className="crpv-pressure-cluster-detail-group">
+                                          <p className="cap">Would resolve if</p>
+                                          {cluster.sourceTension.resolution_signals.slice(0, 1).map((sig, i) => (
+                                            <p key={i} className="crpv-pressure-cluster-detail-line">{sig}</p>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {cluster.sourceTension.blocked_commitments.filter((id) => routeLabelMap.has(id)).slice(0, 1).length > 0 ? (
+                                        <div className="crpv-pressure-cluster-detail-group">
+                                          <p className="cap">Blocks commitment to</p>
+                                          {cluster.sourceTension.blocked_commitments
+                                            .slice(0, 1)
+                                            .map((id) => routeLabelMap.get(id))
+                                            .filter((label): label is string => Boolean(label))
+                                            .map((label, i) => (
+                                              <p key={i} className="crpv-pressure-cluster-detail-line">{shorten(label, 72)}</p>
+                                            ))}
+                                        </div>
+                                      ) : null}
+                                      {unstableAssumptionLines.length > 0 && cluster.key !== "council" ? (
+                                        <div className="crpv-pressure-cluster-detail-group">
+                                          <p className="cap">Assumptions at risk</p>
+                                          {unstableAssumptionLines.slice(0, 1).map((stmt, i) => (
+                                            <p key={i} className="crpv-pressure-cluster-detail-line">{shorten(stmt, 88)}</p>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {cluster.rippleItems.length > 0 && cluster.tone !== "quiet" ? (
+                                        <div className="crpv-pressure-cluster-detail-group">
+                                          <p className="cap">Weakens further if unresolved</p>
+                                          {cluster.rippleItems.map((item, i) => (
+                                            <p key={i} className="crpv-pressure-cluster-detail-line">{item}</p>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      {cluster.isPersistent ? (
+                                        <p className="crpv-pressure-cluster-persistence">This pressure has persisted without resolution.</p>
+                                      ) : null}
+                                      {cluster.isWeakening && !cluster.isPersistent ? (
+                                        <p className="crpv-pressure-cluster-weakening">This pressure is weakening — its contribution to the read may be shifting.</p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          ))}
+                          {pressureClusters.length > 1 || destabilizingSignals.groups.length > pressureSignalsPreview.groups.length ? (
+                            <div className="crpv-pressure-more">
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                onClick={() => setShowAllPressure((current) => !current)}
+                              >
+                                {showAllPressure ? "Show less" : "See more pressure"}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {pressureSignalsPreview.totalCount > 0 ? (
+                        <div className="crpv-pressure-subsection">
+                          <p className="cap">Pressure signals</p>
+                          <StrategicSignalsSection
+                            signals={pressureSignalsPreview}
+                            compact
+                            onInspectRoute={() => goToRoutesPreview()}
+                            onInspectDirection={() => {
+                              setLayer("narrative");
+                              setDrawerKey(null);
+                            }}
                           />
+                        </div>
+                      ) : null}
+
+                      {convergenceState.narrowingNote && pressureClusters.length > 0 ? (
+                        <p className="crpv-pressure-convergence-note">{convergenceState.narrowingNote}</p>
+                      ) : null}
+
+                      {pressureClusters.length === 0 && pressureSignalsPreview.totalCount === 0 && !renderReconciliation && !counterforceState.instabilityCounterforceLine ? (
+                        <p className="crpv-pressure-empty">No single destabilizing pressure is dominating this direction right now.</p>
+                      ) : null}
+                      {counterforceState.instabilityCounterforceLine ? (
+                        <p className="crpv-pressure-counterforce-instability">{counterforceState.instabilityCounterforceLine}</p>
+                      ) : null}
+                    </aside>}
+
+                    {!hasHierarchy && <section className="crpv-pressure-region crpv-pressure-region-validation">
+                      <div className="crpv-pressure-region-topline">
+                        <p className="cap">Validation state</p>
+                        <p className="crpv-pressure-status">
+                          {strategicCenter.customerLag ? "Customer proof still thin" : "Validation is actively moving"}
+                        </p>
+                      </div>
+                      <p className="crpv-pressure-intro">{validationIntro}</p>
+
+                      {validationSummaryItems.length > 0 ? (
+                        <div className="crpv-pressure-validation-summary">
+                          {validationSummaryItems.map((item) => (
+                            <div key={`${item.label}-${item.text}`} className="crpv-pressure-validation-item">
+                              <span>{item.label}</span>
+                              <p>{item.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {unstableAssumptionLines.length > 0 ? (
+                        <div className="crpv-pressure-belief-trace">
+                          <p className="cap">Beliefs still unsettled</p>
+                          <div className="crpv-pressure-belief-lines">
+                            {unstableAssumptionLines.map((stmt, i) => (
+                              <p key={i} className="crpv-pressure-cluster-detail-line">{shorten(stmt, 88)}</p>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {validationConsequenceItems.length > 0 ? (
+                        <div className="crpv-pressure-validation-leverage">
+                          <p className="cap">What becomes safer</p>
+                          <div className="crpv-pressure-validation-leverage-lines">
+                            {validationConsequenceItems.map((item, i) => (
+                              <p key={i} className="crpv-pressure-validation-leverage-line">{item}</p>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {driftContextLines.length > 0 ? (
+                        <div className="crpv-pressure-drift-context">
+                          {driftContextLines.map((line, i) => (
+                            <p key={i} className="crpv-pressure-drift-context-line">{line}</p>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {reframingState.consequenceLines.length > 0 ? (
+                        <div className="crpv-pressure-reframing-consequence">
+                          {reframingState.consequenceLines.map((line, i) => (
+                            <p key={i} className="crpv-pressure-reframing-consequence-line">{line}</p>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {gravityState.validationGravityLine && !conditionDiscipline.suppressGravityValidation ? (
+                        <p className="crpv-pressure-gravity-validation">{gravityState.validationGravityLine}</p>
+                      ) : null}
+
+                      {counterforceState.validationCounterforceLine && !conditionDiscipline.suppressCounterforceValidation ? (
+                        <p className="crpv-pressure-counterforce-validation">{counterforceState.validationCounterforceLine}</p>
+                      ) : null}
+
+                      <div
+                        className={`crpv-pressure-validation-columns ${phasePriority.mainPage.showMovementFirst ? "movement-first" : "confidence-first"}`.trim()}
+                      >
+                        {sectionVisibility.showMovement ? (
+                          <div className="crpv-pressure-validation-panel">
+                            <RefinePreviewWhatChangedSection
+                              companyId={activeCompany?.id}
+                              phaseLabel={latePhaseLabel}
+                              rows={strategicHypothesisRows}
+                              routeRationales={routeRationales}
+                              introCopy={phasePriority.movement.introCopy}
+                              defaultVisibleCount={sectionVisibility.movementVisibleCount}
+                              defaultExpanded={sectionVisibility.movementExpandedByDefault}
+                              suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
+                            />
+                          </div>
                         ) : null}
 
                         {sectionVisibility.showConfidence ? (
-                          <RefinePreviewConfidenceLandscapeSection
-                            domains={confidenceLandscape}
-                            loading={confidenceLandscapeLoading}
-                            primaryKeys={confidencePrimaryKeys}
-                            summaryLine="Where confidence is strongest and where it still needs proof."
-                            phase={phase}
-                          />
+                          <div className="crpv-pressure-validation-panel">
+                            <RefinePreviewConfidenceLandscapeSection
+                              domains={confidenceLandscape}
+                              loading={confidenceLandscapeLoading}
+                              primaryKeys={confidencePrimaryKeys}
+                              summaryLine={isEarlyPhase ? conductor.landscapeSummaryLine : phasePriority.mainPage.confidenceSummaryLine}
+                              phase={phase}
+                            />
+                          </div>
                         ) : null}
+                      </div>
 
-                        <div className="crpv-next-moves">
-                          <p className="cap">Next moves</p>
-                          <div className="crpv-secondary-links crpv-secondary-links-attached">
+                      {cadenceFrame.hasCadence && cadenceFrame.sinceLastReview ? (
+                        <p className="crpv-pressure-cadence">{cadenceFrame.sinceLastReview}</p>
+                      ) : null}
+                      {movementLine && (
+                        <p className="crpv-pressure-cadence">{movementLine}</p>
+                      )}
+                      {assumptionEvolutionLine && (
+                        <p className="crpv-pressure-cadence" style={{ opacity: 0.8 }}>{assumptionEvolutionLine}</p>
+                      )}
+                      {reframingState.reframingMovementLine && !conditionDiscipline.suppressReframingCadence ? (
+                        <p className="crpv-pressure-cadence crpv-pressure-cadence-reframing">{reframingState.reframingMovementLine}</p>
+                      ) : null}
+                      {convergenceState.convergenceMovementLine && !commitmentWindowState.windowMovementLine && (
+                        <p className="crpv-pressure-cadence">{convergenceState.convergenceMovementLine}</p>
+                      )}
+                      {/* Cadence exclusivity: window → fragility → gravity → counterforce.
+                          convergenceMovementLine is also suppressed by windowMovementLine (above).
+                          Only the highest-priority concept that has a movement line fires. */}
+                      {commitmentWindowState.windowMovementLine && (
+                        <p className="crpv-pressure-cadence">{commitmentWindowState.windowMovementLine}</p>
+                      )}
+                      {fragilityState.fragilityMovementLine && !commitmentWindowState.windowMovementLine ? (
+                        <p className="crpv-pressure-cadence">{fragilityState.fragilityMovementLine}</p>
+                      ) : null}
+                      {gravityState.gravityMovementLine && !commitmentWindowState.windowMovementLine && !fragilityState.fragilityMovementLine ? (
+                        <p className="crpv-pressure-cadence">{gravityState.gravityMovementLine}</p>
+                      ) : null}
+                      {counterforceState.counterforceMovementLine && !commitmentWindowState.windowMovementLine && !fragilityState.fragilityMovementLine && !gravityState.gravityMovementLine ? (
+                        <p className="crpv-pressure-cadence">{counterforceState.counterforceMovementLine}</p>
+                      ) : null}
+                    </section>}
+
+                    <div className="crpv-pressure-region crpv-pressure-region-actions">
+                      <div className="crpv-next-moves">
+                        {!hasHierarchy && <p className="cap">Next moves</p>}
+                        {!hasHierarchy && displayAttentionItems.length > 0 ? (
+                          <div className="crpv-pressure-attention">
+                            {displayAttentionItems.map((item, i) => (
+                              <p key={i}>{item}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {hasHierarchy && displayMojoScore && displayMojoScore.projected_raisers.length > 0 && (
+                          <div style={{ background: "#f0f7f4", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#5F9B8C", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" }}>Next move</p>
+                            <p style={{ fontSize: 14, fontWeight: 500, margin: "0 0 6px", color: "#1e3340", lineHeight: 1.4 }}>{displayMojoScore.projected_raisers[0].action_description}</p>
+                            <p style={{ fontSize: 11, color: "#5F9B8C" }}>+{displayMojoScore.projected_raisers[0].estimated_points} pts to MojoScore · {displayMojoScore.projected_raisers[0].confidence} confidence</p>
+                          </div>
+                        )}
+                        <div className="crpv-secondary-links crpv-secondary-links-attached">
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            data-go={isEarlyPhase ? "narrative" : "map"}
+                            onClick={() => {
+                              setLayer(isEarlyPhase ? "narrative" : "map");
+                              setDrawerKey(null);
+                            }}
+                          >
+                            ◎ View Map
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={goToRoutesPreview}
+                          >
+                            ⧉ Routes
+                          </button>
+                          <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
+                            Add Evidence →
+                          </button>
+                        </div>
+
+                        {!hasHierarchy && !isEarlyPhase ? (
+                          <div className="crpv-pressure-utility-links">
                             <button
                               type="button"
                               className="btn ghost"
                               data-go="narrative"
-                              onClick={() => { setLayer("narrative"); setDrawerKey(null); }}
+                              onClick={() => {
+                                setLayer("narrative");
+                                setDrawerKey(null);
+                              }}
                             >
-                              ◎ View Map
+                              Explain this decision
                             </button>
-                            <button
-                              type="button"
-                              className="btn ghost"
-                              onClick={goToRoutesPreview}
-                            >
-                              ⧉ Routes
-                            </button>
-                            <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
-                              Add Evidence →
+                            <button type="button" className="btn ghost" onClick={() => setLayer("narrative")}>
+                              Share with team
                             </button>
                           </div>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p className="cap">{phasePriority.lateCommand.label}</p>
-
-                      <p className="crpv-action" role="status">{latePhaseHeadline}</p>
-                      {latePhaseSupport ? <p className="crpv-action-support">{latePhaseSupport}</p> : null}
-                      {latePhaseStatus ? <p className="crpv-phase-status">{latePhaseStatus}</p> : null}
-
-                      <div className="crpv-late-orientation">
-                        {phasePriority.mainPage.showMovementFirst ? (
-                          <>
-                            {sectionVisibility.showMovement ? (
-                              <RefinePreviewWhatChangedSection
-                                companyId={activeCompany?.id}
-                                phaseLabel={latePhaseLabel}
-                                rows={strategicHypothesisRows}
-                                routeRationales={routeRationales}
-                                introCopy={phasePriority.movement.introCopy}
-                                defaultVisibleCount={sectionVisibility.movementVisibleCount}
-                                defaultExpanded={sectionVisibility.movementExpandedByDefault}
-                                suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
-                              />
-                            ) : null}
-
-                            {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "after_movement" ? (
-                              <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
-                            ) : null}
-
-                            {sectionVisibility.showConfidence ? (
-                              <RefinePreviewConfidenceLandscapeSection
-                                domains={confidenceLandscape}
-                                loading={confidenceLandscapeLoading}
-                                primaryKeys={confidencePrimaryKeys}
-                                summaryLine={phasePriority.mainPage.confidenceSummaryLine}
-                                phase={phase}
-                              />
-                            ) : null}
-                          </>
-                        ) : (
-                          <>
-                            {renderReconciliation && phasePriority.mainPage.reconciliationPlacement === "before_confidence" ? (
-                              <RefinePreviewReconciliationSection narrative={reconciliationNarrative} />
-                            ) : null}
-
-                            {sectionVisibility.showConfidence ? (
-                              <RefinePreviewConfidenceLandscapeSection
-                                domains={confidenceLandscape}
-                                loading={confidenceLandscapeLoading}
-                                primaryKeys={confidencePrimaryKeys}
-                                summaryLine={phasePriority.mainPage.confidenceSummaryLine}
-                                phase={phase}
-                              />
-                            ) : null}
-
-                            {sectionVisibility.showMovement ? (
-                              <RefinePreviewWhatChangedSection
-                                companyId={activeCompany?.id}
-                                phaseLabel={latePhaseLabel}
-                                rows={strategicHypothesisRows}
-                                routeRationales={routeRationales}
-                                introCopy={phasePriority.movement.introCopy}
-                                defaultVisibleCount={sectionVisibility.movementVisibleCount}
-                                defaultExpanded={sectionVisibility.movementExpandedByDefault}
-                                suppressLowSignal={sectionVisibility.suppressLowSignalMovement}
-                              />
-                            ) : null}
-                          </>
-                        )}
-
-                        {sectionVisibility.showHypotheses && focusOrFlowHypotheses.length > 0 ? (
-                          <RefinePreviewHypothesesSection
-                            rows={focusOrFlowHypotheses}
-                            phaseLabel={latePhaseLabel}
-                            maxItems={phasePriority.hypotheses.maxItems}
-                            showHeader
-                            sectionLabel={phasePriority.mainPage.hypothesisLabel}
-                            title={phasePriority.mainPage.hypothesisTitle}
-                            introCopy={phasePriority.hypotheses.introCopy}
-                            note={phasePriority.hypotheses.note}
-                            priorityMode={phasePriority.hypotheses.priorityMode}
-                            emptyCopy="No active tensions or assumptions are shaping this phase yet."
-                            compressAfterLead
-                          />
                         ) : null}
-                      </div>
 
-                      <div className="crpv-meta-row">
-                        <div
-                          className="meta"
-                          onClick={() => (accessModes.inline ? openDrawer("progress") : undefined)}
-                          onMouseEnter={(event) => showHoverTip(event, "Estimated confidence lift after this action is complete.")}
-                          onMouseMove={(event) => moveHoverTip(event, "Estimated confidence lift after this action is complete.")}
-                          onMouseLeave={hideHoverTip}
-                        >
-                          <span className="cap">Impact</span>
-                          <span className="v">{impactValue}</span>
-                        </div>
-                        <div
-                          className="meta"
-                          onClick={() => (accessModes.inline ? openDrawer("blocking") : undefined)}
-                          onMouseEnter={(event) => showHoverTip(event, "Expected execution time and coordination load for this move.")}
-                          onMouseMove={(event) => moveHoverTip(event, "Expected execution time and coordination load for this move.")}
-                          onMouseLeave={hideHoverTip}
-                        >
-                          <span className="cap">Effort</span>
-                          <span className="v">{effortValue}</span>
-                        </div>
-                        <div
-                          className="meta"
-                          onClick={() => (accessModes.inline ? openDrawer("signals") : undefined)}
-                          onMouseEnter={(event) => showHoverTip(event, "How reliable the current evidence is for making this decision now.")}
-                          onMouseMove={(event) => moveHoverTip(event, "How reliable the current evidence is for making this decision now.")}
-                          onMouseLeave={hideHoverTip}
-                        >
-                          <span className="cap">Certainty</span>
-                          <span className="v">{certaintyValue}</span>
+                        <div className="crpv-pressure-lenses">
+                          <SupportingLensesSection onNavigate={navigateToLens} />
                         </div>
                       </div>
-
-                      {accessModes.pills ? (
-                        <div className="crpv-pill-row">
-                          <button type="button" className="pill" onClick={() => openDrawer()}>
-                            <span className="dot" /> Decision context <span className="count">{combinedDrawerSections.length}</span>
-                          </button>
-                        </div>
-                      ) : null}
-
-                      <div className="crpv-cta-row">
-                        <button type="button" className="btn primary" data-commit="agree" onClick={() => commitAgree()}>
-                          ✓ Agree — do this
-                        </button>
-                        <button type="button" className="btn" data-commit="disagree" onClick={commitDisagree}>
-                          Disagree
-                        </button>
-                        <button type="button" className="btn" data-commit="evidence" onClick={commitNeedEvidence}>
-                          Need more evidence
-                        </button>
-                      </div>
-
-                      <div className="crpv-secondary-links">
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={goToRoutesPreview}
-                        >
-                          ⧉ Routes
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          data-go="map"
-                          onClick={() => {
-                            setLayer("map");
-                            setDrawerKey(null);
-                          }}
-                        >
-                          ◎ View Map
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          data-go="narrative"
-                          onClick={() => {
-                            setLayer("narrative");
-                            setDrawerKey(null);
-                          }}
-                        >
-                          ✎ Explain this decision
-                        </button>
-                        <button type="button" className="btn ghost" onClick={() => setLayer("narrative")}>
-                          ↗ Share with team
-                        </button>
-                      </div>
+                    </div>
+                  </div>
                     </>
                   )}
                 </div>
@@ -2306,8 +4177,6 @@ export default function ClientRefinePreviewView() {
                   <p className="n">{toSentence(nextMove?.title) || "Run the next execution checkpoint."}</p>
                   <div className="meta">
                     <span>Owner · {toSentence(strongestAction?.primaryOwner) || "Unassigned"}</span>
-                    <span>Timeline · {effortValue}</span>
-                    <span>Lift · +{confidenceLift}</span>
                   </div>
                   <div className="actions">
                     <button
@@ -2409,7 +4278,7 @@ export default function ClientRefinePreviewView() {
                         <path d={MAP_ROUTE_CURVES[category]} className="crpv-map-route-hit" />
                         <g transform={`translate(${badge.x}, ${badge.y})`} className="crpv-map-route-badge">
                           <rect x="0" y="-22" width="128" height="38" rx="8" />
-                          <text x="12" y="-6" className="label">{category}</text>
+                          <text x="12" y="-6" className="label">{ROUTE_DISPLAY_LABEL[category]}</text>
                           <text x="12" y="10" className="meta">{routeMeta}</text>
                         </g>
                       </g>
@@ -2445,7 +4314,7 @@ export default function ClientRefinePreviewView() {
 
               {hoverRouteOption ? (
                 <aside className="crpv-map-hover-card" aria-live="polite">
-                  <p className="cap">{hoverRouteOption.category} route</p>
+                  <p className="cap">{ROUTE_DISPLAY_LABEL[hoverRouteOption.category as RouteCategory] ?? hoverRouteOption.category}</p>
                   <h3>
                     {hoverRouteOption.available
                       ? `${hoverRouteOption.count} option${hoverRouteOption.count === 1 ? "" : "s"}`
@@ -2493,12 +4362,6 @@ export default function ClientRefinePreviewView() {
                   </p>
                 ) : null}
                 <div className="actions">
-                  <button type="button" className="btn primary" onClick={() => commitAgree()}>
-                    ✓ Agree
-                  </button>
-                  <button type="button" className="btn" onClick={commitDisagree}>
-                    Disagree
-                  </button>
                   <button type="button" className="btn" onClick={() => setLayer("command") }>
                     ← Back
                   </button>
@@ -2530,11 +4393,6 @@ export default function ClientRefinePreviewView() {
                   </div>
                 ))}
                 <div className="crpv-narrative-cta">
-                  {!isEarlyPhase && (
-                    <button type="button" className="btn primary" onClick={() => commitAgree()}>
-                      ✓ Commit
-                    </button>
-                  )}
                   <button type="button" className="btn" onClick={() => setLayer("map") }>
                     ◎ Show on map
                   </button>
@@ -2545,13 +4403,15 @@ export default function ClientRefinePreviewView() {
               </div>
             </section>
 
-            <div className="crpv-edge-tabs">
-              <button type="button" onClick={() => openDrawer()}>
-                Decision Context
-              </button>
-            </div>
+            {!hasHierarchy && (
+              <div className="crpv-edge-tabs">
+                <button type="button" onClick={() => openDrawer()}>
+                  Decision Context
+                </button>
+              </div>
+            )}
 
-            {accessModes.footer ? (
+            {accessModes.footer && !hasHierarchy ? (
               <div className="crpv-footer-drawers">
                 <div className="left cap">DECISION CONTEXT</div>
                 <div className="right">
@@ -2570,8 +4430,6 @@ export default function ClientRefinePreviewView() {
               <p>Command defaults. Map and Narrative are progressive disclosure layers. Drawers expose context on demand.</p>
               <h4>Keyboard</h4>
               <p>M map · N narrative · Esc command · 1-4 open context.</p>
-              <h4>Commit model</h4>
-              <p>Agree logs commit, Disagree branches alternatives, Need evidence pauses until checks are satisfied.</p>
             </aside>
 
             <div className="crpv-legend">
@@ -2899,9 +4757,9 @@ export default function ClientRefinePreviewView() {
               ⚙
             </button>
 
-            <div className="crpv-scrim" onClick={closeDrawer} />
+            {!hasHierarchy && <div className="crpv-scrim" onClick={closeDrawer} />}
 
-            <aside className="crpv-side-drawer" aria-hidden={layer !== "drawer"}>
+            {!hasHierarchy && <aside className="crpv-side-drawer" aria-hidden={layer !== "drawer"}>
               <button type="button" className="close" onClick={closeDrawer}>
                 ✕ CLOSE
               </button>
@@ -2931,7 +4789,7 @@ export default function ClientRefinePreviewView() {
                   </div>
                 </>
               ) : null}
-            </aside>
+            </aside>}
 
             <div className={`crpv-system-line ${systemLineOn ? "on" : ""}`}>
               {systemLine}
