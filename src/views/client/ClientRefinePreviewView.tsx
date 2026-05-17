@@ -68,6 +68,8 @@ import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useFoundationStatus } from "@/hooks/useFoundationStatus";
+import { HomepageHierarchy } from "@/components/client/HomepageHierarchy";
+import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
 type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "branching" | "waiting";
@@ -355,6 +357,9 @@ export default function ClientRefinePreviewView() {
 
   // ── Hierarchy-aware computed values ────────────────────────────────────────
   const hasHierarchy = useMemo(() => routes.some((r) => r.level === "route"), [routes]);
+  // Engagement day shown in the header and bento. Hardcoded until the companies
+  // table gains an engagement_started_at column — the DB created_at is too recent.
+  const ENGAGEMENT_DAY = 52;
   const topLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
   const dominantClaimState = useMemo((): ClaimState | null => {
     if (!hasHierarchy || topLevelRoutes.length === 0) return null;
@@ -3337,6 +3342,7 @@ export default function ClientRefinePreviewView() {
     accessModes.edge ? "mode-edge" : "",
     accessModes.footer ? "mode-footer" : "",
     `mode-${operatingMode}`,
+    hasHierarchy ? "has-hierarchy" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -3381,42 +3387,7 @@ export default function ClientRefinePreviewView() {
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
-                <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
-              </div>
-              <div className="crpv-header-tools">
-                {analysisRunning ? (
-                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="cap" style={{ color: "#999" }}>
-                      Analyzing{elapsedSeconds > 0 ? ` · ${elapsedSeconds}s` : "…"}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      onClick={() => { void cancelAnalysis(); }}
-                      style={{ fontSize: 10, opacity: 0.6 }}
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    onClick={() => { void runAnalysis(); }}
-                  >
-                    Run Analysis
-                  </button>
-                )}
-                <button type="button" className="btn ghost" onClick={goToWorkshop}>Edit strategy →</button>
-                <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToRoutesPreview}>
-                  Routes
-                </button>
-                <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>
-                  ← Main site
-                </button>
-                <div className="cap" aria-live="polite">
-                  {stateLabel(layer)}
-                </div>
+                <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
               </div>
             </header>
 
@@ -3435,137 +3406,39 @@ export default function ClientRefinePreviewView() {
 
             <section className="crpv-command-layer">
               {!commitState || commitState !== "next-revealed" ? (
-                <div className="crpv-command-main">
-                  <OperatingModeBar mode={operatingMode} onChange={setOperatingMode} descriptorOverride={enforcement.safeModeDescriptor} />
-                  {hasHierarchy ? (
-                    <>
-                      {/* Beat 1: WHAT YOU'VE BUILT */}
-                      {foundationStatus && (
-                        <section style={{ marginBottom: 24 }}>
-                          <p className="cap" style={{ marginBottom: 8 }}>What you've built</p>
-                          <p style={{ fontSize: 14, fontWeight: 500, color: "#1e3340", lineHeight: 1.5, margin: "0 0 8px" }}>{foundationStatus.tagline}</p>
-                          <p style={{ fontSize: 13, color: "#5a7470", lineHeight: 1.6, margin: 0 }}>{foundationStatus.narrative}</p>
-                        </section>
-                      )}
-
-                      {/* Beat 2: WHAT YOU'VE FOUND */}
-                      {topNeed && (
-                        <section style={{ marginBottom: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
-                          <p className="cap" style={{ marginBottom: 8 }}>What you've found</p>
-                          <p style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.45, margin: "0 0 12px", color: "#1e3340" }}>{humanizeOdiStatement(topNeed.desired_outcome)}</p>
-                          {needs.length > 1 && (
-                            <button
-                              type="button"
-                              className="btn ghost"
-                              onClick={goToWorkshopInputs}
-                              style={{ fontSize: 11 }}
-                            >
-                              {needs.length - 1} more like this →
-                            </button>
-                          )}
-                        </section>
-                      )}
-
-                      {/* Beat 3: THE SIGNAL PICTURE */}
-                      <section style={{ marginBottom: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
-                        <p className="cap" style={{ marginBottom: 8 }}>The signal picture</p>
-                        {signalLandscape && (
-                          <p style={{ fontSize: 13, lineHeight: 1.5, margin: "0 0 12px", color: "#5a7470" }}>{signalLandscape.narrative}</p>
-                        )}
-                        {displayMojoScore && (
-                          <MojoScoreSurface
-                            result={displayMojoScore}
-                            history={mojoScoreHistory}
-                            companyName={activeCompany?.name ?? undefined}
-                            hideTopAction
+                hasHierarchy ? (
+                  <div className="crpv-homepage-sidebar-layout">
+                    <WorkshopSidebar
+                      activeTab={null}
+                      onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
+                      onHome={() => {}}
+                    />
+                    <div className="crpv-homepage-content">
+                      <div className="crpv-command-main">
+                        {displayMojoScore && foundationStatus ? (
+                          <HomepageHierarchy
+                            score={displayMojoScore}
+                            dominantClaimState={dominantClaimState}
+                            foundationStatus={foundationStatus}
+                            signalLandscape={signalLandscape}
+                            directionEvidence={directionEvidence}
+                            topNeed={topNeed}
+                            needCount={needs.length}
+                            companyCreatedAt={activeCompany?.created_at}
+                            engagementDay={ENGAGEMENT_DAY}
+                            onGoToRoutes={goToRoutesPreview}
+                            onGoToOpportunities={() => navigate("/opportunities")}
+                            onGoToWorkshop={goToWorkshopInputs}
+                            navSlot={null}
                           />
-                        )}
-                      </section>
-
-                      {/* Beat 4: THE CHOICE AND THE UNLOCK */}
-                      <section style={{ paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
-                        <p className="cap" style={{ marginBottom: 8 }}>The choice and the unlock</p>
-                        {directionEvidence && directionEvidence.directions.length > 0 && (
-                          <>
-                            <p style={{ fontSize: 13, lineHeight: 1.5, margin: "0 0 12px", color: "#1e3340" }}>{directionEvidence.narrative}</p>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                              {directionEvidence.directions.map((dir) => {
-                                const claimState = dir.id
-                                  ? (() => {
-                                      const route = topLevelRoutes.find((r) => r.id === dir.id);
-                                      return route?.claim_id ? claimsMap.get(route.claim_id)?.state ?? null : null;
-                                    })()
-                                  : null;
-                                const isLeaning = dir.isLeaning;
-                                return (
-                                  <div
-                                    key={dir.id}
-                                    style={{
-                                      fontFamily: "monospace",
-                                      opacity: isLeaning ? 1 : 0.55,
-                                      paddingLeft: isLeaning ? 0 : 8,
-                                    }}
-                                  >
-                                    <div style={{
-                                      fontWeight: isLeaning ? 700 : 500,
-                                      color: isLeaning ? "#1e3340" : "#5a7470",
-                                      marginBottom: 2,
-                                      fontSize: isLeaning ? 13 : 11,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                    }}>
-                                      {isLeaning && <span style={{ color: "#5F9B8C" }}>→</span>}
-                                      {dir.title}
-                                      {isLeaning && (
-                                        <span style={{ color: "#5F9B8C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", border: "1px solid #5F9B8C", borderRadius: 3, padding: "1px 4px" }}>LEANING</span>
-                                      )}
-                                    </div>
-                                    <div style={{ fontSize: 10, color: "#5a7470" }}>
-                                      {claimState ? `${claimState.replace(/_/g, " ")} · ` : ""}{dir.legCount} leg{dir.legCount === 1 ? "" : "s"} · Public {dir.signals.outside} · Org {dir.signals.organization} · Customer {dir.signals.customer}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                        {displayMojoScore && displayMojoScore.projected_raisers.length > 0 && (
-                          <div style={{ background: "#f0f7f4", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
-                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#5F9B8C", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" }}>Next move</p>
-                            <p style={{ fontSize: 14, fontWeight: 500, margin: "0 0 6px", color: "#1e3340", lineHeight: 1.4 }}>{displayMojoScore.projected_raisers[0].action_description}</p>
-                            <p style={{ fontSize: 11, color: "#5F9B8C" }}>+{displayMojoScore.projected_raisers[0].estimated_points} pts to MojoScore · {displayMojoScore.projected_raisers[0].confidence} confidence</p>
-                          </div>
-                        )}
-                        <div className="crpv-secondary-links crpv-secondary-links-attached">
-                          <button
-                            type="button"
-                            className="btn ghost"
-                            data-go={isEarlyPhase ? "narrative" : "map"}
-                            onClick={() => {
-                              setLayer(isEarlyPhase ? "narrative" : "map");
-                              setDrawerKey(null);
-                            }}
-                          >
-                            ◎ View Map
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost"
-                            onClick={goToRoutesPreview}
-                          >
-                            ⧉ Routes
-                          </button>
-                          <button type="button" className="btn ghost" onClick={goToWorkshopInputs}>
-                            Add Evidence →
-                          </button>
-                        </div>
-                        <div className="crpv-pressure-lenses">
-                          <SupportingLensesSection onNavigate={navigateToLens} />
-                        </div>
-                      </section>
-                    </>
-                  ) : (
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                <div className="crpv-command-main">
+                  {!hasHierarchy && <OperatingModeBar mode={operatingMode} onChange={setOperatingMode} descriptorOverride={enforcement.safeModeDescriptor} />}
+                  {(
                     <>
                       {displayMojoScore && (
                         <MojoScoreSurface
@@ -4112,7 +3985,7 @@ export default function ClientRefinePreviewView() {
                     </>
                   )}
                 </div>
-              ) : null}
+              )) : null}
 
               {showStageStrip ? (
                 <div className="crpv-confidence-morph" aria-live="polite">
@@ -4124,7 +3997,7 @@ export default function ClientRefinePreviewView() {
               ) : null}
 
               {commitState === "committed" ? (
-                <div className="crpv-commit-stamp">✓ COMMITTED · DAY 52 · 14:22</div>
+                <div className="crpv-commit-stamp">✓ COMMITTED · DAY {ENGAGEMENT_DAY} · 14:22</div>
               ) : null}
 
               {commitState === "branching" ? (
@@ -4380,7 +4253,7 @@ export default function ClientRefinePreviewView() {
               </div>
               <div className="crpv-narrative-inner">
                 <p className="cap crpv-narrative-cap">
-                  THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52
+                  THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY}
                 </p>
                 {narrativeRows.map((item, i) => (
                   <div key={i} className="step">

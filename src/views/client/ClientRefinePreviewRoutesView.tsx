@@ -42,9 +42,28 @@ import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClient
 import { buildRouteEditorialRoles, floorEngagementPhase, phaseNarrativePriority, softenRouteForPhase, sortRoutesForPhase, type RouteEditorialRole } from "@/lib/refinePreviewPhaseOrchestration";
 import { displayConfidenceLabel, commitmentMovementSentence } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
+import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import { useCompanyClaims, type ClaimRow } from "@/lib/claims/useCompanyClaims";
+import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
 import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 import type { ClaimState } from "@/lib/claimState";
+import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
+import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
+import { useMojoScore } from "@/hooks/useMojoScore";
+import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
+import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
+
+// ─── Design tokens (inline-style safe — no CSS var access) ───────────────────
+const R = {
+  ink:          "#111111",
+  inkSoft:      "#555555",
+  inkFaint:     "#999999",
+  signal:       "#ff5b29",
+  hairline:     "rgba(17,17,17,0.12)",
+  hairlineFaint: "rgba(17,17,17,0.08)",
+  mono:         '"IBM Plex Mono", ui-monospace, monospace',
+  sans:         '"Inter", system-ui, sans-serif',
+} as const;
 
 type RouteCategory = "fix" | "improve" | "create";
 
@@ -144,9 +163,9 @@ const CLIENT_STATUS_LABELS: Record<ClientAssumption["status"], string> = {
 };
 
 const CLIENT_STATUS_COLORS: Record<ClientAssumption["status"], string> = {
-  supported: "#5F9B8C",
-  partial:   "#FAC846",
-  unproven:  "#999999",
+  supported: R.ink,
+  partial:   R.inkFaint,
+  unproven:  R.inkFaint,
 };
 
 const CLIENT_STATUS_GLYPHS: Record<ClientAssumption["status"], string> = {
@@ -470,42 +489,40 @@ function ClientDecisionBanner({
 
   return (
     <div style={{
-      background: isHypothesis ? "#f7f5f1" : "#f0f7f5",
-      border: isHypothesis ? "1px solid #d4cfc7" : "1px solid #5F9B8C",
-      borderRadius: 6,
-      padding: "16px 20px",
+      borderLeft: `3px solid ${isHypothesis ? R.inkFaint : R.signal}`,
+      paddingLeft: 18,
       marginBottom: 24,
       display: "flex",
       flexDirection: "column",
-      gap: 10,
+      gap: 8,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 10, fontFamily: "monospace", letterSpacing: "0.08em", color: isHypothesis ? "#888" : "#5F9B8C", fontWeight: 600, textTransform: "uppercase" }}>
-          {isHypothesis ? "Working hypothesis" : "Chosen path"}
+        <span style={{ fontFamily: R.mono, fontSize: 9, letterSpacing: "0.1em", color: isHypothesis ? R.inkFaint : R.signal, fontWeight: 600, textTransform: "uppercase" }}>
+          {isHypothesis ? "WORKING HYPOTHESIS" : "CHOSEN PATH"}
         </span>
         {category && (
-          <span style={{ fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em", color: "#5F9B8C", background: "#d5ece7", borderRadius: 3, padding: "1px 6px", textTransform: "uppercase" }}>
-            {CATEGORY_POSTURE_LABEL[category] ?? category}
+          <span style={{ fontFamily: R.mono, fontSize: 9, letterSpacing: "0.06em", color: R.inkFaint, textTransform: "uppercase" }}>
+            · {CATEGORY_POSTURE_LABEL[category] ?? category}
           </span>
         )}
         <button
           type="button"
           onClick={onClear}
-          style={{ marginLeft: "auto", fontSize: 11, color: "#999", textDecoration: "underline", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          style={{ marginLeft: "auto", fontFamily: R.mono, fontSize: 9, letterSpacing: "0.06em", color: R.inkFaint, textDecoration: "underline", textUnderlineOffset: 2, background: "none", border: "none", cursor: "pointer", padding: 0 }}
         >
-          Deselect
+          DESELECT
         </button>
       </div>
 
-      <p style={{ fontSize: 14, fontWeight: 600, color: "#111", margin: 0, lineHeight: 1.4 }}>
+      <p style={{ fontFamily: R.sans, fontSize: 14, fontWeight: 700, color: R.ink, margin: 0, lineHeight: 1.35, letterSpacing: "-0.01em" }}>
         {route.title || "Untitled route"}
       </p>
 
       {bullets.length > 0 && (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
           {bullets.map((b, i) => (
-            <li key={i} style={{ display: "flex", gap: 8, fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-              <span style={{ color: "#5F9B8C", flexShrink: 0 }}>·</span>
+            <li key={i} style={{ display: "flex", gap: 8, fontSize: 12, color: R.inkSoft, lineHeight: 1.5 }}>
+              <span style={{ color: R.inkFaint, flexShrink: 0 }}>·</span>
               <span>{b}</span>
             </li>
           ))}
@@ -713,8 +730,8 @@ function RouteCard({
   const effort = route.effort ? String(route.effort).toUpperCase() : null;
   const completedSteps = steps.filter((s) => s.status === "complete").length;
 
-  const leftAccent = "inset 2px 0 0 #555555";
-  const hoverShadow = "0 2px 12px rgba(95,155,140,0.15)";
+  const leftAccent = `inset 2px 0 0 ${R.inkSoft}`;
+  const hoverShadow = "0 2px 10px rgba(17,17,17,0.08)";
   const boxShadow = isContextMatch && isHovered
     ? `${hoverShadow}, ${leftAccent}`
     : isContextMatch
@@ -752,9 +769,9 @@ function RouteCard({
       onMouseLeave={onHover ? () => onHover(null) : undefined}
       style={{
         outline: isSelected
-          ? "2px solid #5F9B8C"
+          ? `2px solid ${R.signal}`
           : isHovered
-          ? "1.5px solid #b0c9c4"
+          ? `1.5px solid ${R.hairline}`
           : "1.5px solid transparent",
         outlineOffset: isSelected ? -2 : -1,
         boxShadow,
@@ -772,11 +789,10 @@ function RouteCard({
             {isSelected && (
               <span style={{
                 fontSize: 10,
-                fontFamily: "monospace",
+                fontFamily: R.mono,
                 letterSpacing: "0.06em",
-                color: isFlow && rationale?.movement === "weaken" ? "#c0634a" : "#5F9B8C",
-                background: isFlow && rationale?.movement === "weaken" ? "#faeae5" : "#d5ece7",
-                borderRadius: 3,
+                color: isFlow && rationale?.movement === "weaken" ? R.signal : R.ink,
+                background: R.hairlineFaint,
                 padding: "1px 6px",
                 textTransform: "uppercase",
               }}>
@@ -878,13 +894,14 @@ function RouteCard({
                 onClick={(e) => { e.stopPropagation(); onSelect(route); }}
                 style={{
                   fontSize: 11,
-                  color: isSelected ? "#999" : "#5F9B8C",
+                  color: isSelected ? R.inkFaint : R.ink,
                   textDecoration: "underline",
+                  textUnderlineOffset: 2,
                   background: "none",
                   border: "none",
                   cursor: "pointer",
                   padding: 0,
-                  fontFamily: "monospace",
+                  fontFamily: R.mono,
                 }}
               >
                 {isSelected ? "Deselect" : isReady ? "Choose this path →" : "Add as hypothesis →"}
@@ -1059,6 +1076,761 @@ function RoutesColumn({
   );
 }
 
+// ─── Hierarchy: WRAP inline detail panel ─────────────────────────────────────
+
+type WrapAlt  = { alternative_title: string; rejection_reason: string; considered_at?: string };
+type WrapCond = { condition: string; satisfied_flag: boolean; evidence_refs?: string[] };
+
+function HierarchyWrapPanel({
+  alternatives,
+  conditions,
+  activeTab,
+  onClose,
+}: {
+  alternatives: WrapAlt[];
+  conditions: WrapCond[];
+  activeTab: "alts" | "conditions";
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"alts" | "conditions">(activeTab);
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${R.hairline}`, padding: "14px 18px", marginTop: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 14 }}>
+          {(["alts", "conditions"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              style={{
+                fontFamily: R.mono,
+                fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em",
+                color: tab === t ? R.ink : R.inkFaint,
+                fontWeight: tab === t ? 600 : 400,
+                background: "none", border: "none", cursor: "pointer", padding: 0,
+                borderBottom: tab === t ? `1px solid ${R.ink}` : "none", paddingBottom: 2,
+              }}
+            >
+              {t === "alts"
+                ? `Alternatives considered (${alternatives.length})`
+                : `Conditions to meet (${conditions.length})`}
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={onClose} style={{ fontFamily: R.mono, fontSize: 9, color: R.inkFaint, background: "none", border: "none", cursor: "pointer", padding: 0 }}>✕</button>
+      </div>
+      {tab === "alts" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {alternatives.length === 0 ? (
+            <p style={{ fontSize: 12, color: R.inkFaint, margin: 0 }}>No alternatives recorded.</p>
+          ) : alternatives.map((a, i) => (
+            <div key={i} style={{ paddingLeft: 10, borderLeft: `2px solid ${R.hairlineFaint}` }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: R.ink, margin: 0 }}>{a.alternative_title}</p>
+              <p style={{ fontSize: 11, color: R.inkSoft, margin: "3px 0 0", lineHeight: 1.45 }}>Rejected: {a.rejection_reason}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {tab === "conditions" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {conditions.length === 0 ? (
+            <p style={{ fontSize: 12, color: R.inkFaint, margin: 0 }}>No conditions recorded.</p>
+          ) : conditions.map((cond, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <span style={{
+                flexShrink: 0, width: 13, height: 13, borderRadius: "50%",
+                border: `1.5px solid ${cond.satisfied_flag ? R.signal : R.hairline}`,
+                background: cond.satisfied_flag ? R.signal : "transparent",
+                display: "inline-flex", alignItems: "center", justifyContent: "center", marginTop: 2,
+              }}>
+                {cond.satisfied_flag && <span style={{ color: "#fff", fontSize: 7 }}>✓</span>}
+              </span>
+              <p style={{ fontSize: 12, color: cond.satisfied_flag ? R.inkSoft : R.ink, margin: 0, lineHeight: 1.45 }}>
+                {cond.condition}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Hierarchy: constants ─────────────────────────────────────────────────────
+
+const HIERARCHY_STATE_ACCENT: Record<string, string> = {
+  flow:         R.signal,
+  focus:        R.signal,
+  diagnose:     R.signal,
+  outside_view: R.inkFaint,
+};
+
+const HIERARCHY_STATE_LABEL: Record<string, string> = {
+  flow:         "Commitment active",
+  focus:        "In focus",
+  diagnose:     "Being diagnosed",
+  outside_view: "Outside view",
+};
+
+const HIERARCHY_FRAMING: Record<string, { heading: string; body: string }> = {
+  flow:         { heading: "Active commitments",      body: "The organization has committed to these directions. Focus is on strengthening evidence and closing execution gaps." },
+  focus:        { heading: "Priority routes",         body: "Evidence validates these as the most actionable directions. The work is narrowing from candidate to chosen path." },
+  diagnose:     { heading: "Routes under consideration", body: "Candidate directions grounded in internal evidence. Customer validation is the next layer needed to focus around one." },
+  outside_view: { heading: "Early directions",        body: "These routes are based on outside signals. Internal and customer validation is needed before committing." },
+};
+
+// ─── Hierarchy spec §4-§7: visual system ─────────────────────────────────────
+
+const HIERARCHY_HERO: Record<string, { before: string; signal: string }> = {
+  flow:         { before: "Active",       signal: "Commitments" },
+  focus:        { before: "Priority",     signal: "Routes" },
+  diagnose:     { before: "Routes Under", signal: "Consideration" },
+  outside_view: { before: "Early",        signal: "Directions" },
+};
+
+function splitActionText(text: string): [string, string] {
+  const words = text.split(" ");
+  const split = Math.max(2, Math.ceil(words.length * 0.45));
+  return [words.slice(0, split).join(" "), words.slice(split).join(" ")];
+}
+
+// Ring button — standalone interactive (use only where NOT nested in a button parent)
+function ExpandRingBtn({ open, onClick }: { open: boolean; onClick?: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={open ? "Collapse" : "Expand"}
+      style={{
+        width: 28, height: 28, borderRadius: "50%",
+        border: `1.5px solid ${open ? R.ink : R.hairline}`,
+        background: open ? R.ink : "transparent",
+        color: open ? "#fff" : "rgba(17,17,17,0.45)",
+        cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: R.mono, fontSize: 15, lineHeight: 1, fontWeight: 400,
+        flexShrink: 0,
+      }}
+    >
+      {open ? "−" : "+"}
+    </button>
+  );
+}
+
+// Visual-only ring indicator — use inside a <button> parent (no nested button)
+function ExpandRingIndicator({ open }: { open: boolean }) {
+  return (
+    <span style={{
+      width: 26, height: 26, borderRadius: "50%",
+      border: `1.5px solid ${open ? R.ink : R.hairline}`,
+      background: open ? R.ink : "transparent",
+      color: open ? "#fff" : "rgba(17,17,17,0.45)",
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      fontFamily: R.mono, fontSize: 14, lineHeight: 1, fontWeight: 400,
+      flexShrink: 0,
+    }}>
+      {open ? "−" : "+"}
+    </span>
+  );
+}
+
+function InkMetaChip({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div style={{ display: "flex", gap: 5, alignItems: "baseline" }}>
+      <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)" }}>{label}</span>
+      <span style={{ fontFamily: R.mono, fontSize: 10, fontWeight: 600, color: accent ? R.signal : "rgba(17,17,17,0.65)" }}>{value}</span>
+    </div>
+  );
+}
+
+function RouteStateTag({ claimState }: { claimState: ClaimState }) {
+  const isDiagnose = claimState === "diagnose";
+  const label = HIERARCHY_STATE_LABEL[claimState] ?? claimState;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      fontFamily: R.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.1em",
+      color: isDiagnose ? R.signal : "rgba(17,17,17,0.5)",
+      padding: "2px 7px",
+      background: isDiagnose ? "rgba(255,91,41,0.12)" : "rgba(17,17,17,0.05)",
+      borderRadius: 2,
+    }}>
+      {isDiagnose && (
+        <span className="crpv-pulse-dot" style={{
+          width: 5, height: 5, borderRadius: "50%",
+          background: R.signal, flexShrink: 0, display: "inline-block",
+        }} />
+      )}
+      {label}
+    </span>
+  );
+}
+
+function ScoreChip({ label, value, accent, dim }: { label: string; value: number; accent?: boolean; dim?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", padding: "0 14px" }}>
+      <span style={{
+        fontFamily: R.mono, fontSize: 22, fontWeight: 500,
+        color: accent ? R.signal : dim ? "rgba(17,17,17,0.35)" : R.ink,
+        lineHeight: 1, fontVariantNumeric: "tabular-nums",
+      }}>
+        {value}
+      </span>
+      <span style={{
+        fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em",
+        color: "rgba(17,17,17,0.4)", marginTop: 3,
+      }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function HierarchyScoreStrip({ current, reachable, unlockable }: { current: number; reachable: number; unlockable: number }) {
+  const max = Math.max(unlockable, 100);
+  const filledPct   = (current / max) * 100;
+  const reachPct    = (reachable / max) * 100;
+  const unlockPct   = (unlockable / max) * 100;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      borderTop: `1px solid ${R.hairline}`, borderBottom: `1px solid ${R.hairline}`,
+      padding: "16px 0", marginBottom: 48,
+    }}>
+      {/* Left: thin segmented bar */}
+      <div style={{ flex: 1, position: "relative", height: 3, background: "rgba(17,17,17,0.08)", borderRadius: 1, overflow: "hidden", marginRight: 24 }}>
+        <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${filledPct}%`, background: R.ink, borderRadius: 1 }} />
+        {reachPct > filledPct && (
+          <div style={{ position: "absolute", left: `${filledPct}%`, top: 0, height: "100%", width: `${reachPct - filledPct}%`, background: R.ink, opacity: 0.22, borderRadius: 1 }} />
+        )}
+        {unlockPct > reachPct && (
+          <div style={{ position: "absolute", left: `${reachPct}%`, top: 0, height: "100%", width: `${unlockPct - reachPct}%`, background: R.signal, opacity: 0.55, borderRadius: 1 }} />
+        )}
+      </div>
+      {/* Right: compact score chips */}
+      <div style={{ display: "flex", alignItems: "center", gap: 0, flexShrink: 0, borderLeft: `1px solid ${R.hairline}` }}>
+        <ScoreChip label="NOW" value={current} accent />
+        <span style={{ fontFamily: R.mono, fontSize: 12, color: "rgba(17,17,17,0.25)", padding: "0 4px" }}>→</span>
+        <ScoreChip label="REACHABLE" value={Math.round(reachable)} />
+        <span style={{ fontFamily: R.mono, fontSize: 12, color: "rgba(17,17,17,0.25)", padding: "0 4px" }}>→</span>
+        <ScoreChip label="UNLOCKABLE" value={Math.round(unlockable)} dim />
+      </div>
+    </div>
+  );
+}
+
+function KeystoneStripe({ action, scoreLift }: { action: string; scoreLift: number }) {
+  const [actionBefore, actionSignal] = splitActionText(action);
+  return (
+    <div style={{
+      background: R.ink,
+      marginLeft: -60, width: "calc(100% + 120px)",
+      padding: "28px 60px",
+      marginBottom: 48,
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 32,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(246,246,244,0.45)", margin: "0 0 10px" }}>
+          § KEY MOVE
+        </p>
+        <p style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: "#f6f6f4", lineHeight: 1.45, margin: 0, maxWidth: 580 }}>
+          {actionBefore}{" "}
+          <span style={{ color: R.signal }}>{actionSignal}</span>
+        </p>
+      </div>
+      <div style={{ flexShrink: 0, textAlign: "right" }}>
+        <p style={{ fontFamily: R.mono, fontSize: 52, fontWeight: 500, color: R.signal, lineHeight: 1, margin: 0, fontVariantNumeric: "tabular-nums" }}>
+          +{scoreLift}
+        </p>
+        <p style={{ fontFamily: R.mono, fontSize: 8.5, color: "rgba(246,246,244,0.45)", textTransform: "uppercase", letterSpacing: "0.12em", margin: "4px 0 0" }}>
+          PTS REACHABLE
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function HierarchyPageHeader({
+  framing,
+  current,
+  reachable,
+  unlockable,
+  dominantState,
+}: {
+  framing: { heading: string; body: string };
+  current: number;
+  reachable: number;
+  unlockable: number;
+  dominantState: string | null;
+}) {
+  const hero = HIERARCHY_HERO[dominantState ?? "diagnose"] ?? HIERARCHY_HERO.diagnose;
+  return (
+    <div style={{ marginBottom: 0 }}>
+      {/* Eyebrow */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+        <span style={{ width: 5, height: 5, borderRadius: "50%", background: R.signal, display: "inline-block", flexShrink: 0 }} />
+        <span style={{ fontFamily: R.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", color: "rgba(17,17,17,0.4)" }}>
+          Strategy · Route Plan
+        </span>
+      </div>
+      {/* Hero H1 */}
+      <h1 style={{ fontFamily: R.sans, fontSize: 44, fontWeight: 800, color: R.ink, margin: "0 0 14px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
+        {hero.before}{" "}
+        <span style={{ color: R.signal }}>{hero.signal}</span>
+      </h1>
+      {/* Subhead */}
+      <p style={{ fontFamily: R.sans, fontSize: 16, color: "rgba(17,17,17,0.65)", margin: "0 0 40px", lineHeight: 1.55, maxWidth: 600 }}>
+        {framing.body}
+      </p>
+      {/* Score strip */}
+      <HierarchyScoreStrip current={current} reachable={reachable} unlockable={unlockable} />
+    </div>
+  );
+}
+
+function LegRow({
+  leg,
+  index,
+  isLead,
+  expanded,
+  onToggle,
+  claimsMap,
+  rationale,
+  routeClaimState,
+}: {
+  leg: RouteRow;
+  index: number;
+  isLead?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  claimsMap?: Map<string, ClaimRow>;
+  rationale?: RouteRationale | null;
+  routeClaimState?: ClaimState | null;
+}) {
+  const legClaimState = leg.claim_id
+    ? ((claimsMap?.get(leg.claim_id)?.state ?? null) as ClaimState | null)
+    : null;
+  const showLegStateTag = legClaimState !== null && legClaimState !== routeClaimState;
+  const steps    = (Array.isArray(leg.steps_json)    ? leg.steps_json    : []) as DetailItem[];
+  const evidence = (Array.isArray(leg.evidence_json) ? leg.evidence_json : []) as DetailItem[];
+  const completedSteps = steps.filter((s) => s.status === "complete").length;
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "80px 1fr auto",
+        borderTop: `1px solid ${R.hairlineFaint}`,
+        padding: "18px 0",
+        transition: "background 0.12s",
+      }}
+    >
+      {/* Col 1: index numeral */}
+      <div style={{ paddingLeft: 4, paddingTop: 2 }}>
+        <span style={{
+          fontFamily: R.mono, fontSize: 36, fontWeight: 400,
+          color: isLead ? R.signal : "rgba(17,17,17,0.15)",
+          lineHeight: 1, fontVariantNumeric: "tabular-nums",
+          letterSpacing: "-0.02em", display: "block",
+        }}>
+          {String(index).padStart(2, "0")}
+        </span>
+      </div>
+
+      {/* Col 2: content */}
+      <div style={{ minWidth: 0 }}>
+        {/* Status pill + title row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
+          {showLegStateTag && legClaimState && <RouteStateTag claimState={legClaimState} />}
+          <h3 style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.01em" }}>
+            {leg.title || "Untitled leg"}
+          </h3>
+        </div>
+        {/* Summary */}
+        {leg.short_description && (
+          <p style={{ fontFamily: R.sans, fontSize: 14, color: "rgba(17,17,17,0.65)", margin: "0 0 8px", lineHeight: 1.55 }}>
+            {leg.short_description}
+          </p>
+        )}
+        {/* Meta line */}
+        {steps.length > 0 && (
+          <span style={{ fontFamily: R.mono, fontSize: 9, color: "rgba(17,17,17,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            {completedSteps}/{steps.length} STEPS
+          </span>
+        )}
+        {/* Expanded detail panel */}
+        {expanded && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, marginTop: 22, paddingTop: 18, borderTop: `1px solid ${R.hairlineFaint}` }}>
+            {/* Left: Why + Steps */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {rationale && (
+                <div>
+                  <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 8px" }}>
+                    Why This Direction
+                  </p>
+                  <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.8)", lineHeight: 1.6, margin: 0 }}>
+                    {rationale.whatSupportsIt}
+                  </p>
+                  {rationale.mustBecomeTrue && (
+                    <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", lineHeight: 1.55, margin: "6px 0 0", fontStyle: "italic" }}>
+                      Still needed: {rationale.mustBecomeTrue}
+                    </p>
+                  )}
+                </div>
+              )}
+              {steps.length > 0 && (
+                <div>
+                  <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 8px" }}>
+                    Steps
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {steps.map((step) => (
+                      <div key={step.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                        <span style={{ fontFamily: R.mono, fontSize: 11, color: step.status === "complete" ? R.signal : "rgba(17,17,17,0.35)", flexShrink: 0, marginTop: 1 }}>
+                          {statusGlyph(step.status)}
+                        </span>
+                        <span style={{ fontFamily: R.sans, fontSize: 13, color: step.status === "complete" ? "rgba(17,17,17,0.55)" : R.ink, lineHeight: 1.45 }}>
+                          {step.title}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Right: Evidence needed */}
+            <div>
+              {evidence.length > 0 ? (
+                <div>
+                  <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 8px" }}>
+                    Evidence Needed
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {evidence.map((item) => (
+                      <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                        <span style={{ fontFamily: R.mono, fontSize: 11, color: item.status === "complete" ? R.signal : "rgba(17,17,17,0.35)", flexShrink: 0, marginTop: 1 }}>
+                          {statusGlyph(item.status)}
+                        </span>
+                        <span style={{ fontFamily: R.sans, fontSize: 13, color: item.status === "complete" ? "rgba(17,17,17,0.55)" : R.ink, lineHeight: 1.45 }}>
+                          {item.title}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.4)", margin: 0 }}>No evidence items recorded.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Col 3: expand button */}
+      <div style={{ paddingLeft: 16, paddingTop: 2 }}>
+        <ExpandRingBtn open={expanded} onClick={onToggle} />
+      </div>
+    </div>
+  );
+}
+
+function HierarchyRouteSection({
+  route,
+  legs,
+  index,
+  isLead,
+  claimsMap,
+  rationales,
+  selectedRouteId,
+  defaultExpanded,
+  recommendedRouteId: _recommendedRouteId,
+}: {
+  route: RouteRow;
+  legs: RouteRow[];
+  index: number;
+  isLead?: boolean;
+  claimsMap?: Map<string, ClaimRow>;
+  rationales: Map<string, RouteRationale>;
+  selectedRouteId?: string | null;
+  defaultExpanded?: boolean;
+  recommendedRouteId?: string | null;
+}) {
+  const [collapsed, setCollapsed] = useState(!defaultExpanded);
+  const [expandedLegId, setExpandedLegId] = useState<string | null>(null);
+
+  const claimState = route.claim_id
+    ? ((claimsMap?.get(route.claim_id)?.state ?? null) as ClaimState | null)
+    : null;
+  const alternatives  = Array.isArray(route.rejected_alternatives)      ? route.rejected_alternatives      : [];
+  const conditions    = Array.isArray(route.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [];
+  const metConditions = conditions.filter((c: WrapCond) => c.satisfied_flag).length;
+  const isCommitted   = legs.some((l) => l.id === selectedRouteId);
+  const isMonitored   = claimState === "diagnose" || claimState === "focus" || claimState === "flow";
+
+  function toggleLeg(legId: string) {
+    setExpandedLegId((prev) => (prev === legId ? null : legId));
+  }
+
+  return (
+    <div style={{ borderTop: `1px solid ${R.hairline}` }}>
+      {/* Route header — div role=button avoids nested button issue */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setCollapsed((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setCollapsed((v) => !v); }}
+        style={{ display: "flex", width: "100%", alignItems: "flex-start", gap: 24, padding: "28px 0", cursor: "pointer" }}
+      >
+        {/* § number */}
+        <div style={{ flexShrink: 0, width: 48, paddingTop: 3 }}>
+          <span style={{ fontFamily: R.mono, fontSize: 11, color: "rgba(17,17,17,0.4)", letterSpacing: "0.08em" }}>
+            § {String(index).padStart(2, "0")}
+          </span>
+        </div>
+        {/* Main content */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Meta row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: R.mono, fontSize: 9, color: "rgba(17,17,17,0.4)", textTransform: "uppercase", letterSpacing: "0.12em" }}>
+              Route · {legs.length} {legs.length === 1 ? "leg" : "legs"}
+            </span>
+            {isLead && (
+              <span style={{ fontFamily: R.mono, fontSize: 9, color: R.signal, textTransform: "uppercase", letterSpacing: "0.1em" }}>◆ Lead route</span>
+            )}
+            {claimState && <RouteStateTag claimState={claimState} />}
+          </div>
+          {/* H2 title */}
+          <h2 style={{ fontFamily: R.sans, fontSize: 26, fontWeight: 700, color: R.ink, margin: "0 0 10px", lineHeight: 1.15, letterSpacing: "-0.015em" }}>
+            {route.title || "Untitled route"}
+          </h2>
+          {/* Summary */}
+          {route.short_description && (
+            <p style={{ fontFamily: R.sans, fontSize: 15, color: "rgba(17,17,17,0.65)", margin: "0 0 14px", lineHeight: 1.6, maxWidth: 620 }}>
+              {route.short_description}
+            </p>
+          )}
+          {/* WRAP meta line */}
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <InkMetaChip label="Alternatives" value={String(alternatives.length)} />
+            <InkMetaChip
+              label="Conditions"
+              value={`${conditions.length}${metConditions > 0 ? ` · ${metConditions} met` : ""}`}
+            />
+            <InkMetaChip label="Commitment" value={isCommitted ? "Active" : "Not yet"} accent={isCommitted} />
+            <InkMetaChip label="Monitoring" value={isMonitored ? "Active" : "Not yet"} />
+          </div>
+        </div>
+        {/* Expand indicator (visual only — parent div handles click) */}
+        <div style={{ flexShrink: 0, paddingTop: 4 }}>
+          <ExpandRingIndicator open={!collapsed} />
+        </div>
+      </div>
+
+      {/* Collapsible leg list */}
+      {!collapsed && (
+        <div style={{ paddingBottom: 32 }}>
+          {legs.length === 0 ? (
+            <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.4)", paddingLeft: 72, margin: 0 }}>
+              No legs assigned to this route.
+            </p>
+          ) : legs.map((leg, legIdx) => (
+            <LegRow
+              key={leg.id}
+              leg={leg}
+              index={legIdx + 1}
+              isLead={legIdx === 0}
+              expanded={expandedLegId === leg.id}
+              onToggle={() => toggleLeg(leg.id)}
+              claimsMap={claimsMap}
+              rationale={rationales.get(leg.id) ?? null}
+              routeClaimState={claimState}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Hierarchy: group card (legacy — kept for non-spec clients) ───────────────
+
+function HierarchyGroupCard({
+  route,
+  legs,
+  claimsMap,
+  rationales,
+  selectedRouteId,
+  onSelect,
+  onInspect,
+  isReady,
+  phase,
+  editorialRoles,
+  recommendedRouteId,
+}: {
+  route: RouteRow;
+  legs: RouteRow[];
+  claimsMap?: Map<string, ClaimRow>;
+  rationales: Map<string, RouteRationale>;
+  selectedRouteId?: string | null;
+  onSelect?: (route: RouteRow) => void;
+  onInspect?: (route: RouteRow) => void;
+  isReady?: boolean;
+  phase: string;
+  editorialRoles?: Map<string, RouteEditorialRole>;
+  recommendedRouteId?: string | null;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const [wrapOpen, setWrapOpen] = useState(false);
+  const [wrapTab, setWrapTab] = useState<"alts" | "conditions">("alts");
+
+  const claimState = route.claim_id
+    ? ((claimsMap?.get(route.claim_id)?.state ?? null) as ClaimState | null)
+    : null;
+  const stateAccent = HIERARCHY_STATE_ACCENT[claimState ?? "outside_view"] ?? "#6E847F";
+  const stateLabel  = claimState ? (HIERARCHY_STATE_LABEL[claimState] ?? null) : null;
+
+  const alternatives  = Array.isArray(route.rejected_alternatives)      ? route.rejected_alternatives      : [];
+  const conditions    = Array.isArray(route.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [];
+  const metConditions = conditions.filter((c) => c.satisfied_flag).length;
+  const isCommitted   = legs.some((l) => l.id === selectedRouteId);
+  const isMonitored   = claimState === "diagnose" || claimState === "focus" || claimState === "flow";
+
+  function openWrap(tab: "alts" | "conditions") {
+    if (wrapOpen && wrapTab === tab) setWrapOpen(false);
+    else { setWrapTab(tab); setWrapOpen(true); }
+  }
+
+  return (
+    <div style={{ borderLeft: `3px solid ${stateAccent}`, borderBottom: `1px solid ${R.hairline}` }}>
+      {/* Header */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        style={{ display: "flex", width: "100%", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "16px 20px 8px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ fontFamily: R.sans, fontSize: 15, fontWeight: 700, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.01em" }}>
+              {route.title || "Untitled route"}
+            </h3>
+            {claimState && (
+              <ClaimStateBadge state={claimState} claimId={route.claim_id ?? ""} size="sm" variant="inline" />
+            )}
+            <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint }}>
+              {legs.length} {legs.length === 1 ? "leg" : "legs"}
+            </span>
+          </div>
+          {route.short_description && (
+            <p style={{ fontFamily: R.sans, fontSize: 12, color: R.inkSoft, marginTop: 4, lineHeight: 1.5, maxWidth: 680 }}>
+              {route.short_description}
+            </p>
+          )}
+        </div>
+        <span style={{ flexShrink: 0, color: R.inkFaint, paddingTop: 2, fontSize: 11 }}>
+          {expanded ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {/* WRAP indicators — compact mono line */}
+      <div style={{ display: "flex", flexWrap: "wrap", padding: "0 20px 10px 20px", borderBottom: expanded ? `1px solid ${R.hairlineFaint}` : "none" }}>
+        <button type="button" onClick={() => openWrap("alts")} style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 16px 2px 0", background: "none", border: "none", cursor: alternatives.length > 0 ? "pointer" : "default" }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint }}>ALTERNATIVES</span>
+          <span style={{ fontFamily: R.mono, fontSize: 10, fontWeight: 600, color: alternatives.length > 0 ? R.ink : R.inkFaint }}>{alternatives.length}</span>
+        </button>
+        <button type="button" onClick={() => openWrap("conditions")} style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 16px 2px 0", background: "none", border: "none", cursor: conditions.length > 0 ? "pointer" : "default" }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint }}>CONDITIONS</span>
+          <span style={{ fontFamily: R.mono, fontSize: 10, fontWeight: 600, color: conditions.length > 0 ? R.ink : R.inkFaint }}>
+            {conditions.length}
+            {conditions.length > 0 && (
+              <span style={{ fontWeight: 400, color: metConditions > 0 ? R.signal : R.inkFaint, fontSize: 9 }}> ({metConditions} met)</span>
+            )}
+          </span>
+        </button>
+        <div style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 16px 2px 0" }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint }}>COMMITMENT</span>
+          <span style={{ fontFamily: R.mono, fontSize: 10, fontWeight: 600, color: isCommitted ? R.signal : R.inkFaint }}>{isCommitted ? "Active" : "Not yet"}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 16px 2px 0" }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint }}>MONITORING</span>
+          <span style={{ fontFamily: R.mono, fontSize: 10, fontWeight: 600, color: isMonitored ? R.ink : R.inkFaint }}>{isMonitored ? "Active" : "Not yet"}</span>
+        </div>
+        {stateLabel && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "baseline", padding: "2px 0" }}>
+            <span style={{ fontFamily: R.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.12em", color: stateAccent, fontWeight: 600 }}>{stateLabel}</span>
+          </div>
+        )}
+      </div>
+
+      {/* WRAP detail panel */}
+      {wrapOpen && (
+        <div style={{ padding: "0 20px 12px" }}>
+          <HierarchyWrapPanel
+            alternatives={alternatives}
+            conditions={conditions}
+            activeTab={wrapTab}
+            onClose={() => setWrapOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Nested legs */}
+      {expanded && (
+        <div style={{ paddingLeft: 16 }}>
+          {legs.length === 0 ? (
+            <p style={{ fontFamily: R.sans, fontSize: 12, color: R.inkFaint, padding: "12px 0" }}>No legs assigned to this route.</p>
+          ) : (
+            legs.map((leg) => (
+              <RouteCard
+                key={leg.id}
+                route={leg}
+                rationale={rationales.get(leg.id) ?? null}
+                onInspect={onInspect ? () => onInspect(leg) : undefined}
+                isSelected={selectedRouteId === leg.id}
+                isOtherSelected={!!selectedRouteId && selectedRouteId !== leg.id}
+                onSelect={onSelect}
+                isReady={isReady}
+                phase={phase}
+                editorialRole={editorialRoles?.get(leg.id) ?? "default"}
+                claimId={leg.claim_id ?? null}
+                claimState={leg.claim_id ? ((claimsMap?.get(leg.claim_id)?.state ?? null) as ClaimState | null) : null}
+                phaseSoftened={softenRouteForPhase({
+                  phase,
+                  route: leg,
+                  rationale: rationales.get(leg.id) ?? null,
+                  recommendedRouteId: recommendedRouteId ?? null,
+                  selectedRouteId: selectedRouteId ?? null,
+                })}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Hierarchy: desired outcome banner ───────────────────────────────────────
+
+export function DesiredOutcomeBanner({ outcome }: { outcome: DesiredOutcomeRow }) {
+  if (!outcome.statement) return null;
+  return (
+    <div style={{ borderLeft: `3px solid ${R.signal}`, paddingLeft: 18, marginBottom: 36 }}>
+      <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint, margin: "0 0 10px" }}>
+        § DESTINATION
+      </p>
+      <p style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 700, color: R.ink, margin: 0, lineHeight: 1.35, letterSpacing: "-0.015em", maxWidth: 720 }}>
+        {outcome.statement}
+      </p>
+      {outcome.metric && (
+        <p style={{ fontFamily: R.sans, fontSize: 13, color: R.inkSoft, margin: "10px 0 0", lineHeight: 1.5 }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.1em", color: R.inkFaint }}>LEADING INDICATOR</span>
+          {" · "}{outcome.metric}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ClientRefinePreviewRoutesView() {
@@ -1107,6 +1879,7 @@ export default function ClientRefinePreviewRoutesView() {
   const unlockableScore = readiness.structuralUpside;
   const readinessLabel  = readiness.postureLabel;
   const ceilingReason   = readiness.ceilingReason;
+  const hasHierarchy    = routes.some((r) => r.level === "route");
 
   if (!hasCompany) {
     return (
@@ -1147,41 +1920,46 @@ export default function ClientRefinePreviewRoutesView() {
             [{toSentence(activeCompany?.name) || "COMPANY"}] · EXPLORE ROUTES · {stageLabel(phase).toUpperCase()}
           </span>
         </div>
-        <div className="crpv-header-tools">
-          <button type="button" className="btn ghost" onClick={() => navigate(CLIENT_REFINE_PREVIEW_PATH_ROUTE)}>Active Path →</button>
-          <button type="button" className="btn ghost" onClick={goToWorkshop}>Edit strategy →</button>
-          <button type="button" className="btn ghost" onClick={goToRefineHome}>← Refine Home</button>
-          <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>← Main site</button>
-        </div>
       </header>
 
-      <ScoreContextBar
-        currentScore={currentScore}
-        reachableScore={reachableScore}
-        unlockableScore={unlockableScore}
-        routesCount={routes.length}
-        confidenceLabel={readinessLabel}
-        ceilingReason={ceilingReason}
-      />
-
-      <SignalBar
-        activeStage={activeStage}
-        setActiveStage={handleStageChange}
-        baseline={baseline}
-        positioning={positioning ?? null}
-        strategy={strategy ?? null}
-        excludedCount={excludedCount}
-      />
-
-      <div className="crpv-ws-content">
-        <RoutesOrgPanel
-          routes={routes}
-          loading={routesLoading}
-          activeCompany={activeCompany}
-          routeIdParam={routeIdParam}
-          onClearRouteIdParam={clearRouteIdParam}
-          needs={needs}
+      {!hasHierarchy && (
+        <ScoreContextBar
+          currentScore={currentScore}
+          reachableScore={reachableScore}
+          unlockableScore={unlockableScore}
+          routesCount={routes.length}
+          confidenceLabel={readinessLabel}
+          ceilingReason={ceilingReason}
         />
+      )}
+
+      {!hasHierarchy && (
+        <SignalBar
+          activeStage={activeStage}
+          setActiveStage={handleStageChange}
+          baseline={baseline}
+          positioning={positioning ?? null}
+          strategy={strategy ?? null}
+          excludedCount={excludedCount}
+        />
+      )}
+
+      <div className="crpv-ws-body">
+        <WorkshopSidebar
+          activeTab="routes"
+          onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
+          onHome={goToRefineHome}
+        />
+        <div className="crpv-ws-content">
+          <RoutesOrgPanel
+            routes={routes}
+            loading={routesLoading}
+            activeCompany={activeCompany}
+            routeIdParam={routeIdParam}
+            onClearRouteIdParam={clearRouteIdParam}
+            needs={needs}
+          />
+        </div>
       </div>
     </section>
   );
@@ -1228,6 +2006,8 @@ export function RoutesOrgPanel({
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const { primary: desiredOutcome } = useDesiredOutcomes(activeCompany?.id);
+  const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
 
   useEffect(() => {
     setSelectedRouteId(activeCompany?.selected_route_id ?? null);
@@ -1266,6 +2046,89 @@ export function RoutesOrgPanel({
     () => computeLatestExclusionAt(activeCompany?.excluded_signals_json ?? []),
     [activeCompany?.excluded_signals_json],
   );
+
+  // A5 route/leg hierarchy
+  const hasHierarchy = useMemo(() => routes.some((r) => r.level === "route"), [routes]);
+  const topLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
+  const legRoutes = useMemo(() => routes.filter((r) => r.level === "leg" || r.level === "action"), [routes]);
+  const legsByParent = useMemo(() => {
+    const map = new Map<string, RouteRow[]>();
+    for (const leg of legRoutes) {
+      if (!leg.parent_id) continue;
+      const arr = map.get(leg.parent_id) ?? [];
+      arr.push(leg);
+      map.set(leg.parent_id, arr);
+    }
+    return map;
+  }, [legRoutes]);
+  const dominantClaimState = useMemo((): ClaimState | null => {
+    if (!hasHierarchy || topLevelRoutes.length === 0) return null;
+    // Prefer the lead (recommended) route's claim state for the header label.
+    const recommended = selectRecommendedRoute(routes, null, null);
+    const leadRoute = recommended ? topLevelRoutes.find((r) => r.id === recommended.id) : null;
+    const leadState = leadRoute?.claim_id ? (claimsMap?.get(leadRoute.claim_id)?.state ?? null) as ClaimState | null : null;
+    if (leadState) return leadState;
+    const dominanceOrder: ClaimState[] = ["flow", "focus", "diagnose", "outside_view"];
+    const states = topLevelRoutes
+      .map((r) => r.claim_id ? ((claimsMap?.get(r.claim_id)?.state ?? null) as ClaimState | null) : null)
+      .filter((s): s is ClaimState => s !== null);
+    for (const s of dominanceOrder) {
+      if (states.includes(s)) return s;
+    }
+    return states[0] ?? null;
+  }, [hasHierarchy, topLevelRoutes, claimsMap, routes]);
+  const ungroupedRoutes = useMemo(
+    () => hasHierarchy ? routes.filter((r) => r.level == null && r.parent_id == null) : [],
+    [hasHierarchy, routes],
+  );
+  const ungroupedFix     = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "fix"),     [ungroupedRoutes]);
+  const ungroupedImprove = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "improve"), [ungroupedRoutes]);
+  const ungroupedCreate  = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "create"),  [ungroupedRoutes]);
+
+  // Live-compute MojoScore from in-memory data (fallback when no DB row exists yet)
+  const liveMojoScore = useMemo(() => {
+    if (!hasHierarchy || !activeCompany?.id) return null;
+    return computeMojoScore({
+      companyId: activeCompany.id,
+      claims: Array.from(claimsMap.values()).map((c) => ({
+        id: c.id,
+        state: c.state,
+        claim_type: c.claim_type,
+        topic: c.topic,
+        outside_support_count: c.outside_support_count,
+        organization_support_count: c.organization_support_count,
+        customer_support_count: c.customer_support_count,
+        updated_at: c.updated_at,
+      })),
+      routes: routes.map((r) => ({
+        id: r.id,
+        category: r.category,
+        level: r.level ?? null,
+        parent_id: r.parent_id ?? null,
+        steps_json: (Array.isArray(r.steps_json) ? r.steps_json : null) as Array<{ id: string; title: string; status: string }> | null,
+        evidence_json: (Array.isArray(r.evidence_json) ? r.evidence_json : null) as Array<{ id: string; title: string; status: string }> | null,
+        why_this_matters_json: Array.isArray(r.why_this_matters_json) ? r.why_this_matters_json as string[] : null,
+        rejected_alternatives: Array.isArray(r.rejected_alternatives) ? r.rejected_alternatives : null,
+        what_would_have_to_be_true: Array.isArray(r.what_would_have_to_be_true) ? r.what_would_have_to_be_true : null,
+        linked_need_ids: Array.isArray(r.linked_need_ids) ? r.linked_need_ids : null,
+        updated_at: r.updated_at ?? null,
+      })),
+      needs: (needs ?? []).map((n) => ({
+        id: n.id,
+        desired_outcome: n.desired_outcome,
+        importance: n.importance,
+        satisfaction: n.satisfaction,
+        opportunity_score: n.opportunity_score,
+        service_state: n.service_state,
+        updated_at: n.updated_at ?? null,
+      })),
+      computedAt: new Date().toISOString(),
+    });
+  }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
+
+  // Prefer the persisted DB score; fall back to live-computed
+  const displayMojoScore = dbMojoScore ?? liveMojoScore;
+  const displayMojoHistory = mojoScoreHistory.length > 0 ? mojoScoreHistory : [];
 
   const isReroute = useMemo(() => {
     if (!selectedRoute) return false;
@@ -1395,7 +2258,7 @@ export function RoutesOrgPanel({
         leadRationale: leadRouteRationale,
         allRationales: routeRationales,
         hypothesisRows: strategicHypothesisRows,
-        topNeedOutcome: topNeed?.desired_outcome ?? null,
+        topNeedOutcome: topNeed?.desired_outcome ? humanizeOdiStatement(topNeed.desired_outcome) : null,
       }),
     [phase, leadRouteRationale, routeRationales, strategicHypothesisRows, topNeed?.desired_outcome],
   );
@@ -1435,9 +2298,50 @@ export function RoutesOrgPanel({
   );
 
   return (
-    <div className="crpv-ws-section crpv-ws-section-wide" data-tone={phasePriority.orientation.tone}>
+    <div
+      className={hasHierarchy ? undefined : "crpv-ws-section crpv-ws-section-wide"}
+      style={hasHierarchy ? { margin: -36, padding: "40px 48px 80px", background: "#ffffff" } : undefined}
+      data-tone={phasePriority.orientation.tone}
+    >
+      {/* ── Hierarchy page header: eyebrow + hero + score strip + keystone ── */}
+      {hasHierarchy && (() => {
+        const framing = HIERARCHY_FRAMING[dominantClaimState ?? "diagnose"] ?? HIERARCHY_FRAMING.diagnose;
+        if (!displayMojoScore) {
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 32 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: R.signal, display: "inline-block" }} />
+              <span style={{ fontFamily: R.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", color: "rgba(17,17,17,0.4)" }}>
+                Strategy · Route Plan
+              </span>
+            </div>
+          );
+        }
+        const reachable  = computeReachableScore(displayMojoScore);
+        const unlockable = computeUnlockableScore(reachable, displayMojoScore);
+        const current    = Math.round(displayMojoScore.total_score);
+        const scoreLift  = Math.round(reachable) - current;
+        const leadRoute = recommendedRouteId ? topLevelRoutes.find((r) => r.id === recommendedRouteId) ?? topLevelRoutes[0] : topLevelRoutes[0];
+        const keystoneAction =
+          nextBestMove?.title ??
+          (leadRoute?.title ? `Validate "${leadRoute.title}" with direct customer evidence` : "Validate the leading direction with direct customer evidence.");
+        return (
+          <>
+            <HierarchyPageHeader
+              framing={framing}
+              current={current}
+              reachable={reachable}
+              unlockable={unlockable}
+              dominantState={dominantClaimState}
+            />
+            {scoreLift > 0 && (
+              <KeystoneStripe action={keystoneAction} scoreLift={scoreLift} />
+            )}
+          </>
+        );
+      })()}
+
       {/* ── Orientation Layer ──────────────────────────────────────────── */}
-      <section
+      {!hasHierarchy && <section
         className="crpv-r-orientation"
         data-tone={phasePriority.orientation.tone}
         aria-label="Current strategic read"
@@ -1484,10 +2388,10 @@ export function RoutesOrgPanel({
             <p className="crpv-r-orientation-value">{orientationRead.whatCouldChange}</p>
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ── Focal action (secondary to orientation) ────────────────────── */}
-      {nextBestMove && (
+      {!hasHierarchy && nextBestMove && (
         <div style={{ marginBottom: 32, paddingTop: 4 }}>
           <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 6px" }}>
             {hypothesisPh ? "Most in focus" : phasePriority.phase === "flow" ? "What is shifting now" : phasePriority.orientation.tone === "exploratory" ? "Examine next" : "Do this next"}
@@ -1501,28 +2405,32 @@ export function RoutesOrgPanel({
         </div>
       )}
 
-      {/* ── Route context ──────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 20 }}>
-        <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 4px" }}>
-          {phasePriority.routes.introLabel}
-        </p>
-        <p style={{ fontSize: 12, color: "#888", margin: 0, lineHeight: 1.5 }}>
-          {phasePriority.routes.introCopy}
-        </p>
-      </div>
+      {/* ── Route context — only for non-hierarchy clients ─────────────────── */}
+      {!hasHierarchy && (
+        <>
+          <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#999", textTransform: "uppercase", margin: "0 0 4px" }}>
+              {phasePriority.routes.introLabel}
+            </p>
+            <p style={{ fontSize: 12, color: "#888", margin: 0, lineHeight: 1.5 }}>
+              {phasePriority.routes.introCopy}
+            </p>
+          </div>
 
-      {contextStep && (
-        <div style={{ marginBottom: 24 }}>
-          <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#888", textTransform: "uppercase", margin: "0 0 4px", fontWeight: 600 }}>
-            Focusing on
-          </p>
-          <p style={{ fontSize: 13, fontWeight: 500, color: "#222", margin: "0 0 4px" }}>
-            {contextStep.step_number != null ? `Step ${contextStep.step_number} — ` : ""}{contextStep.step_label ?? "Selected step"}
-          </p>
-          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
-            These routes help address gaps in this step.
-          </p>
-        </div>
+          {contextStep && (
+            <div style={{ marginBottom: 24 }}>
+              <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#888", textTransform: "uppercase", margin: "0 0 4px", fontWeight: 600 }}>
+                Focusing on
+              </p>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "#222", margin: "0 0 4px" }}>
+                {contextStep.step_number != null ? `Step ${contextStep.step_number} — ` : ""}{contextStep.step_label ?? "Selected step"}
+              </p>
+              <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
+                These routes help address gaps in this step.
+              </p>
+            </div>
+          )}
+        </>
       )}
 
       {(activeCompany?.excluded_signals_json?.length ?? 0) > 0 && (
@@ -1533,7 +2441,7 @@ export function RoutesOrgPanel({
         </div>
       )}
 
-      {leadRoute && leadRouteRationale ? (
+      {!hasHierarchy && leadRoute && leadRouteRationale ? (
         <div style={{ marginBottom: 24 }}>
           <RouteWhyRisingPanel
             route={leadRoute}
@@ -1550,16 +2458,45 @@ export function RoutesOrgPanel({
         <div className="crpv-ws-placeholder cap">Loading routes…</div>
       ) : (
         <>
-          {!isReady && (
+          {!isReady && !hasHierarchy && (
             <p style={{ fontSize: 11, color: "#999", margin: "0 0 14px", fontStyle: "italic" }}>
               {phasePriority.routes.unreadyNote}
             </p>
           )}
-          <div className="crpv-r-columns">
-            <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-            <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-            <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-          </div>
+          {hasHierarchy ? (
+            <>
+              {desiredOutcome && <DesiredOutcomeBanner outcome={desiredOutcome} />}
+              <div>
+                {topLevelRoutes.map((tlRoute, idx) => (
+                  <HierarchyRouteSection
+                    key={tlRoute.id}
+                    route={tlRoute}
+                    legs={legsByParent.get(tlRoute.id) ?? []}
+                    index={idx + 1}
+                    isLead={tlRoute.id === recommendedRouteId}
+                    claimsMap={claimsMap}
+                    rationales={routeRationaleMap}
+                    selectedRouteId={selectedRoute?.id}
+                    defaultExpanded={idx === 0}
+                    recommendedRouteId={recommendedRouteId}
+                  />
+                ))}
+              </div>
+              {ungroupedRoutes.length > 0 && (
+                <div className="crpv-r-columns" style={{ marginTop: 24 }}>
+                  <RoutesColumn category="fix"     items={ungroupedFix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+                  <RoutesColumn category="improve" items={ungroupedImprove} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+                  <RoutesColumn category="create"  items={ungroupedCreate}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="crpv-r-columns">
+              <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+              <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+              <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+            </div>
+          )}
         </>
       )}
 
@@ -1610,21 +2547,23 @@ export function RoutesOrgPanel({
         </>
       )}
 
-      <CanonicalRouteInspectPanel
-        open={!!inspectRoute}
-        onClose={() => setInspectRoute(null)}
-        route={inspectRoute}
-        detail={inspectDetail}
-        rationale={inspectRationale}
-        areaScoresJson={activeCompany?.area_scores_json}
-        linkedDesiredOutcome={null}
-        currentPhase={phase}
-        staleNote={
-          inspectRoute && latestExclusionAt && isArtifactStale(inspectRoute, latestExclusionAt)
-            ? "Needs review after excluded inputs"
-            : null
-        }
-      />
+      {!hasHierarchy && (
+        <CanonicalRouteInspectPanel
+          open={!!inspectRoute}
+          onClose={() => setInspectRoute(null)}
+          route={inspectRoute}
+          detail={inspectDetail}
+          rationale={inspectRationale}
+          areaScoresJson={activeCompany?.area_scores_json}
+          linkedDesiredOutcome={null}
+          currentPhase={phase}
+          staleNote={
+            inspectRoute && latestExclusionAt && isArtifactStale(inspectRoute, latestExclusionAt)
+              ? "Needs review after excluded inputs"
+              : null
+          }
+        />
+      )}
     </div>
   );
 }

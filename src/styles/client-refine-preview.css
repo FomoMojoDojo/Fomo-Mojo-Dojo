@@ -12,14 +12,20 @@
   --crpv-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
   --crpv-hot: #fff3c4;
   --crpv-hot-soft: #fff3c4;
+  --accent-warm: #C4503D;
+  --signal: #ff5b29;
+  --canvas: #f6f6f4;
   --crpv-ease: cubic-bezier(.2, .7, .2, 1);
   --crpv-dur-micro: .2s;
   --crpv-dur-layer: .45s;
   --crpv-dur-commit: .9s;
   --crpv-duration: 260ms;
+  --crpv-dur-card: .28s;
+  --crpv-dur-card-slow: .38s;
+  --crpv-dur-card-quick: .18s;
 
   min-height: 100dvh;
-  background: var(--crpv-paper-2);
+  background: #ffffff;
   color: var(--crpv-ink);
   padding: 0;
   font-family: "Inter", var(--font-sans), system-ui, sans-serif;
@@ -34,16 +40,21 @@
 
 .crpv-page .cap {
   margin: 0;
-  font-size: 10px;
+  font-size: 9.5px;
   font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.13em;
   color: var(--crpv-ink-faint);
 }
 
 .crpv-muted {
   margin: 0;
   color: var(--crpv-ink-faint);
+}
+
+@keyframes road-draw {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
 }
 
 .crpv-empty-state {
@@ -82,7 +93,6 @@
 }
 
 .crpv-company-button:hover {
-  transform: translateY(-1px);
   border-color: var(--crpv-line-strong);
   background: #ffffff;
 }
@@ -270,12 +280,12 @@
 }
 
 .crpv-action {
-  margin: 18px 0 0;
-  font-size: 52px;
-  line-height: 1.12;
+  margin: 16px 0 0;
+  font-size: clamp(32px, 5.2vw, 52px);
+  line-height: 1.1;
   max-width: 1000px;
-  letter-spacing: -0.025em;
-  font-weight: 400;
+  letter-spacing: -0.028em;
+  font-weight: 370;
 }
 
 .crpv-action-support {
@@ -321,7 +331,7 @@
 }
 
 .crpv-meta-row .meta:hover {
-  transform: translateY(-2px);
+  opacity: 0.72;
 }
 
 .crpv-meta-row .meta .v {
@@ -435,16 +445,15 @@
 
 .crpv-hypotheses-section {
   width: min(1120px, 100%);
-  margin-top: 30px;
-  border: 1px solid var(--crpv-line);
-  background: rgba(255, 255, 255, 0.9);
-  padding: 22px 24px;
+  margin-top: 32px;
+  border: 0;
+  background: transparent;
+  padding: 0;
   text-align: left;
 }
 
 .crpv-hypotheses-section.headerless {
-  margin-top: 22px;
-  padding-top: 18px;
+  margin-top: 24px;
 }
 
 .crpv-reconciliation-section {
@@ -542,12 +551,11 @@
 
 .crpv-hypotheses-empty {
   margin-top: 18px;
-  border: 1px solid var(--crpv-line);
-  background: #fbfaf6;
-  padding: 14px 16px;
+  padding: 0;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--crpv-ink-soft);
+  color: var(--crpv-ink-faint);
+  background: transparent;
 }
 
 .crpv-hypotheses-grid {
@@ -560,7 +568,7 @@
   width: min(1120px, 100%);
   margin-top: 18px;
   border-top: 1px solid var(--crpv-line);
-  background: rgba(255, 255, 255, 0.7);
+  background: transparent;
   padding: 16px 0 0;
   text-align: left;
 }
@@ -580,12 +588,11 @@
 
 .crpv-movement-empty {
   margin-top: 16px;
-  border: 1px solid var(--crpv-line);
-  background: #fbfaf6;
-  padding: 14px 16px;
+  padding: 0;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--crpv-ink-soft);
+  color: var(--crpv-ink-faint);
+  background: transparent;
 }
 
 .crpv-movement-list {
@@ -603,16 +610,16 @@
 }
 
 .crpv-movement-card.is-review {
-  background: rgba(251, 250, 246, 0.5);
+  background: transparent;
 }
 
 .crpv-movement-card.is-strengthening {
-  background: rgba(251, 252, 250, 0.45);
+  background: transparent;
 }
 
 .crpv-movement-card.is-tension {
   border-top-color: #d9c589;
-  background: rgba(255, 250, 240, 0.55);
+  background: transparent;
 }
 
 .crpv-movement-topline {
@@ -669,12 +676,13 @@
 }
 
 .crpv-movement-detail-line {
-  border: 1px solid var(--crpv-line-soft);
-  background: #f8f7f3;
-  padding: 10px 12px;
+  border: 0;
+  border-left: 2px solid var(--crpv-line);
+  background: transparent;
+  padding: 2px 0 2px 12px;
   font-size: 13px;
-  line-height: 1.55;
-  color: var(--crpv-ink);
+  line-height: 1.6;
+  color: var(--crpv-ink-soft);
 }
 
 .crpv-movement-more {
@@ -807,25 +815,25 @@
 }
 
 .crpv-hypothesis-card {
-  border: 1px solid var(--crpv-line);
-  background: #fff;
-  padding: 16px 18px;
+  border-top: 1px solid var(--crpv-line-soft);
+  background: transparent;
+  padding: 16px 0;
   display: grid;
   gap: 14px;
 }
 
 .crpv-hypothesis-card.is-quiet {
-  background: #fcfbf8;
+  background: transparent;
   gap: 10px;
 }
 
 .crpv-hypothesis-card.is-tension {
-  border-color: #c8ab59;
-  background: #fffbef;
+  border-top-color: #c8ab59;
+  background: transparent;
 }
 
 .crpv-hypothesis-card.is-quiet.is-tension {
-  background: #fffaf0;
+  background: transparent;
 }
 
 .crpv-hypothesis-topline {
@@ -889,9 +897,10 @@
 }
 
 .crpv-hypothesis-tension-callout {
-  border: 1px solid #e6d39a;
-  background: #fff8e4;
-  padding: 12px 14px;
+  border: 0;
+  border-left: 2px solid #c8ab59;
+  background: transparent;
+  padding: 2px 0 2px 12px;
   display: grid;
   gap: 6px;
 }
@@ -900,7 +909,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--crpv-ink);
+  color: var(--crpv-ink-soft);
 }
 
 .crpv-hypothesis-truths {
@@ -914,12 +923,13 @@
 }
 
 .crpv-hypothesis-truth {
-  border: 1px solid var(--crpv-line-soft);
-  background: #f8f7f3;
-  padding: 11px 12px;
+  border: 0;
+  border-left: 2px solid var(--crpv-line);
+  background: transparent;
+  padding: 3px 0 3px 12px;
   font-size: 12px;
-  line-height: 1.55;
-  color: var(--crpv-ink);
+  line-height: 1.6;
+  color: var(--crpv-ink-soft);
 }
 
 .crpv-hypothesis-actions {
@@ -1077,10 +1087,12 @@
 }
 
 .crpv-command-main {
-  width: min(1120px, 100%);
+  width: min(1280px, 100%);
   margin: 0 auto;
   display: grid;
-  justify-items: center;
+  gap: 18px;
+  justify-items: stretch;
+  align-items: start;
   transition: opacity .3s var(--crpv-ease), filter .3s var(--crpv-ease);
 }
 
@@ -1088,6 +1100,766 @@
   opacity: 0.28;
   filter: blur(1px);
   pointer-events: none;
+}
+
+.crpv-homepage-hierarchy {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 36px 60px 40px;
+  background: #ffffff;
+  text-align: left;
+}
+@media (max-width: 1023px) {
+  .crpv-homepage-hierarchy {
+    padding: 36px 40px 40px;
+  }
+}
+@media (max-width: 639px) {
+  .crpv-homepage-hierarchy {
+    padding: 36px 20px 40px;
+  }
+}
+
+.crpv-hp-bento {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0 40px;
+}
+@media (max-width: 767px) {
+  .crpv-hp-bento {
+    grid-template-columns: 1fr;
+  }
+}
+
+.crpv-stage.has-hierarchy.state-command .crpv-command-layer,
+.crpv-stage.has-hierarchy.state-drawer .crpv-command-layer {
+  padding: 0;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+.crpv-stage.has-hierarchy .crpv-command-main {
+  gap: 0;
+}
+
+.crpv-pressure-field {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1.38fr) minmax(320px, 0.92fr);
+  grid-template-areas:
+    "alert alert"
+    "commitment instability"
+    "validation instability"
+    "actions actions";
+  gap: 16px 24px;
+  align-items: start;
+  text-align: left;
+}
+
+.crpv-pressure-field > * {
+  min-width: 0;
+}
+
+.crpv-pressure-alert {
+  grid-area: alert;
+  display: grid;
+  gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-pressure-alert-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.crpv-pressure-alert-headline,
+.crpv-pressure-alert-detail {
+  margin: 0;
+  max-width: 980px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.crpv-pressure-alert-headline {
+  color: var(--crpv-ink);
+}
+
+.crpv-pressure-alert-detail {
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-pressure-alert.is-critical {
+  border-top-color: #d6b5a5;
+}
+
+.crpv-pressure-alert.is-warning {
+  border-top-color: #d8c38f;
+}
+
+.crpv-pressure-alert.is-stable {
+  border-top-color: #cad8d1;
+}
+
+.crpv-pressure-region {
+  min-width: 0;
+}
+
+.crpv-pressure-region-commitment {
+  grid-area: commitment;
+  display: grid;
+  gap: 10px;
+  padding: 22px 24px 24px;
+  border: 1px solid var(--crpv-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.76));
+}
+
+.crpv-pressure-region-commitment.is-fragile {
+  border-color: #d1c1b4;
+  border-style: solid dashed solid solid;
+}
+
+.crpv-pressure-region-commitment.is-earned {
+  border-color: #cad4cd;
+}
+
+/* Phase 46 — anchor breathing room: asymmetric vertical space opens visual dominance */
+.crpv-pressure-region-commitment .crpv-pressure-anchor {
+  margin-top: 20px;
+  margin-bottom: 4px;
+}
+
+.crpv-pressure-region-instability {
+  grid-area: instability;
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  padding: 6px 0 0 22px;
+  border-left: 1px solid var(--crpv-line);
+}
+
+.crpv-pressure-region-validation {
+  grid-area: validation;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding-top: 10px;
+}
+
+.crpv-pressure-region-actions {
+  grid-area: actions;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-pressure-region-topline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.crpv-pressure-status {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6e847f;
+  font-family: "JetBrains Mono", var(--font-mono), monospace;
+}
+
+.crpv-pressure-intro {
+  margin: 0;
+  max-width: 54ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--crpv-ink-soft);
+}
+
+/* Phase 46 — secondary regions recede from commitment intro */
+.crpv-pressure-region-instability .crpv-pressure-intro,
+.crpv-pressure-region-validation .crpv-pressure-intro {
+  font-size: 12.5px;
+  color: var(--crpv-ink-faint);
+  line-height: 1.55;
+}
+
+.crpv-pressure-anchor {
+  display: grid;
+  gap: 10px;
+}
+
+.crpv-pressure-anchor-headline {
+  margin: 0;
+  max-width: 15ch;
+  font-size: clamp(2rem, 4.6vw, 3.3rem);
+  line-height: 1.04;
+  letter-spacing: -0.038em;
+  font-weight: 390;
+  color: var(--crpv-ink);
+}
+
+.crpv-pressure-anchor-support {
+  display: grid;
+  gap: 6px;
+  max-width: 60ch;
+}
+
+.crpv-pressure-anchor-support p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.58;
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-pressure-fragility {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--crpv-line);
+}
+
+.crpv-pressure-fragility-line {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid #cec0b1;
+  font-size: 11.5px;
+  line-height: 1.54;
+  color: var(--crpv-ink-soft);
+  opacity: 0.82;
+}
+
+.crpv-pressure-subsection {
+  display: grid;
+  gap: 12px;
+}
+
+.crpv-pressure-subsection-header {
+  display: grid;
+  gap: 6px;
+}
+
+.crpv-pressure-subsection-copy {
+  margin: 0;
+  max-width: 54ch;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-pressure-commitment-footer {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.crpv-pressure-region-commitment .crpv-meta-row,
+.crpv-pressure-region-commitment .crpv-pill-row,
+.crpv-pressure-region-commitment .crpv-cta-row {
+  justify-content: flex-start;
+  justify-items: start;
+  text-align: left;
+}
+
+.crpv-pressure-region-commitment .crpv-meta-row {
+  margin-top: 4px;
+  gap: 28px;
+}
+
+.crpv-pressure-region-commitment .crpv-meta-row .meta {
+  min-width: 86px;
+}
+
+.crpv-pressure-region-commitment .crpv-meta-row .meta .v {
+  font-size: 16px;
+  font-weight: 470;
+}
+
+.crpv-pill-row-attached,
+.crpv-cta-row-attached {
+  margin-top: 0;
+}
+
+.crpv-pressure-clusters {
+  display: grid;
+  gap: 10px;
+}
+
+.crpv-pressure-cluster {
+  display: grid;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--crpv-line);
+}
+
+.crpv-pressure-cluster.is-critical {
+  border-left-color: #c4745a;
+}
+
+.crpv-pressure-cluster.is-warning {
+  border-left-color: #c89f38;
+}
+
+.crpv-pressure-cluster.is-quiet {
+  border-left-color: #d6d1c6;
+}
+
+.crpv-pressure-cluster-label {
+  margin: 0;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--crpv-ink-faint);
+  font-family: "JetBrains Mono", var(--font-mono), monospace;
+}
+
+.crpv-pressure-cluster-headline {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.52;
+  color: var(--crpv-ink);
+  font-weight: 430;
+}
+
+.crpv-pressure-cluster-lines {
+  display: grid;
+  gap: 3px;
+}
+
+.crpv-pressure-cluster-lines p,
+.crpv-pressure-empty,
+.crpv-pressure-cadence {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-pressure-empty {
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-pressure-cadence {
+  font-size: 10px;
+  color: #6E847F;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+}
+
+.crpv-pressure-validation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.crpv-pressure-validation-item {
+  flex: 1 1 220px;
+  max-width: 360px;
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-pressure-validation-item span {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--crpv-ink-faint);
+  font-family: "JetBrains Mono", var(--font-mono), monospace;
+}
+
+.crpv-pressure-validation-item p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-pressure-validation-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+  gap: 18px 26px;
+  align-items: start;
+}
+
+.crpv-pressure-validation-panel {
+  min-width: 0;
+}
+
+.crpv-pressure-attention {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.crpv-pressure-attention p {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid #2a3d3b;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8fa3a0;
+}
+
+.crpv-pressure-more {
+  padding-top: 2px;
+}
+
+.crpv-pressure-more .btn.ghost {
+  padding-inline: 10px;
+  color: var(--crpv-ink-faint);
+  border-color: var(--crpv-line);
+}
+
+/* ── Phase 29 — Operational inspection ─────────────────────────────────── */
+
+.crpv-pressure-cluster-trigger {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--crpv-ink-faint);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  letter-spacing: 0.01em;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.crpv-pressure-cluster-trigger:hover {
+  color: var(--crpv-ink-soft);
+}
+
+.crpv-pressure-cluster-detail {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--crpv-line-soft);
+  margin-top: 2px;
+}
+
+.crpv-pressure-cluster-detail-group {
+  display: grid;
+  gap: 3px;
+}
+
+.crpv-pressure-cluster-detail-group .cap {
+  margin-bottom: 1px;
+}
+
+.crpv-pressure-cluster-detail-line {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-soft);
+  padding-left: 10px;
+  border-left: 1px solid var(--crpv-line);
+}
+
+.crpv-pressure-dependency {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.crpv-pressure-dependency-lines {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.crpv-pressure-belief-trace {
+  display: grid;
+  gap: 5px;
+  padding-top: 6px;
+  padding-bottom: 2px;
+}
+
+.crpv-pressure-belief-lines {
+  display: grid;
+  gap: 3px;
+}
+
+/* ── Phase 30 — Consequence + leverage ──────────────────────────────────── */
+
+.crpv-pressure-consequence {
+  display: grid;
+  gap: 5px;
+}
+
+.crpv-pressure-consequence-line {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-soft);
+  padding-left: 12px;
+  border-left: 2px solid #a8bbb7;
+  opacity: 0.88;
+}
+
+.crpv-pressure-validation-leverage {
+  display: grid;
+  gap: 5px;
+}
+
+.crpv-pressure-validation-leverage-lines {
+  display: grid;
+  gap: 4px;
+}
+
+.crpv-pressure-validation-leverage-line {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-soft);
+  padding-left: 10px;
+  border-left: 1px solid #a8bbb7;
+  opacity: 0.88;
+}
+
+/* Phase 31 — drift + confidence degradation indicators */
+.crpv-pressure-drift-signal {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 10px;
+  border-left: 2px solid #8daabb;
+  opacity: 0.9;
+}
+
+.crpv-pressure-drift-context {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.crpv-pressure-drift-context-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #8daabb;
+  opacity: 0.85;
+}
+
+.crpv-pressure-cluster-persistence {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* Phase 32 — reframing visibility */
+.crpv-pressure-reframing-signal {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 10px;
+  border-left: 1px solid #8daabb;
+  opacity: 0.88;
+}
+
+.crpv-pressure-reframing-consequence {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.crpv-pressure-reframing-consequence-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #8daabb;
+  opacity: 0.85;
+}
+
+.crpv-pressure-cluster-weakening {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+  opacity: 0.78;
+}
+
+.crpv-pressure-cadence-reframing {
+  opacity: 0.72;
+}
+
+/* Phase 33 — convergence + decision narrowing */
+.crpv-pressure-convergence-signal {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 10px;
+  border-left: 1px solid #7aaa97;
+  opacity: 0.9;
+}
+
+.crpv-pressure-convergence-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #7aaa97;
+  opacity: 0.82;
+}
+
+/* Phase 34 — commitment windows */
+.crpv-pressure-window-signal {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #6b9982;
+  opacity: 0.85;
+}
+
+/* Phase 35 — commitment fragility */
+.crpv-pressure-fragility-support {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid var(--crpv-line);
+  opacity: 0.82;
+}
+
+/* Phase 37 — strategic counterforce + residual ambiguity */
+/* Color: #9a8c72 — warm sand/earth, reads as structural residual weight */
+/* Distinct from teal (convergence), slate-blue (drift/gravity), and neutral (fragility) */
+.crpv-pressure-counterforce-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #9a8c72;
+  opacity: 0.86;
+}
+.crpv-pressure-counterforce-validation {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #9a8c72;
+  opacity: 0.84;
+}
+.crpv-pressure-counterforce-instability {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #9a8c72;
+  opacity: 0.82;
+}
+
+/* Phase 36 — strategic center of gravity */
+/* Color: #8898b0 — desaturated blue-gray, reads as structural mass/pull */
+/* Distinct from teal family (convergence/window) and slate-blue (drift/reframing) */
+.crpv-pressure-gravity-line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #8898b0;
+  opacity: 0.88;
+}
+.crpv-pressure-gravity-validation {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.52;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #8898b0;
+  opacity: 0.85;
+}
+.crpv-pressure-cluster-structural-pull {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--crpv-ink-faint);
+  padding-left: 8px;
+  border-left: 1px solid #8898b0;
+  opacity: 0.80;
+}
+
+.crpv-pressure-utility-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 14px;
+  margin-top: 4px;
+}
+
+.crpv-pressure-region-actions .crpv-next-moves {
+  width: min(880px, 100%);
+  justify-items: center;
+  text-align: center;
+}
+
+.crpv-pressure-region-actions .crpv-secondary-links {
+  justify-content: center;
+}
+
+.crpv-pressure-utility-links .btn.ghost {
+  color: var(--crpv-ink-faint);
+  border-color: var(--crpv-line-soft);
+}
+
+.crpv-pressure-lenses {
+  width: 100%;
+  max-width: 720px;
+}
+
+.crpv-pressure-region-validation .crpv-movement-section,
+.crpv-pressure-region-validation .crpv-confidence-section,
+.crpv-pressure-region-instability .crpv-reconciliation-section,
+.crpv-pressure-region-commitment .crpv-hypotheses-section {
+  width: 100%;
+  margin-top: 0;
+}
+
+.crpv-pressure-region-validation .crpv-movement-section {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Phase 46 — cadence lines in validation recede as atmospheric temporal layer */
+.crpv-pressure-region-validation .crpv-pressure-cadence {
+  margin-top: 4px;
+  opacity: 0.62;
+}
+
+.crpv-pressure-region-validation .crpv-confidence-section {
+  padding-top: 0;
+}
+
+.crpv-pressure-region-instability .crpv-reconciliation-section {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .crpv-branch-prompt {
@@ -1127,7 +1899,6 @@
 
 .crpv-branch-card:hover {
   border-color: var(--crpv-ink);
-  transform: translateY(-2px);
 }
 
 .crpv-branch-card .t {
@@ -1380,6 +2151,15 @@
     transform: scale(1);
     transform-origin: center;
   }
+}
+
+/* Pulsing signal dot for DIAGNOSE state tag */
+@keyframes crpv-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.crpv-pulse-dot {
+  animation: crpv-pulse-dot 1.8s ease-in-out infinite;
 }
 
 .crpv-map-pin {
@@ -2312,6 +3092,32 @@
 .crpv-routes-page .crpv-ws-content {
   flex: 1;
   overflow-y: auto;
+  padding: 0;
+  background: #ffffff;
+}
+
+.crpv-routes-page .crpv-ws-section,
+.crpv-routes-page .crpv-ws-section-wide {
+  max-width: none;
+  margin: 0;
+  padding: 36px 60px 80px;
+  background: #ffffff;
+  text-align: left;
+  gap: 0;
+}
+
+@media (max-width: 1023px) {
+  .crpv-routes-page .crpv-ws-section,
+  .crpv-routes-page .crpv-ws-section-wide {
+    padding: 36px 40px 60px;
+  }
+}
+
+@media (max-width: 639px) {
+  .crpv-routes-page .crpv-ws-section,
+  .crpv-routes-page .crpv-ws-section-wide {
+    padding: 24px 20px 40px;
+  }
 }
 
 .crpv-routes-page .crpv-header {
@@ -2705,59 +3511,82 @@
 }
 
 /* Signal bar */
-.crpv-ws-signal-bar {
+/* Field condition line — stage-aware ambient environmental line (Phase 66) */
+.crpv-ws-field-condition {
   display: flex;
-  align-items: stretch;
-  gap: 0;
-  padding: 0;
+  align-items: center;
+  padding: 0 20px;
+  height: 28px;
   border-bottom: 1px solid var(--crpv-line);
-  background: var(--crpv-paper-2);
   flex-shrink: 0;
 }
 
-/* All columns default to the faded page-bg state */
-.crpv-ws-signal-col {
-  flex: 1;
+.crpv-ws-field-condition-text {
+  margin: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  color: var(--crpv-ink-soft);
+  opacity: 0.58;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Signal bar — ambient inline strip (Phase 65, demoted in Phase 66 to compare-only context) */
+.crpv-ws-signal-bar {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 14px 24px;
-  border-right: 1px solid var(--crpv-line);
-  background: var(--crpv-paper-2);
-  opacity: 0.5;
-  transition: background var(--crpv-dur-micro) var(--crpv-ease),
-              opacity var(--crpv-dur-micro) var(--crpv-ease);
+  align-items: center;
+  gap: 0;
+  padding: 0 20px;
+  height: 30px;
+  border-bottom: 1px solid var(--crpv-line);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+/* Columns: inline auto-width, no card treatment */
+.crpv-ws-signal-col {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border-right: none;
+  background: transparent !important;
+  opacity: 0.40;
+  transition: opacity var(--crpv-dur-micro) var(--crpv-ease);
 }
 
 .crpv-ws-signal-col:last-child {
   border-right: none;
 }
 
-/* Outside Signals: never interactive, just faded reference */
 .crpv-ws-signal-outside {
   cursor: default;
 }
 
-/* Clickable columns */
 .crpv-ws-signal-btn {
-  background: var(--crpv-paper-2);
+  background: transparent;
   border: none;
   text-align: left;
   cursor: pointer;
+  padding: 0 8px 0 0;
 }
 
 .crpv-ws-signal-btn:hover {
-  opacity: 0.75;
-  background: var(--crpv-paper-2);
+  opacity: 0.65;
+  background: transparent;
 }
 
-/* Active column: white, full opacity, bottom accent */
+/* Active: atmospheric brightness — not binary full-on */
 .crpv-ws-signal-active,
 .crpv-ws-signal-active:hover {
-  background: var(--crpv-paper) !important;
-  opacity: 1 !important;
-  border-bottom: 2px solid var(--crpv-ink);
-  margin-bottom: -1px;
+  background: transparent !important;
+  opacity: 0.88 !important;
+  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .crpv-ws-signal-active .crpv-ws-signal-tag {
@@ -2769,29 +3598,36 @@
 }
 
 .crpv-ws-signal-tag {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--crpv-ink-soft);
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
 
-/* Excluded-count badge on the Outside Signals stage button */
+/* Excluded-count marker — inline text glyph, no badge box */
 .crpv-ws-signal-excl-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 5px;
   font-size: 8px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  letter-spacing: 0.08em;
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #f59e0b;
-  border-radius: 2px;
+  letter-spacing: 0.06em;
+  background: none;
+  color: #b45309;
+  border: none;
+  border-radius: 0;
   line-height: 1.4;
   flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* Heavy structural elements: hidden in strip mode */
+.crpv-ws-signal-stage,
+.crpv-ws-signal-desc,
+.crpv-ws-signal-cov {
+  display: none;
 }
 
 .crpv-ws-signal-desc {
@@ -2827,38 +3663,184 @@
   padding: 0 2px;
 }
 
-/* Tab bar */
+/* Workshop body — rail + content side by side (Phase 65) */
+.crpv-ws-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.crpv-ws-content-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Tab rail — left depth marker (Phase 65, tightened) */
 .crpv-ws-tabs {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  border-bottom: 1px solid var(--crpv-line);
-  background: var(--crpv-paper);
+  border-right: 1px solid var(--crpv-line);
+  border-bottom: none;
+  background: transparent;
   flex-shrink: 0;
+  width: 112px;
+  padding: 10px 0 0;
+  overflow-y: auto;
+}
+
+/* Hierarchy rail — wider, IBM Plex Mono, ink palette */
+.crpv-ws-tabs.crpv-hier-rail {
+  width: 176px;
+  padding: 12px 0 0;
+  background: #ffffff;
+  border-right: 1px solid rgba(17,17,17,0.1);
+  transition: width 0.2s ease;
+  position: sticky;
+  top: 0;
+  height: calc(100dvh - 72px);
+  overflow-y: auto;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.crpv-ws-tabs.crpv-hier-rail.crpv-sidebar-collapsed {
+  width: 40px;
+  overflow: hidden;
+}
+
+/* Sidebar toggle button */
+.crpv-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 6px 8px;
+  background: none;
+  border: 1px solid rgba(17,17,17,0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  color: rgba(17,17,17,0.4);
+  flex-shrink: 0;
+}
+.crpv-sidebar-toggle:hover {
+  color: #111111;
+  border-color: rgba(17,17,17,0.3);
+}
+
+.crpv-hier-rail .crpv-ws-tab {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: rgba(17,17,17,0.4);
+  font-weight: 400;
+  padding: 8px 16px;
+  opacity: 1;
+}
+
+.crpv-hier-rail .crpv-ws-tab:hover {
+  color: #111111;
+}
+
+.crpv-hier-rail .crpv-ws-tab.active {
+  color: #111111;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Sidebar home + divider */
+.crpv-ws-tab-home {
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}
+.crpv-hier-rail .crpv-ws-tab-home {
+  font-weight: 600 !important;
+  color: rgba(17,17,17,0.65) !important;
+}
+.crpv-ws-tab-divider {
+  height: 1px;
+  background: var(--crpv-line, rgba(17,17,17,0.1));
+  margin: 6px 0 8px;
+}
+.crpv-ws-tab-divider-push {
+  margin-top: auto;
+}
+
+/* + Add client — lighter weight, bottom of sidebar */
+.crpv-ws-tab-add-client {
+  opacity: 0.45 !important;
+  font-size: 10px !important;
+  padding-bottom: 12px !important;
+}
+.crpv-ws-tab-add-client:hover {
+  opacity: 0.9 !important;
 }
 
 .crpv-ws-tab {
-  padding: 12px 20px;
+  padding: 7px 14px;
   font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
-  font-size: 10px;
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   color: var(--crpv-ink-faint);
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  text-align: left;
   cursor: pointer;
   transition: color var(--crpv-dur-micro) var(--crpv-ease),
-              border-color var(--crpv-dur-micro) var(--crpv-ease);
-  margin-bottom: -1px;
+              letter-spacing var(--crpv-dur-micro) var(--crpv-ease),
+              opacity var(--crpv-dur-micro) var(--crpv-ease);
+  margin-bottom: 0;
 }
 
 .crpv-ws-tab:hover {
   color: var(--crpv-ink-soft);
 }
 
+/* Active: typographic compression as orientation signal — no menu indicator */
 .crpv-ws-tab.active {
   color: var(--crpv-ink);
-  border-bottom-color: var(--crpv-ink);
+  letter-spacing: 0.07em;
+}
+
+/* Depth hierarchy: primary → secondary → tertiary */
+.crpv-ws-tab[data-tab="routes"],
+.crpv-ws-tab[data-tab="council"] {
+  opacity: 1;
+}
+
+.crpv-ws-tab[data-tab="strategy"],
+.crpv-ws-tab[data-tab="positioning"],
+.crpv-ws-tab[data-tab="needs"] {
+  opacity: 0.65;
+}
+
+.crpv-ws-tab[data-tab="jobmap"],
+.crpv-ws-tab[data-tab="inputs"] {
+  opacity: 0.42;
+}
+
+/* Depth tier breathing — gap before secondary and tertiary groups */
+.crpv-ws-tab[data-tab="needs"] {
+  margin-top: 10px;
+}
+
+.crpv-ws-tab[data-tab="jobmap"] {
+  margin-top: 10px;
+}
+
+.crpv-ws-tab[data-tab="inputs"] {
+  margin-top: 6px;
+}
+
+/* Active overrides depth opacity */
+.crpv-ws-tab.active {
+  opacity: 1 !important;
 }
 
 /* Affected tab state (exclusion impact) */
@@ -2875,6 +3857,26 @@
   line-height: 1;
 }
 
+/* Compare toggle: ambient secondary action, not a rail orientation item */
+.crpv-ws-compare-toggle {
+  margin-top: 10px;
+  border-top: 1px solid var(--crpv-line);
+  padding-top: 9px;
+  font-size: 8px;
+  opacity: 0.45;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 840px) {
+  .crpv-ws-tabs {
+    width: 78px;
+  }
+  .crpv-ws-tab {
+    font-size: 8px;
+    padding: 7px 10px;
+  }
+}
+
 /* Content area */
 .crpv-ws-content {
   flex: 1;
@@ -2889,7 +3891,7 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 32px;
 }
 
 .crpv-ws-section-wide {
@@ -2900,6 +3902,9 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--crpv-line-soft);
+  margin-bottom: 4px;
 }
 
 .crpv-ws-section-hd-top {
@@ -2999,113 +4004,144 @@
 .crpv-ws-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
 
 .crpv-ws-list-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0;
+  border-top: 1px solid transparent;
 }
 
-.crpv-ws-list-input {
+.crpv-ws-list-row + .crpv-ws-list-row:not(.crpv-ws-list-add) {
+  border-top-color: var(--crpv-line-soft);
+  margin-top: 2px;
+}
+
+/* Rhythm break every 3rd item — creates organic clustering without taxonomy labels */
+.crpv-ws-list-row:nth-child(3n+1):not(:first-child):not(.crpv-ws-list-add) {
+  margin-top: 16px;
+}
+
+/* Tail items compress — long competitor lists fade toward ambient */
+.crpv-ws-list-row:nth-child(n+6):not(.crpv-ws-list-add) div.crpv-ws-list-input {
+  opacity: 0.6;
+  font-size: 13px;
+}
+
+/* Display mode: prose reading, no box */
+div.crpv-ws-list-input {
   flex: 1;
   font-family: "Inter", var(--font-sans), system-ui, sans-serif;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--crpv-ink);
-  background: var(--crpv-paper);
-  border: 1px solid var(--crpv-line);
-  padding: 8px 10px;
+  padding: 6px 0;
+  line-height: 1.55;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.12s;
+}
+
+div.crpv-ws-list-input:hover {
+  border-bottom-color: var(--crpv-line-soft);
+}
+
+/* Edit mode: minimal inline input */
+input.crpv-ws-list-input {
+  flex: 1;
+  font-family: "Inter", var(--font-sans), system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--crpv-ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--crpv-ink-soft);
+  padding: 5px 0;
   transition: border-color var(--crpv-dur-micro) var(--crpv-ease);
 }
 
-.crpv-ws-list-input:focus {
+input.crpv-ws-list-input:focus {
   outline: none;
-  border-color: var(--crpv-ink-soft);
+  border-bottom-color: var(--crpv-ink);
 }
 
-.crpv-ws-list-input::placeholder {
+input.crpv-ws-list-input::placeholder {
   color: var(--crpv-ink-faint);
 }
 
 .crpv-ws-list-add .crpv-ws-list-input {
-  background: var(--crpv-paper-2);
+  background: transparent;
 }
 
 .crpv-ws-list-name {
   flex: 1;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--crpv-ink);
-  padding: 8px 0;
+  padding: 6px 0;
+  line-height: 1.55;
 }
 
 .crpv-ws-remove-btn,
 .crpv-ws-add-btn {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 1px solid var(--crpv-line);
+  border: none;
   color: var(--crpv-ink-faint);
-  font-size: 11px;
+  font-size: 10px;
   cursor: pointer;
-  transition: border-color var(--crpv-dur-micro) var(--crpv-ease),
-              color var(--crpv-dur-micro) var(--crpv-ease);
+  opacity: 0.3;
+  transition: opacity 0.15s;
+  padding-top: 8px;
 }
 
 .crpv-ws-remove-btn:hover {
-  border-color: var(--crpv-ink);
+  opacity: 0.9;
   color: var(--crpv-ink);
 }
 
 .crpv-ws-add-btn {
-  border-style: dashed;
+  opacity: 0.45;
 }
 
 .crpv-ws-add-btn:hover {
-  border-color: var(--crpv-ink-soft);
+  opacity: 0.9;
   color: var(--crpv-ink-soft);
-  border-style: solid;
 }
 
 /* Gap column between signal bar sections */
+/* Gap connector repurposed as · separator in strip mode */
 .crpv-ws-gap-col {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 3px;
   flex-shrink: 0;
-  width: 40px;
-  padding: 12px 0;
+  width: 18px;
+  padding: 0;
 }
 
-.crpv-ws-gap-line {
-  display: block;
-  width: 1px;
-  flex: 1;
-  background: var(--crpv-line);
-  min-height: 12px;
-}
-
-.crpv-ws-gap-label {
-  font-size: 8px;
-  letter-spacing: 0.12em;
+.crpv-ws-gap-col::after {
+  content: '·';
+  font-size: 9px;
   color: var(--crpv-ink-faint);
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
+  opacity: 0.45;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
 }
 
+.crpv-ws-gap-line,
+.crpv-ws-gap-label,
 .crpv-ws-gap-arrow-glyph {
-  font-size: 10px;
-  color: var(--crpv-ink-faint);
+  display: none;
 }
 
-/* Signal bar coverage track */
+/* Signal bar coverage track: hidden in strip mode */
 .crpv-ws-signal-bar-track {
+  display: none;
   width: 100%;
   height: 2px;
   background: var(--crpv-line);
@@ -3385,12 +4421,7 @@
 
 /* Needs table */
 .crpv-ws-need-table-hd {
-  display: grid;
-  grid-template-columns: 28px 1fr 180px 100px 60px;
-  gap: 12px;
-  padding: 0 8px 6px;
-  border-bottom: 1px solid var(--crpv-line);
-  align-items: center;
+  display: none;
 }
 
 .crpv-ws-need-col-num,
@@ -3404,13 +4435,75 @@
 }
 
 .crpv-ws-need-row {
-  display: grid;
-  grid-template-columns: 28px 1fr 180px 100px 60px;
-  gap: 12px;
-  padding: 10px 8px;
+  display: flex;
+  gap: 10px;
+  padding: 12px 8px;
   border-bottom: 1px solid var(--crpv-line-soft);
-  align-items: center;
+  align-items: flex-start;
   transition: background var(--crpv-dur-micro) var(--crpv-ease);
+}
+
+.crpv-ws-need-row-critical {
+  padding-top: 26px;
+  padding-bottom: 26px;
+}
+
+.crpv-ws-need-row-critical .crpv-ws-need-outcome {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.crpv-ws-need-row-high {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.crpv-ws-need-row-low {
+  opacity: 0.52;
+}
+
+/* Ambient — needs with negligible opportunity score become background texture */
+.crpv-ws-need-row-ambient {
+  opacity: 0.35;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.crpv-ws-need-row-ambient .crpv-ws-need-outcome {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.crpv-ws-need-row-ambient .crpv-ws-need-annotation {
+  display: none;
+}
+
+.crpv-ws-need-row-critical[data-depstate="needs_review"],
+.crpv-ws-need-row-high[data-depstate="needs_review"] {
+  border-left: 2px solid #b06a3c;
+  padding-left: 12px;
+}
+
+.crpv-ws-need-row-critical[data-depstate="needs_review"] .crpv-ws-need-outcome,
+.crpv-ws-need-row-high[data-depstate="needs_review"] .crpv-ws-need-outcome {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.crpv-ws-need-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.crpv-ws-need-annotation {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .crpv-ws-need-num {
@@ -3419,11 +4512,14 @@
   color: var(--crpv-ink-faint);
   text-align: right;
   letter-spacing: 0;
+  padding-top: 2px;
+  flex-shrink: 0;
+  min-width: 28px;
 }
 
 .crpv-ws-need-table-hd-outside,
 .crpv-ws-need-row-outside {
-  grid-template-columns: 1fr;
+  display: flex;
 }
 
 .crpv-ws-need-row:hover {
@@ -3451,7 +4547,11 @@
 .crpv-ws-need-outcome {
   font-size: 13px;
   color: var(--crpv-ink);
-  line-height: 1.4;
+  line-height: 1.5;
+}
+
+.crpv-ws-need-row-high .crpv-ws-need-outcome {
+  font-size: 14px;
 }
 
 .crpv-ws-need-scores {
@@ -3474,14 +4574,15 @@
 }
 
 .crpv-ws-score-input {
-  width: 40px;
+  width: 34px;
   text-align: center;
   font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--crpv-ink);
-  background: var(--crpv-paper);
-  border: 1px solid var(--crpv-line);
-  padding: 4px 4px;
+  font-size: 11px;
+  color: var(--crpv-ink-soft);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--crpv-line-soft);
+  padding: 2px 2px;
   -moz-appearance: textfield;
 }
 
@@ -3510,40 +4611,40 @@
   font-size: 8px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  padding: 3px 6px;
-  border: 1px solid var(--crpv-line);
-  color: var(--crpv-ink-soft);
+  color: var(--crpv-ink-faint);
   white-space: nowrap;
 }
 
 .crpv-ws-state-underserved {
-  border-color: var(--crpv-ink-soft);
-  color: var(--crpv-ink);
+  color: var(--crpv-ink-soft);
 }
 
 .crpv-ws-reorder-btns {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  opacity: 0.18;
+  transition: opacity 0.15s;
+}
+
+.crpv-ws-reorder-btns:hover {
+  opacity: 0.75;
 }
 
 .crpv-ws-reorder-btn {
-  width: 24px;
-  height: 18px;
+  width: 20px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 1px solid var(--crpv-line);
+  border: none;
   color: var(--crpv-ink-faint);
   font-size: 7px;
   cursor: pointer;
-  transition: border-color var(--crpv-dur-micro) var(--crpv-ease),
-              color var(--crpv-dur-micro) var(--crpv-ease);
 }
 
 .crpv-ws-reorder-btn:hover:not(:disabled) {
-  border-color: var(--crpv-ink);
   color: var(--crpv-ink);
 }
 
@@ -3617,18 +4718,16 @@
     margin: 0 -16px;
   }
 
-  .crpv-ws-need-table-hd,
-  .crpv-ws-need-row {
-    grid-template-columns: 1fr auto auto;
+  .crpv-ws-need-annotation {
+    gap: 8px;
   }
 
-  .crpv-ws-need-col-scores,
   .crpv-ws-need-scores {
     display: none;
   }
 
   .crpv-ws-signal-bar {
-    flex-wrap: wrap;
+    padding: 0 12px;
   }
 
   .crpv-ws-signal-arrow {
@@ -3636,8 +4735,8 @@
   }
 
   .crpv-ws-signal-col {
-    flex: 1 0 40%;
-    border-bottom: 1px solid var(--crpv-line);
+    flex: 0 0 auto;
+    border-bottom: none;
   }
 }
 
@@ -3676,6 +4775,14 @@
 
 .crpv-r-stat-delta {
   color: var(--crpv-ink-soft);
+}
+
+.crpv-r-stat--dim {
+  opacity: 0.62;
+}
+
+.crpv-r-stat--dim .crpv-r-stat-val {
+  font-size: 16px;
 }
 
 .crpv-r-stat-lbl {
@@ -3735,6 +4842,123 @@
   padding: 80px 36px;
 }
 
+/* ─── Orientation Layer ──────────────────────────────────────────────────── */
+
+.crpv-r-orientation {
+  padding: 16px 18px 14px;
+  background: #f6f8fa;
+  border-left: 3px solid #b8c4d0;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 28px;
+}
+
+.crpv-r-orientation[data-tone="exploratory"] {
+  border-left-color: #7aa3c0;
+  background: #f2f6fb;
+}
+
+.crpv-r-orientation[data-tone="evaluative"] {
+  border-left-color: #b07a3a;
+  background: #faf5ed;
+}
+
+.crpv-r-orientation[data-tone="committed"] {
+  border-left-color: #5F9B8C;
+  background: #f1f8f5;
+}
+
+.crpv-r-orientation-header {
+  margin-bottom: 11px;
+}
+
+.crpv-r-orientation-cap {
+  margin: 0 0 3px;
+  font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8a9fb0;
+}
+
+.crpv-r-orientation-question {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: #4a6272;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.crpv-r-orientation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+@keyframes crpvOrientIn {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.crpv-r-orientation-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: crpvOrientIn 0.4s var(--crpv-ease) both;
+}
+
+.crpv-r-orientation-item:nth-child(1) { animation-delay: 0.04s; }
+.crpv-r-orientation-item:nth-child(2) { animation-delay: 0.09s; }
+.crpv-r-orientation-item:nth-child(3) { animation-delay: 0.14s; }
+.crpv-r-orientation-item:nth-child(4) { animation-delay: 0.19s; }
+.crpv-r-orientation-item:nth-child(5) { animation-delay: 0.24s; }
+
+.crpv-r-orientation-item[data-primary] {
+  margin-bottom: 4px;
+}
+
+.crpv-r-orientation-item[data-primary] .crpv-r-orientation-value {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #1a2a35;
+}
+
+.crpv-r-orientation-item[data-primary] .crpv-r-orientation-label {
+  color: #4a6272;
+}
+
+.crpv-r-orientation-label {
+  margin: 0;
+  font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #6a8090;
+}
+
+.crpv-r-orientation-value {
+  margin: 0;
+  font-size: 12.5px;
+  color: #2a3d48;
+  line-height: 1.55;
+}
+
+.crpv-r-orientation-item[data-ambient] {
+  opacity: 0.52;
+  margin-top: 2px;
+}
+
+.crpv-r-orientation-item[data-ambient] .crpv-r-orientation-label {
+  font-size: 8px;
+}
+
+.crpv-r-orientation-item[data-ambient] .crpv-r-orientation-value {
+  font-size: 11.5px;
+  color: #3a5060;
+}
+
 /* 3-column layout */
 .crpv-r-columns {
   display: grid;
@@ -3791,11 +5015,48 @@
   color: var(--crpv-ink);
 }
 
+.crpv-r-why-rising-movement-intro {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #3d5264;
+  padding: 8px 12px;
+  background: #eef3f7;
+  border-left: 3px solid #7aa3c0;
+  border-radius: 0 4px 4px 0;
+}
+
+.crpv-r-why-rising-lead-sentence {
+  margin: 0 0 18px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #1a2a35;
+  padding: 10px 14px;
+  background: #f0f4f8;
+  border-left: 3px solid #3b82f6;
+  border-radius: 0 4px 4px 0;
+}
+
 .crpv-r-why-rising-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px 18px;
 }
+
+@keyframes crpvGridCellIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.crpv-r-why-rising-grid > div {
+  animation: crpvGridCellIn 0.38s var(--crpv-ease) both;
+}
+
+.crpv-r-why-rising-grid > div:nth-child(1) { animation-delay: 0.05s; }
+.crpv-r-why-rising-grid > div:nth-child(2) { animation-delay: 0.12s; }
+.crpv-r-why-rising-grid > div:nth-child(3) { animation-delay: 0.19s; }
 
 .crpv-r-why-rising-grid p {
   margin: 4px 0 0;
@@ -3806,6 +5067,23 @@
 
 .crpv-r-why-rising-grid > div:last-child {
   grid-column: 1 / -1;
+}
+
+.crpv-r-why-rising-grid--secondary {
+  opacity: 0.75;
+  padding-top: 12px;
+  border-top: 1px solid var(--crpv-line-soft);
+  margin-top: 2px;
+  animation: crpvSecondaryReveal var(--crpv-dur-layer) var(--crpv-ease) both;
+}
+
+@keyframes crpvSecondaryReveal {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 0.75; transform: translateY(0); }
+}
+
+.crpv-r-why-rising-grid--secondary p {
+  font-size: 12.5px;
 }
 
 .crpv-r-why-rising-label,
@@ -3892,11 +5170,10 @@
 }
 
 .crpv-r-col-subtitle {
-  margin: 0 0 16px;
-  font-size: 12.5px;
-  color: var(--crpv-ink-soft);
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  color: var(--crpv-ink-faint);
   line-height: 1.45;
-  min-height: calc(12.5px * 1.45 * 2);
 }
 
 .crpv-r-col-divider {
@@ -3931,8 +5208,16 @@
 .crpv-r-card {
   border: 1px solid var(--crpv-line);
   margin-bottom: 8px;
-  transition: border-color var(--crpv-dur-micro) var(--crpv-ease);
+  transition:
+    border-color var(--crpv-dur-micro) var(--crpv-ease),
+    outline var(--crpv-dur-card) var(--crpv-ease),
+    box-shadow var(--crpv-dur-card) var(--crpv-ease),
+    opacity var(--crpv-dur-card) var(--crpv-ease);
 }
+
+/* Phase-sensitive card cadence */
+.crpv-ws-section[data-tone="exploratory"] { --crpv-dur-card: var(--crpv-dur-card-slow); }
+.crpv-ws-section[data-tone="evaluative"]  { --crpv-dur-card: var(--crpv-dur-card-quick); }
 
 .crpv-r-card:last-child {
   margin-bottom: 0;
@@ -4022,6 +5307,12 @@
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--crpv-ink-soft);
+  animation: crpvCopyReveal var(--crpv-dur-card) var(--crpv-ease) both;
+}
+
+@keyframes crpvCopyReveal {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .crpv-r-card-rationale-note {
@@ -4869,7 +6160,8 @@
 
 /* When rendered as a direct flex child of the workshop page (outside the scroll
    container), override margin/border-radius so it sits flush as a full-width strip. */
-.crpv-workshop-page > .crpv-impact-banner {
+.crpv-workshop-page > .crpv-impact-banner,
+.crpv-ws-content-col > .crpv-impact-banner {
   flex-shrink: 0;
   margin: 0;
   border-left: none;
@@ -4879,7 +6171,8 @@
 }
 
 @media (max-width: 780px) {
-  .crpv-workshop-page > .crpv-impact-banner {
+  .crpv-workshop-page > .crpv-impact-banner,
+  .crpv-ws-content-col > .crpv-impact-banner {
     padding: 10px 16px;
   }
 }
@@ -5094,33 +6387,119 @@
   justify-content: flex-end;
 }
 
+/* ─── Council editorial state block ────────────────────────────────────── */
+
+.crpv-council-editorial {
+  padding-bottom: 32px;
+  margin-bottom: 4px;
+}
+
+.crpv-council-editorial-eyebrow {
+  font-family: var(--crpv-font-mono, monospace);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-faint);
+  opacity: 0.65;
+  margin: 0 0 16px;
+}
+
+.crpv-council-editorial-headline {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--crpv-ink);
+  margin: 0 0 14px;
+  max-width: 600px;
+}
+
+.crpv-council-editorial-context {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--crpv-ink-soft);
+  opacity: 0.75;
+  max-width: 560px;
+  margin: 0 0 18px;
+}
+
+.crpv-council-editorial-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  opacity: 0.55;
+}
+
+.crpv-council-editorial-badge {
+  font-family: var(--crpv-font-mono, monospace);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--crpv-ink-faint);
+}
+
+.crpv-council-editorial-badge-pending {
+  color: #92400e;
+}
+
+.crpv-council-editorial-badge-accepted {
+  color: #166534;
+}
+
+/* Dominant interpretation — the current center of strategic gravity */
+.crpv-council-editorial-featured {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-council-editorial-featured-label {
+  display: none;
+}
+
+.crpv-council-editorial-featured-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--crpv-ink);
+  line-height: 1.35;
+  margin: 0 0 10px;
+  max-width: 560px;
+}
+
+.crpv-council-editorial-featured-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--crpv-ink-soft);
+  margin: 0;
+  max-width: 540px;
+}
+
 /* ─── Council tab ────────────────────────────────────────────────────────── */
 
 .crpv-council-selector {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: 24px;
+  flex-wrap: wrap;
 }
 
 .crpv-council-selector-btn {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 14px;
-  background: var(--crpv-paper-2);
-  border: 1px solid var(--crpv-line);
+  padding: 0;
+  background: none;
+  border: none;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s;
+  opacity: 0.38;
+  transition: opacity 0.12s;
 }
 
 .crpv-council-selector-btn:hover {
-  border-color: var(--crpv-ink-soft);
+  opacity: 0.68;
 }
 
 .crpv-council-selector-btn.active {
-  border-color: var(--crpv-ink);
-  background: #fff;
+  opacity: 1;
 }
 
 .crpv-council-selector-name {
@@ -5174,6 +6553,21 @@
   line-height: 1.65;
 }
 
+/* Structured summary paragraphs — supporting texture, receded */
+.crpv-council-summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  opacity: 0.65;
+}
+
+.crpv-council-summary-para {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--crpv-ink-soft);
+  margin: 0;
+}
+
 .crpv-council-discussion details[open] > summary {
   margin-bottom: 10px;
 }
@@ -5184,39 +6578,61 @@
   font-size: 12.5px;
 }
 
-/* Status filter pills */
+/* Structured discussion paragraphs */
+.crpv-council-discussion-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.crpv-council-discussion-para {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--crpv-ink-soft);
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--crpv-line-soft);
+}
+
+.crpv-council-discussion-para:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+/* Status filters — typographic only, no tab-bar */
 .crpv-council-filters {
   display: flex;
-  gap: 6px;
+  gap: 20px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .crpv-council-filter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  padding: 4px 0;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--crpv-ink-soft);
+  color: var(--crpv-ink-faint);
   background: transparent;
-  border: 1px solid var(--crpv-line);
+  border: none;
   cursor: pointer;
-  transition: border-color 0.1s, color 0.1s;
+  transition: color 0.1s;
+  opacity: 0.55;
 }
 
 .crpv-council-filter:hover {
-  border-color: var(--crpv-ink-soft);
-  color: var(--crpv-ink);
+  opacity: 0.8;
+  color: var(--crpv-ink-soft);
 }
 
 .crpv-council-filter.active {
-  border-color: var(--crpv-ink);
   color: var(--crpv-ink);
-  background: var(--crpv-paper-2);
+  opacity: 1;
+  letter-spacing: 0.06em;
 }
 
 .crpv-council-filter-count {
@@ -5228,16 +6644,17 @@
 .crpv-council-recs {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 
 .crpv-council-rec {
-  border: 1px solid var(--crpv-line);
-  background: var(--crpv-paper);
-  padding: 16px;
+  border: none;
+  border-top: 1px solid var(--crpv-line);
+  background: transparent;
+  padding: 20px 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .crpv-council-rec-accepted {
@@ -5248,6 +6665,19 @@
   opacity: 0.55;
 }
 
+.crpv-council-rec-persistent {
+  border-left: 2px solid #b06a3c;
+  padding-left: 14px;
+}
+
+.crpv-council-rec-persistent .crpv-council-rec-title {
+  font-style: italic;
+}
+
+.crpv-council-rec-persistent .crpv-council-rec-date {
+  color: #b06a3c;
+}
+
 .crpv-council-rec-hd {
   display: flex;
   align-items: flex-start;
@@ -5256,10 +6686,10 @@
 }
 
 .crpv-council-rec-title {
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--crpv-ink);
-  line-height: 1.35;
+  line-height: 1.4;
   flex: 1;
 }
 
@@ -5274,17 +6704,18 @@
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 8px;
   letter-spacing: 0.12em;
-  padding: 2px 6px;
-  border: 1px solid var(--crpv-line);
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
-.crpv-council-priority-high   { border-color: #fca5a5; background: #fef2f2; color: #b91c1c; }
-.crpv-council-priority-medium { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
-.crpv-council-priority-low    { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+.crpv-council-priority-high   { color: #b91c1c; }
+.crpv-council-priority-medium { color: #92400e; }
+.crpv-council-priority-low    { color: #166534; }
 
-.crpv-council-status-pending  { border-color: #fde68a; background: #fffbeb; color: #92400e; }
-.crpv-council-status-accepted { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-.crpv-council-status-ignored  { border-color: var(--crpv-line); background: var(--crpv-paper-2); color: var(--crpv-ink-faint); }
+.crpv-council-status-pending  { color: #92400e; }
+.crpv-council-status-accepted { color: #166534; }
+.crpv-council-status-ignored  { color: var(--crpv-ink-faint); }
 
 .crpv-council-rec-meta {
   font-family: "JetBrains Mono", ui-monospace, monospace;
@@ -5295,16 +6726,17 @@
 }
 
 .crpv-council-rec-body {
-  font-size: 13px;
-  color: var(--crpv-ink);
-  line-height: 1.6;
+  font-size: 13.5px;
+  color: var(--crpv-ink-soft);
+  line-height: 1.7;
   margin: 0;
 }
 
 .crpv-council-rationale {
-  background: var(--crpv-paper-2);
-  border: 1px solid var(--crpv-line-soft);
-  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--crpv-line);
+  padding: 4px 0 4px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -5322,10 +6754,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-top: 1px solid var(--crpv-line-soft);
-  padding-top: 10px;
-  margin-top: 4px;
+  padding-top: 6px;
+  margin-top: 2px;
   flex-wrap: wrap;
+  opacity: 0.38;
+  transition: opacity 0.18s;
+}
+
+.crpv-council-rec:hover .crpv-council-rec-footer {
+  opacity: 1;
 }
 
 .crpv-council-rec-date {
@@ -5346,30 +6783,28 @@
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  padding: 5px 10px;
+  padding: 0;
   cursor: pointer;
-  border: 1px solid var(--crpv-line);
+  border: none;
   background: transparent;
-  color: var(--crpv-ink-soft);
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  color: var(--crpv-ink-faint);
+  text-decoration: underline;
+  transition: color 0.1s;
 }
 
 .crpv-council-action-accept:hover:not(:disabled) {
-  border-color: #22c55e;
   color: #166534;
 }
 
 .crpv-council-action-accept.active,
 .crpv-council-action-accept:disabled {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
   color: #166534;
   opacity: 0.7;
   cursor: default;
 }
 
 .crpv-council-action-ignore:hover:not(:disabled) {
-  border-color: var(--crpv-ink-soft);
+  color: var(--crpv-ink-soft);
   color: var(--crpv-ink);
 }
 
@@ -6055,15 +7490,15 @@
   -webkit-mask-image: linear-gradient(
     to right,
     transparent 0%,
-    black 4%,
-    black 96%,
+    black 2%,
+    black 97%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to right,
     transparent 0%,
-    black 4%,
-    black 96%,
+    black 2%,
+    black 97%,
     transparent 100%
   );
 }
@@ -6125,13 +7560,79 @@
 }
 
 .crpv-ws-jobmap-tile.active {
-  border-color: var(--crpv-ink-soft);
+  border-color: #7a9db0;
+  border-top-width: 2px;
   transform: translateY(-2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.09);
 }
 
 .crpv-ws-jobmap-tile.active .crpv-ws-jobmap-tile-name {
   font-weight: 600;
+}
+
+.crpv-ws-jobmap-tile:hover:not(.active):not(.suggested) {
+  border-color: #c4cdd4;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.crpv-ws-jobmap-tile.inactive {
+  opacity: 0.45;
+  transition: opacity 0.2s;
+}
+
+.crpv-ws-jobmap-tile.has-gap {
+  border-left-color: #e8a317;
+  border-left-width: 2px;
+}
+
+.crpv-ws-jobmap-tile-posture {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.crpv-ws-jobmap-tile-signal {
+  font-size: 11px;
+  color: var(--crpv-ink-soft);
+  margin: 1px 0 0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.crpv-ws-jobmap-tile.route-linked {
+  border-left-color: #3b82f6;
+  border-left-width: 2px;
+}
+
+.crpv-ws-jobmap-tile-ctx {
+  font-size: 11px;
+  color: #2563eb;
+  margin: 3px 0 0;
+  line-height: 1.35;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.crpv-ws-jobmap-tile.synthetic {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.crpv-ws-jobmap-tile.synthetic .crpv-ws-jobmap-tile-ctx {
+  color: #9ca3af;
+  font-style: italic;
 }
 
 .crpv-ws-jobmap-tile-hd {
@@ -6163,10 +7664,15 @@
   color: var(--crpv-ink);
   margin: 0;
   line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .crpv-ws-jobmap-tile.suggested .crpv-ws-jobmap-tile-name {
   font-weight: 600;
+  -webkit-line-clamp: 5;
 }
 
 .crpv-ws-jobmap-tile-status {
@@ -6216,11 +7722,12 @@
 }
 
 /* Scoped rule wins over .crpv-page .cap (0,2,0) for margin.
-   Negative horizontal margins cancel the tile's 13px padding so dashes run edge-to-edge. */
+   Negative horizontal margins cancel the tile's 13px padding so dashes run edge-to-edge.
+   Negative top margin cancels the parent flex gap so the divider sits flush. */
 .crpv-ws-jobmap-tile.suggested .crpv-ws-jobmap-tile-focus {
   font-weight: 500;
   color: var(--crpv-ink-soft);
-  margin: 16px -13px 0;
+  margin: -5px -13px 0;
   border-top: 1px dashed var(--crpv-line);
   padding: 10px 13px 8px;
   background: #fff;
@@ -6296,6 +7803,13 @@
   font-size: 11px;
   color: var(--crpv-ink-soft);
   line-height: 1.4;
+}
+
+.crpv-ws-jobmap-tile-cap-item span:last-child {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* "Routes that could help" — suggested tile only */
@@ -6435,6 +7949,37 @@
 }
 
 @media (max-width: 980px) {
+  .crpv-pressure-field {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "alert"
+      "commitment"
+      "instability"
+      "validation"
+      "actions";
+    gap: 18px;
+  }
+
+  .crpv-pressure-region-instability {
+    padding-left: 0;
+    padding-top: 0;
+    border-left: 0;
+    border-top: 1px solid var(--crpv-line-soft);
+  }
+
+  .crpv-pressure-region-commitment {
+    padding: 18px 18px 20px;
+  }
+
+  .crpv-pressure-anchor-headline {
+    max-width: 16ch;
+    font-size: clamp(1.9rem, 8.2vw, 2.8rem);
+  }
+
+  .crpv-pressure-validation-columns {
+    grid-template-columns: 1fr;
+  }
+
   .crpv-hypotheses-section,
   .crpv-reconciliation-section,
   .crpv-movement-section,
@@ -6446,4 +7991,156 @@
   .crpv-hypothesis-summary {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 1180px) {
+  .crpv-pressure-field {
+    grid-template-columns: minmax(0, 1.18fr) minmax(280px, 0.82fr);
+    gap: 16px 22px;
+  }
+
+  .crpv-pressure-anchor-headline {
+    max-width: 17ch;
+    font-size: clamp(1.9rem, 4vw, 3rem);
+  }
+}
+
+/* ─── Operating mode differentiation ────────────────────────────────────────────
+   Density, pacing, and emphasis vary by mode. Spacing and visual weight shift to
+   match the executive posture of each mode. Scan suppresses low-signal sections.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* SCAN — fast, compressed, high-signal */
+.crpv-stage.mode-scan.state-command .crpv-command-layer,
+.crpv-stage.mode-scan.state-drawer .crpv-command-layer {
+  padding-top: clamp(26px, 3.5vh, 52px);
+  padding-bottom: clamp(72px, 11vh, 140px);
+}
+
+.crpv-stage.mode-scan .crpv-action {
+  margin-top: 10px;
+  font-size: clamp(38px, 5vw, 50px);
+}
+
+.crpv-stage.mode-scan .crpv-action-support {
+  font-size: 14px;
+  margin-top: 12px;
+}
+
+.crpv-stage.mode-scan .crpv-movement-section {
+  display: none;
+}
+
+.crpv-stage.mode-scan .crpv-confidence-secondary {
+  display: none;
+}
+
+/* DIAGNOSE — investigative, standard density — no overrides needed */
+
+/* DECIDE — commitment-oriented, deliberate pacing */
+.crpv-stage.mode-decide .crpv-cta-row {
+  margin-top: 52px;
+  gap: 14px;
+}
+
+.crpv-stage.mode-decide .crpv-meta-row {
+  margin-top: 40px;
+}
+
+/* MONITOR — stable, movement-aware, calm */
+.crpv-stage.mode-monitor .crpv-cta-row {
+  margin-top: 28px;
+  opacity: 0.42;
+}
+
+.crpv-stage.mode-monitor .crpv-meta-row .meta .v {
+  font-size: 17px;
+  font-weight: 420;
+}
+
+/* ── Job Map horizontal tab bar ─────────────────────────────────────────────── */
+.crpv-jobmap-tabbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(17,17,17,0.1);
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.crpv-jobmap-tabbar::-webkit-scrollbar { display: none; }
+
+.crpv-jobmap-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+  flex-shrink: 0;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.crpv-jobmap-tab:hover .crpv-jobmap-tab-label {
+  color: #111111;
+}
+.crpv-jobmap-tab.active {
+  border-bottom-color: #ff5b29;
+}
+.crpv-jobmap-tab.active .crpv-jobmap-tab-label {
+  color: #111111;
+  font-weight: 700;
+}
+.crpv-jobmap-tab-num {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 8px;
+  color: rgba(17,17,17,0.3);
+  letter-spacing: 0.1em;
+  line-height: 1;
+}
+.crpv-jobmap-tab-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(17,17,17,0.4);
+  line-height: 1.2;
+}
+.crpv-jobmap-tab.active .crpv-jobmap-tab-num {
+  color: rgba(17,17,17,0.5);
+}
+
+/* Job Map detail panel */
+.crpv-jobmap-detail {
+  flex: 1;
+}
+
+/* Homepage sidebar layout — reuses crpv-ws-body flex row */
+.crpv-homepage-sidebar-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: calc(100dvh - 72px);
+}
+.crpv-homepage-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Cancel the 100vw breakout trick — not needed when content is already a constrained column */
+.crpv-homepage-content .crpv-homepage-hierarchy {
+  width: 100%;
+  margin-left: 0;
+}
+
+/* Workshop hierarchy — white canvas behind all tab panels */
+.crpv-workshop-page.has-hierarchy .crpv-ws-content {
+  background: #ffffff;
 }

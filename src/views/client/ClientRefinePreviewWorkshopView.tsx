@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
+import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
 
 import PositioningOrgPanel from "./workshop/tabs/PositioningOrgPanel";
 import StrategyOrgPanel from "./workshop/tabs/StrategyOrgPanel";
@@ -28,6 +29,7 @@ import NeedsOrgPanel from "./workshop/tabs/NeedsOrgPanel";
 import InputsTab from "./workshop/tabs/InputsTab";
 import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
+import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import { StrategyCompare, PositioningCompare } from "./workshop/tabs/ComparePanel";
 import { PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
 import "@/styles/client-refine-preview.css";
@@ -48,6 +50,7 @@ import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClient
 import { detectStrategicThemes, normalizeAuthorityPhase } from "@/lib/signalAuthority";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { deriveStrategicTensions } from "@/lib/tensionDerivation";
+import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -406,6 +409,9 @@ export default function ClientRefinePreviewWorkshopView() {
   const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
 
+  const workshopHasHierarchy = routes.some((r) => r.level === "route");
+  const unroutedCount = routes.filter((r) => r.parent_id == null && r.level !== "route").length;
+
   const initialTab = (searchParams.get("tab") as WorkshopTab | null) ?? "positioning";
 
   const [activeTab,   setActiveTab]   = useState<WorkshopTab>(initialTab);
@@ -555,6 +561,14 @@ export default function ClientRefinePreviewWorkshopView() {
     [routes, needs, positioning, strategy, sourceSignals],
   );
 
+  const readiness = useMemo(
+    () => buildReadinessFromCompanySignals({
+      mojoScore:      activeCompany?.mojo_score,
+      evidenceStatus: activeCompany?.evidence_status,
+    }),
+    [activeCompany?.mojo_score, activeCompany?.evidence_status],
+  );
+
   const fieldCondition = deriveFieldCondition({
     mojoScore: Number(activeCompany?.mojo_score ?? 0),
     confidenceLevel: confidence.level,
@@ -668,7 +682,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .filter((n) => n.service_state === "underserved" && n.importance >= 7)
       .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
     if (topUnderserved?.desired_outcome) {
-      const o = String(topUnderserved.desired_outcome);
+      const o = humanizeOdiStatement(String(topUnderserved.desired_outcome));
       return o.length > 90 ? o.slice(0, 90) + "…" : o;
     }
     return null;
@@ -708,7 +722,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .filter((n) => n.service_state === "underserved" && n.importance >= 7)
       .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
     if (topUnderserved?.desired_outcome) {
-      const o = String(topUnderserved.desired_outcome);
+      const o = humanizeOdiStatement(String(topUnderserved.desired_outcome));
       return o.length > 100 ? o.slice(0, 100) + "…" : o;
     }
     return null;
@@ -965,7 +979,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const TABS: { key: WorkshopTab; label: string }[] = [
     { key: "routes",      label: "Routes" },
     { key: "council",     label: "Council" },
-    { key: "needs",       label: "Needs" },
+    { key: "needs",       label: "Opportunities" },
     { key: "strategy",    label: "Strategy" },
     { key: "positioning", label: "Positioning" },
     { key: "jobmap",      label: "Job Map" },
@@ -1010,6 +1024,8 @@ export default function ClientRefinePreviewWorkshopView() {
           signals={sourceSignals}
           updateTextField={updatePosTextField}
           updateItemsField={updatePosItemsField}
+          hasHierarchy={workshopHasHierarchy}
+          unroutedCount={unroutedCount}
         />
       </>
     );
@@ -1022,6 +1038,8 @@ export default function ClientRefinePreviewWorkshopView() {
         routes={filteredRoutes}
         activeStep={activeStep}
         activeRoute={activeRoute}
+        hasHierarchy={workshopHasHierarchy}
+        needs={filteredNeeds}
       />
     );
     if (activeTab === "strategy") {
@@ -1045,6 +1063,7 @@ export default function ClientRefinePreviewWorkshopView() {
         directionContextNote={stratRouteNote ?? strategyContextNote}
         updateNarrativeField={updateNarrativeField}
         updateListField={updateListField}
+        hasHierarchy={workshopHasHierarchy}
       />
       );
     }
@@ -1086,6 +1105,7 @@ export default function ClientRefinePreviewWorkshopView() {
               currentPhase={activeCompany?.engagement_phase}
               reviewNeedId={pendingReviewNeedId}
               onReviewNeedHandled={() => setPendingReviewNeedId(null)}
+              hasHierarchy={workshopHasHierarchy}
             />
             {!odiLoading && filteredNeeds.length === 0 && (
               <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
@@ -1163,7 +1183,7 @@ export default function ClientRefinePreviewWorkshopView() {
   }
 
   return (
-    <section className="crpv-page crpv-workshop-page">
+    <section className={`crpv-page crpv-workshop-page${workshopHasHierarchy ? " has-hierarchy" : ""}`}>
       <header className="crpv-header">
         <div className="left">
           <b>Mojo</b>
@@ -1174,15 +1194,6 @@ export default function ClientRefinePreviewWorkshopView() {
             onSelect={(id) => { setActiveCompanyId(id); setShowCompare(false); }}
             suffix="· WORKSHOP"
           />
-          {isAdmin && (
-            <button type="button" className="btn ghost" onClick={() => setShowCreateClient((current) => !current)}>
-              {showCreateClient ? "Close add client" : "+ Add client"}
-            </button>
-          )}
-        </div>
-        <div className="crpv-header-tools">
-          <button type="button" className="btn ghost" onClick={goToRefineHome}>← Refine Home</button>
-          <button type="button" className="btn ghost crpv-main-site-btn" onClick={goToMainSite}>← Main site</button>
         </div>
       </header>
 
@@ -1235,16 +1246,19 @@ export default function ClientRefinePreviewWorkshopView() {
         </section>
       )}
 
-      <ScoreContextBar
-        currentScore={Math.round(Number(activeCompany?.mojo_score ?? 0))}
-        reachableScore={Math.round(Number(activeCompany?.potential_score ?? 0))}
-        unlockableScore={Math.round(Number(activeCompany?.projected_score ?? 0))}
-        routesCount={routes.length}
-        confidenceLabel={confidence.level}
-      />
+      {!routes.some((r) => r.level === "route") && (
+        <ScoreContextBar
+          currentScore={readiness.currentReadiness}
+          reachableScore={readiness.nearTermPotential}
+          unlockableScore={readiness.structuralUpside}
+          routesCount={routes.length}
+          confidenceLabel={readiness.postureLabel}
+          ceilingReason={readiness.ceilingReason}
+        />
+      )}
 
-      {/* ── Strategic State Region — persistent across all tab navigation ── */}
-      <div style={{
+      {/* ── Strategic State Region — hidden for hierarchy clients ── */}
+      {!workshopHasHierarchy && <div style={{
         padding: "20px 24px 18px",
         background: "#f2f6f4",
         borderBottom: "2px solid #d8e8e1",
@@ -1297,39 +1311,17 @@ export default function ClientRefinePreviewWorkshopView() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       <div className="crpv-ws-body">
-      <nav className="crpv-ws-tabs">
-        {TABS.map((tab) => {
-          const isAffected = false;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              data-tab={tab.key}
-              className={`crpv-ws-tab${activeTab === tab.key ? " active" : ""}${isAffected ? " crpv-ws-tab-affected" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-              title={isAffected ? "Affected by excluded outside signals" : undefined}
-            >
-              {tab.label}
-              {isAffected && <span className="crpv-ws-tab-warn-dot" aria-hidden="true">⚠</span>}
-            </button>
-          );
-        })}
-        {activeTab !== "council" && activeTab !== "jobmap" && activeTab !== "routes" && activeTab !== "inputs" && (
-          <button
-            type="button"
-            className={`crpv-ws-tab crpv-ws-compare-toggle${showCompare ? " active" : ""}`}
-            onClick={() => setShowCompare((v) => !v)}
-            title="Compare with outside signals"
-          >
-            {showCompare ? "Hide compare" : "Compare ⇄"}
-          </button>
-        )}
-      </nav>
+      <WorkshopSidebar
+        activeTab={activeTab}
+        onTabClick={(tab) => setActiveTab(tab as WorkshopTab)}
+        onHome={goToRefineHome}
+        onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
+      />
       <div className="crpv-ws-content-col">
-      {(threadStabilizing || threadUnresolved || threadShifting) && (
+      {!workshopHasHierarchy && (threadStabilizing || threadUnresolved || threadShifting) && (
         <div style={{
           display: "flex",
           alignItems: "stretch",
@@ -1397,12 +1389,13 @@ export default function ClientRefinePreviewWorkshopView() {
             companyName={activeCompany?.name}
             socialNeeds={needs.filter((n) => String(n.source_path).startsWith("social_"))}
             onAdded={() => setNeedsRefreshKey((k) => k + 1)}
+            hasHierarchy={workshopHasHierarchy}
           />
         </div>
       ) : activeTab === "council" ? (
         <div className="crpv-ws-content">
           {companyId ? (
-            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} tensions={councilTensions} />
+            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} tensions={councilTensions} hasHierarchy={workshopHasHierarchy} />
           ) : (
             <div className="crpv-ws-placeholder">Select a company to run the council.</div>
           )}
@@ -1469,6 +1462,8 @@ export default function ClientRefinePreviewWorkshopView() {
             activeStep={activeStep}
             activeRoute={activeRoute}
             routesReady={!nextBestMove || nextBestMove.type === "start_route"}
+            hasHierarchy={workshopHasHierarchy}
+            needs={filteredNeeds}
             headerControls={
               <button
                 type="button"
