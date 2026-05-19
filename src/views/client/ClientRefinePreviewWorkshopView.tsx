@@ -18,10 +18,10 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useSignalExclusion } from "@/hooks/useSignalExclusion";
 import { computeExclusionImpact, computeLatestExclusionAt } from "@/lib/evidenceImpact";
 import { supabase } from "@/integrations/supabase/client";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
-import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
+
 
 import PositioningOrgPanel from "./workshop/tabs/PositioningOrgPanel";
 import StrategyOrgPanel from "./workshop/tabs/StrategyOrgPanel";
@@ -51,9 +51,21 @@ import { detectStrategicThemes, normalizeAuthorityPhase } from "@/lib/signalAuth
 import { inferStrategicCenter } from "@/lib/strategicCenter";
 import { deriveStrategicTensions } from "@/lib/tensionDerivation";
 import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
+import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
+import type { ClaimState } from "@/lib/claimState";
+import { useSignalLandscape } from "@/hooks/useSignalLandscape";
+import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function stageLabel(value: string) {
+  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "outside signals";
+  if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
+  if (value === "focus" || value === "validate_focus") return "focus";
+  if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
+  return "diagnose";
 }
 
 function sanitizeWebsite(url?: string) {
@@ -450,6 +462,13 @@ export default function ClientRefinePreviewWorkshopView() {
   const { preferredRun: baselineRun, loading: baselineLoading } = usePublicBaseline(companyId);
   const baseline = baselineOf(baselineRun);
 
+  const { landscape: workshopSignalLandscape } = useSignalLandscape(companyId);
+  const workshopSignalBasis: SignalBasis | undefined = workshopSignalLandscape ? {
+    publicCount:   workshopSignalLandscape.byBand.outside.count,
+    teamCount:     workshopSignalLandscape.byBand.organization.count,
+    customerCount: workshopSignalLandscape.byBand.customer.count,
+  } : undefined;
+
   const exclusionImpact = useMemo(
     () => computeExclusionImpact(baseline?.evidence_ledger ?? [], signalExclusion.excludedSet, ARTIFACT_TO_TAB),
     [baseline?.evidence_ledger, signalExclusion.excludedSet],
@@ -460,13 +479,38 @@ export default function ClientRefinePreviewWorkshopView() {
     [signalExclusion.excluded],
   );
 
+  const [posRefreshKey, setPosRefreshKey] = useState(0);
+  const [posReEvalLoading, setPosReEvalLoading] = useState(false);
+
+  const handlePosReEvaluate = useCallback(async () => {
+    if (!companyId) return;
+    setPosReEvalLoading(true);
+    await supabase.functions.invoke("evaluate-positioning-alignment", {
+      body: { company_id: companyId },
+    });
+    setPosReEvalLoading(false);
+    setPosRefreshKey((k) => k + 1);
+  }, [companyId]);
+
+  const [odiReEvalLoadingId, setOdiReEvalLoadingId] = useState<string | null>(null);
+
+  const handleNeedReEvaluate = useCallback(async (needId: string) => {
+    if (!companyId) return;
+    setOdiReEvalLoadingId(needId);
+    await supabase.functions.invoke("evaluate-opportunity-alignment", {
+      body: { need_id: needId, company_id: companyId },
+    });
+    setOdiReEvalLoadingId(null);
+    setNeedsRefreshKey((k) => k + 1);
+  }, [companyId]);
+
   const {
     loading: posLoading,
     item: positioning,
     error: posError,
     updateTextField: updatePosTextField,
     updateItemsField: updatePosItemsField,
-  } = usePositioningCanvas(companyId);
+  } = usePositioningCanvas(companyId, posRefreshKey);
 
   const {
     loading: stratLoading,
@@ -534,6 +578,22 @@ export default function ClientRefinePreviewWorkshopView() {
     error: odiError,
     updateNeedScores,
   } = useOdiNeeds(companyId, needsRefreshKey);
+
+  const { claims: workshopClaimsMap } = useCompanyClaims(companyId);
+
+  const workshopTopLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
+
+  const workshopDominantClaimState = useMemo((): ClaimState | null => {
+    if (!workshopHasHierarchy || workshopTopLevelRoutes.length === 0) return null;
+    const order: ClaimState[] = ["flow", "focus", "diagnose", "outside_view"];
+    const states = workshopTopLevelRoutes
+      .map((r) => (r as { claim_id?: string | null }).claim_id
+        ? (workshopClaimsMap.get((r as { claim_id?: string | null }).claim_id!)?.state ?? null)
+        : null)
+      .filter((s): s is ClaimState => s !== null);
+    for (const s of order) { if (states.includes(s)) return s; }
+    return states[0] ?? null;
+  }, [workshopHasHierarchy, workshopTopLevelRoutes, workshopClaimsMap]);
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
   const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
@@ -682,7 +742,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .filter((n) => n.service_state === "underserved" && n.importance >= 7)
       .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
     if (topUnderserved?.desired_outcome) {
-      const o = humanizeOdiStatement(String(topUnderserved.desired_outcome));
+      const o = String(topUnderserved.desired_outcome);
       return o.length > 90 ? o.slice(0, 90) + "…" : o;
     }
     return null;
@@ -722,7 +782,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .filter((n) => n.service_state === "underserved" && n.importance >= 7)
       .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0))[0];
     if (topUnderserved?.desired_outcome) {
-      const o = humanizeOdiStatement(String(topUnderserved.desired_outcome));
+      const o = String(topUnderserved.desired_outcome);
       return o.length > 100 ? o.slice(0, 100) + "…" : o;
     }
     return null;
@@ -1026,6 +1086,9 @@ export default function ClientRefinePreviewWorkshopView() {
           updateItemsField={updatePosItemsField}
           hasHierarchy={workshopHasHierarchy}
           unroutedCount={unroutedCount}
+          signalBasis={workshopSignalBasis}
+          onReEvaluate={handlePosReEvaluate}
+          reEvalLoading={posReEvalLoading}
         />
       </>
     );
@@ -1040,6 +1103,7 @@ export default function ClientRefinePreviewWorkshopView() {
         activeRoute={activeRoute}
         hasHierarchy={workshopHasHierarchy}
         needs={filteredNeeds}
+        signalBasis={workshopSignalBasis}
       />
     );
     if (activeTab === "strategy") {
@@ -1064,6 +1128,8 @@ export default function ClientRefinePreviewWorkshopView() {
         updateNarrativeField={updateNarrativeField}
         updateListField={updateListField}
         hasHierarchy={workshopHasHierarchy}
+        signalBasis={workshopSignalBasis}
+        claimsMap={workshopClaimsMap}
       />
       );
     }
@@ -1106,6 +1172,9 @@ export default function ClientRefinePreviewWorkshopView() {
               reviewNeedId={pendingReviewNeedId}
               onReviewNeedHandled={() => setPendingReviewNeedId(null)}
               hasHierarchy={workshopHasHierarchy}
+              signalBasis={workshopSignalBasis}
+              onReEvaluate={handleNeedReEvaluate}
+              reEvalLoadingId={odiReEvalLoadingId}
             />
             {!odiLoading && filteredNeeds.length === 0 && (
               <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
@@ -1149,7 +1218,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <div className="crpv-ws-cmp-support-col">
             {odiError
               ? <div className="crpv-ws-placeholder crpv-ws-error cap">Query error: {odiError}</div>
-              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} reviewNeedId={pendingReviewNeedId} onReviewNeedHandled={() => setPendingReviewNeedId(null)} />
+              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} reviewNeedId={pendingReviewNeedId} onReviewNeedHandled={() => setPendingReviewNeedId(null)} onReEvaluate={handleNeedReEvaluate} reEvalLoadingId={odiReEvalLoadingId} />
             }
           </div>
         </div>
@@ -1187,13 +1256,19 @@ export default function ClientRefinePreviewWorkshopView() {
       <header className="crpv-header">
         <div className="left">
           <b>Mojo</b>
-          <CompanySwitcher
-            activeCompany={activeCompany}
-            companies={companies}
-            loading={companiesLoading}
-            onSelect={(id) => { setActiveCompanyId(id); setShowCompare(false); }}
-            suffix="· WORKSHOP"
-          />
+          {workshopHasHierarchy ? (
+            <span className="cap">
+              [{activeCompany?.name?.toUpperCase() || "COMPANY"}] · DAY 52 · {workshopDominantClaimState ? workshopDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(activeCompany?.engagement_phase ?? "diagnose").toUpperCase()}
+            </span>
+          ) : (
+            <CompanySwitcher
+              activeCompany={activeCompany}
+              companies={companies}
+              loading={companiesLoading}
+              onSelect={(id) => { setActiveCompanyId(id); setShowCompare(false); }}
+              suffix="· WORKSHOP"
+            />
+          )}
         </div>
       </header>
 
@@ -1319,6 +1394,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onTabClick={(tab) => setActiveTab(tab as WorkshopTab)}
         onHome={goToRefineHome}
         onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
+        onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
       />
       <div className="crpv-ws-content-col">
       {!workshopHasHierarchy && (threadStabilizing || threadUnresolved || threadShifting) && (
@@ -1387,15 +1463,17 @@ export default function ClientRefinePreviewWorkshopView() {
           <InputsTab
             companyId={companyId ?? null}
             companyName={activeCompany?.name}
+            companyWebsite={activeCompany?.website ?? undefined}
             socialNeeds={needs.filter((n) => String(n.source_path).startsWith("social_"))}
             onAdded={() => setNeedsRefreshKey((k) => k + 1)}
             hasHierarchy={workshopHasHierarchy}
+            signalBasis={workshopSignalBasis}
           />
         </div>
       ) : activeTab === "council" ? (
         <div className="crpv-ws-content">
           {companyId ? (
-            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} tensions={councilTensions} hasHierarchy={workshopHasHierarchy} />
+            <WorkshopCouncilTab companyId={companyId} companyName={activeCompany?.name ?? ""} tensions={councilTensions} hasHierarchy={workshopHasHierarchy} signalBasis={workshopSignalBasis} />
           ) : (
             <div className="crpv-ws-placeholder">Select a company to run the council.</div>
           )}

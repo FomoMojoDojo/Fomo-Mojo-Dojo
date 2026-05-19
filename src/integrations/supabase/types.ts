@@ -416,6 +416,7 @@ export type Database = {
           selected_route_id: string | null
           selected_route_summary_json: Json
           selected_route_updated_at: string | null
+          strategic_problem_brief: string | null
           tier: number
           website: string | null
         }
@@ -443,6 +444,7 @@ export type Database = {
           selected_route_id?: string | null
           selected_route_summary_json?: Json
           selected_route_updated_at?: string | null
+          strategic_problem_brief?: string | null
           tier?: number
           website?: string | null
         }
@@ -470,6 +472,7 @@ export type Database = {
           selected_route_id?: string | null
           selected_route_summary_json?: Json
           selected_route_updated_at?: string | null
+          strategic_problem_brief?: string | null
           tier?: number
           website?: string | null
         }
@@ -1484,6 +1487,7 @@ export type Database = {
           journey_key: string
           last_reviewed_at: string | null
           notes: string | null
+          odi_canonical_statement: string | null
           opportunity_score: number
           satisfaction: number
           service_state: string
@@ -1496,6 +1500,9 @@ export type Database = {
           stale_since_event_id: string | null
           step_label: string
           step_number: number
+          strategy_alignment: string | null
+          strategy_alignment_evaluated_at: string | null
+          strategy_alignment_reason: string | null
           tier: string
           updated_at: string
           user_id: string
@@ -1513,6 +1520,7 @@ export type Database = {
           journey_key?: string
           last_reviewed_at?: string | null
           notes?: string | null
+          odi_canonical_statement?: string | null
           opportunity_score?: number
           satisfaction?: number
           service_state?: string
@@ -1525,6 +1533,9 @@ export type Database = {
           stale_since_event_id?: string | null
           step_label?: string
           step_number?: number
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           tier?: string
           updated_at?: string
           user_id: string
@@ -1542,6 +1553,7 @@ export type Database = {
           journey_key?: string
           last_reviewed_at?: string | null
           notes?: string | null
+          odi_canonical_statement?: string | null
           opportunity_score?: number
           satisfaction?: number
           service_state?: string
@@ -1554,6 +1566,9 @@ export type Database = {
           stale_since_event_id?: string | null
           step_label?: string
           step_number?: number
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           tier?: string
           updated_at?: string
           user_id?: string
@@ -1670,6 +1685,9 @@ export type Database = {
           id: string
           market_category: string
           proposed_tagline: string
+          strategy_alignment: string | null
+          strategy_alignment_evaluated_at: string | null
+          strategy_alignment_reason: string | null
           unique_attributes_json: Json
           updated_at: string
           user_id: string
@@ -1686,6 +1704,9 @@ export type Database = {
           id?: string
           market_category?: string
           proposed_tagline?: string
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           unique_attributes_json?: Json
           updated_at?: string
           user_id: string
@@ -1702,6 +1723,9 @@ export type Database = {
           id?: string
           market_category?: string
           proposed_tagline?: string
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           unique_attributes_json?: Json
           updated_at?: string
           user_id?: string
@@ -1940,6 +1964,9 @@ export type Database = {
           stale_reason: string | null
           stale_since_event_id: string | null
           steps_json: Json
+          strategy_alignment: string | null
+          strategy_alignment_evaluated_at: string | null
+          strategy_alignment_reason: string | null
           title: string
           type: string
           updated_at: string
@@ -1970,6 +1997,9 @@ export type Database = {
           stale_reason?: string | null
           stale_since_event_id?: string | null
           steps_json?: Json
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           title?: string
           type?: string
           updated_at?: string
@@ -2000,6 +2030,9 @@ export type Database = {
           stale_reason?: string | null
           stale_since_event_id?: string | null
           steps_json?: Json
+          strategy_alignment?: string | null
+          strategy_alignment_evaluated_at?: string | null
+          strategy_alignment_reason?: string | null
           title?: string
           type?: string
           updated_at?: string
@@ -2045,6 +2078,7 @@ export type Database = {
           id: string
           raw_payload: Json
           recency: string | null
+          relevance_state: string
           signal_band: string
           source_id: string | null
           source_title: string | null
@@ -2068,6 +2102,7 @@ export type Database = {
           id?: string
           raw_payload?: Json
           recency?: string | null
+          relevance_state?: string
           signal_band: string
           source_id?: string | null
           source_title?: string | null
@@ -2091,6 +2126,7 @@ export type Database = {
           id?: string
           raw_payload?: Json
           recency?: string | null
+          relevance_state?: string
           signal_band?: string
           source_id?: string | null
           source_title?: string | null
@@ -2107,6 +2143,76 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      surface_proposals: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          current_state: Json
+          id: string
+          proposed_state: Json
+          raw_payload: Json | null
+          reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          surface_id: string | null
+          surface_type: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          current_state?: Json
+          id?: string
+          proposed_state?: Json
+          raw_payload?: Json | null
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          surface_id?: string | null
+          surface_type: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          current_state?: Json
+          id?: string
+          proposed_state?: Json
+          raw_payload?: Json | null
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          surface_id?: string | null
+          surface_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "surface_proposals_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "surface_proposals_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "surface_proposals_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]

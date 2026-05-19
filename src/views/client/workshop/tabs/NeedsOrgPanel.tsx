@@ -6,9 +6,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { isArtifactStale } from "@/lib/evidenceImpact";
 import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
+import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
+import InspectionShell from "@/components/inspection/InspectionShell";
+import { useInspectionStack } from "@/hooks/useInspectionStack";
 import { SectionHeader } from "../primitives";
 import { getOutcomeFocus, setOutcomeFocus, clearOutcomeFocus } from "@/lib/activeOutcomeFocus";
 import { useAuth } from "@/hooks/useAuth";
+import { sanitizeStaleReason } from "@/lib/needDisplayLanguage";
+import { HierarchyPageShell } from "@/components/design-system/HierarchyPageShell";
+import { HierarchySectionHeader } from "@/components/design-system/HierarchySectionHeader";
+import { D } from "@/components/design-system/tokens";
+import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -88,6 +96,14 @@ function deriveUnknowns(needs: OdiNeedRow[]): string[] {
   return unknowns.slice(0, 4);
 }
 
+function deriveNeedRoleLabel(need: OdiNeedRow): string | null {
+  if (need.service_state === "underserved" && need.importance >= 8) return "Active tension";
+  if (need.service_state === "underserved" && need.importance >= 5) return "Emerging gap";
+  if (need.service_state === "served" && need.importance >= 7 && need.satisfaction <= 6) return "Proof gap";
+  if (need.service_state === "overserved" && need.importance <= 5) return "Over-invested";
+  return null;
+}
+
 // ── NeedRow ───────────────────────────────────────────────────────────────────
 
 function NeedRow({
@@ -100,10 +116,13 @@ function NeedRow({
   onScoreChange,
   onInspect,
   onFocus,
+  onReEvaluate,
+  reEvalLoading,
   isMuted,
   isHighlighted,
   isFocused,
   reviewState,
+  titleMode = "human",
 }: {
   need: OdiNeedRow;
   idx: number;
@@ -114,10 +133,13 @@ function NeedRow({
   onScoreChange: (id: string, imp: number, sat: number) => Promise<void>;
   onInspect?: () => void;
   onFocus?: () => void;
+  onReEvaluate?: () => void;
+  reEvalLoading?: boolean;
   isMuted: boolean;
   isHighlighted: boolean;
   isFocused: boolean;
   reviewState: boolean;
+  titleMode?: "human" | "canonical";
 }) {
   const [imp, setImp] = useState(need.importance);
   const [sat, setSat] = useState(need.satisfaction);
@@ -125,30 +147,116 @@ function NeedRow({
   useEffect(() => { setImp(need.importance); setSat(need.satisfaction); }, [need.importance, need.satisfaction]);
 
   const busy = reorderingId === need.id;
+  const oppWeight = need.opportunity_score >= 9
+    ? " crpv-ws-need-row-critical"
+    : need.opportunity_score >= 7
+      ? " crpv-ws-need-row-high"
+      : need.opportunity_score < 3
+        ? " crpv-ws-need-row-ambient"
+        : need.opportunity_score < 5
+          ? " crpv-ws-need-row-low"
+          : "";
+
+  const roleLabel = deriveNeedRoleLabel(need);
+  const isOffStrategy = need.strategy_alignment === "off_strategy";
+
+  const roleStyle: React.CSSProperties = {
+    ...(roleLabel === "Active tension"
+      ? { borderLeft: "3px solid #c47839", background: "#fdf9f6", paddingLeft: 9 }
+      : roleLabel === "Emerging gap"
+      ? { borderLeft: "2px solid #c4a039" }
+      : roleLabel === "Proof gap"
+      ? { borderLeft: "2px solid #6a7a9e" }
+      : roleLabel === "Over-invested"
+      ? { opacity: 0.5 }
+      : {}),
+    ...(isOffStrategy ? { opacity: isOffStrategy && roleLabel === "Over-invested" ? 0.5 : 0.58 } : {}),
+  };
 
   return (
     <div
-      className={`crpv-ws-need-row${busy ? " crpv-ws-need-moving" : ""}${isMuted ? " crpv-ws-need-muted" : ""}${isHighlighted ? " crpv-ws-need-match" : ""}`}
+      className={`crpv-ws-need-row${oppWeight}${busy ? " crpv-ws-need-moving" : ""}${isMuted ? " crpv-ws-need-muted" : ""}${isHighlighted ? " crpv-ws-need-match" : ""}`}
+      style={roleStyle}
+      data-depstate={need.dependency_state ?? undefined}
     >
       <span className="crpv-ws-need-num">{num}</span>
-      <div className="crpv-ws-need-outcome">
-        <span>{need.desired_outcome}</span>
-        {reviewState && (
-          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ ...MONO, color: "#b06a3c" }}>Needs review</span>
-            <span style={{ fontSize: 11, color: "#7d6a5c", lineHeight: 1.45 }}>
-              {need.stale_reason || "This need may need to be checked because the job map changed."}
-            </span>
+      <div className="crpv-ws-need-body">
+        <div className="crpv-ws-need-outcome">
+          <span>{titleMode === "canonical" ? (need.odi_canonical_statement ?? need.desired_outcome) : need.desired_outcome}</span>
+          {reviewState && (
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ ...MONO, color: "#b06a3c" }}>Needs review</span>
+              <span style={{ fontSize: 11, color: "#7d6a5c", lineHeight: 1.45 }}>
+                {sanitizeStaleReason(need.stale_reason)}
+              </span>
+            </div>
+          )}
+          {isOffStrategy && (
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ ...MONO, color: "#999" }}>OFF-STRATEGY · retained by choice</span>
+              {need.strategy_alignment_reason && (
+                <span style={{ fontSize: 11, color: "#aaa", lineHeight: 1.45, fontStyle: "italic" }}>
+                  {need.strategy_alignment_reason}
+                </span>
+              )}
+              {onReEvaluate && (
+                <button
+                  type="button"
+                  disabled={reEvalLoading}
+                  onClick={onReEvaluate}
+                  style={{ alignSelf: "flex-start", fontSize: 10, color: reEvalLoading ? "#ccc" : "#999", background: "none", border: "none", cursor: reEvalLoading ? "default" : "pointer", padding: 0, textDecoration: "underline" }}
+                >
+                  {reEvalLoading ? "Evaluating…" : "↻ Re-evaluate alignment"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="crpv-ws-need-annotation">
+          <div className="crpv-ws-need-scores">
+            <label className="crpv-ws-need-score-wrap">
+              <span className="crpv-ws-need-score-lbl cap">Imp</span>
+              <input
+                type="number" min={0} max={10}
+                className="crpv-ws-score-input"
+                value={imp}
+                onChange={(e) => setImp(Number(e.target.value))}
+                onBlur={() => onScoreChange(need.id, imp, sat)}
+              />
+            </label>
+            <label className="crpv-ws-need-score-wrap">
+              <span className="crpv-ws-need-score-lbl cap">Sat</span>
+              <input
+                type="number" min={0} max={10}
+                className="crpv-ws-score-input"
+                value={sat}
+                onChange={(e) => setSat(Number(e.target.value))}
+                onBlur={() => onScoreChange(need.id, imp, sat)}
+              />
+            </label>
+            <div className="crpv-ws-need-score-wrap">
+              <span className="crpv-ws-need-score-lbl cap">Opp</span>
+              <span className="crpv-ws-score-display">{need.opportunity_score}</span>
+            </div>
           </div>
-        )}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+          <span className={`crpv-ws-state-badge crpv-ws-state-${need.service_state}`}>
+            {STATE_LABEL[need.service_state] ?? need.service_state}
+          </span>
+          {roleLabel && (() => {
+            const roleColor =
+              roleLabel === "Active tension" ? "#b06a3c"
+              : roleLabel === "Emerging gap" ? "#8a6a3c"
+              : roleLabel === "Proof gap" ? "#5a5e6e"
+              : "#6e7e85";
+            return <span style={{ ...MONO, color: roleColor, fontSize: 9 }}>{roleLabel}</span>;
+          })()}
           {onFocus && (
             <button
               type="button"
-              style={{ fontSize: 10, color: isFocused ? "#5f9b8c" : "#888", textDecoration: "underline", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              style={{ fontSize: 10, color: isFocused ? "#5f9b8c" : "#999", textDecoration: "underline", background: "none", border: "none", cursor: "pointer", padding: 0 }}
               onClick={onFocus}
             >
-              {isFocused ? "Unfocus" : "Focus here"}
+              {isFocused ? "Unfocus" : "Focus"}
             </button>
           )}
           {onInspect && (
@@ -156,50 +264,21 @@ function NeedRow({
               Inspect →
             </button>
           )}
+          <div className="crpv-ws-reorder-btns">
+            <button
+              type="button" className="crpv-ws-reorder-btn"
+              disabled={idx === 0 || busy}
+              onClick={() => onMove(idx, "up")}
+              aria-label="Move up"
+            >▲</button>
+            <button
+              type="button" className="crpv-ws-reorder-btn"
+              disabled={idx === total - 1 || busy}
+              onClick={() => onMove(idx, "down")}
+              aria-label="Move down"
+            >▼</button>
+          </div>
         </div>
-      </div>
-      <div className="crpv-ws-need-scores">
-        <label className="crpv-ws-need-score-wrap">
-          <span className="crpv-ws-need-score-lbl cap">Imp</span>
-          <input
-            type="number" min={0} max={10}
-            className="crpv-ws-score-input"
-            value={imp}
-            onChange={(e) => setImp(Number(e.target.value))}
-            onBlur={() => onScoreChange(need.id, imp, sat)}
-          />
-        </label>
-        <label className="crpv-ws-need-score-wrap">
-          <span className="crpv-ws-need-score-lbl cap">Sat</span>
-          <input
-            type="number" min={0} max={10}
-            className="crpv-ws-score-input"
-            value={sat}
-            onChange={(e) => setSat(Number(e.target.value))}
-            onBlur={() => onScoreChange(need.id, imp, sat)}
-          />
-        </label>
-        <div className="crpv-ws-need-score-wrap">
-          <span className="crpv-ws-need-score-lbl cap">Opp</span>
-          <span className="crpv-ws-score-display">{need.opportunity_score}</span>
-        </div>
-      </div>
-      <span className={`crpv-ws-state-badge crpv-ws-state-${need.service_state}`}>
-        {STATE_LABEL[need.service_state] ?? need.service_state}
-      </span>
-      <div className="crpv-ws-reorder-btns">
-        <button
-          type="button" className="crpv-ws-reorder-btn"
-          disabled={idx === 0 || busy}
-          onClick={() => onMove(idx, "up")}
-          aria-label="Move up"
-        >▲</button>
-        <button
-          type="button" className="crpv-ws-reorder-btn"
-          disabled={idx === total - 1 || busy}
-          onClick={() => onMove(idx, "down")}
-          aria-label="Move down"
-        >▼</button>
       </div>
     </div>
   );
@@ -220,6 +299,10 @@ export default function NeedsOrgPanel({
   currentPhase,
   reviewNeedId,
   onReviewNeedHandled,
+  hasHierarchy,
+  signalBasis,
+  onReEvaluate,
+  reEvalLoadingId,
 }: {
   needs: OdiNeedRow[];
   loading: boolean;
@@ -233,12 +316,18 @@ export default function NeedsOrgPanel({
   currentPhase?: import("@/lib/engagementPhase").EngagementPhase;
   reviewNeedId?: string | null;
   onReviewNeedHandled?: () => void;
+  hasHierarchy?: boolean;
+  signalBasis?: SignalBasis;
+  onReEvaluate?: (needId: string) => void;
+  reEvalLoadingId?: string | null;
 }) {
   const { user } = useAuth();
+  const [titleMode, setTitleMode] = useState<"human" | "canonical">("human");
   const [localNeeds, setLocalNeeds] = useState<OdiNeedRow[]>(initialNeeds);
   const [reorderingId, setReorderingId] = useState<string | null>(null);
-  const [inspectNeed, setInspectNeed] = useState<OdiNeedRow | null>(null);
   const [highlightReviewSection, setHighlightReviewSection] = useState(false);
+  const [reviewTargetId, setReviewTargetId] = useState<string | null>(null);
+  const { stack, top, open: openFrame, push: pushFrame, pop: popFrame, clear: clearFrame, updateTopLens } = useInspectionStack();
   const [focusedOutcome, setFocusedOutcomeRaw] = useState<string | null>(null);
   const [focusedOpportunityId, setFocusedOpportunityIdRaw] = useState<string | null>(null);
 
@@ -273,16 +362,22 @@ export default function NeedsOrgPanel({
     if (!reviewNeedId) return;
     const matchedNeed = initialNeeds.find((need) => need.id === reviewNeedId) ?? null;
     if (matchedNeed) {
-      setInspectNeed(matchedNeed);
+      openFrame({ kind: "need", objectId: matchedNeed.id, lens: "validation" });
+      setReviewTargetId(matchedNeed.id);
       setHighlightReviewSection(true);
     }
     onReviewNeedHandled?.();
-  }, [initialNeeds, onReviewNeedHandled, reviewNeedId]);
+  }, [initialNeeds, onReviewNeedHandled, openFrame, reviewNeedId]);
 
   const applyNeedPatch = useCallback((needId: string, patch: Partial<OdiNeedRow>) => {
     setLocalNeeds((prev) => prev.map((need) => (need.id === needId ? { ...need, ...patch } : need)));
-    setInspectNeed((prev) => (prev?.id === needId ? { ...prev, ...patch } : prev));
   }, []);
+
+  // Derive the need currently open in the inspection panel — used for source_run_id in review events
+  const currentNeedSourceRunId = useMemo(() => {
+    if (top?.kind !== "need") return null;
+    return localNeeds.find((n) => n.id === top.objectId)?.source_run_id ?? null;
+  }, [top, localNeeds]);
 
   const createNeedReviewEvent = useCallback(async (needId: string, eventType: "refreshed" | "updated", reason: string, newValue: Record<string, unknown>) => {
     if (!companyId) throw new Error("Company context missing for need review event.");
@@ -291,7 +386,7 @@ export default function NeedsOrgPanel({
       event_type: eventType,
       actor_type: user?.id ? "user" : "system",
       actor_id: user?.id ?? null,
-      source_run_id: inspectNeed?.source_run_id ?? null,
+      source_run_id: currentNeedSourceRunId,
       object_type: "odi_need",
       object_id: needId,
       previous_value: null,
@@ -299,7 +394,7 @@ export default function NeedsOrgPanel({
       reason,
     });
     if (error) throw new Error(error.message || "Failed to record need review event.");
-  }, [companyId, inspectNeed?.source_run_id, user?.id]);
+  }, [companyId, currentNeedSourceRunId, user?.id]);
 
   const handleMarkReviewed = useCallback(async (needId: string) => {
     const previousNeed = localNeeds.find((need) => need.id === needId);
@@ -390,6 +485,7 @@ export default function NeedsOrgPanel({
     }
 
     applyNeedPatch(needId, patch);
+    setReviewTargetId(needId);
     setHighlightReviewSection(true);
   }, [applyNeedPatch, createNeedReviewEvent, localNeeds]);
 
@@ -476,12 +572,194 @@ export default function NeedsOrgPanel({
   const unknowns = deriveUnknowns(localNeeds);
   const showOutcomeList = outcomeGroups.length > 1;
 
+  const activeTensionCount  = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Active tension").length;
+  const emergingGapCount    = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Emerging gap").length;
+  const proofGapCount       = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Proof gap").length;
+  const overInvestedCount   = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Over-invested").length;
+
+  const needsStateLead = (() => {
+    if (activeTensionCount >= 2) return `${activeTensionCount} active tensions shaping the top priorities.`;
+    if (activeTensionCount === 1) return "One active tension leading the priority stack.";
+    if (emergingGapCount >= 3) return `${emergingGapCount} emerging gaps — customer strategy not yet converged.`;
+    if (proofGapCount >= 2) return `${proofGapCount} proof gaps remain — execution confidence still developing.`;
+    if (overInvestedCount >= 2) return `${overInvestedCount} areas appear over-invested — review for misalignment.`;
+    if (localNeeds.length > 0) return "Customer signal stable — no critical tensions flagged.";
+    return null;
+  })();
+
+  const needsStateSecondary = (() => {
+    if (activeTensionCount >= 1 && overInvestedCount >= 1) return `${overInvestedCount} area${overInvestedCount === 1 ? "" : "s"} over-invested alongside active tensions — priority misalignment possible.`;
+    if (proofGapCount >= 1 && activeTensionCount === 0) return `${proofGapCount} proof gap${proofGapCount === 1 ? "" : "s"} — important needs served but not yet validated.`;
+    return null;
+  })();
+
+  // ── Hierarchy layout ───────────────────────────────────────────────────────
+  if (hasHierarchy) {
+    const sorted = [...localNeeds].sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
+    const subhead = `${localNeeds.length} ${localNeeds.length === 1 ? "opportunity" : "opportunities"} mapped across your customer job.`;
+
+    const topOpp = sorted[0] ?? null;
+    const topScore = topOpp?.opportunity_score ?? 0;
+    const tiedCount = sorted.filter((n) => n.opportunity_score === topScore).length;
+    const topText = topOpp
+      ? (titleMode === "canonical" ? (topOpp.odi_canonical_statement ?? topOpp.desired_outcome) : topOpp.desired_outcome)
+      : null;
+    const topStateColor = topOpp?.service_state === "underserved" ? D.signal
+      : topOpp?.service_state === "overserved" ? D.inkFaint
+      : D.inkSoft;
+
+    return (
+      <HierarchyPageShell
+        eyebrowSegments={["Opportunities"]}
+        h1Before="Customer"
+        h1Signal="Opportunities"
+        subhead={subhead}
+        signalBasis={signalBasis}
+        compactHero
+      >
+        {/* TOP OPPORTUNITY — dominant element */}
+        {topOpp && (
+          <div style={{
+            borderLeft: `5px solid ${D.signal}`,
+            paddingLeft: 20,
+            marginBottom: 52,
+          }}>
+            <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.14em", color: D.signal, margin: "0 0 10px" }}>
+              Top Opportunity
+              {tiedCount > 1 && (
+                <span style={{ color: D.inkFaint, marginLeft: 8 }}>— tied with #{String(2).padStart(2, "0")}</span>
+              )}
+            </p>
+            <p style={{ fontFamily: D.sans, fontSize: 26, fontWeight: 700, lineHeight: 1.35, color: D.ink, margin: "0 0 14px", maxWidth: 640 }}>
+              {topText}
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <span style={{ fontFamily: D.mono, fontSize: 22, fontWeight: 700, color: D.ink, letterSpacing: "-0.02em" }}>
+                {topScore.toFixed(1)}
+              </span>
+              <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: topStateColor }}>
+                {STATE_LABEL[topOpp.service_state] ?? topOpp.service_state}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* HUMAN | CANONICAL toggle */}
+        <div style={{ display: "flex", alignItems: "center", gap: 2, marginBottom: 32, fontFamily: D.mono, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          <button
+            type="button"
+            onClick={() => setTitleMode("human")}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: titleMode === "human" ? D.ink : "rgba(17,17,17,0.4)", fontFamily: "inherit", fontSize: "inherit", letterSpacing: "inherit", textTransform: "inherit" }}
+          >
+            Human
+          </button>
+          <span style={{ color: D.hairline, alignSelf: "center" }}>|</span>
+          <button
+            type="button"
+            onClick={() => setTitleMode("canonical")}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: titleMode === "canonical" ? D.ink : "rgba(17,17,17,0.4)", fontFamily: "inherit", fontSize: "inherit", letterSpacing: "inherit", textTransform: "inherit" }}
+          >
+            Canonical
+          </button>
+        </div>
+
+        {/* § 01 OPPORTUNITIES */}
+        <HierarchySectionHeader number="01" label="Opportunities" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {sorted.map((need, idx) => {
+            const text = titleMode === "canonical" ? (need.odi_canonical_statement ?? need.desired_outcome) : need.desired_outcome;
+            const stateColor = need.service_state === "underserved" ? D.signal
+              : need.service_state === "overserved" ? D.inkFaint
+              : D.inkSoft;
+            const hierarchyOffStrategy = need.strategy_alignment === "off_strategy";
+            return (
+              <div key={need.id} style={{ display: "grid", gridTemplateColumns: "60px 1fr auto", alignItems: "start", gap: "0 16px", borderBottom: `1px solid ${D.hairlineFaint}`, padding: "16px 0", opacity: hierarchyOffStrategy ? 0.58 : undefined }}>
+                <span style={{ fontFamily: D.mono, fontSize: 36, fontWeight: 700, color: "rgba(17,17,17,0.06)", lineHeight: 1, textAlign: "right", paddingRight: 4 }}>
+                  {String(idx + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  <p style={{ fontFamily: D.sans, fontSize: 14, color: D.ink, margin: "4px 0 0", lineHeight: 1.55 }}>
+                    {text}
+                  </p>
+                  {hierarchyOffStrategy && (
+                    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                      <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#999" }}>
+                        OFF-STRATEGY · retained by choice
+                      </span>
+                      {need.strategy_alignment_reason && (
+                        <span style={{ fontSize: 11, color: "#aaa", lineHeight: 1.45, fontStyle: "italic" }}>
+                          {need.strategy_alignment_reason}
+                        </span>
+                      )}
+                      {onReEvaluate && (
+                        <button
+                          type="button"
+                          disabled={reEvalLoadingId === need.id}
+                          onClick={() => onReEvaluate(need.id)}
+                          style={{ alignSelf: "flex-start", fontSize: 10, color: reEvalLoadingId === need.id ? "#ccc" : "#999", background: "none", border: "none", cursor: reEvalLoadingId === need.id ? "default" : "pointer", padding: 0, textDecoration: "underline" }}
+                        >
+                          {reEvalLoadingId === need.id ? "Evaluating…" : "↻ Re-evaluate alignment"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, paddingTop: 4 }}>
+                  <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor }}>
+                    {STATE_LABEL[need.service_state] ?? need.service_state}
+                  </span>
+                  {typeof need.opportunity_score === "number" && need.opportunity_score > 0 && (
+                    <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(17,17,17,0.3)", letterSpacing: "0.06em" }}>
+                      {need.opportunity_score.toFixed(1)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </HierarchyPageShell>
+    );
+  }
+
+  // ── Legacy layout ──────────────────────────────────────────────────────────
   return (
     <div className="crpv-ws-section crpv-ws-section-wide">
-      <SectionHeader
-        title={`Needs · Organization Signals · ${localNeeds.length} total`}
-        desc="What customers need to get done. Use importance and satisfaction scores to surface the biggest opportunities."
-      />
+      {/* Strategic interpretation lead — replaces artifact-first SectionHeader */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9aaba5", margin: 0 }}>
+            Tensions shaping customer progress
+          </p>
+          <span style={{ display: "flex", gap: 2, fontFamily: "monospace", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            <button
+              type="button"
+              onClick={() => setTitleMode("human")}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: titleMode === "human" ? "#1e3340" : "#9aaba5", fontFamily: "inherit", fontSize: "inherit", letterSpacing: "inherit", textTransform: "inherit" }}
+            >
+              Human
+            </button>
+            <span style={{ color: "#d0d5da", alignSelf: "center" }}>|</span>
+            <button
+              type="button"
+              onClick={() => setTitleMode("canonical")}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: titleMode === "canonical" ? "#1e3340" : "#9aaba5", fontFamily: "inherit", fontSize: "inherit", letterSpacing: "inherit", textTransform: "inherit" }}
+            >
+              Canonical
+            </button>
+          </span>
+        </div>
+        {needsStateLead && (
+          <p style={{ fontSize: 15, fontWeight: 400, color: "#1e3340", lineHeight: 1.5, margin: "0 0 4px", letterSpacing: "-0.005em" }}>
+            {needsStateLead}
+          </p>
+        )}
+        {needsStateSecondary && (
+          <p style={{ fontSize: 12, color: "#6a7e78", margin: 0, lineHeight: 1.5 }}>
+            {needsStateSecondary}
+          </p>
+        )}
+      </div>
 
       {/* Step filter banner */}
       {isStepActive && activeStep && (
@@ -502,7 +780,7 @@ export default function NeedsOrgPanel({
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, background: "#f0f7f5", border: "1px solid #5f9b8c", borderRadius: 3, padding: "8px 12px", marginBottom: 16 }}>
           <span style={{ ...MONO, color: "#5f9b8c", flexShrink: 0, paddingTop: 1 }}>Focusing on</span>
           <span style={{ fontSize: 12, color: "#333", flex: 1, lineHeight: 1.5 }}>
-            {focusedOppNeed.desired_outcome}
+            {titleMode === "canonical" ? (focusedOppNeed.odi_canonical_statement ?? focusedOppNeed.desired_outcome) : focusedOppNeed.desired_outcome}
           </span>
           <button
             type="button"
@@ -582,19 +860,32 @@ export default function NeedsOrgPanel({
         </div>
       )}
 
-      {/* What we don't know — supporting context */}
+      {/* Unresolved tensions — gaps still active in interpretation */}
       {unknowns.length > 0 && (
-        <div style={{ marginBottom: 28, paddingTop: 16, borderTop: "1px solid #f5f3ef" }}>
-          <p style={{ ...MONO, color: "#bbb", margin: "0 0 10px" }}>
-            What we don't know yet
+        <div style={{ marginBottom: 32 }}>
+          <p style={{ ...MONO, color: "#c0b6ab", margin: "0 0 14px" }}>
+            Active unknowns
           </p>
-          <ul style={{ margin: 0, padding: "0 0 0 18px" }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
             {unknowns.map((item, i) => (
-              <li key={i} style={{ fontSize: 13, color: "#555", lineHeight: 1.6, marginBottom: 4 }}>
+              <p
+                key={i}
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  color: "#6b6058",
+                  lineHeight: 1.7,
+                  fontStyle: "italic",
+                  paddingTop: i === 0 ? 0 : 10,
+                  paddingBottom: 10,
+                  borderBottom: i < unknowns.length - 1 ? "1px solid #f0ede8" : "none",
+                  opacity: 1 - i * 0.12,
+                }}
+              >
                 {item}
-              </li>
+              </p>
             ))}
-          </ul>
+          </div>
         </div>
       )}
 
@@ -638,10 +929,13 @@ export default function NeedsOrgPanel({
                   num={needNumberById.get(need.id) ?? "—"}
                   total={localNeeds.length}
                   reorderingId={reorderingId}
+                  titleMode={titleMode}
                   onMove={moveNeed}
                   onScoreChange={updateNeedScores}
-                  onInspect={() => setInspectNeed(need)}
+                  onInspect={() => openFrame({ kind: "need", objectId: need.id, lens: "overview" })}
                   onFocus={() => setFocusedOpportunityId(isFocused ? null : need.id)}
+                  onReEvaluate={onReEvaluate ? () => onReEvaluate(need.id) : undefined}
+                  reEvalLoading={reEvalLoadingId === need.id}
                   isMuted={isMuted}
                   isHighlighted={isHighlighted}
                   isFocused={isFocused}
@@ -653,24 +947,60 @@ export default function NeedsOrgPanel({
         );
       })}
 
-      <NeedInspectPanel
-        open={!!inspectNeed}
-        onClose={() => setInspectNeed(null)}
-        need={inspectNeed}
-        routes={routes}
-        onRouteSelect={onRouteSelect}
-        currentPhase={currentPhase}
-        reviewHighlighted={highlightReviewSection}
-        onMarkReviewed={handleMarkReviewed}
-        onSendBackToReview={handleSendBackToReview}
-        staleNote={
-          inspectNeed && latestExclusionAt && isArtifactStale(inspectNeed, latestExclusionAt)
-            ? "Needs review after excluded inputs"
-            : null
-        }
-        onClose={() => {
-          setInspectNeed(null);
-          setHighlightReviewSection(false);
+      <InspectionShell
+        stack={stack}
+        onPop={popFrame}
+        onClear={() => { clearFrame(); setHighlightReviewSection(false); setReviewTargetId(null); }}
+        renderNeed={(frame) => {
+          const need = localNeeds.find((n) => n.id === frame.objectId) ?? null;
+          const prevFrame = stack.length > 1 ? stack[stack.length - 2] : null;
+          const linkedRouteIds = prevFrame?.kind === "route" ? [prevFrame.objectId] : [];
+          return (
+            <NeedInspectPanel
+              key={frame.objectId}
+              shellMode
+              initialLens={frame.lens}
+              onLensChange={updateTopLens}
+              open
+              onClose={() => { clearFrame(); setHighlightReviewSection(false); setReviewTargetId(null); }}
+              need={need}
+              routes={routes}
+              onInspectRoute={(routeId) => pushFrame({ kind: "route", objectId: routeId, lens: "overview" })}
+              currentPhase={currentPhase}
+              reviewHighlighted={highlightReviewSection && frame.objectId === reviewTargetId}
+              onMarkReviewed={handleMarkReviewed}
+              onSendBackToReview={handleSendBackToReview}
+              staleNote={
+                need && latestExclusionAt && isArtifactStale(need, latestExclusionAt)
+                  ? "Needs review after excluded inputs"
+                  : null
+              }
+              linkedRouteIds={linkedRouteIds}
+            />
+          );
+        }}
+        renderRoute={(frame) => {
+          const route = (routes ?? []).find((r) => r.id === frame.objectId) ?? null;
+          const detail: RouteInspectDetail = route ? {
+            steps: Array.isArray(route.steps_json) ? (route.steps_json as RouteInspectDetail["steps"]) : [],
+            evidence: Array.isArray(route.evidence_json) ? (route.evidence_json as RouteInspectDetail["evidence"]) : [],
+            whyThisMatters: Array.isArray(route.why_this_matters_json) ? (route.why_this_matters_json as string[]) : [],
+            frameworks: Array.isArray(route.frameworks_used) ? (route.frameworks_used as string[]) : [],
+            rankedOpps: [],
+          } : { steps: [], evidence: [], whyThisMatters: [], frameworks: [], rankedOpps: [] };
+          return (
+            <RouteInspectPanel
+              key={frame.objectId}
+              shellMode
+              initialLens={frame.lens}
+              onLensChange={updateTopLens}
+              open
+              onClose={clearFrame}
+              route={route}
+              detail={route ? detail : null}
+              rationale={null}
+            />
+          );
         }}
       />
     </div>

@@ -39,8 +39,12 @@ export type OdiNeedRow = {
   stale_reason?: string | null;
   stale_since_event_id?: string | null;
   source_run_id?: string | null;
+  odi_canonical_statement?: string | null;
   updated_at?: string | null;
   created_at: string;
+  strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
+  strategy_alignment_reason?: string | null;
+  strategy_alignment_evaluated_at?: string | null;
 };
 
 export function useOdiNeeds(companyId?: string, refreshKey = 0) {
@@ -87,9 +91,28 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0) {
 
       if (cancelled) return;
 
+      const isNetworkError = (msg: string) =>
+        msg.toLowerCase().includes("load failed") ||
+        msg.toLowerCase().includes("networkerror") ||
+        msg.toLowerCase().includes("failed to fetch");
+
       const errors: string[] = [];
-      if (marketRes.error) errors.push(`Market definition: ${marketRes.error.message}`);
-      if (needsRes.error) errors.push(`Needs: ${needsRes.error.message}`);
+      if (marketRes.error) {
+        const msg = marketRes.error.message || "";
+        if (isNetworkError(msg)) {
+          console.warn("[useOdiNeeds] market-definition network error (transient):", msg, { companyId });
+        } else {
+          errors.push(`Market definition: ${msg}`);
+        }
+      }
+      if (needsRes.error) {
+        const msg = needsRes.error.message || "";
+        if (isNetworkError(msg)) {
+          console.warn("[useOdiNeeds] needs network error (transient):", msg, { companyId });
+        } else {
+          errors.push(`Needs: ${msg}`);
+        }
+      }
 
       setMarketDefinition(marketRes.error ? null : ((marketRes.data as OdiMarketDefinitionRow | null) ?? null));
       setNeeds(needsRes.error ? [] : ((needsRes.data as OdiNeedRow[]) ?? []));
