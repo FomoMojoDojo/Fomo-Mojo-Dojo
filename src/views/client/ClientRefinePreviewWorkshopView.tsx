@@ -7,6 +7,7 @@ import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import { usePositioningProposal } from "@/hooks/usePositioningProposal";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
@@ -491,6 +492,78 @@ export default function ClientRefinePreviewWorkshopView() {
     setPosReEvalLoading(false);
     setPosRefreshKey((k) => k + 1);
   }, [companyId]);
+
+  const [proposalRefreshKey, setProposalRefreshKey] = useState(0);
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [generateMessage, setGenerateMessage] = useState<string | null>(null);
+  const [acceptLoading, setAcceptLoading] = useState(false);
+  const [rejectLoading, setRejectLoading] = useState(false);
+
+  const { proposal } = usePositioningProposal(companyId ?? undefined, proposalRefreshKey);
+
+  const handleGenerateProposal = useCallback(async () => {
+    if (!companyId) return;
+    setGenerateLoading(true);
+    setGenerateMessage(null);
+    const { data, error } = await supabase.functions.invoke("propose-positioning-changes", {
+      body: { company_id: companyId },
+    });
+    setGenerateLoading(false);
+    if (error) {
+      setGenerateMessage(`Error: ${error.message}`);
+    } else if ((data as Record<string, unknown>)?.skipped) {
+      setGenerateMessage("No meaningful changes from current evidence.");
+    } else {
+      setGenerateMessage(null);
+      setProposalRefreshKey((k) => k + 1);
+    }
+  }, [companyId]);
+
+  const handleAcceptProposal = useCallback(async (proposalId: string) => {
+    if (!companyId || !proposal) return;
+    setAcceptLoading(true);
+    try {
+      const proposed = proposal.proposed_state as Record<string, unknown>;
+      const { error: updateError } = await supabase
+        .from("positioning_canvases")
+        .update({
+          competitive_alternatives_json: proposed.competitive_alternatives_json,
+          unique_attributes_json: proposed.unique_attributes_json,
+          value_for_customer: proposed.value_for_customer,
+          best_fit_customers: proposed.best_fit_customers,
+          market_category: proposed.market_category,
+          category_rationale: proposed.category_rationale,
+          current_tagline: proposed.current_tagline,
+          proposed_tagline: proposed.proposed_tagline,
+        })
+        .eq("id", proposal.surface_id as string);
+      if (updateError) {
+        setGenerateMessage(`Accept failed: ${updateError.message}`);
+        return;
+      }
+      await supabase
+        .from("surface_proposals")
+        .update({ status: "accepted", reviewed_at: new Date().toISOString() })
+        .eq("id", proposalId);
+      await supabase.functions.invoke("evaluate-positioning-alignment", {
+        body: { company_id: companyId },
+      });
+      setPosRefreshKey((k) => k + 1);
+      setProposalRefreshKey((k) => k + 1);
+    } finally {
+      setAcceptLoading(false);
+    }
+  }, [companyId, proposal]);
+
+  const handleRejectProposal = useCallback(async (proposalId: string) => {
+    setRejectLoading(true);
+    await supabase
+      .from("surface_proposals")
+      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+      .eq("id", proposalId);
+    setRejectLoading(false);
+    setProposalRefreshKey((k) => k + 1);
+  }, []);
 
   const [odiReEvalLoadingId, setOdiReEvalLoadingId] = useState<string | null>(null);
 
@@ -1089,6 +1162,14 @@ export default function ClientRefinePreviewWorkshopView() {
           signalBasis={workshopSignalBasis}
           onReEvaluate={handlePosReEvaluate}
           reEvalLoading={posReEvalLoading}
+          onGenerateProposal={handleGenerateProposal}
+          generateLoading={generateLoading}
+          generateMessage={generateMessage}
+          proposal={proposal}
+          onAcceptProposal={handleAcceptProposal}
+          onRejectProposal={handleRejectProposal}
+          acceptLoading={acceptLoading}
+          rejectLoading={rejectLoading}
         />
       </>
     );
