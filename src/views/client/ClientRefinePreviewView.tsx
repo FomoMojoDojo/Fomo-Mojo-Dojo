@@ -19,7 +19,8 @@ import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
 import { getRefinePreviewActiveHypotheses } from "@/components/client/RefinePreviewHypothesesSection";
 import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
-import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
+import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { inferIdentityNarrative } from "@/lib/identityNarrative";
 import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
 import { buildRouteRationales } from "@/lib/routeRationale";
@@ -45,7 +46,7 @@ import { auditSemanticIntegrity } from "@/lib/semanticIntegrity";
 import { deriveSemanticEnforcement } from "@/lib/semanticIntegrityEnforcement";
 import { OperatingModeBar } from "@/components/client/OperatingModeBar";
 import { disciplinedPostureLabel } from "@/lib/strategicCenterSurface";
-import { useOdiNeeds } from "@/hooks/useOdiNeeds";
+import { useOdiNeeds, type OdiMarketDefinitionRow } from "@/hooks/useOdiNeeds";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useRoutes } from "@/views/Routes/useRoutes";
@@ -61,10 +62,11 @@ import "@/styles/client-refine-preview.css";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
+import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import MojoScoreSurface from "@/components/score/MojoScoreStrip";
 import type { MojoScoreResult } from "@/lib/mojoScore/types";
 import type { ClaimState } from "@/lib/claimState";
-import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
+
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useFoundationStatus } from "@/hooks/useFoundationStatus";
@@ -197,6 +199,19 @@ function shorten(value: string, max = 72) {
   return `${value.slice(0, max - 1).trimEnd()}…`;
 }
 
+// Extracts the actor noun phrase from a job_executor string for use in conversational templates.
+// "Independent cafe operators sourcing a specialty coffee offering." → "independent cafe operators"
+// Falls back to null if the result would be too long (>40 chars) to fit a template slot cleanly.
+function deriveAudienceShort(jobExecutor: string | null | undefined): string | null {
+  if (!jobExecutor) return null;
+  const text = jobExecutor.replace(/\.$/, "").trim();
+  // Truncate before the first gerund or prepositional phrase that extends the NP
+  const match = text.match(/^(.+?)\s+(?:sourcing|seeking|looking|providing|selling|serving|for\s|who\s|that\s|to\s)/i);
+  const noun = match ? match[1].trim() : text;
+  const lower = noun.charAt(0).toLowerCase() + noun.slice(1);
+  return lower.length <= 40 ? lower : null;
+}
+
 function normalizeCompare(value: string | null | undefined) {
   return String(value || "")
     .toLowerCase()
@@ -319,6 +334,7 @@ export default function ClientRefinePreviewView() {
   } = useClientViewData({ actionLimit: 5 });
 
   const rawPhase = activeCompany?.engagement_phase ?? "outside_signals";
+  const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
   // ── Strategic state analysis ────────────────────────────────────────────────
   const queryClient = useQueryClient();
@@ -336,7 +352,7 @@ export default function ClientRefinePreviewView() {
   const { data: routeHypothesisDependencies = [], isLoading: routeLinksLoading } = useRouteHypothesisDependencies(activeCompany?.id);
   const { data: strategicChangeSummary, isLoading: strategicChangeLoading } = useStrategicChangeSummary(activeCompany?.id);
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
-  const { needs } = useOdiNeeds(activeCompany?.id);
+  const { needs, marketDefinition } = useOdiNeeds(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
 
@@ -425,6 +441,84 @@ export default function ClientRefinePreviewView() {
     routes,
     directionEvidence,
   );
+
+  // ── Member count — solo vs team language (Finding 2) ─────────────────────
+  const [memberCount, setMemberCount] = useState<number>(1);
+  useEffect(() => {
+    if (!activeCompany?.id) return;
+    supabase
+      .from("company_members")
+      .select("id")
+      .eq("company_id", activeCompany.id)
+      .then(({ data }) => { if (data) setMemberCount(Math.max(1, data.length)); });
+  }, [activeCompany?.id]);
+
+  // ── Strategic-priority market definition (J6.1.1) ─────────────────────────
+  // When a company has multiple jobs (e.g. customer + partner after J3), the hook
+  // returns only the most-recently-updated definition — which can be the wrong one.
+  // We fetch all definitions, then pick the one whose job type (B2B vs B2C) matches
+  // whichever journey_key currently has the most strategy_alignment='aligned' needs.
+
+  const [allMarketDefs, setAllMarketDefs] = useState<OdiMarketDefinitionRow[]>([]);
+  useEffect(() => {
+    if (!activeCompany?.id || !hasHierarchy) { setAllMarketDefs([]); return; }
+    supabase
+      .from("odi_market_definitions")
+      .select("*")
+      .eq("company_id", activeCompany.id)
+      .order("updated_at", { ascending: false })
+      .then(({ data }) => { setAllMarketDefs((data as OdiMarketDefinitionRow[]) ?? []); });
+  }, [activeCompany?.id, hasHierarchy]);
+
+  // Which journey_key has the most aligned needs → the strategic priority job
+  const priorityJourneyKey = useMemo((): string | null => {
+    if (needs.length === 0) return null;
+    const counts = new Map<string, number>();
+    for (const n of needs) {
+      if (n.strategy_alignment === "aligned" && n.journey_key) {
+        counts.set(n.journey_key, (counts.get(n.journey_key) ?? 0) + 1);
+      }
+    }
+    if (counts.size === 0) return null;
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  }, [needs]);
+
+  // Pick the market_definition that matches the priority job's audience type.
+  // Since odi_market_definitions has no journey_key FK, we infer B2B vs B2C from
+  // job_executor content, then prefer the one whose type matches the priority key.
+  const strategicMarketDef = useMemo((): OdiMarketDefinitionRow | null => {
+    const defs = allMarketDefs.length > 0 ? allMarketDefs : (marketDefinition ? [marketDefinition] : []);
+    if (defs.length === 0) return null;
+    if (defs.length === 1) return defs[0];
+
+    const B2B = /\b(operator|partner|cafe|vendor|supplier|wholesale|business|company|retailer|brand|agency|restaurant|hospitality)\b/i;
+    const B2C = /\b(consumer|customer|individual|buyer|shopper|user|person|household|visitor|guest)\b/i;
+    const isB2bPriority = priorityJourneyKey
+      ? ["partner", "b2b", "wholesale", "operator"].some((k) => priorityJourneyKey.includes(k))
+      : false;
+
+    for (const def of defs) {
+      const looksB2b = B2B.test(def.job_executor) && !B2C.test(def.job_executor);
+      const looksB2c = B2C.test(def.job_executor) && !B2B.test(def.job_executor);
+      if (isB2bPriority && looksB2b) return def;
+      if (!isB2bPriority && looksB2c) return def;
+    }
+    return defs[0]; // fallback: most recently updated
+  }, [allMarketDefs, marketDefinition, priorityJourneyKey]);
+
+  // ── Next Turn override — context-aware action (Finding 1) ─────────────────
+  const nextTurnOverride = useMemo((): string | undefined => {
+    if (!hasHierarchy || !displayMojoScore) return undefined;
+    const raiser = displayMojoScore.projected_raisers[0];
+    if (!raiser) return undefined;
+    if (dominantClaimState === "diagnose" || (!dominantClaimState && phase === "diagnose")) {
+      const audience = deriveAudienceShort(strategicMarketDef?.job_executor);
+      if (audience) {
+        return `Run 5 conversations with ${audience}. It would show which direction actually resonates.`;
+      }
+    }
+    return undefined;
+  }, [hasHierarchy, displayMojoScore, dominantClaimState, phase, strategicMarketDef]);
 
   const analysisRunning = fileProposals.some(
     (p) => p.processing_state === "queued" || p.processing_state === "running",
@@ -2554,6 +2648,7 @@ export default function ClientRefinePreviewView() {
     strategicCenter.hasMeaningfulDivergence,
   ]);
 
+  // Legacy route options from useClientViewData (non-hierarchy clients)
   const routeOptions = useMemo(() => {
     const buckets: Record<RouteCategory, typeof allActions> = {
       Fix: [],
@@ -2578,39 +2673,82 @@ export default function ClientRefinePreviewView() {
     });
   }, [allActions]);
 
+  // ── Hierarchy-aware map data ────────────────────────────────────────────────
+  // These must be defined before preferredRoute / selectedRouteOption / hoverRouteOption
+  // because those hooks depend on effectiveRouteOptions.
+
+  const hierarchyRouteOptions = useMemo(() => {
+    if (!hasHierarchy) return null;
+    return ROUTE_ORDER.map((category) => {
+      const key = category.toLowerCase() as "fix" | "improve" | "create";
+      const categoryRoutes = topLevelRoutes.filter((r) => r.category === key);
+      const lead = categoryRoutes[0] ?? null;
+      const claimState = lead?.claim_id ? (claimsMap.get(lead.claim_id)?.state ?? null) : null;
+      return {
+        category,
+        count: categoryRoutes.length,
+        available: categoryRoutes.length > 0,
+        leadTitle: toSentence(lead?.title) || ROUTE_FALLBACK_HEADLINE[category],
+        leadStatus: claimState ? claimState.replace(/_/g, " ") : (lead ? "active" : "No route"),
+        optionTitles: categoryRoutes.slice(0, 3).map((r) => toSentence(r.title)).filter(Boolean),
+      };
+    });
+  }, [hasHierarchy, topLevelRoutes, claimsMap]);
+
+  const effectiveRouteOptions = hierarchyRouteOptions ?? routeOptions;
+
+  const mapCurrentScore = hasHierarchy && displayMojoScore
+    ? displayMojoScore.total_score
+    : confidenceTo;
+
+  const mapReachableScore = useMemo(() => {
+    if (!hasHierarchy || !displayMojoScore) return null;
+    return computeReachableScore(displayMojoScore);
+  }, [hasHierarchy, displayMojoScore]);
+
+  const mapDesiredScore = useMemo(() => {
+    if (!hasHierarchy || !displayMojoScore || mapReachableScore === null) return confidenceTarget;
+    return computeUnlockableScore(mapReachableScore, displayMojoScore);
+  }, [hasHierarchy, displayMojoScore, mapReachableScore, confidenceTarget]);
+
+  // Everything below reads effectiveRouteOptions — defined above, so no TDZ.
+
   const preferredRoute = useMemo<RouteCategory>(() => {
-    if (strongestAction?.category) return strongestAction.category;
-    const firstAvailable = routeOptions.find((route) => route.available);
+    if (!hasHierarchy && strongestAction?.category) return strongestAction.category;
+    const firstAvailable = effectiveRouteOptions.find((route) => route.available);
     return firstAvailable ? firstAvailable.category : "Fix";
-  }, [routeOptions, strongestAction?.category]);
+  }, [hasHierarchy, effectiveRouteOptions, strongestAction?.category]);
 
   const selectedRouteOption = useMemo(
-    () => routeOptions.find((route) => route.category === selectedMapRoute) ?? routeOptions[0],
-    [routeOptions, selectedMapRoute],
+    () => effectiveRouteOptions.find((route) => route.category === selectedMapRoute) ?? effectiveRouteOptions[0],
+    [effectiveRouteOptions, selectedMapRoute],
   );
 
   const hoverRouteOption = useMemo(
     () =>
       hoveredMapRoute
-        ? routeOptions.find((route) => route.category === hoveredMapRoute) ?? null
+        ? effectiveRouteOptions.find((route) => route.category === hoveredMapRoute) ?? null
         : null,
-    [hoveredMapRoute, routeOptions],
+    [hoveredMapRoute, effectiveRouteOptions],
   );
 
-  const mapActionHeadline = useMemo(
-    () => selectedRouteOption?.leadTitle || actionHeadline,
-    [actionHeadline, selectedRouteOption],
-  );
+  const mapActionHeadline = useMemo(() => {
+    if (hasHierarchy && displayMojoScore && displayMojoScore.projected_raisers.length > 0) {
+      return displayMojoScore.projected_raisers[0].action_description;
+    }
+    const eff = effectiveRouteOptions.find((r) => r.category === selectedMapRoute);
+    return eff?.leadTitle || actionHeadline;
+  }, [hasHierarchy, displayMojoScore, effectiveRouteOptions, selectedMapRoute, actionHeadline]);
 
   const routeHoverText = useCallback((category: RouteCategory) => {
-    const route = routeOptions.find((item) => item.category === category);
+    const route = effectiveRouteOptions.find((item) => item.category === category);
     if (!route) return `${category} route`;
     if (!route.available) return `${category} route · no live options yet`;
     const options = route.optionTitles.length > 0
       ? route.optionTitles.map((item) => shorten(item, 56)).join(" • ")
       : shorten(route.leadTitle, 56);
     return `${category} route · ${route.count} option${route.count === 1 ? "" : "s"} · ${options}`;
-  }, [routeOptions]);
+  }, [effectiveRouteOptions]);
 
   const evidencePresentLabels = useMemo(
     () => evidence.sources.filter((source) => source.present).map((source) => source.label),
@@ -3412,6 +3550,11 @@ export default function ClientRefinePreviewView() {
                       activeTab={null}
                       onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
                       onHome={() => {}}
+                      onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+                      onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
+                      inboxCount={inboxCount}
+                      inboxHasNew={inboxNewCount > 0}
+                      isHome
                     />
                     <div className="crpv-homepage-content">
                       <div className="crpv-command-main">
@@ -3419,6 +3562,7 @@ export default function ClientRefinePreviewView() {
                           <HomepageHierarchy
                             score={displayMojoScore}
                             dominantClaimState={dominantClaimState}
+                            engagementPhase={phase}
                             foundationStatus={foundationStatus}
                             signalLandscape={signalLandscape}
                             directionEvidence={directionEvidence}
@@ -3426,6 +3570,8 @@ export default function ClientRefinePreviewView() {
                             needCount={needs.length}
                             companyCreatedAt={activeCompany?.created_at}
                             engagementDay={ENGAGEMENT_DAY}
+                            nextTurnOverride={nextTurnOverride}
+                            memberCount={memberCount}
                             onGoToRoutes={goToRoutesPreview}
                             onGoToOpportunities={() => navigate("/opportunities")}
                             onGoToWorkshop={goToWorkshopInputs}
@@ -3636,7 +3782,7 @@ export default function ClientRefinePreviewView() {
                     {hasHierarchy && topNeed && (
                       <section className="crpv-pressure-region" style={{ marginTop: 28, paddingTop: 20, borderTop: "1px solid rgba(0,0,0,0.07)" }}>
                         <p className="cap" style={{ marginBottom: 10 }}>Customer finding</p>
-                        <p style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.45, margin: "0 0 14px", color: "#1e3340" }}>{humanizeOdiStatement(topNeed.desired_outcome)}</p>
+                        <p style={{ fontSize: 17, fontWeight: 500, lineHeight: 1.45, margin: "0 0 14px", color: "#1e3340" }}>{topNeed.desired_outcome}</p>
                         {needs.length > 1 && (
                           <button
                             type="button"
@@ -4114,14 +4260,14 @@ export default function ClientRefinePreviewView() {
                   />
 
                   {ROUTE_ORDER.map((category) => {
-                    const route = routeOptions.find((item) => item.category === category);
+                    const route = effectiveRouteOptions.find((item) => item.category === category);
                     const badge = MAP_ROUTE_BADGES[category];
                     const isSelected = selectedMapRoute === category;
                     const isHovered = hoveredMapRoute === category;
                     const isDimmed = hoveredMapRoute
                       ? hoveredMapRoute !== category && !isSelected
                       : !isSelected;
-                    const routeMeta = route?.available ? `${route.count} options` : "No options";
+                    const routeMeta = route?.available ? `${route.count} direction${route.count === 1 ? "" : "s"}` : "No options";
 
                     return (
                       <g
@@ -4167,7 +4313,7 @@ export default function ClientRefinePreviewView() {
                     <circle cx="880" cy="300" r="26" fill="none" stroke="#111" strokeWidth="2" />
                     <circle cx="880" cy="300" r="9" fill="#111" />
                     <text x="815" y="268" className="wp-label">You are here</text>
-                    <text x="842" y="338" className="wp-cap">CONF {confidenceTo}</text>
+                    <text x="842" y="338" className="wp-cap">CONF {mapCurrentScore}</text>
                   </g>
 
                   <g className="wp wp-next" onClick={() => setLayer("narrative")}>
@@ -4175,12 +4321,15 @@ export default function ClientRefinePreviewView() {
                     <line x1="1120" y1="186" x2="1120" y2="214" stroke="#111" strokeWidth="2" />
                     <line x1="1106" y1="200" x2="1134" y2="200" stroke="#111" strokeWidth="2" />
                     <text x="1080" y="170" className="wp-label">Next move →</text>
+                    {mapReachableScore !== null && (
+                      <text x="1058" y="240" className="wp-cap">REACHABLE {mapReachableScore}</text>
+                    )}
                   </g>
 
                   <g className="wp wp-desired" onClick={() => setLayer("narrative")}>
                     <rect x="1368" y="88" width="24" height="24" fill="#111" />
                     <text x="1310" y="78" className="wp-label">Desired</text>
-                    <text x="1308" y="126" className="wp-cap">DESIRED {confidenceTarget}</text>
+                    <text x="1308" y="126" className="wp-cap">DESIRED {mapDesiredScore}</text>
                   </g>
                 </svg>
               </div>
@@ -4207,7 +4356,7 @@ export default function ClientRefinePreviewView() {
 
               <div className="crpv-map-pin">
                 <div className="crpv-map-route-row" role="tablist" aria-label="Route options">
-                  {routeOptions.map((route) => (
+                  {effectiveRouteOptions.map((route) => (
                     <button
                       key={route.category}
                       type="button"
@@ -4217,14 +4366,15 @@ export default function ClientRefinePreviewView() {
                       onClick={() => setSelectedMapRoute(route.category)}
                     >
                       <span className="name">{route.category}</span>
-                      <span className="meta">{route.available ? `${route.count} live` : "none"}</span>
+                      <span className="meta">{route.available ? `${route.count}` : "none"}</span>
                     </button>
                   ))}
                 </div>
                 <p>{mapActionHeadline}</p>
                 <p className="crpv-map-route-note">
-                  Chosen route: {selectedRouteOption?.category || preferredRoute} ·{" "}
-                  {selectedRouteOption?.leadStatus || "No route"}
+                  {hasHierarchy && selectedRouteOption?.available
+                    ? selectedRouteOption.leadTitle
+                    : `Chosen route: ${selectedRouteOption?.category || preferredRoute} · ${selectedRouteOption?.leadStatus || "No route"}`}
                 </p>
                 {hoverRouteOption ? (
                   <p className="crpv-map-route-note">

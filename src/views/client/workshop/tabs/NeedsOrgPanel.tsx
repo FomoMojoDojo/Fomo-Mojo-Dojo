@@ -1,9 +1,13 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import type { OpportunityProposalRow } from "@/hooks/useOpportunityProposals";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { RouteRow } from "@/views/Routes/useRoutes";
 import { supabase } from "@/integrations/supabase/client";
 import { isArtifactStale } from "@/lib/evidenceImpact";
+import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
+import DriftBadge from "@/components/drift/DriftBadge";
+import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
@@ -37,6 +41,18 @@ const REVIEW_STATES = new Set(["needs_review", "stale", "contradicted", "revalid
 
 function needsReviewState(value: string | null | undefined) {
   return REVIEW_STATES.has(String(value || "").trim().toLowerCase());
+}
+
+function needTimeAgo(iso: string): string {
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 2) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  } catch { return ""; }
 }
 
 // Maps well-known journey_key values to plain outcome statements.
@@ -104,6 +120,161 @@ function deriveNeedRoleLabel(need: OdiNeedRow): string | null {
   return null;
 }
 
+// ── OpportunityProposalSection ────────────────────────────────────────────────
+
+function oppTimeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function opportunityDiffed(proposal: OpportunityProposalRow): boolean {
+  const c = proposal.current_state;
+  const p = proposal.proposed_state;
+  return (
+    String(c.desired_outcome ?? "") !== String(p.desired_outcome ?? "") ||
+    String(c.odi_canonical_statement ?? "") !== String(p.odi_canonical_statement ?? "")
+  );
+}
+
+function OpportunityProposalSection({
+  proposal,
+  onAcceptProposal,
+  onRejectProposal,
+  acceptLoading,
+  rejectLoading,
+}: {
+  proposal: OpportunityProposalRow;
+  onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
+  onRejectProposal?: (proposalId: string) => void;
+  acceptLoading?: boolean;
+  rejectLoading?: boolean;
+}) {
+  const hasDiff = opportunityDiffed(proposal);
+  const [checked, setChecked] = useState(hasDiff);
+  useEffect(() => { setChecked(opportunityDiffed(proposal)); }, [proposal.id]);
+
+  const curr = proposal.current_state;
+  const prop = proposal.proposed_state;
+
+  function handleAccept() {
+    if (!onAcceptProposal) return;
+    const accepted = checked ? ["outcome_statement"] : [];
+    const skipped = checked ? [] : ["outcome_statement"];
+    onAcceptProposal(proposal.id, accepted, skipped);
+  }
+
+  const allUnchecked = !checked || !hasDiff;
+
+  return (
+    <div style={{
+      margin: "6px 0 4px 24px",
+      padding: "10px 12px 12px",
+      border: "1px solid rgba(255,91,41,0.25)",
+      borderRadius: 6,
+      background: "rgba(255,91,41,0.03)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#ff5b29", fontWeight: 600 }}>
+          Proposed Changes
+        </span>
+        <span style={{ fontSize: 9, fontFamily: "monospace", color: "#9aaba5" }}>
+          {oppTimeAgo(proposal.created_at)}{hasDiff ? " · outcome statement differs" : ""}
+        </span>
+      </div>
+      {proposal.reason && (
+        <p style={{ fontSize: 11, color: "#5e7881", margin: "0 0 8px", lineHeight: 1.5, fontStyle: "italic" }}>
+          {proposal.reason}
+        </p>
+      )}
+      {hasDiff && (
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 10 }}>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={() => setChecked((c) => !c)}
+            style={{ marginTop: 3, accentColor: "#ff5b29", flexShrink: 0 }}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em", textTransform: "uppercase" as const, color: "#5e7881" }}>
+                Outcome Statement
+              </span>
+              <span style={{ fontSize: 8, fontFamily: "monospace", color: "#ff5b29", border: "1px solid rgba(255,91,41,0.4)", borderRadius: 3, padding: "0 4px", letterSpacing: "0.05em", textTransform: "uppercase" as const }}>
+                Coupled
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.05em", textTransform: "uppercase" as const, color: "#9aaba5", marginBottom: 2 }}>Human</div>
+                <div style={{ fontSize: 10, color: "#9aaba5", lineHeight: 1.4, textDecoration: "line-through", marginBottom: 1 }}>
+                  {String(curr.desired_outcome ?? "") || "(empty)"}
+                </div>
+                <div style={{ fontSize: 11, color: "#1e3340", lineHeight: 1.4 }}>
+                  {String(prop.desired_outcome ?? "") || "(empty)"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.05em", textTransform: "uppercase" as const, color: "#9aaba5", marginBottom: 2 }}>ODI Formula</div>
+                <div style={{ fontSize: 10, color: "#9aaba5", lineHeight: 1.4, textDecoration: "line-through", fontStyle: "italic", marginBottom: 1 }}>
+                  {String(curr.odi_canonical_statement ?? "") || "(not set)"}
+                </div>
+                <div style={{ fontSize: 11, color: "#1e3340", lineHeight: 1.4, fontStyle: "italic" }}>
+                  {String(prop.odi_canonical_statement ?? "") || "(empty)"}
+                </div>
+              </div>
+            </div>
+          </div>
+        </label>
+      )}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={handleAccept}
+          disabled={acceptLoading || allUnchecked}
+          title={allUnchecked ? "Select at least one field to apply" : undefined}
+          style={{
+            fontSize: 9,
+            fontFamily: "monospace",
+            letterSpacing: "0.05em",
+            background: allUnchecked ? "none" : "#1e3340",
+            color: allUnchecked ? "#9aaba5" : "#fff",
+            border: `1px solid ${allUnchecked ? "#d0d5da" : "#1e3340"}`,
+            borderRadius: 4,
+            padding: "4px 10px",
+            cursor: acceptLoading || allUnchecked ? "default" : "pointer",
+            opacity: acceptLoading ? 0.5 : 1,
+          }}
+        >
+          {acceptLoading ? "Applying…" : checked && hasDiff ? "Apply 1 of 1 change" : "Apply 0 of 1 changes"}
+        </button>
+        <button
+          type="button"
+          onClick={() => onRejectProposal?.(proposal.id)}
+          disabled={rejectLoading}
+          style={{
+            fontSize: 9,
+            fontFamily: "monospace",
+            letterSpacing: "0.05em",
+            background: "none",
+            color: "#9aaba5",
+            border: "1px solid #d0d5da",
+            borderRadius: 4,
+            padding: "4px 10px",
+            cursor: rejectLoading ? "default" : "pointer",
+            opacity: rejectLoading ? 0.5 : 1,
+          }}
+        >
+          {rejectLoading ? "Dismissing…" : "Dismiss"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── NeedRow ───────────────────────────────────────────────────────────────────
 
 function NeedRow({
@@ -118,10 +289,20 @@ function NeedRow({
   onFocus,
   onReEvaluate,
   reEvalLoading,
+  onGenerateProposal,
+  generateLoading,
+  hasPendingProposal,
   isMuted,
   isHighlighted,
   isFocused,
   reviewState,
+  onMarkReviewed,
+  onSaveNeedField,
+  phase,
+  onDriftClick,
+  driftRefreshKey,
+  onCheckSurfaceDrift,
+  checkingSurfaceId,
   titleMode = "human",
 }: {
   need: OdiNeedRow;
@@ -135,14 +316,26 @@ function NeedRow({
   onFocus?: () => void;
   onReEvaluate?: () => void;
   reEvalLoading?: boolean;
+  onGenerateProposal?: () => void;
+  generateLoading?: boolean;
+  hasPendingProposal?: boolean;
   isMuted: boolean;
   isHighlighted: boolean;
   isFocused: boolean;
   reviewState: boolean;
+  onMarkReviewed?: () => Promise<void>;
   titleMode?: "human" | "canonical";
+  onSaveNeedField?: (needId: string, field: "odi_canonical_statement", value: string) => Promise<void>;
+  phase?: import("@/lib/engagementPhase").EngagementPhase;
+  onDriftClick?: (surfaceType: string, surfaceId: string) => void;
+  driftRefreshKey?: number;
+  onCheckSurfaceDrift?: (surfaceType: string, surfaceId: string) => void;
+  checkingSurfaceId?: string | null;
 }) {
   const [imp, setImp] = useState(need.importance);
   const [sat, setSat] = useState(need.satisfaction);
+  const [reviewHovered, setReviewHovered] = useState(false);
+  const [markingReviewed, setMarkingReviewed] = useState(false);
 
   useEffect(() => { setImp(need.importance); setSat(need.satisfaction); }, [need.importance, need.satisfaction]);
 
@@ -182,13 +375,90 @@ function NeedRow({
       <span className="crpv-ws-need-num">{num}</span>
       <div className="crpv-ws-need-body">
         <div className="crpv-ws-need-outcome">
-          <span>{titleMode === "canonical" ? (need.odi_canonical_statement ?? need.desired_outcome) : need.desired_outcome}</span>
+          {onSaveNeedField ? (
+            <>
+              <div style={{ marginBottom: 6 }}>
+                <span style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#9aaba5", display: "block", marginBottom: 3 }}>
+                  ODI Canonical
+                </span>
+                <InlineTextareaEdit
+                  value={need.odi_canonical_statement ?? ""}
+                  onSave={(v) => onSaveNeedField(need.id, "odi_canonical_statement", v)}
+                  placeholder="ODI formula: Minimize/Maximize/Reduce [metric] when [context]…"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <span
+                  style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#c0b6ab", marginRight: 6 }}
+                  title="This is a human-readable version of the ODI canonical statement. To change it, edit the canonical above or use Propose changes from current evidence."
+                >
+                  ↳ derived
+                </span>
+                <span style={{ fontSize: 11, color: "#8a9a94" }}>{need.desired_outcome}</span>
+              </div>
+            </>
+          ) : (
+            <span style={reviewState ? { textDecoration: "underline", textDecorationColor: "#e5c9b0", textUnderlineOffset: 2 } : undefined}>
+              {titleMode === "canonical" ? (need.odi_canonical_statement ?? need.desired_outcome) : need.desired_outcome}
+            </span>
+          )}
           {reviewState && (
-            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ ...MONO, color: "#b06a3c" }}>Needs review</span>
-              <span style={{ fontSize: 11, color: "#7d6a5c", lineHeight: 1.45 }}>
-                {sanitizeStaleReason(need.stale_reason)}
+            <div
+              style={{ position: "relative", display: "inline-block", marginTop: 4 }}
+              onMouseEnter={() => setReviewHovered(true)}
+              onMouseLeave={() => setReviewHovered(false)}
+            >
+              <span style={{ ...MONO, color: "#b06a3c", borderBottom: "1px dotted #b06a3c", paddingBottom: 1, cursor: "default" }}>
+                review pending
               </span>
+              {reviewHovered && (
+                <div style={{
+                  position: "absolute",
+                  left: 0,
+                  top: "calc(100% + 4px)",
+                  zIndex: 200,
+                  background: "#fff",
+                  border: "1px solid rgba(17,17,17,0.12)",
+                  borderRadius: 4,
+                  padding: "10px 14px",
+                  minWidth: 240,
+                  maxWidth: 320,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}>
+                  <span style={{ ...MONO, color: "#b06a3c" }}>Job map changed — review for relevance</span>
+                  {need.updated_at && (
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                      {needTimeAgo(need.updated_at)}
+                    </span>
+                  )}
+                  {need.stale_reason && (
+                    <span style={{ fontSize: 11, color: "#7d6a5c", lineHeight: 1.45 }}>
+                      {sanitizeStaleReason(need.stale_reason)}
+                    </span>
+                  )}
+                  {onMarkReviewed && (
+                    <button
+                      type="button"
+                      disabled={markingReviewed}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setMarkingReviewed(true);
+                        try { await onMarkReviewed(); } finally {
+                          setMarkingReviewed(false);
+                          setReviewHovered(false);
+                        }
+                      }}
+                      style={{ alignSelf: "flex-start", fontFamily: "monospace", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: markingReviewed ? "#ccc" : "#111", background: "none", border: "1px solid rgba(17,17,17,0.2)", borderRadius: 2, padding: "2px 8px", cursor: markingReviewed ? "wait" : "pointer" }}
+                    >
+                      {markingReviewed ? "…" : "Mark reviewed"}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {isOffStrategy && (
@@ -264,6 +534,36 @@ function NeedRow({
               Inspect →
             </button>
           )}
+          {onDriftClick && (
+            <DriftBadge
+              surfaceType="opportunity"
+              surfaceId={need.id}
+              phase={phase}
+              refreshKey={driftRefreshKey}
+              onClick={(a) => onDriftClick("opportunity", a.surface_id)}
+            />
+          )}
+          {onGenerateProposal && (
+            <ProposeChangesButton
+              surfaceType="opportunity"
+              surfaceId={need.id}
+              onGenerate={onGenerateProposal}
+              generateLoading={generateLoading}
+              hasPendingProposal={hasPendingProposal}
+              variant="link"
+              refreshKey={driftRefreshKey}
+            />
+          )}
+          {onCheckSurfaceDrift && (
+            <button
+              type="button"
+              onClick={() => onCheckSurfaceDrift("opportunity", need.id)}
+              disabled={checkingSurfaceId === need.id}
+              style={{ fontSize: 10, color: checkingSurfaceId === need.id ? "#ccc" : "#bbb", background: "none", border: "none", cursor: checkingSurfaceId === need.id ? "wait" : "pointer", padding: 0, textDecoration: "underline", opacity: checkingSurfaceId === need.id ? 0.5 : 1 }}
+            >
+              {checkingSurfaceId === need.id ? "Checking…" : "Check for drift"}
+            </button>
+          )}
           <div className="crpv-ws-reorder-btns">
             <button
               type="button" className="crpv-ws-reorder-btn"
@@ -303,6 +603,18 @@ export default function NeedsOrgPanel({
   signalBasis,
   onReEvaluate,
   reEvalLoadingId,
+  proposalsMap,
+  onGenerateProposal,
+  generateLoadingId,
+  onAcceptProposal,
+  onRejectProposal,
+  acceptLoadingProposalId,
+  rejectLoadingProposalId,
+  onSaveNeedField,
+  onDriftClick,
+  driftRefreshKey,
+  onCheckSurfaceDrift,
+  checkingSurfaceId,
 }: {
   needs: OdiNeedRow[];
   loading: boolean;
@@ -320,6 +632,18 @@ export default function NeedsOrgPanel({
   signalBasis?: SignalBasis;
   onReEvaluate?: (needId: string) => void;
   reEvalLoadingId?: string | null;
+  proposalsMap?: Map<string, OpportunityProposalRow>;
+  onGenerateProposal?: (needId: string) => void;
+  generateLoadingId?: string | null;
+  onAcceptProposal?: (proposalId: string, needId: string, acceptedFields: string[], skippedFields: string[]) => void;
+  onRejectProposal?: (proposalId: string) => void;
+  acceptLoadingProposalId?: string | null;
+  rejectLoadingProposalId?: string | null;
+  onSaveNeedField?: (needId: string, field: "odi_canonical_statement", value: string) => Promise<void>;
+  onDriftClick?: (surfaceType: string, surfaceId: string) => void;
+  driftRefreshKey?: number;
+  onCheckSurfaceDrift?: (surfaceType: string, surfaceId: string) => void;
+  checkingSurfaceId?: string | null;
 }) {
   const { user } = useAuth();
   const [titleMode, setTitleMode] = useState<"human" | "canonical">("human");
@@ -672,49 +996,95 @@ export default function NeedsOrgPanel({
               : need.service_state === "overserved" ? D.inkFaint
               : D.inkSoft;
             const hierarchyOffStrategy = need.strategy_alignment === "off_strategy";
+            const pendingProposal = proposalsMap?.get(need.id) ?? null;
             return (
-              <div key={need.id} style={{ display: "grid", gridTemplateColumns: "60px 1fr auto", alignItems: "start", gap: "0 16px", borderBottom: `1px solid ${D.hairlineFaint}`, padding: "16px 0", opacity: hierarchyOffStrategy ? 0.58 : undefined }}>
-                <span style={{ fontFamily: D.mono, fontSize: 36, fontWeight: 700, color: "rgba(17,17,17,0.06)", lineHeight: 1, textAlign: "right", paddingRight: 4 }}>
-                  {String(idx + 1).padStart(2, "0")}
-                </span>
-                <div>
-                  <p style={{ fontFamily: D.sans, fontSize: 14, color: D.ink, margin: "4px 0 0", lineHeight: 1.55 }}>
-                    {text}
-                  </p>
-                  {hierarchyOffStrategy && (
-                    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
-                      <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#999" }}>
-                        OFF-STRATEGY · retained by choice
-                      </span>
-                      {need.strategy_alignment_reason && (
-                        <span style={{ fontSize: 11, color: "#aaa", lineHeight: 1.45, fontStyle: "italic" }}>
-                          {need.strategy_alignment_reason}
-                        </span>
-                      )}
-                      {onReEvaluate && (
-                        <button
-                          type="button"
-                          disabled={reEvalLoadingId === need.id}
-                          onClick={() => onReEvaluate(need.id)}
-                          style={{ alignSelf: "flex-start", fontSize: 10, color: reEvalLoadingId === need.id ? "#ccc" : "#999", background: "none", border: "none", cursor: reEvalLoadingId === need.id ? "default" : "pointer", padding: 0, textDecoration: "underline" }}
-                        >
-                          {reEvalLoadingId === need.id ? "Evaluating…" : "↻ Re-evaluate alignment"}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, paddingTop: 4 }}>
-                  <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor }}>
-                    {STATE_LABEL[need.service_state] ?? need.service_state}
+              <Fragment key={need.id}>
+                <div style={{ display: "grid", gridTemplateColumns: "60px 1fr auto", alignItems: "start", gap: "0 16px", borderBottom: pendingProposal ? "none" : `1px solid ${D.hairlineFaint}`, padding: "16px 0 16px", opacity: hierarchyOffStrategy ? 0.58 : undefined }}>
+                  <span style={{ fontFamily: D.mono, fontSize: 36, fontWeight: 700, color: "rgba(17,17,17,0.06)", lineHeight: 1, textAlign: "right", paddingRight: 4 }}>
+                    {String(idx + 1).padStart(2, "0")}
                   </span>
-                  {typeof need.opportunity_score === "number" && need.opportunity_score > 0 && (
-                    <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(17,17,17,0.3)", letterSpacing: "0.06em" }}>
-                      {need.opportunity_score.toFixed(1)}
+                  <div>
+                    <p style={{ fontFamily: D.sans, fontSize: 14, color: D.ink, margin: "4px 0 0", lineHeight: 1.55 }}>
+                      {text}
+                    </p>
+                    {hierarchyOffStrategy && (
+                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                        <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#999" }}>
+                          OFF-STRATEGY · retained by choice
+                        </span>
+                        {need.strategy_alignment_reason && (
+                          <span style={{ fontSize: 11, color: "#aaa", lineHeight: 1.45, fontStyle: "italic" }}>
+                            {need.strategy_alignment_reason}
+                          </span>
+                        )}
+                        {onReEvaluate && (
+                          <button
+                            type="button"
+                            disabled={reEvalLoadingId === need.id}
+                            onClick={() => onReEvaluate(need.id)}
+                            style={{ alignSelf: "flex-start", fontSize: 10, color: reEvalLoadingId === need.id ? "#ccc" : "#999", background: "none", border: "none", cursor: reEvalLoadingId === need.id ? "default" : "pointer", padding: 0, textDecoration: "underline" }}
+                          >
+                            {reEvalLoadingId === need.id ? "Evaluating…" : "↻ Re-evaluate alignment"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {onGenerateProposal && (
+                      <div style={{ marginTop: 6 }}>
+                        <ProposeChangesButton
+                          surfaceType="opportunity"
+                          surfaceId={need.id}
+                          onGenerate={() => onGenerateProposal(need.id)}
+                          generateLoading={generateLoadingId === need.id}
+                          hasPendingProposal={!!pendingProposal}
+                          variant="link"
+                          refreshKey={driftRefreshKey}
+                        />
+                      </div>
+                    )}
+                    {onCheckSurfaceDrift && (
+                      <button
+                        type="button"
+                        onClick={() => onCheckSurfaceDrift("opportunity", need.id)}
+                        disabled={checkingSurfaceId === need.id}
+                        style={{ marginTop: 4, alignSelf: "flex-start", fontSize: 10, color: checkingSurfaceId === need.id ? "#ccc" : "#bbb", background: "none", border: "none", cursor: checkingSurfaceId === need.id ? "wait" : "pointer", padding: 0, textDecoration: "underline", opacity: checkingSurfaceId === need.id ? 0.5 : 1, display: "block" }}
+                      >
+                        {checkingSurfaceId === need.id ? "Checking…" : "Check for drift"}
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, paddingTop: 4 }}>
+                    <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor }}>
+                      {STATE_LABEL[need.service_state] ?? need.service_state}
                     </span>
-                  )}
+                    {typeof need.opportunity_score === "number" && need.opportunity_score > 0 && (
+                      <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(17,17,17,0.3)", letterSpacing: "0.06em" }}>
+                        {need.opportunity_score.toFixed(1)}
+                      </span>
+                    )}
+                    {onDriftClick && (
+                      <DriftBadge
+                        surfaceType="opportunity"
+                        surfaceId={need.id}
+                        phase={currentPhase}
+                        refreshKey={driftRefreshKey}
+                        onClick={(a) => onDriftClick("opportunity", a.surface_id)}
+                      />
+                    )}
+                  </div>
                 </div>
-              </div>
+                {pendingProposal && (
+                  <div style={{ borderBottom: `1px solid ${D.hairlineFaint}`, paddingBottom: 16 }}>
+                    <OpportunityProposalSection
+                      proposal={pendingProposal}
+                      onAcceptProposal={onAcceptProposal ? (propId, accepted, skipped) => onAcceptProposal(propId, need.id, accepted, skipped) : undefined}
+                      onRejectProposal={onRejectProposal}
+                      acceptLoading={acceptLoadingProposalId === pendingProposal.id}
+                      rejectLoading={rejectLoadingProposalId === pendingProposal.id}
+                    />
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </div>
@@ -920,27 +1290,48 @@ export default function NeedsOrgPanel({
               const isHighlighted = isStepActive && isStepMatch(need);
               const isFocused = focusedOpportunityId === need.id;
               const reviewState = needsReviewState(need.dependency_state);
+              const pendingProposal = proposalsMap?.get(need.id) ?? null;
 
               return (
-                <NeedRow
-                  key={need.id}
-                  need={need}
-                  idx={idxInLocal}
-                  num={needNumberById.get(need.id) ?? "—"}
-                  total={localNeeds.length}
-                  reorderingId={reorderingId}
-                  titleMode={titleMode}
-                  onMove={moveNeed}
-                  onScoreChange={updateNeedScores}
-                  onInspect={() => openFrame({ kind: "need", objectId: need.id, lens: "overview" })}
-                  onFocus={() => setFocusedOpportunityId(isFocused ? null : need.id)}
-                  onReEvaluate={onReEvaluate ? () => onReEvaluate(need.id) : undefined}
-                  reEvalLoading={reEvalLoadingId === need.id}
-                  isMuted={isMuted}
-                  isHighlighted={isHighlighted}
-                  isFocused={isFocused}
-                  reviewState={reviewState}
-                />
+                <Fragment key={need.id}>
+                  <NeedRow
+                    need={need}
+                    idx={idxInLocal}
+                    num={needNumberById.get(need.id) ?? "—"}
+                    total={localNeeds.length}
+                    reorderingId={reorderingId}
+                    titleMode={titleMode}
+                    onMove={moveNeed}
+                    onScoreChange={updateNeedScores}
+                    onInspect={() => openFrame({ kind: "need", objectId: need.id, lens: "overview" })}
+                    onFocus={() => setFocusedOpportunityId(isFocused ? null : need.id)}
+                    onReEvaluate={onReEvaluate ? () => onReEvaluate(need.id) : undefined}
+                    reEvalLoading={reEvalLoadingId === need.id}
+                    onGenerateProposal={onGenerateProposal ? () => onGenerateProposal(need.id) : undefined}
+                    generateLoading={generateLoadingId === need.id}
+                    hasPendingProposal={!!pendingProposal}
+                    isMuted={isMuted}
+                    isHighlighted={isHighlighted}
+                    isFocused={isFocused}
+                    reviewState={reviewState}
+                    onMarkReviewed={reviewState ? () => handleMarkReviewed(need.id) : undefined}
+                    onSaveNeedField={onSaveNeedField}
+                    phase={currentPhase}
+                    onDriftClick={onDriftClick}
+                    driftRefreshKey={driftRefreshKey}
+                    onCheckSurfaceDrift={onCheckSurfaceDrift}
+                    checkingSurfaceId={checkingSurfaceId}
+                  />
+                  {pendingProposal && (
+                    <OpportunityProposalSection
+                      proposal={pendingProposal}
+                      onAcceptProposal={onAcceptProposal ? (propId, accepted, skipped) => onAcceptProposal(propId, need.id, accepted, skipped) : undefined}
+                      onRejectProposal={onRejectProposal}
+                      acceptLoading={acceptLoadingProposalId === pendingProposal.id}
+                      rejectLoading={rejectLoadingProposalId === pendingProposal.id}
+                    />
+                  )}
+                </Fragment>
               );
             })}
           </div>

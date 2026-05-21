@@ -1,5 +1,7 @@
 import { useMemo, useState, useRef, useEffect, Fragment, type ReactNode } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import type { JobStepRow } from "@/hooks/useJobSteps";
+import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { RouteRow } from "@/views/Routes/useRoutes";
 import { useFoundationProvenance } from "@/hooks/useFoundationProvenance";
 import { FoundationClaimSupport } from "@/components/evidence/FoundationClaimSupport";
@@ -8,8 +10,52 @@ import {
   containsNonOdiProcessLanguage,
   containsSolutionPrescriptiveLanguage,
 } from "@/lib/jtbdProcess";
+import { D } from "@/components/design-system/tokens";
+import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 const ODI_LABELS = ["DEFINE", "LOCATE", "PREPARE", "EXECUTE", "MONITOR", "MODIFY", "CONCLUDE", "EVALUATE"] as const;
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const NEEDS_REVIEW_STATES = new Set(["needs_review", "stale", "contradicted", "revalidate"]);
+
+// Synthetic terminal step — a job step that exists in the ODI progression but was not
+// generated during synthesis. Rendered with "Emerging" posture and a "not yet captured" note.
+type JobStepRowExt = JobStepRow & { _synthetic?: true };
+
+const TERMINAL_LABELS: Record<number, string> = {
+  7: "Confirm approach",
+  8: "Conclude and adjust",
+};
+
+// Pads journeys with fewer than 8 steps by synthesizing the missing terminal checkpoints
+// from the existing journey context. Synthetic steps are marked _synthetic=true and carry
+// no evidence — they render as "Emerging" with no gap or basis.
+function normalizeJourneySteps(steps: JobStepRowExt[]): JobStepRowExt[] {
+  if (steps.length >= 8) return steps;
+  const last = steps[steps.length - 1];
+  if (!last) return steps;
+  const result: JobStepRowExt[] = [...steps];
+  for (let n = steps.length + 1; n <= 8; n++) {
+    result.push({
+      id: `synth-${last.journey_key}-${n}`,
+      company_id: last.company_id,
+      user_id: last.user_id,
+      journey_key: last.journey_key,
+      journey_title: last.journey_title,
+      journey_subtitle: last.journey_subtitle,
+      step_number: n,
+      step_label: TERMINAL_LABELS[n] ?? `Step ${n}`,
+      description: null,
+      designed: false,
+      has_gap: false,
+      evidence_status: "unclear",
+      evidence_basis: null,
+      evidence_confidence: null,
+      gap_note: null,
+      _synthetic: true,
+    });
+  }
+  return result;
+}
 
 function odiLabel(index: number): string {
   return ODI_LABELS[index % ODI_LABELS.length];
@@ -46,6 +92,32 @@ export function deriveSuggestedId(steps: JobStepRow[]): string | null {
   const sorted = [...steps].sort((a, b) => suggestionScore(b) - suggestionScore(a));
   const top = sorted[0];
   return top && suggestionScore(top) > 0 ? top.id : null;
+}
+
+// Strategic posture derived from evidence + gap state — user-facing language, not scores.
+function stepPosture(step: JobStepRow): { label: string; color: string; bg: string } {
+  const ev = step.evidence_status ?? "";
+  const gap = step.has_gap;
+  if (ev === "evidenced" && !gap) return { label: "Stable",            color: "#16a34a", bg: "#edf8f4" };
+  if (ev === "evidenced" && gap)  return { label: "Under pressure",    color: "#c2410c", bg: "#fff4ec" };
+  if (ev === "implied"   && !gap) return { label: "Weak signal",       color: "#6b7280", bg: "#f3f4f6" };
+  if (ev === "implied"   && gap)  return { label: "Validation needed", color: "#b45309", bg: "#fef9ec" };
+  if (ev === "unclear"   && gap)  return { label: "Under pressure",    color: "#c2410c", bg: "#fff4ec" };
+  return                                 { label: "Emerging",          color: "#6d28d9", bg: "#f5f3ff" };
+}
+
+// Short signal line for tiles — gap note or description first sentence, capped at 60 chars.
+function tileSignal(step: JobStepRow): string | null {
+  if (step.has_gap && step.gap_note) {
+    const note = step.gap_note.replace(/['.]+\s*$/, "").trim();
+    if (note.length > 6) return trunc(note, 60);
+  }
+  if (step.description) {
+    const idx = step.description.search(/[.!?]/);
+    const first = (idx > 0 ? step.description.slice(0, idx) : step.description).trim();
+    if (first.length > 6) return trunc(first, 60);
+  }
+  return null;
 }
 
 // ─── Internal condition generation ──────────────────────────────────────────
@@ -99,10 +171,14 @@ function gerundPhrase(label: string): string {
 }
 
 // Gap → resolved condition: strips negation, wraps the core noun as a requirement.
+// If coreOf barely changed the input the gap note doesn't follow negation patterns — use it directly.
 function condFromGap(gap_note: string, step_label: string): string {
   const core = coreOf(gap_note);
   if (core.length < 4) return `${step_label} requirements are documented before the step begins`;
-  return `${ucFirst(trunc(core, 62))} is in place before ${gerundPhrase(step_label)} begins`;
+  if (core.length >= gap_note.trim().length * 0.85) {
+    return trunc(gap_note.trim().replace(/[.!?]+\s*$/, ""), 70);
+  }
+  return `${ucFirst(trunc(core, 62))} is established`;
 }
 
 const LEADING_SUBJECT_RE = /^(?:the\s+)?(?:teams?|staff|organization|company|we|vendor|supplier|partners?)\s+/i;
@@ -117,7 +193,7 @@ function condFromDescription(desc: string, step_label: string): string | null {
   const m = stripped.match(listRe);
   if (m) {
     const list = m[1].replace(/\s+(?:with|for|from|to|in|by|at|of)\s.*$/i, "").trim();
-    if (list.length >= 6) return `${ucFirst(wordTrunc(list, 62))} are confirmed before ${gp} begins`;
+    if (list.length >= 6) return `${ucFirst(wordTrunc(list, 62))} must be confirmed`;
   }
   const clause = stripped.replace(/[^\w\s.,]/g, "").split(/[.,]/)[0].trim();
   if (clause.length >= 10) return `${ucFirst(wordTrunc(clause, 68))} requirements are established`;
@@ -125,7 +201,9 @@ function condFromDescription(desc: string, step_label: string): string | null {
 }
 
 // Evidence basis → what must stay tracked: strips research preamble, wraps the subject.
+// Skip internal key references (e.g. [input_key:comp-alt]) — not user-facing.
 function condFromBasis(basis: string): string | null {
+  if (/^\[input_key:/i.test(basis.trim())) return null;
   if (/^no\s+direct\s+evidence/i.test(basis.trim())) {
     const subject = basis
       .replace(/^no\s+direct\s+evidence\s+(?:on|for|about|of)\s+/i, "")
@@ -230,9 +308,13 @@ function InternalConditions({ conditions }: { conditions: string[] }) {
 function EvidenceDrawer({ step }: { step: JobStepRow }) {
   const ev = step.evidence_status ? EVIDENCE_DOT[step.evidence_status] : null;
   const dotColor = ev?.color ?? "#d1d5db";
-  const basisClean = step.evidence_basis
-    ? step.evidence_basis.replace(/^dify_mojo_analysis:[0-9-]+$/, "Generated by Dify analysis")
-    : null;
+  const basisClean = (() => {
+    const raw = step.evidence_basis;
+    if (!raw) return null;
+    if (/^\[input_key:/i.test(raw.trim())) return null;
+    if (/^(\[input_key:[^\]]+\],?\s*)+$/.test(raw.trim())) return null;
+    return raw.replace(/^dify_mojo_analysis:[0-9-]+$/, "Generated by Dify analysis");
+  })();
   return (
     <div style={{ borderTop: "1px solid #f0f2f5", paddingTop: 7, marginTop: 4, display: "flex", flexDirection: "column", gap: 5 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -246,7 +328,9 @@ function EvidenceDrawer({ step }: { step: JobStepRow }) {
         <p style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.4, margin: 0 }}>{basisClean}</p>
       )}
       {step.has_gap && step.gap_note && (
-        <p style={{ fontSize: 10, color: "#b45309", lineHeight: 1.4, margin: 0 }}>Gap: {step.gap_note}</p>
+        <p style={{ fontSize: 10, color: "#b45309", lineHeight: 1.4, margin: 0 }}>
+          Gap: {step.gap_note.length > 90 ? step.gap_note.slice(0, 90) + "…" : step.gap_note}
+        </p>
       )}
     </div>
   );
@@ -278,30 +362,42 @@ function EvidenceToggle({ open, onToggle, step }: { open: boolean; onToggle: (e:
 }
 
 function SuggestedTile({
-  step, odi, num, isActive, onSelect, routes, routesReady,
+  step, odi, num, isActive, isInactive, isRouteLinked, activeRoute, onSelect, routes, routesReady,
 }: {
-  step: JobStepRow; odi: string; num: number; isActive: boolean; onSelect: () => void;
+  step: JobStepRowExt; odi: string; num: number; isActive: boolean; isInactive: boolean;
+  isRouteLinked: boolean; activeRoute?: RouteRow | null;
+  onSelect: () => void;
   routes: RouteRow[];
   routesReady?: boolean;
 }) {
-  const conditions = deriveInternalConditions(step, odi, 4);
-  const [showEvidence, setShowEvidence] = useState(false);
+  const conditions = deriveInternalConditions(step, odi, 1);
+  const posture = stepPosture(step);
+  const shortDesc = (() => {
+    if (!step.description) return null;
+    const idx = step.description.search(/[.!?]/);
+    return (idx > 0 ? step.description.slice(0, idx) : step.description).trim();
+  })();
+
+  const contextLine: string | null = isRouteLinked && activeRoute
+    ? `Connected route: ${activeRoute.title || "Untitled"}`
+    : null;
 
   return (
     <div
-      className={`crpv-ws-jobmap-tile suggested expanded${isActive ? " active" : ""}`}
+      className={`crpv-ws-jobmap-tile suggested expanded${isActive ? " active" : ""}${isInactive ? " inactive" : ""}${step.has_gap ? " has-gap" : ""}${isRouteLinked ? " route-linked" : ""}`}
       onClick={onSelect}
       style={{ cursor: "pointer" }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "baseline" }}>
         <span className="crpv-ws-jobmap-tile-num">{String(num).padStart(2, "0")}</span>
-        <EvidenceToggle open={showEvidence} onToggle={(e) => { e.stopPropagation(); setShowEvidence((v) => !v); }} step={step} />
       </div>
       <span className="crpv-ws-jobmap-tile-odi">{odi}</span>
       <p className="crpv-ws-jobmap-tile-name">{displayStepLabel(step)}</p>
-      {step.description && (
-        <p className="crpv-ws-jobmap-tile-desc">{step.description}</p>
-      )}
+      {shortDesc && <p className="crpv-ws-jobmap-tile-desc">{shortDesc}</p>}
+      <div className="crpv-ws-jobmap-tile-posture" style={{ color: posture.color, background: posture.bg }}>
+        {posture.label}
+      </div>
+      {contextLine && <p className="crpv-ws-jobmap-tile-ctx">{contextLine}</p>}
       <div className="crpv-ws-jobmap-tile-lower">
         <InternalConditions conditions={conditions} />
         {routesReady && routes.length > 0 && (
@@ -309,7 +405,6 @@ function SuggestedTile({
         )}
       </div>
       <p className="crpv-ws-jobmap-tile-focus cap">↑ Highest risk</p>
-      {showEvidence && <EvidenceDrawer step={step} />}
     </div>
   );
 }
@@ -319,38 +414,47 @@ function RegularTile({
   odi,
   num,
   isActive,
+  isInactive,
+  isRouteLinked,
+  activeRoute,
   onSelect,
 }: {
-  step: JobStepRow;
+  step: JobStepRowExt;
   odi: string;
   num: number;
   isActive: boolean;
+  isInactive: boolean;
+  isRouteLinked: boolean;
+  activeRoute?: RouteRow | null;
   onSelect: () => void;
 }) {
-  const conditions = deriveInternalConditions(step, odi, 2);
-  const [showEvidence, setShowEvidence] = useState(false);
+  const posture = step._synthetic
+    ? { label: "Emerging", color: "#6d28d9", bg: "#f5f3ff" }
+    : stepPosture(step);
+  const signal = step._synthetic ? null : tileSignal(step);
+
+  const contextLine: string | null = isRouteLinked && activeRoute
+    ? `Connected route: ${activeRoute.title || "Untitled"}`
+    : step._synthetic
+      ? "Not yet captured"
+      : null;
 
   return (
     <div
-      className={`crpv-ws-jobmap-tile${isActive ? " active" : ""}`}
-      onClick={onSelect}
-      style={{ cursor: "pointer" }}
+      className={`crpv-ws-jobmap-tile${isActive ? " active" : ""}${isInactive ? " inactive" : ""}${step.has_gap ? " has-gap" : ""}${isRouteLinked ? " route-linked" : ""}${step._synthetic ? " synthetic" : ""}`}
+      onClick={step._synthetic ? undefined : onSelect}
+      style={{ cursor: step._synthetic ? "default" : "pointer" }}
     >
       <div className="crpv-ws-jobmap-tile-hd">
         <span className="crpv-ws-jobmap-tile-num">{String(num).padStart(2, "0")}</span>
         <span className="crpv-ws-jobmap-tile-odi">{odi}</span>
-        <EvidenceToggle open={showEvidence} onToggle={(e) => { e.stopPropagation(); setShowEvidence((v) => !v); }} step={step} />
       </div>
       <p className="crpv-ws-jobmap-tile-name">{displayStepLabel(step)}</p>
-      {step.description && (
-        <p className="crpv-ws-jobmap-tile-desc">{step.description}</p>
-      )}
-      {conditions.length > 0 && (
-        <div className="crpv-ws-jobmap-tile-lower">
-          <InternalConditions conditions={conditions} />
-        </div>
-      )}
-      {showEvidence && <EvidenceDrawer step={step} />}
+      {!contextLine && signal && <p className="crpv-ws-jobmap-tile-signal">{signal}</p>}
+      <div className="crpv-ws-jobmap-tile-posture" style={{ color: posture.color, background: posture.bg }}>
+        {posture.label}
+      </div>
+      {contextLine && <p className="crpv-ws-jobmap-tile-ctx">{contextLine}</p>}
     </div>
   );
 }
@@ -428,7 +532,7 @@ function matchRoutesToStep(
   return scored.slice(0, limit).map((s) => ({ route: s.route, reason: s.reason }));
 }
 
-const CATEGORY_SHORT: Record<string, string> = { fix: "fix", improve: "improve", create: "create" };
+const CATEGORY_SHORT: Record<string, string> = { fix: "pressure", improve: "validation", create: "directional" };
 
 function SuggestedRoutes({
   routes,
@@ -470,7 +574,7 @@ function SuggestedRoutes({
 
 function JourneySection({
   jk,
-  jSteps,
+  jSteps: rawSteps,
   title,
   subtitle,
   summaryParts,
@@ -479,10 +583,11 @@ function JourneySection({
   onSelectStep,
   routes,
   routesReady,
+  activeRoute,
   headerControls,
 }: {
   jk: string;
-  jSteps: JobStepRow[];
+  jSteps: JobStepRowExt[];
   title: string;
   subtitle: string | null;
   summaryParts: string[];
@@ -491,8 +596,23 @@ function JourneySection({
   onSelectStep: (id: string) => void;
   routes: RouteRow[];
   routesReady?: boolean;
+  activeRoute?: RouteRow | null;
   headerControls?: ReactNode;
 }) {
+  const jSteps = useMemo(() => normalizeJourneySteps(rawSteps), [rawSteps]);
+
+  // Compute which steps are linked to the active route by text-token overlap.
+  const routeLinkedStepIds = useMemo<Set<string>>(() => {
+    if (!activeRoute) return new Set();
+    const linked = new Set<string>();
+    for (const step of jSteps) {
+      if (step._synthetic) continue;
+      const matched = matchRoutesToStep([activeRoute], step, [], 1);
+      if ((matched[0]?.score ?? 0) > 0) linked.add(step.id);
+    }
+    return linked;
+  }, [activeRoute, jSteps]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const railRef   = useRef<HTMLDivElement>(null);
   const [canScrollLeft,  setCanScrollLeft]  = useState(false);
@@ -572,6 +692,11 @@ function JourneySection({
             {summaryParts.length > 0 && (
               <p className="crpv-ws-jobmap-summary">{summaryParts.join(" · ")}</p>
             )}
+            {activeRoute && routeLinkedStepIds.size > 0 && (
+              <p style={{ margin: "4px 0 0", fontSize: 11, color: "#2563eb", fontFamily: MONO, letterSpacing: "0.04em" }}>
+                {routeLinkedStepIds.size} step{routeLinkedStepIds.size !== 1 ? "s" : ""} connected to active route
+              </p>
+            )}
           </div>
           {headerControls ?? null}
         </div>
@@ -594,12 +719,15 @@ function JourneySection({
             <div className="crpv-ws-jobmap-rail" ref={railRef}>
               {jSteps.map((step, idx) => (
                 <Fragment key={step.id}>
-                  {step.id === suggestedId ? (
+                  {step.id === suggestedId && !step._synthetic ? (
                     <SuggestedTile
                       step={step}
                       odi={odiLabel(idx)}
                       num={step.step_number ?? idx + 1}
                       isActive={activeStepId === step.id}
+                      isInactive={!!activeStepId && activeStepId !== step.id}
+                      isRouteLinked={routeLinkedStepIds.has(step.id)}
+                      activeRoute={activeRoute}
                       onSelect={() => onSelectStep(step.id)}
                       routes={routes}
                       routesReady={routesReady}
@@ -610,6 +738,9 @@ function JourneySection({
                       odi={odiLabel(idx)}
                       num={step.step_number ?? idx + 1}
                       isActive={activeStepId === step.id}
+                      isInactive={!!activeStepId && activeStepId !== step.id}
+                      isRouteLinked={routeLinkedStepIds.has(step.id)}
+                      activeRoute={activeRoute}
                       onSelect={() => onSelectStep(step.id)}
                     />
                   )}
@@ -645,11 +776,11 @@ function inferRelevantCategory(step: JobStepRow): "fix" | "improve" | "create" |
   return null;
 }
 
-const CATEGORY_LABEL: Record<string, string> = { fix: "Fix", improve: "Improve", create: "Create" };
+const CATEGORY_LABEL: Record<string, string> = { fix: "Under Pressure", improve: "Under Validation", create: "Directional" };
 const CATEGORY_CONTEXT: Record<string, string> = {
-  fix: "This step has gaps — Fix routes address known breakdowns.",
-  improve: "Evidence is thin here — Improve routes build on what's working.",
-  create: "This step looks solid — Create routes expand into new ground.",
+  fix:     "This step has gaps — routes in this group address unresolved friction.",
+  improve: "Evidence is thin here — routes in this group target areas under continued pressure.",
+  create:  "This step looks solid — routes in this group explore directions the evidence suggests but no path yet covers.",
 };
 
 function JobMapRoutesSection({
@@ -674,7 +805,6 @@ function JobMapRoutesSection({
       <div className="crpv-ws-jobmap-routes-list">
         {routes.map((route) => {
           const isMatch = !isFiltering || route.category === relevantCategory;
-          const pts = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
           return (
             <div
               key={route.id}
@@ -684,9 +814,6 @@ function JobMapRoutesSection({
                 {CATEGORY_LABEL[route.category] ?? route.category}
               </span>
               <span className="crpv-ws-jobmap-route-title">{route.title || "Untitled route"}</span>
-              {pts !== null && (
-                <span className="crpv-ws-jobmap-route-pts cap">{pts > 0 ? `+${pts}` : pts} pts</span>
-              )}
             </div>
           );
         })}
@@ -788,10 +915,50 @@ function JobStepInspectPanel({
                 ✕
               </button>
             </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", display: "grid", gap: 16 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", display: "grid", gap: 20 }}>
+              {/* Status — posture badge + plain-language explanation */}
               <section>
                 <p style={{ margin: "0 0 10px", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "#6E847F" }}>
-                  Why this exists
+                  Status
+                </p>
+                {(() => {
+                  const p = stepPosture(step);
+                  const explanations: Record<string, string> = {
+                    "Stable":            "Evidence supports this checkpoint and no gaps are flagged.",
+                    "Under pressure":    "A gap has been flagged here. This checkpoint may be blocking progress.",
+                    "Weak signal":       "Evidence for this checkpoint is inferred, not directly confirmed.",
+                    "Validation needed": "Evidence is thin and a gap exists — this area needs attention.",
+                    "Emerging":          "No evidence has been classified for this checkpoint yet.",
+                  };
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "inline-flex", alignSelf: "flex-start", padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", color: p.color, background: p.bg }}>
+                        {p.label}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 12, color: "#46606D", lineHeight: 1.6 }}>
+                        {explanations[p.label] ?? "Status could not be determined."}
+                      </p>
+                    </div>
+                  );
+                })()}
+              </section>
+
+              {/* What remains unresolved — gap note callout */}
+              {step.has_gap && step.gap_note && (
+                <section>
+                  <p style={{ margin: "0 0 10px", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "#6E847F" }}>
+                    What remains unresolved
+                  </p>
+                  <p style={{ margin: 0, fontSize: 12, color: "#7c5400", lineHeight: 1.6, background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 6, padding: "8px 10px" }}>
+                    {step.gap_note}
+                  </p>
+                </section>
+              )}
+
+              {/* What appears true — provenance claims */}
+              <section>
+                <p style={{ margin: "0 0 10px", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "#6E847F" }}>
+                  What appears true
                 </p>
                 {isLoading ? (
                   <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#46606D" }}>Loading claim support…</p>
@@ -818,8 +985,12 @@ export default function JobMapOrgPanel({
   onSelectStep,
   routes,
   activeStep,
+  activeRoute,
   routesReady,
   headerControls,
+  hasHierarchy,
+  needs,
+  signalBasis,
 }: {
   steps: JobStepRow[];
   loading: boolean;
@@ -827,10 +998,31 @@ export default function JobMapOrgPanel({
   onSelectStep: (id: string) => void;
   routes?: RouteRow[];
   activeStep?: JobStepRow | null;
+  activeRoute?: RouteRow | null;
   routesReady?: boolean;
   headerControls?: ReactNode;
+  hasHierarchy?: boolean;
+  needs?: OdiNeedRow[];
+  signalBasis?: SignalBasis;
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
+  const [activeHierarchyIdx, setActiveHierarchyIdx] = useState<number>(0);
+  const [activeJourneyKey, setActiveJourneyKey] = useState<string>("");
+  const [reviewedIds, setReviewedIds] = useState<Set<string>>(new Set());
+
+  async function handleMarkNeedReviewed(needId: string) {
+    await supabase
+      .from("odi_needs")
+      .update({
+        dependency_state: "fresh",
+        stale_reason: null,
+        stale_since_event_id: null,
+        last_reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", needId);
+    setReviewedIds((prev) => new Set([...prev, needId]));
+  }
+
   const inspectStep = useMemo(
     () => activeStep ?? steps.find((step) => step.id === activeStepId) ?? null,
     [activeStep, activeStepId, steps],
@@ -839,8 +1031,21 @@ export default function JobMapOrgPanel({
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (steps.length === 0) {
     return (
-      <div className="crpv-ws-placeholder">
-        No checkpoint map yet. Build the job map in the admin view.
+      <div className="crpv-ws-placeholder" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16, padding: "32px 40px" }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#233c4b", lineHeight: 1.4 }}>
+          No job map yet
+        </div>
+        <div style={{ fontSize: 13.5, color: "#5a7568", lineHeight: 1.6, maxWidth: 440 }}>
+          A job map shows where customers gain momentum — and where they get stuck. Once built, it surfaces the steps where this organization can make the biggest strategic difference.
+        </div>
+        <div style={{ fontSize: 13, color: "#8aab97", lineHeight: 1.5, maxWidth: 420 }}>
+          Build from the strategy, needs, and research already in the system. It takes about a minute.
+        </div>
+        {headerControls && (
+          <div style={{ marginTop: 4 }}>
+            {headerControls}
+          </div>
+        )}
       </div>
     );
   }
@@ -863,6 +1068,300 @@ export default function JobMapOrgPanel({
   const primaryKeys  = journeyOrder.filter((k) => !isInternalJourneyKey(k));
   const internalKeys = journeyOrder.filter((k) =>  isInternalJourneyKey(k));
 
+  // ── Hierarchy layout — horizontal tab bar ────────────────────────────────
+  if (hasHierarchy) {
+    // When multiple primary journeys exist, show one at a time via journey selector.
+    // Fall back to the first primary key if the stored selection is no longer valid.
+    const activeJK = primaryKeys.includes(activeJourneyKey) ? activeJourneyKey : (primaryKeys[0] ?? "");
+    const allPrimarySteps: JobStepRowExt[] = normalizeJourneySteps(
+      (grouped.get(activeJK) ?? []) as JobStepRowExt[],
+    );
+    const allNeeds = needs ?? [];
+
+    // Per-step opportunity distribution — underserved/served/overserved counts indexed by step position
+    const stepRollups = allPrimarySteps.map((step, idx) => {
+      const linked = allNeeds.filter(
+        (n) => n.journey_key === step.journey_key && n.step_number === (step.step_number ?? idx + 1),
+      );
+      const underserved = linked.filter((n) => n.service_state === "underserved").length;
+      const overserved  = linked.filter((n) => n.service_state === "overserved").length;
+      const served      = linked.filter((n) => n.service_state === "served").length;
+      return { underserved, overserved, served, total: linked.length };
+    });
+
+    // Clamp active index whenever step count changes
+    const safeIdx = Math.min(activeHierarchyIdx, Math.max(0, allPrimarySteps.length - 1));
+    const activeTabStep = allPrimarySteps[safeIdx] ?? null;
+
+    function renderStepDetail(step: JobStepRowExt, idx: number) {
+      if (!step) return null;
+      const odi = odiLabel(idx);
+      const posture = step._synthetic ? { label: "Emerging", color: "#6d28d9", bg: "#f5f3ff" } : stepPosture(step);
+      const conditions = step._synthetic ? [] : deriveInternalConditions(step, odi, 3);
+      const stepLabel = displayStepLabel(step);
+      const linkedOpps = allNeeds.filter(
+        (n) => n.journey_key === step.journey_key && n.step_number === (step.step_number ?? idx + 1),
+      );
+
+      return (
+        <div style={{ maxWidth: 720 }}>
+          {/* Header: ODI label + step name */}
+          <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: D.inkFaint, margin: "0 0 10px" }}>
+            {String(idx + 1).padStart(2, "0")} · {odi}
+          </p>
+          <h2 style={{ fontFamily: D.sans, fontSize: 24, fontWeight: 800, color: D.ink, margin: "0 0 12px", lineHeight: 1.25, letterSpacing: "-0.02em" }}>
+            {stepLabel}
+          </h2>
+
+          {/* Description */}
+          {!step._synthetic && step.description && (
+            <p style={{ fontFamily: D.sans, fontSize: 14, color: D.inkSoft, margin: "0 0 24px", lineHeight: 1.65, maxWidth: 600 }}>
+              {step.description}
+            </p>
+          )}
+
+          {/* Posture badge + gap note */}
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 28, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: posture.color, background: posture.bg, padding: "4px 10px", borderRadius: 3 }}>
+              {posture.label}
+            </span>
+            {!step._synthetic && step.has_gap && step.gap_note && (
+              <span style={{ fontFamily: D.sans, fontSize: 12, color: "#7c5400", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 4, padding: "4px 12px", lineHeight: 1.55, maxWidth: 480 }}>
+                {step.gap_note}
+              </span>
+            )}
+          </div>
+
+          {/* What must be true */}
+          {conditions.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 12px" }}>
+                What must be true
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {conditions.map((cond, i) => (
+                  <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <span style={{ color: D.signal, flexShrink: 0, fontSize: 13, lineHeight: 1.5, marginTop: 1 }}>•</span>
+                    <span style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, lineHeight: 1.6 }}>{cond}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Linked opportunities */}
+          {linkedOpps.length > 0 && (
+            <div>
+              {(() => {
+                const u = linkedOpps.filter((n) => n.service_state === "underserved").length;
+                const o = linkedOpps.filter((n) => n.service_state === "overserved").length;
+                const s = linkedOpps.filter((n) => n.service_state === "served").length;
+                const parts: string[] = [];
+                if (u > 0) parts.push(`${u} underserved`);
+                if (s > 0) parts.push(`${s} served`);
+                if (o > 0) parts.push(`${o} overserved`);
+                const rollupColor = u > 0 ? D.signal : o > 0 ? D.inkFaint : D.inkSoft;
+                return (
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 0 8px" }}>
+                    <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: 0 }}>
+                      Mapped opportunities
+                    </p>
+                    {parts.length > 0 && (
+                      <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: rollupColor, margin: 0 }}>
+                        {parts.join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {linkedOpps.map((opp, i) => {
+                  const stateColor = opp.service_state === "underserved" ? D.signal
+                    : opp.service_state === "overserved" ? D.inkFaint
+                    : D.inkSoft;
+                  const needsPendingReview = NEEDS_REVIEW_STATES.has(opp.dependency_state ?? "") && !reviewedIds.has(opp.id);
+                  return (
+                    <div key={opp.id} style={{ display: "grid", gridTemplateColumns: "40px 1fr auto", alignItems: "start", gap: "0 12px", borderBottom: `1px solid ${D.hairlineFaint}`, padding: "10px 0" }}>
+                      <span style={{ fontFamily: D.mono, fontSize: 24, fontWeight: 700, color: "rgba(17,17,17,0.06)", lineHeight: 1, textAlign: "right" }}>
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <div>
+                        <p style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, margin: "2px 0 0", lineHeight: 1.5, ...(needsPendingReview ? { textDecoration: "underline", textDecorationColor: "#e5c9b0", textUnderlineOffset: 2 } : {}) }}>
+                          {opp.desired_outcome}
+                        </p>
+                        {needsPendingReview && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+                            <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: "#b06a3c", borderBottom: "1px dotted #b06a3c", paddingBottom: 1 }}>
+                              review pending
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); void handleMarkNeedReviewed(opp.id); }}
+                              style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "#111", background: "none", border: "1px solid rgba(17,17,17,0.2)", borderRadius: 2, padding: "1px 6px", cursor: "pointer" }}
+                            >
+                              Mark reviewed
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor, paddingTop: 4, whiteSpace: "nowrap" }}>
+                        {opp.service_state}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Evidence basis */}
+          {!step._synthetic && step.evidence_basis && !/^\[input_key:/i.test(step.evidence_basis.trim()) && (
+            <div style={{ marginTop: 28, paddingTop: 20, borderTop: `1px solid ${D.hairlineFaint}` }}>
+              <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 6px" }}>
+                Evidence basis
+              </p>
+              <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkSoft, margin: 0, lineHeight: 1.55 }}>
+                {step.evidence_basis.replace(/^dify_mojo_analysis:[0-9-]+$/, "Generated by analysis")}
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Derive title and subtitle from the first step of the active journey
+    const activeJourneyFirstStep = allPrimarySteps[0] ?? null;
+    const activeJourneyTitle = displayJourneyTitle(activeJourneyFirstStep?.journey_title, activeJK);
+    const journeyHeadingWord = activeJK === "partner" || activeJK === "b2b" || activeJK === "b2b_cafe"
+      ? "Partner"
+      : activeJK === "customer" || activeJK === "primary"
+      ? "Customer"
+      : activeJourneyTitle || activeJK.charAt(0).toUpperCase() + activeJK.slice(1);
+
+    return (
+      <div style={{ margin: -36, display: "flex", flexDirection: "column", background: D.canvas }}>
+        {/* Page header (above the tab bar) */}
+        <div style={{ padding: "40px 48px 0", background: "#ffffff", borderBottom: `1px solid ${D.hairline}` }}>
+          {/* Eyebrow — matches HierarchyPageShell / Eyebrow component */}
+          <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 16px", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: D.signal, display: "inline-block", flexShrink: 0 }} />
+            {"Strategy · Job Map"}
+          </p>
+          <h1 style={{ fontFamily: D.sans, fontSize: 30, fontWeight: 700, color: D.ink, margin: "0 0 10px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
+            The {journeyHeadingWord} <span style={{ color: D.signal }}>Job</span>
+          </h1>
+          <p style={{ fontFamily: D.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", margin: signalBasis ? "0 0 10px" : "0 0 20px", lineHeight: 1.55, maxWidth: 600 }}>
+            {allPrimarySteps.length} checkpoint{allPrimarySteps.length !== 1 ? "s" : ""} across the {journeyHeadingWord.toLowerCase()} journey.
+          </p>
+          {signalBasis && <div style={{ marginBottom: 16 }}><SignalBasisChip {...signalBasis} /></div>}
+
+          {/* Journey selector — only shown when more than one primary journey exists */}
+          {primaryKeys.length > 1 && (
+            <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+              {primaryKeys.map((jk) => {
+                const jkFirstStep = (grouped.get(jk) ?? [])[0];
+                const jkTitle = displayJourneyTitle(jkFirstStep?.journey_title, jk);
+                const jkLabel = jk === "partner" || jk === "b2b" || jk === "b2b_cafe"
+                  ? "Partner"
+                  : jk === "customer" || jk === "primary"
+                  ? "Customer"
+                  : jkTitle || (jk.charAt(0).toUpperCase() + jk.slice(1));
+                const isActive = jk === activeJK;
+                return (
+                  <button
+                    key={jk}
+                    type="button"
+                    onClick={() => {
+                      setActiveJourneyKey(jk);
+                      setActiveHierarchyIdx(0);
+                    }}
+                    style={{
+                      fontFamily: D.mono,
+                      fontSize: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.1em",
+                      color: isActive ? D.ink : D.inkFaint,
+                      background: isActive ? "rgba(17,17,17,0.06)" : "transparent",
+                      border: "none",
+                      borderRadius: 3,
+                      padding: "5px 12px",
+                      cursor: "pointer",
+                      fontWeight: isActive ? 600 : 400,
+                      transition: "background 0.1s, color 0.1s",
+                    }}
+                  >
+                    {jkLabel}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Horizontal step tab bar */}
+          <div className="crpv-jobmap-tabbar" style={{ marginLeft: -48, marginRight: -48, paddingLeft: 40 }}>
+            {allPrimarySteps.map((step, idx) => {
+              const odi = odiLabel(idx);
+              const posture = step._synthetic ? null : stepPosture(step);
+              const hasGap = !step._synthetic && step.has_gap;
+              return (
+                <button
+                  key={step.id}
+                  type="button"
+                  className={`crpv-jobmap-tab${safeIdx === idx ? " active" : ""}`}
+                  style={
+                    stepRollups[idx].underserved > 0
+                      ? { background: "rgba(255,91,41,0.07)" }
+                      : posture?.label === "Weak signal" && safeIdx !== idx
+                      ? { background: "rgba(255,91,41,0.06)" }
+                      : undefined
+                  }
+                  onClick={() => setActiveHierarchyIdx(idx)}
+                >
+                  <span className="crpv-jobmap-tab-num">{String(idx + 1).padStart(2, "0")}</span>
+                  <span className="crpv-jobmap-tab-label">{odi}</span>
+                  {posture && (
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: hasGap ? "#c2410c" : posture.color, display: "block", marginTop: 3, opacity: 0.7 }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Detail panel */}
+        <div className="crpv-jobmap-detail" style={{ padding: "40px 48px 80px" }}>
+          {activeTabStep ? renderStepDetail(activeTabStep, safeIdx) : null}
+        </div>
+
+        {/* Internal operations (if any) — shown below the primary detail as a collapsible section */}
+        {internalKeys.length > 0 && (
+          <div style={{ padding: "0 48px 40px", borderTop: `1px solid ${D.hairline}` }}>
+            <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "20px 0 16px" }}>
+              Internal Operations
+            </p>
+            {internalKeys.flatMap((jk) => normalizeJourneySteps(grouped.get(jk)! as JobStepRowExt[])).map((step, idx) => {
+              const odi = odiLabel(idx);
+              const posture = step._synthetic ? { label: "Emerging", color: "#6d28d9", bg: "#f5f3ff" } : stepPosture(step);
+              const stepLabel = displayStepLabel(step);
+              return (
+                <div key={step.id} style={{ display: "grid", gridTemplateColumns: "52px 1fr auto", alignItems: "start", gap: "0 12px", borderBottom: `1px solid ${D.hairlineFaint}`, padding: "12px 0" }}>
+                  <span style={{ fontFamily: D.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, paddingTop: 3 }}>
+                    {odi}
+                  </span>
+                  <p style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, margin: "0", lineHeight: 1.4 }}>{stepLabel}</p>
+                  <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: posture.color, background: posture.bg, padding: "2px 6px", borderRadius: 3, whiteSpace: "nowrap" }}>
+                    {posture.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Legacy layout ────────────────────────────────────────────────────────
   function renderJourneySection(jk: string, isFirst: boolean) {
     const jSteps = grouped.get(jk)!;
     const first = jSteps[0];
@@ -891,6 +1390,7 @@ export default function JobMapOrgPanel({
         onSelectStep={onSelectStep}
         routes={routes ?? []}
         routesReady={routesReady}
+        activeRoute={activeRoute}
         headerControls={isFirst ? headerControls : undefined}
       />
     );

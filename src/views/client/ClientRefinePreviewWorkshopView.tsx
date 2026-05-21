@@ -8,6 +8,8 @@ import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { usePositioningProposal } from "@/hooks/usePositioningProposal";
+import { useCascadeProposal } from "@/hooks/useCascadeProposal";
+import { useOpportunityProposalHandlers } from "@/hooks/useOpportunityProposalHandlers";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
@@ -19,8 +21,13 @@ import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useSignalExclusion } from "@/hooks/useSignalExclusion";
 import { computeExclusionImpact, computeLatestExclusionAt } from "@/lib/evidenceImpact";
 import { supabase } from "@/integrations/supabase/client";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE } from "@/lib/clientRefinePreview";
+import { captureBaseline } from "@/lib/baselineCapture";
+import { saveManualEdit } from "@/lib/manualInlineEdit";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
+import { useDriftScan } from "@/hooks/useDriftScan";
+import { useDriftInboxCount } from "@/hooks/useDriftInbox";
+import { formatDistanceToNow } from "date-fns";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
 
 
@@ -31,6 +38,7 @@ import InputsTab from "./workshop/tabs/InputsTab";
 import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
+import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
 import { StrategyCompare, PositioningCompare } from "./workshop/tabs/ComparePanel";
 import { PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
 import "@/styles/client-refine-preview.css";
@@ -119,80 +127,7 @@ function MarketFoundationSection({
   );
 }
 
-function StrategicChangeBanner({
-  total,
-  scoreNote,
-  affectedArtifacts,
-  onOpenArtifact,
-}: {
-  total: number;
-  scoreNote: string | null;
-  affectedArtifacts: Array<{
-    object_type: "odi_need" | "route" | "desired_outcome";
-    object_id: string;
-    label: string;
-    dependency_state: string;
-    stale_reason: string | null;
-    updated_at: string | null;
-  }>;
-  onOpenArtifact: (artifact: {
-    object_type: "odi_need" | "route" | "desired_outcome";
-    object_id: string;
-    label: string;
-    dependency_state: string;
-    stale_reason: string | null;
-    updated_at: string | null;
-  }) => void;
-}) {
-  if (total <= 0) return null;
 
-  return (
-    <div style={{ marginBottom: 24, borderLeft: "2px solid #b06a3c", paddingLeft: 16 }}>
-      <p style={{ margin: "0 0 4px", fontFamily: "JetBrains Mono, monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "#b06a3c", opacity: 0.75 }}>
-        Interpretation shifted
-      </p>
-      <p style={{ margin: "0 0 6px", color: "#233c4b", fontSize: 14, lineHeight: 1.5 }}>
-        The job map changed — {total} downstream assumption{total === 1 ? "" : "s"} may no longer hold.
-      </p>
-      {scoreNote ? (
-        <p style={{ margin: "0 0 10px", color: "#54656a", fontSize: 13, lineHeight: 1.55, fontStyle: "italic" }}>
-          {scoreNote}
-        </p>
-      ) : null}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {affectedArtifacts.slice(0, 10).map((artifact) => (
-          <button
-            key={`${artifact.object_type}:${artifact.object_id}`}
-            type="button"
-            onClick={() => onOpenArtifact(artifact)}
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 12,
-              textAlign: "left",
-              background: "none",
-              border: "none",
-              padding: "4px 0",
-              cursor: "pointer",
-            }}
-          >
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9ca3af", paddingTop: 2, flexShrink: 0, minWidth: 80 }}>
-              {artifact.object_type === "odi_need" ? "Need" : artifact.object_type === "route" ? "Route" : "Outcome"}
-            </span>
-            <span>
-              <span style={{ color: "#233c4b", fontSize: 13, display: "block", textDecoration: "underline", textDecorationColor: "#d7ded1" }}>{artifact.label}</span>
-              {artifact.stale_reason && (
-                <span style={{ color: "#9ca3af", fontSize: 11, display: "block", marginTop: 2, fontStyle: "italic" }}>
-                  {artifact.stale_reason}
-                </span>
-              )}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function StrategicDebugSummary(_props: {
   latestEventId: string | null;
@@ -482,6 +417,83 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const [posRefreshKey, setPosRefreshKey] = useState(0);
   const [posReEvalLoading, setPosReEvalLoading] = useState(false);
+  const [cascadeProposalRefreshKey, setCascadeProposalRefreshKey] = useState(0);
+  const [cascadeRefreshKey, setCascadeRefreshKey] = useState(0);
+
+  // ── Drift detail panel ────────────────────────────────────────────────────────
+  const [driftPanel, setDriftPanel] = useState<{ surfaceType: string; surfaceId: string } | null>(null);
+  const [driftBadgeRefreshKey, setDriftBadgeRefreshKey] = useState(0);
+  const { scanningAll, checkingSurfaceId: driftCheckingSurfaceId, scanAllSurfaces, checkSurface: checkSurfaceDrift } = useDriftScan(companyId);
+  const [scanAllStatus, setScanAllStatus] = useState<{ assessed: number; aligned: number; slight_drift: number; material_drift: number; scannedAt: Date } | null>(null);
+  const [scanAllError, setScanAllError] = useState<string | null>(null);
+
+  const handleScanAllSurfaces = useCallback(() => {
+    setScanAllError(null);
+    scanAllSurfaces(
+      (result) => {
+        setDriftBadgeRefreshKey((k) => k + 1);
+        setScanAllStatus({ ...result, scannedAt: new Date() });
+        const driftCount = (result.slight_drift ?? 0) + (result.material_drift ?? 0);
+        const summary = driftCount === 0
+          ? `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · all aligned`
+          : `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · ${driftCount} with drift`;
+        toast.success(`Scanned · ${summary}`, { duration: 4000 });
+      },
+      (err) => {
+        setScanAllError(err);
+        toast.error(`Scan failed — ${err}`, { duration: 5000 });
+      },
+    );
+  }, [scanAllSurfaces]);
+
+  const handleCheckSurfaceDrift = useCallback((surfaceType: string, surfaceId: string) => {
+    checkSurfaceDrift(
+      surfaceType,
+      surfaceId,
+      (result) => {
+        setDriftBadgeRefreshKey((k) => k + 1);
+        const driftLabel = result.material_drift > 0 ? "material drift" : result.slight_drift > 0 ? "slight drift" : "aligned";
+        toast.success(`Checked ${surfaceType} · ${driftLabel}`, { duration: 4000 });
+      },
+      (err) => {
+        toast.error(`Check failed — ${err}`, { duration: 5000 });
+      },
+    );
+  }, [checkSurfaceDrift]);
+
+  const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(companyId);
+
+  // ─── All data-fetching hooks before any callbacks ─────────────────────────
+  const {
+    loading: posLoading,
+    item: positioning,
+    error: posError,
+    updateTextField: updatePosTextField,
+    updateItemsField: updatePosItemsField,
+    canvasId,
+  } = usePositioningCanvas(companyId, posRefreshKey);
+
+  const {
+    loading: stratLoading,
+    item: strategy,
+    updateNarrativeField,
+    updateListField,
+    cascadeId,
+  } = useStrategyCascade(companyId, cascadeRefreshKey);
+
+  const {
+    loading: odiLoading,
+    marketDefinition,
+    needs,
+    error: odiError,
+    updateNeedScores,
+  } = useOdiNeeds(companyId, needsRefreshKey);
+
+  const { claims: workshopClaimsMap } = useCompanyClaims(companyId);
+  const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
+  const [pendingReviewNeedId, setPendingReviewNeedId] = useState<string | null>(null);
+  const { items: jobSteps, loading: jobStepsLoading, refetch: refetchJobSteps } = useJobSteps(companyId);
+  const { data: strategicChangeSummary } = useStrategicChangeSummary(companyId);
 
   const handlePosReEvaluate = useCallback(async () => {
     if (!companyId) return;
@@ -501,6 +513,15 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const { proposal } = usePositioningProposal(companyId ?? undefined, proposalRefreshKey);
 
+  // ── Cascade proposal state ────────────────────────────────────────────────
+  const [cascadeGenerateLoading, setCascadeGenerateLoading] = useState(false);
+  const [cascadeGenerateMessage, setCascadeGenerateMessage] = useState<string | null>(null);
+  const [cascadeAcceptLoading, setCascadeAcceptLoading] = useState(false);
+  const [cascadeRejectLoading, setCascadeRejectLoading] = useState(false);
+  const [cascadeReEvalProgress, setCascadeReEvalProgress] = useState<string | null>(null);
+
+  const { proposal: cascadeProposal } = useCascadeProposal(companyId ?? undefined, cascadeProposalRefreshKey);
+
   const handleGenerateProposal = useCallback(async () => {
     if (!companyId) return;
     setGenerateLoading(true);
@@ -519,31 +540,31 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId]);
 
-  const handleAcceptProposal = useCallback(async (proposalId: string) => {
+  const handleAcceptProposal = useCallback(async (proposalId: string, acceptedFields: string[], skippedFields: string[]) => {
     if (!companyId || !proposal) return;
     setAcceptLoading(true);
     try {
       const proposed = proposal.proposed_state as Record<string, unknown>;
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      for (const field of acceptedFields) {
+        patch[field] = proposed[field];
+      }
       const { error: updateError } = await supabase
         .from("positioning_canvases")
-        .update({
-          competitive_alternatives_json: proposed.competitive_alternatives_json,
-          unique_attributes_json: proposed.unique_attributes_json,
-          value_for_customer: proposed.value_for_customer,
-          best_fit_customers: proposed.best_fit_customers,
-          market_category: proposed.market_category,
-          category_rationale: proposed.category_rationale,
-          current_tagline: proposed.current_tagline,
-          proposed_tagline: proposed.proposed_tagline,
-        })
+        .update(patch)
         .eq("id", proposal.surface_id as string);
       if (updateError) {
         setGenerateMessage(`Accept failed: ${updateError.message}`);
         return;
       }
+      await captureBaseline(companyId, "positioning", proposal.surface_id as string);
       await supabase
         .from("surface_proposals")
-        .update({ status: "accepted", reviewed_at: new Date().toISOString() })
+        .update({
+          status: "accepted",
+          reviewed_at: new Date().toISOString(),
+          raw_payload: { accepted_fields: acceptedFields, skipped_fields: skippedFields },
+        })
         .eq("id", proposalId);
       await supabase.functions.invoke("evaluate-positioning-alignment", {
         body: { company_id: companyId },
@@ -565,6 +586,146 @@ export default function ClientRefinePreviewWorkshopView() {
     setProposalRefreshKey((k) => k + 1);
   }, []);
 
+  // ── Cascade proposal handlers ─────────────────────────────────────────────
+  const handleGenerateCascadeProposal = useCallback(async () => {
+    if (!companyId) return;
+    setCascadeGenerateLoading(true);
+    setCascadeGenerateMessage(null);
+    const { data, error } = await supabase.functions.invoke("propose-cascade-changes", {
+      body: { company_id: companyId },
+    });
+    setCascadeGenerateLoading(false);
+    if (error) {
+      setCascadeGenerateMessage(`Error: ${error.message}`);
+    } else if ((data as Record<string, unknown>)?.skipped) {
+      setCascadeGenerateMessage((data as Record<string, unknown>).reason as string ?? "No changes detected.");
+    } else {
+      setCascadeGenerateMessage(null);
+    }
+    setCascadeProposalRefreshKey((k) => k + 1);
+  }, [companyId]);
+
+  const handleAcceptCascadeProposal = useCallback(async (
+    proposalId: string,
+    acceptedFields: string[],
+    skippedFields: string[],
+  ) => {
+    if (!companyId || !cascadeProposal) return;
+    setCascadeAcceptLoading(true);
+    setCascadeReEvalProgress(null);
+    try {
+      const proposed = cascadeProposal.proposed_state as Record<string, unknown>;
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      for (const field of acceptedFields) {
+        patch[field] = proposed[field];
+      }
+      const { error: updateError } = await supabase
+        .from("strategy_cascades")
+        .update(patch)
+        .eq("id", cascadeProposal.surface_id as string);
+      if (updateError) {
+        setCascadeGenerateMessage(`Accept failed: ${updateError.message}`);
+        return;
+      }
+      await captureBaseline(companyId, "cascade", cascadeProposal.surface_id as string);
+      await supabase
+        .from("surface_proposals")
+        .update({
+          status: "accepted",
+          reviewed_at: new Date().toISOString(),
+          raw_payload: { accepted_fields: acceptedFields, skipped_fields: skippedFields },
+        })
+        .eq("id", proposalId);
+      setCascadeRefreshKey((k) => k + 1);
+      setCascadeProposalRefreshKey((k) => k + 1);
+
+      // Downstream alignment re-eval across all surfaces
+      const routeIds = routes.filter((r) => r.level === "route" || !r.level).map((r) => r.id);
+      const needIds = needs.map((n) => n.id);
+      const total = routeIds.length + 1 + needIds.length;
+      let done = 0;
+      setCascadeReEvalProgress(`Re-evaluating alignment across ${routeIds.length} routes, 1 positioning canvas, ${needIds.length} opportunities…`);
+
+      const tick = () => {
+        done++;
+        setCascadeReEvalProgress(`Re-evaluating… ${done} of ${total} complete`);
+      };
+
+      await Promise.all([
+        ...routeIds.map((route_id) =>
+          supabase.functions.invoke("evaluate-route-alignment", { body: { route_id, company_id: companyId } })
+            .then(tick).catch(tick)
+        ),
+        supabase.functions.invoke("evaluate-positioning-alignment", { body: { company_id: companyId } })
+          .then(tick).catch(tick),
+        ...needIds.map((need_id) =>
+          supabase.functions.invoke("evaluate-opportunity-alignment", { body: { need_id, company_id: companyId } })
+            .then(tick).catch(tick)
+        ),
+      ]);
+
+      setCascadeReEvalProgress(`Alignment re-evaluation complete — ${total} surfaces updated.`);
+      setPosRefreshKey((k) => k + 1);
+      setNeedsRefreshKey((k) => k + 1);
+    } finally {
+      setCascadeAcceptLoading(false);
+    }
+  }, [companyId, cascadeProposal, routes, needs]);
+
+  const handleRejectCascadeProposal = useCallback(async (proposalId: string) => {
+    setCascadeRejectLoading(true);
+    await supabase
+      .from("surface_proposals")
+      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+      .eq("id", proposalId);
+    setCascadeRejectLoading(false);
+    setCascadeProposalRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleCascadeNarrativeInlineEdit = useCallback(async (
+    field: "winning_aspiration" | "where_to_play" | "how_to_win",
+    value: string,
+    opts?: { isManualInline?: boolean },
+  ) => {
+    await updateNarrativeField(field, value, opts);
+    if (!companyId) return;
+    const routeIds = routes.filter((r) => r.level === "route" || !r.level).map((r) => r.id);
+    const needIds = needs.map((n) => n.id);
+    routeIds.forEach((route_id) => {
+      supabase.functions.invoke("evaluate-route-alignment", { body: { route_id, company_id: companyId } }).catch(() => {});
+    });
+    supabase.functions.invoke("evaluate-positioning-alignment", { body: { company_id: companyId } }).catch(() => {});
+    needIds.forEach((need_id) => {
+      supabase.functions.invoke("evaluate-opportunity-alignment", { body: { need_id, company_id: companyId } }).catch(() => {});
+    });
+    setPosRefreshKey((k) => k + 1);
+    setNeedsRefreshKey((k) => k + 1);
+  }, [companyId, updateNarrativeField, routes, needs]);
+
+  // ── Opportunity proposal handlers (extracted to avoid TDZ ordering fragility) ─
+  const {
+    opportunityProposalsMap,
+    generateLoadingOpportunityId,
+    acceptLoadingOpportunityProposalId,
+    rejectLoadingOpportunityProposalId,
+    handleSaveNeedField,
+    handleGenerateOpportunityProposal,
+    handleAcceptOpportunityProposal,
+    handleRejectOpportunityProposal,
+  } = useOpportunityProposalHandlers(companyId, () => setNeedsRefreshKey((k) => k + 1));
+
+  const handleDriftClick = useCallback((surfaceType: string, surfaceId: string) => {
+    setDriftPanel({ surfaceType, surfaceId });
+  }, []);
+
+  // Safe: handleGenerateOpportunityProposal is from the hook call above, not a TDZ binding.
+  const getDriftProposeCallback = useCallback((surfaceType: string, surfaceId: string) => {
+    if (surfaceType === "cascade") return handleGenerateCascadeProposal;
+    if (surfaceType === "positioning") return handleGenerateProposal;
+    if (surfaceType === "opportunity") return () => handleGenerateOpportunityProposal(surfaceId);
+    return undefined;
+  }, [handleGenerateCascadeProposal, handleGenerateOpportunityProposal]);
+
   const [odiReEvalLoadingId, setOdiReEvalLoadingId] = useState<string | null>(null);
 
   const handleNeedReEvaluate = useCallback(async (needId: string) => {
@@ -577,20 +738,6 @@ export default function ClientRefinePreviewWorkshopView() {
     setNeedsRefreshKey((k) => k + 1);
   }, [companyId]);
 
-  const {
-    loading: posLoading,
-    item: positioning,
-    error: posError,
-    updateTextField: updatePosTextField,
-    updateItemsField: updatePosItemsField,
-  } = usePositioningCanvas(companyId, posRefreshKey);
-
-  const {
-    loading: stratLoading,
-    item: strategy,
-    updateNarrativeField,
-    updateListField,
-  } = useStrategyCascade(companyId);
   const workshopRouteSeeds = useMemo(
     () =>
       routes.map((route) => {
@@ -644,16 +791,6 @@ export default function ClientRefinePreviewWorkshopView() {
     return null;
   }, [activeCompany?.engagement_phase, strategy, workshopStrategicCenter]);
 
-  const {
-    loading: odiLoading,
-    marketDefinition,
-    needs,
-    error: odiError,
-    updateNeedScores,
-  } = useOdiNeeds(companyId, needsRefreshKey);
-
-  const { claims: workshopClaimsMap } = useCompanyClaims(companyId);
-
   const workshopTopLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
 
   const workshopDominantClaimState = useMemo((): ClaimState | null => {
@@ -670,16 +807,10 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
   const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
-  const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
-  const [pendingReviewNeedId, setPendingReviewNeedId] = useState<string | null>(null);
   const handleRouteSelect = useCallback(
     (routeId: string) => { setPendingInspectRouteId(routeId); setActiveTab("routes"); },
     [],
   );
-
-  const { items: jobSteps, loading: jobStepsLoading, refetch: refetchJobSteps } = useJobSteps(companyId);
-
-  const { data: strategicChangeSummary } = useStrategicChangeSummary(companyId);
 
   const compareActive = showCompare;
 
@@ -1170,6 +1301,12 @@ export default function ClientRefinePreviewWorkshopView() {
           onRejectProposal={handleRejectProposal}
           acceptLoading={acceptLoading}
           rejectLoading={rejectLoading}
+          canvasId={canvasId}
+          phase={activeCompany?.engagement_phase}
+          onDriftClick={handleDriftClick}
+          driftRefreshKey={driftBadgeRefreshKey}
+          onCheckSurfaceDrift={handleCheckSurfaceDrift}
+          checkingSurfaceId={driftCheckingSurfaceId}
         />
       </>
     );
@@ -1206,11 +1343,26 @@ export default function ClientRefinePreviewWorkshopView() {
         baseline={baseline}
         signals={sourceSignals}
         directionContextNote={stratRouteNote ?? strategyContextNote}
-        updateNarrativeField={updateNarrativeField}
+        updateNarrativeField={handleCascadeNarrativeInlineEdit}
         updateListField={updateListField}
         hasHierarchy={workshopHasHierarchy}
         signalBasis={workshopSignalBasis}
         claimsMap={workshopClaimsMap}
+        onGenerateProposal={handleGenerateCascadeProposal}
+        generateLoading={cascadeGenerateLoading}
+        generateMessage={cascadeGenerateMessage}
+        proposal={cascadeProposal}
+        onAcceptProposal={handleAcceptCascadeProposal}
+        onRejectProposal={handleRejectCascadeProposal}
+        acceptLoading={cascadeAcceptLoading}
+        rejectLoading={cascadeRejectLoading}
+        reEvalProgress={cascadeReEvalProgress}
+        cascadeId={cascadeId}
+        phase={activeCompany?.engagement_phase}
+        onDriftClick={handleDriftClick}
+        driftRefreshKey={driftBadgeRefreshKey}
+        onCheckSurfaceDrift={handleCheckSurfaceDrift}
+        checkingSurfaceId={driftCheckingSurfaceId}
       />
       );
     }
@@ -1256,6 +1408,18 @@ export default function ClientRefinePreviewWorkshopView() {
               signalBasis={workshopSignalBasis}
               onReEvaluate={handleNeedReEvaluate}
               reEvalLoadingId={odiReEvalLoadingId}
+              proposalsMap={opportunityProposalsMap}
+              onGenerateProposal={handleGenerateOpportunityProposal}
+              generateLoadingId={generateLoadingOpportunityId}
+              onAcceptProposal={handleAcceptOpportunityProposal}
+              onRejectProposal={handleRejectOpportunityProposal}
+              acceptLoadingProposalId={acceptLoadingOpportunityProposalId}
+              rejectLoadingProposalId={rejectLoadingOpportunityProposalId}
+              onSaveNeedField={handleSaveNeedField}
+              onDriftClick={handleDriftClick}
+              driftRefreshKey={driftBadgeRefreshKey}
+              onCheckSurfaceDrift={handleCheckSurfaceDrift}
+              checkingSurfaceId={driftCheckingSurfaceId}
             />
             {!odiLoading && filteredNeeds.length === 0 && (
               <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
@@ -1299,7 +1463,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <div className="crpv-ws-cmp-support-col">
             {odiError
               ? <div className="crpv-ws-placeholder crpv-ws-error cap">Query error: {odiError}</div>
-              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} reviewNeedId={pendingReviewNeedId} onReviewNeedHandled={() => setPendingReviewNeedId(null)} onReEvaluate={handleNeedReEvaluate} reEvalLoadingId={odiReEvalLoadingId} />
+              : <NeedsOrgPanel needs={needs} loading={odiLoading} updateNeedScores={updateNeedScores} latestExclusionAt={latestExclusionAt} activeStep={activeStep} onClearStep={clearStep} routes={routes} onRouteSelect={handleRouteSelect} companyId={companyId ?? undefined} currentPhase={activeCompany?.engagement_phase} reviewNeedId={pendingReviewNeedId} onReviewNeedHandled={() => setPendingReviewNeedId(null)} onReEvaluate={handleNeedReEvaluate} reEvalLoadingId={odiReEvalLoadingId} proposalsMap={opportunityProposalsMap} onGenerateProposal={handleGenerateOpportunityProposal} generateLoadingId={generateLoadingOpportunityId} onAcceptProposal={handleAcceptOpportunityProposal} onRejectProposal={handleRejectOpportunityProposal} acceptLoadingProposalId={acceptLoadingOpportunityProposalId} rejectLoadingProposalId={rejectLoadingOpportunityProposalId} onSaveNeedField={handleSaveNeedField} onDriftClick={handleDriftClick} />
             }
           </div>
         </div>
@@ -1333,6 +1497,7 @@ export default function ClientRefinePreviewWorkshopView() {
   }
 
   return (
+    <>
     <section className={`crpv-page crpv-workshop-page${workshopHasHierarchy ? " has-hierarchy" : ""}`}>
       <header className="crpv-header">
         <div className="left">
@@ -1476,8 +1641,37 @@ export default function ClientRefinePreviewWorkshopView() {
         onHome={goToRefineHome}
         onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
         onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+        onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
+        inboxCount={inboxCount}
+        inboxHasNew={inboxNewCount > 0}
       />
       <div className="crpv-ws-content-col">
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", padding: "6px 20px 0", gap: 4 }}>
+        <button
+          type="button"
+          onClick={handleScanAllSurfaces}
+          disabled={scanningAll}
+          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: scanningAll ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: scanningAll ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2 }}
+        >
+          {scanningAll ? "Scanning…" : "Scan all surfaces"}
+        </button>
+        {scanAllError && (
+          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.05em", color: "#c0392b", margin: 0 }}>
+            Scan failed — {scanAllError}
+          </p>
+        )}
+        {!scanAllError && scanAllStatus && (
+          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.05em", color: "rgba(17,17,17,0.35)", margin: 0 }}>
+            {(() => {
+              const driftCount = (scanAllStatus.slight_drift ?? 0) + (scanAllStatus.material_drift ?? 0);
+              const summary = driftCount === 0
+                ? `${scanAllStatus.assessed} surface${scanAllStatus.assessed === 1 ? "" : "s"} · all aligned`
+                : `${scanAllStatus.assessed} surface${scanAllStatus.assessed === 1 ? "" : "s"} · ${driftCount} with drift`;
+              return `Last scanned ${formatDistanceToNow(scanAllStatus.scannedAt)} ago · ${summary}`;
+            })()}
+          </p>
+        )}
+      </div>
       {!workshopHasHierarchy && (threadStabilizing || threadUnresolved || threadShifting) && (
         <div style={{
           display: "flex",
@@ -1563,12 +1757,6 @@ export default function ClientRefinePreviewWorkshopView() {
         <div className="crpv-ws-content">
           <MarketFoundationSection
             marketDefinition={marketFoundation.marketDefinition}
-          />
-          <StrategicChangeBanner
-            total={strategicChangeSummary?.affectedCounts.total ?? 0}
-            scoreNote={strategicChangeSummary?.scoreNote ?? null}
-            affectedArtifacts={strategicChangeSummary?.affectedArtifacts ?? []}
-            onOpenArtifact={openAffectedArtifact}
           />
           {isAdmin ? (
             <StrategicDebugSummary
@@ -1667,5 +1855,18 @@ export default function ClientRefinePreviewWorkshopView() {
       </div>
       </div>
     </section>
+
+    {driftPanel && (
+      <DriftDetailPanel
+        open
+        onClose={() => { setDriftPanel(null); }}
+        surfaceType={driftPanel.surfaceType}
+        surfaceId={driftPanel.surfaceId}
+        refreshKey={driftBadgeRefreshKey}
+        onRefresh={() => setDriftBadgeRefreshKey((k) => k + 1)}
+        onProposeChanges={getDriftProposeCallback(driftPanel.surfaceType, driftPanel.surfaceId)}
+      />
+    )}
+    </>
   );
 }

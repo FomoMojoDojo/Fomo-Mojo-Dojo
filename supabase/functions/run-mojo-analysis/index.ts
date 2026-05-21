@@ -11,7 +11,9 @@ const corsHeaders = {
 
 const DIFY_MONITOR_MAX_ATTEMPTS = 240;
 const DIFY_MONITOR_DELAY_MS = 5000;
-const DIFY_STARTUP_TIMEOUT_MS = 180000;
+const DIFY_RUN_ID_TIMEOUT_MS = 180000;
+const DIFY_POLL_TIMEOUT_MS = 4000;
+const DIFY_LOG_POLL_DELAY_MS = 1000;
 
 const STOP_WORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "into", "what", "how",
@@ -337,9 +339,9 @@ function needOutcomeFromStep(step: NormalizedStep, index: number): string {
 }
 
 function needServiceState(importance: number, satisfaction: number): string {
-  if (importance >= 7 && satisfaction <= 4) return "under_served";
-  if (importance <= 4 && satisfaction >= 8) return "over_served";
-  return "appropriately_served";
+  if (importance >= 7 && satisfaction <= 4) return "underserved";
+  if (importance <= 4 && satisfaction >= 8) return "overserved";
+  return "served";
 }
 
 function nowIso() {
@@ -440,31 +442,41 @@ async function generateNeedsFromSteps(
 
   await supabase.from("odi_needs").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
 
+  // Generate both template variants per step for broad Diagnose-phase coverage.
+  // Template 0 uses the base importance/satisfaction; template 1 bumps satisfaction
+  // by 1, producing a slightly less urgent variant of the same step concern.
+  let sortOrder = 1;
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const importance = Math.max(5, Math.min(9, 8 - ((step.step_number - 1) % 3)));
-    const satisfaction = Math.max(2, Math.min(7, 4 + ((step.step_number + 1) % 3)));
-    const opportunityScore = importance + Math.max(0, importance - satisfaction);
+    const baseImportance = Math.max(5, Math.min(9, 8 - ((step.step_number - 1) % 3)));
+    const baseSatisfaction = Math.max(2, Math.min(7, 4 + ((step.step_number + 1) % 3)));
+    const templates = ODI_NEED_TEMPLATES[step.step_number] ?? ODI_NEED_TEMPLATES[1];
 
-    await supabase.from("odi_needs").insert({
-      company_id: companyId,
-      user_id: userId,
-      tier: "need",
-      desired_outcome: needOutcomeFromStep(step, i),
-      journey_key: journeyKey,
-      step_number: step.step_number,
-      step_label: step.step_label,
-      importance,
-      satisfaction,
-      opportunity_score: opportunityScore,
-      sort_order: i + 1,
-      service_state: needServiceState(importance, satisfaction),
-      source_path: "dify_mojo_analysis",
-      frameworks_used: ["JTBD", "ODI", "dify_mojo_analysis"],
-    });
+    for (let t = 0; t < templates.length; t++) {
+      const importance = baseImportance;
+      const satisfaction = Math.min(7, baseSatisfaction + t);
+      const opportunityScore = importance + Math.max(0, importance - satisfaction);
+
+      await supabase.from("odi_needs").insert({
+        company_id: companyId,
+        user_id: userId,
+        tier: "need",
+        desired_outcome: needOutcomeFromStep(step, t),
+        journey_key: journeyKey,
+        step_number: step.step_number,
+        step_label: step.step_label,
+        importance,
+        satisfaction,
+        opportunity_score: opportunityScore,
+        sort_order: sortOrder++,
+        service_state: needServiceState(importance, satisfaction),
+        source_path: "dify_mojo_analysis",
+        frameworks_used: ["JTBD", "ODI", "dify_mojo_analysis"],
+      });
+    }
   }
 
-  console.log("[run-mojo-analysis] generated", steps.length, "needs from job steps — journey:", journeyKey);
+  console.log("[run-mojo-analysis] generated", steps.length * 2, "needs from job steps — journey:", journeyKey);
 }
 
 async function applyJobStepsFromDify(
@@ -570,6 +582,68 @@ async function readLocalEnvValue(name: string): Promise<string | undefined> {
   }
 }
 
+async function resolveMojoAnalysisApiKey() {
+  const dedicatedEnv = Deno.env.get("DIFY_MOJO_ANALYSIS_API_KEY");
+  if (dedicatedEnv) return dedicatedEnv;
+
+  const dedicatedFile = await readLocalEnvValue("DIFY_MOJO_ANALYSIS_API_KEY");
+  if (dedicatedFile) return dedicatedFile;
+
+  const genericEnv = Deno.env.get("DIFY_API_KEY");
+  if (genericEnv) return genericEnv;
+
+  const genericFile = await readLocalEnvValue("DIFY_API_KEY");
+  return genericFile;
+}
+
+async function readDockerGatewayFromProc() {
+  try {
+    const routeTable = await Deno.readTextFile("/proc/net/route");
+    const lines = routeTable.split(/\r?\n/).slice(1);
+    for (const line of lines) {
+      const columns = line.trim().split(/\s+/);
+      if (columns.length < 3) continue;
+      const destination = columns[1];
+      const gatewayHex = columns[2];
+      if (destination !== "00000000" || gatewayHex.length !== 8) continue;
+      const octets = gatewayHex.match(/../g)?.map((part) => parseInt(part, 16)).reverse();
+      if (!octets || octets.some((part) => !Number.isFinite(part))) continue;
+      return octets.join(".");
+    }
+  } catch {
+    // Ignore local runtime probing errors and fall back to other local gateway heuristics.
+  }
+  return null;
+}
+
+async function inferDockerGatewayIpv4() {
+  try {
+    const osModule = await import("node:os");
+    const interfaces = osModule.networkInterfaces?.() ?? {};
+    const candidates: string[] = [];
+    for (const entries of Object.values(interfaces)) {
+      for (const entry of entries ?? []) {
+        if (!entry || entry.family !== "IPv4" || entry.internal) continue;
+        const octets = String(entry.address ?? "").trim().split(".");
+        if (octets.length !== 4) continue;
+        if (octets[0] !== "172" && octets[0] !== "192" && octets[0] !== "10") continue;
+        candidates.push(`${octets[0]}.${octets[1]}.${octets[2]}.1`);
+      }
+    }
+    const preferred = candidates.find((ip) => ip.startsWith("172."));
+    if (preferred) return preferred;
+    if (candidates.length > 0) return candidates[0];
+  } catch {
+    // Ignore node compatibility probing errors.
+  }
+  return null;
+}
+
+async function buildDifyBaseUrlCandidates(baseUrl: string) {
+  const trimmed = String(baseUrl ?? "").trim().replace(/\/$/, "");
+  return trimmed ? [trimmed] : [baseUrl];
+}
+
 // ── Dify helpers ──────────────────────────────────────────────────────────────
 
 function buildWorkflowRunEndpoint(baseUrl: string) {
@@ -580,20 +654,125 @@ function buildWorkflowRunDetailEndpoint(baseUrl: string, runId: string) {
   return `${baseUrl}/workflows/run/${runId}`;
 }
 
+function buildWorkflowLogsEndpoint(baseUrl: string, difyUserSessionId: string) {
+  const url = new URL(`${baseUrl}/workflows/logs`);
+  url.searchParams.set("created_by_end_user_session_id", difyUserSessionId);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("limit", "1");
+  return url.toString();
+}
+
+function extractWorkflowStartPayload(value: unknown): { workflowRunId: string; taskId: string } {
+  const payload = asRecord(value) ?? {};
+  const nested = asRecord(payload.data) ?? {};
+  return {
+    workflowRunId: String(payload.workflow_run_id ?? nested.workflow_run_id ?? nested.id ?? "").trim(),
+    taskId: String(payload.task_id ?? nested.task_id ?? "").trim(),
+  };
+}
+
+function extractWorkflowStartFromText(text: string): { workflowRunId: string; taskId: string } {
+  const normalized = String(text ?? "");
+
+  const workflowMatch = normalized.match(/"workflow_run_id"\s*:\s*"([^"]+)"/);
+  const taskMatch = normalized.match(/"task_id"\s*:\s*"([^"]+)"/);
+  if (workflowMatch?.[1]) {
+    return {
+      workflowRunId: workflowMatch[1].trim(),
+      taskId: String(taskMatch?.[1] ?? "").trim(),
+    };
+  }
+
+  const blocks = normalized.split(/\r?\n\r?\n+/);
+  for (const block of blocks) {
+    for (const line of block.split(/\r?\n/)) {
+      if (!line.startsWith("data:")) continue;
+      const raw = line.slice(5).trim();
+      if (!raw) continue;
+      try {
+        const extracted = extractWorkflowStartPayload(JSON.parse(raw));
+        if (extracted.workflowRunId) return extracted;
+      } catch {
+        // Ignore malformed or partial SSE payloads and continue scanning.
+      }
+    }
+  }
+
+  return { workflowRunId: "", taskId: "" };
+}
+
+async function lookupWorkflowRunFromLogs(params: {
+  apiKey: string;
+  baseUrl: string;
+  difyUserSessionId: string;
+}): Promise<{ workflowRunId: string; taskId: string }> {
+  const { apiKey, baseUrl, difyUserSessionId } = params;
+  const response = await fetch(buildWorkflowLogsEndpoint(baseUrl, difyUserSessionId), {
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Accept": "application/json",
+    },
+    signal: AbortSignal.timeout(DIFY_POLL_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new Error(`Dify log lookup error (${response.status}): ${raw}`);
+  }
+
+  const payload = asRecord(await response.json().catch(() => null)) ?? {};
+  const rows = Array.isArray(payload.data) ? payload.data : [];
+  const first = asRecord(rows[0]) ?? {};
+  const workflowRun = asRecord(first.workflow_run) ?? {};
+  return {
+    workflowRunId: String(workflowRun.id ?? "").trim(),
+    taskId: "",
+  };
+}
+
+async function waitForWorkflowRunFromLogs(params: {
+  apiKey: string;
+  baseUrl: string;
+  difyUserSessionId: string;
+  deadline: number;
+}): Promise<{ workflowRunId: string; taskId: string }> {
+  const { apiKey, baseUrl, difyUserSessionId, deadline } = params;
+
+  while (Date.now() < deadline) {
+    try {
+      const found = await lookupWorkflowRunFromLogs({ apiKey, baseUrl, difyUserSessionId });
+      if (found.workflowRunId) return found;
+    } catch (err) {
+      console.warn("[run-mojo-analysis] Dify log lookup retry:", String((err as Error)?.message ?? err), "| candidate:", baseUrl);
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(DIFY_LOG_POLL_DELAY_MS, remainingMs)));
+  }
+
+  throw new Error("startup-timeout");
+}
+
 async function startDifyStream(params: {
   apiKey: string;
   endpoint: string;
   inputs: Record<string, string>;
+  difyUserSessionId: string;
 }): Promise<{ workflowRunId: string; taskId: string }> {
-  const { apiKey, endpoint, inputs } = params;
+  const { apiKey, endpoint, inputs, difyUserSessionId } = params;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("startup-timeout"), DIFY_STARTUP_TIMEOUT_MS);
+  const startupTimeout = setTimeout(() => controller.abort("startup-timeout"), DIFY_RUN_ID_TIMEOUT_MS);
 
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ inputs, response_mode: "streaming", user: "run-mojo-analysis" }),
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json",
+      },
+      body: JSON.stringify({ inputs, response_mode: "streaming", user: difyUserSessionId }),
       signal: controller.signal,
     });
 
@@ -602,39 +781,126 @@ async function startDifyStream(params: {
       throw new Error(`Dify error (${response.status}): ${raw}`);
     }
 
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let workflowRunId = "";
-    let taskId = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\n\n+/);
-      buffer = blocks.pop() ?? "";
-
-      for (const block of blocks) {
-        const dataLine = block.split(/\r?\n/).find((l) => l.startsWith("data:"));
-        if (!dataLine) continue;
-        try {
-          const payload = JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>;
-          workflowRunId ||= String(payload.workflow_run_id ?? asRecord(payload.data)?.workflow_run_id ?? "").trim();
-          taskId ||= String(payload.task_id ?? asRecord(payload.data)?.task_id ?? "").trim();
-          if (workflowRunId) { controller.abort("run-id-captured"); return { workflowRunId, taskId }; }
-        } catch { /* skip malformed */ }
-      }
+    const contentType = String(response.headers.get("content-type") ?? "").toLowerCase();
+    console.log("[run-mojo-analysis] Dify startup response:", endpoint, "| status:", response.status, "| content-type:", contentType || "none");
+    if (!response.body) {
+      const raw = await response.text().catch(() => "");
+      const extracted = extractWorkflowStartFromText(raw);
+      if (extracted.workflowRunId) return extracted;
+      throw new Error("Dify stream missing response body");
     }
 
-    throw new Error("Dify stream ended without workflow_run_id");
-  } catch (err) {
-    const msg = String((err as Error)?.message ?? err);
-    if (msg.includes("run-id-captured")) return { workflowRunId: "", taskId: "" };
-    throw err;
+    if (contentType.includes("application/json")) {
+      const extracted = extractWorkflowStartPayload(await response.json().catch(() => null));
+      if (extracted.workflowRunId) return extracted;
+      throw new Error("Dify JSON response missing workflow_run_id");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const baseUrl = endpoint.replace(/\/workflows\/run$/, "");
+    const startupDeadline = Date.now() + DIFY_RUN_ID_TIMEOUT_MS;
+    let chunkCount = 0;
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          const chunkText = decoder.decode(value, { stream: true });
+          chunkCount += 1;
+          if (chunkCount <= 3) {
+            console.log(
+              "[run-mojo-analysis] Dify startup chunk:",
+              endpoint,
+              "| chunk:",
+              chunkCount,
+              "| bytes:",
+              value.length,
+              "| preview:",
+              JSON.stringify(chunkText.slice(0, 240)),
+            );
+          }
+          buffer += chunkText;
+          const extracted = extractWorkflowStartFromText(buffer);
+          if (extracted.workflowRunId) {
+            try {
+              await reader.cancel();
+            } catch {
+              // Best-effort cleanup; we already have the run ID.
+            }
+            return extracted;
+          }
+          if (chunkText.includes("event: ping")) {
+            // Dify heartbeat — the workflow_started event with the run ID arrives
+            // in the next chunk. Keep reading instead of switching to log polling.
+            console.log("[run-mojo-analysis] Dify startup received ping on chunk", chunkCount, "— continuing SSE read");
+          }
+        }
+      }
+    } catch (err) {
+      const message = String((err as Error)?.message ?? err);
+      if (message.includes("startup-timeout")) {
+        console.warn("[run-mojo-analysis] Dify startup stream timed out after response, falling back to workflow logs");
+        return await waitForWorkflowRunFromLogs({
+          apiKey,
+          baseUrl,
+          difyUserSessionId,
+          deadline: Date.now() + 15000,
+        });
+      }
+      throw err;
+    }
+
+    buffer += decoder.decode();
+    const extracted = extractWorkflowStartFromText(buffer);
+    if (extracted.workflowRunId) return extracted;
+    return await waitForWorkflowRunFromLogs({
+      apiKey,
+      baseUrl,
+      difyUserSessionId,
+      deadline: Date.now() + 15000,
+    });
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(startupTimeout);
   }
+}
+
+async function startDifyStreamWithFallbacks(params: {
+  apiKey: string;
+  baseUrls: string[];
+  inputs: Record<string, string>;
+  difyUserSessionId: string;
+}): Promise<{ workflowRunId: string; taskId: string; baseUrl: string }> {
+  const { apiKey, baseUrls, inputs, difyUserSessionId } = params;
+  let lastError: Error | null = null;
+
+  for (const baseUrl of baseUrls) {
+    try {
+      const started = await startDifyStream({
+        apiKey,
+        endpoint: buildWorkflowRunEndpoint(baseUrl),
+        inputs,
+        difyUserSessionId,
+      });
+      return { ...started, baseUrl };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      lastError = error;
+      const message = String(error.message || error);
+      const retryable =
+        message.includes("startup-timeout") ||
+        message.toLowerCase().includes("fetch failed") ||
+        message.toLowerCase().includes("connection") ||
+        message.toLowerCase().includes("network");
+
+      if (!retryable) throw error;
+      console.warn("[run-mojo-analysis] retrying Dify start with next base URL after:", message, "| candidate:", baseUrl);
+    }
+  }
+
+  throw lastError ?? new Error("Failed to start Dify workflow");
 }
 
 async function fetchDifyRunResult(params: {
@@ -645,6 +911,7 @@ async function fetchDifyRunResult(params: {
   const { apiKey, baseUrl, runId } = params;
   const res = await fetch(buildWorkflowRunDetailEndpoint(baseUrl, runId), {
     headers: { "Authorization": `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(DIFY_POLL_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Dify poll error (${res.status})`);
   const data = asRecord(await res.json()) ?? {};
@@ -883,24 +1150,22 @@ serve(async (req) => {
     const validTriggers = ["manual", "baseline_complete", "scheduled", "jobmap_regenerate"];
     const triggerLabel = validTriggers.includes(trigger_type) ? trigger_type : "manual";
 
-    const apiKeyEnv = Deno.env.get("DIFY_MOJO_ANALYSIS_API_KEY");
-    const apiKeyFile = apiKeyEnv ? undefined : await readLocalEnvValue("DIFY_MOJO_ANALYSIS_API_KEY");
-    const DIFY_API_KEY = apiKeyEnv ?? apiKeyFile;
+    const DIFY_API_KEY = await resolveMojoAnalysisApiKey();
 
     if (!DIFY_API_KEY) {
-      return jsonResponse({ error: "DIFY_MOJO_ANALYSIS_API_KEY not configured" }, 503);
+      return jsonResponse({ error: "DIFY_MOJO_ANALYSIS_API_KEY or DIFY_API_KEY not configured" }, 503);
     }
 
     const baseUrlEnv = Deno.env.get("DIFY_API_BASE_URL");
     const baseUrlFile = baseUrlEnv ? undefined : await readLocalEnvValue("DIFY_API_BASE_URL");
-    const DIFY_BASE_URL = (baseUrlEnv ?? baseUrlFile ?? "https://api.dify.ai").replace(/\/$/, "");
+    const DIFY_BASE_URLS = await buildDifyBaseUrlCandidates((baseUrlEnv ?? baseUrlFile ?? "https://api.dify.ai").replace(/\/$/, ""));
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Create queued proposal row and return immediately — all Dify work is background
+    // Create the proposal row first so startup success/failure is always traceable.
     const { data: proposal, error: insertError } = await supabase
       .from("file_proposals")
       .insert({
@@ -956,62 +1221,94 @@ serve(async (req) => {
 
     console.log("[run-mojo-analysis] odi context — job_performer:", jobPerformer ? "set" : "empty", "| primary_job:", primaryJob ? "set" : "empty", "| desired_outcome:", desiredOutcome ? "set" : "empty", "| challenge:", recurringProgressChallenge ? "set" : "empty");
 
-    // Keep Dify start + monitoring in one continuous background promise so the
-    // runtime (local or production) only needs to honour waitUntil once.
-    const backgroundWork = (async () => {
-      try {
-        const endpoint = buildWorkflowRunEndpoint(DIFY_BASE_URL);
-        const { workflowRunId, taskId } = await startDifyStream({
-          apiKey: DIFY_API_KEY,
-          endpoint,
-          inputs: {
-            company_id,
-            trigger_type: triggerLabel,
-            journey_key: requestedJourneyKey || "",
-            file_url: "",
-            job_performer: jobPerformer,
-            primary_job: primaryJob,
-            desired_outcome: desiredOutcome,
-            recurring_progress_challenge: recurringProgressChallenge,
-          },
-        });
+    const startupInputs = {
+      company_id,
+      trigger_type: triggerLabel,
+      journey_key: requestedJourneyKey || "",
+      file_url: "",
+      job_performer: jobPerformer,
+      primary_job: primaryJob,
+      desired_outcome: desiredOutcome,
+      recurring_progress_challenge: recurringProgressChallenge,
+    };
+    const difyUserSessionId = `mojo-analysis:${proposalId}`;
 
-        if (!workflowRunId) {
-          await markFailed(supabase, proposalId, "Failed to start Dify workflow — no run ID returned");
-          return;
-        }
+    // ── Step 1: Start Dify workflow synchronously ─────────────────────────────
+    // SSE startup must happen before returning the HTTP response so the local
+    // Edge Runtime (which has no EdgeRuntime.waitUntil) reliably gets the run ID.
+    console.log("[run-mojo-analysis] starting Dify workflow via candidates:", DIFY_BASE_URLS.join(", "));
 
-        console.log("[run-mojo-analysis] dify run started:", workflowRunId);
+    let workflowRunId = "";
+    let taskId = "";
+    let selectedBaseUrl = DIFY_BASE_URLS[0];
+    try {
+      const started = await startDifyStreamWithFallbacks({
+        apiKey: DIFY_API_KEY,
+        baseUrls: DIFY_BASE_URLS,
+        inputs: startupInputs,
+        difyUserSessionId,
+      });
+      workflowRunId = started.workflowRunId;
+      taskId = started.taskId;
+      selectedBaseUrl = started.baseUrl;
+      console.log("[run-mojo-analysis] selected Dify base URL:", selectedBaseUrl);
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      console.error("[run-mojo-analysis] startup error:", msg);
+      await markFailed(supabase, proposalId, msg);
+      return jsonResponse({ error: `Failed to start Dify workflow: ${msg}` }, 500);
+    }
 
-        await supabase.from("file_proposals").update({
-          processing_state: "running",
-          dify_workflow_run_id: workflowRunId,
-          dify_task_id: taskId || null,
-        }).eq("id", proposalId);
+    if (!workflowRunId) {
+      const message = "Failed to start Dify workflow — no run ID returned";
+      await markFailed(supabase, proposalId, message);
+      return jsonResponse({ error: message }, 500);
+    }
 
-        await monitorInBackground({
-          supabase,
-          apiKey: DIFY_API_KEY,
-          baseUrl: DIFY_BASE_URL,
-          proposalId,
-          saveOpts: {
-            jobmapOnly,
-            journeyKey: requestedJourneyKey || "customer",
-            jobPerformer,
-            primaryJob,
-          },
-        });
-      } catch (err) {
-        const msg = String((err as Error)?.message ?? err);
-        console.error("[run-mojo-analysis] background error:", msg);
-        await markFailed(supabase, proposalId, msg);
-      }
-    })();
+    console.log("[run-mojo-analysis] dify run started:", workflowRunId);
 
-    const registered = waitUntil(backgroundWork);
+    // ── Step 2: Persist run ID synchronously ──────────────────────────────────
+    const { error: runningUpdateError } = await supabase.from("file_proposals").update({
+      processing_state: "running",
+      dify_workflow_run_id: workflowRunId,
+      dify_task_id: taskId || null,
+    }).eq("id", proposalId);
+
+    if (runningUpdateError) {
+      const message = `Failed to persist Dify run ID: ${runningUpdateError.message}`;
+      console.error("[run-mojo-analysis] startup persistence error:", message);
+      await markFailed(supabase, proposalId, message);
+      return jsonResponse({ error: message }, 500);
+    }
+
+    // ── Step 3: Poll for completion ───────────────────────────────────────────
+    // The Dify workflow is now confirmed running (workflowRunId persisted above).
+    // Background the polling monitor. In production, EdgeRuntime.waitUntil keeps
+    // the promise alive after the HTTP response. In local dev (supabase functions
+    // serve), the server process is long-lived so background promises continue
+    // even after the response is sent — no need to block.
+    const monitorPromise = monitorInBackground({
+      supabase,
+      apiKey: DIFY_API_KEY,
+      baseUrl: selectedBaseUrl,
+      proposalId,
+      saveOpts: {
+        jobmapOnly,
+        journeyKey: requestedJourneyKey || "customer",
+        jobPerformer,
+        primaryJob,
+      },
+    }).catch(async (err) => {
+      const msg = String((err as Error)?.message ?? err);
+      console.error("[run-mojo-analysis] monitor error:", msg);
+      await markFailed(supabase, proposalId, msg);
+    });
+
+    const registered = waitUntil(monitorPromise);
     if (!registered) {
-      // waitUntil unavailable — await inline so the work completes before the response
-      await backgroundWork;
+      // Local dev: supabase functions serve keeps the server alive, so the
+      // background promise will continue running after we return the response.
+      console.log("[run-mojo-analysis] local dev: waitUntil unavailable; monitor running in background (server is long-lived)");
     }
 
     return jsonResponse({ proposal_id: proposalId, status: "queued", trigger_type: triggerLabel });
