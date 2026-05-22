@@ -3,6 +3,7 @@ import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
+  buildCompanyVocabExclusions,
   containsNonOdiProcessLanguage,
   containsSolutionPrescriptiveLanguage,
   normalizeToEightCheckpointSpine,
@@ -343,13 +344,13 @@ function extractStepFocus(args: {
   const base = shortPhrase(args.contextHint, 9) || "improved client decisions and outcomes";
   return {
     1: pickProblem(/(lack|without).{0,80}(proof|quantified|evidence)|improves?.{0,50}(decision|outcome)/i) ||
-      pickInput("outcome-data") || base,
-    2: pickInput("needs-assessment") || pickInput("referral-map") || base,
-    3: pickInput("outcome-data") || pickInput("program-model") || base,
+      pickInput("outcome-evidence") || base,
+    2: pickInput("customer-research") || pickInput("acquisition-map") || base,
+    3: pickInput("outcome-evidence") || pickInput("operating-model") || base,
     4: pickProblem(/friction in sales|slows adoption|difficult to productize/i) || pickInput("brand-narrative") || base,
-    5: pickInput("program-model") || pickProblem(/high-touch|repeatability|scalable system/i) || base,
-    6: pickInput("family-satisfaction") || pickInput("donor-retention") || base,
-    7: pickProblem(/slows adoption|friction in sales|risk/i) || pickInput("grant-pipeline") || base,
+    5: pickInput("operating-model") || pickProblem(/high-touch|repeatability|scalable system/i) || base,
+    6: pickInput("customer-signals") || pickInput("retention-signals") || base,
+    7: pickProblem(/slows adoption|friction in sales|risk/i) || pickInput("demand-pipeline") || base,
     8: pickProblem(/productize|scalable system|high-touch consulting/i) || pickInput("market-cat") || base,
   } as Record<number, string>;
 }
@@ -545,6 +546,7 @@ function normalizeCustomerJourney(args: {
   evidenceBasis: string;
   contextHint?: string;
   forceContextualDescriptions?: boolean;
+  industryExclusions?: Set<string>;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
   const contextTopic = normalizeContextTopic(args.contextHint || "");
@@ -575,14 +577,14 @@ function normalizeCustomerJourney(args: {
     const rawDescription = safeText(step.description);
     const contextualDescription = contextualStepDescription(checkpoint.stepNumber, contextTopic);
     const description = rawDescription || contextualDescription;
-    const repairedLabel = containsSolutionPrescriptiveLanguage(label) || containsNonOdiProcessLanguage(label)
+    const repairedLabel = containsSolutionPrescriptiveLanguage(label, args.industryExclusions) || containsNonOdiProcessLanguage(label)
       ? checkpoint.canonicalLabel
       : label;
     const shouldUseContextual =
       args.forceContextualDescriptions ||
       !rawDescription ||
       rawDescription === checkpoint.description ||
-      containsSolutionPrescriptiveLanguage(rawDescription) ||
+      containsSolutionPrescriptiveLanguage(rawDescription, args.industryExclusions) ||
       containsNonOdiProcessLanguage(rawDescription);
     const repairedDescription = shouldUseContextual ? contextualDescription : description;
 
@@ -601,23 +603,23 @@ function normalizeCustomerJourney(args: {
     } as NormalizedStep;
   });
 
-  const validated = validateEightCheckpointSpine(normalized);
+  const validated = validateEightCheckpointSpine(normalized, args.industryExclusions);
+  // Fallback: if validation still fails (e.g. LLM step count wrong), build a
+  // customer-contextual skeleton rather than emitting the generic checkpoint
+  // descriptions. Uses canonical labels (stable Ulwick anchors) with
+  // per-step descriptions derived from the company's context.
   const finalSteps = validated.isValid
     ? normalized
-    : normalizeToEightCheckpointSpine([], {
-      defaultEvidenceBasis: `${args.evidenceBasis} The first pass produced invalid steps, so this map was reset to the required 8-step customer sequence.`,
-      defaultConfidence: 45,
-      defaultGapNote: contextualGapNote,
-    }).map((step) => ({
-      step_number: Number(step.step_number) || 1,
-      step_label: safeText(step.step_label),
-      description: safeText(step.description),
+    : JTBD_ODI_CHECKPOINTS.map((checkpoint) => ({
+      step_number: checkpoint.stepNumber,
+      step_label: checkpoint.canonicalLabel,
+      description: contextualStepDescription(checkpoint.stepNumber, contextTopic),
       designed: false,
       has_gap: true,
-      evidence_status: sanitizeEvidenceStatus(step.evidence_status),
-      evidence_basis: safeText(step.evidence_basis) || args.evidenceBasis,
-      evidence_confidence: clampInt(Number(step.evidence_confidence), 0, 100),
-      gap_note: safeText(step.gap_note) || contextualGapNote,
+      evidence_status: "unclear" as NormalizedStep["evidence_status"],
+      evidence_basis: args.evidenceBasis,
+      evidence_confidence: 45,
+      gap_note: contextualGapNote,
     }));
 
   return {
@@ -632,6 +634,7 @@ function normalizeNonCustomerJourney(args: {
   map: SelectedJobMap;
   rawJourney: Record<string, unknown> | null;
   evidenceBasis: string;
+  industryExclusions?: Set<string>;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
   const parsed: NormalizedStep[] = rawSteps
@@ -643,7 +646,7 @@ function normalizeNonCustomerJourney(args: {
       const description = safeText(row?.description) || fallback.description;
       return {
         step_number: stepNumber,
-        step_label: containsSolutionPrescriptiveLanguage(label) ? fallback.canonicalLabel : label,
+        step_label: containsSolutionPrescriptiveLanguage(label, args.industryExclusions) ? fallback.canonicalLabel : label,
         description,
         designed: row?.designed === true,
         has_gap: row?.has_gap !== false,
@@ -686,6 +689,7 @@ function normalizeNeeds(args: {
   customerJourney: NormalizedJourney;
   evidenceBasis: string;
   contextHint?: string;
+  industryExclusions?: Set<string>;
 }) {
   const contextHint = compactContextHint(args.contextHint || "");
   const stepByNumber = new Map(args.customerJourney.steps.map((step) => [step.step_number, step]));
@@ -700,7 +704,7 @@ function normalizeNeeds(args: {
       const computedOpp = clampInt(Number(entry.opportunity_score) || (importance + (10 - satisfaction)), 0, 20);
       const rawOutcome = safeText(entry.desired_outcome);
       const cleanedOutcome = normalizeNeedLanguage(rawOutcome);
-      const desiredOutcome = cleanedOutcome && !containsSolutionPrescriptiveLanguage(cleanedOutcome) && !isWeakNeedLanguage(cleanedOutcome)
+      const desiredOutcome = cleanedOutcome && !containsSolutionPrescriptiveLanguage(cleanedOutcome, args.industryExclusions) && !isWeakNeedLanguage(cleanedOutcome)
         ? cleanedOutcome
         : fallbackNeedFromStep(stepByNumber.get(stepNumber) || args.customerJourney.steps[stepNumber - 1], index, contextHint);
 
@@ -794,7 +798,7 @@ Deno.serve(async (req) => {
 
     const { data: companyRow, error: companyErr } = await supabase
       .from("companies")
-      .select("id,name,website,created_by")
+      .select("id,name,website,created_by,manual_industry_vocab")
       .eq("id", companyId)
       .maybeSingle();
     if (companyErr || !companyRow) {
@@ -928,6 +932,21 @@ Deno.serve(async (req) => {
       marketJtbd: safeText(lensCard?.economic_engine),
     });
 
+    const industryExclusions = buildCompanyVocabExclusions([
+      safeText((companyRow as Record<string, unknown>)?.name),
+      safeText(marketDef?.job_executor),
+      safeText(marketDef?.jtbd),
+      safeText(marketDef?.chooser),
+      safeText(marketDef?.market_context),
+    ]);
+    const manualVocab = (companyRow as Record<string, unknown>)?.manual_industry_vocab;
+    if (Array.isArray(manualVocab)) {
+      for (const term of manualVocab) {
+        const normalized = String(term).toLowerCase().trim();
+        if (normalized) industryExclusions.add(normalized);
+      }
+    }
+
     let llmOutput: Record<string, unknown> = {};
     let synthesisMode: "model" | "fallback" = "model";
     try {
@@ -964,9 +983,10 @@ Deno.serve(async (req) => {
           evidenceBasis: basis,
           contextHint,
           forceContextualDescriptions: synthesisMode === "fallback",
+          industryExclusions,
         });
       }
-      return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis });
+      return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis, industryExclusions });
     });
 
     const primaryCustomerJourney =
@@ -981,6 +1001,7 @@ Deno.serve(async (req) => {
         evidenceBasis: basis,
         contextHint,
         forceContextualDescriptions: true,
+        industryExclusions,
       });
     if (!normalizedJourneys.some((journey) => isCustomerJourneyKey(journey.journey_key))) {
       normalizedJourneys.unshift(primaryCustomerJourney);
@@ -1019,6 +1040,7 @@ Deno.serve(async (req) => {
       customerJourney: primaryCustomerJourney,
       evidenceBasis: basis,
       contextHint,
+      industryExclusions,
     });
 
     // Per-journey write: check for Dify-sourced steps before overwriting.

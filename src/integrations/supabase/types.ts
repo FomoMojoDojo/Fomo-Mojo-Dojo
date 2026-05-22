@@ -416,6 +416,7 @@ export type Database = {
           selected_route_id: string | null
           selected_route_summary_json: Json
           selected_route_updated_at: string | null
+          manual_industry_vocab: string[]
           strategic_problem_brief: string | null
           tier: number
           website: string | null
@@ -432,6 +433,7 @@ export type Database = {
           id?: string
           last_scored_at?: string | null
           last_updated?: string
+          manual_industry_vocab?: string[]
           mojo_score?: number | null
           name: string
           potential_score?: number | null
@@ -460,6 +462,7 @@ export type Database = {
           id?: string
           last_scored_at?: string | null
           last_updated?: string
+          manual_industry_vocab?: string[]
           mojo_score?: number | null
           name?: string
           potential_score?: number | null
@@ -765,6 +768,50 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "deep_dive_analyses_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      desired_outcomes: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          importance_score: number | null
+          is_primary: boolean
+          metric: string | null
+          satisfaction_score: number | null
+          statement: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          importance_score?: number | null
+          is_primary?: boolean
+          metric?: string | null
+          satisfaction_score?: number | null
+          statement: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          importance_score?: number | null
+          is_primary?: boolean
+          metric?: string | null
+          satisfaction_score?: number | null
+          statement?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "desired_outcomes_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1377,6 +1424,44 @@ export type Database = {
         }
         Relationships: []
       }
+      mojo_scores: {
+        Row: {
+          company_id: string
+          component_scores: Json
+          computed_at: string
+          explanation: Json
+          id: string
+          methodology_version: string
+          total_score: number
+        }
+        Insert: {
+          company_id: string
+          component_scores?: Json
+          computed_at?: string
+          explanation?: Json
+          id?: string
+          methodology_version?: string
+          total_score: number
+        }
+        Update: {
+          company_id?: string
+          component_scores?: Json
+          computed_at?: string
+          explanation?: Json
+          id?: string
+          methodology_version?: string
+          total_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mojo_scores_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       object_dependencies: {
         Row: {
           company_id: string
@@ -1433,6 +1518,7 @@ export type Database = {
           id: string
           innovation_strategy: string | null
           job_executor: string
+          journey_key: string
           jtbd: string
           source_path: string
           updated_at: string
@@ -1446,6 +1532,7 @@ export type Database = {
           id?: string
           innovation_strategy?: string | null
           job_executor?: string
+          journey_key?: string
           jtbd?: string
           source_path?: string
           updated_at?: string
@@ -1459,6 +1546,7 @@ export type Database = {
           id?: string
           innovation_strategy?: string | null
           job_executor?: string
+          journey_key?: string
           jtbd?: string
           source_path?: string
           updated_at?: string
@@ -1468,7 +1556,7 @@ export type Database = {
           {
             foreignKeyName: "odi_market_definitions_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -1480,6 +1568,8 @@ export type Database = {
           created_at: string
           dependency_state: string
           desired_outcome: string
+          evidence_baseline_captured_at: string | null
+          evidence_baseline_signal_ids: Json | null
           evidence_state: string
           frameworks_used: string[]
           id: string
@@ -1513,6 +1603,8 @@ export type Database = {
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           evidence_state?: string
           frameworks_used?: string[]
           id?: string
@@ -1546,6 +1638,8 @@ export type Database = {
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           evidence_state?: string
           frameworks_used?: string[]
           id?: string
@@ -1681,10 +1775,13 @@ export type Database = {
           competitive_alternatives_json: Json
           created_at: string
           current_tagline: string
+          evidence_baseline_captured_at: string | null
+          evidence_baseline_signal_ids: Json | null
           frameworks_used: string[]
           id: string
           market_category: string
           proposed_tagline: string
+          source: string
           strategy_alignment: string | null
           strategy_alignment_evaluated_at: string | null
           strategy_alignment_reason: string | null
@@ -1700,10 +1797,13 @@ export type Database = {
           competitive_alternatives_json?: Json
           created_at?: string
           current_tagline?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           id?: string
           market_category?: string
           proposed_tagline?: string
+          source?: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
@@ -1719,10 +1819,13 @@ export type Database = {
           competitive_alternatives_json?: Json
           created_at?: string
           current_tagline?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           id?: string
           market_category?: string
           proposed_tagline?: string
+          source?: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
@@ -1948,17 +2051,26 @@ export type Database = {
           created_at: string
           dependency_state: string
           effort: string
+          evidence_baseline_captured_at: string | null
+          evidence_baseline_signal_ids: Json | null
           evidence_json: Json
           evidence_state: string
           frameworks_used: string[]
           id: string
           last_reviewed_at: string | null
+          level: string
           linked_need_ids: string[] | null
           linked_tension_ids: string[] | null
+          parent_id: string | null
+          primary_desired_outcome_id: string | null
           pts_value: number
+          rejected_alternatives: Json
+          relevance_state: string
           route_insights_json: Json | null
+          secondary_desired_outcome_ids: string[]
           short_description: string
           sort_order: number
+          source: string
           source_file_ids: string[] | null
           source_run_id: string | null
           stale_reason: string | null
@@ -1972,6 +2084,7 @@ export type Database = {
           updated_at: string
           user_id: string
           validation_state: string
+          what_would_have_to_be_true: Json
           why_this_matters_json: Json
         }
         Insert: {
@@ -1981,17 +2094,26 @@ export type Database = {
           created_at?: string
           dependency_state?: string
           effort?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           evidence_json?: Json
           evidence_state?: string
           frameworks_used?: string[]
           id?: string
           last_reviewed_at?: string | null
+          level?: string
           linked_need_ids?: string[] | null
           linked_tension_ids?: string[] | null
+          parent_id?: string | null
+          primary_desired_outcome_id?: string | null
           pts_value?: number
+          rejected_alternatives?: Json
+          relevance_state?: string
           route_insights_json?: Json | null
+          secondary_desired_outcome_ids?: string[]
           short_description?: string
           sort_order?: number
+          source?: string
           source_file_ids?: string[] | null
           source_run_id?: string | null
           stale_reason?: string | null
@@ -2005,6 +2127,7 @@ export type Database = {
           updated_at?: string
           user_id: string
           validation_state?: string
+          what_would_have_to_be_true?: Json
           why_this_matters_json?: Json
         }
         Update: {
@@ -2014,17 +2137,26 @@ export type Database = {
           created_at?: string
           dependency_state?: string
           effort?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           evidence_json?: Json
           evidence_state?: string
           frameworks_used?: string[]
           id?: string
           last_reviewed_at?: string | null
+          level?: string
           linked_need_ids?: string[] | null
           linked_tension_ids?: string[] | null
+          parent_id?: string | null
+          primary_desired_outcome_id?: string | null
           pts_value?: number
+          rejected_alternatives?: Json
+          relevance_state?: string
           route_insights_json?: Json | null
+          secondary_desired_outcome_ids?: string[]
           short_description?: string
           sort_order?: number
+          source?: string
           source_file_ids?: string[] | null
           source_run_id?: string | null
           stale_reason?: string | null
@@ -2038,6 +2170,7 @@ export type Database = {
           updated_at?: string
           user_id?: string
           validation_state?: string
+          what_would_have_to_be_true?: Json
           why_this_matters_json?: Json
         }
         Relationships: [
@@ -2053,6 +2186,20 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "routes_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "routes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "routes_primary_desired_outcome_id_fkey"
+            columns: ["primary_desired_outcome_id"]
+            isOneToOne: false
+            referencedRelation: "desired_outcomes"
             referencedColumns: ["id"]
           },
           {
@@ -2143,76 +2290,6 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      surface_proposals: {
-        Row: {
-          company_id: string
-          created_at: string
-          created_by: string | null
-          current_state: Json
-          id: string
-          proposed_state: Json
-          raw_payload: Json | null
-          reason: string | null
-          reviewed_at: string | null
-          reviewed_by: string | null
-          status: string
-          surface_id: string | null
-          surface_type: string
-        }
-        Insert: {
-          company_id: string
-          created_at?: string
-          created_by?: string | null
-          current_state?: Json
-          id?: string
-          proposed_state?: Json
-          raw_payload?: Json | null
-          reason?: string | null
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status?: string
-          surface_id?: string | null
-          surface_type: string
-        }
-        Update: {
-          company_id?: string
-          created_at?: string
-          created_by?: string | null
-          current_state?: Json
-          id?: string
-          proposed_state?: Json
-          raw_payload?: Json | null
-          reason?: string | null
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status?: string
-          surface_id?: string | null
-          surface_type?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "surface_proposals_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "surface_proposals_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "surface_proposals_reviewed_by_fkey"
-            columns: ["reviewed_by"]
-            isOneToOne: false
-            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -2755,10 +2832,13 @@ export type Database = {
           capabilities_json: Json
           company_id: string
           created_at: string
+          evidence_baseline_captured_at: string | null
+          evidence_baseline_signal_ids: Json | null
           frameworks_used: string[]
           how_to_win: string
           id: string
           management_systems_json: Json
+          source: string
           updated_at: string
           user_id: string
           where_to_play: string
@@ -2769,10 +2849,13 @@ export type Database = {
           capabilities_json?: Json
           company_id: string
           created_at?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           how_to_win?: string
           id?: string
           management_systems_json?: Json
+          source?: string
           updated_at?: string
           user_id: string
           where_to_play?: string
@@ -2783,10 +2866,13 @@ export type Database = {
           capabilities_json?: Json
           company_id?: string
           created_at?: string
+          evidence_baseline_captured_at?: string | null
+          evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           how_to_win?: string
           id?: string
           management_systems_json?: Json
+          source?: string
           updated_at?: string
           user_id?: string
           where_to_play?: string
@@ -2839,6 +2925,175 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "strategy_problem_statements_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      surface_drift_assessments: {
+        Row: {
+          accepted_as_aligned_at: string | null
+          assessment_basis: Json | null
+          company_id: string
+          created_at: string
+          drift_score: number
+          drift_state: string
+          id: string
+          last_assessed_at: string
+          llm_confirmation: string | null
+          operator_seen_at: string | null
+          surface_id: string
+          surface_type: string
+        }
+        Insert: {
+          accepted_as_aligned_at?: string | null
+          assessment_basis?: Json | null
+          company_id: string
+          created_at?: string
+          drift_score: number
+          drift_state: string
+          id?: string
+          last_assessed_at?: string
+          llm_confirmation?: string | null
+          operator_seen_at?: string | null
+          surface_id: string
+          surface_type: string
+        }
+        Update: {
+          accepted_as_aligned_at?: string | null
+          assessment_basis?: Json | null
+          company_id?: string
+          created_at?: string
+          drift_score?: number
+          drift_state?: string
+          id?: string
+          last_assessed_at?: string
+          llm_confirmation?: string | null
+          operator_seen_at?: string | null
+          surface_id?: string
+          surface_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "surface_drift_assessments_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      surface_proposals: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          current_state: Json
+          id: string
+          proposed_state: Json
+          raw_payload: Json | null
+          reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          surface_id: string | null
+          surface_type: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          current_state?: Json
+          id?: string
+          proposed_state?: Json
+          raw_payload?: Json | null
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          surface_id?: string | null
+          surface_type: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          current_state?: Json
+          id?: string
+          proposed_state?: Json
+          raw_payload?: Json | null
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          surface_id?: string | null
+          surface_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "surface_proposals_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tests: {
+        Row: {
+          action_id: string
+          company_id: string
+          created_at: string
+          evidence_refs: string[]
+          expected_negative_signal: string
+          expected_positive_signal: string
+          hypothesis: string
+          id: string
+          no_test_needed: boolean
+          no_test_needed_reason: string | null
+          result: string | null
+          updated_at: string
+        }
+        Insert: {
+          action_id: string
+          company_id: string
+          created_at?: string
+          evidence_refs?: string[]
+          expected_negative_signal: string
+          expected_positive_signal: string
+          hypothesis: string
+          id?: string
+          no_test_needed?: boolean
+          no_test_needed_reason?: string | null
+          result?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action_id?: string
+          company_id?: string
+          created_at?: string
+          evidence_refs?: string[]
+          expected_negative_signal?: string
+          expected_positive_signal?: string
+          hypothesis?: string
+          id?: string
+          no_test_needed?: boolean
+          no_test_needed_reason?: string | null
+          result?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tests_action_id_fkey"
+            columns: ["action_id"]
+            isOneToOne: false
+            referencedRelation: "routes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tests_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -3031,5 +3286,5 @@ export const Constants = {
   },
 } as const
 
-A new version of Supabase CLI is available: v2.98.2 (currently installed v2.90.0)
+A new version of Supabase CLI is available: v2.100.1 (currently installed v2.90.0)
 We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli

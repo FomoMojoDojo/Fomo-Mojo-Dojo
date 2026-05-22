@@ -6,6 +6,7 @@ import {
 } from "../_shared/frameworkLibrary.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
+  buildCompanyVocabExclusions,
   containsSolutionPrescriptiveLanguage,
   normalizeToEightCheckpointSpine,
   validateEightCheckpointSpine,
@@ -733,15 +734,15 @@ const INPUT_PUBLIC_EVIDENCE_WEIGHTS: Record<string, number> = {
   "val-prop": 0.72,
   "target-aud": 0.65,
   "market-cat": 0.68,
-  "program-model": 0.72,
-  "needs-assessment": 0.55,
-  "outcome-data": 0.4,
-  "referral-map": 0.38,
+  "operating-model": 0.72,
+  "customer-research": 0.55,
+  "outcome-evidence": 0.4,
+  "acquisition-map": 0.38,
   "brand-narrative": 0.45,
   "channel-strat": 0.3,
-  "donor-retention": 0.22,
-  "grant-pipeline": 0.24,
-  "family-satisfaction": 0.22,
+  "retention-signals": 0.22,
+  "demand-pipeline": 0.24,
+  "customer-signals": 0.22,
 };
 
 const INPUT_BASE_IMPACT_BY_KEY: Record<string, number> = {
@@ -750,15 +751,15 @@ const INPUT_BASE_IMPACT_BY_KEY: Record<string, number> = {
   "val-prop": 7.0,
   "target-aud": 6.0,
   "market-cat": 7.0,
-  "program-model": 6.0,
-  "needs-assessment": 5.0,
-  "outcome-data": 6.0,
-  "referral-map": 5.5,
+  "operating-model": 6.0,
+  "customer-research": 5.0,
+  "outcome-evidence": 6.0,
+  "acquisition-map": 5.5,
   "brand-narrative": 5.0,
   "channel-strat": 5.5,
-  "donor-retention": 4.5,
-  "grant-pipeline": 4.5,
-  "family-satisfaction": 4.0,
+  "retention-signals": 4.5,
+  "demand-pipeline": 4.5,
+  "customer-signals": 4.0,
 };
 
 type InputContextMode = "nonprofit" | "commercial" | "unknown";
@@ -893,66 +894,66 @@ function applyProfileSpecificInputNaming(args: {
   if (profile === "fintech_collections") {
     if (key === "val-prop") inputLabel = "Recovery Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Creditors";
-    else if (key === "program-model") inputLabel = "Collections Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Creditor & Debtor Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Recovery Outcome Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Acquisition & Partner Channels"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Collections Operating Model";
+    else if (key === "customer-research") { inputLabel = "Creditor & Debtor Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Recovery Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Acquisition & Partner Channels"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Trust & Compliance Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "Enterprise GTM Channels"; subGroup = "GTM"; }
-    else if (key === "donor-retention") setRetentionFields("Client Retention", "Retention", "Client renewal and account expansion behavior", "Protects recurring enterprise revenue");
-    else if (key === "grant-pipeline") setRetentionFields("Enterprise Pipeline", "Demand Pipeline", "Qualified creditor opportunities and procurement stages", "Predicts near-term contracted revenue");
-    else if (key === "family-satisfaction") setRetentionFields("Debtor Experience Signals", "Customer Experience", "Complaint trends, resolution quality, and fairness sentiment", "Reduces compliance and reputational risk");
+    else if (key === "retention-signals") setRetentionFields("Client Retention", "Retention", "Client renewal and account expansion behavior", "Protects recurring enterprise revenue");
+    else if (key === "demand-pipeline") setRetentionFields("Enterprise Pipeline", "Demand Pipeline", "Qualified creditor opportunities and procurement stages", "Predicts near-term contracted revenue");
+    else if (key === "customer-signals") setRetentionFields("Debtor Experience Signals", "Customer Experience", "Complaint trends, resolution quality, and fairness sentiment", "Reduces compliance and reputational risk");
   } else if (profile === "hospitality_coffee") {
     if (key === "val-prop") inputLabel = "Roaster Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Buyers";
-    else if (key === "program-model") inputLabel = "Roaster Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Buyer & Partner Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Cup Quality Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Wholesale Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Roaster Operating Model";
+    else if (key === "customer-research") { inputLabel = "Buyer & Partner Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Cup Quality Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Wholesale Acquisition Sources"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Origin & Craft Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "Wholesale + DTC Channels"; subGroup = "GTM"; }
-    else if (key === "donor-retention") setRetentionFields("Repeat Purchase Retention", "Retention", "Reorder frequency and wholesale account retention", "Protects recurring coffee revenue");
-    else if (key === "grant-pipeline") setRetentionFields("Wholesale Pipeline", "Demand Pipeline", "Qualified cafe and restaurant partnership opportunities", "Predicts future wholesale volume");
-    else if (key === "family-satisfaction") setRetentionFields("Customer Experience Signals", "Customer Experience", "Ratings, tasting feedback, and partner NPS", "Guides product quality and service improvements");
+    else if (key === "retention-signals") setRetentionFields("Repeat Purchase Retention", "Retention", "Reorder frequency and wholesale account retention", "Protects recurring coffee revenue");
+    else if (key === "demand-pipeline") setRetentionFields("Wholesale Pipeline", "Demand Pipeline", "Qualified cafe and restaurant partnership opportunities", "Predicts future wholesale volume");
+    else if (key === "customer-signals") setRetentionFields("Customer Experience Signals", "Customer Experience", "Ratings, tasting feedback, and partner NPS", "Guides product quality and service improvements");
   } else if (profile === "telecom_saas") {
     if (key === "val-prop") inputLabel = "Platform Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Carrier Segments";
-    else if (key === "program-model") inputLabel = "Platform Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Operator Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Adoption Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Partner Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Platform Operating Model";
+    else if (key === "customer-research") { inputLabel = "Operator Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Adoption Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Partner Acquisition Sources"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Platform Positioning Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "Carrier GTM Channels"; subGroup = "GTM"; }
   } else if (profile === "legal_services") {
     if (key === "val-prop") inputLabel = "Case Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Claimants";
-    else if (key === "program-model") inputLabel = "Litigation Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Claimant Decision Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Case Outcome Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Case Referral Sources"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Litigation Operating Model";
+    else if (key === "customer-research") { inputLabel = "Claimant Decision Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Case Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Case Referral Sources"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Advocacy Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "Claim Intake Channels"; subGroup = "GTM"; }
   } else if (profile === "mobility_aviation") {
     if (key === "val-prop") inputLabel = "Mobility Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Riders & Partners";
-    else if (key === "program-model") inputLabel = "Flight Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Rider & Partner Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Flight Readiness Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Partnership Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Flight Operating Model";
+    else if (key === "customer-research") { inputLabel = "Rider & Partner Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Flight Readiness Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Partnership Acquisition Sources"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Mobility Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "Route Launch Channels"; subGroup = "GTM"; }
   } else if (profile === "generic_commercial") {
     if (key === "val-prop") inputLabel = "Value Themes";
     else if (key === "target-aud") inputLabel = "Best-Fit Customers";
-    else if (key === "program-model") inputLabel = "Operating Model";
-    else if (key === "needs-assessment") { inputLabel = "Customer Jobs"; subGroup = "ODI"; }
-    else if (key === "outcome-data") { inputLabel = "Outcome Evidence"; subGroup = "ODI"; }
-    else if (key === "referral-map") { inputLabel = "Acquisition Sources"; subGroup = "GTM"; }
+    else if (key === "operating-model") inputLabel = "Operating Model";
+    else if (key === "customer-research") { inputLabel = "Customer Jobs"; subGroup = "ODI"; }
+    else if (key === "outcome-evidence") { inputLabel = "Outcome Evidence"; subGroup = "ODI"; }
+    else if (key === "acquisition-map") { inputLabel = "Acquisition Sources"; subGroup = "GTM"; }
     else if (key === "brand-narrative") { inputLabel = "Positioning Story"; subGroup = "Messaging"; }
     else if (key === "channel-strat") { inputLabel = "GTM Channels"; subGroup = "GTM"; }
-    else if (key === "donor-retention") setRetentionFields("Customer Retention", "Retention", "Repeat purchase and reorder behavior", "Protects recurring revenue and loyalty");
-    else if (key === "grant-pipeline") setRetentionFields("Growth Pipeline", "Demand Pipeline", "Qualified leads and wholesale opportunities", "Predicts near-term revenue growth");
-    else if (key === "family-satisfaction") setRetentionFields("Customer Satisfaction", "Customer Experience", "Ratings, reviews, and repeat sentiment", "Signals fit, quality, and retention risk");
+    else if (key === "retention-signals") setRetentionFields("Customer Retention", "Retention", "Repeat purchase and reorder behavior", "Protects recurring revenue and loyalty");
+    else if (key === "demand-pipeline") setRetentionFields("Growth Pipeline", "Demand Pipeline", "Qualified leads and wholesale opportunities", "Predicts near-term revenue growth");
+    else if (key === "customer-signals") setRetentionFields("Customer Satisfaction", "Customer Experience", "Ratings, reviews, and repeat sentiment", "Signals fit, quality, and retention risk");
   }
 
   return { inputLabel, subGroup, description, whyItMatters };
@@ -1005,7 +1006,7 @@ function contextualizeInputForCompany(args: {
 
   const needsOdiSignal = (text: string) =>
     !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
-  if (key === "needs-assessment") {
+  if (key === "customer-research") {
     if (needsOdiSignal(description)) {
       description = "Customer job map and desired outcomes by segment";
     }
@@ -1013,7 +1014,7 @@ function contextualizeInputForCompany(args: {
       whyItMatters = "Shows what matters most and where current results are falling short";
     }
   }
-  if (key === "outcome-data") {
+  if (key === "outcome-evidence") {
     if (needsOdiSignal(description)) {
       description = "Track desired outcome satisfaction and completion signals";
     }
@@ -1021,7 +1022,7 @@ function contextualizeInputForCompany(args: {
       whyItMatters = "Confirms progress on high-importance outcomes that are still underserved";
     }
   }
-  if (key === "referral-map") {
+  if (key === "acquisition-map") {
     if (needsOdiSignal(description)) {
       description = "Map decision triggers and trusted channels customers use";
     }
@@ -2708,10 +2709,14 @@ async function runAllDraftReviews(opts: {
   journeys: unknown;
   opportunities: unknown;
   routes: unknown;
-  positioning: unknown;
-  strategy: unknown;
+  // positioning/strategy are leaf outputs — their review is deferred to A37+ leaf-output review pass
+  positioning?: unknown;
+  strategy?: unknown;
 }) {
-  const [consistencyReview, positioningReview, evidenceReview, strategyReview] = await Promise.all([
+  // NOTE (A37): Orchestrator reviews only the 5 upstream surfaces: inputs, journeys,
+  // managed_outcomes, opportunities, routes. positioningReview and strategyReview are
+  // deferred — leaf functions own those tables and a separate review pass is a future enhancement.
+  const [consistencyReview, evidenceReview] = await Promise.all([
     runConsistencyReview({
       apiKey: opts.apiKey,
       model: opts.model,
@@ -2724,19 +2729,8 @@ async function runAllDraftReviews(opts: {
       journeys: opts.journeys,
       opportunities: opts.opportunities,
       routes: opts.routes,
-      positioning: opts.positioning,
-      strategy: opts.strategy,
-    }),
-    runPositioningReview({
-      apiKey: opts.apiKey,
-      model: opts.model,
-      companyName: opts.companyName,
-      website: opts.website,
-      baselineBrief: opts.baselineBrief,
-      strategicProblemBrief: opts.strategicProblemBrief,
-      positioning: opts.positioning,
-      opportunities: opts.opportunities,
-      routes: opts.routes,
+      positioning: opts.positioning ?? null,
+      strategy: opts.strategy ?? null,
     }),
     runEvidenceReview({
       apiKey: opts.apiKey,
@@ -2748,21 +2742,12 @@ async function runAllDraftReviews(opts: {
       journeys: opts.journeys,
       opportunities: opts.opportunities,
       routes: opts.routes,
-      positioning: opts.positioning,
-      strategy: opts.strategy,
-    }),
-    runStrategyReview({
-      apiKey: opts.apiKey,
-      model: opts.model,
-      companyName: opts.companyName,
-      website: opts.website,
-      baselineBrief: opts.baselineBrief,
-      strategicProblemBrief: opts.strategicProblemBrief,
-      strategy: opts.strategy,
-      routes: opts.routes,
-      opportunities: opts.opportunities,
+      positioning: opts.positioning ?? null,
+      strategy: opts.strategy ?? null,
     }),
   ]);
+  const positioningReview = null;
+  const strategyReview = null;
 
   return { consistencyReview, positioningReview, evidenceReview, strategyReview };
 }
@@ -2983,14 +2968,14 @@ const POSITIONING_KEYS = new Set([
   "target-aud",
   "market-cat",
 ]);
-const CUSTOMER_KEYS = new Set(["needs-assessment", "family-satisfaction"]);
-const STRATEGY_KEYS = new Set(["program-model", "outcome-data"]);
+const CUSTOMER_KEYS = new Set(["customer-research", "customer-signals"]);
+const STRATEGY_KEYS = new Set(["operating-model", "outcome-evidence"]);
 const GTM_KEYS = new Set([
-  "referral-map",
+  "acquisition-map",
   "brand-narrative",
   "channel-strat",
-  "donor-retention",
-  "grant-pipeline",
+  "retention-signals",
+  "demand-pipeline",
 ]);
 type JourneyKey = string;
 type FrameworkMode = "dunford_positioning" | "torres_opportunity_map" | "martin_strategy_cascade";
@@ -3302,7 +3287,7 @@ function sanitizeJourneyStepEvidenceStatus(value: unknown) {
   return "unclear";
 }
 
-function enforceCustomerJourneySpine(journeys: Array<Record<string, unknown>>) {
+function enforceCustomerJourneySpine(journeys: Array<Record<string, unknown>>, industryExclusions?: Set<string>) {
   return journeys.map((journey) => {
     const journeyKey = normalizeJourneyKey(journey?.journey_key);
     if (!isCustomerJourneyKey(journeyKey)) return journey;
@@ -3329,10 +3314,10 @@ function enforceCustomerJourneySpine(journeys: Array<Record<string, unknown>>) {
       },
     );
 
-    const validated = validateEightCheckpointSpine(normalizedSteps);
+    const validated = validateEightCheckpointSpine(normalizedSteps, industryExclusions);
     const fallbackSubtitle = "How the primary job performer moves through all 8 customer checkpoints.";
     const currentSubtitle = String(journey?.journey_subtitle || "").trim();
-    const safeSubtitle = containsSolutionPrescriptiveLanguage(currentSubtitle)
+    const safeSubtitle = containsSolutionPrescriptiveLanguage(currentSubtitle, industryExclusions)
       ? fallbackSubtitle
       : currentSubtitle || fallbackSubtitle;
 
@@ -4544,19 +4529,19 @@ const INPUT_GROUP_BY_KEY: Record<string, InputGroupKey> = {
   "val-prop": "foundation",
   "target-aud": "foundation",
   "market-cat": "foundation",
-  "program-model": "foundation",
-  "needs-assessment": "foundation",
+  "operating-model": "foundation",
+  "customer-research": "foundation",
 
   // execution (3)
-  "referral-map": "execution",
+  "acquisition-map": "execution",
   "brand-narrative": "execution",
   "channel-strat": "execution",
 
   // market evidence (4)
-  "outcome-data": "market_evidence",
-  "donor-retention": "market_evidence",
-  "grant-pipeline": "market_evidence",
-  "family-satisfaction": "market_evidence",
+  "outcome-evidence": "market_evidence",
+  "retention-signals": "market_evidence",
+  "demand-pipeline": "market_evidence",
+  "customer-signals": "market_evidence",
 };
 
 function groupLabelForKey(groupKey: InputGroupKey) {
@@ -4579,8 +4564,8 @@ function normalizeInputGroupKey(args: {
     return rawGroup;
   }
 
-  if (key === "needs-assessment") return "foundation";
-  if (key === "outcome-data") return "market_evidence";
+  if (key === "customer-research") return "foundation";
+  if (key === "outcome-evidence") return "market_evidence";
 
   const sub = String(args.subGroup || "").toLowerCase();
   if (/\bmarket evidence\b|\bevidence\b|\bvalidation\b|\bretention\b|\bpipeline\b|\bexperience\b/.test(sub)) {
@@ -4602,15 +4587,15 @@ const INPUT_KEYS: string[] = [
   "val-prop",
   "target-aud",
   "market-cat",
-  "program-model",
-  "needs-assessment",
-  "outcome-data",
-  "referral-map",
+  "operating-model",
+  "customer-research",
+  "outcome-evidence",
+  "acquisition-map",
   "brand-narrative",
   "channel-strat",
-  "donor-retention",
-  "grant-pipeline",
-  "family-satisfaction",
+  "retention-signals",
+  "demand-pipeline",
+  "customer-signals",
 ];
 
 const repairBundleSchema = {
@@ -4972,14 +4957,23 @@ Deno.serve(async (req) => {
     // Validate user session (even if served with --no-verify-jwt)
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return jsonResponse({ error: "No auth header" }, 401);
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-    const anonClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: userRes, error: authError } = await anonClient.auth.getUser();
-    const user = userRes?.user;
-    if (authError || !user) return jsonResponse({ error: "Unauthorized" }, 401);
+    // Accept service role key directly (internal/orchestrator calls) or user JWT.
+    // Dedicated service-role identity in auth.users — email: system@mojomap.internal (A55).
+    // Satisfies inputs.user_id FK to auth.users(id). Migration: 20260518000002_create_service_role_user.sql
+    const SERVICE_ROLE_UUID = "1a27cf29-554a-46e9-bab8-0e238f9dc088";
+    let user: { id: string } | null = null;
+    if (bearerToken === serviceRoleKey) {
+      user = { id: SERVICE_ROLE_UUID };
+    } else {
+      const anonClient = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: userRes, error: authError } = await anonClient.auth.getUser();
+      if (authError || !userRes?.user) return jsonResponse({ error: "Unauthorized" }, 401);
+      user = userRes.user;
+    }
 
     const body = await req.json().catch(() => ({}));
     const bodyRecord = asRecord(body) || {};
@@ -4999,6 +4993,7 @@ Deno.serve(async (req) => {
     const website = typeof bodyRecord?.website === "string" ? bodyRecord.website : "";
     const reviewMode = String(bodyRecord?.review_mode || "").trim().toLowerCase();
     const allowHighSeverityReviewSave = reviewMode === "advisory" || bodyRecord?.allow_review_block_save === true;
+    const dry_run = bodyRecord?.dry_run === true;
     const contextMode = String(bodyRecord?.context_mode || "").trim().toLowerCase();
     const forceUploadedOnlyContext = contextMode === "uploaded_only" || bodyRecord?.prefer_uploaded_context === true;
     let requestedJourneyKeys = parseRequestedJourneyKeys(bodyRecord?.journeys_to_generate);
@@ -5046,7 +5041,7 @@ Deno.serve(async (req) => {
 
     const { data: companyRow, error: companySourceFilterErr } = await supabase
       .from("companies")
-      .select("public_source_filters_json, excluded_signals_json")
+      .select("public_source_filters_json, excluded_signals_json, manual_industry_vocab")
       .eq("id", company_id)
       .maybeSingle();
     if (companySourceFilterErr) {
@@ -5069,29 +5064,33 @@ Deno.serve(async (req) => {
     );
 
     const lockTtlMinutes = 15;
-    const lockResult = await acquireCompanyRunLock({
-      supabase,
-      companyId: company_id,
-      userId: user.id,
-      operation: "research",
-      ttlMinutes: lockTtlMinutes,
-    });
+    let stopLockHeartbeat: (() => void) | null = null;
 
-    if (lockResult) {
-      return jsonResponse({
-        error: "Research is already running for this company",
-        status: "company_locked",
-        operation: lockResult.existing?.operation ?? "unknown",
-        started_at: lockResult.existing?.started_at ?? null,
-        expires_at: lockResult.existing?.expires_at ?? null,
-      }, 409);
+    if (!dry_run && user.id !== SERVICE_ROLE_UUID) {
+      const lockResult = await acquireCompanyRunLock({
+        supabase,
+        companyId: company_id,
+        userId: user.id,
+        operation: "research",
+        ttlMinutes: lockTtlMinutes,
+      });
+
+      if (lockResult) {
+        return jsonResponse({
+          error: "Research is already running for this company",
+          status: "company_locked",
+          operation: lockResult.existing?.operation ?? "unknown",
+          started_at: lockResult.existing?.started_at ?? null,
+          expires_at: lockResult.existing?.expires_at ?? null,
+        }, 409);
+      }
+
+      stopLockHeartbeat = startCompanyRunLockHeartbeat({
+        supabase,
+        companyId: company_id,
+        ttlMinutes: lockTtlMinutes,
+      });
     }
-
-    const stopLockHeartbeat = startCompanyRunLockHeartbeat({
-      supabase,
-      companyId: company_id,
-      ttlMinutes: lockTtlMinutes,
-    });
 
     try {
     // ✅ Fetch recent public baselines and prefer the latest strong run.
@@ -5498,10 +5497,9 @@ Deno.serve(async (req) => {
       `Constraints:\n` +
       evidenceConsistencyConstraint +
       noIndustrySwitchConstraint +
-      `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
       `- For commercial businesses, translate nonprofit-style placeholders into category-relevant equivalents (customer retention, growth pipeline, customer satisfaction)\n` +
       `- Never output "not applicable", "N/A", or "not relevant" for required inputs; provide the closest category-specific signal instead\n` +
-      `- Embed ODI framing in at least needs-assessment, outcome-data, and referral-map by referencing job/outcome context and importance/satisfaction evidence\n` +
+      `- Embed ODI framing in at least customer-research, outcome-evidence, and acquisition-map by referencing job/outcome context and importance/satisfaction evidence\n` +
       `- Input descriptions should highlight what must be clarified to resolve strategic problems\n` +
       `- When evidence is weak, use cautious wording instead of inventing specifics\n` +
       `- Set group_key per input based on context; do not force equal counts across groups\n` +
@@ -5686,7 +5684,15 @@ Deno.serve(async (req) => {
         });
       }
     }
-    journeys = enforceCustomerJourneySpine(alignedJourneys as Array<Record<string, unknown>>);
+    const industryExclusions = buildCompanyVocabExclusions([String(company_name || "")]);
+    const manualVocab = (companyRow as Record<string, unknown> | null)?.manual_industry_vocab;
+    if (Array.isArray(manualVocab)) {
+      for (const term of manualVocab) {
+        const normalized = String(term).toLowerCase().trim();
+        if (normalized) industryExclusions.add(normalized);
+      }
+    }
+    journeys = enforceCustomerJourneySpine(alignedJourneys as Array<Record<string, unknown>>, industryExclusions);
 
     if (journeys.length !== targetJourneyKeys.length) {
       const found = new Set(journeys.map((journey) => normalizeJourneyKey(journey?.journey_key)));
@@ -5818,6 +5824,7 @@ Deno.serve(async (req) => {
             additionalProperties: false,
             properties: {
               outcome: { type: "string" },
+              odi_canonical_statement: { type: "string" },
               step_number: { type: "integer" },
               step_label: { type: "string" },
               journey_key: { type: "string", enum: ["customer"] },
@@ -5826,7 +5833,7 @@ Deno.serve(async (req) => {
               opportunity_score: { type: "integer" },
               priority_tier: { type: "string", enum: ["focus", "monitor", "defer"] },
             },
-            required: ["outcome", "step_number", "step_label", "journey_key", "importance", "satisfaction", "opportunity_score", "priority_tier"],
+            required: ["outcome", "odi_canonical_statement", "step_number", "step_label", "journey_key", "importance", "satisfaction", "opportunity_score", "priority_tier"],
           },
         },
       },
@@ -5843,18 +5850,21 @@ Deno.serve(async (req) => {
       `- Opportunities should target bottlenecks, missing capabilities, weak transitions, or unclear handoffs in those journeys\n` +
       `- Every opportunity must be narrower and more specific than the managed desired outcome it supports\n` +
       `- Opportunities should directly address the client-stated strategic problems when provided\n` +
+      `- Each opportunity requires TWO forms of the outcome:\n` +
+      `  - outcome: plain human language (10-18 words, everyday phrasing, no formula verbs required)\n` +
+      `  - odi_canonical_statement: strict ODI formula using "Minimize/Reduce/Increase/Maximize the [dimension] [to|of|in] [object] when [context]" — must use formula verbs and structured syntax\n` +
+      `  Both fields describe the same underlying opportunity from different angles. They must not be identical.\n` +
       `- outcome must read like a strong product discovery outcome or ODI desired outcome, not a feature idea, deliverable, or recommendation\n` +
       `- Use a structured formula close to: direction + measurable dimension + object + context\n` +
       `- Start with verbs like minimize, reduce, increase, improve, maximize, or avoid when appropriate\n` +
+      `- When generating multiple opportunities for the same step_number, ensure each uses a distinct primary measurable dimension (e.g., one targets time, another targets confidence, another targets completion rate) — do not repeat the same core noun phrase across outcomes in the same step\n` +
       `- Keep outcomes solution-free, stable over time, and measurable in spirit\n` +
       `- Good outcomes describe a change in customer behavior, progress, clarity, effort, risk, confidence, continuity, completion, conversion, or retention\n` +
       `- Good outcomes stay within the company's span of influence, rather than naming broad business goals with no customer mechanism\n` +
       `- Do not output initiatives, launches, campaigns, dashboards, websites, forms, workflows, programs, portals, tools, or features as outcomes\n` +
       `- Do not use vague outcome text like "Improve engagement" or "Increase awareness" without a concrete object and context\n` +
       noIndustrySwitchConstraint +
-      `- Good example style: "Minimize the time it takes to complete intake during a family crisis"\n` +
-      `- Better example style: "Increase the likelihood that a referred family completes the first intake step after initial outreach"\n` +
-      `- Bad example style: "Build a better intake form", "Add referral dashboard", or "Launch a new donor campaign"\n` +
+      `- Bad example style: "Build a better intake form", "Add referral dashboard", or "Launch a campaign"\n` +
       `- Avoid jargon phrases like "monitored decision outcomes", "strategic alignment", and "core audience"\n` +
       `- Prefer plain alternatives like "tracked decision results", "fit with strategy", and "main audience"\n` +
       `- importance/satisfaction 1..10\n` +
@@ -5950,6 +5960,7 @@ Deno.serve(async (req) => {
     opportunities = opportunities.map((opp) => ({
       ...opp,
       outcome: normalizeOutcomeLanguage(String(opp?.outcome || "")),
+      odi_canonical_statement: String(opp?.odi_canonical_statement || "").trim() || null,
     }));
 
     if (opportunities.length === 0) {
@@ -6038,8 +6049,36 @@ Deno.serve(async (req) => {
               effort: { type: "string", enum: ["low", "medium", "high"] },
               type: { type: "string", enum: ["Fix", "Improve", "Create"] },
               sort_order: { type: "integer" },
+              rejected_alternatives: {
+                type: "array",
+                minItems: 2,
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    alternative_title: { type: "string" },
+                    rejection_reason: { type: "string" },
+                  },
+                  required: ["alternative_title", "rejection_reason"],
+                },
+              },
+              what_would_have_to_be_true: {
+                type: "array",
+                minItems: 2,
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    condition: { type: "string" },
+                    satisfied_flag: { type: "boolean" },
+                  },
+                  required: ["condition", "satisfied_flag"],
+                },
+              },
             },
-            required: ["category", "title", "short_description", "pts_value", "effort", "type", "sort_order"],
+            required: ["category", "title", "short_description", "pts_value", "effort", "type", "sort_order", "rejected_alternatives", "what_would_have_to_be_true"],
           },
         },
       },
@@ -6064,7 +6103,9 @@ Deno.serve(async (req) => {
       `- sort_order should rank strongest routes first within the whole set\n` +
       noIndustrySwitchConstraint +
       `- Fix = remove blockers/gaps, Improve = strengthen existing systems, Create = build net-new strategic assets\n` +
-      `- type must match category in title case\n`;
+      `- type must match category in title case\n` +
+      `- For each route, generate 2–3 rejected_alternatives: real candidate directions that were plausible but not chosen. Each needs alternative_title (5–10 words, specific) and rejection_reason (one sentence naming the concrete tension that made this route less compelling than the chosen one). Do not use strawmen — name genuine alternatives.\n` +
+      `- For each route, generate 2–3 what_would_have_to_be_true items: testable conditions that must hold for this route to succeed. Phrase each condition as a falsifiable claim ("Customer X values Y enough to Z"; "Operational capability W can be built within timeframe V"). Set satisfied_flag=false for all — these are unvalidated assumptions at research time.\n`;
 
     const routesUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -6090,238 +6131,11 @@ Deno.serve(async (req) => {
     if (routes.length < 4) return jsonResponse({ error: `Expected >=4 routes, got ${routes.length}` }, 500);
 
     // -------------------------
-    // 5) Generate POSITIONING CANVAS
+    // 5) Positioning canvas + strategy cascade delegated to leaf functions
+    //    (refresh-positioning, refresh-cascade) — invoked in §8b below.
     // -------------------------
-    const positioningCanvasSchema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        competitive_alternatives: {
-          type: "array",
-          minItems: 3,
-          maxItems: 6,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              id: { type: "string" },
-              name: { type: "string" },
-              description: { type: "string" },
-              highlighted: { type: "boolean" },
-            },
-            required: ["id", "name", "description", "highlighted"],
-          },
-        },
-        unique_attributes: {
-          type: "array",
-          minItems: 3,
-          maxItems: 6,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              id: { type: "string" },
-              name: { type: "string" },
-              description: { type: "string" },
-              highlighted: { type: "boolean" },
-            },
-            required: ["id", "name", "description", "highlighted"],
-          },
-        },
-        value_for_customer: { type: "string" },
-        best_fit_customers: { type: "string" },
-        market_category: { type: "string" },
-        category_rationale: { type: "string" },
-        current_tagline: { type: "string" },
-        proposed_tagline: { type: "string" },
-      },
-      required: [
-        "competitive_alternatives",
-        "unique_attributes",
-        "value_for_customer",
-        "best_fit_customers",
-        "market_category",
-        "category_rationale",
-        "current_tagline",
-        "proposed_tagline",
-      ],
-    };
 
-    const positioningFrameworkKeys = getFrameworkRoutingPlan("positioning").map((framework) => framework.key);
-
-    const positioningCanvasSystemText =
-      `You are generating an April Dunford style positioning canvas for a strategy platform.\n` +
-      `Return ONLY valid JSON matching the schema. No prose outside the JSON.\n` +
-      `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
-      `Framework guidance:\n${buildFrameworkBrief("positioning", getFrameworkRoutingPlan("positioning"))}\n\n` +
-      `Rules:\n` +
-      `- Stay strictly consistent with the provided website, evidence, category, audience, and company context\n` +
-      `- Use April Dunford frame-of-reference logic plus ODI role clarity (job executor, chooser, user)\n` +
-      `- Never switch industries, populations, or buyer types; if the evidence says youth mental healthcare, do not output elder care, senior living, or adjacent but different markets\n` +
-      `- competitive_alternatives should be real alternatives, including manual workarounds or doing nothing when relevant\n` +
-      `- competitive_alternatives must serve the same customer/job context as the company; do not list alternatives from unrelated sectors\n` +
-      `- unique_attributes should be specific and credible, not vague marketing claims\n` +
-      `- value_for_customer should describe what customers can do or achieve that they could not before\n` +
-      `- best_fit_customers should describe the clearest-fit audience in one paragraph and name buyer/executor context when possible\n` +
-      `- market_category should be the category the company should claim or reshape and must be concise (2-8 words)\n` +
-      `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
-      evidenceAlignmentConstraint +
-      `- positioning should directly address the client-stated strategic problem framing when provided\n` +
-      `- category_rationale should explain why this category frame of reference helps buyers understand the company in ODI job terms\n` +
-      `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
-      `- proposed_tagline should be a strategist-quality direction, not a generic slogan\n` +
-      `- highlighted=true only for the strongest or most differentiating items\n`;
-
-    const positioningCanvasUserText =
-      `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
-      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
-      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
-      `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
-      `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
-      `Generated routes:\n${routes
-        .slice(0, 10)
-        .map((route: any, index: number) =>
-          `${index + 1}. ${route?.category || "improve"} | ${route?.title || "Untitled"} | ${route?.short_description || "No description"}`
-        )
-        .join("\n")}\n\n` +
-      `Generate a positioning canvas for this exact company.`;
-
-    const positioningPromise = callOpenAIJSON({
-      apiKey: openaiKey,
-      model: openaiModel,
-      schemaName: "mojo_positioning_canvas_v1",
-      schema: positioningCanvasSchema,
-      systemText: positioningCanvasSystemText,
-      userText: positioningCanvasUserText,
-      maxOutputTokens: 2200,
-      temperature: 0.2,
-    });
-
-    // -------------------------
-    // 6) Generate STRATEGY CASCADE
-    // -------------------------
-    const strategyCascadeSchema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        winning_aspiration: { type: "string" },
-        where_to_play: { type: "string" },
-        how_to_win: { type: "string" },
-        capabilities: {
-          type: "array",
-          minItems: 4,
-          maxItems: 8,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              name: { type: "string" },
-              status: { type: "string", enum: ["strong", "developing", "gap"] },
-              note: { type: "string" },
-            },
-            required: ["name", "status", "note"],
-          },
-        },
-        management_systems: {
-          type: "array",
-          minItems: 4,
-          maxItems: 8,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              name: { type: "string" },
-              status: { type: "string", enum: ["strong", "developing", "gap"] },
-              note: { type: "string" },
-            },
-            required: ["name", "status", "note"],
-          },
-        },
-        assumptions: {
-          type: "array",
-          minItems: 4,
-          maxItems: 8,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              assumption: { type: "string" },
-              tested: { type: "boolean" },
-              note: { type: "string" },
-            },
-            required: ["assumption", "tested", "note"],
-          },
-        },
-      },
-      required: [
-        "winning_aspiration",
-        "where_to_play",
-        "how_to_win",
-        "capabilities",
-        "management_systems",
-        "assumptions",
-      ],
-    };
-
-    const strategyFrameworkKeys = positioningFrameworkKeys;
-
-    const strategyCascadeSystemText =
-      `You are generating a strategy cascade for a strategy platform.\n` +
-      `Return ONLY valid JSON matching the schema. No prose outside the JSON.\n` +
-      `Synthesize the evidence into a clear Roger Martin style cascade.\n` +
-      `Use strong, executive-quality language, but stay tethered to the supplied evidence.\n` +
-      `If evidence is thin, make the uncertainty explicit through status and assumptions rather than pretending certainty.\n\n` +
-      `Rules:\n` +
-      evidenceConsistencyConstraint +
-      `- Strategy choices should directly resolve or reduce the client-stated strategic problem(s) when provided\n` +
-      noIndustrySwitchConstraint +
-      `- If evidence indicates youth mental health, do not output elder care, senior living, home care, or adjacent sectors\n` +
-      `- where_to_play must be framed around the job executor and job context — not a product category. Format: who the job executor is, what job they are trying to accomplish, and the specific segment or context where this company competes.\n` +
-      `- where_to_play should align with April Dunford frame of reference and ODI role/job context\n` +
-      `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
-      `- winning_aspiration, where_to_play, and how_to_win should each be one well-written paragraph\n` +
-      `- capabilities should be concrete operational or strategic abilities, not departments\n` +
-      `- management_systems should be recurring operating loops, measurement systems, governance, planning, or resource systems\n` +
-      `- status=strong only when the capability or system is meaningfully evidenced\n` +
-      `- status=developing when there is some evidence but it appears incomplete or immature\n` +
-      `- status=gap when it appears important but weak, missing, or unproven\n` +
-      `- note should be a short evidence-based explanation, 6-16 words\n` +
-      `- assumptions should read like untested strategic beliefs or claims implied by the company story\n` +
-      `- assumptions.note should explain why the assumption is untested or what would validate it\n`;
-
-    const strategyCascadeUserText =
-      `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
-      `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
-      `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
-      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
-      `Generated strategy inputs:\n${buildInputBrief(inputs)}\n\n` +
-      `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
-      `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
-      `Generated routes:\n${routes
-        .slice(0, 12)
-        .map((route: any, index: number) =>
-          `${index + 1}. ${route?.category || "improve"} | ${route?.title || "Untitled"} | ${route?.short_description || "No description"}`
-        )
-        .join("\n")}\n\n` +
-      `Generate a full strategy cascade for this exact company in the supplied schema.`;
-
-    const strategyPromise = callOpenAIJSON({
-      apiKey: openaiKey,
-      model: openaiModel,
-      schemaName: "mojo_strategy_cascade_v1",
-      schema: strategyCascadeSchema,
-      systemText: strategyCascadeSystemText,
-      userText: strategyCascadeUserText,
-      maxOutputTokens: 2200,
-      temperature: 0.2,
-    });
-
-    let [positioningCanvasResult, strategyCascadeResult] = await Promise.all([
-      positioningPromise,
-      strategyPromise,
-    ]);
-
+    // placeholder so downstream references compile until §8b read-back
     const customerJourneyDraft = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const odiBrief = buildODIBrief({
       baselineResultJson: effectiveBaselineResultJson,
@@ -6346,8 +6160,6 @@ Deno.serve(async (req) => {
       journeys,
       opportunities,
       routes,
-      positioning: positioningCanvasResult,
-      strategy: strategyCascadeResult,
     });
 
     let reviewResults = [
@@ -6381,8 +6193,6 @@ Deno.serve(async (req) => {
           journeys,
           opportunities,
           routes,
-          positioning: positioningCanvasResult,
-          strategy: strategyCascadeResult,
           reviews: reviewResults,
         });
 
@@ -6395,9 +6205,6 @@ Deno.serve(async (req) => {
         if (Array.isArray(repairedBundle?.routes) && repairedBundle.routes.length > 0) {
           routes = repairedBundle.routes;
         }
-        positioningCanvasResult = repairedBundle?.positioning ?? positioningCanvasResult;
-        strategyCascadeResult = repairedBundle?.strategy ?? strategyCascadeResult;
-
         const repairedJourneyByKey = new Map<string, any>();
         for (const journey of journeys) {
           const key = normalizeJourneyKey(journey?.journey_key);
@@ -6427,8 +6234,6 @@ Deno.serve(async (req) => {
           journeys,
           opportunities,
           routes,
-          positioning: positioningCanvasResult,
-          strategy: strategyCascadeResult,
         }));
 
         reviewResults = [
@@ -6453,6 +6258,11 @@ Deno.serve(async (req) => {
     }
 
     if (highSeverityReviews.length > 0 && !allowHighSeverityReviewSave) {
+      if (dry_run) {
+        console.log("[research-company] dry_run: review would block; continuing without save", {
+          reviews: highSeverityReviews.map((entry) => ({ key: entry.key, severity: entry.review?.severity })),
+        });
+      } else {
       console.log("[research-company] blocked by reviewer findings", {
         company_id,
         baseline_run_id: baselineRun?.id ?? null,
@@ -6484,6 +6294,7 @@ Deno.serve(async (req) => {
         baseline_run_id: baselineRun?.id ?? null,
         reviews: reviewResults,
       }, 422);
+      } // end !dry_run block
     }
 
     if (highSeverityReviews.length > 0 && allowHighSeverityReviewSave) {
@@ -6499,26 +6310,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    const positioningRecord = (positioningCanvasResult ?? {}) as Record<string, unknown>;
-    const strategyRecord = (strategyCascadeResult ?? {}) as Record<string, unknown>;
-    const baselineCategory = String(
-      ((effectiveBaselineResultJson as { category_archetype?: unknown } | null)?.category_archetype) || "",
-    );
-    const normalizedMarketCategory = normalizeMarketCategoryValue(
-      positioningRecord.market_category,
-      baselineCategory,
-      strategyRecord.where_to_play,
-      positioningRecord.best_fit_customers,
-      strategicProblemBrief,
-    );
-    positioningRecord.market_category = normalizedMarketCategory;
-    strategyRecord.where_to_play = normalizeWhereToPlayValue(
-      strategyRecord.where_to_play,
-      normalizedMarketCategory,
-    );
-    positioningCanvasResult = positioningRecord;
-    strategyCascadeResult = strategyRecord;
-
     const savedReviewStatus =
       highSeverityReviews.length > 0 && allowHighSeverityReviewSave
         ? "saved_with_high_risk_review"
@@ -6526,6 +6317,7 @@ Deno.serve(async (req) => {
           ? "saved_after_review"
           : "saved";
 
+    if (!dry_run) {
     await persistResearchReviewRun({
       supabase,
       companyId: company_id,
@@ -6541,6 +6333,7 @@ Deno.serve(async (req) => {
       reviews: reviewResults,
       finalizerApplied,
     });
+    } // end !dry_run persistResearchReviewRun
 
     // Filter to structurally valid outcomes before persistence.
     // For low-information contexts (outside phase, sparse public data) some outcomes
@@ -6606,18 +6399,9 @@ Deno.serve(async (req) => {
     }
 
     // -------------------------
-    // 7) Clear old rows for company
+    // 7) Clear old rows for company (skipped in dry_run)
     // -------------------------
-    const { data: existingInputs } = await supabase
-      .from("inputs")
-      .select("id, input_key")
-      .eq("company_id", company_id);
-    const existingIds = (existingInputs || []).map((r: any) => r.id);
-    const inputKeyById = new Map<string, string>(
-      ((existingInputs || []) as Array<{ id?: string; input_key?: string }>)
-        .filter((row) => typeof row?.id === "string" && typeof row?.input_key === "string")
-        .map((row) => [String(row.id), String(row.input_key)]),
-    );
+    // Declared here so §8 INSERT block can reference preserved files regardless of dry_run scope
     const preservedInputFilesByKey = new Map<
       string,
       Array<{
@@ -6628,6 +6412,17 @@ Deno.serve(async (req) => {
         uploaded_at?: string | null;
       }>
     >();
+    if (!dry_run) {
+    const { data: existingInputs } = await supabase
+      .from("inputs")
+      .select("id, input_key")
+      .eq("company_id", company_id);
+    const existingIds = (existingInputs || []).map((r: any) => r.id);
+    const inputKeyById = new Map<string, string>(
+      ((existingInputs || []) as Array<{ id?: string; input_key?: string }>)
+        .filter((row) => typeof row?.id === "string" && typeof row?.input_key === "string")
+        .map((row) => [String(row.id), String(row.input_key)]),
+    );
 
     if (existingIds.length > 0) {
       const { data: existingInputFiles, error: existingInputFilesErr } = await supabase
@@ -6668,15 +6463,17 @@ Deno.serve(async (req) => {
     await supabase.from("solution_tests").delete().eq("company_id", company_id);
     await supabase.from("solution_ideas").delete().eq("company_id", company_id);
     await supabase.from("opportunities").delete().eq("company_id", company_id);
-    await supabase.from("routes").delete().eq("company_id", company_id);
+    // LIKE 'manual_%' preserves all manual-origin routes/legs (manual_inline, manual_a5_recovery, etc.)
+    await supabase.from("routes").delete().eq("company_id", company_id).not("source", "like", "manual_%");
     await supabase.from("managed_outcomes").delete().eq("company_id", company_id);
     await supabase.from("odi_needs").delete().eq("company_id", company_id);
     await supabase.from("odi_market_definitions").delete().eq("company_id", company_id);
-    await supabase.from("positioning_canvases").delete().eq("company_id", company_id);
-    await supabase.from("strategy_cascades").delete().eq("company_id", company_id);
+    // positioning_canvases and strategy_cascades are owned by leaf functions (A37)
+
+    } // end !dry_run §7 clears
 
     // -------------------------
-    // 8) Insert inputs / steps / opps / routes
+    // 8) Insert inputs / steps / opps / routes (skipped in dry_run)
     // -------------------------
     let inputsInserted = 0;
     let stepsInserted = 0;
@@ -6687,8 +6484,10 @@ Deno.serve(async (req) => {
     let solutionTestsInserted = 0;
     let odiNeedsInserted = 0;
     let odiMarketDefinitionsInserted = 0;
-    let positioningCanvasInserted = 0;
-    let strategyCascadeInserted = 0;
+    // Hoisted: referenced by scoreCompanyMojo (§9) outside the dry_run gate
+    const artifactSourcePath =
+      researchContextMode === "uploaded_evidence_fallback" ? "uploaded_file_research" : "public_research";
+    if (!dry_run) {
     const insertedOpportunities: Array<{
       id: string;
       outcome: string;
@@ -6706,6 +6505,8 @@ Deno.serve(async (req) => {
       effort: string;
       frameworks_used: string[];
       sort_order: number;
+      rejected_alternatives: Array<{ alternative_title: string; rejection_reason: string }>;
+      what_would_have_to_be_true: Array<{ condition: string; satisfied_flag: boolean }>;
     }> = [];
     const restoredFileKeys = new Set<string>();
 
@@ -7130,9 +6931,6 @@ Deno.serve(async (req) => {
       researchContextMode === "uploaded_evidence_fallback"
         ? "Unknown from uploaded evidence"
         : "Unknown from public evidence";
-    const artifactSourcePath =
-      researchContextMode === "uploaded_evidence_fallback" ? "uploaded_file_research" : "public_research";
-
     const journeyDerivedExecutor = audienceFromJourneyTitle(customerJourney?.journey_title);
     const journeyDerivedJtbd = jtbdFromJourneyTitle(customerJourney?.journey_title);
     const normalizedCompanyName = normalizeAudienceSignal(company_name);
@@ -7208,6 +7006,7 @@ Deno.serve(async (req) => {
         user_id: user.id,
         tier: "need",
         desired_outcome: desiredOutcome,
+        odi_canonical_statement: opp?.odi_canonical_statement || null,
         journey_key: "customer",
         step_number: stepNumber,
         step_label: stepLabel,
@@ -7270,6 +7069,9 @@ Deno.serve(async (req) => {
         effort,
         type: String(route?.type || routeType),
         sort_order: Math.max(1, Number(route?.sort_order) || routesInserted + 1),
+        level: "route",
+        rejected_alternatives: Array.isArray(route?.rejected_alternatives) ? route.rejected_alternatives : [],
+        what_would_have_to_be_true: Array.isArray(route?.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [],
       };
 
       let insert = await supabase
@@ -7289,6 +7091,9 @@ Deno.serve(async (req) => {
           effort,
           type: String(route?.type || routeType),
           sort_order: Math.max(1, Number(route?.sort_order) || routesInserted + 1),
+          level: "route",
+          rejected_alternatives: Array.isArray(route?.rejected_alternatives) ? route.rejected_alternatives : [],
+          what_would_have_to_be_true: Array.isArray(route?.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [],
         })
           .select("id, category, title, short_description, effort, frameworks_used, sort_order")
           .single();
@@ -7307,6 +7112,8 @@ Deno.serve(async (req) => {
           effort: String(row.effort || effort),
           frameworks_used: ensureRequiredFrameworkKeys(Array.isArray(row.frameworks_used) ? row.frameworks_used as string[] : routeFrameworkKeys),
           sort_order: Math.max(1, Number(row.sort_order) || routesInserted + 1),
+          rejected_alternatives: Array.isArray(route?.rejected_alternatives) ? route.rejected_alternatives : [],
+          what_would_have_to_be_true: Array.isArray(route?.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [],
         });
 
         if (insertedId) {
@@ -7432,89 +7239,69 @@ Deno.serve(async (req) => {
       }
     }
 
-    const positioningPayload = {
-      company_id,
-      user_id: user.id,
-      frameworks_used: positioningFrameworkKeys,
-      competitive_alternatives_json: Array.isArray(positioningCanvasResult?.competitive_alternatives)
-        ? positioningCanvasResult.competitive_alternatives
-        : [],
-      unique_attributes_json: Array.isArray(positioningCanvasResult?.unique_attributes)
-        ? positioningCanvasResult.unique_attributes
-        : [],
-      value_for_customer: String(positioningCanvasResult?.value_for_customer || ""),
-      best_fit_customers: String(positioningCanvasResult?.best_fit_customers || ""),
-      market_category: String(positioningCanvasResult?.market_category || ""),
-      category_rationale: String(positioningCanvasResult?.category_rationale || ""),
-      current_tagline: String(positioningCanvasResult?.current_tagline || ""),
-      proposed_tagline: String(positioningCanvasResult?.proposed_tagline || ""),
-    };
+    } // end !dry_run §8 upstream INSERTs
 
-    let { error: positioningErr } = await supabase.from("positioning_canvases").insert(positioningPayload);
-    if (positioningErr && String(positioningErr.message || "").toLowerCase().includes("frameworks_used")) {
-      const fallback = await supabase.from("positioning_canvases").insert({
-        company_id,
-        user_id: user.id,
-        competitive_alternatives_json: Array.isArray(positioningCanvasResult?.competitive_alternatives)
-          ? positioningCanvasResult.competitive_alternatives
-          : [],
-        unique_attributes_json: Array.isArray(positioningCanvasResult?.unique_attributes)
-          ? positioningCanvasResult.unique_attributes
-          : [],
-        value_for_customer: String(positioningCanvasResult?.value_for_customer || ""),
-        best_fit_customers: String(positioningCanvasResult?.best_fit_customers || ""),
-        market_category: String(positioningCanvasResult?.market_category || ""),
-        category_rationale: String(positioningCanvasResult?.category_rationale || ""),
-        current_tagline: String(positioningCanvasResult?.current_tagline || ""),
-        proposed_tagline: String(positioningCanvasResult?.proposed_tagline || ""),
-      });
-      positioningErr = fallback.error;
+    // -------------------------
+    // 8b) Invoke leaf functions (cascade + positioning) — always runs; dry_run forwarded
+    // -------------------------
+    const authorizationHeader = req.headers.get("Authorization") ?? "";
+    const [cascadeInvokeResult, positioningInvokeResult] = await Promise.all([
+      supabase.functions.invoke("refresh-cascade", {
+        body: { company_id, skip_lock: true, dry_run },
+        headers: { Authorization: authorizationHeader },
+      }).catch((err: unknown) => {
+        console.error("[research-company] refresh-cascade invoke error:", err);
+        return { data: null, error: err };
+      }),
+      supabase.functions.invoke("refresh-positioning", {
+        body: { company_id, skip_lock: true, dry_run },
+        headers: { Authorization: authorizationHeader },
+      }).catch((err: unknown) => {
+        console.error("[research-company] refresh-positioning invoke error:", err);
+        return { data: null, error: err };
+      }),
+    ]);
+
+    if ((cascadeInvokeResult as any)?.data?.status === "skipped_manual_preserved") {
+      console.log("[research-company] refresh-cascade: manual cascade preserved", { company_id });
+    }
+    if ((positioningInvokeResult as any)?.data?.status === "skipped_manual_preserved") {
+      console.log("[research-company] refresh-positioning: manual positioning preserved", { company_id });
     }
 
-    if (positioningErr) console.error("[research-company] positioning canvas insert error:", positioningErr);
-    else positioningCanvasInserted++;
-
-    const cascadePayload = {
-      company_id,
-      user_id: user.id,
-      frameworks_used: strategyFrameworkKeys,
-      winning_aspiration: String(strategyCascadeResult?.winning_aspiration || ""),
-      where_to_play: String(strategyCascadeResult?.where_to_play || ""),
-      how_to_win: String(strategyCascadeResult?.how_to_win || ""),
-      capabilities_json: Array.isArray(strategyCascadeResult?.capabilities)
-        ? strategyCascadeResult.capabilities
-        : [],
-      management_systems_json: Array.isArray(strategyCascadeResult?.management_systems)
-        ? strategyCascadeResult.management_systems
-        : [],
-      assumptions_json: Array.isArray(strategyCascadeResult?.assumptions)
-        ? strategyCascadeResult.assumptions
-        : [],
-    };
-
-    let { error: cascadeErr } = await supabase.from("strategy_cascades").insert(cascadePayload);
-    if (cascadeErr && String(cascadeErr.message || "").toLowerCase().includes("frameworks_used")) {
-      const fallback = await supabase.from("strategy_cascades").insert({
+    if (dry_run) {
+      return jsonResponse({
+        status: "dry_run",
         company_id,
-        user_id: user.id,
-        winning_aspiration: String(strategyCascadeResult?.winning_aspiration || ""),
-        where_to_play: String(strategyCascadeResult?.where_to_play || ""),
-        how_to_win: String(strategyCascadeResult?.how_to_win || ""),
-        capabilities_json: Array.isArray(strategyCascadeResult?.capabilities)
-          ? strategyCascadeResult.capabilities
-          : [],
-        management_systems_json: Array.isArray(strategyCascadeResult?.management_systems)
-          ? strategyCascadeResult.management_systems
-          : [],
-        assumptions_json: Array.isArray(strategyCascadeResult?.assumptions)
-          ? strategyCascadeResult.assumptions
-          : [],
+        upstream_generated: {
+          inputs: inputs.length,
+          journeys: journeys.length,
+          opportunities: opportunities.length,
+          routes,
+        },
+        cascade_result: (cascadeInvokeResult as any)?.data ?? null,
+        positioning_result: (positioningInvokeResult as any)?.data ?? null,
       });
-      cascadeErr = fallback.error;
     }
 
-    if (cascadeErr) console.error("[research-company] strategy cascade insert error:", cascadeErr);
-    else strategyCascadeInserted++;
+    // -------------------------
+    // 8c) Read fresh cascade + positioning from DB (leaves have committed by this point)
+    // -------------------------
+    const { data: freshCascadeRow } = await supabase
+      .from("strategy_cascades")
+      .select("winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { data: freshPositioningRow } = await supabase
+      .from("positioning_canvases")
+      .select("competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     // -------------------------
     // 9) Use baselineRun (fetched once) + update company scores
@@ -7554,26 +7341,26 @@ Deno.serve(async (req) => {
         category: route?.category,
       })),
       positioning: {
-        competitive_alternatives: Array.isArray(positioningCanvasResult?.competitive_alternatives)
-          ? positioningCanvasResult.competitive_alternatives
+        competitive_alternatives: Array.isArray((freshPositioningRow as any)?.competitive_alternatives_json)
+          ? (freshPositioningRow as any).competitive_alternatives_json
           : [],
-        unique_attributes: Array.isArray(positioningCanvasResult?.unique_attributes)
-          ? positioningCanvasResult.unique_attributes
+        unique_attributes: Array.isArray((freshPositioningRow as any)?.unique_attributes_json)
+          ? (freshPositioningRow as any).unique_attributes_json
           : [],
-        value_for_customer: positioningCanvasResult?.value_for_customer,
-        best_fit_customers: positioningCanvasResult?.best_fit_customers,
-        market_category: positioningCanvasResult?.market_category,
-        category_rationale: positioningCanvasResult?.category_rationale,
-        current_tagline: positioningCanvasResult?.current_tagline,
-        proposed_tagline: positioningCanvasResult?.proposed_tagline,
+        value_for_customer: (freshPositioningRow as any)?.value_for_customer,
+        best_fit_customers: (freshPositioningRow as any)?.best_fit_customers,
+        market_category: (freshPositioningRow as any)?.market_category,
+        category_rationale: (freshPositioningRow as any)?.category_rationale,
+        current_tagline: (freshPositioningRow as any)?.current_tagline,
+        proposed_tagline: (freshPositioningRow as any)?.proposed_tagline,
       },
       strategy: {
-        winning_aspiration: strategyCascadeResult?.winning_aspiration,
-        where_to_play: strategyCascadeResult?.where_to_play,
-        how_to_win: strategyCascadeResult?.how_to_win,
-        capabilities: Array.isArray(strategyCascadeResult?.capabilities) ? strategyCascadeResult.capabilities : [],
-        management_systems: Array.isArray(strategyCascadeResult?.management_systems) ? strategyCascadeResult.management_systems : [],
-        assumptions: Array.isArray(strategyCascadeResult?.assumptions) ? strategyCascadeResult.assumptions : [],
+        winning_aspiration: (freshCascadeRow as any)?.winning_aspiration,
+        where_to_play: (freshCascadeRow as any)?.where_to_play,
+        how_to_win: (freshCascadeRow as any)?.how_to_win,
+        capabilities: Array.isArray((freshCascadeRow as any)?.capabilities_json) ? (freshCascadeRow as any).capabilities_json : [],
+        management_systems: Array.isArray((freshCascadeRow as any)?.management_systems_json) ? (freshCascadeRow as any).management_systems_json : [],
+        assumptions: Array.isArray((freshCascadeRow as any)?.assumptions_json) ? (freshCascadeRow as any).assumptions_json : [],
       },
       strategicProblems,
       gamma: 2.2,
@@ -7610,12 +7397,12 @@ Deno.serve(async (req) => {
       evidenceStatus: scored.evidence_status,
       summaryJson: {
         positioning: {
-          market_category: String(positioningCanvasResult?.market_category || ""),
-          proposed_tagline: String(positioningCanvasResult?.proposed_tagline || ""),
+          market_category: String((freshPositioningRow as any)?.market_category || ""),
+          proposed_tagline: String((freshPositioningRow as any)?.proposed_tagline || ""),
         },
         strategy: {
-          winning_aspiration: String(strategyCascadeResult?.winning_aspiration || ""),
-          where_to_play: String(strategyCascadeResult?.where_to_play || ""),
+          winning_aspiration: String((freshCascadeRow as any)?.winning_aspiration || ""),
+          where_to_play: String((freshCascadeRow as any)?.where_to_play || ""),
         },
         strategic_problem_context: {
           count: strategicProblems.length,
@@ -7684,8 +7471,8 @@ Deno.serve(async (req) => {
           source: item.source,
           status: item.status,
         })),
-        positioning: positioningCanvasResult,
-        strategy: strategyCascadeResult,
+        positioning: freshPositioningRow ?? null,
+        strategy: freshCascadeRow ?? null,
       },
     });
 
@@ -7718,15 +7505,15 @@ Deno.serve(async (req) => {
       solution_tests_inserted: solutionTestsInserted,
       odi_market_definitions_inserted: odiMarketDefinitionsInserted,
       odi_needs_inserted: odiNeedsInserted,
-      positioning_canvas_inserted: positioningCanvasInserted,
-      strategy_cascade_inserted: strategyCascadeInserted,
+      cascade_status: String((cascadeInvokeResult as any)?.data?.status ?? "invoked"),
+      positioning_status: String((positioningInvokeResult as any)?.data?.status ?? "invoked"),
       mojo_score: scored.mojo_score,
       evidence_status: scored.evidence_status,
       primary_desired_outcome: managedOutcomes.find((outcome: any) => outcome?.is_primary === true) || managedOutcomes[0] || null,
     });
     } finally {
-      stopLockHeartbeat();
-      await releaseCompanyRunLock(supabase, company_id);
+      if (stopLockHeartbeat) stopLockHeartbeat();
+      if (!dry_run && user.id !== SERVICE_ROLE_UUID) await releaseCompanyRunLock(supabase, company_id);
     }
   } catch (err) {
     console.error("[research-company] error:", err);
