@@ -15,6 +15,7 @@ export type Database = {
           company_id: string
           completed_at: string | null
           created_at: string
+          flow_type: string | null
           id: string
           input_json: Json
           mode: string
@@ -29,6 +30,7 @@ export type Database = {
           company_id: string
           completed_at?: string | null
           created_at?: string
+          flow_type?: string | null
           id?: string
           input_json?: Json
           mode?: string
@@ -43,6 +45,7 @@ export type Database = {
           company_id?: string
           completed_at?: string | null
           created_at?: string
+          flow_type?: string | null
           id?: string
           input_json?: Json
           mode?: string
