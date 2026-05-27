@@ -6835,6 +6835,7 @@ Deno.serve(async (req) => {
         .insert({
           company_id,
           user_id: user.id,
+          provenance_type: "public_research",
           frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
           managed_outcome_id: managedOutcomeId,
           ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
@@ -6858,6 +6859,7 @@ Deno.serve(async (req) => {
           .insert({
             company_id,
             user_id: user.id,
+            provenance_type: "public_research",
             frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
             managed_outcome_id: managedOutcomeId,
             outcome: String(opp?.outcome || ""),
@@ -6880,6 +6882,7 @@ Deno.serve(async (req) => {
           .insert({
             company_id,
             user_id: user.id,
+            provenance_type: "public_research",
             managed_outcome_id: managedOutcomeId,
             ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
             outcome: String(opp?.outcome || ""),
@@ -6973,6 +6976,7 @@ Deno.serve(async (req) => {
     const { error: odiMarketErr } = await supabase.from("odi_market_definitions").insert({
       company_id,
       user_id: user.id,
+      provenance_type: "public_research",
       job_executor,
       chooser,
       jtbd,
@@ -7004,6 +7008,7 @@ Deno.serve(async (req) => {
       const { error: odiNeedErr } = await supabase.from("odi_needs").insert({
         company_id,
         user_id: user.id,
+        provenance_type: "public_research",
         tier: "need",
         desired_outcome: desiredOutcome,
         odi_canonical_statement: opp?.odi_canonical_statement || null,
@@ -7061,6 +7066,7 @@ Deno.serve(async (req) => {
       const routePayload = {
         company_id,
         user_id: user.id,
+        provenance_type: "public_research",
         frameworks_used: ensureRequiredFrameworkKeys(routeFrameworkKeys),
         category,
         title: rewrittenRoute.title,
@@ -7084,6 +7090,7 @@ Deno.serve(async (req) => {
         insert = await supabase.from("routes").insert({
           company_id,
           user_id: user.id,
+          provenance_type: "public_research",
           category,
           title: rewrittenRoute.title,
           short_description: rewrittenRoute.shortDescription,

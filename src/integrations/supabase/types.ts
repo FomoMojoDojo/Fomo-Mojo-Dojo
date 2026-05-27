@@ -1936,6 +1936,7 @@ export type Database = {
           evidence_status: string | null
           id: string
           mojo_score: number | null
+          provenance_type: string | null
           status: string
           summary_json: Json
           user_id: string
@@ -1948,6 +1949,7 @@ export type Database = {
           evidence_status?: string | null
           id?: string
           mojo_score?: number | null
+          provenance_type?: string | null
           status?: string
           summary_json?: Json
           user_id: string
@@ -1960,6 +1962,7 @@ export type Database = {
           evidence_status?: string | null
           id?: string
           mojo_score?: number | null
+          provenance_type?: string | null
           status?: string
           summary_json?: Json
           user_id?: string

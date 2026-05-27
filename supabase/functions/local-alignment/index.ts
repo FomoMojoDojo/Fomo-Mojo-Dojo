@@ -27,9 +27,9 @@ const PLAIN_LANGUAGE_RULES =
 
 const INPUT_KEYS_BY_AREA: Record<string, string[]> = {
   positioning: ["comp-alt", "unique-attr", "val-prop", "target-aud", "market-cat", "brand-narrative"],
-  strategy: ["program-model", "needs-assessment", "outcome-data", "referral-map", "channel-strat"],
-  market: ["market-cat", "target-aud", "comp-alt", "needs-assessment", "brand-narrative"],
-  odi: ["outcome-data", "needs-assessment", "program-model"],
+  strategy: ["operating-model", "customer-research", "outcome-evidence", "acquisition-map", "channel-strat"],
+  market: ["market-cat", "target-aud", "comp-alt", "customer-research", "brand-narrative"],
+  odi: ["outcome-evidence", "customer-research", "operating-model"],
 };
 
 function uniqueFrameworks(frameworks: FrameworkReference[]) {
@@ -1356,6 +1356,7 @@ Deno.serve(async (req) => {
       .insert({
         company_id: companyId,
         user_id: runUserId,
+        provenance_type: "framework_adjudicated",
         baseline_run_id: effectiveBaselineRun?.id ?? null,
         status: "local_alignment",
         mojo_score: effectiveMojoForRun,

@@ -1,4 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  adjudicate,
+  AdjudicationBlockedError,
+  type AdjudicationInput,
+  type ContextMode,
+  type FlowMode,
+} from "../_shared/adjudication.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,9 +15,6 @@ const corsHeaders = {
 
 const WEAK_BASELINE_STATUSES = new Set(["ambiguous_public_evidence", "insufficient_public_evidence"]);
 const ALLOWED_AREAS = new Set(["positioning", "strategy", "market", "odi"]);
-
-type FlowMode = "public_only" | "uploaded_only" | "hybrid";
-type ContextMode = "public_baseline" | "uploaded_only" | "uploaded_evidence_fallback";
 type FrameworkMode = "dunford_positioning" | "torres_opportunity_map" | "martin_strategy_cascade";
 type ProgramStage = "outside" | "diagnose" | "focus" | "flow";
 type OrchestratorMode = "off" | "chained" | "parallel";
@@ -670,92 +674,37 @@ Deno.serve(async (req) => {
       task: async () => {
         const uploadedFileCount = Number(asRecord(evidenceCheck)?.uploaded_file_count || 0);
         const existingArtifactCount = Number(asRecord(evidenceCheck)?.existing_artifact_count || 0);
-        const hasUploadedEvidence = uploadedFileCount > 0;
-        const hasExistingArtifacts = existingArtifactCount > 0;
-        const weakBaseline = isWeakBaselineStatus(baselineStatus);
-        const weakBaselineBeforePublicCollection = isWeakBaselineStatus(baselineStatusBeforePublicCollection);
-        const baselineMissing = baselineStatus === "missing";
-        let contextMode: ContextMode = "public_baseline";
-        let rationale = "";
 
-        if (mode === "uploaded_only") {
-          if (!hasUploadedEvidence) {
-            throw new FlowError(
-              "Uploaded-only mode requires at least one uploaded file.",
-              "adjudication",
-              422,
-              {
-                error: "Uploaded-only mode requires at least one uploaded file.",
-                status: "uploaded_context_requires_files",
-                reason: "No uploaded files were found for this company.",
-              },
-            );
+        const adjudicationInput: AdjudicationInput = {
+          mode,
+          baselineStatus,
+          baselineStatusBeforePublicCollection,
+          uploadedFileCount,
+          existingArtifactCount,
+        };
+
+        let contextMode: ContextMode;
+        let rationale: string;
+        try {
+          const result = adjudicate(adjudicationInput);
+          contextMode = result.contextMode;
+          rationale = result.rationale;
+        } catch (err) {
+          if (err instanceof AdjudicationBlockedError) {
+            throw new FlowError(err.message, "adjudication", err.statusCode, {
+              error: err.message,
+              status: err.status,
+              reason: err.reason,
+            });
           }
-          contextMode = "uploaded_only";
-          rationale = "Uploaded-only mode selected, so generated outputs must rely on uploaded company evidence.";
-        } else if (mode === "public_only") {
-          if (weakBaseline || baselineMissing) {
-            throw new FlowError(
-              "Public-only mode requires a strong public baseline.",
-              "adjudication",
-              422,
-              {
-                error: "Public-only mode requires a strong public baseline.",
-                status: "public_baseline_not_ready",
-                reason: baselineMissing
-                  ? "No baseline run found for this company."
-                  : `Latest baseline status is '${baselineStatus}', which is not strong enough for public-only generation.`,
-              },
-            );
-          }
-          contextMode = "public_baseline";
-          rationale = "Public-only mode selected and baseline quality check passed.";
-        } else {
-          if ((weakBaseline || baselineMissing) && hasUploadedEvidence) {
-            contextMode = "uploaded_only";
-            rationale = baselineMissing
-              ? "No public baseline run is available, so flow switched to uploaded evidence."
-              : "Public baseline is weak/ambiguous, so flow switched to uploaded evidence.";
-          } else if (weakBaseline && !hasUploadedEvidence) {
-            if (hasExistingArtifacts || !weakBaselineBeforePublicCollection) {
-              contextMode = "public_baseline";
-              rationale = hasExistingArtifacts
-                ? "Latest baseline is weak, but prior generated artifacts exist for this company, so flow continues with public baseline context."
-                : "Latest baseline is weak, but a prior baseline status was not weak, so flow continues with public baseline context.";
-            } else {
-              throw new FlowError(
-                "Public baseline is weak and no uploaded evidence is available.",
-                "adjudication",
-                422,
-                {
-                  error: "Public baseline is weak and no uploaded evidence is available.",
-                  status: baselineStatus || "insufficient_public_evidence",
-                  reason: "Add uploaded evidence or improve public baseline before generating artifacts.",
-                },
-              );
-            }
-          } else if (baselineMissing && !hasUploadedEvidence) {
-            throw new FlowError(
-              "No baseline run or uploaded evidence available.",
-              "adjudication",
-              422,
-              {
-                error: "No baseline run or uploaded evidence available.",
-                status: "missing_evidence_context",
-                reason: "Run public baseline or upload files before artifact generation.",
-              },
-            );
-          } else {
-            contextMode = "public_baseline";
-            rationale = "Hybrid mode selected and public baseline quality check passed.";
-          }
+          throw err;
         }
 
         selectedContextMode = contextMode;
         return {
           mode,
           baseline_status: baselineStatus,
-          has_uploaded_evidence: hasUploadedEvidence,
+          has_uploaded_evidence: uploadedFileCount > 0,
           uploaded_file_count: uploadedFileCount,
           selected_context_mode: contextMode,
           rationale,
