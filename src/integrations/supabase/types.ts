@@ -404,6 +404,7 @@ export type Database = {
           id: string
           last_scored_at: string | null
           last_updated: string
+          manual_industry_vocab: string[]
           mojo_score: number | null
           name: string
           potential_score: number | null
@@ -416,7 +417,6 @@ export type Database = {
           selected_route_id: string | null
           selected_route_summary_json: Json
           selected_route_updated_at: string | null
-          manual_industry_vocab: string[]
           strategic_problem_brief: string | null
           tier: number
           website: string | null
@@ -1513,6 +1513,7 @@ export type Database = {
         Row: {
           chooser: string
           company_id: string
+          confidence: number | null
           created_at: string
           frameworks_used: string[]
           id: string
@@ -1520,6 +1521,7 @@ export type Database = {
           job_executor: string
           journey_key: string
           jtbd: string
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           source_path: string
           updated_at: string
           user_id: string
@@ -1527,6 +1529,7 @@ export type Database = {
         Insert: {
           chooser?: string
           company_id: string
+          confidence?: number | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
@@ -1534,6 +1537,7 @@ export type Database = {
           job_executor?: string
           journey_key?: string
           jtbd?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source_path?: string
           updated_at?: string
           user_id: string
@@ -1541,6 +1545,7 @@ export type Database = {
         Update: {
           chooser?: string
           company_id?: string
+          confidence?: number | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
@@ -1548,6 +1553,7 @@ export type Database = {
           job_executor?: string
           journey_key?: string
           jtbd?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source_path?: string
           updated_at?: string
           user_id?: string
@@ -1565,6 +1571,7 @@ export type Database = {
       odi_needs: {
         Row: {
           company_id: string
+          confidence: number | null
           created_at: string
           dependency_state: string
           desired_outcome: string
@@ -1579,6 +1586,7 @@ export type Database = {
           notes: string | null
           odi_canonical_statement: string | null
           opportunity_score: number
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction: number
           service_state: string
           social_extraction_json: Json | null
@@ -1600,6 +1608,7 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          confidence?: number | null
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
@@ -1614,6 +1623,7 @@ export type Database = {
           notes?: string | null
           odi_canonical_statement?: string | null
           opportunity_score?: number
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
           service_state?: string
           social_extraction_json?: Json | null
@@ -1635,6 +1645,7 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          confidence?: number | null
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
@@ -1649,6 +1660,7 @@ export type Database = {
           notes?: string | null
           odi_canonical_statement?: string | null
           opportunity_score?: number
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
           service_state?: string
           social_extraction_json?: Json | null
@@ -1688,6 +1700,7 @@ export type Database = {
       opportunities: {
         Row: {
           company_id: string
+          confidence: number | null
           created_at: string
           frameworks_used: string[]
           id: string
@@ -1698,6 +1711,7 @@ export type Database = {
           outcome: string
           parent_opportunity_id: string | null
           priority_tier: string
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction: number
           step_label: string
           step_number: number
@@ -1707,6 +1721,7 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          confidence?: number | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
@@ -1717,6 +1732,7 @@ export type Database = {
           outcome?: string
           parent_opportunity_id?: string | null
           priority_tier?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
           step_label?: string
           step_number?: number
@@ -1726,6 +1742,7 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          confidence?: number | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
@@ -1736,6 +1753,7 @@ export type Database = {
           outcome?: string
           parent_opportunity_id?: string | null
           priority_tier?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
           step_label?: string
           step_number?: number
@@ -1773,6 +1791,7 @@ export type Database = {
           category_rationale: string
           company_id: string
           competitive_alternatives_json: Json
+          confidence: number | null
           created_at: string
           current_tagline: string
           evidence_baseline_captured_at: string | null
@@ -1781,6 +1800,7 @@ export type Database = {
           id: string
           market_category: string
           proposed_tagline: string
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           source: string
           strategy_alignment: string | null
           strategy_alignment_evaluated_at: string | null
@@ -1795,6 +1815,7 @@ export type Database = {
           category_rationale?: string
           company_id: string
           competitive_alternatives_json?: Json
+          confidence?: number | null
           created_at?: string
           current_tagline?: string
           evidence_baseline_captured_at?: string | null
@@ -1803,6 +1824,7 @@ export type Database = {
           id?: string
           market_category?: string
           proposed_tagline?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source?: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
@@ -1817,6 +1839,7 @@ export type Database = {
           category_rationale?: string
           company_id?: string
           competitive_alternatives_json?: Json
+          confidence?: number | null
           created_at?: string
           current_tagline?: string
           evidence_baseline_captured_at?: string | null
@@ -1825,6 +1848,7 @@ export type Database = {
           id?: string
           market_category?: string
           proposed_tagline?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source?: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
@@ -2048,6 +2072,7 @@ export type Database = {
           category: string
           claim_id: string | null
           company_id: string
+          confidence: number | null
           created_at: string
           dependency_state: string
           effort: string
@@ -2063,6 +2088,7 @@ export type Database = {
           linked_tension_ids: string[] | null
           parent_id: string | null
           primary_desired_outcome_id: string | null
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           pts_value: number
           rejected_alternatives: Json
           relevance_state: string
@@ -2091,6 +2117,7 @@ export type Database = {
           category?: string
           claim_id?: string | null
           company_id: string
+          confidence?: number | null
           created_at?: string
           dependency_state?: string
           effort?: string
@@ -2106,6 +2133,7 @@ export type Database = {
           linked_tension_ids?: string[] | null
           parent_id?: string | null
           primary_desired_outcome_id?: string | null
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           pts_value?: number
           rejected_alternatives?: Json
           relevance_state?: string
@@ -2134,6 +2162,7 @@ export type Database = {
           category?: string
           claim_id?: string | null
           company_id?: string
+          confidence?: number | null
           created_at?: string
           dependency_state?: string
           effort?: string
@@ -2149,6 +2178,7 @@ export type Database = {
           linked_tension_ids?: string[] | null
           parent_id?: string | null
           primary_desired_outcome_id?: string | null
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           pts_value?: number
           rejected_alternatives?: Json
           relevance_state?: string
@@ -2831,6 +2861,7 @@ export type Database = {
           assumptions_json: Json
           capabilities_json: Json
           company_id: string
+          confidence: number | null
           created_at: string
           evidence_baseline_captured_at: string | null
           evidence_baseline_signal_ids: Json | null
@@ -2838,6 +2869,7 @@ export type Database = {
           how_to_win: string
           id: string
           management_systems_json: Json
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           source: string
           updated_at: string
           user_id: string
@@ -2848,6 +2880,7 @@ export type Database = {
           assumptions_json?: Json
           capabilities_json?: Json
           company_id: string
+          confidence?: number | null
           created_at?: string
           evidence_baseline_captured_at?: string | null
           evidence_baseline_signal_ids?: Json | null
@@ -2855,6 +2888,7 @@ export type Database = {
           how_to_win?: string
           id?: string
           management_systems_json?: Json
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source?: string
           updated_at?: string
           user_id: string
@@ -2865,6 +2899,7 @@ export type Database = {
           assumptions_json?: Json
           capabilities_json?: Json
           company_id?: string
+          confidence?: number | null
           created_at?: string
           evidence_baseline_captured_at?: string | null
           evidence_baseline_signal_ids?: Json | null
@@ -2872,6 +2907,7 @@ export type Database = {
           how_to_win?: string
           id?: string
           management_systems_json?: Json
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           source?: string
           updated_at?: string
           user_id?: string
@@ -3144,6 +3180,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
     }
     Enums: {
@@ -3151,6 +3188,11 @@ export type Database = {
       input_group_key: "foundation" | "execution" | "market_evidence"
       input_impact_tier: "high" | "med" | "low" | "done"
       input_status: "complete" | "partial" | "gap" | "not_started"
+      provenance_type_enum:
+        | "public_research"
+        | "framework_adjudicated"
+        | "odi_survey"
+        | "manual"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3282,9 +3324,15 @@ export const Constants = {
       input_group_key: ["foundation", "execution", "market_evidence"],
       input_impact_tier: ["high", "med", "low", "done"],
       input_status: ["complete", "partial", "gap", "not_started"],
+      provenance_type_enum: [
+        "public_research",
+        "framework_adjudicated",
+        "odi_survey",
+        "manual",
+      ],
     },
   },
 } as const
 
-A new version of Supabase CLI is available: v2.100.1 (currently installed v2.90.0)
+A new version of Supabase CLI is available: v2.101.0 (currently installed v2.90.0)
 We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
