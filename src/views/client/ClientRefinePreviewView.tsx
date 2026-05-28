@@ -21,6 +21,8 @@ import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnost
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
+import { useDriftScan } from "@/hooks/useDriftScan";
+import { formatDistanceToNow } from "date-fns";
 import { inferIdentityNarrative } from "@/lib/identityNarrative";
 import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
 import { buildRouteRationales } from "@/lib/routeRationale";
@@ -336,6 +338,30 @@ export default function ClientRefinePreviewView() {
   const rawPhase = activeCompany?.engagement_phase ?? "outside_signals";
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
+  // ── Homepage drift scan (mirrors workshop-page A78 pattern) ───────────────
+  const { scanningAll: homeScanningAll, scanAllSurfaces: homeScanAllSurfaces } = useDriftScan(activeCompany?.id);
+  const [homeScanAllStatus, setHomeScanAllStatus] = useState<{ assessed: number; aligned: number; slight_drift: number; material_drift: number; scannedAt: Date } | null>(null);
+  const [homeScanAllError, setHomeScanAllError] = useState<string | null>(null);
+  const [showHeaderSwitcher, setShowHeaderSwitcher] = useState(false);
+  const headerSwitcherRef = useRef<HTMLDivElement>(null);
+  const handleHomeScanAllSurfaces = useCallback(() => {
+    setHomeScanAllError(null);
+    homeScanAllSurfaces(
+      (result) => {
+        setHomeScanAllStatus({ ...result, scannedAt: new Date() });
+        const driftCount = (result.slight_drift ?? 0) + (result.material_drift ?? 0);
+        const summary = driftCount === 0
+          ? `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · all aligned`
+          : `${result.assessed} surface${result.assessed === 1 ? "" : "s"} · ${driftCount} with drift`;
+        toast.success(`Scanned · ${summary}`, { duration: 4000 });
+      },
+      (err) => {
+        setHomeScanAllError(err);
+        toast.error(`Scan failed — ${err}`, { duration: 5000 });
+      },
+    );
+  }, [homeScanAllSurfaces]);
+
   // ── Strategic state analysis ────────────────────────────────────────────────
   const queryClient = useQueryClient();
   const { data: fileProposals = [] } = useFileProposals(activeCompany?.id);
@@ -445,6 +471,22 @@ export default function ClientRefinePreviewView() {
   // ── Member count — solo vs team language (Finding 2) ─────────────────────
   const [memberCount, setMemberCount] = useState<number>(1);
   useEffect(() => {
+    if (!showHeaderSwitcher) return;
+    const handler = (e: MouseEvent) => {
+      if (headerSwitcherRef.current && !headerSwitcherRef.current.contains(e.target as Node)) {
+        setShowHeaderSwitcher(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowHeaderSwitcher(false); };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showHeaderSwitcher]);
+
+  useEffect(() => {
     if (!activeCompany?.id) return;
     supabase
       .from("company_members")
@@ -453,11 +495,10 @@ export default function ClientRefinePreviewView() {
       .then(({ data }) => { if (data) setMemberCount(Math.max(1, data.length)); });
   }, [activeCompany?.id]);
 
-  // ── Strategic-priority market definition (J6.1.1) ─────────────────────────
-  // When a company has multiple jobs (e.g. customer + partner after J3), the hook
-  // returns only the most-recently-updated definition — which can be the wrong one.
-  // We fetch all definitions, then pick the one whose job type (B2B vs B2C) matches
-  // whichever journey_key currently has the most strategy_alignment='aligned' needs.
+  // ── Strategic-priority market definition (J6.1.1 / DI1.1) ────────────────
+  // Fetch all market definitions for the company, then select by journey_key
+  // column (exact match against the priority journey). Falls back to the first
+  // row (most recently updated) when no exact match exists.
 
   const [allMarketDefs, setAllMarketDefs] = useState<OdiMarketDefinitionRow[]>([]);
   useEffect(() => {
@@ -483,28 +524,14 @@ export default function ClientRefinePreviewView() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
   }, [needs]);
 
-  // Pick the market_definition that matches the priority job's audience type.
-  // Since odi_market_definitions has no journey_key FK, we infer B2B vs B2C from
-  // job_executor content, then prefer the one whose type matches the priority key.
+  // Direct column lookup — no regex heuristic
   const strategicMarketDef = useMemo((): OdiMarketDefinitionRow | null => {
-    const defs = allMarketDefs.length > 0 ? allMarketDefs : (marketDefinition ? [marketDefinition] : []);
-    if (defs.length === 0) return null;
-    if (defs.length === 1) return defs[0];
-
-    const B2B = /\b(operator|partner|cafe|vendor|supplier|wholesale|business|company|retailer|brand|agency|restaurant|hospitality)\b/i;
-    const B2C = /\b(consumer|customer|individual|buyer|shopper|user|person|household|visitor|guest)\b/i;
-    const isB2bPriority = priorityJourneyKey
-      ? ["partner", "b2b", "wholesale", "operator"].some((k) => priorityJourneyKey.includes(k))
-      : false;
-
-    for (const def of defs) {
-      const looksB2b = B2B.test(def.job_executor) && !B2C.test(def.job_executor);
-      const looksB2c = B2C.test(def.job_executor) && !B2B.test(def.job_executor);
-      if (isB2bPriority && looksB2b) return def;
-      if (!isB2bPriority && looksB2c) return def;
-    }
-    return defs[0]; // fallback: most recently updated
-  }, [allMarketDefs, marketDefinition, priorityJourneyKey]);
+    if (allMarketDefs.length === 0) return null;
+    return (
+      allMarketDefs.find((d) => d.journey_key === priorityJourneyKey) ??
+      allMarketDefs[0]
+    );
+  }, [allMarketDefs, priorityJourneyKey]);
 
   // ── Next Turn override — context-aware action (Finding 1) ─────────────────
   const nextTurnOverride = useMemo((): string | undefined => {
@@ -3525,7 +3552,45 @@ export default function ClientRefinePreviewView() {
             <header className="crpv-header">
               <div className="left">
                 <b>Mojo</b>
-                <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                {companies.length > 1 ? (
+                  <div className="crpv-co-switcher" ref={headerSwitcherRef}>
+                    <button
+                      type="button"
+                      className="crpv-co-trigger cap"
+                      onClick={() => setShowHeaderSwitcher((v) => !v)}
+                      aria-haspopup="listbox"
+                      aria-expanded={showHeaderSwitcher}
+                    >
+                      [{toSentence(activeCompany?.name) || "COMPANY"}]
+                      <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
+                    </button>
+                    <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                    {showHeaderSwitcher && (
+                      <div className="crpv-co-dropdown" role="listbox">
+                        <ul className="crpv-co-list">
+                          {companies.map((c) => (
+                            <li key={c.id}>
+                              <button
+                                type="button"
+                                className={`crpv-co-option${c.id === activeCompany?.id ? " active" : ""}`}
+                                role="option"
+                                aria-selected={c.id === activeCompany?.id}
+                                onClick={() => { setActiveCompanyId(c.id); setShowHeaderSwitcher(false); }}
+                              >
+                                <span className="crpv-co-option-name">{c.name}</span>
+                                <span className="crpv-co-option-meta cap">
+                                  {[c.quarter, c.archetype, c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null].filter(Boolean).join(" · ")}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                )}
               </div>
             </header>
 
@@ -3557,6 +3622,32 @@ export default function ClientRefinePreviewView() {
                       isHome
                     />
                     <div className="crpv-homepage-content">
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", padding: "6px 20px 0", gap: 4 }}>
+                        <button
+                          type="button"
+                          onClick={handleHomeScanAllSurfaces}
+                          disabled={homeScanningAll}
+                          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: homeScanningAll ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: homeScanningAll ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2 }}
+                        >
+                          {homeScanningAll ? "Scanning…" : "Scan all surfaces"}
+                        </button>
+                        {homeScanAllError && (
+                          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.05em", color: "#c0392b", margin: 0 }}>
+                            Scan failed — {homeScanAllError}
+                          </p>
+                        )}
+                        {!homeScanAllError && homeScanAllStatus && (
+                          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.05em", color: "rgba(17,17,17,0.35)", margin: 0 }}>
+                            {(() => {
+                              const driftCount = (homeScanAllStatus.slight_drift ?? 0) + (homeScanAllStatus.material_drift ?? 0);
+                              const summary = driftCount === 0
+                                ? `${homeScanAllStatus.assessed} surface${homeScanAllStatus.assessed === 1 ? "" : "s"} · all aligned`
+                                : `${homeScanAllStatus.assessed} surface${homeScanAllStatus.assessed === 1 ? "" : "s"} · ${driftCount} with drift`;
+                              return `Last scanned ${formatDistanceToNow(homeScanAllStatus.scannedAt)} ago · ${summary}`;
+                            })()}
+                          </p>
+                        )}
+                      </div>
                       <div className="crpv-command-main">
                         {displayMojoScore && foundationStatus ? (
                           <HomepageHierarchy

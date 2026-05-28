@@ -506,7 +506,7 @@ export default function TopNav() {
                     >
                       <span className="text-[13px] font-medium text-[#f3f6ff]">{companyName}</span>
                       <ChevronDown
-                        className={`h-3 w-3 shrink-0 text-[#9ca5c7] transition-transform ${showTopSwitcher ? "rotate-180" : ""}`}
+                        className={`h-4 w-4 shrink-0 text-[#c5cde8] transition-transform ${showTopSwitcher ? "rotate-180" : ""}`}
                       />
                     </button>
                     {showTopSwitcher && (
@@ -816,7 +816,7 @@ export default function TopNav() {
                     </div>
                     {companies.length > 1 ? (
                       <ChevronDown
-                        className={`h-3.5 w-3.5 text-[#9ca5c7] transition-transform ${showSwitcher ? "rotate-180" : ""}`}
+                        className={`h-4 w-4 text-[#c5cde8] transition-transform ${showSwitcher ? "rotate-180" : ""}`}
                       />
                     ) : null}
                   </div>
