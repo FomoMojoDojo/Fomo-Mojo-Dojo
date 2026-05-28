@@ -1102,6 +1102,7 @@ Deno.serve(async (req) => {
           job_executor: marketDefinition.job_executor,
           chooser: marketDefinition.chooser,
           jtbd: marketDefinition.jtbd,
+          provenance_type: "framework_adjudicated",
           source_path: preserveManualMarket ? safeText(existingMarket?.source_path) : "local_jobmap_synthesis",
           frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
           updated_at: new Date().toISOString(),
@@ -1116,6 +1117,7 @@ Deno.serve(async (req) => {
       const { error: marketInsertError } = await supabase.from("odi_market_definitions").insert({
         company_id: companyId,
         user_id: runUserId,
+        provenance_type: "framework_adjudicated",
         job_executor: marketDefinition.job_executor,
         chooser: marketDefinition.chooser,
         jtbd: marketDefinition.jtbd,
