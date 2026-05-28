@@ -144,8 +144,6 @@ export default function TopNav() {
 
   const [showSwitcher, setShowSwitcher] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
-  const [showTopSwitcher, setShowTopSwitcher] = useState(false);
-  const topSwitcherRef = useRef<HTMLDivElement>(null);
   const [selectedPhase, setSelectedPhase] = useState<ClientSystemPhase>(() =>
     readStoredClientPhase(activeCompany?.id),
   );
@@ -194,9 +192,6 @@ export default function TopNav() {
     const handler = (e: MouseEvent | TouchEvent) => {
       if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) {
         setShowSwitcher(false);
-      }
-      if (topSwitcherRef.current && !topSwitcherRef.current.contains(e.target as Node)) {
-        setShowTopSwitcher(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -497,44 +492,7 @@ export default function TopNav() {
                     <PanelLeftClose className="h-4 w-4" />
                   </button>
                 </div>
-                {isAdmin && companies.length > 1 ? (
-                  <div className="relative mt-2" ref={topSwitcherRef}>
-                    <button
-                      type="button"
-                      onClick={() => setShowTopSwitcher((v) => !v)}
-                      className="flex items-center gap-1 text-left"
-                    >
-                      <span className="text-[13px] font-medium text-[#f3f6ff]">{companyName}</span>
-                      <ChevronDown
-                        className={`h-4 w-4 shrink-0 text-[#c5cde8] transition-transform ${showTopSwitcher ? "rotate-180" : ""}`}
-                      />
-                    </button>
-                    {showTopSwitcher && (
-                      <div className="absolute left-0 right-0 top-full z-[70] mt-1 rounded-lg border border-white/15 bg-[#1a2140] py-1 shadow-2xl">
-                        {companies.map((company) => (
-                          <button
-                            key={company.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveCompanyId(company.id);
-                              setShowTopSwitcher(false);
-                            }}
-                            className={`w-full px-3 py-2 text-left transition-colors hover:bg-white/8 ${
-                              company.id === activeCompany?.id ? "bg-white/10" : ""
-                            }`}
-                          >
-                            <p className="text-[13px] text-[#eef2ff]">{company.name}</p>
-                            <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#a0a8c9]">
-                              {company.quarter} · {company.archetype}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-[13px] font-medium text-[#f3f6ff]">{companyName}</p>
-                )}
+                <p className="mt-2 text-[13px] font-medium text-[#f3f6ff]">{companyName}</p>
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[#9fa7c7]">{companyMeta}</p>
               </>
             ) : (

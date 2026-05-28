@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company, ExcludedSignal } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
+import { supabase } from "@/integrations/supabase/client";
+import { captureBaseline } from "@/lib/baselineCapture";
+import { saveManualEdit } from "@/lib/manualInlineEdit";
+import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
+import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
 import { useRoutes, type RouteAssumption } from "@/views/Routes/useRoutes";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
+import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { setActivePath } from "@/lib/activePath";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import CanonicalRouteInspectPanel, { type RouteInspectDetail as CanonicalRouteInspectDetail } from "@/components/routes/RouteInspectPanel";
@@ -44,14 +51,22 @@ import { displayConfidenceLabel, commitmentMovementSentence } from "@/lib/strate
 import "@/styles/client-refine-preview.css";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import { useCompanyClaims, type ClaimRow } from "@/lib/claims/useCompanyClaims";
-import { humanizeOdiStatement } from "@/lib/humanizeOdiStatement";
+
 import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 import type { ClaimState } from "@/lib/claimState";
+import DriftBadge from "@/components/drift/DriftBadge";
+import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
+import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
+import { useDriftScan } from "@/hooks/useDriftScan";
+import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
+import { useSignalLandscape } from "@/hooks/useSignalLandscape";
+import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
+import { useRouteProposals, type RouteProposalRow } from "@/hooks/useRouteProposals";
 
 // ─── Design tokens (inline-style safe — no CSS var access) ───────────────────
 const R = {
@@ -681,6 +696,214 @@ function statusTip(status: DetailItem["status"]) {
   return "Missing — not yet addressed";
 }
 
+// ─── Route field config ───────────────────────────────────────────────────────
+
+const ROUTE_FIELD_LABELS: Record<string, string> = {
+  title:                   "Title",
+  short_description:       "Description",
+  rejected_alternatives:   "Rejected Alternatives",
+  what_would_have_to_be_true: "What Would Have to Be True",
+};
+const ROUTE_FIELDS = Object.keys(ROUTE_FIELD_LABELS);
+
+function summarizeRouteValue(field: string, val: unknown): string {
+  if (field === "rejected_alternatives") {
+    if (!Array.isArray(val) || val.length === 0) return "(empty)";
+    const titles = (val as Array<{ alternative_title?: string; rejection_reason?: string }>)
+      .map((item) => item.alternative_title || item.rejection_reason || "")
+      .filter(Boolean);
+    if (titles.length === 0) return "(empty)";
+    if (titles.length <= 2) return titles.join(", ");
+    return `${titles.slice(0, 2).join(", ")} +${titles.length - 2} more`;
+  }
+  if (field === "what_would_have_to_be_true") {
+    if (!Array.isArray(val) || val.length === 0) return "(empty)";
+    const conditions = (val as Array<{ condition?: string }>)
+      .map((item) => item.condition || "")
+      .filter(Boolean);
+    if (conditions.length === 0) return "(empty)";
+    if (conditions.length <= 2) return conditions.join(", ");
+    return `${conditions.slice(0, 2).join(", ")} +${conditions.length - 2} more`;
+  }
+  return String(val ?? "") || "(empty)";
+}
+
+function routeDiffedFields(proposal: RouteProposalRow): string[] {
+  return ROUTE_FIELDS.filter((field) => {
+    const curr = proposal.current_state[field];
+    const prop = proposal.proposed_state[field];
+    if (field === "rejected_alternatives") {
+      const texts = (arr: unknown) =>
+        (Array.isArray(arr) ? arr : [])
+          .map((item: unknown) => (typeof item === "object" && item ? String((item as Record<string, unknown>).rejection_reason ?? "") : ""))
+          .filter(Boolean)
+          .sort()
+          .join("|");
+      return texts(curr) !== texts(prop);
+    }
+    if (field === "what_would_have_to_be_true") {
+      const texts = (arr: unknown) =>
+        (Array.isArray(arr) ? arr : [])
+          .map((item: unknown) => (typeof item === "object" && item ? String((item as Record<string, unknown>).condition ?? "") : ""))
+          .filter(Boolean)
+          .sort()
+          .join("|");
+      return texts(curr) !== texts(prop);
+    }
+    return String(curr ?? "") !== String(prop ?? "");
+  });
+}
+
+function routeTimeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function RouteProposalSection({
+  proposal,
+  onAcceptProposal,
+  onRejectProposal,
+  acceptLoading,
+  rejectLoading,
+}: {
+  proposal: RouteProposalRow;
+  onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
+  onRejectProposal?: (proposalId: string) => void;
+  acceptLoading?: boolean;
+  rejectLoading?: boolean;
+}) {
+  const diffFields = useMemo(() => routeDiffedFields(proposal), [proposal]);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(diffFields));
+  useEffect(() => { setSelected(new Set(routeDiffedFields(proposal))); }, [proposal.id]);
+
+  const total = diffFields.length;
+  const selectedCount = diffFields.filter((f) => selected.has(f)).length;
+  const allUnchecked = selectedCount === 0;
+
+  function toggle(field: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field);
+      else next.add(field);
+      return next;
+    });
+  }
+
+  function handleAccept() {
+    if (!onAcceptProposal) return;
+    const accepted = diffFields.filter((f) => selected.has(f));
+    const skipped = diffFields.filter((f) => !selected.has(f));
+    onAcceptProposal(proposal.id, accepted, skipped);
+  }
+
+  const isList = (field: string) =>
+    field === "rejected_alternatives" || field === "what_would_have_to_be_true";
+
+  return (
+    <div style={{
+      margin: "10px 0 4px",
+      padding: "10px 12px 12px",
+      border: `1px solid rgba(255,91,41,0.25)`,
+      borderRadius: 6,
+      background: "rgba(255,91,41,0.03)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 10, fontFamily: R.mono, letterSpacing: "0.07em", color: "#ff5b29", fontWeight: 600 }}>
+          PROPOSED CHANGES
+        </span>
+        <span style={{ fontSize: 10, fontFamily: R.mono, color: R.inkFaint }}>
+          {routeTimeAgo(proposal.created_at)} · {total} field{total !== 1 ? "s" : ""} differ
+        </span>
+      </div>
+      {proposal.reason && (
+        <p style={{ fontSize: 11, color: R.inkSoft, margin: "0 0 8px", lineHeight: 1.5, fontStyle: "italic" }}>
+          {proposal.reason}
+        </p>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+        {diffFields.map((field) => {
+          const curr = proposal.current_state[field];
+          const prop = proposal.proposed_state[field];
+          const isChecked = selected.has(field);
+          return (
+            <label key={field} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => toggle(field)}
+                style={{ marginTop: 2, accentColor: "#ff5b29", flexShrink: 0 }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontSize: 10, fontFamily: R.mono, color: R.inkSoft, letterSpacing: "0.05em" }}>
+                    {ROUTE_FIELD_LABELS[field] ?? field}
+                  </span>
+                  {isList(field) && (
+                    <span style={{ fontSize: 9, fontFamily: R.mono, color: "#ff5b29", border: "1px solid rgba(255,91,41,0.4)", borderRadius: 3, padding: "0 4px", letterSpacing: "0.05em" }}>
+                      LIST
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 10, color: R.inkFaint, fontFamily: R.sans, textDecoration: "line-through", marginBottom: 1, lineHeight: 1.4 }}>
+                  {summarizeRouteValue(field, curr)}
+                </div>
+                <div style={{ fontSize: 11, color: R.ink, fontFamily: R.sans, lineHeight: 1.4 }}>
+                  {summarizeRouteValue(field, prop)}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={handleAccept}
+          disabled={acceptLoading || allUnchecked}
+          title={allUnchecked ? "Select at least one field to apply" : undefined}
+          style={{
+            fontSize: 10,
+            fontFamily: R.mono,
+            letterSpacing: "0.05em",
+            background: allUnchecked ? "none" : "#111",
+            color: allUnchecked ? R.inkFaint : "#fff",
+            border: `1px solid ${allUnchecked ? R.hairline : "#111"}`,
+            borderRadius: 4,
+            padding: "4px 10px",
+            cursor: acceptLoading || allUnchecked ? "default" : "pointer",
+            opacity: acceptLoading ? 0.5 : 1,
+          }}
+        >
+          {acceptLoading ? "Applying…" : `Apply ${selectedCount} of ${total} change${total !== 1 ? "s" : ""}`}
+        </button>
+        <button
+          type="button"
+          onClick={() => onRejectProposal?.(proposal.id)}
+          disabled={rejectLoading}
+          style={{
+            fontSize: 10,
+            fontFamily: R.mono,
+            letterSpacing: "0.05em",
+            background: "none",
+            color: R.inkFaint,
+            border: `1px solid ${R.hairline}`,
+            borderRadius: 4,
+            padding: "4px 10px",
+            cursor: rejectLoading ? "default" : "pointer",
+            opacity: rejectLoading ? 0.5 : 1,
+          }}
+        >
+          {rejectLoading ? "Dismissing…" : "Dismiss"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RouteCard({
   route,
   rationale,
@@ -699,6 +922,19 @@ function RouteCard({
   phase,
   claimId,
   claimState,
+  onReEvaluate,
+  reEvalLoading,
+  pendingProposal,
+  onGenerateProposal,
+  generateLoading,
+  generateMessage,
+  onAcceptProposal,
+  onRejectProposal,
+  acceptLoading,
+  rejectLoading,
+  driftRefreshKey,
+  onCheckDrift,
+  checkingSurfaceId,
 }: {
   route: RouteRow;
   rationale?: RouteRationale | null;
@@ -717,6 +953,19 @@ function RouteCard({
   phase?: string;
   claimId?: string | null;
   claimState?: ClaimState | null;
+  onReEvaluate?: () => void;
+  reEvalLoading?: boolean;
+  pendingProposal?: RouteProposalRow | null;
+  onGenerateProposal?: () => void;
+  generateLoading?: boolean;
+  generateMessage?: string | null;
+  onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
+  onRejectProposal?: (proposalId: string) => void;
+  acceptLoading?: boolean;
+  rejectLoading?: boolean;
+  driftRefreshKey?: number;
+  onCheckDrift?: () => void;
+  checkingSurfaceId?: string | null;
 }) {
 
 
@@ -729,6 +978,7 @@ function RouteCard({
   const pts    = typeof route.pts_value === "number" ? Math.round(route.pts_value) : null;
   const effort = route.effort ? String(route.effort).toUpperCase() : null;
   const completedSteps = steps.filter((s) => s.status === "complete").length;
+  const isOffStrategy = route.strategy_alignment === "off_strategy";
 
   const leftAccent = `inset 2px 0 0 ${R.inkSoft}`;
   const hoverShadow = "0 2px 10px rgba(17,17,17,0.08)";
@@ -775,7 +1025,7 @@ function RouteCard({
           : "1.5px solid transparent",
         outlineOffset: isSelected ? -2 : -1,
         boxShadow,
-        opacity: isOtherSelected ? 0.42 : isOtherHovered ? 0.72 : editorialQuiet ? 0.54 : phaseSoftened ? 0.62 : isContextDim ? 0.85 : undefined,
+        opacity: isOtherSelected ? 0.42 : isOtherHovered ? 0.72 : isOffStrategy ? 0.58 : editorialQuiet ? 0.54 : phaseSoftened ? 0.62 : isContextDim ? 0.85 : undefined,
       }}
     >
       <button
@@ -784,7 +1034,14 @@ function RouteCard({
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="crpv-r-card-top">
-          <span className="crpv-r-card-title" style={isContextMatch ? { fontWeight: 600 } : undefined}>{route.title || "Untitled route"}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+            <span className="crpv-r-card-title" style={isContextMatch ? { fontWeight: 600 } : undefined}>{route.title || "Untitled route"}</span>
+            {isOffStrategy && (
+              <span style={{ fontSize: 9, fontFamily: R.mono, letterSpacing: "0.1em", color: "#888", textTransform: "uppercase" }}>
+                OFF-STRATEGY · retained by choice
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isSelected && (
               <span style={{
@@ -887,7 +1144,16 @@ function RouteCard({
             </div>
           ) : null}
 
-          <div className="crpv-r-detail-section" style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {isOffStrategy && route.strategy_alignment_reason ? (
+            <div className="crpv-r-detail-section">
+              <p className="crpv-r-detail-label" style={{ color: "#999" }}>Strategy alignment note</p>
+              <p style={{ fontSize: 11, color: "#999", margin: 0, lineHeight: 1.5, fontStyle: "italic" }}>
+                {route.strategy_alignment_reason}
+              </p>
+            </div>
+          ) : null}
+
+          <div className="crpv-r-detail-section" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {onSelect && (
               <button
                 type="button"
@@ -916,7 +1182,63 @@ function RouteCard({
                 Inspect why →
               </button>
             )}
+            {onReEvaluate && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReEvaluate(); }}
+                disabled={reEvalLoading}
+                style={{
+                  fontSize: 10,
+                  color: "#aaa",
+                  fontFamily: R.mono,
+                  letterSpacing: "0.06em",
+                  background: "none",
+                  border: "none",
+                  cursor: reEvalLoading ? "wait" : "pointer",
+                  padding: 0,
+                  opacity: reEvalLoading ? 0.5 : 1,
+                }}
+              >
+                {reEvalLoading ? "Evaluating…" : "↻ Re-evaluate alignment"}
+              </button>
+            )}
+            {onGenerateProposal && (
+              <ProposeChangesButton
+                surfaceType="route"
+                surfaceId={route.id}
+                onGenerate={onGenerateProposal}
+                generateLoading={generateLoading}
+                hasPendingProposal={!!pendingProposal}
+                variant="link"
+                stopPropagation
+                refreshKey={driftRefreshKey}
+              />
+            )}
+            {onCheckDrift && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onCheckDrift(); }}
+                disabled={checkingSurfaceId === route.id}
+                style={{ fontSize: 10, color: checkingSurfaceId === route.id ? "#ccc" : "#bbb", background: "none", border: "none", cursor: checkingSurfaceId === route.id ? "wait" : "pointer", padding: 0, textDecoration: "underline", opacity: checkingSurfaceId === route.id ? 0.5 : 1 }}
+              >
+                {checkingSurfaceId === route.id ? "Checking…" : "Check for drift"}
+              </button>
+            )}
           </div>
+          {generateMessage && (
+            <p style={{ fontSize: 10, color: R.inkFaint, fontFamily: R.mono, margin: "4px 0 0", lineHeight: 1.4 }}>
+              {generateMessage}
+            </p>
+          )}
+          {pendingProposal && (
+            <RouteProposalSection
+              proposal={pendingProposal}
+              onAcceptProposal={onAcceptProposal}
+              onRejectProposal={onRejectProposal}
+              acceptLoading={acceptLoading}
+              rejectLoading={rejectLoading}
+            />
+          )}
         </div>
       ) : null}
     </div>
@@ -948,6 +1270,18 @@ function RoutesColumn({
   recommendedReasonPrefix,
   editorialRoles,
   claimsMap,
+  onReEvaluate,
+  reEvalLoadingId,
+  proposalsMap,
+  onGenerateProposal,
+  generateLoadingId,
+  onAcceptProposal,
+  onRejectProposal,
+  acceptLoadingProposalId,
+  rejectLoadingProposalId,
+  driftRefreshKey,
+  onCheckDrift,
+  checkingSurfaceId,
 }: {
   category: RouteCategory;
   items: RouteRow[];
@@ -971,6 +1305,18 @@ function RoutesColumn({
   recommendedReasonPrefix?: string;
   editorialRoles?: Map<string, RouteEditorialRole>;
   claimsMap?: Map<string, ClaimRow>;
+  onReEvaluate?: (routeId: string) => void;
+  reEvalLoadingId?: string | null;
+  proposalsMap?: Map<string, RouteProposalRow>;
+  onGenerateProposal?: (routeId: string) => void;
+  generateLoadingId?: string | null;
+  onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
+  onRejectProposal?: (proposalId: string) => void;
+  acceptLoadingProposalId?: string | null;
+  rejectLoadingProposalId?: string | null;
+  driftRefreshKey?: number;
+  onCheckDrift?: (routeId: string) => void;
+  checkingSurfaceId?: string | null;
 }) {
   const meta = CATEGORY_META[category] ?? CATEGORY_META.improve;
 
@@ -1056,6 +1402,18 @@ function RoutesColumn({
                   recommendedRouteId,
                   selectedRouteId,
                 })}
+                onReEvaluate={onReEvaluate ? () => onReEvaluate(route.id) : undefined}
+                reEvalLoading={reEvalLoadingId === route.id}
+                pendingProposal={proposalsMap?.get(route.id) ?? null}
+                onGenerateProposal={onGenerateProposal ? () => onGenerateProposal(route.id) : undefined}
+                generateLoading={generateLoadingId === route.id}
+                onAcceptProposal={onAcceptProposal}
+                onRejectProposal={onRejectProposal}
+                acceptLoading={acceptLoadingProposalId === (proposalsMap?.get(route.id)?.id ?? "")}
+                rejectLoading={rejectLoadingProposalId === (proposalsMap?.get(route.id)?.id ?? "")}
+                driftRefreshKey={driftRefreshKey}
+                onCheckDrift={onCheckDrift ? () => onCheckDrift(route.id) : undefined}
+                checkingSurfaceId={checkingSurfaceId}
               />
               {route.id === recommendedRouteId && onStartRoute && !hypothesisPhase && (
                 <button
@@ -1373,13 +1731,13 @@ function HierarchyPageHeader({
           Strategy · Route Plan
         </span>
       </div>
-      {/* Hero H1 */}
-      <h1 style={{ fontFamily: R.sans, fontSize: 44, fontWeight: 800, color: R.ink, margin: "0 0 14px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
+      {/* Hero H1 — supporting weight; § DESTINATION is the page's visual lead */}
+      <h1 style={{ fontFamily: R.sans, fontSize: 30, fontWeight: 700, color: R.ink, margin: "0 0 10px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
         {hero.before}{" "}
         <span style={{ color: R.signal }}>{hero.signal}</span>
       </h1>
       {/* Subhead */}
-      <p style={{ fontFamily: R.sans, fontSize: 16, color: "rgba(17,17,17,0.65)", margin: "0 0 40px", lineHeight: 1.55, maxWidth: 600 }}>
+      <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", margin: "0 0 32px", lineHeight: 1.55, maxWidth: 600 }}>
         {framing.body}
       </p>
       {/* Score strip */}
@@ -1397,6 +1755,12 @@ function LegRow({
   claimsMap,
   rationale,
   routeClaimState,
+  onSaveField,
+  phase,
+  onDriftClick,
+  driftRefreshKey,
+  onCheckDrift,
+  checkingSurfaceId,
 }: {
   leg: RouteRow;
   index: number;
@@ -1406,6 +1770,12 @@ function LegRow({
   claimsMap?: Map<string, ClaimRow>;
   rationale?: RouteRationale | null;
   routeClaimState?: ClaimState | null;
+  onSaveField?: (legId: string, field: "title" | "short_description", value: string) => Promise<void>;
+  phase?: EngagementPhase;
+  onDriftClick?: (surfaceType: string, surfaceId: string) => void;
+  driftRefreshKey?: number;
+  onCheckDrift?: (routeId: string) => void;
+  checkingSurfaceId?: string | null;
 }) {
   const legClaimState = leg.claim_id
     ? ((claimsMap?.get(leg.claim_id)?.state ?? null) as ClaimState | null)
@@ -1442,16 +1812,44 @@ function LegRow({
         {/* Status pill + title row */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
           {showLegStateTag && legClaimState && <RouteStateTag claimState={legClaimState} />}
-          <h3 style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.01em" }}>
-            {leg.title || "Untitled leg"}
+          <h3 style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.01em", flex: 1, minWidth: 0 }}>
+            <InlineTextEdit
+              value={leg.title || ""}
+              onSave={onSaveField ? (v) => onSaveField(leg.id, "title", v) : async () => {}}
+              placeholder="Untitled leg"
+              disabled={!onSaveField}
+              style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, lineHeight: 1.2, letterSpacing: "-0.01em" }}
+            />
           </h3>
+          {onDriftClick && (
+            <DriftBadge
+              surfaceType="route"
+              surfaceId={leg.id}
+              phase={phase}
+              refreshKey={driftRefreshKey}
+              onClick={(a) => onDriftClick("route", a.surface_id)}
+            />
+          )}
+          {onCheckDrift && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onCheckDrift(leg.id); }}
+              disabled={checkingSurfaceId === leg.id}
+              style={{ fontSize: 10, fontFamily: R.mono, letterSpacing: "0.06em", color: checkingSurfaceId === leg.id ? "#ccc" : "#aaa", background: "none", border: "none", cursor: checkingSurfaceId === leg.id ? "wait" : "pointer", padding: 0, textDecoration: "underline", opacity: checkingSurfaceId === leg.id ? 0.5 : 1, flexShrink: 0 }}
+            >
+              {checkingSurfaceId === leg.id ? "Checking…" : "Check for drift"}
+            </button>
+          )}
         </div>
         {/* Summary */}
-        {leg.short_description && (
-          <p style={{ fontFamily: R.sans, fontSize: 14, color: "rgba(17,17,17,0.65)", margin: "0 0 8px", lineHeight: 1.55 }}>
-            {leg.short_description}
-          </p>
-        )}
+        <InlineTextareaEdit
+          value={leg.short_description || ""}
+          onSave={onSaveField ? (v) => onSaveField(leg.id, "short_description", v) : async () => {}}
+          placeholder="Add a description…"
+          disabled={!onSaveField}
+          rows={2}
+          style={{ fontFamily: R.sans, fontSize: 14, color: "rgba(17,17,17,0.65)", marginBottom: 8, lineHeight: 1.55 }}
+        />
         {/* Meta line */}
         {steps.length > 0 && (
           <span style={{ fontFamily: R.mono, fontSize: 9, color: "rgba(17,17,17,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
@@ -1544,6 +1942,12 @@ function HierarchyRouteSection({
   selectedRouteId,
   defaultExpanded,
   recommendedRouteId: _recommendedRouteId,
+  onSaveField,
+  phase,
+  onDriftClick,
+  driftRefreshKey,
+  onCheckDrift,
+  checkingSurfaceId,
 }: {
   route: RouteRow;
   legs: RouteRow[];
@@ -1554,6 +1958,12 @@ function HierarchyRouteSection({
   selectedRouteId?: string | null;
   defaultExpanded?: boolean;
   recommendedRouteId?: string | null;
+  onSaveField?: (routeOrLegId: string, field: "title" | "short_description", value: string) => Promise<void>;
+  phase?: EngagementPhase;
+  onDriftClick?: (surfaceType: string, surfaceId: string) => void;
+  driftRefreshKey?: number;
+  onCheckDrift?: (routeId: string) => void;
+  checkingSurfaceId?: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultExpanded);
   const [expandedLegId, setExpandedLegId] = useState<string | null>(null);
@@ -1598,17 +2008,45 @@ function HierarchyRouteSection({
               <span style={{ fontFamily: R.mono, fontSize: 9, color: R.signal, textTransform: "uppercase", letterSpacing: "0.1em" }}>◆ Lead route</span>
             )}
             {claimState && <RouteStateTag claimState={claimState} />}
+            {onDriftClick && (
+              <DriftBadge
+                surfaceType="route"
+                surfaceId={route.id}
+                phase={phase}
+                refreshKey={driftRefreshKey}
+                onClick={(a) => onDriftClick("route", a.surface_id)}
+              />
+            )}
+            {onCheckDrift && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onCheckDrift(route.id); }}
+                disabled={checkingSurfaceId === route.id}
+                style={{ fontSize: 10, fontFamily: R.mono, letterSpacing: "0.06em", color: checkingSurfaceId === route.id ? "#ccc" : "#aaa", background: "none", border: "none", cursor: checkingSurfaceId === route.id ? "wait" : "pointer", padding: 0, textDecoration: "underline", opacity: checkingSurfaceId === route.id ? 0.5 : 1, flexShrink: 0 }}
+              >
+                {checkingSurfaceId === route.id ? "Checking…" : "Check for drift"}
+              </button>
+            )}
           </div>
           {/* H2 title */}
           <h2 style={{ fontFamily: R.sans, fontSize: 26, fontWeight: 700, color: R.ink, margin: "0 0 10px", lineHeight: 1.15, letterSpacing: "-0.015em" }}>
-            {route.title || "Untitled route"}
+            <InlineTextEdit
+              value={route.title || ""}
+              onSave={onSaveField ? (v) => onSaveField(route.id, "title", v) : async () => {}}
+              placeholder="Untitled route"
+              disabled={!onSaveField}
+              style={{ fontFamily: R.sans, fontSize: 26, fontWeight: 700, color: R.ink, lineHeight: 1.15, letterSpacing: "-0.015em" }}
+            />
           </h2>
           {/* Summary */}
-          {route.short_description && (
-            <p style={{ fontFamily: R.sans, fontSize: 15, color: "rgba(17,17,17,0.65)", margin: "0 0 14px", lineHeight: 1.6, maxWidth: 620 }}>
-              {route.short_description}
-            </p>
-          )}
+          <InlineTextareaEdit
+            value={route.short_description || ""}
+            onSave={onSaveField ? (v) => onSaveField(route.id, "short_description", v) : async () => {}}
+            placeholder="Add a description…"
+            disabled={!onSaveField}
+            rows={2}
+            style={{ fontFamily: R.sans, fontSize: 15, color: "rgba(17,17,17,0.65)", marginBottom: 14, lineHeight: 1.6, maxWidth: 620 }}
+          />
           {/* WRAP meta line */}
           <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
             <InkMetaChip label="Alternatives" value={String(alternatives.length)} />
@@ -1644,6 +2082,12 @@ function HierarchyRouteSection({
               claimsMap={claimsMap}
               rationale={rationales.get(leg.id) ?? null}
               routeClaimState={claimState}
+              onSaveField={onSaveField}
+              phase={phase}
+              onDriftClick={onDriftClick}
+              driftRefreshKey={driftRefreshKey}
+              onCheckDrift={onCheckDrift}
+              checkingSurfaceId={checkingSurfaceId}
             />
           ))}
         </div>
@@ -1814,16 +2258,16 @@ function HierarchyGroupCard({
 export function DesiredOutcomeBanner({ outcome }: { outcome: DesiredOutcomeRow }) {
   if (!outcome.statement) return null;
   return (
-    <div style={{ borderLeft: `3px solid ${R.signal}`, paddingLeft: 18, marginBottom: 36 }}>
-      <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint, margin: "0 0 10px" }}>
-        § DESTINATION
+    <div style={{ borderLeft: `5px solid ${R.signal}`, paddingLeft: 24, marginBottom: 52 }}>
+      <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: R.signal, margin: "0 0 12px" }}>
+        § Destination
       </p>
-      <p style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 700, color: R.ink, margin: 0, lineHeight: 1.35, letterSpacing: "-0.015em", maxWidth: 720 }}>
+      <p style={{ fontFamily: R.sans, fontSize: 32, fontWeight: 800, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em", maxWidth: 680 }}>
         {outcome.statement}
       </p>
       {outcome.metric && (
-        <p style={{ fontFamily: R.sans, fontSize: 13, color: R.inkSoft, margin: "10px 0 0", lineHeight: 1.5 }}>
-          <span style={{ fontFamily: R.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.1em", color: R.inkFaint }}>LEADING INDICATOR</span>
+        <p style={{ fontFamily: R.sans, fontSize: 13, color: R.inkSoft, margin: "14px 0 0", lineHeight: 1.5 }}>
+          <span style={{ fontFamily: R.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.1em", color: R.inkFaint }}>Leading Indicator</span>
           {" · "}{outcome.metric}
         </p>
       )}
@@ -1837,22 +2281,28 @@ export default function ClientRefinePreviewRoutesView() {
   const navigate = useNavigate();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 5 });
-  const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
+  const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
+  const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id, routesRefreshKey);
+  // ─── All data-fetching hooks before any callbacks ────────────────────────────
   const { needs } = useOdiNeeds(activeCompany?.id);
+  const { preferredRun: baselineRun } = usePublicBaseline(activeCompany?.id);
+  const { item: positioning } = usePositioningCanvas(activeCompany?.id);
+  const { item: strategy } = useStrategyCascade(activeCompany?.id);
+  const [activeStage, setActiveStage] = useState<SignalStage>("org");
+  const [showHeaderSwitcher, setShowHeaderSwitcher] = useState(false);
+  const headerSwitcherRef = useRef<HTMLDivElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const phase = floorEngagementPhase({
     phase: activeCompany?.engagement_phase ?? "outside_signals",
     hasNeedsWithScores: needs.some((n) => n.importance > 0),
     hasSelectedRoute: !!activeCompany?.selected_route_id,
   });
-  const { preferredRun: baselineRun } = usePublicBaseline(activeCompany?.id);
-  const { item: positioning } = usePositioningCanvas(activeCompany?.id);
-  const { item: strategy } = useStrategyCascade(activeCompany?.id);
-  const [activeStage, setActiveStage] = useState<SignalStage>("org");
-  const [searchParams, setSearchParams] = useSearchParams();
   const routeIdParam = searchParams.get("routeId");
-
   const baseline = baselineOf(baselineRun);
   const excludedCount = activeCompany?.excluded_signals_json?.length ?? 0;
+
+  const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
   const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
@@ -1867,6 +2317,22 @@ export default function ClientRefinePreviewRoutesView() {
     setSearchParams((prev) => { prev.delete("routeId"); return prev; }, { replace: true });
   }, [setSearchParams]);
 
+  useEffect(() => {
+    if (!showHeaderSwitcher) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!headerSwitcherRef.current?.contains(e.target as Node)) setShowHeaderSwitcher(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowHeaderSwitcher(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showHeaderSwitcher]);
+
   const readiness = useMemo(
     () => buildReadinessFromCompanySignals({
       mojoScore:       activeCompany?.mojo_score,
@@ -1880,6 +2346,19 @@ export default function ClientRefinePreviewRoutesView() {
   const readinessLabel  = readiness.postureLabel;
   const ceilingReason   = readiness.ceilingReason;
   const hasHierarchy    = routes.some((r) => r.level === "route");
+  const { claims: pageClaimsMap } = useCompanyClaims(activeCompany?.id);
+  const pageTopLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
+  const pagesDominantClaimState = useMemo((): ClaimState | null => {
+    if (!hasHierarchy || pageTopLevelRoutes.length === 0) return null;
+    const order: ClaimState[] = ["flow", "focus", "diagnose", "outside_view"];
+    const states = pageTopLevelRoutes
+      .map((r) => (r as { claim_id?: string | null }).claim_id
+        ? (pageClaimsMap.get((r as { claim_id?: string | null }).claim_id!)?.state ?? null)
+        : null)
+      .filter((s): s is ClaimState => s !== null);
+    for (const s of order) { if (states.includes(s)) return s; }
+    return states[0] ?? null;
+  }, [hasHierarchy, pageTopLevelRoutes, pageClaimsMap]);
 
   if (!hasCompany) {
     return (
@@ -1916,9 +2395,45 @@ export default function ClientRefinePreviewRoutesView() {
       <header className="crpv-header">
         <div className="left">
           <b>Mojo</b>
-          <span className="cap">
-            [{toSentence(activeCompany?.name) || "COMPANY"}] · EXPLORE ROUTES · {stageLabel(phase).toUpperCase()}
-          </span>
+          {companies.length > 1 ? (
+            <div className="crpv-co-switcher" ref={headerSwitcherRef}>
+              <button
+                type="button"
+                className="crpv-co-trigger cap"
+                onClick={() => setShowHeaderSwitcher((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={showHeaderSwitcher}
+              >
+                [{toSentence(activeCompany?.name) || "COMPANY"}]
+                <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
+              </button>
+              <span className="cap" style={{ marginLeft: 4 }}>· DAY 52 · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+              {showHeaderSwitcher && (
+                <div className="crpv-co-dropdown" role="listbox">
+                  <ul className="crpv-co-list">
+                    {companies.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          className={`crpv-co-option${c.id === activeCompany?.id ? " active" : ""}`}
+                          role="option"
+                          aria-selected={c.id === activeCompany?.id}
+                          onClick={() => { setActiveCompanyId(c.id); setShowHeaderSwitcher(false); }}
+                        >
+                          <span className="crpv-co-option-name">{c.name}</span>
+                          <span className="crpv-co-option-meta cap">
+                            {[c.quarter, c.archetype, c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null].filter(Boolean).join(" · ")}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+          )}
         </div>
       </header>
 
@@ -1949,6 +2464,9 @@ export default function ClientRefinePreviewRoutesView() {
           activeTab="routes"
           onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
           onHome={goToRefineHome}
+          onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
+          inboxCount={inboxCount}
+          inboxHasNew={inboxNewCount > 0}
         />
         <div className="crpv-ws-content">
           <RoutesOrgPanel
@@ -2008,6 +2526,16 @@ export function RoutesOrgPanel({
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const { primary: desiredOutcome } = useDesiredOutcomes(activeCompany?.id);
   const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+  const { landscape: routesSignalLandscape } = useSignalLandscape(activeCompany?.id);
+  const [reEvalLoading, setReEvalLoading] = useState<string | null>(null);
+  const [routeProposalRefreshKey, setRouteProposalRefreshKey] = useState(0);
+  const { proposals: routeProposalsMap } = useRouteProposals(activeCompany?.id, routeProposalRefreshKey);
+  const [generateLoadingRouteId, setGenerateLoadingRouteId] = useState<string | null>(null);
+  const [acceptLoadingProposalId, setAcceptLoadingProposalId] = useState<string | null>(null);
+  const [rejectLoadingProposalId, setRejectLoadingProposalId] = useState<string | null>(null);
+  const [driftPanel, setDriftPanel] = useState<{ surfaceType: string; surfaceId: string } | null>(null);
+  const [driftBadgeRefreshKey, setDriftBadgeRefreshKey] = useState(0);
+  const { checkingSurfaceId, checkSurface: checkRouteDrift } = useDriftScan(activeCompany?.id);
 
   useEffect(() => {
     setSelectedRouteId(activeCompany?.selected_route_id ?? null);
@@ -2024,6 +2552,99 @@ export function RoutesOrgPanel({
       console.warn(`[RoutesOrgPanel] No route found for routeId: ${routeIdParam}`);
     }
   }, [routeIdParam, routes]);
+
+  const handleReEvaluate = useCallback(async (routeId: string) => {
+    if (!activeCompany?.id) return;
+    setReEvalLoading(routeId);
+    const { error } = await supabase.functions.invoke("evaluate-route-alignment", {
+      body: { route_id: routeId, company_id: activeCompany.id },
+    });
+    setReEvalLoading(null);
+    if (error) console.error("[RoutesOrgPanel] Re-evaluate error:", error.message);
+  }, [activeCompany?.id]);
+
+  const handleGenerateRouteProposal = useCallback(async (routeId: string) => {
+    if (!activeCompany?.id) return;
+    setGenerateLoadingRouteId(routeId);
+    try {
+      await supabase.functions.invoke("propose-route-changes", {
+        body: { route_id: routeId, company_id: activeCompany.id },
+      });
+      setRouteProposalRefreshKey((k) => k + 1);
+    } finally {
+      setGenerateLoadingRouteId(null);
+    }
+  }, [activeCompany?.id]);
+
+  const handleDriftClick = useCallback((surfaceType: string, surfaceId: string) => {
+    setDriftPanel({ surfaceType, surfaceId });
+  }, []);
+
+  const handleCheckRouteDrift = useCallback((routeId: string) => {
+    checkRouteDrift(
+      "route",
+      routeId,
+      (result) => {
+        setDriftBadgeRefreshKey((k) => k + 1);
+        const driftLabel = result.material_drift > 0 ? "material drift" : result.slight_drift > 0 ? "slight drift" : "aligned";
+        toast.success(`Checked route · ${driftLabel}`, { duration: 4000 });
+      },
+      (err) => {
+        toast.error(`Check failed — ${err}`, { duration: 5000 });
+      },
+    );
+  }, [checkRouteDrift]);
+
+  const handleAcceptRouteProposal = useCallback(async (
+    proposalId: string,
+    acceptedFields: string[],
+    skippedFields: string[],
+  ) => {
+    if (!activeCompany?.id) return;
+    const proposal = Array.from(routeProposalsMap.values()).find((p) => p.id === proposalId);
+    if (!proposal?.surface_id) return;
+    setAcceptLoadingProposalId(proposalId);
+    try {
+      const proposed = proposal.proposed_state as Record<string, unknown>;
+      const patch: Record<string, unknown> = { source: `manual_${proposalId}` };
+      for (const field of acceptedFields) { patch[field] = proposed[field]; }
+      const { error: updateError } = await supabase
+        .from("routes")
+        .update(patch)
+        .eq("id", proposal.surface_id)
+        .eq("company_id", activeCompany.id);
+      if (updateError) { return; }
+      await captureBaseline(activeCompany.id, "route", proposal.surface_id);
+      await supabase
+        .from("surface_proposals")
+        .update({
+          status: "accepted",
+          reviewed_at: new Date().toISOString(),
+          raw_payload: { accepted_fields: acceptedFields, skipped_fields: skippedFields },
+        })
+        .eq("id", proposalId);
+      setRouteProposalRefreshKey((k) => k + 1);
+      await supabase.functions.invoke("evaluate-route-alignment", {
+        body: { route_id: proposal.surface_id, company_id: activeCompany.id },
+      });
+    } finally {
+      setAcceptLoadingProposalId(null);
+    }
+  }, [activeCompany?.id, routeProposalsMap]);
+
+  const handleRejectRouteProposal = useCallback(async (proposalId: string) => {
+    if (!activeCompany?.id) return;
+    setRejectLoadingProposalId(proposalId);
+    try {
+      await supabase.from("surface_proposals").update({
+        status: "rejected",
+        reviewed_at: new Date().toISOString(),
+      }).eq("id", proposalId);
+      setRouteProposalRefreshKey((k) => k + 1);
+    } finally {
+      setRejectLoadingProposalId(null);
+    }
+  }, [activeCompany?.id]);
 
   const phase = floorEngagementPhase({
     phase: activeCompany?.engagement_phase ?? "outside_signals",
@@ -2136,6 +2757,13 @@ export function RoutesOrgPanel({
     const ev = deriveClientEvidence(selectedRoute);
     return stale || deriveClientAssumptions(selectedRoute, ev).some((a) => a.critical && a.status === "unproven");
   }, [selectedRoute, latestExclusionAt]);
+
+  async function handleSaveRouteField(routeOrLegId: string, field: "title" | "short_description", value: string) {
+    if (!activeCompany?.id) return;
+    await saveManualEdit("route", routeOrLegId, activeCompany.id, field, value);
+    supabase.functions.invoke("evaluate-route-alignment", { body: { route_id: routeOrLegId, company_id: activeCompany.id } }).catch(() => {});
+    setRoutesRefreshKey((k) => k + 1);
+  }
 
   function handleInspectRoute(route: RouteRow) {
     setInspectRoute(route);
@@ -2258,7 +2886,7 @@ export function RoutesOrgPanel({
         leadRationale: leadRouteRationale,
         allRationales: routeRationales,
         hypothesisRows: strategicHypothesisRows,
-        topNeedOutcome: topNeed?.desired_outcome ? humanizeOdiStatement(topNeed.desired_outcome) : null,
+        topNeedOutcome: topNeed?.desired_outcome ?? null,
       }),
     [phase, leadRouteRationale, routeRationales, strategicHypothesisRows, topNeed?.desired_outcome],
   );
@@ -2335,6 +2963,13 @@ export function RoutesOrgPanel({
             />
             {scoreLift > 0 && (
               <KeystoneStripe action={keystoneAction} scoreLift={scoreLift} />
+            )}
+            {routesSignalLandscape && (
+              <SignalBasisChip
+                publicCount={routesSignalLandscape.byBand.outside.count}
+                teamCount={routesSignalLandscape.byBand.organization.count}
+                customerCount={routesSignalLandscape.byBand.customer.count}
+              />
             )}
           </>
         );
@@ -2479,22 +3114,28 @@ export function RoutesOrgPanel({
                     selectedRouteId={selectedRoute?.id}
                     defaultExpanded={idx === 0}
                     recommendedRouteId={recommendedRouteId}
+                    onSaveField={handleSaveRouteField}
+                    phase={phase}
+                    onDriftClick={handleDriftClick}
+                    driftRefreshKey={driftBadgeRefreshKey}
+                    onCheckDrift={handleCheckRouteDrift}
+                    checkingSurfaceId={checkingSurfaceId}
                   />
                 ))}
               </div>
               {ungroupedRoutes.length > 0 && (
                 <div className="crpv-r-columns" style={{ marginTop: 24 }}>
-                  <RoutesColumn category="fix"     items={ungroupedFix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-                  <RoutesColumn category="improve" items={ungroupedImprove} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-                  <RoutesColumn category="create"  items={ungroupedCreate}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+                  <RoutesColumn category="fix"     items={ungroupedFix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+                  <RoutesColumn category="improve" items={ungroupedImprove} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+                  <RoutesColumn category="create"  items={ungroupedCreate}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
                 </div>
               )}
             </>
           ) : (
             <div className="crpv-r-columns">
-              <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-              <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
-              <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} />
+              <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+              <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+              <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
             </div>
           )}
         </>
@@ -2562,6 +3203,18 @@ export function RoutesOrgPanel({
               ? "Needs review after excluded inputs"
               : null
           }
+        />
+      )}
+      {driftPanel && (
+        <DriftDetailPanel
+          open
+          onClose={() => setDriftPanel(null)}
+          surfaceType={driftPanel.surfaceType}
+          surfaceId={driftPanel.surfaceId}
+          refreshKey={driftBadgeRefreshKey}
+          onRefresh={() => setDriftBadgeRefreshKey((k) => k + 1)}
+          onProposeChanges={() => handleGenerateRouteProposal(driftPanel.surfaceId)}
+          proposeChangesLabel="Propose route changes from current evidence"
         />
       )}
     </div>
