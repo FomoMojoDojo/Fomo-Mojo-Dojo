@@ -24,6 +24,7 @@ import {
 } from "@/lib/clientOnboardingMojoMapConfig";
 import { MOCK_NAV_CONFIG } from "@/lib/mockData";
 import {
+  Activity,
   BarChart3,
   Building2,
   ChevronDown,
@@ -35,6 +36,7 @@ import {
   Home,
   ListChecks,
   Map,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Shield,
@@ -63,6 +65,27 @@ type NavItem = {
   flag?: NavFlag;
   adminOnly?: boolean;
 };
+
+// Orientation nav — three-tier operating model
+// Review: primary strategic operating surfaces
+const reviewItems: NavItem[] = [
+  { label: "Commitment Review", path: "/routes", icon: Map },
+  { label: "Movement", path: "/movement", icon: Activity },
+  { label: "Council", path: "/preview/client-refine/workshop?tab=council", icon: MessageSquare },
+];
+
+// Lenses: analytical depth — supporting interpretation
+const lensItems: NavItem[] = [
+  { label: "Direction", path: "/strategy", icon: Compass },
+  { label: "Positioning", path: "/positioning", icon: FileText },
+  { label: "Customer Research", path: "/job-steps#needs", icon: TrendingUp },
+  { label: "Job Map", path: "/job-steps", icon: Sparkles, flag: "show_job_steps" },
+];
+
+// Workbench: evidence and reference
+const workbenchItems: NavItem[] = [
+  { label: "Evidence", path: "/inputs", icon: ListChecks },
+];
 
 const coreItems: NavItem[] = [
   { label: "MojoMap", path: "/", icon: Home },
@@ -121,6 +144,8 @@ export default function TopNav() {
 
   const [showSwitcher, setShowSwitcher] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+  const [showTopSwitcher, setShowTopSwitcher] = useState(false);
+  const topSwitcherRef = useRef<HTMLDivElement>(null);
   const [selectedPhase, setSelectedPhase] = useState<ClientSystemPhase>(() =>
     readStoredClientPhase(activeCompany?.id),
   );
@@ -142,19 +167,36 @@ export default function TopNav() {
     [isAdmin, isClientView],
   );
 
+  const visibleReview = useMemo(
+    () => reviewItems.filter((item) => !item.adminOnly || isAdmin),
+    [isAdmin],
+  );
+
+  const visibleLenses = useMemo(
+    () => lensItems.filter((item) => !item.flag || MOCK_NAV_CONFIG[item.flag]),
+    [],
+  );
+
+  const visibleWorkbench = useMemo(
+    () => workbenchItems.filter((item) => !item.flag || MOCK_NAV_CONFIG[item.flag]),
+    [],
+  );
+
   const companyName = activeCompany?.name?.trim() || "No company selected";
   const companyMeta = activeCompany
     ? [
-        "Strategy Map",
         activeCompany.quarter?.trim() || "Quarter not set",
         activeCompany.archetype?.trim() || "Archetype not set",
       ].join(" · ")
-    : "Select a company to view its map";
+    : "Select a company to begin";
 
   useEffect(() => {
     const handler = (e: MouseEvent | TouchEvent) => {
       if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) {
         setShowSwitcher(false);
+      }
+      if (topSwitcherRef.current && !topSwitcherRef.current.contains(e.target as Node)) {
+        setShowTopSwitcher(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -218,9 +260,10 @@ export default function TopNav() {
   }, [sidebarOpen]);
 
   function isActive(path: string) {
-    if (path === "/") return location.pathname === "/";
-    if (path === "/admin") return location.pathname === "/admin";
-    return location.pathname.startsWith(path);
+    const cleanPath = path.split("#")[0].split("?")[0];
+    if (cleanPath === "/") return location.pathname === "/";
+    if (cleanPath === "/admin") return location.pathname === "/admin";
+    return location.pathname.startsWith(cleanPath);
   }
 
   const isDesktop = () => window.matchMedia("(min-width: 1024px)").matches;
@@ -275,13 +318,111 @@ export default function TopNav() {
   };
 
   const navItemClass = (path: string) =>
-    `group flex items-center rounded-lg py-2 transition-colors ${
+    `group flex items-center rounded-md py-2 transition-colors transition-opacity ${
       sidebarOpen ? "gap-3 px-3 text-[15px]" : "h-10 justify-center px-0 text-[13px]"
     } ${
       isActive(path)
-        ? "bg-white/12 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
-        : "text-[#c7cde4] hover:bg-white/8 hover:text-white"
+        ? "text-white shadow-[inset_2px_0_0_rgba(255,255,255,0.35)]"
+        : "text-[#b0b8d4] hover:text-[#e0e4f4]"
     }`;
+
+  const lensNavItemClass = (path: string) =>
+    `group flex items-center py-1 transition-colors transition-opacity ${
+      sidebarOpen ? "gap-3 px-3 text-[13px]" : "h-8 justify-center px-0 text-[12px]"
+    } ${
+      isActive(path)
+        ? "text-[#c4cae0]"
+        : "text-[#616a8a] hover:text-[#9098b8]"
+    }`;
+
+  // Workbench tier: smallest weight, most muted — evidence and reference
+  const renderWorkbenchGroup = (items: NavItem[]) => (
+    <div style={{ opacity: 0.72 }}>
+      <div className="space-y-0">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const active = isActive(item.path);
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              onClick={onNavFollow}
+              className={`group flex items-center transition-colors ${
+                sidebarOpen ? "gap-3 px-3 py-1 text-[12px]" : "h-8 justify-center px-0 text-[11px]"
+              } ${active ? "text-[#b8bdd8]" : "text-[#5a6284] hover:text-[#8a90b0]"}`}
+            >
+              <Icon className={`h-3 w-3 ${active ? "opacity-60" : "opacity-35"}`} />
+              {sidebarOpen ? (
+                <span className="font-normal">{item.label}</span>
+              ) : (
+                <span className="sr-only">{item.label}</span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Lenses tier: reduced weight — analytical depth, secondary layer
+  const renderLensGroup = (items: NavItem[]) => (
+    <div>
+      <div className="space-y-0">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const active = isActive(item.path);
+          return (
+            <Link key={item.path} to={item.path} className={lensNavItemClass(item.path)} onClick={onNavFollow}>
+              <Icon className={`h-3.5 w-3.5 ${active ? "opacity-75" : "opacity-40"}`} />
+              {sidebarOpen ? (
+                <span className={active ? "font-medium" : "font-normal"}>{item.label}</span>
+              ) : (
+                <span className="sr-only">{item.label}</span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Review tier: elevated weight, teal accent — primary strategic operating layer
+  const renderReviewGroup = (items: NavItem[]) => (
+    <div>
+      <div className="space-y-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const active = isActive(item.path);
+          const isRoutes = item.path === "/routes";
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              onClick={onNavFollow}
+              className={`group flex items-center py-2 transition-colors ${
+                sidebarOpen ? "gap-3 px-3 text-[15px]" : "h-10 justify-center px-0 text-[13px]"
+              } ${
+                active
+                  ? isRoutes
+                    ? "text-white shadow-[inset_3px_0_0_#5F9B8C]"
+                    : "text-[#d4d9ef] shadow-[inset_2px_0_0_rgba(255,255,255,0.22)]"
+                  : isRoutes
+                    ? "text-[#8ecfc5] hover:text-white"
+                    : "text-[#b0b8d4] hover:text-[#e0e4f4]"
+              }`}
+            >
+              <Icon className={`h-4 w-4 ${isRoutes ? "opacity-100" : "opacity-80"}`} />
+              {sidebarOpen ? (
+                <span className={isRoutes ? "font-semibold" : "font-medium"}>{item.label}</span>
+              ) : (
+                <span className="sr-only">{item.label}</span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const statusItems = [
     { label: "Company Selected", on: !!activeCompany?.id },
@@ -356,7 +497,44 @@ export default function TopNav() {
                     <PanelLeftClose className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="mt-2 text-[13px] font-medium text-[#f3f6ff]">{companyName}</p>
+                {isAdmin && companies.length > 1 ? (
+                  <div className="relative mt-2" ref={topSwitcherRef}>
+                    <button
+                      type="button"
+                      onClick={() => setShowTopSwitcher((v) => !v)}
+                      className="flex items-center gap-1 text-left"
+                    >
+                      <span className="text-[13px] font-medium text-[#f3f6ff]">{companyName}</span>
+                      <ChevronDown
+                        className={`h-3 w-3 shrink-0 text-[#9ca5c7] transition-transform ${showTopSwitcher ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {showTopSwitcher && (
+                      <div className="absolute left-0 right-0 top-full z-[70] mt-1 rounded-lg border border-white/15 bg-[#1a2140] py-1 shadow-2xl">
+                        {companies.map((company) => (
+                          <button
+                            key={company.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveCompanyId(company.id);
+                              setShowTopSwitcher(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left transition-colors hover:bg-white/8 ${
+                              company.id === activeCompany?.id ? "bg-white/10" : ""
+                            }`}
+                          >
+                            <p className="text-[13px] text-[#eef2ff]">{company.name}</p>
+                            <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#a0a8c9]">
+                              {company.quarter} · {company.archetype}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[13px] font-medium text-[#f3f6ff]">{companyName}</p>
+                )}
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[#9fa7c7]">{companyMeta}</p>
               </>
             ) : (
@@ -376,14 +554,21 @@ export default function TopNav() {
             )}
           </div>
 
-          <div className={`flex-1 space-y-6 overflow-y-auto ${sidebarOpen ? "px-3 py-5" : "px-2 py-3"}`}>
-            {renderGroup("Core", visibleCore)}
-            {visibleResources.length > 0 ? renderGroup("Resources", visibleResources) : null}
+          <div className={`flex-1 space-y-4 overflow-y-auto ${sidebarOpen ? "px-3 py-5" : "px-2 py-3"}`}>
+            {isClientView ? (
+              renderGroup("Core", visibleCore)
+            ) : (
+              <>
+                {renderReviewGroup(visibleReview)}
+                {renderLensGroup(visibleLenses)}
+                {renderWorkbenchGroup(visibleWorkbench)}
+              </>
+            )}
 
             {isAdmin ? (
               <div>
                 {sidebarOpen ? (
-                  <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">Admin</p>
+                  <p className="px-3 pb-2 font-mono text-[9px] uppercase tracking-[0.16em] text-[#8f95af]" style={{ opacity: 0.6 }}>Admin</p>
                 ) : null}
                 <div className="space-y-1">
                   <Link to="/process/mojomap" className={navItemClass("/process/mojomap")} onClick={onAdminNavFollow}>
@@ -411,7 +596,7 @@ export default function TopNav() {
                 <div className="mt-4">
                   {sidebarOpen ? (
                     <div className="flex items-center justify-between px-3 pb-2">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#7f87a8]">Tooling</p>
+                      <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-[#7f87a8]" style={{ opacity: 0.55 }}>Tooling</p>
                       <button
                         type="button"
                         onClick={() => setToolingOpen((current) => !current)}
@@ -446,7 +631,6 @@ export default function TopNav() {
 
             {sidebarOpen ? (
               <div>
-                <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#8f95af]">View</p>
                 <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-1.5">
                   <div className="grid grid-cols-2 gap-1">
                     <button
