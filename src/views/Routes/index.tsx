@@ -562,13 +562,14 @@ export default function RoutesView() {
   const { stack, top, open: openFrame, push: pushFrame, pop: popFrame, clear: clearFrame, updateTopLens } = useInspectionStack();
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
+  const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
 
   // Sync from DB when company changes
   useEffect(() => {
     setSelectedRouteId(activeCompany?.selected_route_id ?? null);
     setDecisionSavedAt(activeCompany?.selected_route_updated_at ?? null);
   }, [activeCompany?.id]);
-  const { loading, items, error } = useRoutes(activeCompany?.id);
+  const { loading, items, error } = useRoutes(activeCompany?.id, routesRefreshKey);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const { primary: primaryOutcome } = useDesiredOutcomes(activeCompany?.id);
   const { item: cascade } = useStrategyCascade(activeCompany?.id);
@@ -1244,6 +1245,7 @@ export default function RoutesView() {
             cascade={cascade}
             positioning={positioning}
             routeDecision={inspectRouteDecision}
+            onLegUpdated={() => setRoutesRefreshKey((k) => k + 1)}
           />
         )}
         renderNeed={(frame) => {

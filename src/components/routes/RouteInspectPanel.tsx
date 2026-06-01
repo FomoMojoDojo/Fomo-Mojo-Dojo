@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { supabase } from "@/integrations/supabase/client";
 import type { RouteRow, RouteAssumption } from "@/views/Routes/useRoutes";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -121,15 +122,17 @@ function StatusDot({ status }: { status: "complete" | "in_progress" | "missing" 
 // ─── Inspection tab type ────────────────────────────────────────────────────────
 
 // "overview" is a panel-specific default landing state — not a formal LensType.
+// "execution" is a leg-only editable surface — not a formal LensType.
 // The other tabs correspond to canonical LensType values from strategicObjects.ts.
-type InspectTab = "overview" | Extract<LensType, "customer_reality" | "positioning" | "evidence" | "validation">;
+type InspectTab = "overview" | "execution" | Extract<LensType, "customer_reality" | "positioning" | "evidence" | "validation">;
 
-const TABS: { id: InspectTab; label: string }[] = [
+const TABS: { id: InspectTab; label: string; legOnly?: boolean }[] = [
   { id: "overview",         label: "Overview" },
   { id: "customer_reality", label: "Customer Reality" },
   { id: "positioning",      label: "Positioning" },
   { id: "evidence",         label: "Evidence" },
   { id: "validation",       label: "Validation" },
+  { id: "execution",        label: "Execution", legOnly: true },
 ];
 
 // Validate that the non-overview tabs are real LensType values.
@@ -183,6 +186,8 @@ export type RouteInspectPanelProps = {
   positioning?: PositioningCanvas | null;
   /** Decision portfolio entry for this route — commitment state, sequencing, escalations. */
   routeDecision?: RouteDecision | null;
+  /** Called after a leg's steps_json/evidence_json are saved — use to trigger route list refetch. */
+  onLegUpdated?: (legId: string) => void;
 };
 
 // ─── Confidence and readiness rendering ────────────────────────────────────────
@@ -1088,21 +1093,263 @@ function ValidationLens({
   );
 }
 
+// ─── Leg Execution Lens ────────────────────────────────────────────────────────
+
+type EditableItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
+
+const STATUS_LABELS: Record<EditableItem["status"], string> = {
+  complete:    "Complete",
+  in_progress: "In progress",
+  missing:     "Missing",
+};
+
+function ItemRow({
+  item,
+  onTitleChange,
+  onStatusChange,
+  onRemove,
+}: {
+  item: EditableItem;
+  onTitleChange: (v: string) => void;
+  onStatusChange: (v: EditableItem["status"]) => void;
+  onRemove: () => void;
+}) {
+  const dotColor = item.status === "complete" ? c.teal : item.status === "in_progress" ? c.amber : c.coral;
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <select
+        value={item.status}
+        onChange={(e) => onStatusChange(e.target.value as EditableItem["status"])}
+        style={{
+          fontFamily: MONO, fontSize: 9, textTransform: "uppercase",
+          color: dotColor, background: "none", border: `1px solid ${dotColor}50`,
+          borderRadius: 3, padding: "2px 4px", cursor: "pointer", flexShrink: 0,
+        }}
+      >
+        {(["complete", "in_progress", "missing"] as const).map((s) => (
+          <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+        ))}
+      </select>
+      <input
+        type="text"
+        value={item.title}
+        onChange={(e) => onTitleChange(e.target.value)}
+        placeholder="Describe this item…"
+        style={{
+          flex: 1, fontFamily: "Inter, sans-serif", fontSize: 12.5,
+          border: `1px solid ${c.line}`, borderRadius: 3, padding: "4px 8px",
+          color: c.charcoal, background: "#fff", minWidth: 0, outline: "none",
+        }}
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove"
+        style={{
+          fontFamily: MONO, fontSize: 9.5, color: c.muted, background: "none",
+          border: "none", cursor: "pointer", padding: "2px 4px", flexShrink: 0,
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function ExecutionLens({
+  route,
+  onLegUpdated,
+}: {
+  route: RouteRow;
+  onLegUpdated?: (legId: string) => void;
+}) {
+  const [steps, setSteps] = useState<EditableItem[]>(
+    () => (Array.isArray(route.steps_json) ? route.steps_json : []) as EditableItem[],
+  );
+  const [evidence, setEvidence] = useState<EditableItem[]>(
+    () => (Array.isArray(route.evidence_json) ? route.evidence_json : []) as EditableItem[],
+  );
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  function addStep() {
+    setSteps((prev) => [...prev, { id: crypto.randomUUID(), title: "", status: "missing" }]);
+    setSaved(false);
+  }
+  function removeStep(id: string) {
+    setSteps((prev) => prev.filter((s) => s.id !== id));
+    setSaved(false);
+  }
+  function updateStep(id: string, patch: Partial<EditableItem>) {
+    setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+    setSaved(false);
+  }
+
+  function addEvidence() {
+    setEvidence((prev) => [...prev, { id: crypto.randomUUID(), title: "", status: "missing" }]);
+    setSaved(false);
+  }
+  function removeEvidence(id: string) {
+    setEvidence((prev) => prev.filter((e) => e.id !== id));
+    setSaved(false);
+  }
+  function updateEvidence(id: string, patch: Partial<EditableItem>) {
+    setEvidence((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError(null);
+    setSaved(false);
+    try {
+      const { error } = await supabase
+        .from("routes")
+        .update({ steps_json: steps, evidence_json: evidence })
+        .eq("id", route.id)
+        .eq("company_id", route.company_id);
+      if (error) throw error;
+      setSaved(true);
+      onLegUpdated?.(route.id);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: "14px 20px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+      {/* Steps */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <SectionLabel>Steps</SectionLabel>
+          <button
+            type="button"
+            onClick={addStep}
+            style={{
+              fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.10em",
+              color: c.teal, background: "none", border: `1px solid ${c.teal}50`,
+              borderRadius: 3, padding: "2px 8px", cursor: "pointer",
+            }}
+          >
+            + Add step
+          </button>
+        </div>
+        {steps.length === 0 ? (
+          <p style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: c.muted, fontStyle: "italic" }}>
+            No steps yet. Add a step to start tracking progress.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {steps.map((step) => (
+              <ItemRow
+                key={step.id}
+                item={step}
+                onTitleChange={(v) => updateStep(step.id, { title: v })}
+                onStatusChange={(v) => updateStep(step.id, { status: v })}
+                onRemove={() => removeStep(step.id)}
+              />
+            ))}
+          </div>
+        )}
+        <p style={{ margin: "6px 0 0", fontFamily: MONO, fontSize: 8.5, color: c.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          "Complete" status moves the structural score. "In progress" and "Missing" do not.
+        </p>
+      </div>
+
+      <Divider />
+
+      {/* Evidence */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <SectionLabel>Evidence</SectionLabel>
+          <button
+            type="button"
+            onClick={addEvidence}
+            style={{
+              fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.10em",
+              color: c.teal, background: "none", border: `1px solid ${c.teal}50`,
+              borderRadius: 3, padding: "2px 8px", cursor: "pointer",
+            }}
+          >
+            + Add item
+          </button>
+        </div>
+        {evidence.length === 0 ? (
+          <p style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: c.muted, fontStyle: "italic" }}>
+            No evidence items yet. Add an item to start tracking evidence quality.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {evidence.map((ev) => (
+              <ItemRow
+                key={ev.id}
+                item={ev}
+                onTitleChange={(v) => updateEvidence(ev.id, { title: v })}
+                onStatusChange={(v) => updateEvidence(ev.id, { status: v })}
+                onRemove={() => removeEvidence(ev.id)}
+              />
+            ))}
+          </div>
+        )}
+        <p style={{ margin: "6px 0 0", fontFamily: MONO, fontSize: 8.5, color: c.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Any status other than "Missing" counts as supporting evidence and moves the band score.
+        </p>
+      </div>
+
+      <Divider />
+
+      {/* Save row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            fontFamily: MONO, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.10em",
+            color: "#fff", background: saving ? c.muted : c.teal, border: "none",
+            borderRadius: 4, padding: "6px 16px", cursor: saving ? "not-allowed" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && !saving && (
+          <span style={{ fontFamily: MONO, fontSize: 9, color: c.teal, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Saved ✓
+          </span>
+        )}
+        {saveError && (
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: c.coral }}>
+            {saveError}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Lens switcher ───────────────────────────────────────────────────────────────
 
 function LensSwitcher({
   active,
   onChange,
   routeKind,
+  isLeg,
 }: {
   active: InspectTab;
   onChange: (tab: InspectTab) => void;
   routeKind: "strategic_route";
+  isLeg?: boolean;
 }) {
   // Verify lens tabs against LENS_SUPPORTED_OBJECTS at render time.
   // Overview is always shown; formal lenses are filtered by ontology compatibility.
+  // "execution" is leg-only.
   const visibleTabs = TABS.filter((tab) => {
     if (tab.id === "overview") return true;
+    if (tab.id === "execution") return isLeg === true;
     const lensType = tab.id as LensType;
     // Confirm this is a known lens type before checking compatibility
     if (!LENS_TYPES.includes(lensType)) return false;
@@ -1168,6 +1415,7 @@ export default function RouteInspectPanel({
   cascade,
   positioning,
   routeDecision,
+  onLegUpdated,
 }: RouteInspectPanelProps) {
   const [activeTab, setActiveTab] = useState<InspectTab>(() => {
     if (initialLens && TABS.some((t) => t.id === initialLens)) return initialLens as InspectTab;
@@ -1263,6 +1511,7 @@ export default function RouteInspectPanel({
             active={activeTab}
             onChange={switchTab}
             routeKind="strategic_route"
+            isLeg={route?.level === "leg"}
           />
         </div>
 
@@ -1303,6 +1552,9 @@ export default function RouteInspectPanel({
           )}
           {activeTab === "validation" && (
             <ValidationLens route={route} rationale={rationale} />
+          )}
+          {activeTab === "execution" && route.level === "leg" && (
+            <ExecutionLens route={route} onLegUpdated={onLegUpdated} />
           )}
         </div>
 
