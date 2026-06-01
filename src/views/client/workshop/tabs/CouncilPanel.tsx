@@ -26,6 +26,7 @@ interface CouncilRec {
   decided_at: string | null;
   created_at: string;
   decision_id?: string | null;
+  decision_note?: string | null;
 }
 
 interface DecisionSummary {
@@ -80,6 +81,21 @@ function councilFmtDate(iso: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
+const EXECUTION_CATEGORIES = new Set(["execution", "execution focus", "routes"]);
+function isExecutionCategory(category: string): boolean {
+  return EXECUTION_CATEGORIES.has(category.trim().toLowerCase());
+}
+function parseLegId(decisionNote: string | null | undefined): string | null {
+  if (!decisionNote) return null;
+  try { const p = JSON.parse(decisionNote) as Record<string, unknown>; return typeof p.leg_id === "string" ? p.leg_id : null; } catch { return null; }
+}
+function recBadgeLabel(rec: CouncilRec): string {
+  if (rec.status === "pending") return "Unresolved";
+  if (rec.status === "ignored") return "Set aside";
+  if (isExecutionCategory(rec.category) && parseLegId(rec.decision_note) !== null) return "Integrated";
+  return "Accepted";
+}
+
 async function extractCouncilError(error: unknown, fallback: string): Promise<string> {
   const err = error as { message?: string; context?: { text?: () => Promise<string> } } | null;
   const base = typeof err?.message === "string" && err.message.trim() ? err.message.trim() : fallback;
@@ -109,6 +125,12 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
   const [statusFilter, setStatusFilter]   = useState<CouncilRecStatus | "all">("pending");
   const [error, setError]                 = useState<string | null>(null);
   const [showIgnored, setShowIgnored]     = useState(false);
+  const [draftRecId, setDraftRecId]             = useState<string | null>(null);
+  const [draftTitle, setDraftTitle]             = useState("");
+  const [draftParentRouteId, setDraftParentRouteId] = useState<string | null>(null);
+  const [topLevelRoutes, setTopLevelRoutes]     = useState<Array<{ id: string; title: string }>>([]);
+  const [routesLoading, setRoutesLoading]       = useState(false);
+  const [confirmingLeg, setConfirmingLeg]       = useState(false);
 
 
   const scopedRuns = useMemo(() => runs.filter((r) => councilKeyFromRun(r) === councilKey), [runs, councilKey]);
@@ -120,9 +142,10 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
     [scopedRecs, statusFilter]);
 
   const counts = useMemo(() => ({
-    pending:  scopedRecs.filter((r) => r.status === "pending").length,
-    accepted: scopedRecs.filter((r) => r.status === "accepted").length,
-    ignored:  scopedRecs.filter((r) => r.status === "ignored").length,
+    pending:   scopedRecs.filter((r) => r.status === "pending").length,
+    accepted:  scopedRecs.filter((r) => r.status === "accepted").length,
+    confirmed: scopedRecs.filter((r) => r.status === "accepted" && isExecutionCategory(r.category) && parseLegId(r.decision_note) !== null).length,
+    ignored:   scopedRecs.filter((r) => r.status === "ignored").length,
   }), [scopedRecs]);
 
   const meta = COUNCIL_OPTIONS.find((o) => o.key === councilKey)!;
@@ -191,6 +214,15 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
         status, decided_at: new Date().toISOString(), decided_by: user?.id ?? null,
       }).eq("id", id).eq("company_id", companyId);
       setRecs((prev) => prev.map((r) => r.id === id ? { ...r, status, decided_at: new Date().toISOString() } : r));
+      if (status === "accepted") {
+        const rec = recs.find((r) => r.id === id);
+        if (rec && isExecutionCategory(rec.category) && parseLegId(rec.decision_note) === null) {
+          setDraftRecId(id);
+          setDraftTitle(rec.title);
+          setDraftParentRouteId(null);
+          void loadTopLevelRoutes();
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update");
     } finally {
@@ -198,10 +230,61 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
     }
   }
 
+  async function loadTopLevelRoutes() {
+    setRoutesLoading(true);
+    try {
+      const { data, error } = await sb.from("routes")
+        .select("id, title")
+        .eq("company_id", companyId)
+        .eq("level", "route")
+        .order("sort_order", { ascending: true })
+        .limit(100);
+      if (error) throw error;
+      setTopLevelRoutes((data ?? []) as Array<{ id: string; title: string }>);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load routes");
+    } finally {
+      setRoutesLoading(false);
+    }
+  }
+
+  async function confirmLeg() {
+    if (!draftRecId || !draftParentRouteId || !draftTitle.trim()) return;
+    setConfirmingLeg(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const rec = recs.find((r) => r.id === draftRecId);
+      const { data: inserted, error: insertErr } = await sb.from("routes").insert({
+        company_id: companyId,
+        user_id: user?.id ?? null,
+        level: "leg",
+        parent_id: draftParentRouteId,
+        title: draftTitle.trim(),
+        short_description: rec?.recommendation ?? null,
+        category: "improve",
+      }).select("id").single();
+      if (insertErr) throw insertErr;
+      const legId = (inserted as { id: string }).id;
+      const decisionNote = JSON.stringify({ leg_id: legId });
+      await sb.from("council_recommendations")
+        .update({ decision_note: decisionNote })
+        .eq("id", draftRecId)
+        .eq("company_id", companyId);
+      setRecs((prev) => prev.map((r) => r.id === draftRecId ? { ...r, decision_note: decisionNote } : r));
+      setDraftRecId(null);
+      setDraftTitle("");
+      setDraftParentRouteId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create leg");
+    } finally {
+      setConfirmingLeg(false);
+    }
+  }
+
   const STATUS_FILTERS: Array<{ key: CouncilRecStatus | "all"; label: string; count?: number }> = [
     { key: "all",      label: "All",        count: scopedRecs.length },
     { key: "pending",  label: "Unresolved", count: counts.pending },
-    { key: "accepted", label: "Integrated", count: counts.accepted },
+    { key: "accepted", label: "Accepted",   count: counts.accepted },
     { key: "ignored",  label: "Set aside",  count: counts.ignored },
   ];
 
@@ -406,7 +489,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                           <span className="crpv-council-rec-title">{rec.title}</span>
                           <div className="crpv-council-rec-badges">
                             <span className={`crpv-council-badge crpv-council-priority-${rec.priority} cap`}>{rec.priority}</span>
-                            <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{rec.status === "pending" ? "Unresolved" : "Integrated"}</span>
+                            <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{recBadgeLabel(rec)}</span>
                           </div>
                         </div>
                         <p className="crpv-council-rec-meta cap">{rec.category} · {rec.confidence}% confidence</p>
@@ -438,8 +521,72 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                             >
                               {decisionId === `${rec.id}:ignored` ? "Saving…" : "Ignore"}
                             </button>
+                            {rec.status === "accepted" && isExecutionCategory(rec.category) && parseLegId(rec.decision_note) === null && draftRecId !== rec.id && (
+                              <button
+                                type="button"
+                                className="crpv-council-action-accept"
+                                onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(); }}
+                                disabled={!!decisionId || confirmingLeg}
+                              >
+                                Create leg
+                              </button>
+                            )}
                           </div>
                         </div>
+                        {draftRecId === rec.id && (
+                          <div style={{ marginTop: 12, padding: "12px 14px", background: "rgba(0,0,0,0.03)", borderRadius: 6, borderTop: "1px solid #e8ecea" }}>
+                            <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#6E847F", margin: "0 0 10px" }}>
+                              Draft execution leg
+                            </p>
+                            <div style={{ marginBottom: 8 }}>
+                              <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "#6E847F", margin: "0 0 4px" }}>Leg title</p>
+                              <input
+                                type="text"
+                                value={draftTitle}
+                                onChange={(e) => setDraftTitle(e.target.value)}
+                                style={{ width: "100%", fontFamily: "sans-serif", fontSize: 13, padding: "6px 8px", border: "1px solid #d4dbd8", borderRadius: 4, background: "#fff", boxSizing: "border-box" as const }}
+                                placeholder="Leg title"
+                              />
+                            </div>
+                            <div style={{ marginBottom: 10 }}>
+                              <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "#6E847F", margin: "0 0 4px" }}>Parent route</p>
+                              {routesLoading ? (
+                                <p style={{ fontFamily: "sans-serif", fontSize: 12, color: "#6E847F", margin: 0 }}>Loading routes…</p>
+                              ) : topLevelRoutes.length === 0 ? (
+                                <p style={{ fontFamily: "sans-serif", fontSize: 12, color: "#6E847F", margin: 0 }}>No top-level routes found.</p>
+                              ) : (
+                                <select
+                                  value={draftParentRouteId ?? ""}
+                                  onChange={(e) => setDraftParentRouteId(e.target.value || null)}
+                                  style={{ width: "100%", fontFamily: "sans-serif", fontSize: 13, padding: "6px 8px", border: "1px solid #d4dbd8", borderRadius: 4, background: "#fff" }}
+                                >
+                                  <option value="">Pick a route…</option>
+                                  {topLevelRoutes.map((r) => (
+                                    <option key={r.id} value={r.id}>{r.title ?? r.id}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                type="button"
+                                className="crpv-council-action-accept"
+                                onClick={confirmLeg}
+                                disabled={confirmingLeg || !draftParentRouteId || !draftTitle.trim()}
+                              >
+                                {confirmingLeg ? "Creating…" : "Confirm leg"}
+                              </button>
+                              <button
+                                type="button"
+                                className="crpv-council-action-ignore"
+                                onClick={() => { setDraftRecId(null); setDraftTitle(""); setDraftParentRouteId(null); }}
+                                disabled={confirmingLeg}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </article>
                     );
                   })}
@@ -522,8 +669,8 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
             {counts.pending > 0 && (
               <span className="crpv-council-editorial-badge crpv-council-editorial-badge-pending">{counts.pending} unresolved</span>
             )}
-            {counts.accepted > 0 && (
-              <span className="crpv-council-editorial-badge crpv-council-editorial-badge-accepted">{counts.accepted} integrated</span>
+            {counts.confirmed > 0 && (
+              <span className="crpv-council-editorial-badge crpv-council-editorial-badge-accepted">{counts.confirmed} integrated</span>
             )}
             {counts.ignored > 0 && (
               <span className="crpv-council-editorial-badge">{counts.ignored} set aside</span>
@@ -672,7 +819,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                         <span className="crpv-council-rec-title">{rec.title}</span>
                         <div className="crpv-council-rec-badges">
                           <span className={`crpv-council-badge crpv-council-priority-${rec.priority} cap`}>{rec.priority}</span>
-                          <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{rec.status === "pending" ? "Unresolved" : rec.status === "accepted" ? "Integrated" : "Set aside"}</span>
+                          <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{recBadgeLabel(rec)}</span>
                         </div>
                       </div>
                       <p className="crpv-council-rec-meta cap">{rec.category} · {rec.confidence}% confidence</p>
@@ -704,8 +851,72 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                           >
                             {decisionId === `${rec.id}:ignored` ? "Saving…" : "Ignore"}
                           </button>
+                          {rec.status === "accepted" && isExecutionCategory(rec.category) && parseLegId(rec.decision_note) === null && draftRecId !== rec.id && (
+                            <button
+                              type="button"
+                              className="crpv-council-action-accept"
+                              onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(); }}
+                              disabled={!!decisionId || confirmingLeg}
+                            >
+                              Create leg
+                            </button>
+                          )}
                         </div>
                       </div>
+                      {draftRecId === rec.id && (
+                        <div style={{ marginTop: 12, padding: "12px 14px", background: "rgba(0,0,0,0.03)", borderRadius: 6, borderTop: "1px solid #e8ecea" }}>
+                          <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "#6E847F", margin: "0 0 10px" }}>
+                            Draft execution leg
+                          </p>
+                          <div style={{ marginBottom: 8 }}>
+                            <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "#6E847F", margin: "0 0 4px" }}>Leg title</p>
+                            <input
+                              type="text"
+                              value={draftTitle}
+                              onChange={(e) => setDraftTitle(e.target.value)}
+                              style={{ width: "100%", fontFamily: "sans-serif", fontSize: 13, padding: "6px 8px", border: "1px solid #d4dbd8", borderRadius: 4, background: "#fff", boxSizing: "border-box" as const }}
+                              placeholder="Leg title"
+                            />
+                          </div>
+                          <div style={{ marginBottom: 10 }}>
+                            <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "#6E847F", margin: "0 0 4px" }}>Parent route</p>
+                            {routesLoading ? (
+                              <p style={{ fontFamily: "sans-serif", fontSize: 12, color: "#6E847F", margin: 0 }}>Loading routes…</p>
+                            ) : topLevelRoutes.length === 0 ? (
+                              <p style={{ fontFamily: "sans-serif", fontSize: 12, color: "#6E847F", margin: 0 }}>No top-level routes found.</p>
+                            ) : (
+                              <select
+                                value={draftParentRouteId ?? ""}
+                                onChange={(e) => setDraftParentRouteId(e.target.value || null)}
+                                style={{ width: "100%", fontFamily: "sans-serif", fontSize: 13, padding: "6px 8px", border: "1px solid #d4dbd8", borderRadius: 4, background: "#fff" }}
+                              >
+                                <option value="">Pick a route…</option>
+                                {topLevelRoutes.map((r) => (
+                                  <option key={r.id} value={r.id}>{r.title ?? r.id}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              type="button"
+                              className="crpv-council-action-accept"
+                              onClick={confirmLeg}
+                              disabled={confirmingLeg || !draftParentRouteId || !draftTitle.trim()}
+                            >
+                              {confirmingLeg ? "Creating…" : "Confirm leg"}
+                            </button>
+                            <button
+                              type="button"
+                              className="crpv-council-action-ignore"
+                              onClick={() => { setDraftRecId(null); setDraftTitle(""); setDraftParentRouteId(null); }}
+                              disabled={confirmingLeg}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </article>
                   );
                 })}
