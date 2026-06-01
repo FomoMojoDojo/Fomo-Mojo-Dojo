@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
+import { computeMojoScore } from "../../../src/lib/mojoScore/computeMojoScore.ts";
+import { writeMojoScore } from "../../../src/lib/mojoScore/writeMojoScore.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -921,6 +923,52 @@ async function fetchDifyRunResult(params: {
   return { status, outputs, error };
 }
 
+// ── MojoScore snapshot ────────────────────────────────────────────────────────
+//
+// Fetches the current state of claims, routes, and needs for a company, computes
+// a MojoScore using the same function the compass displays, and persists one
+// insert-only row to mojo_scores so score history accrues across analysis runs.
+//
+// Called after saveResult has finalized claims and needs — routes are not
+// modified by run-mojo-analysis but are read fresh here for a consistent snapshot.
+//
+// Errors are caught and logged; a snapshot failure does not fail the analysis run.
+
+async function snapshotMojoScore(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
+): Promise<void> {
+  try {
+    const [claimsResult, routesResult, needsResult] = await Promise.all([
+      supabase
+        .from("claims")
+        .select("id, state, claim_type, topic, outside_support_count, organization_support_count, customer_support_count, updated_at")
+        .eq("company_id", companyId),
+      supabase
+        .from("routes")
+        .select("id, category, level, parent_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
+        .eq("company_id", companyId),
+      supabase
+        .from("odi_needs")
+        .select("id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at")
+        .eq("company_id", companyId),
+    ]);
+
+    const claims = (claimsResult.data ?? []) as Parameters<typeof computeMojoScore>[0]["claims"];
+    const routes = (routesResult.data ?? []) as Parameters<typeof computeMojoScore>[0]["routes"];
+    const needs  = (needsResult.data  ?? []) as Parameters<typeof computeMojoScore>[0]["needs"];
+
+    const result = computeMojoScore({ companyId, claims, routes, needs, computedAt: new Date().toISOString() });
+    await writeMojoScore(supabase, result);
+
+    console.log(
+      `[run-mojo-analysis] mojo_scores snapshot — company: ${companyId} | score: ${result.total_score} | contributors: ${result.contributors.length}`,
+    );
+  } catch (err) {
+    console.error("[run-mojo-analysis] mojo_scores snapshot failed (non-fatal):", String((err as Error)?.message ?? err));
+  }
+}
+
 // ── Proposal persistence ──────────────────────────────────────────────────────
 
 async function markFailed(supabase: ReturnType<typeof createClient>, proposalId: string, error: string) {
@@ -1084,6 +1132,12 @@ async function saveResult(
     if (odiJobSteps.length >= 4 || odiInternalSteps.length >= 4) {
       await applyJobStepsFromDify(supabase, companyId, odiJobSteps, odiInternalSteps, "customer", jobPerformer, primaryJob, proposalId);
     }
+
+    // ── MojoScore snapshot ────────────────────────────────────────────────────
+    // Compute after claims and needs are finalized so the snapshot reflects the
+    // full state produced by this analysis run. Routes are not modified here but
+    // are read fresh from the DB so the snapshot is always consistent.
+    await snapshotMojoScore(supabase, companyId);
   }
 
   console.log("[run-mojo-analysis] saved proposal:", proposalId, "| odi steps extracted:", odiJobSteps.length);
