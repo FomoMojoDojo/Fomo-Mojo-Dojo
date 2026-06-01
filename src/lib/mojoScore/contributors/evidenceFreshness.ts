@@ -14,7 +14,7 @@
 //
 // Portfolio score = mean across all claims + route legs.
 
-import type { MojoScoreInput, ContributorScore } from "../types";
+import type { MojoScoreInput, ContributorScore } from "../types.ts";
 
 export const WEIGHT = 0.10;
 

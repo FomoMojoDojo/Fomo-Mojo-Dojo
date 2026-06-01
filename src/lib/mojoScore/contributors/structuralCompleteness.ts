@@ -9,7 +9,7 @@
 // Routes with empty steps_json or evidence_json contribute 0 to numerator
 // but DO count in the denominator if they have at least one item.
 
-import type { MojoScoreInput, ContributorScore } from "../types";
+import type { MojoScoreInput, ContributorScore } from "../types.ts";
 
 export const WEIGHT = 0.10;
 

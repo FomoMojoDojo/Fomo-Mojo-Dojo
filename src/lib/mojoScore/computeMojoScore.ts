@@ -11,14 +11,14 @@ import type {
   MojoScoreResult,
   ProjectedRaise,
   EngagementState,
-} from "./types";
-import { scoreStateDistributionHealth, deriveEngagementState } from "./contributors/stateDistributionHealth";
-import { scoreCustomerBandEvidence } from "./contributors/customerBandEvidence";
-import { scoreWrapEvidence } from "./contributors/wrapEvidence";
-import { scoreActionPortfolioBalance } from "./contributors/actionPortfolioBalance";
-import { scoreStructuralCompleteness } from "./contributors/structuralCompleteness";
-import { scoreEvidenceFreshness } from "./contributors/evidenceFreshness";
-import { scoreOpportunityRouteCoverage } from "./contributors/opportunityRouteCoverage";
+} from "./types.ts";
+import { scoreStateDistributionHealth, deriveEngagementState } from "./contributors/stateDistributionHealth.ts";
+import { scoreCustomerBandEvidence } from "./contributors/customerBandEvidence.ts";
+import { scoreWrapEvidence } from "./contributors/wrapEvidence.ts";
+import { scoreActionPortfolioBalance } from "./contributors/actionPortfolioBalance.ts";
+import { scoreStructuralCompleteness } from "./contributors/structuralCompleteness.ts";
+import { scoreEvidenceFreshness } from "./contributors/evidenceFreshness.ts";
+import { scoreOpportunityRouteCoverage } from "./contributors/opportunityRouteCoverage.ts";
 
 export const METHODOLOGY_VERSION = "v1.0.0";
 

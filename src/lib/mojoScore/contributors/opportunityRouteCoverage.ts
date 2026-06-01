@@ -8,7 +8,7 @@
 // A need is "covered" when its id appears in any route's linked_need_ids array.
 // Bonus: if ALL needs are covered → +5 pts (up to cap 100).
 
-import type { MojoScoreInput, ContributorScore } from "../types";
+import type { MojoScoreInput, ContributorScore } from "../types.ts";
 
 export const WEIGHT = 0.05;
 

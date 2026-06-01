@@ -12,7 +12,7 @@
 // Momentum bonus: +5 if any flow claims, +2 if any focus claims.
 // Total score capped at 100.
 
-import type { MojoScoreInput, ContributorScore, EngagementState } from "../types";
+import type { MojoScoreInput, ContributorScore, EngagementState } from "../types.ts";
 
 export const WEIGHT = 0.30;
 

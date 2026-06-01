@@ -16,7 +16,7 @@
 //
 // Falls back to all routes when no hierarchy is present.
 
-import type { MojoScoreInput, ContributorScore, RouteInput } from "../types";
+import type { MojoScoreInput, ContributorScore, RouteInput } from "../types.ts";
 
 export const WEIGHT = 0.20;
 

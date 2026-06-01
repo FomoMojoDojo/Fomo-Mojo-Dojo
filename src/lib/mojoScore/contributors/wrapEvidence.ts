@@ -8,7 +8,7 @@
 // Portfolio score = mean of per-route WRAP scores across top-level routes.
 // Falls back to all routes when no hierarchy exists.
 
-import type { MojoScoreInput, ContributorScore, RouteInput } from "../types";
+import type { MojoScoreInput, ContributorScore, RouteInput } from "../types.ts";
 
 export const WEIGHT = 0.15;
 

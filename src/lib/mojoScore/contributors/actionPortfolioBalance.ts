@@ -11,7 +11,7 @@
 // Bonus: +10 pts if all three categories are present.
 // Score capped at 100.
 
-import type { MojoScoreInput, ContributorScore } from "../types";
+import type { MojoScoreInput, ContributorScore } from "../types.ts";
 
 export const WEIGHT = 0.10;
 
