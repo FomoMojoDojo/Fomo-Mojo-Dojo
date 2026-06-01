@@ -1365,6 +1365,7 @@ export default function ClientRefinePreviewWorkshopView() {
         driftRefreshKey={driftBadgeRefreshKey}
         onCheckSurfaceDrift={handleCheckSurfaceDrift}
         checkingSurfaceId={driftCheckingSurfaceId}
+        companyName={activeCompany?.name}
       />
       );
     }
