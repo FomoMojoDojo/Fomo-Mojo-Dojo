@@ -284,7 +284,7 @@ describe("route rationale", () => {
     expect(rationale.whyThisRouteExists).toContain("emerging strategy appears centered on");
     expect(rationale.whyThisRouteExists.toLowerCase()).toContain("partner operational outcomes");
     expect(rationale.whatSupportsIt).toContain("The route fits a direction increasingly centered on partner operational outcomes");
-    expect(rationale.whatSupportsIt).toContain("Outside perception reads as a craft-focused specialty coffee roaster");
+    expect(rationale.whatSupportsIt).toContain("Outside perception reads as a company publicly known for craft quality and specialty coffee");
   });
 
   it("filters generic route assumptions out of what must become true", () => {

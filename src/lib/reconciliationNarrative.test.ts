@@ -146,8 +146,8 @@ describe("reconciliation narrative", () => {
 
     expect(narrative?.shouldRender).toBe(true);
     expect(narrative?.mode).toBe("divergent");
-    expect(narrative?.publicPerspective).toBe("A craft-focused specialty coffee roaster");
-    expect(narrative?.strategicDirection?.toLowerCase()).toContain("operational partner for cafe operators");
+    expect(narrative?.publicPerspective).toBe("A company publicly known for craft quality and specialty coffee");
+    expect(narrative?.strategicDirection?.toLowerCase()).toContain("partner operational outcomes");
     expect(narrative?.customerReality).toContain("Customer validation is still lagging");
   });
 
@@ -280,7 +280,7 @@ describe("reconciliation narrative", () => {
     });
 
     expect(narrative?.shouldRender).toBe(true);
-    expect(narrative?.publicPerspective).toBe("A craft-focused specialty coffee roaster");
-    expect(narrative?.strategicDirection?.toLowerCase()).toContain("operational partner for cafe operators");
+    expect(narrative?.publicPerspective).toBe("A company publicly known for craft quality and specialty coffee");
+    expect(narrative?.strategicDirection?.toLowerCase()).toContain("partner operational outcomes");
   });
 });

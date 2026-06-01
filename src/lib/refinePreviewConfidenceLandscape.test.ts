@@ -256,7 +256,7 @@ describe("refine preview confidence landscape", () => {
     });
 
     expect(domains.find((domain) => domain.key === "strategic_alignment")?.narrative).toContain(
-      "publicly the company still reads as a craft-focused specialty coffee roaster",
+      "publicly the company still reads as a company publicly known for craft quality and specialty coffee",
     );
   });
 });

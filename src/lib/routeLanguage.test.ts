@@ -36,7 +36,12 @@ describe("route language", () => {
     expect(rewritten.qualityAfter.quality).toMatch(/strong|highly_specific/);
   });
 
-  it("rewrites donor-impact routes into trust and visibility language", () => {
+  // TODO: route-language generation for non-coffee/nonprofit domains is
+  // undecided — donor-specific rewrites were removed in the identity refactor;
+  // general data-derived replacement TBD (may be superseded by the
+  // strategic-objects system). Re-enable and assert correct behavior once
+  // decided. See SCOPE_refactor.md.
+  it.skip("rewrites donor-impact routes into trust and visibility language", () => {
     const rewritten = rewriteRouteLanguage({
       category: "improve",
       title: "Strengthen Funding Cycle Reporting",
