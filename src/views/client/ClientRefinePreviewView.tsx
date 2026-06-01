@@ -76,7 +76,7 @@ import { HomepageHierarchy } from "@/components/client/HomepageHierarchy";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 
 type LayerState = "command" | "map" | "narrative" | "drawer";
-type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "branching" | "waiting";
+type CommitState = "idle" | "committing" | "committed" | "next-revealed" | "waiting";
 type DrawerKey = "why" | "blocking" | "signals" | "progress";
 type RouteCategory = "Fix" | "Improve" | "Create";
 type TweakTab = "evidence" | "claims" | "foundation" | "assumptions" | "rerun" | "access";
@@ -117,29 +117,6 @@ const EDGE_DRAWERS: Array<{ key: DrawerKey; label: string }> = [
   { key: "progress", label: "Progress" },
 ];
 
-const BRANCH_OPTIONS = [
-  {
-    id: "branch-research",
-    title: "Desk Research Sprint",
-    description: "Quick evidence pass before interviews.",
-    lift: 9,
-    duration: "1wk",
-  },
-  {
-    id: "branch-pilot",
-    title: "Pilot with Two Accounts",
-    description: "Run a live pilot and collect verbatims.",
-    lift: 17,
-    duration: "4wk",
-  },
-  {
-    id: "branch-reframe",
-    title: "Reframe Target Segment",
-    description: "Tighten who this decision is really for.",
-    lift: 4,
-    duration: "3d",
-  },
-] as const;
 
 const ROUTE_ORDER: RouteCategory[] = ["Fix", "Improve", "Create"];
 
@@ -182,6 +159,10 @@ function lowerFirst(value: string | null | undefined) {
 
 function stripTerminalPunctuation(value: string | null | undefined) {
   return toSentence(value).replace(/[.?!]+$/g, "");
+}
+
+function formatHHmm(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function buildCenterHeroSupport(args: {
@@ -399,9 +380,12 @@ export default function ClientRefinePreviewView() {
 
   // ── Hierarchy-aware computed values ────────────────────────────────────────
   const hasHierarchy = useMemo(() => routes.some((r) => r.level === "route"), [routes]);
-  // Engagement day shown in the header and bento. Hardcoded until the companies
-  // table gains an engagement_started_at column — the DB created_at is too recent.
-  const ENGAGEMENT_DAY = 52;
+  const ENGAGEMENT_DAY = useMemo((): number | null => {
+    const startAt = activeCompany?.engagement_started_at;
+    if (!startAt) return null;
+    const ms = Date.now() - new Date(startAt).getTime();
+    return Math.max(1, Math.floor(ms / 86_400_000));
+  }, [activeCompany?.engagement_started_at]);
   const topLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
   const dominantClaimState = useMemo((): ClaimState | null => {
     if (!hasHierarchy || topLevelRoutes.length === 0) return null;
@@ -533,19 +517,24 @@ export default function ClientRefinePreviewView() {
     );
   }, [allMarketDefs, priorityJourneyKey]);
 
+  // ── Audience short-form — company's own job_executor noun phrase ─────────
+  const audienceShort = useMemo(
+    () => deriveAudienceShort(strategicMarketDef?.job_executor),
+    [strategicMarketDef],
+  );
+
   // ── Next Turn override — context-aware action (Finding 1) ─────────────────
   const nextTurnOverride = useMemo((): string | undefined => {
     if (!hasHierarchy || !displayMojoScore) return undefined;
     const raiser = displayMojoScore.projected_raisers[0];
     if (!raiser) return undefined;
     if (dominantClaimState === "diagnose" || (!dominantClaimState && phase === "diagnose")) {
-      const audience = deriveAudienceShort(strategicMarketDef?.job_executor);
-      if (audience) {
-        return `Run 5 conversations with ${audience}. It would show which direction actually resonates.`;
+      if (audienceShort) {
+        return `Run 5 conversations with ${audienceShort}. It would show which direction actually resonates.`;
       }
     }
     return undefined;
-  }, [hasHierarchy, displayMojoScore, dominantClaimState, phase, strategicMarketDef]);
+  }, [hasHierarchy, displayMojoScore, dominantClaimState, phase, audienceShort]);
 
   const analysisRunning = fileProposals.some(
     (p) => p.processing_state === "queued" || p.processing_state === "running",
@@ -1012,6 +1001,7 @@ export default function ClientRefinePreviewView() {
   const [confidenceFrom, setConfidenceFrom] = useState(42);
   const [confidenceTo, setConfidenceTo] = useState(42);
   const [evidenceChecks, setEvidenceChecks] = useState<boolean[]>([false, false, false]);
+  const [committedAt, setCommittedAt] = useState<Date | null>(null);
   const [hoverTip, setHoverTip] = useState<{ text: string; x: number; y: number } | null>(null);
 
   const handleAddAssumption = useCallback(async () => {
@@ -1046,7 +1036,10 @@ export default function ClientRefinePreviewView() {
   }, [isEarlyPhase, nextMove?.detail, evidence.sources]);
 
 
-  const baseConfidence = useMemo(() => confidenceBase(confidence.level), [confidence.level]);
+  const baseConfidence = useMemo(
+    () => (hasHierarchy && displayMojoScore) ? Math.round(displayMojoScore.total_score) : confidenceBase(confidence.level),
+    [hasHierarchy, displayMojoScore, confidence.level],
+  );
 
   const confidenceTarget = useMemo(() => {
     const projected = Number(activeCompany?.projected_score ?? activeCompany?.potential_score ?? 0);
@@ -1141,6 +1134,13 @@ export default function ClientRefinePreviewView() {
   );
   const leadMainRoute = phaseSortedRoutes[0] ?? null;
   const leadMainRationale = leadMainRoute ? (routeRationaleMap.get(leadMainRoute.id) ?? null) : null;
+  const evidenceConditions = useMemo((): string[] => {
+    const wwhtbt = leadMainRoute?.what_would_have_to_be_true;
+    if (Array.isArray(wwhtbt) && wwhtbt.length > 0) {
+      return wwhtbt.slice(0, 5).map((c) => c.condition);
+    }
+    return ["Evidence collected and reviewed"];
+  }, [leadMainRoute]);
   const leadRouteHypothesisRows = useMemo(() => {
     if (!leadMainRationale) return [];
     const linkedIds = new Set(leadMainRationale.matchedHypothesisIds);
@@ -3258,8 +3258,9 @@ export default function ClientRefinePreviewView() {
     setSystemLineOn(false);
     setConfidenceFrom(baseConfidence);
     setConfidenceTo(baseConfidence);
-    setEvidenceChecks([false, false, false]);
-  }, [baseConfidence, clearAsync]);
+    setEvidenceChecks(evidenceConditions.map(() => false));
+    setCommittedAt(null);
+  }, [baseConfidence, clearAsync, evidenceConditions]);
 
   const commitAgree = useCallback(
     (targetOverride?: number, messageOverride?: string) => {
@@ -3267,7 +3268,7 @@ export default function ClientRefinePreviewView() {
       setCommitState("committing");
       setLayer("command");
       setDrawerKey(null);
-      setEvidenceChecks([false, false, false]);
+      setEvidenceChecks(evidenceConditions.map(() => false));
       setConfidenceFrom(baseConfidence);
       setConfidenceTo(baseConfidence);
 
@@ -3275,6 +3276,7 @@ export default function ClientRefinePreviewView() {
 
       typeSystemLine("LOGGING COMMIT · RECOMPUTING", () => {
         animateConfidenceTo(baseConfidence, target, 900, () => {
+          setCommittedAt(new Date());
           setCommitState("committed");
           const message = messageOverride || `CONFIDENCE ${baseConfidence} → ${target} · STAGE ${stageLabel(phase).toUpperCase()} ADVANCING`;
           typeSystemLine(message, () => {
@@ -3291,6 +3293,7 @@ export default function ClientRefinePreviewView() {
       baseConfidence,
       clearAsync,
       confidenceLift,
+      evidenceConditions,
       later,
       phase,
       typeSystemLine,
@@ -3299,14 +3302,15 @@ export default function ClientRefinePreviewView() {
 
   const commitDisagree = useCallback(() => {
     clearAsync();
-    setCommitState("branching");
+    setCommitState("waiting");
     setLayer("command");
     setDrawerKey(null);
-    setEvidenceChecks([false, false, false]);
+    setEvidenceChecks(evidenceConditions.map(() => false));
     setConfidenceFrom(baseConfidence);
     setConfidenceTo(baseConfidence);
-    typeSystemLine("PATH BRANCHED · AWAITING ALTERNATIVE");
-  }, [baseConfidence, clearAsync, typeSystemLine]);
+    const n = evidenceConditions.length;
+    typeSystemLine(`DECISION PAUSED · ${n} CONDITION${n === 1 ? "" : "S"} REQUESTED`);
+  }, [baseConfidence, clearAsync, evidenceConditions, typeSystemLine]);
 
   const commitNeedEvidence = useCallback(() => {
     clearAsync();
@@ -3315,14 +3319,15 @@ export default function ClientRefinePreviewView() {
     setDrawerKey(null);
     setConfidenceFrom(baseConfidence);
     setConfidenceTo(baseConfidence);
-    setEvidenceChecks([false, false, false]);
-    typeSystemLine("DECISION PAUSED · 3 CONDITIONS REQUESTED");
-  }, [baseConfidence, clearAsync, typeSystemLine]);
+    setEvidenceChecks(evidenceConditions.map(() => false));
+    const n = evidenceConditions.length;
+    typeSystemLine(`DECISION PAUSED · ${n} CONDITION${n === 1 ? "" : "S"} REQUESTED`);
+  }, [baseConfidence, clearAsync, evidenceConditions, typeSystemLine]);
 
   const resolveEvidence = useCallback(() => {
     if (commitState !== "waiting") return;
 
-    [0, 1, 2].forEach((index) => {
+    Array.from({ length: evidenceConditions.length }, (_, i) => i).forEach((index) => {
       later(() => {
         setEvidenceChecks((current) => {
           const next = [...current];
@@ -3330,21 +3335,14 @@ export default function ClientRefinePreviewView() {
           return next;
         });
 
-        if (index === 2) {
+        if (index === evidenceConditions.length - 1) {
           later(() => {
             commitAgree(undefined, "EVIDENCE SATISFIED · COMMITTING NEXT MOVE");
           }, 500);
         }
       }, 500 + index * 600);
     });
-  }, [commitAgree, commitState, later]);
-
-  const selectBranch = useCallback(
-    (lift: number) => {
-      commitAgree(baseConfidence + lift, `ALT PATH COMMITTED · +${lift} CONF`);
-    },
-    [baseConfidence, commitAgree],
-  );
+  }, [commitAgree, commitState, evidenceConditions, later]);
 
   const openDrawer = useCallback((key: DrawerKey = "why") => {
     setDrawerKey(key);
@@ -3564,7 +3562,7 @@ export default function ClientRefinePreviewView() {
                       [{toSentence(activeCompany?.name) || "COMPANY"}]
                       <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
                     </button>
-                    <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                    <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
                     {showHeaderSwitcher && (
                       <div className="crpv-co-dropdown" role="listbox">
                         <ul className="crpv-co-list">
@@ -3589,7 +3587,7 @@ export default function ClientRefinePreviewView() {
                     )}
                   </div>
                 ) : (
-                  <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                  <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
                 )}
               </div>
             </header>
@@ -3660,8 +3658,9 @@ export default function ClientRefinePreviewView() {
                             topNeed={topNeed}
                             needCount={needs.length}
                             companyCreatedAt={activeCompany?.created_at}
-                            engagementDay={ENGAGEMENT_DAY}
+                            engagementDay={ENGAGEMENT_DAY ?? undefined}
                             nextTurnOverride={nextTurnOverride}
+                            audienceShort={audienceShort}
                             memberCount={memberCount}
                             onGoToRoutes={goToRoutesPreview}
                             onGoToOpportunities={() => navigate("/opportunities")}
@@ -4234,36 +4233,13 @@ export default function ClientRefinePreviewView() {
               ) : null}
 
               {commitState === "committed" ? (
-                <div className="crpv-commit-stamp">✓ COMMITTED · DAY {ENGAGEMENT_DAY} · 14:22</div>
-              ) : null}
-
-              {commitState === "branching" ? (
-                <div className="crpv-branch-prompt">
-                  <p className="cap">PATH BRANCHED · CHOOSE AN ALTERNATIVE</p>
-                  <h2>Pick the best route and continue.</h2>
-                  <div className="crpv-branch-options">
-                    {BRANCH_OPTIONS.map((option) => (
-                      <button key={option.id} type="button" className="crpv-branch-card" onClick={() => selectBranch(option.lift)}>
-                        <span className="t">{option.title}</span>
-                        <span className="d">{option.description}</span>
-                        <span className="lift">
-                          <span>+{option.lift} CONF</span>
-                          <span>{option.duration}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <div className="crpv-commit-stamp">✓ COMMITTED · DAY {ENGAGEMENT_DAY ?? "—"} · {committedAt ? formatHHmm(committedAt) : "--:--"}</div>
               ) : null}
 
               {commitState === "waiting" ? (
                 <div className="crpv-evidence-prompt">
                   <h4>Evidence conditions requested</h4>
-                  {[
-                    "Interview evidence linked to top need",
-                    "Decision-owner confirmation captured",
-                    "Execution support plan documented",
-                  ].map((label, index) => (
+                  {evidenceConditions.map((label, index) => (
                     <div key={label} className="check">
                       <div className={`box ${evidenceChecks[index] ? "on" : ""}`}>{evidenceChecks[index] ? "✓" : ""}</div>
                       <span className={evidenceChecks[index] ? "done" : ""}>{label}</span>
@@ -4494,7 +4470,7 @@ export default function ClientRefinePreviewView() {
               </div>
               <div className="crpv-narrative-inner">
                 <p className="cap crpv-narrative-cap">
-                  THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY}
+                  THE DECISION, IN FULL · [{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"}
                 </p>
                 {narrativeRows.map((item, i) => (
                   <div key={i} className="step">

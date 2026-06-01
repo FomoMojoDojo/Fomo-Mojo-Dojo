@@ -340,6 +340,128 @@ function StrategicBriefSection({ companyId }: { companyId: string | undefined })
   );
 }
 
+// ── Engagement start date (operator-editable) ─────────────────────────────────
+
+function EngagementStartSection({
+  companyId,
+  currentValue,
+  onSaved,
+}: {
+  companyId: string;
+  currentValue: string | null | undefined;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const currentDate = currentValue ? currentValue.substring(0, 10) : "";
+  const displayDate = currentValue
+    ? new Date(currentValue).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "—";
+
+  function openEdit() {
+    setDraft(currentDate);
+    setEditing(true);
+    setError(null);
+  }
+
+  async function handleSave() {
+    if (!draft) return;
+    setSaving(true);
+    setError(null);
+    const { error: err } = await supabase.from("companies")
+      .update({ engagement_started_at: new Date(draft).toISOString() })
+      .eq("id", companyId);
+    setSaving(false);
+    if (err) {
+      setError(err.message);
+    } else {
+      setEditing(false);
+      onSaved();
+    }
+  }
+
+  function handleCancel() {
+    setEditing(false);
+    setDraft("");
+    setError(null);
+  }
+
+  const unchanged = draft === currentDate;
+
+  return (
+    <section style={{ marginBottom: 36 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
+        <div>
+          <p style={{ fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.13em", color: C.inkFaint, margin: "0 0 2px" }}>
+            Engagement Start
+          </p>
+          <p style={{ fontFamily: C.inter, fontSize: 12, color: C.inkFaint, margin: 0 }}>
+            Sets the DAY counter throughout the workspace
+          </p>
+        </div>
+        {!editing && (
+          <button
+            type="button"
+            onClick={openEdit}
+            style={{ fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.10em", color: C.inkSoft, background: "none", border: `1px solid ${C.line}`, padding: "2px 10px", cursor: "pointer" }}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            type="date"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            max={new Date().toISOString().substring(0, 10)}
+            disabled={saving}
+            style={{
+              fontFamily: C.mono, fontSize: 13, color: C.ink, background: C.canvas,
+              border: `1px solid ${C.line}`, padding: "8px 12px", boxSizing: "border-box",
+            }}
+          />
+          {error && (
+            <p style={{ fontFamily: C.mono, fontSize: 10, color: C.warm, margin: 0 }}>{error}</p>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || unchanged || !draft}
+              style={{
+                fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.10em",
+                color: (saving || unchanged || !draft) ? C.inkFaint : "#fff",
+                background: (saving || unchanged || !draft) ? C.lineSoft : C.ink,
+                border: "none", padding: "5px 14px", cursor: (saving || unchanged || !draft) ? "default" : "pointer",
+              }}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={saving}
+              style={{ fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.10em", color: C.inkSoft, background: "none", border: `1px solid ${C.line}`, padding: "5px 14px", cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ border: `1px solid ${C.line}`, padding: "12px 14px", background: "#fff" }}>
+          <p style={{ fontFamily: C.mono, fontSize: 13, color: C.ink, margin: 0 }}>{displayDate}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Industry vocabulary overrides ─────────────────────────────────────────────
 
 type IndustryVocabState = {
@@ -1174,6 +1296,15 @@ export default function ClientRefinePreviewCompanyView() {
                 )}
               </div>
             </section>
+
+            {/* ── Engagement start date ── */}
+            {companyId && (
+              <EngagementStartSection
+                companyId={companyId}
+                currentValue={activeCompany?.engagement_started_at}
+                onSaved={refetch}
+              />
+            )}
 
             {/* ── Strategic problem brief ── */}
             <StrategicBriefSection companyId={companyId} />

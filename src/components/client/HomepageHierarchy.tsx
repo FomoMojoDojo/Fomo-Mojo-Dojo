@@ -128,10 +128,13 @@ function StrategicCompass({
     <div style={{ marginBottom: 48 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
         <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: T.inkFaint }}>
-          § STANDING · <strong style={{ color: T.ink, fontWeight: 500 }}>{current}</strong>
+          CURRENT · <strong style={{ color: T.ink, fontWeight: 500 }}>{current}</strong>
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: T.inkFaint }}>
+          REACHABLE · <strong style={{ color: T.ink, fontWeight: 500 }}>{reachable}</strong>
         </span>
         <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: T.signal }}>
-          § DESTINATION · <strong style={{ fontWeight: 500 }}>{unlockable}</strong> ◆
+          DESTINATION · <strong style={{ fontWeight: 500 }}>{unlockable}</strong>
         </span>
       </div>
 
@@ -149,8 +152,8 @@ function StrategicCompass({
       {/* DETOUR badge — anchored at current-score position along bar */}
       <div style={{ position: "relative", height: 28, marginTop: 0 }}>
         <div style={{ position: "absolute", left: detourLeft, top: 8, transform: "translateX(-50%)" }}>
-          <span style={{ fontFamily: T.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", color: "#7c5400", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 2, padding: "3px 10px", whiteSpace: "nowrap" }}>
-            DETOUR: {detour}
+          <span style={{ fontFamily: T.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", color: T.inkFaint, whiteSpace: "nowrap" }}>
+            NEXT: {detour}
           </span>
         </div>
       </div>
@@ -167,23 +170,28 @@ function NextTurnBlock({
   action: string; scoreLift: number; isSolo: boolean;
 }) {
   const adapted = adaptTeamLanguage(action, isSolo);
-  // Split into two typographic parts: a plain lead and a signal-colored tail
-  const words = adapted.split(" ");
-  const splitIdx = Math.max(2, Math.ceil(words.length * 0.55));
-  const lead = words.slice(0, splitIdx).join(" ");
-  const tail = words.slice(splitIdx).join(" ");
+  // Split at the first sentence boundary; fall back to 55% word-count ratio
+  const sentenceMatch = adapted.match(/^(.+?[.!?])\s+(.+)$/s);
+  const lead = sentenceMatch ? sentenceMatch[1] : (() => {
+    const words = adapted.split(" ");
+    return words.slice(0, Math.max(2, Math.ceil(words.length * 0.55))).join(" ");
+  })();
+  const tail = sentenceMatch ? sentenceMatch[2] : (() => {
+    const words = adapted.split(" ");
+    return words.slice(Math.max(2, Math.ceil(words.length * 0.55))).join(" ");
+  })();
 
   return (
     <div style={{ marginBottom: 52 }}>
       <p style={{ fontFamily: T.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: T.inkFaint, margin: "0 0 14px" }}>
         THE NEXT TURN
       </p>
-      <p style={{ fontFamily: T.sans, fontSize: 24, fontWeight: 700, color: T.ink, lineHeight: 1.3, margin: "0 0 14px", letterSpacing: "-0.02em", maxWidth: 680 }}>
+      <p style={{ fontFamily: T.sans, fontSize: 60, fontWeight: 700, color: T.ink, lineHeight: 1.12, margin: "0 0 14px", letterSpacing: "-0.03em", maxWidth: 680 }}>
         {lead}{tail ? <> <span style={{ color: T.signal }}>{tail}</span></> : null}
       </p>
       {scoreLift > 0 && (
         <p style={{ fontFamily: T.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: T.signal, margin: 0 }}>
-          +{scoreLift} PTS · ~2–3 WEEKS
+          +{scoreLift} PTS
         </p>
       )}
     </div>
@@ -212,7 +220,7 @@ function SignalSection({
   return (
     <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>
       <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", color: T.inkFaint, textTransform: "uppercase", display: "block", marginBottom: 22 }}>
-        § 02 · SIGNAL
+        02 · SIGNAL
       </span>
 
       {humanized ? (
@@ -274,7 +282,7 @@ function PathingSection({
   return (
     <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>
       <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", color: T.inkFaint, textTransform: "uppercase", display: "block", marginBottom: 22 }}>
-        § 03 · DIRECTIONS
+        03 · ROUTES
       </span>
 
       {directions.length > 0 ? (
@@ -284,7 +292,7 @@ function PathingSection({
             return (
               <div
                 key={dir.id}
-                style={{ display: "flex", alignItems: "baseline", gap: 16, opacity: isLeaning ? 1 : 0.4 }}
+                style={{ display: "flex", alignItems: "baseline", gap: 16 }}
               >
                 <span style={{ fontFamily: T.mono, fontSize: 9, color: isLeaning ? T.signal : T.inkFaint, flexShrink: 0, width: 20 }}>
                   {String(i + 1).padStart(2, "0")}
@@ -293,7 +301,7 @@ function PathingSection({
                   {dir.title}
                 </span>
                 <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: isLeaning ? 500 : 400, color: isLeaning ? T.signal : T.inkFaint, flexShrink: 0 }}>
-                  {dir.signals.total}
+                  {dir.legCount}
                 </span>
               </div>
             );
@@ -308,7 +316,7 @@ function PathingSection({
         onClick={onGoToRoutes}
         style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: T.ink, textDecoration: "underline", textUnderlineOffset: 3, background: "none", border: "none", padding: 0, cursor: "pointer" }}
       >
-        SEE ALL {directions.length} DIRECTIONS →
+        SEE ALL {directions.length} ROUTES →
       </button>
     </div>
   );
@@ -321,11 +329,13 @@ function ContextSection({
   dayCount,
   current,
   unlockable,
+  audienceShort,
 }: {
   foundationStatus: FoundationStatus;
-  dayCount: number;
+  dayCount: number | null;
   current: number;
   unlockable: number;
+  audienceShort?: string | null;
 }) {
   const groundedCount = [
     foundationStatus.positioningSet,
@@ -336,9 +346,10 @@ function ContextSection({
 
   const foundationLabel = groundedCount === 4 ? "MAPPED" : groundedCount >= 2 ? "PARTIAL" : "MINIMAL";
 
+  const audience = audienceShort ?? "the people you serve";
   const narrativeParts: [string, string, string] | null =
     groundedCount === 4
-      ? ["The strategy reads well from inside. The next layer is hearing how cafe operators see it — your foundation is ", "MAPPED", " — that's the starting point for the conversation."]
+      ? [`The strategy reads well from inside. The next layer is hearing how ${audience} see it — your foundation is `, "MAPPED", " — that's the starting point for the conversation."]
       : null;
 
   const narrativePlain =
@@ -351,7 +362,7 @@ function ContextSection({
   return (
     <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>
       <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", color: T.inkFaint, textTransform: "uppercase", display: "block", marginBottom: 22 }}>
-        § 01 · CONTEXT
+        01 · CONTEXT
       </span>
 
       <p style={{ fontFamily: T.sans, fontSize: 15, lineHeight: 1.7, color: T.inkSoft, margin: "0 0 28px", maxWidth: 560 }}>
@@ -363,7 +374,7 @@ function ContextSection({
       <div style={{ display: "flex", gap: 32 }}>
         <div>
           <p style={{ fontFamily: T.mono, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkFaint, margin: "0 0 5px" }}>DAY</p>
-          <p style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 500, color: T.ink, margin: 0 }}>{dayCount}</p>
+          <p style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 500, color: T.ink, margin: 0 }}>{dayCount ?? "—"}</p>
         </div>
         <div>
           <p style={{ fontFamily: T.mono, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkFaint, margin: "0 0 5px" }}>SCORE</p>
@@ -390,9 +401,11 @@ export interface HomepageHierarchyProps {
   topNeed: OdiNeedRow | null;
   needCount: number;
   companyCreatedAt: string | null | undefined;
-  engagementDay?: number;
+  engagementDay?: number | null;
   /** Override the score-derived Next Turn action (e.g. from cascade context). */
   nextTurnOverride?: string;
+  /** Company's own audience noun phrase from odi_market_definitions.job_executor. */
+  audienceShort?: string | null;
   /** Number of active company members — used to adapt team-assuming language. */
   memberCount?: number;
   onGoToRoutes: () => void;
@@ -413,6 +426,7 @@ export function HomepageHierarchy({
   companyCreatedAt,
   engagementDay,
   nextTurnOverride,
+  audienceShort,
   memberCount = 1,
   onGoToRoutes,
   onGoToOpportunities,
@@ -421,7 +435,7 @@ export function HomepageHierarchy({
   const reachable  = computeReachableScore(score);
   const unlockable = computeUnlockableScore(reachable, score);
   const current    = Math.round(score.total_score);
-  const dayCount   = engagementDay ?? deriveDayCount(companyCreatedAt);
+  const dayCount: number | null = engagementDay ?? null;
   const isSolo     = memberCount <= 1;
 
   const state = dominantClaimState
@@ -449,6 +463,7 @@ export function HomepageHierarchy({
           dayCount={dayCount}
           current={current}
           unlockable={unlockable}
+          audienceShort={audienceShort}
         />
 
         <SignalSection
@@ -466,7 +481,7 @@ export function HomepageHierarchy({
         ) : (
           <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>
             <span style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: "0.12em", color: T.inkFaint, textTransform: "uppercase", display: "block", marginBottom: 14 }}>
-              § 03 · DIRECTIONS
+              03 · ROUTES
             </span>
             <p style={{ fontSize: 13, color: T.inkFaint }}>No directions mapped yet.</p>
           </div>

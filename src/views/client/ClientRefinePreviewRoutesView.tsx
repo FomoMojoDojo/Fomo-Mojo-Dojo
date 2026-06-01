@@ -67,6 +67,8 @@ import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/p
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
 import { useRouteProposals, type RouteProposalRow } from "@/hooks/useRouteProposals";
+import { useAuth } from "@/hooks/useAuth";
+import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
 
 // ─── Design tokens (inline-style safe — no CSS var access) ───────────────────
 const R = {
@@ -2279,6 +2281,7 @@ export function DesiredOutcomeBanner({ outcome }: { outcome: DesiredOutcomeRow }
 
 export default function ClientRefinePreviewRoutesView() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 5 });
   const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
@@ -2467,6 +2470,7 @@ export default function ClientRefinePreviewRoutesView() {
           onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
           inboxCount={inboxCount}
           inboxHasNew={inboxNewCount > 0}
+          showTeachingToggle={isAdmin}
         />
         <div className="crpv-ws-content">
           <RoutesOrgPanel
@@ -2516,6 +2520,7 @@ export function RoutesOrgPanel({
   onRouteActivate?: (routeId: string) => void;
 }) {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const [inspectRoute, setInspectRoute]     = useState<RouteRow | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
@@ -2961,6 +2966,14 @@ export function RoutesOrgPanel({
               unlockable={unlockable}
               dominantState={dominantClaimState}
             />
+            <div style={{ marginBottom: 12, marginTop: -16 }}>
+              <SurfaceEducationTrigger
+                surfaceKey="routes"
+                isAdmin={isAdmin}
+                panelTitle="About Routes"
+                slotData={{ route_count: topLevelRoutes.length }}
+              />
+            </div>
             {scoreLift > 0 && (
               <KeystoneStripe action={keystoneAction} scoreLift={scoreLift} />
             )}

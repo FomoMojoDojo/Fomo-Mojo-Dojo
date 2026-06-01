@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { safeLocalStorageGet, safeLocalStorageSet } from '@/lib/safeLocalStorage';
@@ -38,6 +38,7 @@ export interface Company {
   selected_route_id?: string | null;
   selected_route_summary_json?: Record<string, unknown> | null;
   selected_route_updated_at?: string | null;
+  engagement_started_at?: string | null;
 }
 
 interface CompanyCtx {
@@ -73,6 +74,7 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
   selected_route_id: null,
   selected_route_summary_json: null,
   selected_route_updated_at: null,
+  engagement_started_at: null,
 };
 
 function pickDefaultCompanyId(companies: Company[]): string | null {
@@ -85,6 +87,11 @@ function pickDefaultCompanyId(companies: Company[]): string | null {
   return preferred?.id ?? companies[0].id;
 }
 
+function isAbortLikeError(error: { message?: string; details?: string } | null | undefined) {
+  const text = `${String(error?.message || "")} ${String(error?.details || "")}`.toLowerCase();
+  return text.includes("abort") || text.includes("aborted");
+}
+
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const { user, isAdmin, loading: authLoading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -92,6 +99,21 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     safeLocalStorageGet('active_company_id')
   );
   const [loading, setLoading] = useState(true);
+  const pageUnloadingRef = useRef(false);
+
+  useEffect(() => {
+    const markPageUnloading = () => {
+      pageUnloadingRef.current = true;
+    };
+
+    window.addEventListener("pagehide", markPageUnloading);
+    window.addEventListener("beforeunload", markPageUnloading);
+
+    return () => {
+      window.removeEventListener("pagehide", markPageUnloading);
+      window.removeEventListener("beforeunload", markPageUnloading);
+    };
+  }, []);
 
   const setFallbackPublicCompany = useCallback(() => {
     setCompanies([PUBLIC_CAFE_BARRA_FALLBACK]);
@@ -103,7 +125,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
-  const fetchCompanies = useCallback(async () => {
+  const fetchCompanies = useCallback(async (signal?: AbortSignal) => {
     if (authLoading) {
       setLoading(true);
       return;
@@ -116,12 +138,22 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
     const baseSelect =
       "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
-    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at`;
+    const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
 
-    let { data, error } = await supabase
+    let companiesQuery = supabase
       .from("companies")
       .select(extendedSelect)
       .order("created_at", { ascending: true });
+
+    if (signal) {
+      companiesQuery = companiesQuery.abortSignal(signal);
+    }
+
+    let { data, error } = await companiesQuery;
+
+    if (signal?.aborted || pageUnloadingRef.current || isAbortLikeError(error)) {
+      return;
+    }
 
     const missingColumn =
       !!error &&
@@ -130,12 +162,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       );
 
     if (missingColumn) {
-      const fallback = await supabase
+      let fallbackQuery = supabase
         .from("companies")
         .select(baseSelect)
         .order("created_at", { ascending: true });
+      if (signal) {
+        fallbackQuery = fallbackQuery.abortSignal(signal);
+      }
+      const fallback = await fallbackQuery;
       data = (fallback.data ?? []) as any[];
       error = fallback.error;
+      if (signal?.aborted || pageUnloadingRef.current || isAbortLikeError(error)) {
+        return;
+      }
       if (!error) {
         data = (data ?? []).map((row) => ({
           ...row,
@@ -165,7 +204,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, [user, isAdmin, authLoading, setFallbackPublicCompany]);
 
   useEffect(() => {
-    fetchCompanies();
+    const controller = new AbortController();
+    void fetchCompanies(controller.signal);
+    return () => controller.abort();
   }, [fetchCompanies]);
 
   const setActiveCompanyId = (id: string) => {

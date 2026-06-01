@@ -53,6 +53,7 @@ import { baselineOf } from "./workshop/helpers";
 import {
   EvidenceImpactBanner,
   ARTIFACT_TO_TAB,
+  DataQualityMarker,
 } from "./workshop/primitives";
 import { deriveNextBestMove, type EvidenceReadiness } from "@/lib/nextBestMove";
 import { deriveClientAssumptions, deriveClientEvidence } from "@/lib/routeClientNarrative";
@@ -397,6 +398,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const { preferredRun: baselineRun, loading: baselineLoading } = usePublicBaseline(companyId);
   const baseline = baselineOf(baselineRun);
+  const dataQualityFlag = baseline?.data_quality_flag ?? null;
 
   const { landscape: workshopSignalLandscape } = useSignalLandscape(companyId);
   const workshopSignalBasis: SignalBasis | undefined = workshopSignalLandscape ? {
@@ -487,7 +489,7 @@ export default function ClientRefinePreviewWorkshopView() {
     needs,
     error: odiError,
     updateNeedScores,
-  } = useOdiNeeds(companyId, needsRefreshKey);
+  } = useOdiNeeds(companyId, needsRefreshKey, focusedJourneyKey ?? undefined);
 
   const { claims: workshopClaimsMap } = useCompanyClaims(companyId);
   const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
@@ -1179,15 +1181,15 @@ export default function ClientRefinePreviewWorkshopView() {
       setActiveCompanyId(data.id);
       await refetchCompany();
 
-      if (newClientRunBaseline) {
-        if (!sanitizedWebsite) {
-          throw new Error("Website required to run outside-signals baseline.");
-        }
+      if (newClientRunBaseline && sanitizedWebsite) {
         toast.loading(`Running outside signals for ${data.name}…`, { id: "create-client-baseline" });
         await runPublicBaseline(data.id, data.name, sanitizedWebsite);
         toast.success(`Outside signals captured for ${data.name}.`, { id: "create-client-baseline" });
       } else {
         toast.success(`Client created: ${data.name}`);
+        if (!sanitizedWebsite) {
+          setActiveTab("inputs");
+        }
       }
 
       setNewClientName("");
@@ -1553,7 +1555,7 @@ export default function ClientRefinePreviewWorkshopView() {
               disabled={creatingClient}
               onClick={() => void handleCreateClient()}
             >
-              {creatingClient ? "Creating…" : newClientRunBaseline ? "Create + baseline" : "Create client"}
+              {creatingClient ? "Creating…" : (newClientRunBaseline && newClientWebsite.trim()) ? "Create + baseline" : "Create client"}
             </button>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, color: "#46606d", fontSize: 13 }}>
@@ -1644,6 +1646,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
         inboxCount={inboxCount}
         inboxHasNew={inboxNewCount > 0}
+        showTeachingToggle={isAdmin}
       />
       <div className="crpv-ws-content-col">
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", padding: "6px 20px 0", gap: 4 }}>
@@ -1767,39 +1770,6 @@ export default function ClientRefinePreviewWorkshopView() {
               dependenciesCreatedCount={strategicChangeSummary?.debug.dependenciesCreatedCount ?? 0}
             />
           ) : null}
-          {journeyOptions.length > 1 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <span className="cap" style={{ color: "#6e847f" }}>Map</span>
-              <select
-                value={showAllJourneys ? "__all__" : focusedJourneyKey ?? ""}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "__all__") {
-                    setShowAllJourneys(true);
-                    return;
-                  }
-                  setShowAllJourneys(false);
-                  setFocusedJourneyKey(value || null);
-                }}
-                style={{
-                  minWidth: 320,
-                  border: "1px solid #dde6d1",
-                  borderRadius: 6,
-                  background: "#fff",
-                  color: "#233c4b",
-                  fontSize: 13,
-                  padding: "7px 10px",
-                }}
-              >
-                {journeyOptions.map((journey) => (
-                  <option key={journey.key} value={journey.key}>
-                    {journey.title}
-                  </option>
-                ))}
-                <option value="__all__">Show all maps</option>
-              </select>
-            </div>
-          )}
           <JobMapOrgPanel
             steps={filteredJobSteps}
             loading={jobStepsLoading}
@@ -1812,14 +1782,48 @@ export default function ClientRefinePreviewWorkshopView() {
             hasHierarchy={workshopHasHierarchy}
             needs={filteredNeeds}
             headerControls={
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={() => void rerunLocalJobMapSynthesis()}
-                disabled={regeneratingJobMap || jobStepsLoading}
-              >
-                {regeneratingJobMap ? "Generating…" : "Generate Job Map"}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {journeyOptions.length > 1 && (
+                  <select
+                    value={showAllJourneys ? "__all__" : focusedJourneyKey ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__all__") {
+                        setShowAllJourneys(true);
+                        return;
+                      }
+                      setShowAllJourneys(false);
+                      setFocusedJourneyKey(value || null);
+                    }}
+                    style={{
+                      minWidth: 280,
+                      border: "1px solid #dde6d1",
+                      borderRadius: 4,
+                      background: "#fff",
+                      color: "#233c4b",
+                      fontSize: 13,
+                      padding: "5px 10px",
+                      appearance: "auto",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {journeyOptions.map((journey) => (
+                      <option key={journey.key} value={journey.key}>
+                        {journey.title}
+                      </option>
+                    ))}
+                    <option value="__all__">Show all maps</option>
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => void rerunLocalJobMapSynthesis()}
+                  disabled={regeneratingJobMap || jobStepsLoading}
+                >
+                  {regeneratingJobMap ? "Generating…" : "Generate Job Map"}
+                </button>
+              </div>
             }
           />
         </div>
@@ -1849,6 +1853,35 @@ export default function ClientRefinePreviewWorkshopView() {
         </div>
       ) : (
         <div className="crpv-ws-content">
+          {companyId && !baselineLoading && dataQualityFlag?.type === "no_results" && (
+            <div className="crpv-dq-notice">
+              <p className="crpv-dq-notice-prompt">{dataQualityFlag.prompt}</p>
+              <button
+                type="button"
+                className="crpv-dq-notice-cta"
+                onClick={() => setActiveTab("inputs")}
+              >
+                Upload documents
+              </button>
+            </div>
+          )}
+          {companyId && !baselineLoading && !baselineRun && (
+            <div className="crpv-dq-notice">
+              <p className="crpv-dq-notice-prompt">No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.</p>
+              <button
+                type="button"
+                className="crpv-dq-notice-cta"
+                onClick={() => setActiveTab("inputs")}
+              >
+                Upload documents
+              </button>
+            </div>
+          )}
+          {companyId && !baselineLoading && dataQualityFlag && (dataQualityFlag.type === "thin" || dataQualityFlag.type === "ambiguous") && (
+            <div style={{ marginBottom: 8 }}>
+              <DataQualityMarker type={dataQualityFlag.type} prompt={dataQualityFlag.prompt} />
+            </div>
+          )}
           {renderOrgTab()}
         </div>
       )}

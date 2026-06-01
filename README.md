@@ -72,6 +72,24 @@ To connect a domain, navigate to Project > Settings > Domains and click Connect 
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
 
+## Database Safety — READ BEFORE RUNNING ANY RESET
+
+**DO NOT run `supabase db reset --local` directly.** This command destroys all local workspace data including auth accounts (login) with no confirmation and no backup. It has caused two full data-loss incidents on this project.
+
+Use the safe wrapper instead:
+
+```sh
+npm run db:reset:safe    # shows data, creates backup, requires typed confirmation
+npm run db:backup        # back up current data before risky operations
+npm run db:restore       # restore from a backup file
+npm run db:check-destructive  # scan SQL files for unguarded destructive statements
+```
+
+See [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) for full guidance.
+See [docs/RECOVERY_STATUS.md](docs/RECOVERY_STATUS.md) for current workspace recovery state.
+
+---
+
 ## Privacy boundary
 
 This app is currently split into two AI paths:

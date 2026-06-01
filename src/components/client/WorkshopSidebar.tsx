@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
 
 const SIDEBAR_TABS = [
   { key: "routes",      label: "Routes" },
@@ -17,13 +18,26 @@ export function WorkshopSidebar({
   onTabClick,
   onHome,
   onAddClient,
+  onCompany,
+  onInbox,
+  inboxCount = 0,
+  inboxHasNew = false,
+  isHome,
+  showTeachingToggle = false,
 }: {
   activeTab: string | null;
   onTabClick: (tab: SidebarTabKey) => void;
   onHome: () => void;
   onAddClient?: () => void;
+  onCompany?: () => void;
+  onInbox?: () => void;
+  inboxCount?: number;
+  inboxHasNew?: boolean;
+  isHome?: boolean;
+  showTeachingToggle?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const { enabled: teachingMode, toggle: toggleTeaching } = useSurfaceTeachingMode();
 
   return (
     <nav
@@ -42,15 +56,18 @@ export function WorkshopSidebar({
 
       {!collapsed && (
         <>
-          <button
-            type="button"
-            className="crpv-ws-tab crpv-ws-tab-home"
-            onClick={onHome}
-          >
-            ← Home
-          </button>
-
-          <div className="crpv-ws-tab-divider" />
+          {!isHome && (
+            <>
+              <button
+                type="button"
+                className="crpv-ws-tab crpv-ws-tab-home"
+                onClick={onHome}
+              >
+                ← Home
+              </button>
+              <div className="crpv-ws-tab-divider" />
+            </>
+          )}
 
           {SIDEBAR_TABS.map((tab) => (
             <button
@@ -66,6 +83,61 @@ export function WorkshopSidebar({
 
           <div className="crpv-ws-tab-divider crpv-ws-tab-divider-push" />
 
+          {onInbox && (
+            <button
+              type="button"
+              className={`crpv-ws-tab${activeTab === "__inbox__" ? " active" : ""}`}
+              onClick={onInbox}
+              style={{ position: "relative" }}
+            >
+              Inbox
+              {inboxCount > 0 && (
+                <span style={{
+                  position: "absolute",
+                  top: 4,
+                  right: 6,
+                  minWidth: 16,
+                  height: 16,
+                  background: inboxHasNew ? "#c45c00" : "rgba(17,17,17,0.4)",
+                  color: "#fff",
+                  borderRadius: 8,
+                  fontSize: 8,
+                  fontFamily: "monospace",
+                  fontWeight: 700,
+                  letterSpacing: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "0 4px",
+                  lineHeight: 1,
+                }}>
+                  {inboxCount > 99 ? "99+" : inboxCount}
+                </span>
+              )}
+              {inboxHasNew && inboxCount === 0 && (
+                <span style={{
+                  position: "absolute",
+                  top: 6,
+                  right: 8,
+                  width: 6,
+                  height: 6,
+                  background: "#c45c00",
+                  borderRadius: "50%",
+                }} />
+              )}
+            </button>
+          )}
+
+          {onCompany && (
+            <button
+              type="button"
+              className={`crpv-ws-tab${activeTab === "__company__" ? " active" : ""}`}
+              onClick={onCompany}
+            >
+              Company
+            </button>
+          )}
+
           {onAddClient && (
             <button
               type="button"
@@ -73,6 +145,22 @@ export function WorkshopSidebar({
               onClick={onAddClient}
             >
               + Add Client
+            </button>
+          )}
+
+          {showTeachingToggle && (
+            <button
+              type="button"
+              className="crpv-ws-tab"
+              onClick={toggleTeaching}
+              data-teaching-toggle
+              title={teachingMode ? "Collapse educational panels" : "Expand educational panels"}
+              style={{
+                opacity: teachingMode ? 1 : 0.55,
+                fontStyle: teachingMode ? "normal" : "italic",
+              }}
+            >
+              {teachingMode ? "Teaching ✓" : "Teaching"}
             </button>
           )}
         </>
