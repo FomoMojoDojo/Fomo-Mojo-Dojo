@@ -54,6 +54,7 @@ export default function StrategicHypothesesPanel({ companyId }: { companyId: str
   const rows = useMemo(() => {
     const all = data ?? [];
     if (statusFilter === "all") return all;
+    if (statusFilter === "journey") return all.filter((row) => row.hypothesis.journey_key != null);
     return all.filter((row) => row.hypothesis.hypothesis_state === statusFilter);
   }, [data, statusFilter]);
 
@@ -77,6 +78,7 @@ export default function StrategicHypothesesPanel({ companyId }: { companyId: str
             <option value="contradicted">Contradicted</option>
             <option value="reframed">Reframed</option>
             <option value="retired">Retired</option>
+            <option value="journey">Journey hypotheses</option>
           </select>
           <div className="font-mono text-[11px] tracking-[0.06em]" style={{ color: c.muted }}>
             {(data ?? []).length} hypotheses
@@ -121,6 +123,11 @@ export default function StrategicHypothesesPanel({ companyId }: { companyId: str
                         <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                           {row.hypothesis.hypothesis_kind.replace(/_/g, " ")}
                         </span>
+                        {row.hypothesis.journey_key ? (
+                          <span style={{ padding: "2px 7px", borderRadius: 999, border: "1px solid #a3c9f5", background: "#eff6ff", color: "#1d4ed8", fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            {row.hypothesis.journey_key.replace(/_/g, " ")}
+                          </span>
+                        ) : null}
                         {row.hypothesis.topic ? (
                           <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                             {row.hypothesis.topic}

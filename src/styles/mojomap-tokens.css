@@ -1,0 +1,65 @@
+/* ── MojoMap Design System Tokens ─────────────────────────────────────────────
+ * Single source of truth. Import once at the app root.
+ * Components that render inside Radix portals (Sheet, Dialog, Tooltip)
+ * must use the JS constants in src/components/design-system/tokens.ts
+ * because CSS custom properties on :root are not forwarded into portals.
+ */
+
+:root {
+  /* Colors — only three */
+  --canvas: #ffffff;
+  --ink: oklch(0.18 0 0);
+  --signal: oklch(0.69 0.215 35);
+
+  /* Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Font weights */
+  --weight-normal:    400;
+  --weight-medium:    500; /* mono only */
+  --weight-semibold:  600;
+  --weight-bold:      700;
+  --weight-extrabold: 800;
+
+  /* Type scale */
+  --text-xs:   10px; /* eyebrow labels */
+  --text-sm:   13px; /* meta, small body */
+  --text-base: 15px; /* body */
+  --text-lg:   18px; /* H3 / leg titles */
+  --text-xl:   22px; /* keystone statement */
+  --text-2xl:  26px; /* H2 / route titles */
+  --text-3xl:  36px; /* display numerals */
+  --text-4xl:  44px; /* H1 hero */
+
+  /* Ink opacity scale */
+  --ink-8:  oklch(0.18 0 0 / 0.08);
+  --ink-10: oklch(0.18 0 0 / 0.10);
+  --ink-15: oklch(0.18 0 0 / 0.15);
+  --ink-20: oklch(0.18 0 0 / 0.20);
+  --ink-30: oklch(0.18 0 0 / 0.30);
+  --ink-40: oklch(0.18 0 0 / 0.40);
+  --ink-50: oklch(0.18 0 0 / 0.50);
+  --ink-65: oklch(0.18 0 0 / 0.65);
+  --ink-70: oklch(0.18 0 0 / 0.70);
+  --ink-80: oklch(0.18 0 0 / 0.80);
+
+  /* Spacing scale (non-linear ~1.4×) */
+  --sp-1:   6px;
+  --sp-2:  10px;
+  --sp-3:  14px;
+  --sp-4:  18px;
+  --sp-5:  22px;
+  --sp-6:  28px;
+  --sp-7:  36px;
+  --sp-8:  44px;
+  --sp-9:  60px;
+  --sp-10: 72px;
+  --sp-11: 120px;
+
+  /* Animation */
+  --ease-out:   cubic-bezier(0.19, 1, 0.22, 1);
+  --dur-micro:  200ms;
+  --dur-layer:  450ms;
+  --dur-commit: 900ms;
+}

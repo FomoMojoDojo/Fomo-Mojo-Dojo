@@ -285,8 +285,8 @@ function scoreHypothesisMatch(seed: RouteRationaleSeed, row: HypothesisProvenanc
 
 function routeWhyFallback(seed: RouteRationaleSeed) {
   const first = uniqueLines([...(seed.route.why_this_matters_json ?? []), seed.route.short_description], 1)[0];
-  if (first) return `This route rises because ${lowerFirst(stripPeriod(first))}.`;
-  return "This route rises because the current evidence points to a meaningful constraint worth testing.";
+  if (first) return `This direction keeps surfacing because ${lowerFirst(stripPeriod(first))}.`;
+  return "This direction surfaces because the evidence continues to point toward a constraint worth exploring.";
 }
 
 function supportSummary(
@@ -316,7 +316,7 @@ function supportSummary(
   if (routeCentered && strategicCenter?.label) {
     const publicContext =
       strategicCenter.hasMeaningfulDivergence && (identityNarrative?.publicIdentity || strategicCenter.publicContextLabel)
-        ? ` Publicly, the company still reads as ${lowerFirst(identityNarrative?.publicIdentity || strategicCenter.publicContextLabel || "")}, but that is now better treated as context than as the main direction.`
+        ? ` Outside perception reads as ${lowerFirst(identityNarrative?.publicIdentity || strategicCenter.publicContextLabel || "")} — treat this as context, not the main direction.`
         : "";
 
     if (shape.customer > 0) {
@@ -346,7 +346,7 @@ function supportSummary(
   if (shape.organization > 0 && shape.outside > 0) {
     if (center.label && dominantBand === "organization" && normalizeAuthorityPhase(phase) !== "pre_diagnosis") {
       const publicContext = identityNarrative?.publicIdentity
-        ? ` Publicly, the company still reads as ${lowerFirst(identityNarrative.publicIdentity)}, but that is now better treated as context than as the main direction.`
+        ? ` Outside perception reads as ${lowerFirst(identityNarrative.publicIdentity)} — treat this as context, not the main direction.`
         : " Public signals now act more as context than proof.";
       return `Internal strategy is increasingly centered on ${center.label}.${publicContext} Customer proof is still missing.`;
     }
@@ -369,7 +369,7 @@ function supportSummary(
         ? `Public signals are clustering around ${label}, but not enough to treat it as confirmed.`
         : `This is mostly supported by public signals pointing toward ${label}.`;
   }
-  return "The route has some local support, but the broader evidence behind it is still thin.";
+  return "There's some support for this direction, but not enough evidence yet to rely on it.";
 }
 
 function uncertaintySummary(args: {
@@ -432,7 +432,7 @@ function mustBecomeTrueSummary(args: {
 
   if (args.strategicCenter?.label) {
     if (args.strategicCenter.label.includes("operational reliability")) {
-      return "We still need direct customer evidence that operational reliability changes buying confidence.";
+      return "We still need to hear directly from customers whether reliability is what drives their buying decision.";
     }
     if (args.strategicCenter.label.includes("partner operational outcomes")) {
       return "We still need evidence that reducing operator burden changes repeat buying or partner confidence.";
@@ -463,7 +463,7 @@ function couldWeakenSummary(args: {
   themes: Theme[];
 }) {
   if (args.weakeningLines.length > 0) {
-    return `This route weakens if ${lowerFirst(stripPeriod(args.weakeningLines[0]))}.`;
+    return `This direction may weaken if ${lowerFirst(stripPeriod(args.weakeningLines[0]))}.`;
   }
   if (String(args.route.stale_reason || "").trim()) {
     return "If the latest customer-job view keeps shifting, this route may no longer fit the current problem.";
@@ -482,17 +482,17 @@ function couldWeakenSummary(args: {
 
 function movementLabel(value: RouteMovement) {
   if (value === "strengthen") return "Strengthening";
-  if (value === "weaken") return "Weakening";
+  if (value === "weaken") return "Under pressure";
   if (value === "narrow") return "Narrowing";
   if (value === "split") return "Split between two readings";
   return "Still unresolved";
 }
 
 function readinessMeaning(value: RouteReadiness) {
-  if (value === "Commit") return "Strong enough to focus around.";
-  if (value === "Validate") return "Promising path. Needs validation before commitment.";
-  if (value === "Hold") return "Do not pursue until the evidence clears.";
-  return "Worth investigating, not ready to choose.";
+  if (value === "Commit") return "Evidence has built to a point where focusing here is defensible.";
+  if (value === "Validate") return "Confidence has built enough to validate. Not yet safe to commit.";
+  if (value === "Hold") return "Earlier signals are in conflict. Hold until the picture stabilizes.";
+  return "Worth examining further. Not enough has formed yet to narrow direction.";
 }
 
 function determineConfidence(args: {
@@ -610,7 +610,7 @@ function primaryWhy(
     normalizeAuthorityPhase(phase) !== "pre_diagnosis" &&
     routeMatchesCenter(strategicCenter, themes)
   ) {
-    return `This route matters because the emerging strategy appears centered on ${strategicCenter.label}.`;
+    return `This direction keeps surfacing because the emerging strategy appears centered on ${strategicCenter.label}.`;
   }
   const top = [...matched].sort((a, b) => hypothesisAuthorityScore(b, phase) - hypothesisAuthorityScore(a, phase))[0];
   if (!top) return routeWhyFallback(seed);
@@ -618,12 +618,12 @@ function primaryWhy(
     explicitLinks.find((link) => link.hypothesisId === top.hypothesis.id && link.dependencyType !== "contradicts") ?? null;
   const statement = lowerFirst(stripPeriod(top.hypothesis.statement));
   if (leadingLink?.dependencyType === "assumes") {
-    return `This route stays viable if ${statement}.`;
+    return `This direction stays viable if ${statement}.`;
   }
   if (leadingLink?.dependencyType === "constrains") {
-    return `This route stays relevant because ${statement}.`;
+    return `This direction stays relevant because ${statement}.`;
   }
-  return `This route rises because ${statement}.`;
+  return `This direction keeps surfacing because ${statement}.`;
 }
 
 function dependencyRank(type: RouteHypothesisDependency["dependencyType"]) {
@@ -836,4 +836,62 @@ export function buildRouteRationales(args: {
       linkSource: entry.linkSource,
     } satisfies RouteRationale;
   });
+}
+
+// ─── Why leading — comparative rationale for the recommended route ─────────────
+
+function confidenceRankLocal(label: RouteNarrativeConfidence): number {
+  switch (label) {
+    case "Supported by multiple validated signals": return 5;
+    case "Evidence is starting to converge":        return 4;
+    case "Customer validation missing":             return 3;
+    case "Early directional read":                  return 2;
+    case "Still highly uncertain":                  return 1;
+    case "Contradicted by recent evidence":         return 0;
+  }
+}
+
+export function deriveWhyLeading(lead: RouteRationale, all: RouteRationale[]): string {
+  const others = all.filter((r) => r.routeId !== lead.routeId);
+
+  const isOnlyGraphLinked =
+    lead.linkSource === "graph_linked" &&
+    others.every((r) => r.linkSource !== "graph_linked");
+
+  if (isOnlyGraphLinked) {
+    return "This is the only route with a direct connection to the active strategic hypotheses.";
+  }
+
+  const isOnlyCustomerBacked =
+    lead.supportShape.customer > 0 &&
+    others.every((r) => r.supportShape.customer === 0);
+
+  if (isOnlyCustomerBacked) {
+    return "This is the only route currently backed by customer evidence.";
+  }
+
+  const leadRank = confidenceRankLocal(lead.confidenceLabel);
+  const isHighestConfidence = others.every((r) => confidenceRankLocal(r.confidenceLabel) <= leadRank);
+
+  if (isHighestConfidence && leadRank >= 4) {
+    return "Multiple signals from different sources have continued to converge here more than any other option.";
+  }
+
+  const isOnlyStrengthening =
+    lead.movement === "strengthen" &&
+    others.every((r) => r.movement !== "strengthen");
+
+  if (isOnlyStrengthening) {
+    return "This route is gaining signal as others remain unresolved.";
+  }
+
+  const isOnlyCommitReady =
+    lead.readiness === "Commit" &&
+    others.every((r) => r.readiness !== "Commit");
+
+  if (isOnlyCommitReady) {
+    return "This route has the fewest unresolved conditions of any option in the current set.";
+  }
+
+  return "This route continues to carry the strongest available signal given the evidence accumulated so far.";
 }

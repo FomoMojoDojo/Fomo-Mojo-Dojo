@@ -9,6 +9,12 @@ import {
   normalizeToEightCheckpointSpine,
   validateEightCheckpointSpine,
 } from "../_shared/jtbdProcess.ts";
+import {
+  type IndustryStepAnchor,
+  anchorsToPromptBlock,
+  getIndustryStepAnchors,
+  inferStandardMarketCategory,
+} from "../_shared/industryStepAnchors.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -460,7 +466,19 @@ async function callLocalSynthesis(args: {
   website: string;
   selectedJobMaps: SelectedJobMap[];
   contextJson: Record<string, unknown>;
+  industryLabel?: string;
+  industryAnchors?: IndustryStepAnchor | null;
 }) {
+  const industryBlock = args.industryAnchors
+    ? "\n\nIndustry step hypotheses for this company's market category: " +
+      args.industryLabel +
+      ".\n" +
+      "The industry_step_anchors field in the context JSON provides starting hypotheses for each ODI checkpoint. " +
+      "Use these as your initial step labels and refine each label and description to fit this specific company's job executor, market context, and evidence. " +
+      "You may deviate where the company's evidence clearly calls for it, but preserve the ODI job-progression structure:\n" +
+      anchorsToPromptBlock(args.industryAnchors)
+    : "";
+
   const systemText =
     "You are a local JTBD/ODI analyst running only on private local inference. " +
     "Use only the provided context JSON and do not invent external evidence. " +
@@ -473,7 +491,8 @@ async function callLocalSynthesis(args: {
     "Labels must be solution-agnostic, stable over time, and tied to the actual job — not operational phases, implementation stages, or startup workflow. " +
     "Describe what the actor is trying to accomplish, not what the company is doing. " +
     "Use plain language a client can read quickly; avoid consulting jargon, placeholders, and generic filler. " +
-    "For market_definition.market_context, frame around the job executor and their primary goal — who is trying to accomplish what outcome. Do not start with 'Category:' — job-defined framing is preferred.";
+    "For market_definition.market_context, frame around the job executor and their primary goal — who is trying to accomplish what outcome. Do not start with 'Category:' — job-defined framing is preferred." +
+    industryBlock;
 
   const odiCtx = (args.contextJson as Record<string, unknown>)?.odi_context as Record<string, string> | undefined;
   const odiContextBlock = odiCtx && (odiCtx.job_performer || odiCtx.primary_job || odiCtx.desired_outcome)
@@ -871,6 +890,17 @@ Deno.serve(async (req) => {
     const marketDef = asRecord(marketDefRow as Record<string, unknown> | null);
     const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
 
+    const industryLabel = inferStandardMarketCategory(
+      safeText(baseline?.category_archetype),
+      safeText(lensCard?.economic_engine),
+      ...evidenceLedger
+        .slice(0, 18)
+        .map((item) => safeText((item as Record<string, unknown>)?.snippet)),
+    );
+    const industryAnchors: IndustryStepAnchor | null = industryLabel
+      ? getIndustryStepAnchors(industryLabel)
+      : null;
+
     const evidenceContext = {
       // Explicit ODI context — job performer, primary job, desired outcome, recurring challenge
       // These are the four inputs the ODI stage needs to generate a grounded job map
@@ -923,6 +953,8 @@ Deno.serve(async (req) => {
           snippet: safeText((item as Record<string, unknown>)?.snippet),
         }))
         .filter((item) => item.bucket || item.snippet),
+      industry_label: industryLabel || "",
+      industry_step_anchors: industryAnchors || null,
     };
 
     const contextHint = buildContextHint({
@@ -957,6 +989,8 @@ Deno.serve(async (req) => {
         website: safeText((companyRow as Record<string, unknown>)?.website),
         selectedJobMaps: requestedMaps,
         contextJson: evidenceContext,
+        industryLabel: industryLabel || undefined,
+        industryAnchors: industryAnchors || undefined,
       });
     } catch (error) {
       synthesisMode = "fallback";
@@ -973,7 +1007,9 @@ Deno.serve(async (req) => {
       if (!rawJourneyByKey.has(key)) rawJourneyByKey.set(key, obj || {});
     }
 
-    const basis = "Local synthesis from uploaded evidence, company context, and baseline signals.";
+    const basis = industryAnchors
+      ? `industry_anchor:${industryLabel}`
+      : "industry_unresolved";
     const normalizedJourneys: NormalizedJourney[] = requestedMaps.map((map) => {
       const rawJourney = rawJourneyByKey.get(map.journey_key) || null;
       if (isCustomerJourneyKey(map.journey_key)) {
@@ -1081,7 +1117,10 @@ Deno.serve(async (req) => {
         steps: journey.steps,
         sourceRunId,
         sourceLabel: "local_jobmap_synthesis",
-        frameworksUsed: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
+        frameworksUsed: [
+          "JTBD", "ODI", "local_ollama", "local_jobmap_synthesis",
+          ...(industryAnchors ? ["industry_anchored"] : []),
+        ],
         claimTopic: "job",
       });
       stepsInserted += result.insertedStepCount;

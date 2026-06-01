@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import ClientModeNav from "@/components/client-view/ClientModeNav";
 import ClientSignalBars from "@/components/client-view/ClientSignalBars";
 import PageShell from "@/components/layout/PageShell";
@@ -5,11 +6,13 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useHashAnchorScroll } from "@/hooks/useHashAnchorScroll";
 import type { ClientActionSummary } from "@/lib/clientViewModel";
 import { StateBadge } from "@/components/ui/semantic-badges";
+import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
 
 function scoreState(score: number) {
-  if (score >= 75) return { label: "Strong", tone: "served" as const };
-  if (score >= 60) return { label: "Emerging", tone: "monitor" as const };
-  return { label: "At Risk", tone: "gap" as const };
+  if (score >= 75) return { label: "Strong readiness", tone: "served" as const };
+  if (score >= 55) return { label: "Building readiness", tone: "monitor" as const };
+  if (score >= 35) return { label: "Directional readiness", tone: "monitor" as const };
+  return { label: "Fragile readiness", tone: "gap" as const };
 }
 
 type LimiterLabel = "Ownership" | "Proof" | "Alignment" | "Execution";
@@ -66,11 +69,18 @@ export default function ClientScoreView() {
     rerunningAnalysis,
   } = useClientViewData({ actionLimit: 5 });
 
-  const mojoScore = Math.round(Number(activeCompany?.mojo_score ?? 0));
-  const potentialScore = Math.round(Number(activeCompany?.potential_score ?? 0));
-  const projectedScore = Math.round(Number(activeCompany?.projected_score ?? 0));
+  const readiness = useMemo(
+    () => buildReadinessFromCompanySignals({
+      mojoScore:      activeCompany?.mojo_score,
+      evidenceStatus: activeCompany?.evidence_status,
+    }),
+    [activeCompany?.mojo_score, activeCompany?.evidence_status],
+  );
+  const mojoScore      = readiness.currentReadiness;
+  const potentialScore = readiness.nearTermPotential;
+  const projectedScore = readiness.structuralUpside;
   const scoreTone = scoreState(mojoScore);
-  const scoreCeiling = Math.max(mojoScore, potentialScore, projectedScore);
+  const scoreCeiling = readiness.structuralUpside;
   const proofLimited = isProofLimited(activeCompany?.evidence_status);
   const alignmentLimited = isAlignmentLimited(primaryConstraint.title);
   const activeCount = allActions.filter((action) => action.status === "in_progress" || action.status === "done").length;
@@ -167,13 +177,13 @@ export default function ClientScoreView() {
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Baseline {mojoScore}
+                    Current {mojoScore}
                   </span>
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Reachable {potentialScore}
+                    Reachable now {potentialScore}
                   </span>
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Unlockable {projectedScore}
+                    Structural upside {projectedScore}
                   </span>
                 </div>
               </div>

@@ -80,6 +80,31 @@ const HIGH_OPPORTUNITY_THRESHOLD = 10;
 // even if hasPrimaryEvidence is nominally set.
 const WEAK_STEP_EVIDENCE_RATIO = 0.5;
 
+// ── Route-specific action derivation ─────────────────────────────────────────
+
+// Pick the best evidence-derived route to extract a validation action from.
+// Prefers routes with route_insights_json.uncertainty and evidence_derived_79 tag.
+function findLeadInsightRoute(routes: RouteRow[]): RouteRow | null {
+  const withInsights = routes.filter((r) => !!r.route_insights_json?.movement_condition);
+  const evidenceDerived = withInsights.filter(
+    (r) => Array.isArray(r.frameworks_used) && r.frameworks_used.includes("evidence_derived_79"),
+  );
+  const candidates = evidenceDerived.length > 0 ? evidenceDerived : withInsights;
+  return candidates.sort((a, b) => (b.pts_value ?? 0) - (a.pts_value ?? 0))[0] ?? null;
+}
+
+// Extract a specific, first-person test question from movement_condition.
+// "Confidence strengthens when a partner reports X" → "Test whether a partner reports X."
+export function deriveRouteValidationTitle(route: RouteRow): string {
+  const mc = route.route_insights_json?.movement_condition ?? "";
+  const match = mc.match(/strengthens when ([^.]+)/i);
+  if (match) {
+    const condition = match[1].trim().replace(/\.$/, "");
+    return `Test whether ${condition.charAt(0).toLowerCase()}${condition.slice(1)}.`;
+  }
+  return route.title;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // A need is "meaningfully scored" when importance/satisfaction are not both at
@@ -211,10 +236,20 @@ export function deriveNextBestMoveDebug({
 
   // Rule 1: no primary customer research on these needs
   if (customerLayer === "missing") {
+    const leadInsightRoute = findLeadInsightRoute(routes);
+    if (leadInsightRoute) {
+      return build({
+        type: "validate_needs",
+        title: deriveRouteValidationTitle(leadInsightRoute),
+        reason: leadInsightRoute.route_insights_json?.uncertainty ?? "No customer-sourced data covers this route yet.",
+        routeId: leadInsightRoute.id,
+        isHypothesis: selectedRoute != null,
+      });
+    }
     return build({
       type: "validate_needs",
-      title: "Talk to 8–10 customers about what's not working",
-      reason: "We don't yet know where this breaks down in practice.",
+      title: "Gather direct evidence from partner cafes",
+      reason: "Route recommendations are working hypotheses until customer evidence confirms them.",
       isHypothesis: selectedRoute != null,
     });
   }

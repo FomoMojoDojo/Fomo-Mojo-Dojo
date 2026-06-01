@@ -9,13 +9,17 @@ import { useStrategicProblems, type StrategicProblem } from "@/hooks/useStrategi
 import { useStrategicAssumptions, type StrategicAssumption } from "@/hooks/useStrategicAssumptions";
 import { useLatestLocalAlignment } from "@/hooks/useLocalAlignment";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
-import { MetaBadge } from "@/components/ui/semantic-badges";
 import { AreaAlignmentPanel } from "@/components/alignment/AreaAlignmentPanel";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import type { CascadeItem } from "@/lib/types";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
+import { useCompanyClaims, findClaimByTopicAndStatement } from "@/lib/claims/useCompanyClaims";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
+import type { ClaimState } from "@/lib/claimState";
+import { useDerivedTensions } from "@/hooks/useDerivedTensions";
+import TensionBlock from "@/components/tensions/TensionBlock";
 import {
   OUTCOME_LEVEL_META,
   OUTCOME_LEVELS,
@@ -40,23 +44,23 @@ const c = {
   amber: "#FAC846",
 };
 
-function sectionLabel(text: string) {
+function sectionLabel(text: string, opacity = 0.82) {
   return (
     <div
-      className="font-mono text-[10px] uppercase tracking-[0.14em]"
-      style={{ color: c.muted }}
+      className="font-mono text-[11px] uppercase tracking-[0.14em]"
+      style={{ color: c.muted, opacity }}
     >
       {text}
     </div>
   );
 }
 
-function connector() {
+function connector(fragmented = false) {
   return (
-    <div className="flex justify-center py-2">
+    <div className={`flex justify-center ${fragmented ? "py-4" : "py-2"}`}>
       <div className="flex flex-col items-center">
-        <div className="h-5 w-px" style={{ background: c.line }} />
-        <div className="font-sans text-[18px] leading-none" style={{ color: c.amber }}>
+        <div style={{ height: fragmented ? 28 : 20, width: 1, background: fragmented ? c.lineFaint : c.line }} />
+        <div className="font-sans text-[18px] leading-none" style={{ color: fragmented ? c.muted : c.amber, opacity: fragmented ? 0.55 : 1 }}>
           ↓
         </div>
       </div>
@@ -66,11 +70,8 @@ function connector() {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div
-      className="rounded-[24px] border px-6 py-12 text-center"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
-      <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+    <div className="py-8">
+      <p className="font-sans text-[14px]" style={{ color: c.muted }}>
         {message}
       </p>
     </div>
@@ -81,34 +82,53 @@ function NarrativeBlock({
   label,
   text,
   emptyText,
+  coherenceNote,
+  textOpacity = 1,
   saving,
   onAcceptSuggestion,
   onIgnoreSuggestion,
+  sectionPaddingTop = 24,
+  sectionPaddingBottom = 20,
+  claimId,
+  claimState,
 }: {
   label: string;
   text: string;
   emptyText: string;
+  coherenceNote?: string | null;
+  textOpacity?: number;
   saving?: boolean;
   onAcceptSuggestion?: (suggested: string) => void | Promise<void>;
   onIgnoreSuggestion?: (primary: string) => void | Promise<void>;
+  sectionPaddingTop?: number;
+  sectionPaddingBottom?: number;
+  claimId?: string | null;
+  claimState?: ClaimState | null;
 }) {
   const parsed = parseClaritySuggestion(text);
   const renderedText = parsed.primary || emptyText;
 
   return (
-    <section
-      className="rounded-[24px] border px-5 py-5 sm:px-6"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
-      {sectionLabel(label)}
+    <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: sectionPaddingTop, paddingBottom: sectionPaddingBottom }}>
+      <div className="flex items-center gap-2">
+        {sectionLabel(label)}
+        {claimId && claimState && (
+          <ClaimStateBadge state={claimState} claimId={claimId} size="sm" />
+        )}
+      </div>
       <p
         className="mt-3 font-sans text-[15px] leading-[1.9] sm:text-[16px]"
-        style={{ color: c.charcoal }}
+        style={{ color: c.charcoal, opacity: textOpacity }}
       >
         {renderedText}
       </p>
+      {coherenceNote && (
+        <p className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted, opacity: 0.65 }}>
+          · {coherenceNote}
+        </p>
+      )}
       {parsed.suggested ? (
-        <div className="mt-4 rounded-[16px] border px-4 py-3" style={{ borderColor: c.line, background: c.paper }}>
+        <div className="mt-4" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 14, paddingTop: 6, paddingBottom: 6 }}>
           <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
             Suggested clearer version
           </p>
@@ -116,22 +136,22 @@ function NarrativeBlock({
             {parsed.suggested}
           </p>
           {onAcceptSuggestion && onIgnoreSuggestion ? (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={() => onAcceptSuggestion(parsed.suggested!)}
                 disabled={!!saving}
-                className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
-                Accept Suggestion
+                Accept
               </button>
               <button
                 type="button"
                 onClick={() => onIgnoreSuggestion(parsed.primary)}
                 disabled={!!saving}
-                className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 Ignore
               </button>
@@ -156,10 +176,14 @@ function GridSection({
   label,
   items,
   onUpdate,
+  sectionPaddingTop = 32,
+  sectionPaddingBottom = 24,
 }: {
   label: string;
   items: CascadeItem[];
   onUpdate?: (items: CascadeItem[]) => void;
+  sectionPaddingTop?: number;
+  sectionPaddingBottom?: number;
 }) {
   const [newName, setNewName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -192,31 +216,30 @@ function GridSection({
   };
 
   return (
-    <section
-      className="rounded-[24px] border px-5 py-5 sm:px-6"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
+    <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: sectionPaddingTop, paddingBottom: sectionPaddingBottom }}>
       {sectionLabel(label)}
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-0 lg:grid-cols-2 xl:grid-cols-3">
         {items.map((item, index) => {
           const tone = statusTone(item.status);
+          const nameWeight = item.status === "strong" ? 600 : item.status === "developing" ? 500 : 400;
+          const nameOpacity = item.status === "strong" ? 1 : item.status === "developing" ? 0.82 : 0.58;
+          const nameStyle = item.status === "gap" ? "italic" : "normal";
           return (
             <div
               key={`${label}-${item.name}-${index}`}
-              className="rounded-[18px] border p-4"
-              style={{ borderColor: c.line, background: c.paper }}
+              style={{ borderLeft: `2px solid ${tone.dot}40`, paddingLeft: 14, paddingTop: 12, paddingBottom: 12, marginRight: 24, marginBottom: 8 }}
             >
-              <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+              <p className="font-sans text-[14px] leading-[1.45]" style={{ color: c.charcoal, fontWeight: nameWeight, opacity: nameOpacity, fontStyle: nameStyle }}>
                 {item.name}
               </p>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-2 flex items-center gap-3">
                 {onUpdate ? (
                   <button
                     type="button"
                     onClick={() => cycleStatus(index)}
                     disabled={saving}
-                    className="rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:opacity-70 disabled:opacity-40"
-                    style={{ color: tone.dot, borderColor: tone.dot, background: "transparent" }}
+                    className="font-mono text-[10px] uppercase tracking-[0.1em] hover:opacity-70 disabled:opacity-40"
+                    style={{ color: tone.dot, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                     title="Click to cycle status"
                   >
                     {tone.text}
@@ -231,8 +254,8 @@ function GridSection({
                     type="button"
                     onClick={() => removeItem(index)}
                     disabled={saving}
-                    className="ml-auto rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] disabled:opacity-40"
-                    style={{ borderColor: c.line, color: c.muted, background: "#fff" }}
+                    className="ml-auto font-mono text-[9px] uppercase tracking-[0.08em] underline disabled:opacity-40"
+                    style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                   >
                     Remove
                   </button>
@@ -251,7 +274,7 @@ function GridSection({
       {onUpdate ? (
         <div className="mt-4 flex gap-2">
           <input
-            className="flex-1 rounded-[12px] border px-3 py-2 font-sans text-[13px] outline-none"
+            className="flex-1 border px-3 py-2 font-sans text-[13px] outline-none"
             style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
             value={newName}
             placeholder={`Add ${label.toLowerCase()}…`}
@@ -262,7 +285,7 @@ function GridSection({
             type="button"
             onClick={addItem}
             disabled={saving || !newName.trim()}
-            className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-40"
+            className="border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-40"
             style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
           >
             {saving ? "Saving…" : "Add"}
@@ -468,10 +491,30 @@ function UnifiedAssumptionCard({
     : item.createdAt
       ? new Date(item.createdAt).toLocaleDateString()
       : "Not edited yet";
+
+  const itemAgeDays = (() => {
+    const ms = Number.isFinite(Date.parse(item.updatedAt ?? ""))
+      ? Date.parse(item.updatedAt!)
+      : Number.isFinite(Date.parse(item.createdAt ?? ""))
+        ? Date.parse(item.createdAt!)
+        : 0;
+    return ms > 0 ? Math.max(0, (Date.now() - ms) / 86_400_000) : 0;
+  })();
+  const assumptionPadding =
+    item.status === "untested"   ? 17 :
+    item.status === "validating" ? 15 :
+    item.status === "validated"  ? 12 : 10;
+  const evidenceBaseOpacity =
+    item.status === "validated" ? (itemAgeDays > 60 ? 0.82 : 0.95) :
+    item.status === "validating" ? 0.82 :
+    item.status === "invalidated" ? (itemAgeDays < 7 ? 0.50 : 0.42) : 0.68;
+
   return (
     <div
-      className="rounded-[18px] border p-4"
-      style={{ borderColor: c.line, background: c.paper }}
+      style={{
+        borderLeft: `${item.status === "validated" ? 3 : 2}px solid ${item.statusTone.fg}${item.status === "validated" ? "90" : item.status === "untested" ? "45" : item.status === "invalidated" ? "28" : "60"}`,
+        paddingLeft: 14, paddingTop: assumptionPadding, paddingBottom: assumptionPadding, marginBottom: 2,
+      }}
     >
       {isEditing && editDraft ? (
         <div className="space-y-3">
@@ -536,7 +579,7 @@ function UnifiedAssumptionCard({
               <option value="invalidated">Invalidated</option>
             </select>
           </div>
-          <div className="rounded-[10px] border px-2.5 py-2" style={{ borderColor: c.lineFaint, background: "#F9FBF7" }}>
+          <div style={{ borderLeft: `2px solid ${c.lineFaint}`, paddingLeft: 10, paddingTop: 6, paddingBottom: 6 }}>
             <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
               Created: {createdLabel}
             </p>
@@ -568,42 +611,54 @@ function UnifiedAssumptionCard({
       ) : (
         <>
           <div className="flex items-start justify-between gap-3">
-            <p className="font-sans text-[15px] leading-[1.5]" style={{ color: c.charcoal }}>
+            <p className="font-sans text-[14px] leading-[1.55]" style={{
+              color: c.charcoal,
+              fontWeight: item.status === "validated" ? 500 : 400,
+              opacity: item.status === "validated" ? 1 : item.status === "validating" ? 0.88 : item.status === "invalidated" ? 0.5 : 0.75,
+              fontStyle: item.status === "invalidated" ? "italic" : "normal",
+            }}>
               {item.assumption}
             </p>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">
               <span
-                className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                style={{ borderColor: originStyle.border, background: originStyle.bg, color: originStyle.fg }}
+                className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ color: originStyle.fg }}
               >
                 {originStyle.label}
               </span>
               {sourceStyle ? (
                 <span
-                  className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                  style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
+                  className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                  style={{ color: sourceStyle.fg }}
                 >
                   {sourceLabel(item.source!)}
                 </span>
               ) : null}
               <span
-                className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                style={{ borderColor: item.statusTone.border, background: item.statusTone.bg, color: item.statusTone.fg }}
+                className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ color: item.statusTone.fg }}
               >
                 {item.statusLabel}
               </span>
               <button
                 type="button"
                 onClick={onEdit}
-                className="rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                className="font-mono text-[9px] uppercase tracking-[0.08em] underline"
+                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 Edit
               </button>
             </div>
           </div>
-          <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{ color: c.secondary }}>
-            {item.evidence ? `Evidence needed: ${item.evidence}` : "Evidence needed: not defined yet."}
+          <p className="mt-2 font-sans text-[12px] leading-[1.55]" style={{
+            color: c.secondary,
+            opacity: evidenceBaseOpacity,
+          }}>
+            {item.status === "validated" || item.status === "invalidated"
+              ? (item.evidence ? `Evidence: ${item.evidence}` : "Evidence: not recorded.")
+              : item.status === "validating"
+                ? (item.evidence ? `Evidence in progress: ${item.evidence}` : "Evidence in progress: not yet defined.")
+                : (item.evidence ? `Evidence needed: ${item.evidence}` : "Evidence needed: not defined yet.")}
           </p>
         </>
       )}
@@ -827,10 +882,7 @@ function OutcomeForm({
 
       {/* Live sentence preview */}
       {preview ? (
-        <div
-          className="rounded-[14px] border px-4 py-3"
-          style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}
-        >
+        <div style={{ borderLeft: `2px solid ${c.teal}`, paddingLeft: 14, paddingTop: 6, paddingBottom: 6 }}>
           <p
             className="font-mono text-[10px] uppercase tracking-[0.1em]"
             style={{ color: c.teal }}
@@ -912,6 +964,19 @@ export default function StrategyView() {
     areaScoresJson: activeCompany?.area_scores_json,
     evidenceStatus: activeCompany?.evidence_status,
   });
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const cascadeClaims = useMemo(() => ({
+    winning_aspiration: findClaimByTopicAndStatement(claimsMap, "strategy", item?.winning_aspiration),
+    where_to_play:      findClaimByTopicAndStatement(claimsMap, "strategy", item?.where_to_play),
+    how_to_win:         findClaimByTopicAndStatement(claimsMap, "strategy", item?.how_to_win),
+  }), [claimsMap, item?.winning_aspiration, item?.where_to_play, item?.how_to_win]);
+  // ── Strategic tensions ───────────────────────────────────────────────────
+  const { forContext: tensionsForContext } = useDerivedTensions({
+    cascade: item ?? null,
+    sourceSignals,
+  });
+  const strategyTensions = tensionsForContext("strategy", 3);
+
   // ── Outcome editor state ─────────────────────────────────────────────────
   const [outcomeFormOpen, setOutcomeFormOpen] = useState(false);
   const [editingOutcomeId, setEditingOutcomeId] = useState<string | null>(null);
@@ -1204,6 +1269,21 @@ export default function StrategyView() {
     [unifiedAssumptions],
   );
 
+  const capabilityGapCount = useMemo(
+    () => (item?.capabilities ?? []).filter((cap) => cap.status === "gap").length,
+    [item?.capabilities],
+  );
+
+  const focusProblemAgeDays = useMemo(() => {
+    if (!currentFocusProblem) return 0;
+    const ms = Number.isFinite(Date.parse(currentFocusProblem.problem.updated_at))
+      ? Date.parse(currentFocusProblem.problem.updated_at)
+      : Number.isFinite(Date.parse(currentFocusProblem.problem.created_at))
+        ? Date.parse(currentFocusProblem.problem.created_at)
+        : 0;
+    return ms > 0 ? Math.max(0, (Date.now() - ms) / 86_400_000) : 0;
+  }, [currentFocusProblem]);
+
   const filteredUnifiedAssumptions = useMemo(() => {
     if (assumptionViewFilter === "generated") {
       return unifiedAssumptions.filter((assumption) => assumption.origin === "generated");
@@ -1341,7 +1421,7 @@ export default function StrategyView() {
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-screen strategic-surface"
       style={{
         background: c.bg,
         backgroundImage:
@@ -1350,23 +1430,22 @@ export default function StrategyView() {
     >
       <TopNav />
 
-      <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
+      <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-4 sm:px-6 md:px-8">
         <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
-        <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1">
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {activeCompany?.name || "No company selected"}
-              </div>
-              <h1 className="mt-2 font-sans text-[34px] font-semibold" style={{ color: c.charcoal }}>
-                Strategy Cascade
-              </h1>
-              <p className="mojo-under-title max-w-3xl font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
-                A good strategy is a set of reinforcing choices. This cascade shows the current
-                strategic logic from aspiration through capabilities, management systems, and the
-                assumptions that still need proof.
+        <div className="mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9298B5" }}>
+                Direction · {activeCompany?.name || "No company selected"} · Directional coherence
               </p>
+              <Link
+                to="/routes"
+                className="font-mono text-[10px] uppercase tracking-[0.1em]"
+                style={{ color: "#6a9e94", textDecoration: "underline", opacity: 0.7 }}
+              >
+                ← Commitment Review
+              </Link>
             </div>
             {item && (
               <button
@@ -1375,7 +1454,7 @@ export default function StrategyView() {
                 className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] underline"
                 style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
-                Inspect strategy →
+                Inspect →
               </button>
             )}
           </div>
@@ -1392,37 +1471,110 @@ export default function StrategyView() {
         {!activeCompany?.id ? (
           <EmptyState message="Select a company to view its strategy cascade." />
         ) : (
-          <div className="space-y-1">
-            <section
-              className="rounded-[24px] border px-5 py-5 sm:px-6"
-              style={{ borderColor: c.line, background: c.panel }}
-            >
+          <div className="space-y-0">
+            {item?.winning_aspiration && (() => {
+              const hasWhere = Boolean(item.where_to_play);
+              const hasHow   = Boolean(item.how_to_win);
+              const stratHeadline =
+                hasWhere && hasHow ? "Strategy cascade holds across all core dimensions."
+                : hasWhere || hasHow ? "Strategic direction is defined — full cascade keeps reaching for coherence."
+                : "Winning aspiration is set — direction and method remain open.";
+              const stratContext = hasWhere && hasHow
+                ? String(item.where_to_play ?? "").split(/\n/).filter(Boolean)[0]?.slice(0, 160) || ""
+                : "Complete the where-to-play and how-to-win dimensions to lock in the full cascade.";
+              return (
+                <section style={{ paddingBottom: openProblemsCount > 0 ? 16 : 22, marginBottom: 4, borderBottom: `2px solid ${c.line}` }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: c.muted }}>
+                    Strategy cascade · <span style={{ color: hasWhere && hasHow ? c.teal : c.muted }}>{hasWhere && hasHow ? "settled" : "settling"}</span>
+                  </p>
+                  <h2 className="mt-3 font-sans font-semibold leading-[1.25] max-w-3xl" style={{ fontSize: 36, color: c.charcoal }}>
+                    {stratHeadline}
+                  </h2>
+                  {stratContext && (
+                    <p className="mt-2 font-sans text-[14px] leading-[1.55] max-w-2xl" style={{ color: c.secondary }}>
+                      {stratContext}
+                    </p>
+                  )}
+                  <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted, opacity: 0.7 }}>
+                    Org capability signals: {sourceSignals.hasCompanyEvidence ? "active" : "incomplete"} · Research: {sourceSignals.hasPrimaryEvidence ? "active" : "none"}
+                  </p>
+                  {openProblemsCount > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${c.line}`, color: c.muted }}>
+                        {openProblemsCount} open {openProblemsCount === 1 ? "problem" : "problems"}
+                      </span>
+                    </div>
+                  )}
+                  <div className="mt-4" style={{ borderLeft: `3px solid ${c.teal}`, paddingLeft: 14 }}>
+                    <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.teal }}>Winning aspiration</p>
+                    <p className="font-sans text-[17px] font-semibold leading-[1.4] max-w-3xl" style={{ color: c.charcoal }}>
+                      {item.winning_aspiration}
+                    </p>
+                  </div>
+                  {(hasWhere || hasHow) && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 max-w-3xl">
+                      {item.where_to_play && (
+                        <div style={{ borderLeft: `2px solid ${c.lineFaint}`, paddingLeft: 12 }}>
+                          <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>Where to play</p>
+                          <p className="font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
+                            {String(item.where_to_play).split(/\n/).filter(Boolean)[0] || String(item.where_to_play).slice(0, 120)}
+                          </p>
+                        </div>
+                      )}
+                      {item.how_to_win && (
+                        <div style={{
+                          borderLeft: `2px solid ${c.lineFaint}`,
+                          paddingLeft: 12,
+                          opacity: capabilityGapCount > 0 ? 0.82 : 1,
+                        }}>
+                          <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                            How to win{capabilityGapCount > 0 ? " — capability gaps remain" : ""}
+                          </p>
+                          <p className="font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
+                            {String(item.how_to_win).split(/\n/).filter(Boolean)[0] || String(item.how_to_win).slice(0, 120)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
+
+            {strategyTensions.length > 0 && (
+              <section style={{ borderTop: `1px solid ${c.lineFaint}`, paddingTop: 16, paddingBottom: 16 }}>
+                <TensionBlock tensions={strategyTensions} context="strategy" />
+              </section>
+            )}
+
+            <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: 32, paddingBottom: 24 }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  {sectionLabel("Client-Stated Strategic Problem(s)")}
-                  <p className="mt-2.5 max-w-4xl font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
-                    Capture the strategic problems in the client&apos;s own words, then narrow to one priority problem
-                    for this cycle using evidence. Problems stay open while they are still shaping active choices.
+                  {sectionLabel("Problems in Play")}
+                  <p className="mt-2 max-w-4xl font-sans text-[13px] mojo-desc" style={{ color: c.muted }}>
+                    Problems actively shaping decisions. One focus problem at a time — reconcile when evidence resolves or reframes it.
                   </p>
                 </div>
-                <MetaBadge>{openProblemsCount} open</MetaBadge>
+                <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted, opacity: 0.7 }}>
+                  {openProblemsCount} open
+                </span>
               </div>
-              <div className="mt-4 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+              <div className="mt-4" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 14, paddingTop: 8, paddingBottom: 8, opacity: 0.82 }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.75 }}>
                   What reconciliation means
                 </p>
-                <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                <p className="mt-1.5 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
                   <span className="font-semibold" style={{ color: c.charcoal }}>Open (In play):</span> this problem is
                   still unresolved and should influence strategy decisions now.
                 </p>
-                <p className="mt-1.5 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                <p className="mt-1 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
                   <span className="font-semibold" style={{ color: c.charcoal }}>Reconciled (Closed):</span> evidence has
                   resolved, reframed, or merged this problem for now. You can reopen it any time if new evidence shows up.
                 </p>
               </div>
               {currentFocusProblem ? (
-                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                <div className="mt-4" style={{ borderLeft: `2px solid ${c.teal}`, paddingLeft: 14, paddingTop: focusProblemAgeDays > 45 ? 20 : 16, paddingBottom: focusProblemAgeDays > 45 ? 20 : 16 }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.10em]" style={{ color: c.teal }}>
                     Current focus problem (evidence-led)
                   </p>
                   <p className="mt-2 font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
@@ -1436,16 +1588,16 @@ export default function StrategyView() {
                     {currentFocusProblem.whyNow}.
                   </p>
                   <p className="mt-1 font-sans text-[12px] leading-[1.65]" style={{ color: c.secondary }}>
-                    <span className="font-mono text-[10px] uppercase tracking-[0.08em]">Decision ask:</span>{" "}
+                    <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ opacity: 0.65 }}>The ask:</span>{" "}
                     {currentFocusProblem.decisionAsk}
                   </p>
                 </div>
               ) : (
-                <div className="mt-3 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
+                <div className="mt-4" style={{ borderLeft: `2px solid ${c.lineFaint}`, paddingLeft: 14, paddingTop: 8, paddingBottom: 8 }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.75 }}>
                     Current focus problem (evidence-led)
                   </p>
-                  <p className="mt-2 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
+                  <p className="mt-1.5 font-sans text-[13px] leading-[1.65]" style={{ color: c.secondary }}>
                     Add at least one open strategic problem to identify the single problem we should focus on first.
                   </p>
                 </div>
@@ -1457,21 +1609,21 @@ export default function StrategyView() {
                 </p>
               ) : (
                 <>
-                  <div className="mt-4 rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
-                      Add Strategic Problem
+                  <div className="mt-5" style={{ borderTop: `1px solid ${c.lineFaint}`, paddingTop: 16 }}>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.10em]" style={{ color: c.muted, opacity: 0.6 }}>
+                      Record a problem
                     </p>
                     <textarea
-                      className="mt-3 w-full rounded-[14px] border px-3 py-2 font-sans text-[14px] outline-none"
+                      className="mt-3 w-full border px-3 py-2 font-sans text-[14px] outline-none"
                       style={{ borderColor: c.line, background: "#fff", color: c.charcoal }}
                       rows={3}
                       value={newProblemText}
                       placeholder="Example: We are not clear which audience and category to prioritize for growth."
                       onChange={(event) => setNewProblemText(event.target.value)}
                     />
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
                       <select
-                        className="rounded-md border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
+                        className="border px-2 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
                         style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
                         value={newProblemSource}
                         onChange={(event) => setNewProblemSource(event.target.value as StrategicProblem["source"])}
@@ -1486,10 +1638,10 @@ export default function StrategyView() {
                         type="button"
                         onClick={handleAddStrategicProblem}
                         disabled={strategicProblemSaving}
-                        className="rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] disabled:opacity-50"
-                        style={{ borderColor: c.line, color: c.secondary, background: c.paper }}
+                        className="border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] disabled:opacity-50"
+                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
                       >
-                        {strategicProblemSaving ? "Saving..." : "Add Problem"}
+                        {strategicProblemSaving ? "Saving..." : "Record"}
                       </button>
                     </div>
                   </div>
@@ -1517,35 +1669,36 @@ export default function StrategyView() {
                         return (
                           <div
                             key={problem.id}
-                            className="rounded-[18px] border p-4 transition-opacity"
                             style={{
-                              borderColor: c.line,
-                              background: inactive ? "#F8FAF6" : c.paper,
-                              opacity: inactive ? 0.64 : 1,
+                              borderLeft: `2px solid ${statusStyle.fg}60`,
+                              paddingLeft: 14,
+                              paddingTop: inactive ? 8 : 14,
+                              paddingBottom: inactive ? 8 : 14,
+                              opacity: inactive ? 0.58 : 1,
                             }}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <p className="font-sans text-[15px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
+                                <p className="font-sans text-[14px] font-semibold leading-[1.4]" style={{ color: c.charcoal }}>
                                   {title}
                                 </p>
                                 <p className="mt-1 font-sans text-[13px] leading-[1.6]" style={{ color: c.secondary }}>
                                   {summary}
                                 </p>
                                 <p className="mt-1 font-sans text-[12px] leading-[1.55]" style={{ color: c.muted }}>
-                                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]">Decision ask:</span>{" "}
+                                  <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ opacity: 0.65 }}>The ask:</span>{" "}
                                   {decisionAsk}
                                 </p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <div className="mt-2 flex flex-wrap items-center gap-3">
                                   <span
-                                    className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                                    style={{ borderColor: sourceStyle.border, background: sourceStyle.bg, color: sourceStyle.fg }}
+                                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                                    style={{ color: sourceStyle.fg }}
                                   >
                                     {sourceLabel(problem.source)}
                                   </span>
                                   <span
-                                    className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                                    style={{ borderColor: statusStyle.border, background: statusStyle.bg, color: statusStyle.fg }}
+                                    className="font-mono text-[9px] uppercase tracking-[0.08em]"
+                                    style={{ color: statusStyle.fg }}
                                   >
                                     {statusStyle.label}
                                   </span>
@@ -1554,8 +1707,8 @@ export default function StrategyView() {
                               <button
                                 type="button"
                                 onClick={() => toggleProblemExpanded(problem.id)}
-                                className="shrink-0 rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]"
-                                style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                className="shrink-0 font-mono text-[9px] uppercase tracking-[0.08em] underline"
+                                style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                               >
                                 {expanded ? "Collapse" : "Expand"}
                               </button>
@@ -1641,10 +1794,7 @@ export default function StrategyView() {
               )}
             </section>
 
-            <section
-              className="mt-5 rounded-[24px] border px-5 py-5 sm:px-6"
-              style={{ borderColor: c.line, background: c.panel }}
-            >
+            <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: 22, paddingBottom: 24 }}>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
                   {sectionLabel("Desired Outcomes")}
@@ -1652,7 +1802,7 @@ export default function StrategyView() {
                     Outcomes anchor opportunities, route choices, and score movement. Each outcome must describe a measurable change in behavior — who does what differently, and when.
                   </p>
                 </div>
-                <MetaBadge>{managedOutcomes.length} outcome{managedOutcomes.length !== 1 ? "s" : ""}</MetaBadge>
+                <span className="font-mono text-[9px] uppercase tracking-[0.12em]" style={{ color: c.muted, opacity: 0.55 }}>{managedOutcomes.length} {managedOutcomes.length !== 1 ? "outcomes" : "outcome"}</span>
               </div>
 
               {/* Outcome list */}
@@ -1686,28 +1836,30 @@ export default function StrategyView() {
                           )}
                         </div>
 
-                        <div className="space-y-3">
+                        <div className="space-y-0">
                           {items.map((outcome) => {
                             const structured = isFullyStructured(outcome);
                             const isEditing = outcomeFormOpen && editingOutcomeId === outcome.id;
                             return (
                               <div
                                 key={outcome.id}
-                                className="rounded-[18px] border p-4"
-                                style={{ borderColor: isEditing ? c.teal : c.line, background: c.paper }}
+                                style={{
+                                  borderLeft: `2px solid ${isEditing ? c.teal : levelAccent}60`,
+                                  paddingLeft: 14, paddingTop: 14, paddingBottom: 14, marginBottom: 8,
+                                }}
                               >
                                 {isEditing ? null : (
                                   <>
                                     {/* Statement + edit button */}
                                     <div className="flex items-start justify-between gap-3">
-                                      <p className="font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                                      <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
                                         {outcome.outcome_statement || outcome.outcome_title}
                                       </p>
                                       <button
                                         type="button"
                                         onClick={() => openEditOutcome(outcome.id)}
-                                        className="shrink-0 rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] hover:opacity-70 transition-opacity"
-                                        style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                        className="shrink-0 font-mono text-[9px] uppercase tracking-[0.08em] underline hover:opacity-70"
+                                        style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                                       >
                                         Edit
                                       </button>
@@ -1715,22 +1867,22 @@ export default function StrategyView() {
 
                                     {/* Behavior-first breakdown */}
                                     {(outcome.actor || outcome.action) ? (
-                                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      <div className="mt-2 flex flex-wrap gap-4">
                                         {outcome.actor && (
-                                          <div className="rounded-[12px] border px-3 py-2" style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}>
-                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Actor</p>
+                                          <div>
+                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted, opacity: 0.75 }}>Actor</p>
                                             <p className="font-sans text-[13px] mt-0.5" style={{ color: c.charcoal }}>{outcome.actor}</p>
                                           </div>
                                         )}
                                         {outcome.action && (
-                                          <div className="rounded-[12px] border px-3 py-2" style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}>
-                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>Action (observable)</p>
+                                          <div>
+                                            <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted, opacity: 0.75 }}>Action</p>
                                             <p className="font-sans text-[13px] mt-0.5" style={{ color: c.charcoal }}>{outcome.action}</p>
                                           </div>
                                         )}
                                       </div>
                                     ) : (
-                                      <div className="mt-2 rounded-[10px] border px-3 py-2" style={{ borderColor: "#FFD1B4", background: "#FFF5EE" }}>
+                                      <div className="mt-2" style={{ borderLeft: `2px solid ${c.coral}60`, paddingLeft: 10 }}>
                                         <p className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral }}>Behavior-first rule not met</p>
                                         <p className="font-sans text-[12px] mt-0.5" style={{ color: c.secondary }}>
                                           Add Actor and Action to anchor this outcome to observable behavior.
@@ -1739,7 +1891,7 @@ export default function StrategyView() {
                                     )}
 
                                     {/* Detail */}
-                                    <div className="mt-3 space-y-1">
+                                    <div className="mt-2 space-y-1">
                                       <p className="font-sans text-[12px]" style={{ color: c.secondary }}>
                                         <span className="font-semibold" style={{ color: c.charcoal }}>Leading indicator:</span>{" "}
                                         {outcome.leading_indicator || outcome.metric || "—"}
@@ -1758,24 +1910,18 @@ export default function StrategyView() {
                                       )}
                                     </div>
 
-                                    {/* Badges */}
-                                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                                      {structured ? (
-                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: "#BDD8CF", background: "#EEF6E7", color: c.teal }}>
-                                          Behavior-first ✓
-                                        </span>
-                                      ) : (
-                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: "#FFD1B4", background: "#FFF5EE", color: c.coral }}>
-                                          Incomplete
-                                        </span>
-                                      )}
+                                    {/* Status tags */}
+                                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                                      <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: structured ? c.teal : c.coral }}>
+                                        {structured ? "Behavior-first ✓" : "Incomplete"}
+                                      </span>
                                       {outcome.is_primary && (
-                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: c.line, background: "#FAFBF8", color: c.muted }}>
+                                        <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                                           Primary anchor
                                         </span>
                                       )}
                                       {outcome.confidence != null && (
-                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em]" style={{ borderColor: c.line, background: "#FAFBF8", color: c.muted }}>
+                                        <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
                                           Confidence {outcome.confidence}/100
                                         </span>
                                       )}
@@ -1808,10 +1954,10 @@ export default function StrategyView() {
               {/* Add form */}
               {outcomeFormOpen && !editingOutcomeId && (
                 <div
-                  className="rounded-[18px] border p-4 mb-4"
-                  style={{ borderColor: c.teal, background: c.paper }}
+                  className="mb-4"
+                  style={{ borderLeft: `2px solid ${c.teal}`, paddingLeft: 14, paddingTop: 12, paddingBottom: 12 }}
                 >
-                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: c.teal }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.10em] mb-3" style={{ color: c.teal }}>
                     New outcome
                   </p>
                   <OutcomeForm
@@ -1831,8 +1977,8 @@ export default function StrategyView() {
                 <button
                   type="button"
                   onClick={openAddOutcome}
-                  className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] hover:opacity-70 transition-opacity"
-                  style={{ borderColor: c.line, color: c.secondary, background: c.paper }}
+                  className="font-mono text-[11px] uppercase tracking-[0.08em] underline hover:opacity-70"
+                  style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   <span>+</span>
                   <span>Add Outcome</span>
@@ -1861,20 +2007,17 @@ export default function StrategyView() {
             ) : error ? (
               <EmptyState message={`Failed to load strategy cascade: ${error}`} />
             ) : !item ? (
-              <div
-                className="rounded-[24px] border px-6 py-10 text-center"
-                style={{ borderColor: c.line, background: c.panel }}
-              >
-                <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+              <div className="py-8">
+                <p className="font-sans text-[14px]" style={{ color: c.muted }}>
                   No strategy cascade yet.
                 </p>
-                <p className="mt-2 font-sans text-[13px]" style={{ color: c.muted }}>
+                <p className="mt-1 font-sans text-[13px]" style={{ color: c.muted }}>
                   Run AI Research from the Admin panel to generate the full cascade.
                 </p>
                 <Link
                   to="/admin/companies"
-                  className="mt-4 inline-block rounded-md border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors hover:bg-black/5"
-                  style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                  className="mt-3 inline-block font-mono text-[11px] uppercase tracking-[0.08em] underline"
+                  style={{ color: c.teal }}
                 >
                   Go to Admin → Companies
                 </Link>
@@ -1886,6 +2029,10 @@ export default function StrategyView() {
                   text={item.winning_aspiration}
                   emptyText="No winning aspiration generated yet."
                   saving={savingField === "winning_aspiration"}
+                  sectionPaddingTop={36}
+                  sectionPaddingBottom={32}
+                  claimId={cascadeClaims.winning_aspiration?.id ?? null}
+                  claimState={cascadeClaims.winning_aspiration?.state ?? null}
                   onAcceptSuggestion={(suggested) =>
                     applyClaritySuggestion("winning_aspiration", suggested, "accept")
                   }
@@ -1894,14 +2041,18 @@ export default function StrategyView() {
                   }
                 />
 
-                {connector()}
+                {connector(capabilityGapCount > 0)}
 
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-x-10 gap-y-0 lg:grid-cols-[56%_44%]">
                   <NarrativeBlock
                     label="Where To Play"
                     text={item.where_to_play}
                     emptyText="No where-to-play definition generated yet."
                     saving={savingField === "where_to_play"}
+                    sectionPaddingTop={20}
+                    sectionPaddingBottom={14}
+                    claimId={cascadeClaims.where_to_play?.id ?? null}
+                    claimState={cascadeClaims.where_to_play?.state ?? null}
                     onAcceptSuggestion={(suggested) =>
                       applyClaritySuggestion("where_to_play", suggested, "accept")
                     }
@@ -1913,7 +2064,13 @@ export default function StrategyView() {
                     label="How To Win"
                     text={item.how_to_win}
                     emptyText="No how-to-win logic generated yet."
+                    coherenceNote={capabilityGapCount > 0 ? `${capabilityGapCount} required ${capabilityGapCount === 1 ? "capability gap remains" : "capability gaps remain"} unresolved` : null}
+                    textOpacity={capabilityGapCount > 0 ? 0.84 : 1}
                     saving={savingField === "how_to_win"}
+                    sectionPaddingTop={20}
+                    sectionPaddingBottom={14}
+                    claimId={cascadeClaims.how_to_win?.id ?? null}
+                    claimState={cascadeClaims.how_to_win?.state ?? null}
                     onAcceptSuggestion={(suggested) =>
                       applyClaritySuggestion("how_to_win", suggested, "accept")
                     }
@@ -1923,11 +2080,12 @@ export default function StrategyView() {
                   />
                 </div>
 
-                {connector()}
+                {connector(capabilityGapCount > 0)}
 
                 <GridSection
                   label="Required Capabilities"
                   items={item.capabilities}
+                  sectionPaddingTop={32 + Math.min(capabilityGapCount * 4, 16)}
                   onUpdate={async (updated) => {
                     try {
                       await updateListField("capabilities_json", updated);
@@ -1942,6 +2100,8 @@ export default function StrategyView() {
                 <GridSection
                   label="Management Systems"
                   items={item.management_systems}
+                  sectionPaddingTop={18}
+                  sectionPaddingBottom={12}
                   onUpdate={async (updated) => {
                     try {
                       await updateListField("management_systems_json", updated);
@@ -1953,31 +2113,24 @@ export default function StrategyView() {
 
                 {connector()}
 
-                <section
-                  className="rounded-[24px] border px-5 py-5 sm:px-6"
-                  style={{ borderColor: c.line, background: c.panel }}
-                >
+                <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: 32, paddingBottom: 24 }}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      {sectionLabel("Assumptions Snapshot")}
-                      <p className="mt-3 max-w-4xl font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
-                        Generated assumptions and submitted assumptions are shown together here so we can track them in one place.
+                      {sectionLabel("Assumptions Snapshot", 0.72)}
+                      <p className="mt-2 max-w-4xl font-sans text-[13px] leading-[1.7]" style={{ color: c.muted }}>
+                        Research-generated and team-submitted assumptions in one view. Validate or invalidate to sharpen the strategy signal.
                       </p>
                     </div>
-                    <MetaBadge>{openAssumptionsCount} needing validation</MetaBadge>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted, opacity: 0.6 }}>
+                      {openAssumptionsCount} untested
+                    </span>
                   </div>
 
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <div className="mt-4 flex flex-wrap items-center gap-5" style={{ borderBottom: `1px solid ${c.lineFaint}`, paddingBottom: 0 }}>
                     {([
-                      { key: "all", label: `All (${unifiedAssumptions.length})` },
-                      {
-                        key: "generated",
-                        label: `Generated (${unifiedAssumptions.filter((assumption) => assumption.origin === "generated").length})`,
-                      },
-                      {
-                        key: "submitted",
-                        label: `Submitted (${unifiedAssumptions.filter((assumption) => assumption.origin === "submitted").length})`,
-                      },
+                      { key: "all", label: "All" },
+                      { key: "generated", label: "Research-generated" },
+                      { key: "submitted", label: "Team-submitted" },
                     ] as Array<{ key: AssumptionViewFilter; label: string }>).map((filter) => {
                       const selected = assumptionViewFilter === filter.key;
                       return (
@@ -1985,11 +2138,15 @@ export default function StrategyView() {
                           key={filter.key}
                           type="button"
                           onClick={() => setAssumptionViewFilter(filter.key)}
-                          className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
+                          className="font-mono text-[9px] uppercase tracking-[0.1em]"
                           style={{
-                            borderColor: selected ? c.teal : c.line,
-                            background: selected ? "#EEF6E7" : "#fff",
-                            color: selected ? c.teal : c.secondary,
+                            paddingBottom: 8,
+                            borderBottomWidth: selected ? 1 : 0,
+                            borderBottomStyle: "solid",
+                            borderBottomColor: c.teal,
+                            color: selected ? c.teal : c.muted,
+                            opacity: selected ? 1 : 0.72,
+                            background: "none", border: "none", borderBottom: selected ? `1px solid ${c.teal}` : "1px solid transparent", cursor: "pointer", padding: "0 0 8px 0",
                           }}
                         >
                           {filter.label}
@@ -2039,8 +2196,8 @@ export default function StrategyView() {
                     <button
                       type="button"
                       onClick={() => setAssumptionsEditorOpen((open) => !open)}
-                      className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
-                      style={{ borderColor: c.line, color: c.secondary, background: c.paper }}
+                      className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                      style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                     >
                       <span>{assumptionsEditorOpen ? "Hide Add Assumption" : "Add Assumption"}</span>
                       <span>{assumptionsEditorOpen ? "−" : "+"}</span>
@@ -2054,7 +2211,7 @@ export default function StrategyView() {
                           </p>
                         ) : (
                           <>
-                            <div className="rounded-[18px] border p-4" style={{ borderColor: c.line, background: c.paper }}>
+                            <div style={{ borderTop: `1px solid ${c.lineFaint}`, paddingTop: 16 }}>
                               <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: c.muted }}>
                                 Add Assumption
                               </p>
@@ -2068,8 +2225,8 @@ export default function StrategyView() {
                               />
                               {suggestedEvidenceForNewAssumption ? (
                                 <div
-                                  className="mt-3 rounded-[14px] border px-3 py-2"
-                                  style={{ borderColor: c.lineFaint, background: "#F7FAF5" }}
+                                  className="mt-3"
+                                  style={{ borderLeft: `2px solid ${c.lineFaint}`, paddingLeft: 12, paddingTop: 8, paddingBottom: 8 }}
                                 >
                                   <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
                                     Suggested Evidence Needed
@@ -2080,8 +2237,8 @@ export default function StrategyView() {
                                   <button
                                     type="button"
                                     onClick={() => setNewAssumptionNote(suggestedEvidenceForNewAssumption)}
-                                    className="mt-2 rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]"
-                                    style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                                    className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                                    style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                                   >
                                     Use Suggestion
                                   </button>

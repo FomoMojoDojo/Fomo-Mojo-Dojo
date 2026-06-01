@@ -1428,6 +1428,12 @@ async function callOpenAI(opts: {
     : new Error(String(lastModelError || "OpenAI call failed after retries and model fallback."));
 }
 
+const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous", string> = {
+  no_results: "No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.",
+  thin: "Public evidence is too thin to infer a complete baseline. Upload internal documents to improve signal quality.",
+  ambiguous: "Search results don't clearly match this company. Verify the company name and domain, or upload internal documents to supplement.",
+};
+
 function buildInsufficientResult(args: {
   companyName: string;
   website: string;
@@ -1435,14 +1441,19 @@ function buildInsufficientResult(args: {
   variants: string[];
   reason: string;
   debug: Record<string, any>;
+  qualityType: "no_results" | "thin";
 }) {
-  const { companyName, website, domain, variants, reason, debug } = args;
+  const { companyName, website, domain, variants, reason, debug, qualityType } = args;
 
   return {
     status: "insufficient_public_evidence",
     reason,
     company: { name: companyName, website, domain, variants },
     debug,
+    data_quality_flag: {
+      type: qualityType,
+      prompt: QUALITY_PROMPTS[qualityType],
+    },
     category_archetype: "unknown",
     lens_card: {
       primary_buyer: "unknown",
@@ -1497,6 +1508,10 @@ function buildAmbiguousResult(args: {
     company: { name: companyName, website, domain, variants },
     debug,
     closest_sources,
+    data_quality_flag: {
+      type: "ambiguous" as const,
+      prompt: QUALITY_PROMPTS.ambiguous,
+    },
     category_archetype: "unknown",
     lens_card: {
       primary_buyer: "unknown",
@@ -2002,6 +2017,7 @@ Deno.serve(async (req) => {
         website,
         domain,
         variants,
+        qualityType: "no_results",
         reason: "No public sources returned by search; website crawl also failed or too thin.",
         debug: {
           queryA,
@@ -2083,6 +2099,7 @@ Deno.serve(async (req) => {
         website,
         domain,
         variants,
+        qualityType: "thin",
         reason: "All matching public sources were filtered out by source controls.",
         debug: {
           queryA,
@@ -2411,6 +2428,7 @@ Deno.serve(async (req) => {
         website,
         domain,
         variants,
+        qualityType: "thin",
         reason: "Not enough extractable evidence (need at least 2 sources with meaningful text).",
         debug: {
           queryA,
@@ -2504,10 +2522,13 @@ Deno.serve(async (req) => {
         source_type: String(entry.source_type || "profile_or_company_page").trim(),
         snippet: String(entry.snippet || "").trim(),
       }));
-    const resultWithDiscoveredSources = mergeDiscoveredEvidenceIntoLedger({
-      result: typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {},
-      discoveredEvidence: discoveredProfileEvidence,
-    });
+    const resultWithDiscoveredSources = {
+      ...mergeDiscoveredEvidenceIntoLedger({
+        result: typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {},
+        discoveredEvidence: discoveredProfileEvidence,
+      }),
+      status: "ok" as const,
+    };
 
     const { data: inserted, error: insErr } = await supabase
       .from("public_baseline_runs")

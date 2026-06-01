@@ -146,7 +146,9 @@ export async function rebuildStrategicHypothesesForCompany(args: {
   const claimsById = new Map(claims.map((claim) => [claim.id, claim]));
   const existing = (existingRes.data ?? []) as StrategicHypothesis[];
   const existingByKey = new Map(existing.map((row) => [row.hypothesis_key, row]));
-  const activeUnmatched = new Map(existing.filter((row) => row.is_active).map((row) => [row.id, row]));
+  // Journey hypotheses (journey_key IS NOT NULL) are not claim-derived and must
+  // never be retired or reframed by the claim-rebuild sweep.
+  const activeUnmatched = new Map(existing.filter((row) => row.is_active && !row.journey_key).map((row) => [row.id, row]));
   const processedHypothesisIds = new Set<string>();
   const dependencyPayload: DependencyTarget[] = [];
 

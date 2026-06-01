@@ -6,15 +6,15 @@ const BASE_IMPACT_BY_INPUT_KEY: Record<string, number> = {
   "val-prop": 7.0,
   "target-aud": 6.0,
   "market-cat": 7.0,
-  "program-model": 6.0,
-  "needs-assessment": 5.0,
-  "outcome-data": 6.0,
-  "referral-map": 5.5,
+  "operating-model": 6.0,
+  "customer-research": 5.0,
+  "outcome-evidence": 6.0,
+  "acquisition-map": 5.5,
   "brand-narrative": 5.0,
   "channel-strat": 5.5,
-  "donor-retention": 4.5,
-  "grant-pipeline": 4.5,
-  "family-satisfaction": 4.0,
+  "retention-signals": 4.5,
+  "demand-pipeline": 4.5,
+  "customer-signals": 4.0,
 };
 
 export function getInputBaseImpact(inputKey: string): number {

@@ -46,7 +46,7 @@ export function StateBadge({ tone, children }: { tone: StateTone | string; child
 
 export function MetaBadge({ children }: { children: ReactNode }) {
   return (
-    <span className={`${baseClass} border-[#d8e1de] bg-white px-2.5 py-1 text-[10px] text-t-primary`}>
+    <span className="inline-flex items-center font-mono uppercase tracking-[0.09em] text-[9.5px]" style={{ color: "#6E847F" }}>
       {children}
     </span>
   );
@@ -54,11 +54,9 @@ export function MetaBadge({ children }: { children: ReactNode }) {
 
 export function ScoreChip({ label, value }: { label: string; value: number | null | undefined }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-[#d8e1de] bg-white px-2.5 py-1 font-sans text-[10px] text-t-primary">
-      <span className="mr-1 uppercase tracking-[0.1em] text-forest">
-        {label}
-      </span>
-      <span className="font-bold">{value ?? "—"}</span>
+    <span className="inline-flex items-center gap-1 font-mono text-[9.5px]" style={{ color: "#6E847F" }}>
+      <span className="uppercase tracking-[0.1em]">{label}</span>
+      <span className="font-semibold" style={{ color: "#233C4B" }}>{value ?? "—"}</span>
     </span>
   );
 }

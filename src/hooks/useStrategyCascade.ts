@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { StrategyCascade, CascadeAssumption, CascadeItem } from "@/lib/types";
+import { captureBaseline } from "@/lib/baselineCapture";
 
 type StrategyCascadeRow = {
   id: string;
@@ -73,9 +74,10 @@ function mapRow(row: StrategyCascadeRow): StrategyCascade {
   };
 }
 
-export function useStrategyCascade(companyId?: string) {
+export function useStrategyCascade(companyId?: string, refreshKey = 0) {
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<StrategyCascade | null>(null);
+  const [cascadeId, setCascadeId] = useState<string | null>(null);
   const [frameworksUsed, setFrameworksUsed] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [savingField, setSavingField] = useState<"winning_aspiration" | "where_to_play" | "how_to_win" | null>(null);
@@ -83,6 +85,7 @@ export function useStrategyCascade(companyId?: string) {
   useEffect(() => {
     if (!companyId) {
       setItem(null);
+      setCascadeId(null);
       setError(null);
       setLoading(false);
       return;
@@ -101,6 +104,8 @@ export function useStrategyCascade(companyId?: string) {
           "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
         )
         .eq("company_id", companyId)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (cancelled) return;
@@ -121,6 +126,7 @@ export function useStrategyCascade(companyId?: string) {
       } else {
         const row = data as StrategyCascadeRow | null;
         setItem(row ? mapRow(row) : null);
+        setCascadeId(row?.id ?? null);
         setFrameworksUsed(Array.isArray(row?.frameworks_used) ? row.frameworks_used : []);
       }
 
@@ -130,19 +136,24 @@ export function useStrategyCascade(companyId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, refreshKey]);
 
   async function updateNarrativeField(
     field: "winning_aspiration" | "where_to_play" | "how_to_win",
     value: string,
+    opts?: { isManualInline?: boolean },
   ) {
     if (!companyId) throw new Error("Select a company first.");
 
     setSavingField(field);
     try {
+      const patch: Record<string, unknown> = { [field]: String(value || "").trim() };
+      if (opts?.isManualInline) patch.source = "manual_inline";
+
       const { data, error } = await supabase
         .from("strategy_cascades")
-        .update({ [field]: String(value || "").trim() })
+        .update(patch)
         .eq("company_id", companyId)
         .select(
           "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
@@ -153,13 +164,15 @@ export function useStrategyCascade(companyId?: string) {
         throw new Error(error.message || "Failed to update strategy narrative.");
       }
 
-      if (data) {
-        setItem(mapRow(data as StrategyCascadeRow));
+      const row = data as StrategyCascadeRow | null;
+      if (row) {
+        setItem(mapRow(row));
+        setCascadeId(row.id);
+        if (opts?.isManualInline) {
+          await captureBaseline(companyId, "cascade", row.id);
+        }
       } else if (item) {
-        setItem({
-          ...item,
-          [field]: String(value || "").trim(),
-        });
+        setItem({ ...item, [field]: String(value || "").trim() });
       }
     } finally {
       setSavingField(null);
@@ -195,5 +208,5 @@ export function useStrategyCascade(companyId?: string) {
     }
   }
 
-  return { loading, item, frameworksUsed, error, savingField, updateNarrativeField, updateListField };
+  return { loading, item, cascadeId, frameworksUsed, error, savingField, updateNarrativeField, updateListField };
 }

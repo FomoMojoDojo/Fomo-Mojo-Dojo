@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import PositioningInspectPanel from "./PositioningInspectPanel";
@@ -15,6 +16,11 @@ import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNot
 import type { InputItem, PositioningCanvas, StrategyCascade } from "@/lib/types";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { parseClaritySuggestion } from "@/lib/text/claritySuggestion";
+import { useCompanyClaims, findClaimByTopicAndStatement } from "@/lib/claims/useCompanyClaims";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
+import type { ClaimState } from "@/lib/claimState";
+import { useDerivedTensions } from "@/hooks/useDerivedTensions";
+import TensionBlock from "@/components/tensions/TensionBlock";
 import {
   evaluatePositioningStrength,
   getCategoryHighlightWords,
@@ -206,7 +212,7 @@ function sectionLabel(text: string) {
   return (
     <div
       className="font-mono text-[10px] uppercase tracking-[0.14em]"
-      style={{ color: c.muted }}
+      style={{ color: c.muted, opacity: 0.82 }}
     >
       {text}
     </div>
@@ -223,11 +229,8 @@ function splitBullets(text: string | undefined) {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div
-      className="rounded-[24px] border px-6 py-12 text-center"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
-      <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
+    <div className="py-8 text-center">
+      <p className="font-sans text-[13px]" style={{ color: c.muted }}>
         {message}
       </p>
     </div>
@@ -249,7 +252,7 @@ function SuggestionActions({
   if (!parsed.suggested) return null;
 
   return (
-    <div className="mt-3 rounded-[14px] border px-3 py-2.5" style={{ borderColor: c.line, background: c.paper }}>
+    <div className="mt-3" style={{ borderLeft: `2px solid ${c.line}`, paddingLeft: 12, paddingTop: 8, paddingBottom: 8 }}>
       <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
         Suggested clearer version
       </p>
@@ -257,13 +260,13 @@ function SuggestionActions({
         {parsed.suggested}
       </p>
       {onAccept && onIgnore ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <div className="mt-2.5 flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => onAccept(parsed.suggested!)}
             disabled={!!saving}
-            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+            className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+            style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
           >
             Accept Suggestion
           </button>
@@ -271,8 +274,8 @@ function SuggestionActions({
             type="button"
             onClick={() => onIgnore(parsed.primary)}
             disabled={!!saving}
-            className="rounded-md border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] disabled:opacity-50"
-            style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+            className="font-mono text-[10px] uppercase tracking-[0.08em] underline disabled:opacity-50"
+            style={{ color: c.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
           >
             Ignore
           </button>
@@ -386,20 +389,21 @@ function OptionCard({
   const parsedDetail = parseClaritySuggestion(detail);
   const hasHL = highlightWords && highlightWords.length > 0 && highlightTooltip;
   return (
-    <div
-      className="rounded-[18px] border p-4"
-      style={{
-        borderColor: highlighted ? accent : c.line,
-        background: c.paper,
-        boxShadow: highlighted ? `inset 3px 0 0 ${accent}` : "none",
-      }}
-    >
-      <p className="font-sans text-[15px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+    <div style={{ paddingTop: highlighted ? 14 : 6, paddingBottom: highlighted ? 16 : 10 }}>
+      <p
+        className="font-sans leading-[1.45]"
+        style={{
+          fontSize: highlighted ? 15 : 13,
+          fontWeight: highlighted ? 600 : 400,
+          color: highlighted ? c.charcoal : c.secondary,
+        }}
+      >
+        {highlighted && <span style={{ color: accent, marginRight: 6 }}>·</span>}
         {hasHL
           ? <InlineHighlight text={title} words={highlightWords!} tooltip={highlightTooltip!} />
           : title}
       </p>
-      <p className="mojo-under-title font-sans text-[12px] leading-[1.45]" style={{ color: c.secondary }}>
+      <p className="mojo-under-title font-sans text-[12px] leading-[1.5]" style={{ color: c.muted, paddingLeft: highlighted ? 14 : 0, opacity: highlighted ? 1 : 0.82 }}>
         {parsedDetail.primary || detail}
       </p>
       <SuggestionActions
@@ -427,21 +431,23 @@ function AlternativesBlock({
 }) {
   if (Array.isArray(items) && items.length > 0) {
     return (
-      <div className="space-y-3">
+      <div>
         {items.map((item, index) => (
-          <OptionCard
-            key={item.id || `alt-${index}`}
-            title={item.name}
-            detail={item.description || "Needs stronger validation from buyer interviews or market research."}
-            accent={META.competitive_alternatives.accent}
-            onAcceptSuggestion={
-              onAcceptSuggestion ? (suggested) => onAcceptSuggestion(index, suggested) : undefined
-            }
-            onIgnoreSuggestion={
-              onIgnoreSuggestion ? (primary) => onIgnoreSuggestion(index, primary) : undefined
-            }
-            saving={saving}
-          />
+          <div key={item.id || `alt-${index}`} style={{ marginBottom: index === 0 ? 22 : index === 1 ? 8 : 0 }}>
+            <OptionCard
+              title={item.name}
+              detail={item.description || "Needs stronger validation from buyer interviews or market research."}
+              accent={META.competitive_alternatives.accent}
+              highlighted={index === 0}
+              onAcceptSuggestion={
+                onAcceptSuggestion ? (suggested) => onAcceptSuggestion(index, suggested) : undefined
+              }
+              onIgnoreSuggestion={
+                onIgnoreSuggestion ? (primary) => onIgnoreSuggestion(index, primary) : undefined
+              }
+              saving={saving}
+            />
+          </div>
         ))}
       </div>
     );
@@ -500,7 +506,7 @@ function AttributesBlock({
 
   if (Array.isArray(items) && items.length > 0) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-0">
         {items.map((item, index) => (
           <OptionCard
             key={item.id || `attr-${index}`}
@@ -564,12 +570,12 @@ function SourcePill({ tier, compact = false }: { tier: SourceTier; compact?: boo
 
   return (
     <span
-      className={`inline-flex items-center rounded-full border font-sans ${compact ? "px-2.5 py-1 text-[10px]" : "px-3 py-1.5 text-[11px]"}`}
-      style={{ background: meta.bg, color: meta.fg, borderColor: meta.border }}
+      className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+      style={{ color: meta.fg }}
       title={meta.short}
     >
-      <Icon className="mr-1.5 h-3.5 w-3.5" />
-      <span className="uppercase tracking-[0.08em]">{meta.label}</span>
+      <Icon className="h-3 w-3" />
+      {meta.label}
     </span>
   );
 }
@@ -592,11 +598,11 @@ function QualityPill({
 
   return (
     <span
-      className="inline-flex items-center rounded-full border px-3 py-1.5 font-sans text-[11px]"
-      style={{ background: style.bg, color: style.fg, borderColor: style.border }}
+      className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em]"
+      style={{ color: style.fg }}
     >
-      <Icon className="mr-1.5 h-3.5 w-3.5" />
-      <span className="uppercase tracking-[0.08em]">{label}</span>
+      <Icon className="h-3 w-3" />
+      {label}
     </span>
   );
 }
@@ -814,37 +820,59 @@ function CanvasSection({
   sourceTier,
   input,
   children,
+  size = "normal",
+  claimId,
+  claimState,
 }: {
   section: CanvasKey;
   sourceTier: SourceTier;
   input: InputItem | null;
   children?: React.ReactNode;
+  size?: "large" | "normal";
+  claimId?: string | null;
+  claimState?: ClaimState | null;
 }) {
   const meta = META[section];
+  const headingSize = size === "large" ? 30 : 22;
+  const padTop = size === "large" ? 40 : 24;
+  const padBottom = size === "large" ? 32 : 20;
+  const contentOpacity =
+    sourceTier === "implemented_tested" ? 1
+    : sourceTier === "evidence"         ? 0.96
+    : sourceTier === "company"          ? 0.91
+    : 0.84;
 
   return (
-    <section
-      className="rounded-[24px] border p-5 sm:p-6"
-      style={{ borderColor: c.line, background: c.panel }}
-    >
+    <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: padTop, paddingBottom: padBottom }}>
       <div className="flex items-start justify-between gap-3">
-        {sectionLabel(meta.eyebrow)}
+        <div>
+          <div className="font-mono text-[9px] uppercase tracking-[0.12em]" style={{ color: c.muted, opacity: 0.75 }}>
+            {meta.eyebrow}
+          </div>
+          <div className="flex items-center gap-2">
+            <h2 className="mt-1 font-sans font-semibold leading-[1.1]" style={{ fontSize: headingSize, color: c.charcoal }}>
+              {meta.title}
+            </h2>
+            {claimId && claimState && (
+              <div className="mt-1">
+                <ClaimStateBadge state={claimState} claimId={claimId} size="sm" />
+              </div>
+            )}
+          </div>
+        </div>
         <SourcePill tier={sourceTier} compact />
       </div>
-      <h2 className="mt-3 font-sans text-[30px] font-semibold" style={{ color: c.charcoal }}>
-        {meta.title}
-      </h2>
-      <p className="mojo-under-title font-sans text-[14px] mojo-desc" style={{ color: c.secondary }}>
+      <p className="mt-1.5 font-sans text-[13px] leading-[1.55]" style={{ color: c.muted }}>
         {meta.subtitle}
       </p>
 
-      <div className="mt-5">
+      <div className="mt-5" style={{ opacity: contentOpacity }}>
         {children ?? (
           <>
-            <p className="font-sans text-[17px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+            <p className="font-sans text-[16px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
               {input?.input_label || "Not set"}
             </p>
-            <p className="mt-2.5 font-sans text-[14px] leading-[1.5]" style={{ color: c.secondary }}>
+            <p className="mt-2 font-sans text-[14px] leading-[1.5]" style={{ color: c.secondary }}>
               {input?.description || `No ${meta.title.toLowerCase()} detail has been generated yet.`}
             </p>
           </>
@@ -900,6 +928,12 @@ export default function PositioningView() {
     inputsOverride: inputs,
     evidenceStatus: activeCompany?.evidence_status,
   });
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const canvasClaims = useMemo(() => ({
+    value_for_customer: findClaimByTopicAndStatement(claimsMap, "positioning", canvas.value_for_customer),
+    market_category:    findClaimByTopicAndStatement(claimsMap, "positioning", canvas.market_category),
+    best_fit_customers: findClaimByTopicAndStatement(claimsMap, "positioning", canvas.best_fit_customers),
+  }), [claimsMap, canvas.value_for_customer, canvas.market_category, canvas.best_fit_customers]);
   const alignment = computeStrategyAlignment(canvas, strategyCascade);
 
   const sectionTiers: Record<PositioningSectionKey, SourceTier> = {
@@ -951,6 +985,14 @@ export default function PositioningView() {
   });
   const { data: localAlignment } = useLatestLocalAlignment(activeCompany?.id);
   const positioningAlignment = localAlignment?.areas?.positioning ?? null;
+
+  const { forContext: tensionsForContext } = useDerivedTensions({
+    canvas,
+    cascade: strategyCascade ?? null,
+    sourceSignals,
+    positioningStrength: strengthResult,
+  });
+  const positioningTensions = tensionsForContext("positioning", 3);
 
   const applyClaritySuggestion = async (
     field: EditablePositioningField,
@@ -1011,7 +1053,7 @@ export default function PositioningView() {
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-screen strategic-surface"
       style={{
         background: c.bg,
         backgroundImage:
@@ -1020,22 +1062,22 @@ export default function PositioningView() {
     >
       <TopNav />
 
-      <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-6 sm:px-6 md:px-8">
+      <main className="mx-auto max-w-[1120px] px-4 pb-12 pt-4 sm:px-6 md:px-8">
         <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
-        <div className="mb-8 border-b pb-5" style={{ borderColor: c.line }}>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1">
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                {activeCompany?.name || "No company selected"}
-              </div>
-              <h1 className="mt-2 font-sans text-[34px] font-semibold" style={{ color: c.charcoal }}>
-                Positioning Canvas
-              </h1>
-              <p className="mojo-under-title max-w-3xl font-sans text-[15px] mojo-desc" style={{ color: c.secondary }}>
-                Positioning is the foundation for go-to-market clarity. This canvas now shows source
-                confidence so we can distinguish public-source drafts from research-backed and testing-informed positioning.
+        <div className="mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9298B5" }}>
+                Market Lens · {activeCompany?.name || "No company selected"} · Competitive interpretation
               </p>
+              <Link
+                to="/routes"
+                className="font-mono text-[10px] uppercase tracking-[0.1em]"
+                style={{ color: "#6a9e94", textDecoration: "underline", opacity: 0.7 }}
+              >
+                ← Commitment Review
+              </Link>
             </div>
             {hasStoredCanvas && (
               <button
@@ -1067,11 +1109,74 @@ export default function PositioningView() {
         ) : !hasStoredCanvas && foundation.length === 0 ? (
           <EmptyState message="No foundation inputs yet. Run AI Research in Admin → Companies." />
         ) : (
-          <div className="space-y-5">
+          <div className={strengthResult.level === "strong" ? "space-y-4" : strengthResult.level === "weak" || strengthResult.level === "generic" ? "space-y-6" : "space-y-5"}>
+            {(() => {
+              const posHeadline =
+                strengthResult.level === "strong"   ? "Positioning holds strong across core dimensions."
+                : strengthResult.level === "moderate" ? "Positioning is defined but keeps needing sharper proof."
+                : strengthResult.level === "weak"     ? "Positioning keeps needing specificity — clarity remains open."
+                : "Positioning uses generic language — market distinction keeps weakening.";
+              const posContextRaw =
+                strengthResult.issues.length > 0
+                  ? strengthResult.issues[0]
+                  : strengthResult.level === "strong"
+                    ? (canvas.value_for_customer || "Strong differentiation across core positioning dimensions.")
+                    : "Refine core positioning dimensions to strengthen market differentiation.";
+              const posContext = posContextRaw.length > 200 ? posContextRaw.slice(0, 197) + "…" : posContextRaw;
+              const posAccent = strengthResult.level === "strong" || strengthResult.level === "moderate" ? c.teal : c.coral;
+              return (
+                <section style={{ paddingBottom: strengthResult.level === "weak" || strengthResult.level === "generic" ? 16 : 22, marginBottom: 4, borderBottom: `2px solid ${c.line}` }}>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: c.muted }}>
+                    Positioning · <span style={{ color: posAccent }}>{strengthResult.level}</span>
+                  </p>
+                  <h2 className="mt-3 font-sans font-semibold leading-[1.25] max-w-3xl" style={{ fontSize: 36, color: c.charcoal }}>
+                    {posHeadline}
+                  </h2>
+                  <p className="mt-2 font-sans text-[14px] leading-[1.55] max-w-2xl" style={{ color: c.secondary }}>
+                    {posContext}
+                  </p>
+                  <p className="mt-3 font-mono text-[10px]" style={{ color: c.muted, opacity: 0.7 }}>
+                    Outside signals: {activeCompany?.evidence_status === "baseline_plus_artifacts" || activeCompany?.evidence_status === "public_evidence_strong" ? "active" : "carrying — no customer confirmation"} · Org signals: {sourceSignals.hasCompanyEvidence ? "active" : "absent — interpretation rests on external data"}
+                  </p>
+                  {strengthResult.issues.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${posAccent}`, color: posAccent }}>
+                        {strengthResult.issues.length} {strengthResult.issues.length === 1 ? "issue" : "issues"} flagged
+                      </span>
+                    </div>
+                  )}
+                  {(canvas.proposed_tagline || canvas.current_tagline) && (
+                    <div className="mt-4" style={{ borderLeft: `3px solid ${posAccent}`, paddingLeft: 14 }}>
+                      <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: posAccent }}>
+                        {canvas.proposed_tagline ? "Proposed direction" : "Current tagline"}
+                      </p>
+                      <p className="font-sans text-[16px] font-semibold leading-[1.35]" style={{ color: c.charcoal }}>
+                        {canvas.proposed_tagline || canvas.current_tagline}
+                      </p>
+                      {canvas.competitive_alternatives.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-4">
+                          {canvas.competitive_alternatives.slice(0, 3).map((alt) => (
+                            <span key={alt.id} className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
+                              vs {alt.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
+
+            {positioningTensions.length > 0 && (
+              <section style={{ paddingTop: 16, paddingBottom: 16, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <TensionBlock tensions={positioningTensions} context="positioning" showBlockerCallout={false} />
+              </section>
+            )}
+
             {!hasStoredCanvas ? (
               <section
-                className="rounded-[20px] border px-5 py-4"
-                style={{ borderColor: c.amber, background: `${c.amber}12` }}
+                style={{ borderLeft: `2px solid ${c.amber}`, paddingLeft: 16, paddingTop: 12, paddingBottom: 12 }}
               >
                 <p className="font-sans text-[13px] leading-[1.65]" style={{ color: c.charcoal }}>
                   Showing legacy input-derived positioning because no stored positioning canvas exists yet.
@@ -1085,12 +1190,12 @@ export default function PositioningView() {
                 <button
                   type="button"
                   onClick={() => setShowIssues((v) => !v)}
-                  className="flex items-center gap-2 rounded-full border px-3 py-1.5"
-                  style={{ borderColor: "#F4A56A", background: "#FFF4EC", cursor: "pointer" }}
+                  className="flex items-center gap-2"
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: "#A5512E" }} />
-                  <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
-                    Positioning clarity: Needs refinement
+                  <span className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E", opacity: 0.82 }}>
+                    Positioning needs refinement
                   </span>
                   <span className="font-mono text-[9px]" style={{ color: "#A5512E" }}>
                     {showIssues ? "▲" : "▼"}
@@ -1099,16 +1204,16 @@ export default function PositioningView() {
 
                 {showIssues && (
                   <div
-                    className="mt-2 rounded-[14px] border px-4 py-3"
-                    style={{ borderColor: "#F4A56A", background: "#FFF9F3" }}
+                    className="mt-2"
+                    style={{ borderLeft: "2px solid #F4A56A", paddingLeft: 14, paddingTop: 10, paddingBottom: 10 }}
                   >
                     <p className="font-sans text-[13px] leading-[1.6]" style={{ color: "#7A3B20" }}>
                       Your current positioning may be hard for customers to understand or differentiate.
                     </p>
                     {strengthResult.issues.length > 0 && (
                       <div className="mt-2.5">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
-                          What we're seeing
+                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E", opacity: 0.7 }}>
+                          Clarity gaps
                         </p>
                         <ul className="mt-1.5 space-y-1 pl-5">
                           {strengthResult.issues.map((issue) => (
@@ -1121,8 +1226,8 @@ export default function PositioningView() {
                     )}
                     {strengthResult.suggestions.length > 0 && (
                       <div className="mt-2.5">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E" }}>
-                          What to improve
+                        <p className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "#A5512E", opacity: 0.7 }}>
+                          Refinements
                         </p>
                         <ul className="mt-1.5 space-y-1 pl-5">
                           {strengthResult.suggestions.map((suggestion) => (
@@ -1141,11 +1246,122 @@ export default function PositioningView() {
               </div>
             )}
 
-            <section
-              className="rounded-[28px] border border-dashed p-4 sm:p-5"
-              style={{ borderColor: c.line, background: `${c.paper}80` }}
+            {/* Value Statement — full width, primary */}
+            <CanvasSection
+              section="value_proposition"
+              sourceTier={sectionTiers.value_proposition}
+              input={valueProposition}
+              size="large"
+              claimId={canvasClaims.value_for_customer?.id ?? null}
+              claimState={canvasClaims.value_for_customer?.state ?? null}
             >
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                {hasStoredCanvas ? "Value Statement" : valueProposition?.input_label || "Value statement not set"}
+              </p>
+              <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
+                {outcomeHighlights.length > 0 && valueForCustomerText.primary
+                  ? <InlineHighlight
+                      text={valueForCustomerText.primary}
+                      words={outcomeHighlights}
+                      tooltip={{
+                        explanation: "This describes a benefit but not a specific customer change.",
+                        suggestion: "Frame it as a before/after result — what they can now do that they couldn't before.",
+                      }}
+                    />
+                  : (valueForCustomerText.primary || "No value proposition has been generated yet.")
+                }
+              </p>
+              <SuggestionActions
+                raw={canvas.value_for_customer}
+                saving={savingField === "value_for_customer"}
+                onAccept={
+                  hasStoredCanvas
+                    ? (suggested) => applyClaritySuggestion("value_for_customer", suggested, "accept")
+                    : undefined
+                }
+                onIgnore={
+                  hasStoredCanvas
+                    ? (primary) => applyClaritySuggestion("value_for_customer", primary, "ignore")
+                    : undefined
+                }
+              />
+              {bestFitCustomersText.primary || bestFitCustomersText.suggested ? (
+                <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
+                  Best-fit audience: {bestFitCustomersText.primary || "Not set yet."}
+                </p>
+              ) : null}
+              <SuggestionActions
+                raw={canvas.best_fit_customers}
+                saving={savingField === "best_fit_customers"}
+                onAccept={
+                  hasStoredCanvas
+                    ? (suggested) => applyClaritySuggestion("best_fit_customers", suggested, "accept")
+                    : undefined
+                }
+                onIgnore={
+                  hasStoredCanvas
+                    ? (primary) => applyClaritySuggestion("best_fit_customers", primary, "ignore")
+                    : undefined
+                }
+              />
+            </CanvasSection>
+
+            {/* Market Category — full width */}
+            <CanvasSection
+              section="market_category"
+              sourceTier={sectionTiers.market_category}
+              input={marketCategory}
+              claimId={canvasClaims.market_category?.id ?? null}
+              claimState={canvasClaims.market_category?.state ?? null}
+            >
+              <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
+                {categoryHighlights.length > 0 && marketCategoryText.primary
+                  ? <InlineHighlight
+                      text={marketCategoryText.primary}
+                      words={categoryHighlights}
+                      tooltip={{
+                        explanation: "This category is too broad. Buyers may not know what to compare you against.",
+                        suggestion: "Name the specific job, buyer, or context.",
+                      }}
+                    />
+                  : (marketCategoryText.primary || "Market category not set")
+                }
+              </p>
+              <SuggestionActions
+                raw={canvas.market_category}
+                saving={savingField === "market_category"}
+                onAccept={
+                  hasStoredCanvas
+                    ? (suggested) => applyClaritySuggestion("market_category", suggested, "accept")
+                    : undefined
+                }
+                onIgnore={
+                  hasStoredCanvas
+                    ? (primary) => applyClaritySuggestion("market_category", primary, "ignore")
+                    : undefined
+                }
+              />
+              <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
+                {categoryRationaleText.primary || "No market category framing has been generated yet."}
+              </p>
+              <SuggestionActions
+                raw={canvas.category_rationale}
+                saving={savingField === "category_rationale"}
+                onAccept={
+                  hasStoredCanvas
+                    ? (suggested) => applyClaritySuggestion("category_rationale", suggested, "accept")
+                    : undefined
+                }
+                onIgnore={
+                  hasStoredCanvas
+                    ? (primary) => applyClaritySuggestion("category_rationale", primary, "ignore")
+                    : undefined
+                }
+              />
+            </CanvasSection>
+
+            {/* Supporting reference: Competitive Alternatives + Unique Attributes */}
+            <div className="grid grid-cols-1 lg:grid-cols-2">
                 <CanvasSection
                   section="competitive_alternatives"
                   sourceTier={sectionTiers.competitive_alternatives}
@@ -1194,120 +1410,11 @@ export default function PositioningView() {
                     }
                   />
                 </CanvasSection>
+            </div>
 
-                <CanvasSection
-                  section="value_proposition"
-                  sourceTier={sectionTiers.value_proposition}
-                  input={valueProposition}
-                >
-                  <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {hasStoredCanvas ? "Value Statement" : valueProposition?.input_label || "Value statement not set"}
-                  </p>
-                  <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
-                    {outcomeHighlights.length > 0 && valueForCustomerText.primary
-                      ? <InlineHighlight
-                          text={valueForCustomerText.primary}
-                          words={outcomeHighlights}
-                          tooltip={{
-                            explanation: "This describes a benefit but not a specific customer change.",
-                            suggestion: "Frame it as a before/after result — what they can now do that they couldn't before.",
-                          }}
-                        />
-                      : (valueForCustomerText.primary || "No value proposition has been generated yet.")
-                    }
-                  </p>
-                  <SuggestionActions
-                    raw={canvas.value_for_customer}
-                    saving={savingField === "value_for_customer"}
-                    onAccept={
-                      hasStoredCanvas
-                        ? (suggested) => applyClaritySuggestion("value_for_customer", suggested, "accept")
-                        : undefined
-                    }
-                    onIgnore={
-                      hasStoredCanvas
-                        ? (primary) => applyClaritySuggestion("value_for_customer", primary, "ignore")
-                        : undefined
-                    }
-                  />
-                  {bestFitCustomersText.primary || bestFitCustomersText.suggested ? (
-                    <p className="mt-3 font-sans text-[13px] leading-[1.5]" style={{ color: c.secondary }}>
-                      Best-fit audience: {bestFitCustomersText.primary || "Not set yet."}
-                    </p>
-                  ) : null}
-                  <SuggestionActions
-                    raw={canvas.best_fit_customers}
-                    saving={savingField === "best_fit_customers"}
-                    onAccept={
-                      hasStoredCanvas
-                        ? (suggested) => applyClaritySuggestion("best_fit_customers", suggested, "accept")
-                        : undefined
-                    }
-                    onIgnore={
-                      hasStoredCanvas
-                        ? (primary) => applyClaritySuggestion("best_fit_customers", primary, "ignore")
-                        : undefined
-                    }
-                  />
-                </CanvasSection>
-
-                <CanvasSection
-                  section="market_category"
-                  sourceTier={sectionTiers.market_category}
-                  input={marketCategory}
-                >
-                  <p className="font-sans text-[18px] font-semibold leading-[1.45]" style={{ color: c.charcoal }}>
-                    {categoryHighlights.length > 0 && marketCategoryText.primary
-                      ? <InlineHighlight
-                          text={marketCategoryText.primary}
-                          words={categoryHighlights}
-                          tooltip={{
-                            explanation: "This category is too broad. Buyers may not know what to compare you against.",
-                            suggestion: "Name the specific job, buyer, or context.",
-                          }}
-                        />
-                      : (marketCategoryText.primary || "Market category not set")
-                    }
-                  </p>
-                  <SuggestionActions
-                    raw={canvas.market_category}
-                    saving={savingField === "market_category"}
-                    onAccept={
-                      hasStoredCanvas
-                        ? (suggested) => applyClaritySuggestion("market_category", suggested, "accept")
-                        : undefined
-                    }
-                    onIgnore={
-                      hasStoredCanvas
-                        ? (primary) => applyClaritySuggestion("market_category", primary, "ignore")
-                        : undefined
-                    }
-                  />
-                  <p className="mt-3 font-sans text-[15px] leading-[1.5]" style={{ color: c.secondary }}>
-                    {categoryRationaleText.primary || "No market category framing has been generated yet."}
-                  </p>
-                  <SuggestionActions
-                    raw={canvas.category_rationale}
-                    saving={savingField === "category_rationale"}
-                    onAccept={
-                      hasStoredCanvas
-                        ? (suggested) => applyClaritySuggestion("category_rationale", suggested, "accept")
-                        : undefined
-                    }
-                    onIgnore={
-                      hasStoredCanvas
-                        ? (primary) => applyClaritySuggestion("category_rationale", primary, "ignore")
-                        : undefined
-                    }
-                  />
-                </CanvasSection>
-              </div>
-            </section>
-
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-1 lg:grid-cols-2">
               <section
-                className="rounded-[24px] border p-5 sm:p-6"
-                style={{ borderColor: c.line, background: c.panel }}
+                style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 16 }}
               >
                 <div className="flex items-start justify-between gap-3">
                   {sectionLabel("Current Tagline")}
@@ -1334,8 +1441,7 @@ export default function PositioningView() {
               </section>
 
               <section
-                className="rounded-[24px] border p-5 sm:p-6"
-                style={{ borderColor: c.line, background: c.panel }}
+                style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 16 }}
               >
                 <div className="flex items-start justify-between gap-3">
                   {sectionLabel("Proposed Direction")}
@@ -1377,14 +1483,14 @@ export default function PositioningView() {
             />
 
             <section
-              className="relative rounded-[20px] border px-5 py-4"
-              style={{ borderColor: c.line, background: c.panel }}
+              className="relative"
+              style={{ borderTop: `1px solid ${c.line}`, paddingTop: 32, paddingBottom: 24 }}
             >
-              <div className="absolute right-4 top-4 hidden sm:block">
+              <div className="absolute right-0 top-6 hidden sm:block">
                 <QualityPill label={qualityCheck.label} tone={qualityCheck.tone} />
               </div>
 
-              <div className="flex flex-wrap items-start justify-between gap-3 pr-0 sm:pr-[220px]">
+              <div className="flex flex-wrap items-start justify-between gap-3 pr-0 sm:pr-[200px]">
                 <div className="max-w-2xl">
                   {sectionLabel("Source Confidence")}
                   <p className="mt-2 font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
@@ -1418,8 +1524,8 @@ export default function PositioningView() {
                         toast.error(err instanceof Error ? err.message : "Failed to apply framework guidance.");
                       }
                     }}
-                    className="rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors hover:bg-black/5"
-                    style={{ borderColor: c.line, color: c.secondary, background: "#fff" }}
+                    className="font-mono text-[10px] uppercase tracking-[0.08em] underline"
+                    style={{ color: c.teal, background: "none", border: "none", cursor: "pointer", padding: 0 }}
                   >
                     Apply Positioning Framework
                   </button>
@@ -1427,19 +1533,14 @@ export default function PositioningView() {
               ) : null}
             </section>
 
-            <section
-              className="rounded-[24px] px-5 py-5 sm:px-6"
-              style={{ background: c.charcoal }}
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <p className="font-sans text-[15px] leading-[1.7] text-white">
-                  Strong positioning is a leverage point. It improves messaging, narrows the right
-                  customer, clarifies alternatives, and raises strategic confidence across the map.
-                </p>
-                <div className="font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: c.amber }}>
-                  Work On Positioning →
-                </div>
-              </div>
+            <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: 24, paddingBottom: 8 }}>
+              <p className="font-sans text-[14px] leading-[1.7]" style={{ color: c.secondary }}>
+                Strong positioning is a leverage point. It improves messaging, narrows the right
+                customer, clarifies alternatives, and raises strategic confidence across the map.
+              </p>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: c.teal }}>
+                Work on positioning →
+              </p>
             </section>
           </div>
         )}

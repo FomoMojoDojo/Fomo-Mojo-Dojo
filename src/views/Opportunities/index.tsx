@@ -5,6 +5,9 @@ import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
+import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
+import type { ClaimState } from "@/lib/claimState";
 import { useManagedOutcomes } from "@/hooks/useManagedOutcomes";
 import { useOpportunities, type OpportunityRow, type WorkflowStatus } from "@/hooks/useOpportunities";
 import { useSolutionIdeas, type SolutionIdeaRow } from "@/hooks/useSolutionIdeas";
@@ -533,6 +536,8 @@ function OpportunityCard({
   isTargeted = false,
   innovationStrategy = null,
   hideWorkflowPicker = false,
+  claimId,
+  claimState,
 }: {
   item: OpportunityRow;
   opportunityNumber?: string;
@@ -545,6 +550,8 @@ function OpportunityCard({
   isTargeted?: boolean;
   innovationStrategy?: string | null;
   hideWorkflowPicker?: boolean;
+  claimId?: string | null;
+  claimState?: ClaimState | null;
 }) {
   const [expanded, setExpanded] = useState(isTargeted);
   useEffect(() => {
@@ -642,6 +649,9 @@ function OpportunityCard({
             {priorityLabel(item.priority_tier)}
           </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {claimId && claimState && (
+              <ClaimStateBadge state={claimState} claimId={claimId} size="sm" />
+            )}
             <StateBadge tone={deriveServiceState(item.importance, item.satisfaction)} />
             {strategyAlignment === "strong" ? (
               <span className="inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em]" style={{ borderColor: "#B6DFB8", background: "#EEF6E7", color: "#1F6A5B" }}>
@@ -726,6 +736,7 @@ function OpportunitySection({
   showJourneyBadge = true,
   targetOpportunityId,
   innovationStrategy = null,
+  claimsMap,
 }: {
   title: string;
   subtitle: string;
@@ -739,6 +750,7 @@ function OpportunitySection({
   showJourneyBadge?: boolean;
   targetOpportunityId?: string | null;
   innovationStrategy?: string | null;
+  claimsMap?: Map<string, import("@/lib/claims/useCompanyClaims").ClaimRow>;
 }) {
   if (items.length === 0) return null;
 
@@ -773,6 +785,8 @@ function OpportunitySection({
             showJourneyBadge={showJourneyBadge}
             isTargeted={targetOpportunityId === item.id}
             innovationStrategy={innovationStrategy}
+            claimId={item.id}
+            claimState={claimsMap?.get(item.id)?.state ?? null}
           />
         ))}
       </div>
@@ -798,6 +812,7 @@ function CheckpointListSection({
   showJourneyBadge = true,
   targetOpportunityId,
   innovationStrategy = null,
+  claimsMap,
 }: {
   items: OpportunityRow[];
   jobSteps: Array<{ id: string; journey_key: string; step_number: number | null; step_label: string | null; journey_title?: string | null }>;
@@ -809,6 +824,7 @@ function CheckpointListSection({
   showJourneyBadge?: boolean;
   targetOpportunityId?: string | null;
   innovationStrategy?: string | null;
+  claimsMap?: Map<string, import("@/lib/claims/useCompanyClaims").ClaimRow>;
 }) {
   // Group opportunities by step_number + journey_key
   const grouped = useMemo(() => {
@@ -913,6 +929,8 @@ function CheckpointListSection({
                     isTargeted={targetOpportunityId === item.id}
                     innovationStrategy={innovationStrategy}
                     hideWorkflowPicker
+                    claimId={item.id}
+                    claimState={claimsMap?.get(item.id)?.state ?? null}
                   />
                 </div>
               ))}
@@ -1926,6 +1944,7 @@ export default function OpportunitiesView() {
     updateWorkflowStatus,
   } = useOpportunities(activeCompany?.id);
   const { needs, marketDefinition } = useOdiNeeds(activeCompany?.id);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const innovationStrategy = String(marketDefinition?.innovation_strategy || "").trim().toLowerCase() || null;
   const { item: strategyCascade } = useStrategyCascade(activeCompany?.id);
   const { item: positioningCanvas } = usePositioningCanvas(activeCompany?.id);
@@ -2250,6 +2269,7 @@ export default function OpportunitiesView() {
               showJourneyBadge={showJourneyBadge}
               targetOpportunityId={targetOpportunityId}
               innovationStrategy={innovationStrategy}
+              claimsMap={claimsMap}
             />
           </div>
         )}

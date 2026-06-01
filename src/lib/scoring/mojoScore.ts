@@ -225,14 +225,14 @@ const POSITIONING_KEYS = [
   "market-cat",
 ];
 
-const CUSTOMER_KEYS = ["needs-assessment", "family-satisfaction"];
-const STRATEGY_KEYS = ["program-model", "outcome-data"];
+const CUSTOMER_KEYS = ["customer-research", "customer-signals"];
+const STRATEGY_KEYS = ["operating-model", "outcome-evidence"];
 const GTM_KEYS = [
-  "referral-map",
+  "acquisition-map",
   "brand-narrative",
   "channel-strat",
-  "donor-retention",
-  "grant-pipeline",
+  "retention-signals",
+  "demand-pipeline",
 ];
 
 const GATE_WEIGHTS: Record<GateKey, number> = {

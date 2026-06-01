@@ -46,6 +46,7 @@ export function useRoutes(companyId?: string) {
           "id, company_id, category, title, short_description, pts_value, effort, type, sort_order, created_at"
         )
         .eq("company_id", companyId)
+        .eq("relevance_state", "active")
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(500);

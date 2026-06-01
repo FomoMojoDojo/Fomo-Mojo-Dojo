@@ -8,9 +8,9 @@ import { routeRelativeTime } from "@/views/Routes/routeDecision";
 import "@/styles/client-refine-preview.css";
 
 const CATEGORY_LABEL: Record<string, string> = {
-  fix:     "Fix",
-  improve: "Improve",
-  create:  "Create",
+  fix:     "Under Pressure",
+  improve: "Under Validation",
+  create:  "Directional",
 };
 
 const STATUS_GLYPH: Record<string, string> = {

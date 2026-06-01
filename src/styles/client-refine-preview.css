@@ -6095,6 +6095,79 @@ input.crpv-ws-list-input::placeholder {
   margin-top: 1px;
 }
 
+/* ─── Data quality — no-data CTA notice ─────────────────────────────────── */
+
+.crpv-dq-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  background: #f9f6f0;
+  border: 1px solid #e2d5bc;
+  border-radius: 8px;
+}
+
+.crpv-dq-notice-prompt {
+  margin: 0;
+  font-size: 13px;
+  color: #4a3820;
+  line-height: 1.5;
+}
+
+.crpv-dq-notice-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  background: #fff;
+  border: 1px solid #c8a96e;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #7a5c2e;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+}
+
+.crpv-dq-notice-cta:hover {
+  background: #fdf5e8;
+  border-color: #b8903a;
+  color: #5a3e18;
+}
+
+/* ─── Data quality — ambient inline marker (thin / ambiguous) ───────────── */
+
+.crpv-dq-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: default;
+}
+
+.crpv-dq-marker::before {
+  content: "·";
+  font-size: 11px;
+  line-height: 1;
+}
+
+.crpv-dq-marker--thin {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.crpv-dq-marker--ambiguous {
+  background: #fef9ec;
+  color: #78450a;
+  border: 1px solid #f5d96b;
+}
+
 /* ─── Excluded from analysis ─────────────────────────────────────────────── */
 
 .crpv-ws-excluded-section {

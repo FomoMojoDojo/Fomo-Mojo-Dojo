@@ -4,6 +4,7 @@
 
 begin;
 
+-- destructive-ok: all UPDATEs target FomoMojoDojo company only (WHERE lower(name) = 'fomomojodojo'); run-once manual alignment script
 with c as (
   select id
   from public.companies
@@ -128,6 +129,7 @@ where js.company_id = (select id from c)
   and js.journey_key = v.journey_key
   and js.step_number = v.step_number;
 
+-- destructive-ok: targets FomoMojoDojo company only; manual alignment script
 with c as (
   select id
   from public.companies
@@ -155,6 +157,7 @@ from (
 where o.company_id = (select id from c)
   and o.id = v.id;
 
+-- destructive-ok: targets FomoMojoDojo company only; manual alignment script
 with c as (
   select id
   from public.companies
@@ -183,6 +186,7 @@ from (
 where n.company_id = (select id from c)
   and n.id = v.id;
 
+-- destructive-ok: targets FomoMojoDojo company only; manual alignment script
 with c as (
   select id
   from public.companies
@@ -208,6 +212,7 @@ from (
 where r.company_id = (select id from c)
   and r.id = v.id;
 
+-- destructive-ok: targets FomoMojoDojo company only; manual alignment script
 with c as (
   select id
   from public.companies
@@ -227,6 +232,7 @@ set
 where m.company_id = (select id from c)
   and m.journey_key = 'customer';
 
+-- destructive-ok: targets FomoMojoDojo company only; manual alignment script
 with c as (
   select id
   from public.companies

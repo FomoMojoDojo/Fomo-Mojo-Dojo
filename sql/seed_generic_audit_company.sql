@@ -3,6 +3,7 @@
 
 begin;
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
@@ -10,6 +11,7 @@ delete from public.input_files where input_id in (
   select i.id from public.inputs i join target_company tc on i.company_id = tc.id
 );
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
@@ -17,51 +19,61 @@ delete from public.input_subitems where input_id in (
   select i.id from public.inputs i join target_company tc on i.company_id = tc.id
 );
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.inputs where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.odi_needs where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.odi_market_definitions where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.managed_outcomes where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.opportunities where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.job_steps where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.routes where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.positioning_canvases where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 with target_company as (
   select id from public.companies where name = 'Generic Audit - Fallback Diagnostics'
 )
 delete from public.strategy_cascades where company_id in (select id from target_company);
 
+-- destructive-ok: targets "Generic Audit - Fallback Diagnostics" by exact name — fixed internal demo; does not touch real client data
 delete from public.companies where name = 'Generic Audit - Fallback Diagnostics';
 
 with owner as (

@@ -113,7 +113,7 @@ describe("route rationale", () => {
 
     expect(rationales[0]?.confidenceLabel).toBe("Customer validation missing");
     expect(rationales[0]?.readiness).toBe("Validate");
-    expect(rationales[0]?.readinessMeaning).toBe("Promising path. Needs validation before commitment.");
+    expect(rationales[0]?.readinessMeaning).toBe("Confidence has built enough to validate. Not yet safe to commit.");
     expect(rationales[0]?.whatSupportsIt).toContain("Customer proof is still missing");
   });
 
@@ -284,7 +284,7 @@ describe("route rationale", () => {
     expect(rationale.whyThisRouteExists).toContain("emerging strategy appears centered on");
     expect(rationale.whyThisRouteExists.toLowerCase()).toContain("partner operational outcomes");
     expect(rationale.whatSupportsIt).toContain("The route fits a direction increasingly centered on partner operational outcomes");
-    expect(rationale.whatSupportsIt).toContain("Publicly, the company still reads as a craft-focused specialty coffee roaster");
+    expect(rationale.whatSupportsIt).toContain("Outside perception reads as a craft-focused specialty coffee roaster");
   });
 
   it("filters generic route assumptions out of what must become true", () => {
@@ -451,6 +451,6 @@ describe("route rationale", () => {
 
     expect(rationale.confidenceLabel).toBe("Still highly uncertain");
     expect(rationale.readiness).toBe("Investigate");
-    expect(rationale.readinessMeaning).toBe("Worth investigating, not ready to choose.");
+    expect(rationale.readinessMeaning).toBe("Worth examining further. Not enough has formed yet to narrow direction.");
   });
 });

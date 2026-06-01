@@ -36,18 +36,14 @@ type InputFileRow = {
   file_path: string;
   tags: string[] | null;
   uploaded_at: string;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
+  archive_source: string | null;
+  restored_at: string | null;
+  restored_by: string | null;
 };
 
-function normalizeLegacyCompanyText(text: string, companyName?: string): string {
-  const safeText = String(text || "");
-  const target = String(companyName || "").trim();
-  if (!target) return safeText;
-  if (/edgewood/i.test(target)) return safeText;
-  if (!/edgewood/i.test(safeText)) return safeText;
-  return safeText
-    .replace(/\bEdgewood Center for Children & Families\b/gi, target)
-    .replace(/\bEdgewood\b/gi, target);
-}
 
 type LocalInputProfile = "generic" | "fintech_collections" | "hospitality_coffee";
 
@@ -73,78 +69,20 @@ function contextualizeInputText(args: {
   const companyName = String(args.companyName || "").trim();
   const profile = inferLocalInputProfile(companyName);
 
-  let inputLabel = normalizeLegacyCompanyText(args.inputLabel, companyName);
-  let subGroup = normalizeLegacyCompanyText(args.subGroup, companyName);
-  let description = normalizeLegacyCompanyText(args.description, companyName);
-  let whyItMatters = normalizeLegacyCompanyText(args.whyItMatters, companyName);
-
-  const combined = `${inputLabel} ${subGroup} ${description} ${whyItMatters}`.toLowerCase();
-  const notApplicable = /not applicable|not relevant|n\/a/.test(combined);
-  const hasLegacyNonprofitLabel =
-    (args.inputKey === "donor-retention" && /\bdonor\b/.test(combined)) ||
-    (args.inputKey === "grant-pipeline" && /\bgrant\b/.test(combined)) ||
-    (args.inputKey === "family-satisfaction" && /\bfamil(y|ies)\b/.test(combined));
-  const shouldModernizeMarketEvidence = notApplicable || hasLegacyNonprofitLabel;
-
-  if (shouldModernizeMarketEvidence) {
-    if (args.inputKey === "donor-retention") {
-      if (profile === "fintech_collections") {
-        inputLabel = "Client Retention";
-        subGroup = "Retention";
-        if (notApplicable) description = "Client renewal and account expansion behavior";
-        if (notApplicable) whyItMatters = "Protects recurring enterprise revenue";
-      } else if (profile === "hospitality_coffee") {
-        inputLabel = "Repeat Purchase Retention";
-        subGroup = "Retention";
-        if (notApplicable) description = "Reorder frequency and wholesale account retention";
-        if (notApplicable) whyItMatters = "Protects recurring coffee revenue";
-      } else {
-        inputLabel = "Customer Retention";
-        subGroup = "Retention";
-        if (notApplicable) description = "Repeat purchase and reorder behavior";
-        if (notApplicable) whyItMatters = "Protects recurring revenue and loyalty";
-      }
-    } else if (args.inputKey === "grant-pipeline") {
-      if (profile === "fintech_collections") {
-        inputLabel = "Enterprise Pipeline";
-        subGroup = "Demand Pipeline";
-        if (notApplicable) description = "Qualified creditor opportunities and procurement stages";
-        if (notApplicable) whyItMatters = "Predicts near-term contracted revenue";
-      } else if (profile === "hospitality_coffee") {
-        inputLabel = "Wholesale Pipeline";
-        subGroup = "Demand Pipeline";
-        if (notApplicable) description = "Qualified cafe and restaurant partnership opportunities";
-        if (notApplicable) whyItMatters = "Predicts future wholesale volume";
-      } else {
-        inputLabel = "Growth Pipeline";
-        subGroup = "Demand Pipeline";
-        if (notApplicable) description = "Qualified leads and wholesale opportunities";
-        if (notApplicable) whyItMatters = "Predicts near-term revenue growth";
-      }
-    } else if (args.inputKey === "family-satisfaction") {
-      if (profile === "fintech_collections") {
-        inputLabel = "Debtor Experience Signals";
-        subGroup = "Customer Experience";
-        if (notApplicable) description = "Complaint trends, resolution quality, and fairness sentiment";
-        if (notApplicable) whyItMatters = "Reduces compliance and reputational risk";
-      } else {
-        inputLabel = "Customer Experience Signals";
-        subGroup = "Customer Experience";
-        if (notApplicable) description = "Ratings, reviews, and partner NPS";
-        if (notApplicable) whyItMatters = "Guides product quality and service improvements";
-      }
-    }
-  }
+  let inputLabel = args.inputLabel;
+  let subGroup = args.subGroup;
+  let description = args.description;
+  let whyItMatters = args.whyItMatters;
 
   const needsOdiSignal = (text: string) =>
     !/\bodi\b|\bjob\b|\boutcome\b|\bimportance\b|\bsatisfaction\b/.test(String(text || "").toLowerCase());
-  if (args.inputKey === "needs-assessment") {
+  if (args.inputKey === "customer-research") {
     if (needsOdiSignal(description)) description = "Customer checkpoint map and desired outcomes by segment";
     if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows what matters most and where current results are falling short";
-  } else if (args.inputKey === "outcome-data") {
+  } else if (args.inputKey === "outcome-evidence") {
     if (needsOdiSignal(description)) description = "Track desired outcome satisfaction and completion signals";
     if (needsOdiSignal(whyItMatters)) whyItMatters = "Confirms progress on high-importance outcomes that are still underserved";
-  } else if (args.inputKey === "referral-map") {
+  } else if (args.inputKey === "acquisition-map") {
     if (needsOdiSignal(description)) description = "Map decision triggers and trusted channels customers use";
     if (needsOdiSignal(whyItMatters)) whyItMatters = "Shows where customers discover, evaluate, and choose with confidence";
   }
@@ -158,15 +96,15 @@ const PUBLIC_SEED_COMPLETENESS_BY_KEY: Record<string, number> = {
   "val-prop": 27,
   "target-aud": 24,
   "market-cat": 25,
-  "program-model": 26,
-  "needs-assessment": 20,
-  "outcome-data": 16,
-  "referral-map": 14,
+  "operating-model": 26,
+  "customer-research": 20,
+  "outcome-evidence": 16,
+  "acquisition-map": 14,
   "brand-narrative": 18,
   "channel-strat": 12,
-  "donor-retention": 10,
-  "grant-pipeline": 10,
-  "family-satisfaction": 11,
+  "retention-signals": 10,
+  "demand-pipeline": 10,
+  "customer-signals": 11,
 };
 
 function inferPublicSeed(row: InputRow) {
@@ -315,7 +253,7 @@ export function useInputs(companyIdOverride?: string) {
 
       const [{ data: subs, error: e2 }, { data: files, error: e3 }] = await Promise.all([
         supabase.from('input_subitems').select('*').in('input_id', inputIds),
-        supabase.from('input_files').select('*').in('input_id', inputIds),
+        supabase.from('input_files').select('*').in('input_id', inputIds).is('archived_at', null),
       ]);
 
       if (e2) throw e2;
@@ -431,15 +369,80 @@ export function useUploadInputFile() {
   });
 }
 
-export function useDeleteInputFile() {
+export function useArchiveInputFile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, filePath }: { id: string; filePath: string }) => {
-      await supabase.storage.from('input-files').remove([filePath]);
-      const { error } = await supabase.from('input_files').delete().eq('id', id);
+    mutationFn: async ({
+      id,
+      reason = 'user_removed',
+      source = 'ui',
+    }: { id: string; filePath?: string; reason?: string; source?: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('input_files').update({
+        archived_at: new Date().toISOString(),
+        archived_by: user?.id ?? null,
+        archive_reason: reason,
+        archive_source: source,
+      }).eq('id', id);
+      if (error) throw error;
+      // storage blob is intentionally NOT removed
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inputs'] });
+      qc.invalidateQueries({ queryKey: ['company-files'] });
+    },
+  });
+}
+
+/** @deprecated Use useArchiveInputFile — blobs are preserved via soft archive. */
+export function useDeleteInputFile() {
+  return useArchiveInputFile();
+}
+
+export function useRestoreInputFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('input_files').update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+        archive_source: null,
+        restored_at: new Date().toISOString(),
+        restored_by: user?.id ?? null,
+      }).eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inputs'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inputs'] });
+      qc.invalidateQueries({ queryKey: ['company-files'] });
+      qc.invalidateQueries({ queryKey: ['archived-files'] });
+    },
+  });
+}
+
+export function useArchivedInputFiles(companyId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['archived-files', companyId],
+    queryFn: async () => {
+      if (!companyId) return [];
+      const { data: inputRows } = await supabase
+        .from('inputs')
+        .select('id')
+        .eq('company_id', companyId);
+      const inputIds = (inputRows ?? []).map((r: { id: string }) => r.id);
+      if (inputIds.length === 0) return [];
+      const { data, error } = await supabase
+        .from('input_files')
+        .select('*')
+        .in('input_id', inputIds)
+        .not('archived_at', 'is', null)
+        .order('archived_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as InputFileRow[];
+    },
+    enabled: !!companyId,
   });
 }
 

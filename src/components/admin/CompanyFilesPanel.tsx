@@ -56,9 +56,9 @@ type AnalyzeFileResult = {
 
 const INPUT_KEYS_BY_AREA: Record<"positioning" | "strategy" | "market" | "odi", string[]> = {
   positioning: ["comp-alt", "unique-attr", "val-prop", "target-aud", "market-cat", "brand-narrative"],
-  strategy: ["program-model", "needs-assessment", "outcome-data", "referral-map", "channel-strat"],
-  market: ["market-cat", "target-aud", "comp-alt", "needs-assessment", "brand-narrative"],
-  odi: ["outcome-data", "needs-assessment", "program-model"],
+  strategy: ["operating-model", "customer-research", "outcome-evidence", "acquisition-map", "channel-strat"],
+  market: ["market-cat", "target-aud", "comp-alt", "customer-research", "brand-narrative"],
+  odi: ["outcome-evidence", "customer-research", "operating-model"],
 };
 
 function areasForInputKeys(inputKeys: string[]) {
@@ -1231,7 +1231,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       .from("inputs")
       .select("id")
       .eq("company_id", companyId)
-      .eq("input_key", "needs-assessment")
+      .eq("input_key", "customer-research")
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -1243,7 +1243,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       .insert({
         user_id: userId,
         company_id: companyId,
-        input_key: "needs-assessment",
+        input_key: "customer-research",
         input_label: "Client Intake Brief",
         group_key: "market_evidence",
         group_label: "Market Evidence",
@@ -1451,7 +1451,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
       const safeCompany = safeDirSegment(companyName).toLowerCase().replace(/\s+/g, "-");
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const fileName = `${timestamp}-manual-quiz-intake.md`;
-      const filePath = `${userId}/${safeCompany}/needs-assessment/${inputId}/${fileName}`;
+      const filePath = `${userId}/${safeCompany}/customer-research/${inputId}/${fileName}`;
       const markdown = buildQuizIntakeMarkdown(payload, companyName);
       const extractedText = buildQuizExtractedText(payload, companyName);
 

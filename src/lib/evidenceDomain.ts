@@ -99,6 +99,7 @@ export type Signal = {
   structure_level: StructureLevel;
   validation_status: ValidationStatus;
   confidence_to_use: ConfidenceLevel;
+  relevance_state: string;
   raw_payload: unknown;
   created_at: string;
   updated_at: string;

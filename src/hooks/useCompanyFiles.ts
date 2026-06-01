@@ -9,9 +9,12 @@ export interface CompanyFileRow {
   file_path: string;
   tags: string[] | null;
   uploaded_at: string;
+  archived_at: string | null;
+  archive_reason: string | null;
+  archive_source: string | null;
 }
 
-// Fetches all input_files for a company by joining through inputs.company_id.
+// Fetches active (non-archived) input_files for a company via inputs.company_id.
 // Intentionally lightweight — avoids the full useInputs overhead.
 export function useCompanyFiles(companyId: string | null | undefined) {
   return useQuery({
@@ -32,6 +35,7 @@ export function useCompanyFiles(companyId: string | null | undefined) {
         .from('input_files')
         .select('*')
         .in('input_id', inputIds)
+        .is('archived_at', null)
         .order('uploaded_at', { ascending: false });
       if (e2) throw e2;
 

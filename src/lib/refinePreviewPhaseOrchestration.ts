@@ -17,6 +17,32 @@ export function resolveRefineNarrativePhase(phase: string): RefineNarrativePhase
   return "flow";
 }
 
+/**
+ * Floors the engagement phase to what evidence actually supports.
+ * Prevents "focus" from displaying when customer needs data is absent,
+ * and "flow" from displaying when no route commitment exists.
+ * Does NOT mutate the database — display-only correction.
+ */
+export function floorEngagementPhase(args: {
+  phase: string;
+  hasNeedsWithScores: boolean;
+  hasSelectedRoute: boolean;
+}): string {
+  const { phase, hasNeedsWithScores, hasSelectedRoute } = args;
+
+  // Flow requires a committed route — without one, floor to focus
+  if ((phase === "flow" || phase === "validate_flow") && !hasSelectedRoute) {
+    return hasNeedsWithScores ? "focus" : "diagnose";
+  }
+
+  // Focus requires customer needs with importance/satisfaction data
+  if ((phase === "focus" || phase === "validate_focus") && !hasNeedsWithScores) {
+    return "diagnose";
+  }
+
+  return phase;
+}
+
 export function phaseSectionVisibility(phase: string) {
   const narrativePhase = resolveRefineNarrativePhase(phase);
   if (narrativePhase === "focus") {
@@ -69,14 +95,20 @@ export function phaseNarrativePriority(phase: string) {
   if (narrativePhase === "pre_diagnosis") {
     return {
       phase: narrativePhase,
+      orientation: {
+        question: "What has not yet been grounded in direct evidence?",
+        read: "Direction has been forming from outside signals. It has not yet been grounded in customer or internal evidence.",
+        tone: "exploratory" as const,
+      },
+      readinessFraming: "How stable is our understanding so far?",
       hypotheses: {
         maxItems: 2,
         priorityMode: "tension_first" as HypothesisPriorityMode,
-        introCopy: "These are early outside-view reads from the evidence we have so far. They should sharpen or break as we learn more.",
-        note: "Hold these lightly. The point here is to provoke better questions, not to settle the answer.",
+        introCopy: "These are early outside-view reads from the evidence gathered so far. They should sharpen or break as we learn more.",
+        note: "Hold these lightly. The point is to provoke better questions, not to settle the answer.",
       },
       movement: {
-        introCopy: "Recent shifts in confidence and evidence.",
+        introCopy: "What is forming, holding, or still unresolved in the current read.",
       },
       mainPage: {
         confidenceSummaryLine: "Where confidence is strongest and where it still needs proof.",
@@ -86,18 +118,19 @@ export function phaseNarrativePriority(phase: string) {
         hypothesisTitle: "Early read",
       },
       lateCommand: {
-        label: "THE NEXT MOVE",
+        label: "WHAT TO EXAMINE NEXT",
       },
       routes: {
         introLabel: "Possible paths",
-        introCopy: "Candidate directions suggested by the evidence. Treat them as worth investigating, not ready to choose.",
+        introCopy: "Candidate directions the evidence has been pointing toward. Treat these as directional reads — not ready to commit.",
         panelTitle: "Why this path is surfacing",
         safeNowLabel: "How to treat it now",
-        unreadyNote: "Not ready to choose yet — use these routes to probe the problem, not to commit to a path.",
+        unreadyNote: "Not ready to commit — use these routes to probe the problem and test assumptions.",
         sortMode: "investigate_first" as RouteSortMode,
         softenWeakRoutes: false,
+        suppressLeadBadge: true,
         hypothesisSubtitleOverride: "Directional paths suggested by the outside read — useful for tension-testing, not commitment.",
-        recommendedLabel: "Most worth investigating",
+        recommendedLabel: "Clearest signal so far",
         recommendedReasonPrefix: "Why this is surfacing: ",
       },
     };
@@ -106,14 +139,20 @@ export function phaseNarrativePriority(phase: string) {
   if (narrativePhase === "diagnose") {
     return {
       phase: narrativePhase,
+      orientation: {
+        question: "What still remains untested in the current read?",
+        read: "The diagnosis is developing. Track what has held up, what has weakened, and what still needs direct proof before direction narrows.",
+        tone: "exploratory" as const,
+      },
+      readinessFraming: "How stable is our understanding?",
       hypotheses: {
         maxItems: 2,
         priorityMode: "assumption_pressure" as HypothesisPriorityMode,
-        introCopy: "These are the working reads that are holding up, weakening, or still waiting on proof.",
+        introCopy: "These are the working reads that have been holding up, weakening, or waiting on proof.",
         note: "Use these to reconcile evidence and pressure-test assumptions before turning them into direction.",
       },
       movement: {
-        introCopy: "What is strengthening, weakening, or still unresolved.",
+        introCopy: "What has been strengthening, weakening, or still remains unresolved.",
       },
       mainPage: {
         confidenceSummaryLine: "Where confidence is strongest and where it still needs proof.",
@@ -123,19 +162,20 @@ export function phaseNarrativePriority(phase: string) {
         hypothesisTitle: "Early read",
       },
       lateCommand: {
-        label: "THE NEXT MOVE",
+        label: "WHAT TO EXAMINE NEXT",
       },
       routes: {
-        introLabel: "Routes beginning to stand out",
-        introCopy: "These are the paths starting to move from investigate to validate. The point now is to test which ones can carry the diagnosis.",
-        panelTitle: "Why this route is becoming more plausible",
+        introLabel: "Candidate paths",
+        introCopy: "Possible directions that have been emerging from the evidence. Use these to probe assumptions and test what holds — not to choose yet.",
+        panelTitle: "Why this path is emerging",
         safeNowLabel: "How to treat it now",
-        unreadyNote: "Not ready to choose yet — validate the assumptions that are still carrying too much weight.",
-        sortMode: "validate_first" as RouteSortMode,
+        unreadyNote: "Not ready to choose — resolve the assumptions still carrying too much weight before narrowing.",
+        sortMode: "investigate_first" as RouteSortMode,
         softenWeakRoutes: false,
-        hypothesisSubtitleOverride: "Routes the diagnosis is starting to support — still provisional, but more constrained.",
-        recommendedLabel: "Most worth validating",
-        recommendedReasonPrefix: "Why this is strengthening: ",
+        suppressLeadBadge: true,
+        hypothesisSubtitleOverride: "Candidate paths the diagnosis is beginning to surface — provisional and still open.",
+        recommendedLabel: "Clearest current signal",
+        recommendedReasonPrefix: "Why this is emerging: ",
       },
     };
   }
@@ -143,14 +183,20 @@ export function phaseNarrativePriority(phase: string) {
   if (narrativePhase === "focus") {
     return {
       phase: narrativePhase,
+      orientation: {
+        question: "What has the evidence most consistently pointed toward?",
+        read: "A clearest path has emerged from the evidence. The task now is validating what has been strengthening and resolving what remains uncertain.",
+        tone: "evaluative" as const,
+      },
+      readinessFraming: "How safe is prioritization right now?",
       hypotheses: {
         maxItems: 2,
         priorityMode: "assumption_pressure" as HypothesisPriorityMode,
-        introCopy: "The current focus still depends on these assumptions and tensions holding up.",
+        introCopy: "The current focus still depends on these assumptions and tensions continuing to hold.",
         note: "If these weaken, the focus should move.",
       },
       movement: {
-        introCopy: "What is narrowing, validating, or still not safe to focus around.",
+        introCopy: "What has been narrowing, validating, or still remains too uncertain to focus around.",
       },
       mainPage: {
         confidenceSummaryLine: "How safe the current focus is and what still needs proof.",
@@ -163,13 +209,14 @@ export function phaseNarrativePriority(phase: string) {
         label: "WHERE TO FOCUS",
       },
       routes: {
-        introLabel: "Routes",
-        introCopy: "These are the paths that are strong enough to compare seriously. Bring the most believable route forward and keep weaker paths intentionally secondary.",
+        introLabel: "Directions being explored",
+        introCopy: "Routes ranked by accumulated evidence confidence. Compare what has been strengthening against competing paths — the most consistently supported read should lead.",
         panelTitle: "Why this route is safest to focus around",
-        safeNowLabel: "What you can safely do now",
+        safeNowLabel: "What to pursue now",
         unreadyNote: "A lead route is forming, but it is not safe to commit until the remaining proof gaps clear.",
         sortMode: "commit_first" as RouteSortMode,
         softenWeakRoutes: true,
+        suppressLeadBadge: false,
         hypothesisSubtitleOverride: "",
         recommendedLabel: "Safest route to focus around",
         recommendedReasonPrefix: "Why this is safest: ",
@@ -179,14 +226,20 @@ export function phaseNarrativePriority(phase: string) {
 
   return {
     phase: narrativePhase,
+    orientation: {
+      question: "What is still shifting as we act?",
+      read: "We are learning through action. Track what has continued holding, what has started drifting, and what new signals are reshaping the picture.",
+      tone: "committed" as const,
+    },
+    readinessFraming: "How safe is execution commitment right now?",
     hypotheses: {
       maxItems: 2,
       priorityMode: "tension_first" as HypothesisPriorityMode,
       introCopy: "These are the tensions and assumptions most likely to change confidence next.",
-      note: "Keep these in view as the route learns.",
+      note: "Keep these in view as the route continues to learn.",
     },
     movement: {
-      introCopy: "Recent shifts in route confidence, learning, and drift.",
+      introCopy: "What has continued holding, started drifting, or recently shifted.",
     },
     mainPage: {
       confidenceSummaryLine: "How confidence is holding up as new signals come in.",
@@ -200,12 +253,13 @@ export function phaseNarrativePriority(phase: string) {
     },
     routes: {
       introLabel: "Routes in motion",
-      introCopy: "These routes are now being maintained through learning. Watch which paths strengthen, weaken, or drift as new signals appear.",
+      introCopy: "These routes are being sustained through learning. Watch what continues to hold, what has started drifting, and what new signals are reshaping the picture.",
       panelTitle: "How this route is holding up",
       safeNowLabel: "What to watch now",
       unreadyNote: "Keep the route live, but respond quickly if confidence weakens or the supporting signals drift.",
       sortMode: "movement_first" as RouteSortMode,
       softenWeakRoutes: false,
+      suppressLeadBadge: false,
       hypothesisSubtitleOverride: "",
       recommendedLabel: "Most in motion",
       recommendedReasonPrefix: "What is shifting here: ",
@@ -347,11 +401,15 @@ export function buildRouteEditorialRoles(args: {
   recommendedRouteId?: string | null;
 }) {
   const roles = new Map<string, RouteEditorialRole>();
+  const narrativePhase = resolveRefineNarrativePhase(args.phase);
   const scored = args.items
     .map((route) => ({ route, rationale: args.rationales.get(route.id) ?? null }))
     .filter((entry): entry is { route: RouteRow; rationale: RouteRationale } => Boolean(entry.rationale));
 
-  if (args.recommendedRouteId) roles.set(args.recommendedRouteId, "recommended");
+  // In exploratory phases (pre_diagnosis, diagnose) the "recommended" role implies a
+  // lead has been chosen — suppress it so the badge never shows "Lead route" prematurely.
+  const allowRecommendedBadge = narrativePhase === "focus" || narrativePhase === "flow";
+  if (args.recommendedRouteId && allowRecommendedBadge) roles.set(args.recommendedRouteId, "recommended");
 
   const improving = [...scored]
     .filter(({ rationale }) => rationale.movement === "strengthen" || rationale.movement === "narrow")

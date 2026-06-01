@@ -37,3 +37,11 @@ local-db-backups/
 # Local Next.js build caches
 launch-site/.next-build/
 launch-site/.next-dev/
+
+# Supabase CLI temp files
+supabase/.temp/
+
+# Temp/debug scripts (dot-prefixed scratch files and one-off debug probes)
+.tmp_*
+debug-*.cjs
+probe-*.cjs

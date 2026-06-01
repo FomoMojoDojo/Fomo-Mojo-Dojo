@@ -21,14 +21,14 @@ const AREA_BY_INPUT_KEY: Record<string, string> = {
   "target-aud": "positioning",
   "market-cat": "positioning",
   "brand-narrative": "positioning",
-  "program-model": "strategy",
-  "needs-assessment": "strategy",
-  "outcome-data": "product",
+  "operating-model": "strategy",
+  "customer-research": "strategy",
+  "outcome-evidence": "product",
   "channel-strat": "marketing",
-  "referral-map": "sales",
-  "donor-retention": "sales",
-  "grant-pipeline": "sales",
-  "family-satisfaction": "cx",
+  "acquisition-map": "sales",
+  "retention-signals": "sales",
+  "demand-pipeline": "sales",
+  "customer-signals": "cx",
 };
 
 const AREA_BY_GROUP_KEY: Record<string, string> = {

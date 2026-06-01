@@ -1,9 +1,9 @@
-import { useState, Fragment, useMemo, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, Fragment, useMemo, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from "react";
 import mammoth from "mammoth";
 import { useQuery } from "@tanstack/react-query";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import { useCompanyFiles } from "@/hooks/useCompanyFiles";
-import { useUpdateFileTags, useDeleteInputFile, getFileSignedUrl } from "@/hooks/useInputs";
+import { useUpdateFileTags, useArchiveInputFile, useRestoreInputFile, useArchivedInputFiles, getFileSignedUrl } from "@/hooks/useInputs";
 import {
   useFileProposals,
   type FileProposalRow,
@@ -22,6 +22,13 @@ import { visibleFileTags, readAreaSupportTags, makeAreaSupportTag, isInternalFil
 import { mapInputToAreaKey, inferAreaHintsFromFileName } from "@/lib/areaMapping";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { supabase } from "@/integrations/supabase/client";
+
+import { Eyebrow } from "@/components/design-system/Eyebrow";
+import { D } from "@/components/design-system/tokens";
+import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -275,14 +282,14 @@ function fileProposalProcessingBadgeStyle(proposal: FileProposalRow): React.CSSP
 function fileProposalProcessingBadgeText(proposal: FileProposalRow): string {
   switch (proposal.processing_state) {
     case "queued":
-      return "Dify queued";
+      return "Analysis queued";
     case "running":
-      return "Dify running";
+      return "Analyzing";
     case "failed":
-      return "Dify failed";
+      return "Analysis failed";
     case "ready":
     default:
-      return "Dify ready";
+      return "Analysis ready";
   }
 }
 
@@ -312,7 +319,9 @@ function isProposalStale(proposal: FileProposalRow): boolean {
 }
 
 function isQueuedPlaceholderSummary(summary: string): boolean {
-  return summary.trim() === "Dify analysis queued. Results will appear when processing finishes.";
+  const s = summary.trim();
+  return s === "Dify analysis queued. Results will appear when processing finishes."
+    || s === "Analysis queued. Results will appear when processing finishes.";
 }
 
 function proposalPriority(proposal: FileProposalRow): number {
@@ -388,28 +397,33 @@ function PrimaryAddBtn({ label, active, onClick }: { label: string; active: bool
   );
 }
 
-// "Applied in" cell — shows areas (with linked-need hover detail) for used rows,
-// "Apply →" button for unused rows.
+// Areas cell — shows area chips for tagged rows, or untagged prompt for empty rows.
 function UsedByCell({
-  areas, linkedNeeds, onUseThis,
+  areas, linkedNeeds, onUseThis, rowType,
 }: {
-  areas: FoundationArea[]; linkedNeeds: string[]; onUseThis: () => void;
+  areas: FoundationArea[]; linkedNeeds: string[]; onUseThis: () => void; rowType: "file" | "social" | string;
 }) {
   if (areas.length === 0) {
+    const untaggedLabel = rowType === "social" ? "Assign step →" : "Assign area →";
     return (
-      <button
-        type="button"
-        onClick={onUseThis}
-        style={{
-          ...MONO, fontSize: 10, letterSpacing: "0.04em",
-          color: "#b0a898", background: "none", border: "none",
-          padding: 0, cursor: "pointer", textDecoration: "underline",
-          textDecorationStyle: "dashed",
-          textUnderlineOffset: 3,
-        }}
-      >
-        Apply →
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {rowType !== "social" && (
+          <span style={{ ...MONO, fontSize: 9, color: "#c8c2ba", letterSpacing: "0.04em" }}>Untagged</span>
+        )}
+        <button
+          type="button"
+          onClick={onUseThis}
+          style={{
+            ...MONO, fontSize: 10, letterSpacing: "0.04em",
+            color: "#b0a898", background: "none", border: "none",
+            padding: 0, cursor: "pointer", textDecoration: "underline",
+            textDecorationStyle: "dashed",
+            textUnderlineOffset: 3,
+          }}
+        >
+          {untaggedLabel}
+        </button>
+      </div>
     );
   }
   const rest = areas.length - 1;
@@ -737,7 +751,7 @@ function ProposalReviewPanel({
       padding: "16px 20px", margin: "2px 0 8px",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div style={{ ...LABEL_TINY }}>Dify Analysis</div>
+        <div style={{ ...LABEL_TINY }}>Evidence Analysis</div>
         <span style={{ ...MONO, fontSize: 9, color: confidenceColor, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700 }}>
           {proposal.confidence} confidence
         </span>
@@ -768,7 +782,7 @@ function ProposalReviewPanel({
 
       {frameworkResults.length > 0 && (
         <div style={{ marginBottom: 16, borderTop: "1px solid #d4e8dc", paddingTop: 12 }}>
-          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Framework findings</div>
+          <div style={{ ...LABEL_TINY, marginBottom: 8 }}>Signal patterns</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {frameworkResults.map((framework, i) => (
               <div key={`${framework.framework}-${i}`}>
@@ -797,8 +811,8 @@ function ProposalReviewPanel({
         <div style={{ margin: "0 0 14px" }}>
           <p style={{ ...MONO, fontSize: 10, color: "#888", margin: "0 0 8px", lineHeight: 1.6 }}>
             {proposal.processing_state === "queued"
-              ? "Dify analysis is queued. This panel updates automatically."
-              : "Dify analysis is running. This panel updates automatically."}
+              ? "Analysis queued. This panel updates automatically."
+              : "Analysis running. This panel updates automatically."}
           </p>
           <div style={{ height: 6, borderRadius: 999, background: "#dcebe3", overflow: "hidden" }}>
             <div
@@ -815,7 +829,7 @@ function ProposalReviewPanel({
 
       {isFailed && proposal.processing_error && (
         <p style={{ ...MONO, fontSize: 10, color: "#c0392b", margin: "0 0 14px", lineHeight: 1.6 }}>
-          Dify failed: {proposal.processing_error}
+          Analysis failed: {proposal.processing_error}
         </p>
       )}
 
@@ -1085,8 +1099,8 @@ function ProposalReviewPanel({
         {isReady
           ? "Checked items are accepted for review. Only area tags are applied for now; structured items are not auto-created."
           : isFailed
-            ? "This proposal did not complete cleanly. Retry Dify analysis from the file row if needed."
-            : "This proposal is still processing. You can dismiss it if it is stuck, or wait for Dify processing to finish."}
+            ? "This analysis did not complete cleanly. Retry from the file row if needed."
+            : "This analysis is still processing. You can dismiss it if it is stuck, or wait for it to finish."}
       </p>
     </div>
   );
@@ -1097,13 +1111,19 @@ function ProposalReviewPanel({
 export default function InputsTab({
   companyId,
   companyName,
+  companyWebsite,
   socialNeeds,
   onAdded,
+  hasHierarchy,
+  signalBasis,
 }: {
-  companyId:    string | null;
-  companyName?: string;
-  socialNeeds:  OdiNeedRow[];
-  onAdded:      () => void;
+  companyId:      string | null;
+  companyName?:   string;
+  companyWebsite?: string;
+  socialNeeds:    OdiNeedRow[];
+  onAdded:        () => void;
+  hasHierarchy?:  boolean;
+  signalBasis?:   SignalBasis;
 }) {
   const [showSocial,       setShowSocial]       = useState(false);
   const [typeFilter,       setTypeFilter]       = useState<TypeFilter>("all");
@@ -1113,6 +1133,37 @@ export default function InputsTab({
 
   const { data: companyFiles = [], refetch: refetchFiles } = useCompanyFiles(companyId);
   const updateFileTags = useUpdateFileTags();
+
+  // Evidence source status — shows reconstruction vs evidence-derived state.
+  const { data: evidenceStatus } = useQuery({
+    queryKey: ['evidence-source-status', companyId],
+    queryFn: async () => {
+      if (!companyId) return null;
+      const [needsRes, routesRes, stepsRes] = await Promise.all([
+        supabase.from('odi_needs').select('id, frameworks_used, source_path').eq('company_id', companyId),
+        supabase.from('routes').select('id, frameworks_used').eq('company_id', companyId),
+        supabase.from('job_steps').select('id, evidence_basis').eq('company_id', companyId),
+      ]);
+      const needs = needsRes.data ?? [];
+      const routes = routesRes.data ?? [];
+      const steps = stepsRes.data ?? [];
+      const isReconstructed = (fw: string[] | null) =>
+        Array.isArray(fw) &&
+        fw.includes('reconstructed_prior') &&
+        !fw.includes('superseded_by_evidence_78e') &&
+        !fw.includes('evidence_derived_78e');
+      const needsReconstructed = needs.filter((n) => isReconstructed(n.frameworks_used)).length;
+      const routesReconstructed = routes.filter((r) => isReconstructed(r.frameworks_used)).length;
+      return {
+        needsTotal: needs.length,
+        needsReconstructed,
+        routesTotal: routes.length,
+        routesReconstructed,
+        stepsTotal: steps.length,
+      };
+    },
+    enabled: !!companyId,
+  });
 
   // Minimal inputs list — needed to resolve cross_area_input_ids from analyze-file response.
   const { data: companyInputs = [] } = useQuery({
@@ -1131,7 +1182,49 @@ export default function InputsTab({
   const [analyzingFileId,  setAnalyzingFileId]  = useState<string | null>(null);
   const [analyzeFailedIds, setAnalyzeFailedIds] = useState<ReadonlySet<string>>(new Set());
 
-  const deleteFileMutation = useDeleteInputFile();
+  // ── Auth + public baseline ─────────────────────────────────────────────────
+  const { isAdmin } = useAuth();
+  const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(companyId ?? undefined);
+
+  const { data: runLock } = useQuery({
+    queryKey: ['company-run-lock', companyId],
+    queryFn: async () => {
+      if (!companyId) return null;
+      const { data } = await supabase
+        .from('company_run_locks')
+        .select('operation, expires_at')
+        .eq('company_id', companyId)
+        .eq('operation', 'public_baseline')
+        .maybeSingle();
+      return data ?? null;
+    },
+    refetchInterval: 5000,
+    enabled: !!companyId,
+  });
+  const baselineRunning = !!runLock && new Date(runLock.expires_at) > new Date();
+
+  const handleRefreshBaseline = useCallback(async () => {
+    if (!companyId || !companyName) return;
+    if (!companyWebsite?.trim()) {
+      toast.error("Add a website for this company before refreshing outside signals.");
+      return;
+    }
+    toast.loading("Refreshing outside signals…", { id: "refresh-baseline" });
+    const { error } = await supabase.functions.invoke("public-baseline", {
+      body: { company_id: companyId, company_name: companyName, website: companyWebsite },
+    });
+    if (error) {
+      toast.error(error.message || "Outside signal refresh failed.", { id: "refresh-baseline" });
+    } else {
+      toast.success("Outside signals updated.", { id: "refresh-baseline" });
+      void refetchBaseline();
+    }
+  }, [companyId, companyName, companyWebsite, refetchBaseline]);
+
+  const archiveFileMutation = useArchiveInputFile();
+  const restoreFileMutation = useRestoreInputFile();
+  const { data: archivedFiles = [] } = useArchivedInputFiles(companyId);
+  const [showArchived, setShowArchived] = useState(false);
   const [deleteConfirmId,  setDeleteConfirmId]  = useState<string | null>(null);
   const [deletingFileId,   setDeletingFileId]   = useState<string | null>(null);
 
@@ -1139,7 +1232,7 @@ export default function InputsTab({
     setDeleteConfirmId(null);
     setDeletingFileId(row.id);
     try {
-      await deleteFileMutation.mutateAsync({ id: row.id, filePath: row.filePath ?? "" });
+      await archiveFileMutation.mutateAsync({ id: row.id, reason: 'user_removed', source: 'ui' });
       if (mode === "file-and-unlink" && row.filePath) {
         await supabase.from("odi_needs").update({ source_path: "" }).eq("source_path", row.filePath);
       }
@@ -1149,6 +1242,11 @@ export default function InputsTab({
     } finally {
       setDeletingFileId(null);
     }
+  }
+
+  async function handleRestoreFile(id: string) {
+    await restoreFileMutation.mutateAsync({ id });
+    await refetchFiles();
   }
 
   // ── Dify proposal state ────────────────────────────────────────────────────
@@ -1498,7 +1596,7 @@ export default function InputsTab({
     return {
       id:               n.id,
       type:             "social",
-      title:            n.desired_outcome,
+      title:            n.desired_outcome ?? "",
       source:           socialSourceLabel(n.source_path),
       date:             relativeTime(n.created_at),
       status:           "early signal",
@@ -1520,21 +1618,174 @@ export default function InputsTab({
 
   // ── Summary counts ─────────────────────────────────────────────────────────
 
-  const processedCount       = fileRows.filter((r) => r.processingStatus === "processed").length;
+  const processedCount        = fileRows.filter((r) => r.processingStatus === "processed").length;
   const usedInFoundationCount = fileRows.filter((r) => r.areas.length > 0).length;
+  const analyzedCount         = fileRows.filter((r) => proposalByFileId.get(r.id)?.processing_state === "ready").length;
+  const allApplied            = fileRows.length > 0 && usedInFoundationCount === fileRows.length;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ padding: "8px 0 80px", maxWidth: 860 }}>
+    <div style={hasHierarchy
+      ? { margin: -36, padding: "40px 48px 80px", background: D.canvas }
+      : { padding: "8px 0 80px", maxWidth: 860 }
+    }>
 
       {/* ── PAGE INTRO ────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 28 }}>
-        <span style={LABEL_TINY}>Inputs</span>
-        <p style={{ margin: "4px 0 0", fontSize: 11, color: "#aaa", fontFamily: "monospace" }}>
-          What you've added — and what it's shaping.
-        </p>
-      </div>
+      {hasHierarchy ? (
+        <div style={{ marginBottom: 40 }}>
+          <Eyebrow segments={["Strategy", "Inputs"]} />
+          <h1 style={{ fontFamily: D.sans, fontSize: 30, fontWeight: 700, color: D.ink, margin: "0 0 10px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
+            Evidence{" "}
+            <span style={{ color: D.signal }}>Lineage</span>
+          </h1>
+          <p style={{ fontFamily: D.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", margin: signalBasis ? "0 0 10px" : "0 0 20px", lineHeight: 1.55, maxWidth: 600 }}>
+            What evidence is shaping the strategy — and where signals came from.
+          </p>
+          {signalBasis && <SignalBasisChip {...signalBasis} />}
+
+          {/* Admin-only: outside signals refresh */}
+          {isAdmin && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20, marginBottom: 4 }}>
+              <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: "rgba(246,246,244,0.35)" }}>
+                Outside signals
+              </span>
+              {baselineRun?.created_at && (
+                <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(246,246,244,0.25)" }}>
+                  Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </span>
+              )}
+              <button
+                type="button"
+                disabled={baselineRunning}
+                onClick={() => void handleRefreshBaseline()}
+                style={{
+                  fontFamily: D.mono, fontSize: 9, color: baselineRunning ? "rgba(246,246,244,0.25)" : "#7a9e90",
+                  background: "none", border: "none", padding: 0,
+                  cursor: baselineRunning ? "default" : "pointer",
+                  textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
+                }}
+              >
+                {baselineRunning ? "Refreshing…" : "Refresh outside signals →"}
+              </button>
+            </div>
+          )}
+
+          {/* Dynamic integration status */}
+          {!allApplied && fileRows.length > 0 && (() => {
+            let eyebrow: string;
+            let headline: string;
+            let sub: string;
+            if (analyzedCount === 0) {
+              eyebrow = "Not yet analyzed";
+              headline = `${fileRows.length} source${fileRows.length === 1 ? "" : "s"} uploaded — run analysis to extract signals.`;
+              sub = "Use Run analysis → below on each file to begin deep extraction.";
+            } else if (usedInFoundationCount === 0) {
+              eyebrow = "Not yet integrated";
+              headline = `${analyzedCount} of ${fileRows.length} source${fileRows.length === 1 ? "" : "s"} analyzed — none assigned to foundation areas yet.`;
+              sub = "Assign foundation areas below to begin shaping strategy with your evidence.";
+            } else {
+              eyebrow = "Partially integrated";
+              headline = `${usedInFoundationCount} of ${fileRows.length} source${fileRows.length === 1 ? "" : "s"} assigned to foundation areas.`;
+              sub = `${fileRows.length - usedInFoundationCount} source${fileRows.length - usedInFoundationCount === 1 ? "" : "s"} still need area assignment.`;
+            }
+            return (
+              <div style={{
+                background: "#1a1a1a",
+                borderLeft: `5px solid ${D.signal}`,
+                borderRadius: 4,
+                padding: "18px 22px",
+                marginTop: 20,
+                marginBottom: 8,
+              }}>
+                <p style={{ fontFamily: D.mono, fontSize: 10, textTransform: "uppercase" as const, letterSpacing: "0.14em", color: D.signal, margin: "0 0 8px" }}>
+                  {eyebrow}
+                </p>
+                <p style={{ fontFamily: D.sans, fontSize: 17, fontWeight: 600, lineHeight: 1.4, color: "rgba(246,246,244,0.92)", margin: 0 }}>
+                  {headline}
+                </p>
+                <p style={{ fontFamily: D.sans, fontSize: 13, color: "rgba(246,246,244,0.5)", margin: "8px 0 0", lineHeight: 1.5 }}>
+                  {sub}
+                </p>
+              </div>
+            );
+          })()}
+        </div>
+      ) : (
+        <div style={{ marginBottom: 28 }}>
+          <span style={LABEL_TINY}>Evidence Lineage</span>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#aaa", fontFamily: "monospace" }}>
+            What evidence is shaping the strategy — and where signals came from.
+          </p>
+        </div>
+      )}
+
+      {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
+      {evidenceStatus && (
+        <div style={{
+          marginBottom: 28,
+          padding: "12px 16px",
+          background: evidenceStatus.needsReconstructed > 0 || evidenceStatus.routesReconstructed > 0
+            ? "#fdf8f3" : "#f4faf7",
+          border: `1px solid ${evidenceStatus.needsReconstructed > 0 || evidenceStatus.routesReconstructed > 0
+            ? "#e8cfa8" : "#b8d8c8"}`,
+          borderRadius: 4,
+        }}>
+          <div style={{ ...LABEL_TINY, marginBottom: 10 }}>Signal origin</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 24px" }}>
+            <div style={{ ...MONO, fontSize: 10, color: "#666" }}>
+              Evidence files
+              <span style={{ float: "right", color: companyFiles.length > 0 ? "#1a8f5a" : "#c0392b" }}>
+                {companyFiles.length}
+              </span>
+            </div>
+            <div style={{ ...MONO, fontSize: 10, color: "#666" }}>
+              Customer tensions mapped
+              <span style={{ float: "right", color: "#555" }}>{evidenceStatus.needsTotal}</span>
+            </div>
+            <div style={{ ...MONO, fontSize: 10, color: "#666" }}>
+              Directional routes
+              <span style={{ float: "right", color: "#555" }}>{evidenceStatus.routesTotal}</span>
+            </div>
+            <div style={{ ...MONO, fontSize: 10, color: "#666" }}>
+              Job steps defined
+              <span style={{ float: "right", color: "#555" }}>{evidenceStatus.stepsTotal}</span>
+            </div>
+          </div>
+          {(evidenceStatus.needsReconstructed > 0 || evidenceStatus.routesReconstructed > 0) && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #e8cfa8" }}>
+              <div style={{ ...MONO, fontSize: 10, color: "#b35c00" }}>
+                Inferred from prior session (not file-verified):
+              </div>
+              <ul style={{ margin: "6px 0 0", padding: "0 0 0 14px" }}>
+                {evidenceStatus.needsReconstructed > 0 && (
+                  <li style={{ ...MONO, fontSize: 10, color: "#b35c00", lineHeight: 1.5 }}>
+                    {evidenceStatus.needsReconstructed} of {evidenceStatus.needsTotal} customer tensions — inferred, not yet verified by uploaded evidence
+                  </li>
+                )}
+                {evidenceStatus.routesReconstructed > 0 && (
+                  <li style={{ ...MONO, fontSize: 10, color: "#b35c00", lineHeight: 1.5 }}>
+                    {evidenceStatus.routesReconstructed} of {evidenceStatus.routesTotal} directional routes — inferred, not yet verified by uploaded evidence
+                  </li>
+                )}
+              </ul>
+              <p style={{ ...MONO, fontSize: 10, color: "#c8a060", margin: "8px 0 0", lineHeight: 1.5 }}>
+                Upload evidence files and run analysis to strengthen signal confidence.
+              </p>
+            </div>
+          )}
+          {evidenceStatus.needsReconstructed === 0 && evidenceStatus.routesReconstructed === 0 && companyFiles.length > 0 && (
+            <div style={{ marginTop: 8, ...MONO, fontSize: 10, color: "#1a8f5a" }}>
+              Signals appear file-verified.
+            </div>
+          )}
+          {evidenceStatus.needsReconstructed === 0 && evidenceStatus.routesReconstructed === 0 && companyFiles.length === 0 && evidenceStatus.needsTotal > 0 && (
+            <div style={{ marginTop: 8, ...MONO, fontSize: 10, color: "#888" }}>
+              Signal origin unclear — no uploaded evidence files found.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── ADD INPUT ─────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 36 }}>
@@ -1585,20 +1836,40 @@ export default function InputsTab({
         </div>
       </div>
 
-      {/* ── INPUTS LIBRARY ────────────────────────────────────────────────── */}
+      {/* ── EVIDENCE SOURCES ────────────────────────────────────────────── */}
       <div>
-        {/* File summary strip */}
-        {fileRows.length > 0 && (
-          <p style={{ ...MONO, fontSize: 10, color: "#aaa", marginBottom: 16, marginTop: 0 }}>
-            Files: {fileRows.length} uploaded
-            {" · "}{processedCount} processed
-            {" · "}{usedInFoundationCount} used in foundation
-          </p>
-        )}
+        {/* Evidence impact lead */}
+        {fileRows.length > 0 && (() => {
+          const areasSet = new Set<string>();
+          fileRows.forEach((r) => r.areas.forEach((a) => areasSet.add(areaDisplayLabel(a))));
+          const areaList = [...areasSet];
+          const coveredAreaKeys = new Set(
+            fileRows.flatMap((r) => r.areas as FoundationArea[])
+          );
+          const unsupportedAreas = FOUNDATION_AREAS.filter((a) => !coveredAreaKeys.has(a)).map(areaDisplayLabel);
+          const impactLine = usedInFoundationCount > 0
+            ? `${usedInFoundationCount} source${usedInFoundationCount === 1 ? "" : "s"} reinforcing current direction — ${areaList.length > 0 ? areaList.join(", ").toLowerCase() : "foundation areas"}.`
+            : `${fileRows.length} source${fileRows.length === 1 ? "" : "s"} uploaded — not yet integrated into foundation areas.`;
+          const unsupportedLine = usedInFoundationCount > 0 && unsupportedAreas.length > 0
+            ? `${unsupportedAreas.join(", ").toLowerCase()} — no evidence yet.`
+            : null;
+          return (
+            <>
+              <p style={{ fontSize: 13, color: "#2d4a3e", lineHeight: 1.55, marginBottom: unsupportedLine ? 4 : 20, marginTop: 0, fontWeight: 400 }}>
+                {impactLine}
+              </p>
+              {unsupportedLine && (
+                <p style={{ fontSize: 11, color: "#8a8a78", lineHeight: 1.5, marginBottom: 18, marginTop: 0, fontFamily: "monospace", letterSpacing: "0.01em" }}>
+                  {unsupportedLine}
+                </p>
+              )}
+            </>
+          );
+        })()}
 
         <div style={{ marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
-            <span style={LABEL_TINY}>Inputs Library</span>
+            <span style={LABEL_TINY}>Evidence memory</span>
             <div style={{ display: "flex", gap: 8 }}>
               <select
                 value={typeFilter}
@@ -1638,8 +1909,8 @@ export default function InputsTab({
                   <th style={{ ...TH, width: "32%" }}>Title / Snippet</th>
                   <th style={TH}>Source</th>
                   <th style={TH}>Date</th>
-                  <th style={TH}>Processing</th>
-                  <th style={{ ...TH, paddingRight: 0 }}>Applied in</th>
+                  <th style={{ ...TH, paddingRight: 0 }}>Areas</th>
+                  <th style={TH}>Analysis</th>
                   <th style={{ ...TH, paddingRight: 0, width: 24 }}></th>
                 </tr>
               </thead>
@@ -1683,55 +1954,30 @@ export default function InputsTab({
                         </td>
                         <td style={{ ...TD, color: "#aaa", whiteSpace: "nowrap" }}>{row.source || "—"}</td>
                         <td style={{ ...TD, color: "#ccc", whiteSpace: "nowrap" }}>{row.date}</td>
+                        {/* Areas column — area chips or assign prompt */}
+                        <td style={{ ...TD, paddingRight: 0 }}>
+                          <UsedByCell
+                            areas={row.areas}
+                            linkedNeeds={row.linkedNeeds}
+                            onUseThis={() => setUseThisId(panelOpen ? null : row.id)}
+                            rowType={row.type}
+                          />
+                        </td>
+                        {/* Analysis column — Dify proposal state (file rows only) */}
                         <td style={{ ...TD, whiteSpace: "nowrap" }}>
                           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                            {/* Main processing status */}
                             {row.type !== "file" ? (
                               <span style={{ ...MONO, fontSize: 9, color: "#e0dcd8" }}>—</span>
-                            ) : proposalByFileId.has(row.id) ? (
-                              <span style={fileProposalProcessingBadgeStyle(proposalByFileId.get(row.id)!)}>
-                                {fileProposalProcessingBadgeText(proposalByFileId.get(row.id)!)}
-                              </span>
-                            ) : row.processingStatus === "processed" ? (
-                              <span style={{ ...MONO, fontSize: 9, color: "#1a8f5a" }}>Processed</span>
-                            ) : row.processingStatus === "uploading" ? (
-                              <span style={{ ...MONO, fontSize: 9, color: "#c97700" }}>Processing…</span>
-                            ) : analyzingFileId === row.id ? (
-                              <span style={{ ...MONO, fontSize: 9, color: "#c97700" }}>Analyzing…</span>
-                            ) : analyzeFailedIds.has(row.id) ? (
-                              <button
-                                type="button"
-                                onClick={() => handleAnalyze(row)}
-                                style={{
-                                  ...MONO, fontSize: 9, color: "#c0392b", background: "none",
-                                  border: "none", padding: 0, cursor: "pointer",
-                                  textDecoration: "underline", textUnderlineOffset: 3,
-                                }}
-                              >
-                                Analysis failed — retry
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleAnalyze(row)}
-                                style={{
-                                  ...MONO, fontSize: 9, color: "#5a8a70", background: "none",
-                                  border: "none", padding: 0, cursor: "pointer",
-                                  textDecoration: "underline", textDecorationStyle: "dashed",
-                                  textUnderlineOffset: 3,
-                                }}
-                              >
-                                Analyze →
-                              </button>
-                            )}
-                            {/* Dify proposal action — secondary, file rows only */}
-                            {row.type === "file" && (() => {
+                            ) : (() => {
                               const proposal = proposalByFileId.get(row.id);
                               if (proposal) {
                                 const isActiveProposal = proposal.processing_state === "queued" || proposal.processing_state === "running";
                                 const isFailedProposal = proposal.processing_state === "failed";
                                 return (
                                   <>
+                                    <span style={fileProposalProcessingBadgeStyle(proposal)}>
+                                      {fileProposalProcessingBadgeText(proposal)}
+                                    </span>
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1740,19 +1986,19 @@ export default function InputsTab({
                                         setDeleteConfirmId(null);
                                       }}
                                       style={{
-                                        ...MONO, fontSize: 9, color: proposal.processing_state === "failed" ? "#c0392b" : "#2d8a60", background: "none",
+                                        ...MONO, fontSize: 9, color: isFailedProposal ? "#c0392b" : "#2d8a60", background: "none",
                                         border: "none", padding: 0, cursor: "pointer",
                                         textDecoration: "underline", textDecorationStyle: "dashed",
                                         textUnderlineOffset: 3,
                                       }}
-                                      >
+                                    >
                                       {proposalPanelOpen
                                         ? `↑ Close review${fileProposalReviewCountsText(proposal)}`
                                         : `Review proposal →${fileProposalReviewCountsText(proposal)}`}
                                     </button>
                                     {isActiveProposal ? (
-                                      <span style={{ ...MONO, fontSize: 9, color: syncingProposalId === proposal.id ? "#7a9e90" : "#9aa79f" }}>
-                                        {syncingProposalId === proposal.id ? "Updating automatically…" : "Updating automatically…"}
+                                      <span style={{ ...MONO, fontSize: 9, color: "#9aa79f" }}>
+                                        Updating automatically…
                                       </span>
                                     ) : (
                                       <>
@@ -1767,9 +2013,9 @@ export default function InputsTab({
                                             textUnderlineOffset: 3,
                                           }}
                                         >
-                                          {difyAnalyzingFileId === row.id ? "Dify analyzing…" : "Run Dify again →"}
+                                          {difyAnalyzingFileId === row.id ? "Analyzing…" : "Re-run analysis →"}
                                         </button>
-                                        {isFailedProposal ? (
+                                        {isFailedProposal && (
                                           <button
                                             type="button"
                                             onClick={() => handleDismissProposal(proposal)}
@@ -1781,14 +2027,14 @@ export default function InputsTab({
                                           >
                                             Dismiss failed run →
                                           </button>
-                                        ) : null}
+                                        )}
                                       </>
                                     )}
                                   </>
                                 );
                               }
                               if (difyAnalyzingFileId === row.id) {
-                                return <span style={{ ...MONO, fontSize: 9, color: "#c97700" }}>Dify analyzing…</span>;
+                                return <span style={{ ...MONO, fontSize: 9, color: "#c97700" }}>Analyzing…</span>;
                               }
                               if (difyFailedIds.has(row.id)) {
                                 return (
@@ -1801,7 +2047,7 @@ export default function InputsTab({
                                       textDecoration: "underline", textUnderlineOffset: 3,
                                     }}
                                   >
-                                    Dify failed — retry
+                                    Analysis failed — retry →
                                   </button>
                                 );
                               }
@@ -1816,18 +2062,11 @@ export default function InputsTab({
                                     textUnderlineOffset: 3,
                                   }}
                                 >
-                                  Analyze with Dify →
+                                  {difyAnalyzingFileId === row.id ? "Analyzing…" : "Run analysis →"}
                                 </button>
                               );
                             })()}
                           </div>
-                        </td>
-                        <td style={{ ...TD, paddingRight: 0 }}>
-                          <UsedByCell
-                            areas={row.areas}
-                            linkedNeeds={row.linkedNeeds}
-                            onUseThis={() => setUseThisId(panelOpen ? null : row.id)}
-                          />
                         </td>
                         {row.type === "file" ? (
                           <td style={{ ...TD, paddingRight: 0, width: 24, textAlign: "center" }}>
@@ -1841,7 +2080,7 @@ export default function InputsTab({
                                   setUseThisId(null);
                                 }
                               }}
-                              title="Remove file"
+                              title="Archive file (recoverable)"
                               style={{
                                 ...MONO, fontSize: 13, color: "#c8c2ba",
                                 background: "none", border: "none",
@@ -1903,6 +2142,69 @@ export default function InputsTab({
           </div>
         )}
       </div>
+
+      {/* Archived files section */}
+      {archivedFiles.length > 0 && (
+        <div style={{ marginTop: 24, padding: "0 0 8px" }}>
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: 11, color: "#b8b0a8", padding: "4px 0",
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <span style={{ fontFamily: "monospace" }}>{showArchived ? "▾" : "▸"}</span>
+            {archivedFiles.length} archived file{archivedFiles.length !== 1 ? "s" : ""}
+          </button>
+          {showArchived && (
+            <div style={{ marginTop: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #f0ece8" }}>
+                    <th style={{ textAlign: "left", padding: "4px 8px", color: "#b8b0a8", fontWeight: 400 }}>Filename</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px", color: "#b8b0a8", fontWeight: 400 }}>Uploaded</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px", color: "#b8b0a8", fontWeight: 400 }}>Archived</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px", color: "#b8b0a8", fontWeight: 400 }}>Reason</th>
+                    <th style={{ padding: "4px 8px" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archivedFiles.map((f) => (
+                    <tr key={f.id} style={{ borderBottom: "1px solid #f8f6f4" }}>
+                      <td style={{ padding: "4px 8px", color: "#b8b0a8", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          title={f.file_name}>{f.file_name}</td>
+                      <td style={{ padding: "4px 8px", color: "#c8c2ba", whiteSpace: "nowrap" }}>
+                        {f.uploaded_at ? new Date(f.uploaded_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td style={{ padding: "4px 8px", color: "#c8c2ba", whiteSpace: "nowrap" }}>
+                        {f.archived_at ? new Date(f.archived_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td style={{ padding: "4px 8px", color: "#c8c2ba" }}>
+                        {f.archive_reason ?? "—"}
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreFile(f.id)}
+                          style={{
+                            fontSize: 10, color: "#8b7355",
+                            background: "none", border: "1px solid #e8e2da",
+                            borderRadius: 3, padding: "2px 6px", cursor: "pointer",
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* File upload dialog */}
       <FileUploadDialog

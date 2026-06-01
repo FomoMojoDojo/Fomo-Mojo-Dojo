@@ -39,39 +39,35 @@ export function routeSignalTiers({
   const outsidePresent =
     fw.some((f) => f.includes("jtbd") || f.includes("odi") || f.includes("public") || f.includes("baseline"));
 
-  const cells: TierCellData[] = [
+  // All 4 cells always rendered. present=false cells show "Not yet classified." per plan spec.
+  return [
     { tier: "outside", label: "Outside Signals", present: outsidePresent },
     { tier: "org", label: "Organization Signals", present: hasNonMissingEvidence },
+    {
+      tier: "customer",
+      label: "Customer Signals",
+      present: hasCustomerEvidence,
+      detail: hasCustomerEvidence ? undefined : "Not yet classified.",
+    },
+    { tier: "market", label: "Market Validation", present: hasCompleteEvidence },
   ];
-
-  // Customer Signals: only included if there is qualifying customer evidence
-  if (hasCustomerEvidence) {
-    cells.push({ tier: "customer", label: "Customer Signals", present: true });
-  }
-
-  cells.push({ tier: "market", label: "Market Validation", present: hasCompleteEvidence });
-  return cells;
 }
 
 // Derive source-layer cells for a need based on source_path.
-// Customer Signals cell is omitted unless isPrimaryNeedsSourcePath confirms primary research.
+// Always returns all 4 cells so the TierGrid fills both columns evenly.
+// Absent cells show "Not yet classified." — matching routeSignalTiers behavior.
 export function needSignalTiers(sourcePath: string | null | undefined): TierCellData[] {
   const s = String(sourcePath || "").trim().toLowerCase();
   const isOutside = s.includes("baseline") || s.includes("public") || s.includes("social");
   const isOrg = !isOutside && (s.includes("upload") || s.includes("org") || s.includes("company") || s.includes("file"));
   const isCustomer = isPrimaryNeedsSourcePath(sourcePath);
 
-  const cells: TierCellData[] = [
-    { tier: "outside", label: "Outside Signals", present: isOutside },
-    { tier: "org", label: "Organization Signals", present: isOrg },
+  return [
+    { tier: "outside",  label: "Outside Signals",      present: isOutside,  detail: isOutside  ? undefined : "Not yet classified." },
+    { tier: "org",      label: "Organization Signals",  present: isOrg,      detail: isOrg      ? undefined : "Not yet classified." },
+    { tier: "customer", label: "Customer Signals",      present: isCustomer, detail: isCustomer ? undefined : "Not yet classified." },
+    { tier: "market",   label: "Market Validation",     present: false,      detail: "Not yet classified." },
   ];
-
-  if (isCustomer) {
-    cells.push({ tier: "customer", label: "Customer Signals", present: true });
-  }
-
-  cells.push({ tier: "market", label: "Market Validation", present: false });
-  return cells;
 }
 
 // Generation context label from frameworks_used — framed as "how it was generated", not "evidence from".

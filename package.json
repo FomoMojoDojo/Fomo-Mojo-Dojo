@@ -19,7 +19,11 @@
     "files:sync-local": "node scripts/sync-local-files-to-supabase.mjs",
     "files:pull-local": "node scripts/pull-supabase-files-to-local.mjs",
     "files:auto-mirror": "node scripts/auto-mirror-local-files.mjs --root \"Client_Files\"",
-    "db:check-companies-columns": "node scripts/check-companies-columns.mjs"
+    "db:check-companies-columns": "node scripts/check-companies-columns.mjs",
+    "db:backup": "bash scripts/backup-local-db.sh",
+    "db:restore": "bash scripts/restore-local-db.sh",
+    "db:reset:safe": "bash scripts/safe-db-reset.sh",
+    "db:check-destructive": "bash scripts/check-destructive-sql.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -122,8 +122,18 @@ const CHECKPOINT_BY_NUMBER = new Map(
   JTBD_ODI_CHECKPOINTS.map((checkpoint) => [checkpoint.stepNumber, checkpoint]),
 );
 
-const SOLUTION_PRESCRIPTIVE_PATTERN =
-  /\b(feature|dashboard|portal|campaign|launch|tool|app|platform|build|implement|rollout|workflow automation|automation workflow|template|mvp|ui|productize|standardize|integrate|promote|negotiate|supplier|vendor|pricing|terms|partnership|onboarding|mojomap|mojoscore|coffee)\b/i;
+const PRESCRIPTIVE_TERMS_LIST = [
+  "feature", "dashboard", "portal", "campaign", "launch", "tool", "app", "platform",
+  "build", "implement", "rollout", "workflow automation", "automation workflow",
+  "template", "mvp", "ui", "productize", "standardize", "integrate", "promote",
+  "negotiate", "supplier", "vendor", "pricing", "terms", "partnership",
+  "onboarding", "mojomap", "mojoscore",
+];
+
+const SOLUTION_PRESCRIPTIVE_PATTERN = new RegExp(
+  `\\b(${PRESCRIPTIVE_TERMS_LIST.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+  "i",
+);
 
 const NON_ODI_PROCESS_PATTERN =
   /\b(awareness|acquisition|activation|retention|engagement|pipeline stage|marketing funnel|sales funnel|consulting process|delivery process|implementation plan)\b/i;
@@ -181,15 +191,37 @@ export function buildDefaultCheckpointSeed() {
   }));
 }
 
-export function containsSolutionPrescriptiveLanguage(value: string | null | undefined) {
-  return SOLUTION_PRESCRIPTIVE_PATTERN.test(String(value || ""));
+export function buildCompanyVocabExclusions(fields: string[]): Set<string> {
+  const combined = fields.join(" ").toLowerCase();
+  const result = new Set<string>();
+  for (const term of PRESCRIPTIVE_TERMS_LIST) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(combined)) result.add(term);
+  }
+  return result;
+}
+
+export function containsSolutionPrescriptiveLanguage(
+  value: string | null | undefined,
+  excludedTerms?: Set<string>,
+): boolean {
+  const text = String(value || "");
+  if (!excludedTerms || excludedTerms.size === 0) {
+    return SOLUTION_PRESCRIPTIVE_PATTERN.test(text);
+  }
+  for (const term of PRESCRIPTIVE_TERMS_LIST) {
+    if (excludedTerms.has(term)) continue;
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(text)) return true;
+  }
+  return false;
 }
 
 export function containsNonOdiProcessLanguage(value: string | null | undefined) {
   return NON_ODI_PROCESS_PATTERN.test(String(value || ""));
 }
 
-export function validateEightCheckpointSpine(steps: JtbdProcessStepDraft[]) {
+export function validateEightCheckpointSpine(steps: JtbdProcessStepDraft[], excludedTerms?: Set<string>) {
   const issues: string[] = [];
   if (!Array.isArray(steps) || steps.length !== JTBD_CHECKPOINT_COUNT) {
     issues.push(`Expected ${JTBD_CHECKPOINT_COUNT} checkpoints but received ${Array.isArray(steps) ? steps.length : 0}.`);
@@ -209,7 +241,7 @@ export function validateEightCheckpointSpine(steps: JtbdProcessStepDraft[]) {
     const description = safeText(step.description);
     if (!label) issues.push(`Step ${safeStepNumber(step.step_number) || "?"} is missing a label.`);
     if (!description) issues.push(`Step ${safeStepNumber(step.step_number) || "?"} is missing a description.`);
-    if (containsSolutionPrescriptiveLanguage(label) || containsSolutionPrescriptiveLanguage(description)) {
+    if (containsSolutionPrescriptiveLanguage(label, excludedTerms) || containsSolutionPrescriptiveLanguage(description, excludedTerms)) {
       issues.push(`Step ${safeStepNumber(step.step_number) || "?"} includes solution-prescriptive language.`);
     }
     if (containsNonOdiProcessLanguage(label)) {

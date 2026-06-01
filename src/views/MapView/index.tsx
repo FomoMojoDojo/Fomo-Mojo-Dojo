@@ -51,8 +51,7 @@ const c = {
 
 const cardStyle = {
   background: c.card,
-  borderRadius: 12,
-  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+  borderRadius: 4,
   border: `1px solid ${c.line}`,
 } as const;
 
@@ -118,8 +117,8 @@ function MiniBar({ value }: { value: number }) {
   const v = Math.max(0, Math.min(100, value));
   return (
     <div
-      className="h-[8px] w-full rounded-full overflow-hidden"
-      style={{ background: c.lineFaint, border: `1px solid ${c.line}` }}
+      className="h-[5px] w-full overflow-hidden"
+      style={{ background: c.lineFaint }}
     >
       <div
         className="h-full"
@@ -203,19 +202,16 @@ function RoutesStrip({ routes, companyId }: { routes: ReturnType<typeof useRoute
           return (
             <div
               key={key}
-              className="rounded-lg p-3"
-              style={{ border: `1px solid ${c.line}`, background: c.lineFaint }}
+              className="p-3"
+              style={{ borderLeft: `2px solid ${accent}`, paddingLeft: 12 }}
             >
               <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="h-[14px] w-[3px] rounded-full" style={{ background: accent }} />
-                  <p className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold" style={{ color: accent }}>
-                    {label}
-                  </p>
-                </div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em] font-semibold" style={{ color: accent }}>
+                  {label}
+                </p>
                 <span
-                  className="inline-flex items-center rounded-full border px-1.5 py-0.5 font-mono text-[9px]"
-                  style={{ borderColor: c.line, background: "#FFFFFF", color: c.muted }}
+                  className="font-mono text-[9px]"
+                  style={{ color: c.muted }}
                 >
                   {catRoutes.length}
                 </span>

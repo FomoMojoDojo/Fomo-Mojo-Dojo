@@ -2,7 +2,7 @@
 // Pure decision function — no DB I/O, no edge-function dependencies.
 // Used by run-agent-flow and any future discrete flow entry points.
 
-export type ContextMode = "public_baseline" | "uploaded_only" | "uploaded_evidence_fallback";
+export type ContextMode = "public_baseline" | "uploaded_only" | "uploaded_evidence_fallback" | "upload_required";
 export type FlowMode = "public_only" | "uploaded_only" | "hybrid";
 
 export type AdjudicationInput = {
@@ -11,11 +11,13 @@ export type AdjudicationInput = {
   baselineStatusBeforePublicCollection: string;
   uploadedFileCount: number;
   existingArtifactCount: number;
+  baselineQualityType?: string;
 };
 
 export type AdjudicationResult = {
   contextMode: ContextMode;
   rationale: string;
+  qualityType?: string;
 };
 
 export class AdjudicationBlockedError extends Error {
@@ -48,6 +50,7 @@ export function adjudicate(input: AdjudicationInput): AdjudicationResult {
     baselineStatusBeforePublicCollection,
     uploadedFileCount,
     existingArtifactCount,
+    baselineQualityType,
   } = input;
 
   const hasUploadedEvidence = uploadedFileCount > 0;
@@ -96,20 +99,18 @@ export function adjudicate(input: AdjudicationInput): AdjudicationResult {
           ? "Latest baseline is weak, but prior generated artifacts exist for this company, so flow continues with public baseline context."
           : "Latest baseline is weak, but a prior baseline status was not weak, so flow continues with public baseline context.";
       } else {
-        throw new AdjudicationBlockedError({
-          message: "Public baseline is weak and no uploaded evidence is available.",
-          statusCode: 422,
-          status: baselineStatus || "insufficient_public_evidence",
-          reason: "Add uploaded evidence or improve public baseline before generating artifacts.",
-        });
+        return {
+          contextMode: "upload_required",
+          rationale: "Public baseline is weak and no uploaded evidence is available.",
+          qualityType: baselineQualityType ?? baselineStatus,
+        };
       }
     } else if (baselineMissing && !hasUploadedEvidence) {
-      throw new AdjudicationBlockedError({
-        message: "No baseline run or uploaded evidence available.",
-        statusCode: 422,
-        status: "missing_evidence_context",
-        reason: "Run public baseline or upload files before artifact generation.",
-      });
+      return {
+        contextMode: "upload_required",
+        rationale: "No baseline run or uploaded evidence available.",
+        qualityType: baselineQualityType ?? "no_results",
+      };
     } else {
       contextMode = "public_baseline";
       rationale = "Hybrid mode selected and public baseline quality check passed.";

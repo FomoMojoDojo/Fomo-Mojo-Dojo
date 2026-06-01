@@ -1297,6 +1297,10 @@ export default function JobMapOrgPanel({
             </div>
           )}
 
+          {headerControls && (
+            <div style={{ marginBottom: 16 }}>{headerControls}</div>
+          )}
+
           {/* Horizontal step tab bar */}
           <div className="crpv-jobmap-tabbar" style={{ marginLeft: -48, marginRight: -48, paddingLeft: 40 }}>
             {allPrimarySteps.map((step, idx) => {

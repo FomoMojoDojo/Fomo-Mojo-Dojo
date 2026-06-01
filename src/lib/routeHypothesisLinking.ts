@@ -196,6 +196,8 @@ function isGenericValidationHypothesis(hypothesis: RouteHypothesisLike) {
 
 function dependencyTypeForMatch(hypothesis: RouteHypothesisLike, hasContradiction: boolean): RouteHypothesisDependencyType {
   if (hasContradiction || hypothesis.hypothesis_state === "contradicted") return "contradicts";
+  // Unstable hypotheses constrain routes — evidence is actively contested
+  if (hypothesis.hypothesis_state === "unstable") return "constrains";
   if (hypothesis.hypothesis_kind === "candidate_assumption") return "assumes";
   if (hypothesis.hypothesis_kind === "inferred_tension") return "constrains";
   return "supports";

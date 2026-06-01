@@ -15,6 +15,8 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+const DIFY_POLL_TIMEOUT_MS = 4000;
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   return v as Record<string, unknown>;
@@ -92,6 +94,94 @@ async function readLocalEnvValue(name: string): Promise<string | undefined> {
   }
 }
 
+async function resolveMojoAnalysisApiKey() {
+  const dedicatedEnv = Deno.env.get("DIFY_MOJO_ANALYSIS_API_KEY");
+  if (dedicatedEnv) return dedicatedEnv;
+
+  const dedicatedFile = await readLocalEnvValue("DIFY_MOJO_ANALYSIS_API_KEY");
+  if (dedicatedFile) return dedicatedFile;
+
+  const genericEnv = Deno.env.get("DIFY_API_KEY");
+  if (genericEnv) return genericEnv;
+
+  const genericFile = await readLocalEnvValue("DIFY_API_KEY");
+  return genericFile;
+}
+
+async function readDockerGatewayFromProc() {
+  try {
+    const routeTable = await Deno.readTextFile("/proc/net/route");
+    const lines = routeTable.split(/\r?\n/).slice(1);
+    for (const line of lines) {
+      const columns = line.trim().split(/\s+/);
+      if (columns.length < 3) continue;
+      const destination = columns[1];
+      const gatewayHex = columns[2];
+      if (destination !== "00000000" || gatewayHex.length !== 8) continue;
+      const octets = gatewayHex.match(/../g)?.map((part) => parseInt(part, 16)).reverse();
+      if (!octets || octets.some((part) => !Number.isFinite(part))) continue;
+      return octets.join(".");
+    }
+  } catch {
+    // Ignore local runtime probing errors and fall back to other local gateway heuristics.
+  }
+  return null;
+}
+
+async function inferDockerGatewayIpv4() {
+  try {
+    const osModule = await import("node:os");
+    const interfaces = osModule.networkInterfaces?.() ?? {};
+    const candidates: string[] = [];
+    for (const entries of Object.values(interfaces)) {
+      for (const entry of entries ?? []) {
+        if (!entry || entry.family !== "IPv4" || entry.internal) continue;
+        const octets = String(entry.address ?? "").trim().split(".");
+        if (octets.length !== 4) continue;
+        if (octets[0] !== "172" && octets[0] !== "192" && octets[0] !== "10") continue;
+        candidates.push(`${octets[0]}.${octets[1]}.${octets[2]}.1`);
+      }
+    }
+    const preferred = candidates.find((ip) => ip.startsWith("172."));
+    if (preferred) return preferred;
+    if (candidates.length > 0) return candidates[0];
+  } catch {
+    // Ignore node compatibility probing errors.
+  }
+  return null;
+}
+
+async function buildDifyBaseUrlCandidates(baseUrl: string) {
+  const trimmed = String(baseUrl ?? "").trim().replace(/\/$/, "");
+  return trimmed ? [trimmed] : [baseUrl];
+}
+
+async function fetchDifyRunDetailWithFallbacks(params: {
+  apiKey: string;
+  baseUrls: string[];
+  runId: string;
+}) {
+  const { apiKey, baseUrls, runId } = params;
+  let lastResponse: Response | null = null;
+  let lastError: Error | null = null;
+
+  for (const baseUrl of baseUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/workflows/run/${runId}`, {
+        headers: { "Authorization": `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(DIFY_POLL_TIMEOUT_MS),
+      });
+      if (res.ok) return res;
+      lastResponse = res;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError ?? new Error("Failed to reach Dify run detail endpoint");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -99,14 +189,12 @@ serve(async (req) => {
     const { proposal_id } = await req.json() as { proposal_id?: string };
     if (!proposal_id) return jsonResponse({ error: "proposal_id is required" }, 400);
 
-    const apiKeyEnv = Deno.env.get("DIFY_MOJO_ANALYSIS_API_KEY");
-    const apiKeyFile = apiKeyEnv ? undefined : await readLocalEnvValue("DIFY_MOJO_ANALYSIS_API_KEY");
-    const DIFY_API_KEY = apiKeyEnv ?? apiKeyFile;
-    if (!DIFY_API_KEY) return jsonResponse({ error: "DIFY_MOJO_ANALYSIS_API_KEY not configured" }, 503);
+    const DIFY_API_KEY = await resolveMojoAnalysisApiKey();
+    if (!DIFY_API_KEY) return jsonResponse({ error: "DIFY_MOJO_ANALYSIS_API_KEY or DIFY_API_KEY not configured" }, 503);
 
     const baseUrlEnv = Deno.env.get("DIFY_API_BASE_URL");
     const baseUrlFile = baseUrlEnv ? undefined : await readLocalEnvValue("DIFY_API_BASE_URL");
-    const DIFY_BASE_URL = (baseUrlEnv ?? baseUrlFile ?? "https://api.dify.ai").replace(/\/$/, "");
+    const DIFY_BASE_URLS = await buildDifyBaseUrlCandidates((baseUrlEnv ?? baseUrlFile ?? "https://api.dify.ai").replace(/\/$/, ""));
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -134,8 +222,10 @@ serve(async (req) => {
       return jsonResponse({ status: "failed" });
     }
 
-    const res = await fetch(`${DIFY_BASE_URL}/workflows/run/${runId}`, {
-      headers: { "Authorization": `Bearer ${DIFY_API_KEY}` },
+    const res = await fetchDifyRunDetailWithFallbacks({
+      apiKey: DIFY_API_KEY,
+      baseUrls: DIFY_BASE_URLS,
+      runId,
     });
 
     if (!res.ok) {

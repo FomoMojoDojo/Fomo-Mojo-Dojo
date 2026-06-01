@@ -42,11 +42,13 @@ export function computeFoundationStatus(
   const topLevelRoutes = routes.filter((r) => r.level === "route");
   const directionCount = topLevelRoutes.length;
 
-  const wrapPresent = topLevelRoutes.some(
-    (r) =>
-      (r.rejected_alternatives?.length ?? 0) > 0 ||
-      (r.what_would_have_to_be_true?.length ?? 0) > 0,
-  );
+  const wrapPresent =
+    topLevelRoutes.length > 0 &&
+    topLevelRoutes.every(
+      (r) =>
+        (r.rejected_alternatives?.length ?? 0) > 0 &&
+        (r.what_would_have_to_be_true?.length ?? 0) > 0,
+    );
 
   const leaningTitle = directionEvidence?.leaning
     ? (directionEvidence.directions.find((d) => d.id === directionEvidence.leaning)?.title ?? null)
@@ -107,7 +109,7 @@ export function computeFoundationStatus(
   ).length;
   const tagline =
     groundedCount >= 3
-      ? "You've done real work here. The foundation is stronger than most teams ever build."
+      ? "You've done real work here. The foundation is mapped across all four pillars."
       : groundedCount >= 2
         ? "Solid groundwork in place. A few elements still to fill in."
         : "Early-stage foundation — more to build, but a real start.";

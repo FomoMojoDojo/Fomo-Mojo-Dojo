@@ -8,6 +8,7 @@ export interface ScoreContextBarProps {
   routesCount: number;
   confidenceLabel: string;
   evidenceBand?: EvidenceBand;
+  ceilingReason?: string | null;
 }
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
@@ -29,10 +30,20 @@ function nextBandLabel(band: EvidenceBand): string | null {
 
 function confidenceToBand(label: string): EvidenceBand {
   const l = label.toLowerCase();
-  if (l === "high" || l === "strong") return "market_validated";
-  if (l === "medium" || l === "moderate") return "customer_evidenced";
-  if (l === "low") return "directional_not_validated";
+  if (l.includes("strong"))                    return "market_validated";
+  if (l.includes("building") || l === "high" || l.includes("medium") || l.includes("moderate")) return "customer_evidenced";
   return "directional_not_validated";
+}
+
+// Shorten posture labels ("Strong readiness" → "STRONG") for the confidence chip
+function abbreviatePostureLabel(label: string): string {
+  const l = label.toLowerCase();
+  if (l.includes("strong"))       return "STRONG";
+  if (l.includes("building"))     return "BUILDING";
+  if (l.includes("directional"))  return "DIRECTIONAL";
+  if (l.includes("fragile"))      return "FRAGILE";
+  if (l.includes("insufficient")) return "INSUFFICIENT";
+  return label.toUpperCase();
 }
 
 function bandUnlockActions(band: EvidenceBand): string[] {
@@ -58,11 +69,11 @@ function bandUnlockActions(band: EvidenceBand): string[] {
     case "market_validated":
       return [
         "Complete route steps to build implementation confidence.",
-        "Track outcomes against intended impact.",
+        "Track results against what each route was intended to achieve.",
       ];
     case "proven_path":
       return [
-        "Record and maintain outcomes against each route's intended impact.",
+        "Record and maintain results against each route's intended purpose.",
       ];
     default:
       return ["Continue closing evidence gaps to strengthen confidence."];
@@ -91,7 +102,7 @@ function UnlockableTooltipBody({
       </div>
 
       <p style={{ margin: 0 }}>
-        Unlockable shows what becomes possible if the missing evidence is validated.
+        Potential readiness unlocked if the deeper constraints are resolved.
       </p>
 
       {actions.length > 0 && (
@@ -124,90 +135,103 @@ export default function ScoreContextBar({
   routesCount,
   confidenceLabel,
   evidenceBand,
+  ceilingReason,
 }: ScoreContextBarProps) {
   const scoreDelta = Math.max(0, reachableScore - currentScore);
   const band: EvidenceBand = evidenceBand ?? confidenceToBand(confidenceLabel);
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div className="crpv-r-stat-bar">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="crpv-r-stat" tabIndex={0}>
-              <span className="crpv-r-stat-val">{currentScore || "—"}</span>
-              <span className="crpv-r-stat-lbl">Current</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="crpv-stat-tooltip">
-            Where you stand today based on current evidence, alignment, and readiness.
-          </TooltipContent>
-        </Tooltip>
-
-        <span className="crpv-r-stat-arrow">→</span>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="crpv-r-stat" tabIndex={0}>
-              <span className="crpv-r-stat-val">{reachableScore || "—"}</span>
-              <span className="crpv-r-stat-lbl">Reachable</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="crpv-stat-tooltip">
-            How far you can improve within the current evidence level by fixing known gaps.
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="crpv-r-stat" tabIndex={0}>
-              <span className="crpv-r-stat-val crpv-r-stat-delta">+{scoreDelta}</span>
-              <span className="crpv-r-stat-lbl">Delta</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="crpv-stat-tooltip">
-            The improvement available without needing new validation.
-          </TooltipContent>
-        </Tooltip>
-
-        {unlockableScore > 0 && (
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <div className="crpv-r-stat-bar">
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="crpv-r-stat crpv-r-stat-unlockable" tabIndex={0}>
-                <span className="crpv-r-stat-val">{unlockableScore}</span>
-                <span className="crpv-r-stat-lbl">Unlockable</span>
+              <div className="crpv-r-stat" tabIndex={0}>
+                <span className="crpv-r-stat-val">{currentScore || "—"}</span>
+                <span className="crpv-r-stat-lbl">Current</span>
               </div>
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="crpv-stat-tooltip" style={{ maxWidth: 280 }}>
-              <UnlockableTooltipBody band={band} />
+            <TooltipContent side="bottom" className="crpv-stat-tooltip">
+              Confidence-adjusted readiness to commit to this strategic direction right now.
             </TooltipContent>
           </Tooltip>
+
+          <span className="crpv-r-stat-arrow">→</span>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="crpv-r-stat" tabIndex={0}>
+                <span className="crpv-r-stat-val">{reachableScore || "—"}</span>
+                <span className="crpv-r-stat-lbl">Reachable now</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="crpv-stat-tooltip">
+              What becomes reachable if the top active blocker or unlock path resolves.
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="crpv-r-stat crpv-r-stat--dim" tabIndex={0}>
+                <span className="crpv-r-stat-val crpv-r-stat-delta">+{scoreDelta}</span>
+                <span className="crpv-r-stat-lbl">Delta</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="crpv-stat-tooltip">
+              Near-term gain available — reachable now minus current readiness.
+            </TooltipContent>
+          </Tooltip>
+
+          {unlockableScore > reachableScore && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="crpv-r-stat crpv-r-stat-unlockable" tabIndex={0}>
+                  <span className="crpv-r-stat-val">{unlockableScore}</span>
+                  <span className="crpv-r-stat-lbl">Unlockable</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="crpv-stat-tooltip" style={{ maxWidth: 280 }}>
+                <UnlockableTooltipBody band={band} />
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          <div className="crpv-r-stat-sep" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="crpv-r-stat crpv-r-stat--dim" tabIndex={0}>
+                <span className="crpv-r-stat-val">{routesCount}</span>
+                <span className="crpv-r-stat-lbl">Routes</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="crpv-stat-tooltip">
+              The number of possible paths currently identified.
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="crpv-r-stat" tabIndex={0}>
+                <span className="crpv-r-stat-val">{abbreviatePostureLabel(confidenceLabel)}</span>
+                <span className="crpv-r-stat-lbl">Readiness</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="crpv-stat-tooltip">
+              {confidenceLabel} — anatomy-derived posture based on evidence environment and strategic signals.
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {ceilingReason && (
+          <div
+            className="crpv-r-stat-bar"
+            style={{ borderTop: "none", paddingTop: 4, paddingBottom: 6, gap: 6, fontSize: 10, color: "#b06a3c", opacity: 0.85 }}
+          >
+            <span style={{ flexShrink: 0 }}>⌧</span>
+            <span>Structural upside constrained — {ceilingReason.replace(/\.$/, "").toLowerCase()}.</span>
+          </div>
         )}
-
-        <div className="crpv-r-stat-sep" />
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="crpv-r-stat" tabIndex={0}>
-              <span className="crpv-r-stat-val">{routesCount}</span>
-              <span className="crpv-r-stat-lbl">Routes</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="crpv-stat-tooltip">
-            The number of possible paths currently identified.
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="crpv-r-stat" tabIndex={0}>
-              <span className="crpv-r-stat-val">{confidenceLabel.toUpperCase()}</span>
-              <span className="crpv-r-stat-lbl">Confidence</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="crpv-stat-tooltip">
-            How strongly the current recommendation is supported by evidence.
-          </TooltipContent>
-        </Tooltip>
       </div>
     </TooltipProvider>
   );

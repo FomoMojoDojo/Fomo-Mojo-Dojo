@@ -273,7 +273,7 @@ function strategicAlignment(args: {
       ? `The read is increasingly centered on ${center.label}, but publicly the company still reads as ${String(identityNarrative.publicIdentity || center.publicContextLabel).replace(/^([A-Z])/, (match) => match.toLowerCase())}.`
       : state === "Strong enough to act on"
         ? center.label
-          ? `The read is cohering around ${center.label}, and the team has enough shared confidence to move without forcing certainty.`
+          ? `The direction is centering on ${center.label}. There's enough shared confidence to move — you don't need certainty to take the next step.`
           : "The team has enough shared confidence in the read to move without forcing certainty."
         : state === "Building support"
           ? center.label
@@ -293,7 +293,7 @@ function strategicAlignment(args: {
     whatIncreasesConfidence: "Resolve downstream reviews and turn critical assumptions into explicit validation questions.",
     whatStillWeakensConfidence:
       center.hasMeaningfulDivergence && center.label && (identityNarrative.publicIdentity || center.publicContextLabel)
-        ? `Publicly, the company still reads as ${String(identityNarrative.publicIdentity || center.publicContextLabel).replace(/^([A-Z])/, (match) => match.toLowerCase())}, while the strategic read is leaning toward ${center.label}. Customer proof is still needed to settle that gap.`
+        ? `Outside perception reads as ${String(identityNarrative.publicIdentity || center.publicContextLabel).replace(/^([A-Z])/, (match) => match.toLowerCase())}, while the strategic read is leaning toward ${center.label}. Customer proof is needed to settle that gap.`
         : unresolvedReview > 0
         ? "Some needs or routes still require review, so the shared direction could still change."
         : conflict.hasConflict && conflict.summary

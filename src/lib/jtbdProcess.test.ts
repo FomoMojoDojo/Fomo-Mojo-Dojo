@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildMarketFitCheckpointSpine } from "@/lib/marketTaxonomy";
 import {
+  buildCompanyVocabExclusions,
   deriveMarketDefinitionCanvas,
   JTBD_CHECKPOINT_COUNT,
   validateEightCheckpointSpine,
@@ -48,6 +49,70 @@ describe("validateEightCheckpointSpine", () => {
     expect(result.isValid).toBe(false);
     expect(result.issues.some((issue) => issue.includes("solution-prescriptive"))).toBe(true);
     expect(result.issues.some((issue) => issue.includes("non-SDS process wording"))).toBe(true);
+  });
+});
+
+describe("buildCompanyVocabExclusions + company-aware validation", () => {
+  it("excludes industry terms found in company context fields", () => {
+    const exclusions = buildCompanyVocabExclusions([
+      "Acme Sourcing Co",
+      "Independent cafe operators sourcing a specialty coffee offering for their venue",
+      "Identify and commit to a supplier relationship that makes the offering distinctive — evaluating pricing and terms",
+      "The venue owner and head buyer",
+    ]);
+    expect(exclusions.has("supplier")).toBe(true);
+    expect(exclusions.has("pricing")).toBe(true);
+    expect(exclusions.has("terms")).toBe(true);
+    // genuinely prescriptive terms NOT in company context must NOT be excluded
+    expect(exclusions.has("dashboard")).toBe(false);
+    expect(exclusions.has("feature")).toBe(false);
+  });
+
+  it("does not flag industry vocab from company context as solution-prescriptive", () => {
+    const exclusions = buildCompanyVocabExclusions([
+      "Independent cafe operators sourcing specialty coffee",
+      "Identify and commit to a supplier relationship — evaluating pricing and terms for the venue",
+    ]);
+    const steps = Array.from({ length: 8 }, (_, idx) => ({
+      step_number: idx + 1,
+      step_label:
+        idx === 0 ? "Confirm supplier terms" : idx === 1 ? "Evaluate pricing fit" : `Checkpoint ${idx + 1}`,
+      description: `Evidence-backed progress checkpoint ${idx + 1}.`,
+    }));
+    const result = validateEightCheckpointSpine(steps, exclusions);
+    expect(result.isValid).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("still flags genuinely prescriptive terms not in company context", () => {
+    const exclusions = buildCompanyVocabExclusions([
+      "Independent cafe operators sourcing specialty coffee",
+    ]);
+    const steps = Array.from({ length: 8 }, (_, idx) => ({
+      step_number: idx + 1,
+      step_label: idx === 0 ? "Launch dashboard" : `Checkpoint ${idx + 1}`,
+      description: `Evidence-backed progress checkpoint ${idx + 1}.`,
+    }));
+    const result = validateEightCheckpointSpine(steps, exclusions);
+    expect(result.isValid).toBe(false);
+    expect(result.issues.some((i) => i.includes("solution-prescriptive"))).toBe(true);
+  });
+});
+
+describe("manual vocab terms not in PRESCRIPTIVE_TERMS_LIST", () => {
+  it("allows step labels containing manual terms even when not present in company context fields", () => {
+    // 'dashboard' and 'feature' are in PRESCRIPTIVE_TERMS_LIST.
+    // The company context fields don't mention them, so buildCompanyVocabExclusions won't catch them.
+    // But if we manually add them to the exclusion set, the validator should accept them.
+    const exclusions = new Set(["dashboard", "feature"]);
+    const steps = Array.from({ length: 8 }, (_, idx) => ({
+      step_number: idx + 1,
+      step_label: idx === 0 ? "Review dashboard metrics" : idx === 1 ? "Evaluate feature fit" : `Checkpoint ${idx + 1}`,
+      description: `Evidence-backed progress checkpoint ${idx + 1}.`,
+    }));
+    const result = validateEightCheckpointSpine(steps, exclusions);
+    expect(result.isValid).toBe(true);
+    expect(result.issues).toEqual([]);
   });
 });
 

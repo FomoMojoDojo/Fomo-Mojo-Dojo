@@ -283,7 +283,7 @@ async function ensureIntakeInput(args: {
     .from("inputs")
     .select("id")
     .eq("company_id", companyId)
-    .eq("input_key", "needs-assessment")
+    .eq("input_key", "customer-research")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -295,7 +295,7 @@ async function ensureIntakeInput(args: {
     .insert({
       user_id: userId,
       company_id: companyId,
-      input_key: "needs-assessment",
+      input_key: "customer-research",
       input_label: "Client Intake Brief",
       group_key: "market_evidence",
       group_label: "Market Evidence",
@@ -334,7 +334,7 @@ async function createIntakeFile(args: {
   const safeCompany = slugify(args.companyName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const fileName = `${timestamp}-launch-site-intake.md`;
-  const filePath = `${args.userId}/${safeCompany}/needs-assessment/${args.inputId}/${fileName}`;
+  const filePath = `${args.userId}/${safeCompany}/customer-research/${args.inputId}/${fileName}`;
   const markdown = buildIntakeMarkdown(
     args.payload,
     args.companyName,

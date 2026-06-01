@@ -142,7 +142,7 @@ export function useStrategicHypotheses(companyId?: string) {
       const signalIds = [...new Set(refs.map((ref) => ref.signal_id).filter(Boolean))];
       let signals: Signal[] = [];
       if (signalIds.length > 0) {
-        const signalsRes = await supabase.from("signals").select("*").eq("company_id", companyId).in("id", signalIds);
+        const signalsRes = await supabase.from("signals").select("*").eq("company_id", companyId).eq("relevance_state", "active").in("id", signalIds);
         if (signalsRes.error) throw new Error(signalsRes.error.message || "Failed to load linked signals.");
         signals = (signalsRes.data ?? []) as Signal[];
       }

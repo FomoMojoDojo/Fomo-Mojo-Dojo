@@ -1,36 +1,30 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import TopNav from '@/components/layout/TopNav';
 import type { InputItem } from '@/lib/types';
 import InputCircle from './InputCircle';
 import InputSidePanel from './InputSidePanel';
-import ImpactBadge from '@/components/ui/ImpactBadge';
 import { useInputs } from '@/hooks/useInputs';
 import { useAuth } from '@/hooks/useAuth';
 import { useCompany } from '@/hooks/useCompany';
 import FileUploadDialog from '@/components/FileUploadDialog';
 import { useSourceConfidence } from '@/hooks/useSourceConfidence';
-import { MetaBadge, ScoreChip, StateBadge } from '@/components/ui/semantic-badges';
 import PageContextStatus from '@/components/layout/PageContextStatus';
 import GenericAuditTraceNote from '@/components/diagnostics/GenericAuditTraceNote';
 import { isGenericAuditCompany } from '@/lib/genericAudit';
 
 const c = {
   bg: '#faf7f6',
-  field: '#ffffff',
-  card: '#ffffff',
   line: '#dde6d1',
   lineFaint: '#edf2e8',
   charcoal: '#233c4b',
   secondary: '#46606d',
   muted: '#6e847f',
+  coral: '#FF7D2D',
+  teal: '#5F9B8C',
 };
 
-const cardStyle = {
-  background: c.card,
-  borderRadius: 12,
-  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-  border: `1px solid ${c.line}`,
-} as const;
+const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
 export default function InputsView() {
   const [selectedInput, setSelectedInput] = useState<InputItem | null>(null);
@@ -70,39 +64,36 @@ export default function InputsView() {
   }
 
   const groups = [
-    { key: 'foundation', label: 'Foundation', badge: 'Positioning + Strategy Cascade', items: grouped.foundation, accent: '#e8613a' },
-    { key: 'execution', label: 'Execution', badge: 'GTM + Messaging', items: grouped.execution, accent: '#3a9a8c' },
-    { key: 'market_evidence', label: 'Market Evidence', badge: 'Strategic Decision System + Validation', items: grouped.market_evidence, accent: '#c48a2a' },
+    { key: 'foundation',      label: 'Foundation',       note: 'Positioning and strategy cascade',        items: grouped.foundation },
+    { key: 'execution',       label: 'Execution',        note: 'GTM and messaging',                       items: grouped.execution },
+    { key: 'market_evidence', label: 'Market Evidence',  note: 'Research and validation',                 items: grouped.market_evidence },
   ];
 
   return (
-    <div
-      className="min-h-screen"
-      style={{ background: c.bg }}
-    >
+    <div className="min-h-screen strategic-surface" style={{
+      background: c.bg,
+      backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'6\' height=\'6\' viewBox=\'0 0 6 6\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'%23000\' fill-opacity=\'0.025\'%3E%3Cpath d=\'M5 0h1L0 5V4zM6 5v1H5z\'/%3E%3C/g%3E%3C/svg%3E")',
+    }}>
       <TopNav />
       <div className="flex" style={{ height: 'calc(100vh - 52px)' }}>
-        {/* Main area */}
-        <div className="flex-1 overflow-y-auto" style={{ padding: '0 36px 48px 36px' }}>
-          <div className="max-w-content mx-auto pt-6 px-4 sm:px-0">
+
+        {/* Main field */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[1440px] px-4 pb-12 pt-4 sm:px-6 md:px-8">
             <PageContextStatus lastScoredAt={activeCompany?.last_scored_at} sourceSignals={sourceSignals} />
 
-            {/* Page header — matching map view */}
-            <div className="mb-8">
-              <div className="flex items-center justify-between gap-3">
-              <div>
-                <h1 className="font-sans text-[34px] font-semibold leading-[1] tracking-tight" style={{ color: c.charcoal }}>
-                  Diagnostic Inputs
-                </h1>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {activeCompany?.name ? <MetaBadge>{activeCompany.name}</MetaBadge> : null}
-                  <ScoreChip label="Done" value={complete} />
-                  <ScoreChip label="Total" value={total} />
-                  <StateBadge tone={gaps > 0 ? 'gap' : 'designed'}>
-                    {gaps} critical gaps
-                  </StateBadge>
-                </div>
-              </div>
+            <div className="mb-2">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: '#9298B5' }}>
+                  Evidence · {activeCompany?.name || 'No company selected'} · Evidence basis
+                </p>
+                <Link
+                  to="/routes"
+                  className="font-mono text-[10px] uppercase tracking-[0.1em]"
+                  style={{ color: '#6a9e94', textDecoration: 'underline', opacity: 0.7 }}
+                >
+                  ← Commitment Review
+                </Link>
               </div>
               <GenericAuditTraceNote
                 active={auditMode}
@@ -114,149 +105,83 @@ export default function InputsView() {
               />
             </div>
 
-            {/* Recessed field */}
-            <div
-              className="rounded-2xl p-5 sm:p-6"
-              style={{
-                background: c.field,
-                border: `1px solid ${c.line}`,
-                boxShadow: '0 10px 30px rgba(35,60,75,0.06)',
-              }}
-            >
-
-            {/* Hero completeness bar */}
-            <div className="overflow-hidden mb-5" style={{ ...cardStyle, boxShadow: '0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)' }}>
-              <div className="p-5 px-6 flex items-center gap-5">
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] whitespace-nowrap" style={{ color: c.secondary }}>
-                  OVERALL COMPLETENESS
-                </span>
-                <div className="flex-1 h-3 rounded-full relative overflow-hidden" style={{ background: c.lineFaint }}>
-                  <div
-                    className="absolute left-0 top-0 h-3 rounded-full transition-all duration-[800ms]"
-                    style={{
-                      width: `${pct}%`,
-                      background: 'linear-gradient(to right, #5f9b8c, #233c4b)',
-                      boxShadow: '0 1px 4px rgba(35,60,75,0.28)',
-                    }}
-                  />
-                </div>
-                <span
-                  className="font-sans leading-none tracking-tighter"
-                  style={{ fontSize: 36, fontWeight: 900, color: c.charcoal }}
-                >
-                  {pct}%
-                </span>
-                <div className="border-l pl-5 ml-1" style={{ borderColor: c.lineFaint }}>
-                  <span className="font-sans text-[14px] font-semibold block" style={{ color: c.charcoal }}>
-                    {complete} of {total} complete
-                  </span>
-                  <div className="mt-2">
-                    <StateBadge tone={gaps > 0 ? 'gap' : 'designed'}>
-                      {gaps} critical gaps
-                    </StateBadge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Legend row */}
-            <div className="flex items-center justify-between mb-5 px-1">
-              <div className="flex items-center gap-[18px]">
-                {[
-                  { label: 'Complete', color: 'hsl(108, 42%, 40%)' },
-                  { label: 'In Progress', color: 'hsl(26, 65%, 50%)' },
-                  { label: 'Missing', color: 'hsl(7, 72%, 48%)' },
-                  { label: 'Not started', color: '#b5b0a8' },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center gap-2">
-                    <div className="w-[10px] h-[10px] rounded-full" style={{ background: item.color, boxShadow: `0 1px 3px ${item.color}40` }} />
-                    <span className="font-mono text-[10px] font-medium" style={{ color: c.secondary }}>{item.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.muted }}>
-                  SCORE IMPACT:
-                </span>
-                <ImpactBadge pts={3.5} />
-                <ImpactBadge pts={1.5} />
-                <ImpactBadge pts={0.5} />
-              </div>
-            </div>
-
-            {/* Input groups — each in its own white card */}
-            {inputs.length === 0 ? (
-              <div
-                className="rounded-xl border px-6 py-12 text-center"
-                style={{ ...cardStyle }}
-              >
-                <p className="font-sans text-[15px]" style={{ color: c.secondary }}>
-                  {user
-                    ? 'No diagnostic inputs yet. Run AI Research in Admin → Companies or add input data first.'
-                    : 'Sign in to view company inputs.'}
+            {/* Evidence state — field typography, no box */}
+            {total > 0 && (
+              <section style={{ paddingBottom: 24, marginBottom: 8, borderBottom: `1px solid ${c.line}` }}>
+                <p style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.14em', color: c.muted }}>
+                  Evidence basis
                 </p>
-              </div>
-            ) : groups.map((group) => {
-              const groupPct = group.items.length > 0
-                ? Math.round(group.items.reduce((sum, i) => sum + i.completeness, 0) / group.items.length)
-                : 0;
-              return (
-                <div
-                  key={group.key}
-                  className="mb-5 overflow-hidden"
-                  style={{ ...cardStyle, boxShadow: '0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)' }}
-                >
-                  {/* Group header */}
-                  <div className="px-5 pt-4 pb-3 flex items-center gap-3">
-                    <div className="w-1 h-6 rounded-full" style={{ background: group.accent }} />
-                    <span className="font-sans text-[14px] font-bold tracking-tight" style={{ color: c.charcoal }}>
-                      {group.label}
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, marginTop: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 44, fontWeight: 300, color: c.charcoal, letterSpacing: '-0.04em', lineHeight: 1 }}>
+                    {pct}<span style={{ fontSize: 18, letterSpacing: 0, fontWeight: 400 }}>%</span>
+                  </span>
+                  <span className="font-sans text-[14px]" style={{ color: c.secondary }}>
+                    {complete} of {total} inputs confirmed
+                  </span>
+                  {gaps > 0 && (
+                    <span style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: c.coral }}>
+                      {gaps} structural {gaps === 1 ? 'gap' : 'gaps'}
                     </span>
-                    <MetaBadge>{group.badge}</MetaBadge>
-                  </div>
-                  <div className="mx-5 h-px" style={{ background: c.lineFaint }} />
-                  {/* Circles */}
-                  <div className="flex flex-wrap gap-6 p-6 pt-5">
-                    {group.items.map((input) => (
-                      <InputCircle
-                        key={input.id}
-                        input={input}
-                        onClick={() => openPanel(input)}
-                        isSelected={selectedInput?.id === input.id}
-                      />
-                    ))}
-                  </div>
+                  )}
                 </div>
-              );
-            })}
+                <div style={{ marginTop: 12, height: 2, background: c.lineFaint, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(to right, #5f9b8c, #233c4b)', transition: 'width 0.8s' }} />
+                </div>
+              </section>
+            )}
 
-            {/* Upload zone */}
-            <div
-              className="border-[2px] border-dashed rounded-xl p-7 text-center cursor-pointer hover:border-ink transition-colors"
-              style={{ borderColor: c.line, background: '#f7fbf4' }}
-              onClick={() => setUploadOpen(true)}
-            >
-              <div className="text-[34px] mb-2">📁</div>
-              <p className="font-sans text-[14px] font-medium" style={{ color: c.secondary }}>
-                Upload a file with area assignment and tags
+            {/* Evidence groups — field regions, no card boxes */}
+            {inputs.length === 0 ? (
+              <p className="font-sans text-[14px] py-8" style={{ color: c.secondary }}>
+                {user
+                  ? 'No diagnostic inputs yet. Run AI Research in Admin → Companies or add input data first.'
+                  : 'Sign in to view company inputs.'}
               </p>
-              <p className="font-mono text-[11px] mt-1" style={{ color: c.muted }}>
-                PDF · DOCX · XLSX · MP4 · Max 50MB
-              </p>
-              <button
-                className="mt-4 px-5 py-[9px] rounded-[16px] font-mono text-[11px] uppercase cursor-pointer transition-colors border"
-                style={{
-                  background: '#233c4b',
-                  color: '#faf7f6',
-                  borderColor: '#233c4b',
-                  boxShadow: '0 10px 30px rgba(35,60,75,0.14)',
-                }}
-              >
-                Choose File
-              </button>
-            </div>
+            ) : (
+              <>
+                {groups.map((group, groupIndex) => (
+                  <section key={group.key} style={{ paddingTop: groupIndex === 0 ? 14 : 24, paddingBottom: 8, borderBottom: `1px solid ${c.lineFaint}` }}>
+                    <div style={{ marginBottom: 16 }}>
+                      <span style={{ fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.14em', color: c.charcoal }}>
+                        {group.label}
+                      </span>
+                      <span style={{ marginLeft: 12, fontFamily: MONO, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: c.muted, opacity: 0.6 }}>
+                        {group.note}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, paddingBottom: 16 }}>
+                      {group.items.map((input) => (
+                        <InputCircle
+                          key={input.id}
+                          input={input}
+                          onClick={() => openPanel(input)}
+                          isSelected={selectedInput?.id === input.id}
+                        />
+                      ))}
+                      {group.items.length === 0 && (
+                        <p style={{ fontFamily: MONO, fontSize: 10, color: c.muted, opacity: 0.6 }}>No inputs in this group.</p>
+                      )}
+                    </div>
+                  </section>
+                ))}
 
-            </div>{/* close recessed field */}
+                {/* Upload — quiet inline trigger */}
+                <div style={{ paddingTop: 20, paddingBottom: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setUploadOpen(true)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ fontFamily: MONO, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: c.teal, textDecoration: 'underline' }}>
+                      Add evidence file →
+                    </span>
+                  </button>
+                  <span style={{ marginLeft: 12, fontFamily: MONO, fontSize: 9, color: c.muted, opacity: 0.6 }}>
+                    PDF · DOCX · XLSX · MP4 · Max 50MB
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

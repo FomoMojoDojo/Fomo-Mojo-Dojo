@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 export type OdiMarketDefinitionRow = {
   id: string;
   company_id: string;
+  journey_key: string;
   job_executor: string;
   chooser: string;
   jtbd: string;
@@ -47,7 +48,7 @@ export type OdiNeedRow = {
   strategy_alignment_evaluated_at?: string | null;
 };
 
-export function useOdiNeeds(companyId?: string, refreshKey = 0) {
+export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: string) {
   const [loading, setLoading] = useState(false);
   const [marketDefinition, setMarketDefinition] = useState<OdiMarketDefinitionRow | null>(null);
   const [needs, setNeeds] = useState<OdiNeedRow[]>([]);
@@ -71,15 +72,24 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0) {
       setLoading(true);
       setError(null);
 
+      const marketQuery = journeyKey
+        ? supabase
+            .from("odi_market_definitions")
+            .select("*")
+            .eq("company_id", companyId)
+            .eq("journey_key", journeyKey)
+            .maybeSingle()
+        : supabase
+            .from("odi_market_definitions")
+            .select("*")
+            .eq("company_id", companyId)
+            .order("updated_at", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
       const [marketRes, needsRes] = await Promise.all([
-        supabase
-          .from("odi_market_definitions")
-          .select("*")
-          .eq("company_id", companyId)
-          .order("updated_at", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+        marketQuery,
         supabase
           .from("odi_needs")
           .select("*")
@@ -124,7 +134,7 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0) {
     return () => {
       cancelled = true;
     };
-  }, [companyId, refreshKey]);
+  }, [companyId, refreshKey, journeyKey]);
 
   async function updateMarketDefinition(patch: Partial<Pick<OdiMarketDefinitionRow, "innovation_strategy">>) {
     if (!companyId) throw new Error("Select a company first.");

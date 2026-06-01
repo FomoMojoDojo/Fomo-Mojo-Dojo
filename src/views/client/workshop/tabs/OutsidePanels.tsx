@@ -5,6 +5,7 @@ import { ledgerItemFingerprint } from "@/lib/scoring/mojoScore";
 import type { PositioningCanvas, StrategyCascade } from "@/lib/types";
 import {
   BaselineWarningBanner,
+  DataQualityMarker,
   SectionHeader,
   ReviewableBlock,
   OutsideSignalItems,
@@ -164,9 +165,17 @@ export function PositioningOutside({ baseline, companyId, exclusion }: { baselin
 
   const { message_alignment, outside_voice_signals = [], category_archetype } = baseline;
 
+  const dqFlag = baseline.data_quality_flag;
+  const dqMarkerType = dqFlag?.type === "thin" || dqFlag?.type === "ambiguous" ? dqFlag.type : null;
+
   return (
     <div className="crpv-ws-section">
       <BaselineWarningBanner baseline={baseline} />
+      {dqMarkerType && dqFlag && (
+        <div style={{ marginBottom: 8 }}>
+          <DataQualityMarker type={dqMarkerType} prompt={dqFlag.prompt} />
+        </div>
+      )}
       <SectionHeader
         title="Positioning · Outside Signals"
         desc="What the market sees publicly — before any internal strategy work."
@@ -203,10 +212,17 @@ export function StrategyOutside({ baseline, companyId }: { baseline: BaselineRes
   }
 
   const { lens_card, top_hypotheses = [], open_questions = [] } = baseline;
+  const stratDqFlag = baseline.data_quality_flag;
+  const stratDqMarkerType = stratDqFlag?.type === "thin" || stratDqFlag?.type === "ambiguous" ? stratDqFlag.type : null;
 
   return (
     <div className="crpv-ws-section">
       <BaselineWarningBanner baseline={baseline} />
+      {stratDqMarkerType && stratDqFlag && (
+        <div style={{ marginBottom: 8 }}>
+          <DataQualityMarker type={stratDqMarkerType} prompt={stratDqFlag.prompt} />
+        </div>
+      )}
       <SectionHeader
         title="Strategy · Outside Signals"
         desc="How the market perceives the company's competitive position."

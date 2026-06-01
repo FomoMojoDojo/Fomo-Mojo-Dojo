@@ -198,6 +198,7 @@ export function useDirectionEvidence(
           .from("signals")
           .select("id, signal_band")
           .eq("company_id", companyId)
+          .eq("relevance_state", "active")
           .limit(2000),
       ]);
 

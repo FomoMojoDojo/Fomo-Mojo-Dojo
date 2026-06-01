@@ -13,6 +13,7 @@ import {
   rebuildRouteHypothesisDependencies,
   rebuildStrategicHypothesesForCompany,
 } from "./strategicHypotheses.ts";
+import { inferJourneyHypothesesForCompany } from "./journeyHypotheses.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -88,7 +89,19 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   const { error: deleteRefsError } = await supabase.from("claim_signal_refs").delete().eq("company_id", companyId);
   if (deleteRefsError) throw new Error(`Failed clearing claim refs: ${deleteRefsError.message}`);
-  const { error: deleteClaimsError } = await supabase.from("claims").delete().eq("company_id", companyId);
+  // Preserve claims whose raw_payload.source matches 'manual_%' — they were
+  // hand-approved and must survive the signal rebuild.
+  const { data: manualClaimRows } = await supabase
+    .from("claims")
+    .select("id")
+    .eq("company_id", companyId)
+    .filter("raw_payload->>source", "like", "manual_%");
+  const manualClaimIds = (manualClaimRows || []).map((r: { id?: string }) => String(r.id || "")).filter(Boolean);
+
+  const claimsDeleteQuery = supabase.from("claims").delete().eq("company_id", companyId);
+  const { error: deleteClaimsError } = manualClaimIds.length > 0
+    ? await claimsDeleteQuery.not("id", "in", `(${manualClaimIds.join(",")})`)
+    : await claimsDeleteQuery;
   if (deleteClaimsError) throw new Error(`Failed clearing claims: ${deleteClaimsError.message}`);
 
   if (candidates.length === 0) {
@@ -382,8 +395,14 @@ export async function ingestPublicBaselineSignals(args: {
     sourceType: "public_baseline_run",
     signals,
   });
-  console.log(`[evidence] public baseline ingested company=${args.companyId} run=${args.runId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount} hypotheses=${stats.hypothesisCount} hypothesisDeps=${stats.dependencyCount} routeHypothesisDeps=${stats.routeDependencyCount} graphLinkedRoutes=${stats.graphLinkedRouteCount}`);
-  return stats;
+  const journeyStats = await inferJourneyHypothesesForCompany({
+    supabase: args.supabase as any,
+    companyId: args.companyId,
+    resultJson: args.resultJson,
+    sourceRunId: String(args.runId),
+  });
+  console.log(`[evidence] public baseline ingested company=${args.companyId} run=${args.runId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount} hypotheses=${stats.hypothesisCount} hypothesisDeps=${stats.dependencyCount} routeHypothesisDeps=${stats.routeDependencyCount} graphLinkedRoutes=${stats.graphLinkedRouteCount} journeyHypotheses=${journeyStats.journeyCount}`);
+  return { ...stats, ...journeyStats };
 }
 
 export async function ingestDifyProposalSignals(args: {

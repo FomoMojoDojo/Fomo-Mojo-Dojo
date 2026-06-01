@@ -109,4 +109,43 @@ describe("route hypothesis linking", () => {
     expect(links).toHaveLength(1);
     expect(links[0]?.dependencyType).toBe("contradicts");
   });
+
+  it("maps unstable hypothesis to constrains dependency type", () => {
+    const links = buildConservativeRouteHypothesisLinks({
+      routes: [makeRoute()],
+      hypotheses: [
+        {
+          hypothesis: makeHypothesis({
+            id: "hyp-unstable",
+            hypothesis_state: "unstable",
+            statement: "Public positioning may need stronger operational proof to win trust.",
+          }),
+          supportShape: { outside: 1, organization: 1, customer: 0 },
+        },
+      ],
+    });
+
+    expect(links).toHaveLength(1);
+    expect(links[0]?.dependencyType).toBe("constrains");
+  });
+
+  it("strengthened hypothesis maps to supports dependency type", () => {
+    const links = buildConservativeRouteHypothesisLinks({
+      routes: [makeRoute()],
+      hypotheses: [
+        {
+          hypothesis: makeHypothesis({
+            id: "hyp-strong",
+            hypothesis_state: "strengthened",
+            confidence: "high",
+            statement: "Public positioning may need stronger operational proof to win trust.",
+          }),
+          supportShape: { outside: 2, organization: 1, customer: 1 },
+        },
+      ],
+    });
+
+    expect(links).toHaveLength(1);
+    expect(links[0]?.dependencyType).toBe("supports");
+  });
 });

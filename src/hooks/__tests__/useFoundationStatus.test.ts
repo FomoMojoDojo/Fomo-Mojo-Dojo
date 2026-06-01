@@ -28,7 +28,7 @@ const makeRoute = (overrides: Partial<RouteRow> & { id: string }): RouteRow => (
 
 const routeA = makeRoute({ id: "r-a", level: "route" });
 const routeB = makeRoute({ id: "r-b", level: "route" });
-const routeC = makeRoute({ id: "r-c", level: "route", what_would_have_to_be_true: ["Condition 1"] as unknown as RouteRow["what_would_have_to_be_true"] });
+const routeC = makeRoute({ id: "r-c", level: "route", rejected_alternatives: ["Alt C"] as unknown as RouteRow["rejected_alternatives"], what_would_have_to_be_true: ["Condition 1"] as unknown as RouteRow["what_would_have_to_be_true"] });
 
 const makeDirectionEvidence = (overrides: Partial<DirectionEvidence> = {}): DirectionEvidence => ({
   directions: [],
@@ -99,6 +99,7 @@ describe("computeFoundationStatus — fully grounded", () => {
     id: "r-wrap",
     level: "route",
     rejected_alternatives: ["Alt A", "Alt B"] as unknown as RouteRow["rejected_alternatives"],
+    what_would_have_to_be_true: ["Condition A", "Condition B"] as unknown as RouteRow["what_would_have_to_be_true"],
   });
 
   const evidence = makeDirectionEvidence({
@@ -162,9 +163,9 @@ describe("computeFoundationStatus — only legs (no top-level routes)", () => {
   it("wrapPresent is false (legs not checked)", () => expect(result.wrapPresent).toBe(false));
 });
 
-// ── wrapPresent via what_would_have_to_be_true ────────────────────────────────
+// ── wrapPresent requires both fields populated ─────────────────────────────────
 
-describe("computeFoundationStatus — wrapPresent via what_would_have_to_be_true", () => {
+describe("computeFoundationStatus — wrapPresent when both WRAP fields populated", () => {
   const result = computeFoundationStatus(null, null, [routeC], null);
 
   it("directionCount is 1", () => expect(result.directionCount).toBe(1));

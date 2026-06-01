@@ -188,7 +188,7 @@ describe("refine preview phase orchestration", () => {
 
   it("provides different route copy postures by phase", () => {
     expect(phaseNarrativePriority("outside_signals").routes.panelTitle).toBe("Why this path is surfacing");
-    expect(phaseNarrativePriority("diagnose").routes.panelTitle).toBe("Why this route is becoming more plausible");
+    expect(phaseNarrativePriority("diagnose").routes.panelTitle).toBe("Why this path is emerging");
     expect(phaseNarrativePriority("focus").routes.panelTitle).toBe("Why this route is safest to focus around");
     expect(phaseNarrativePriority("flow").routes.panelTitle).toBe("How this route is holding up");
     expect(phaseNarrativePriority("focus").mainPage.hypothesisLabel).toBe("What this focus depends on");

@@ -10,7 +10,7 @@ import { FoundationClaimSupport } from "@/components/evidence/FoundationClaimSup
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { StrategicEvent } from "@/lib/strategicGraphDomain";
-import { rewriteNeedTitle, rewriteJobContextPhrase, sanitizeStaleReason, humanSourceLabel } from "@/lib/needDisplayLanguage";
+import { rewriteJobContextPhrase, sanitizeStaleReason, humanSourceLabel } from "@/lib/needDisplayLanguage";
 import { deriveNeedServedByRoutes } from "@/lib/strategicObjectRelationships";
 import {
   deriveNeedRealityCard,
@@ -989,7 +989,7 @@ export default function NeedInspectPanel({
 
           {/* Desired outcome */}
           <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 17, fontWeight: 600, lineHeight: 1.35, color: c.ink }}>
-            {rewriteNeedTitle(need.desired_outcome) || "Untitled need"}
+            {need.desired_outcome || "Untitled need"}
           </h2>
         </div>
 

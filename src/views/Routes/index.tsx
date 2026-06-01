@@ -18,6 +18,7 @@ import { MetaBadge } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import RouteCard from "./RouteCard";
+import TopLevelRouteCard from "./TopLevelRouteCard";
 import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import StrategicDirectionInspectPanel from "@/components/direction/StrategicDirectionInspectPanel";
@@ -32,6 +33,7 @@ import {
   type FocusClassification,
 } from "@/lib/initiativeFocus";
 import { routeDetail } from "./routeDetail";
+import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import { buildRouteRationales } from "@/lib/routeRationale";
 import {
   routeRelativeTime,
@@ -568,6 +570,7 @@ export default function RoutesView() {
   }, [activeCompany?.id]);
   const { loading, items, error } = useRoutes(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const { primary: primaryOutcome } = useDesiredOutcomes(activeCompany?.id);
   const { item: cascade } = useStrategyCascade(activeCompany?.id);
   const { item: positioning } = usePositioningCanvas(activeCompany?.id);
   const { items: steps } = useJobSteps(activeCompany?.id);
@@ -875,6 +878,61 @@ export default function RoutesView() {
   const safestCommitment = portfolio.safeToCommit[0] ?? null;
   const activeSignals = strategicHypothesisRows.filter((h) => h.hypothesis.is_active).slice(0, 5);
 
+  // ── A5 hierarchy ──────────────────────────────────────────────────────────
+  const topLevelRoutes = useMemo(
+    () => items.filter((r) => r.level === "route"),
+    [items],
+  );
+  const legRoutes = useMemo(
+    () => items.filter((r) => r.level !== "route"),
+    [items],
+  );
+  const legsByParent = useMemo(() => {
+    const map = new Map<string, typeof legRoutes>();
+    for (const leg of legRoutes) {
+      const pid = leg.parent_id ?? "__orphan__";
+      if (!map.has(pid)) map.set(pid, []);
+      map.get(pid)!.push(leg);
+    }
+    return map;
+  }, [legRoutes]);
+
+  const hasHierarchy = topLevelRoutes.length > 0;
+
+  // State-aware page-level framing derived from top-level route claim states
+  const routesPageFraming = useMemo(() => {
+    if (!hasHierarchy) return null;
+    const states = topLevelRoutes.map((r) =>
+      r.claim_id ? (claimsMap?.get(r.claim_id)?.state ?? null) : null,
+    );
+    const flowRoute = topLevelRoutes.find((r) => claimsMap?.get(r.claim_id ?? "")?.state === "flow");
+    const focusRoute = topLevelRoutes.find((r) => claimsMap?.get(r.claim_id ?? "")?.state === "focus");
+    if (flowRoute) {
+      return {
+        lead: "Committed route in progress",
+        sub: `${flowRoute.title} — leg-by-leg execution underway.`,
+      };
+    }
+    if (focusRoute) {
+      return {
+        lead: "Primary route emerging",
+        sub: `${focusRoute.title} continues to strengthen across evidence layers. Comparing against alternatives before commitment.`,
+      };
+    }
+    const diagnoseCount = states.filter((s) => s === "diagnose").length;
+    const n = topLevelRoutes.length;
+    if (diagnoseCount > 0) {
+      return {
+        lead: "Routes under consideration",
+        sub: `${n} candidate ${n === 1 ? "direction" : "directions"}, all grounded in internal evidence. Customer validation is the next layer needed to focus around one.`,
+      };
+    }
+    return {
+      lead: "Routes under consideration — internal grounding still forming",
+      sub: "Compare directions as evidence accumulates. None yet has the evidence to focus around.",
+    };
+  }, [hasHierarchy, topLevelRoutes, claimsMap]);
+
   return (
     <div
       className="min-h-screen strategic-surface"
@@ -931,78 +989,81 @@ export default function RoutesView() {
         ) : (
           <div className="space-y-0">
 
-            {/* ── FIELD CONDITION + DECISION POSTURE ───────────────────── */}
-            <section style={{ paddingTop: 14, paddingBottom: 24, borderBottom: `1px solid ${c.line}` }}>
-              <div className="flex items-center gap-3 flex-wrap">
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: readinessReport ? (readinessReport.readinessCeiling < 35 ? c.coral : readinessReport.readinessCeiling < 55 ? c.amber : c.muted) : c.muted }}>
-                  {readinessReport ? readinessReport.postureLabel : "Commitment posture"}
+            {/* ── STATE-AWARE PAGE FRAMING ──────────────────────────────── */}
+            {routesPageFraming ? (
+              <section style={{ paddingTop: 14, paddingBottom: 20, borderBottom: `1px solid ${c.line}` }}>
+                <p className="font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.65 }}>
+                  Route overview
                 </p>
-                {readinessReport && (
-                  <p className="font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: readinessReport.movementColor }}>
-                    {readinessReport.movementLabel}
+                <h2 className="mt-2 font-sans font-semibold leading-[1.15] max-w-3xl" style={{ fontSize: 36, color: c.charcoal }}>
+                  {routesPageFraming.lead}
+                </h2>
+                <p className="mt-2 font-sans text-[14px] leading-[1.5] max-w-2xl" style={{ color: c.secondary }}>
+                  {routesPageFraming.sub}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1">
+                  {flaggedNeedsCount > 0 && (
+                    <Link to="/job-steps#needs" className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral, textDecoration: "underline" }}>
+                      {flaggedNeedsCount} {flaggedNeedsCount === 1 ? "proof point" : "proof points"} need review →
+                    </Link>
+                  )}
+                  <span className="font-mono text-[9px]" style={{ color: c.muted, opacity: 0.55 }}>
+                    {currentScore} readiness · +{Math.max(0, potentialScore - currentScore)} reachable · {topLevelRoutes.length} {topLevelRoutes.length === 1 ? "route" : "routes"} · {legRoutes.length} legs
+                  </span>
+                </div>
+              </section>
+            ) : (
+              /* Fallback framing for companies without hierarchy */
+              <section style={{ paddingTop: 14, paddingBottom: 20, borderBottom: `1px solid ${c.line}` }}>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: readinessReport ? (readinessReport.readinessCeiling < 35 ? c.coral : readinessReport.readinessCeiling < 55 ? c.amber : c.muted) : c.muted }}>
+                    {readinessReport ? readinessReport.postureLabel : "Commitment posture"}
+                  </p>
+                  {readinessReport && (
+                    <p className="font-mono text-[10px] uppercase tracking-[0.14em]" style={{ color: readinessReport.movementColor }}>
+                      {readinessReport.movementLabel}
+                    </p>
+                  )}
+                </div>
+                <h2 className="mt-3 font-sans font-semibold leading-[1.2] max-w-3xl" style={{ fontSize: 44, color: c.charcoal }}>
+                  {editorialHeadline}
+                </h2>
+              </section>
+            )}
+
+            {/* ── DESIRED OUTCOME ───────────────────────────────────────── */}
+            {primaryOutcome && (
+              <section style={{ paddingTop: 18, paddingBottom: 18, borderBottom: `1px solid ${c.line}` }}>
+                <p className="font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.65 }}>
+                  Desired Outcome
+                </p>
+                <p className="mt-2 font-sans text-[16px] leading-[1.5] max-w-2xl" style={{ color: c.charcoal, fontWeight: 500 }}>
+                  {primaryOutcome.statement}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1">
+                  {primaryOutcome.importance_score !== null && (
+                    <span className="font-mono text-[11px]" style={{ color: c.secondary }}>
+                      Importance: <strong style={{ color: c.charcoal }}>{primaryOutcome.importance_score}/10</strong>
+                    </span>
+                  )}
+                  {primaryOutcome.satisfaction_score !== null && (
+                    <span className="font-mono text-[11px]" style={{ color: c.secondary }}>
+                      Current satisfaction: <strong style={{ color: c.charcoal }}>{primaryOutcome.satisfaction_score}/10</strong>
+                    </span>
+                  )}
+                  {primaryOutcome.importance_score !== null && primaryOutcome.satisfaction_score !== null && (
+                    <span className="font-mono text-[11px]" style={{ color: c.coral }}>
+                      Gap: <strong>{primaryOutcome.importance_score - primaryOutcome.satisfaction_score}</strong>
+                    </span>
+                  )}
+                </div>
+                {primaryOutcome.metric && (
+                  <p className="mt-2 font-sans text-[11px] leading-[1.45]" style={{ color: c.muted, fontStyle: "italic" }}>
+                    {primaryOutcome.metric}
                   </p>
                 )}
-              </div>
-              <h2 className="mt-3 font-sans font-semibold leading-[1.2] max-w-3xl" style={{ fontSize: 44, color: c.charcoal }}>
-                {editorialHeadline}
-              </h2>
-              {primaryPressure && (
-                <p className="mt-2 font-sans text-[13px] leading-[1.45] max-w-2xl" style={{ color: c.coral, fontStyle: "italic", opacity: 0.85 }}>
-                  {primaryPressure}
-                </p>
-              )}
-              {portfolio.escalations.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {portfolio.escalations.map((esc, i) => (
-                    <span key={i} className="font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-[3px]" style={{ border: `1px solid ${esc.severity === "warning" ? c.coral : c.line}`, color: esc.severity === "warning" ? c.coral : c.muted }}>
-                      {esc.title.toUpperCase()}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* ── COMMITMENT CONDITION ROWS ─────────────────────────────── */}
-            <section style={{ paddingTop: 14, paddingBottom: 6 }}>
-              <div className="grid grid-cols-1 gap-x-10 gap-y-3 md:grid-cols-[56%_44%]">
-                <div>
-                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.muted, opacity: 0.55 }}>Condition</p>
-                  <p className="font-sans text-[15px] leading-[1.5]" style={{ color: c.charcoal }}>{portfolio.portfolioNarrative}</p>
-                </div>
-                <div>
-                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: c.teal, opacity: 0.75 }}>Safest commitment</p>
-                  <p className="font-sans text-[14px] font-medium leading-[1.5]" style={{ color: c.charcoal }}>
-                    {safestCommitment ?? portfolio.portfolioNextMove}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 md:grid-cols-2" style={{ opacity: 0.72 }}>
-                <div>
-                  <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                    {flaggedNeedsCount > 0
-                      ? `${flaggedNeedsCount} ${flaggedNeedsCount === 1 ? "proof point" : "proof points"} flagged — re-validate before committing.`
-                      : "No active escalations."}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-sans text-[12px] leading-[1.5]" style={{ color: c.secondary }}>
-                    {customerRealityNarrative.postureHeadline}
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            {/* ── CONTEXT BAR ───────────────────────────────────────────── */}
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1" style={{ paddingTop: 6, paddingBottom: 6, borderBottom: `1px solid ${c.lineFaint}` }}>
-              {flaggedNeedsCount > 0 && (
-                <Link to="/job-steps#needs" className="font-mono text-[9px] uppercase tracking-[0.1em]" style={{ color: c.coral, textDecoration: "underline" }}>
-                  {flaggedNeedsCount} {flaggedNeedsCount === 1 ? "proof point" : "proof points"} need review →
-                </Link>
-              )}
-              <span className="font-mono text-[9px]" style={{ color: c.muted, opacity: 0.55 }}>
-                {currentScore} readiness · +{Math.max(0, potentialScore - currentScore)} reachable · {items.length} {items.length === 1 ? "path" : "paths"}
-              </span>
-            </div>
+              </section>
+            )}
 
             {/* ── STRATEGIC SIGNALS ─────────────────────────────────────── */}
             {activeSignals.length > 0 && (
@@ -1079,28 +1140,6 @@ export default function RoutesView() {
               </section>
             )}
 
-            {/* ── DECISION BANNER OR COMMITMENT REVIEW ──────────────────── */}
-            {selectedRoute && selectedDetail ? (
-              <DecisionSummaryBanner
-                route={selectedRoute}
-                detail={selectedDetail}
-                linkedOutcome={selectedOutcome}
-                savedAt={decisionSavedAt}
-                onClear={handleClearDecision}
-              />
-            ) : (
-              <CommitmentReviewBlock
-                portfolio={portfolio}
-                routeOutcomeMap={routeOutcomeMap}
-                items={items}
-                opportunities={opportunities}
-                steps={steps}
-                initiativeContext={initiativeContext}
-                opportunityFocusById={opportunityFocusById}
-                onSelect={handleSelectRoute}
-              />
-            )}
-
             {latestExclusionAt && (
               <div style={{ borderLeft: `2px solid #FAC846`, paddingLeft: 12, paddingTop: 4, paddingBottom: 4 }}>
                 <p className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "#FAC846" }}>
@@ -1112,18 +1151,26 @@ export default function RoutesView() {
               </div>
             )}
 
-            {/* ── DECISION PRESSURE GROUPS ──────────────────────────────── */}
-            <div className="space-y-2" style={{ paddingTop: 12 }}>
-              {pressureGroups.length === 0 ? (
-                <p className="font-sans text-[13px] py-4" style={{ color: c.muted }}>
-                  No commitment paths defined yet.
-                </p>
-              ) : (
-                pressureGroups.map(({ key, routes }) => (
-                  <PressureGroupSection
-                    key={key}
-                    groupKey={key}
-                    routes={routes}
+            {/* ── SELECTED ROUTE BANNER ─────────────────────────────────── */}
+            {selectedRoute && selectedDetail && (
+              <DecisionSummaryBanner
+                route={selectedRoute}
+                detail={selectedDetail}
+                linkedOutcome={selectedOutcome}
+                savedAt={decisionSavedAt}
+                onClear={handleClearDecision}
+              />
+            )}
+
+            {/* ── ROUTE HIERARCHY (primary layout when hierarchy exists) ── */}
+            {hasHierarchy ? (
+              <div style={{ paddingTop: 12 }}>
+                {topLevelRoutes.map((route) => (
+                  <TopLevelRouteCard
+                    key={route.id}
+                    route={route}
+                    legs={legsByParent.get(route.id) ?? []}
+                    claimsMap={claimsMap}
                     opportunities={opportunities}
                     steps={steps}
                     initiativeContext={initiativeContext}
@@ -1132,14 +1179,42 @@ export default function RoutesView() {
                     routeDecisionMap={routeDecisionMap}
                     routeDecisionAttributionMap={routeDecisionAttributionMap}
                     allTensions={allTensions}
-                    onInspect={(route) => openFrame({ kind: "route", objectId: route.id, lens: "overview" })}
                     selectedRouteId={selectedRouteId}
                     onSelect={handleSelectRoute}
-                    claimsMap={claimsMap}
+                    onInspect={(r) => openFrame({ kind: "route", objectId: r.id, lens: "overview" })}
                   />
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            ) : (
+              /* Fallback flat layout for companies without hierarchy */
+              <div className="space-y-2" style={{ paddingTop: 12 }}>
+                {pressureGroups.length === 0 ? (
+                  <p className="font-sans text-[13px] py-4" style={{ color: c.muted }}>
+                    No commitment paths defined yet.
+                  </p>
+                ) : (
+                  pressureGroups.map(({ key, routes }) => (
+                    <PressureGroupSection
+                      key={key}
+                      groupKey={key}
+                      routes={routes}
+                      opportunities={opportunities}
+                      steps={steps}
+                      initiativeContext={initiativeContext}
+                      opportunityFocusById={opportunityFocusById}
+                      routeOutcomeMap={routeOutcomeMap}
+                      routeDecisionMap={routeDecisionMap}
+                      routeDecisionAttributionMap={routeDecisionAttributionMap}
+                      allTensions={allTensions}
+                      onInspect={(route) => openFrame({ kind: "route", objectId: route.id, lens: "overview" })}
+                      selectedRouteId={selectedRouteId}
+                      onSelect={handleSelectRoute}
+                      claimsMap={claimsMap}
+                    />
+                  ))
+                )}
+              </div>
+            )}
           </div>
         )}
       </main>

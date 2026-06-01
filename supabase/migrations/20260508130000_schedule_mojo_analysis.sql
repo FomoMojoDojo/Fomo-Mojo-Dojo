@@ -51,9 +51,15 @@ END;
 $$;
 
 -- Schedule: daily at 06:00 UTC.
--- pg_cron is available on hosted Supabase; enable it in Dashboard → Database → Extensions if needed.
-SELECT cron.schedule(
-  'mojo-analysis-daily',
-  '0 6 * * *',
-  'SELECT public.trigger_scheduled_mojo_analysis()'
-);
+-- pg_cron is available on hosted Supabase; enable it in Dashboard → Database → Extensions.
+-- Skipped gracefully if pg_cron is not installed (local dev without the extension).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'cron') THEN
+    PERFORM cron.schedule(
+      'mojo-analysis-daily',
+      '0 6 * * *',
+      'SELECT public.trigger_scheduled_mojo_analysis()'
+    );
+  END IF;
+END $$;

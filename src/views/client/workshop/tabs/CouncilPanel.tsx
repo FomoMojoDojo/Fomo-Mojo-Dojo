@@ -1,6 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { SectionHeader } from "../primitives";
+import TensionBlock from "@/components/tensions/TensionBlock";
+import type { StrategicTension } from "@/lib/tensionTypes";
+import { decisionStateColor, decisionStateBorderColor } from "@/lib/decisionPostureNarrative";
+import { DECISION_STATE_LABELS } from "@/lib/strategicDecisionDomain";
+import { HierarchyPageShell } from "@/components/design-system/HierarchyPageShell";
+import { HierarchySectionHeader } from "@/components/design-system/HierarchySectionHeader";
+import { D } from "@/components/design-system/tokens";
+import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 type CouncilKey = "strategy_council" | "mojo_council";
 type CouncilRecStatus = "pending" | "accepted" | "ignored";
@@ -17,6 +25,14 @@ interface CouncilRec {
   source_context_json: Record<string, unknown> | null;
   decided_at: string | null;
   created_at: string;
+  decision_id?: string | null;
+}
+
+interface DecisionSummary {
+  id: string;
+  title: string;
+  decision_question: string | null;
+  decision_state: string;
 }
 
 interface CouncilRun {
@@ -28,9 +44,9 @@ interface CouncilRun {
   created_at: string;
 }
 
-const COUNCIL_OPTIONS: Array<{ key: CouncilKey; label: string; desc: string }> = [
-  { key: "mojo_council",     label: "Mojo Council",     desc: "Heath, Dunford, Roger Martin, Berger, Torres, Miller, Ulwick" },
-  { key: "strategy_council", label: "Strategy Council", desc: "Jobs, Bartlett, Hormozi, Robbins, Priestley" },
+const COUNCIL_OPTIONS: Array<{ key: CouncilKey; label: string; desc: string; role: string }> = [
+  { key: "mojo_council",     label: "Mojo Council",     desc: "Heath, Dunford, Roger Martin, Berger, Torres, Miller, Ulwick", role: "Frameworks for diagnosis and decision" },
+  { key: "strategy_council", label: "Strategy Council", desc: "Jobs, Bartlett, Hormozi, Robbins, Priestley",                  role: "Founder and operator perspective" },
 ];
 
 function councilKeyFromRun(run: CouncilRun): CouncilKey {
@@ -81,15 +97,19 @@ async function extractCouncilError(error: unknown, fallback: string): Promise<st
   }
 }
 
-export default function WorkshopCouncilTab({ companyId, companyName }: { companyId: string; companyName: string }) {
+
+export default function WorkshopCouncilTab({ companyId, companyName, tensions = [], hasHierarchy, signalBasis }: { companyId: string; companyName: string; tensions?: StrategicTension[]; hasHierarchy?: boolean; signalBasis?: SignalBasis }) {
   const [councilKey, setCouncilKey]       = useState<CouncilKey>("mojo_council");
   const [runs, setRuns]                   = useState<CouncilRun[]>([]);
   const [recs, setRecs]                   = useState<CouncilRec[]>([]);
+  const [decisions, setDecisions]         = useState<DecisionSummary[]>([]);
   const [loading, setLoading]             = useState(true);
   const [running, setRunning]             = useState(false);
   const [decisionId, setDecisionId]       = useState<string | null>(null);
   const [statusFilter, setStatusFilter]   = useState<CouncilRecStatus | "all">("pending");
   const [error, setError]                 = useState<string | null>(null);
+  const [showIgnored, setShowIgnored]     = useState(false);
+
 
   const scopedRuns = useMemo(() => runs.filter((r) => councilKeyFromRun(r) === councilKey), [runs, councilKey]);
   const scopedRecs = useMemo(() => recs.filter((r) => councilKeyFromRec(r) === councilKey), [recs, councilKey]);
@@ -112,14 +132,16 @@ export default function WorkshopCouncilTab({ companyId, companyName }: { company
     setLoading(true);
     setError(null);
     try {
-      const [recRes, runRes] = await Promise.all([
+      const [recRes, runRes, decRes] = await Promise.all([
         sb.from("council_recommendations").select("*").eq("company_id", companyId).order("created_at", { ascending: false }).limit(250),
         sb.from("council_review_runs").select("id, status, summary, recommendation_count, source_snapshot_json, created_at").eq("company_id", companyId).order("created_at", { ascending: false }).limit(40),
+        sb.from("strategic_decisions").select("id, title, decision_question, decision_state").eq("company_id", companyId).neq("decision_state", "retired").limit(50),
       ]);
       if (recRes.error) throw recRes.error;
       if (runRes.error) throw runRes.error;
       setRecs((recRes.data ?? []) as CouncilRec[]);
       setRuns((runRes.data ?? []) as CouncilRun[]);
+      setDecisions((decRes.data ?? []) as DecisionSummary[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load council data");
     } finally {
@@ -177,19 +199,348 @@ export default function WorkshopCouncilTab({ companyId, companyName }: { company
   }
 
   const STATUS_FILTERS: Array<{ key: CouncilRecStatus | "all"; label: string; count?: number }> = [
-    { key: "all",      label: "All",      count: scopedRecs.length },
-    { key: "pending",  label: "Pending",  count: counts.pending },
-    { key: "accepted", label: "Accepted", count: counts.accepted },
-    { key: "ignored",  label: "Ignored",  count: counts.ignored },
+    { key: "all",      label: "All",        count: scopedRecs.length },
+    { key: "pending",  label: "Unresolved", count: counts.pending },
+    { key: "accepted", label: "Integrated", count: counts.accepted },
+    { key: "ignored",  label: "Set aside",  count: counts.ignored },
   ];
 
+  const topPendingHighPriority = useMemo(
+    () => scopedRecs.find((r) => r.status === "pending" && r.priority === "high") ?? scopedRecs.find((r) => r.status === "pending") ?? null,
+    [scopedRecs],
+  );
+
+  const decisionMap = useMemo(
+    () => new Map(decisions.map((d) => [d.id, d])),
+    [decisions],
+  );
+
+  // Group filtered recs by decision_id: [{decision: DecisionSummary | null, recs: CouncilRec[]}]
+  const groupedRecs = useMemo(() => {
+    const linked: Map<string, CouncilRec[]> = new Map();
+    const unlinked: CouncilRec[] = [];
+    for (const rec of filtered) {
+      const did = rec.decision_id;
+      const dec = did ? decisionMap.get(did) : null;
+      if (dec) {
+        const group = linked.get(dec.id) ?? [];
+        group.push(rec);
+        linked.set(dec.id, group);
+      } else {
+        unlinked.push(rec);
+      }
+    }
+    const result: Array<{ decision: DecisionSummary | null; recs: CouncilRec[] }> = [];
+    for (const [did, groupRecs] of linked.entries()) {
+      result.push({ decision: decisionMap.get(did) ?? null, recs: groupRecs });
+    }
+    if (unlinked.length > 0) result.push({ decision: null, recs: unlinked });
+    return result;
+  }, [filtered, decisionMap]);
+
+  const editorialHeadline = useMemo(() => {
+    const summary = latestRun?.summary?.split(/\n{2,}/)[0]?.trim();
+    if (summary && summary.length > 0 && summary.length < 280) return summary;
+    if (scopedRecs.length === 0) {
+      // Use a tension statement as the lead if no session has been run
+      const blocker = tensions.find((t) => t.is_commitment_blocker);
+      const highPressure = tensions.find((t) => t.pressure === "high" || t.pressure === "critical");
+      if (blocker?.statement) return blocker.statement;
+      if (highPressure?.statement) return highPressure.statement;
+      return `No advisory session run for ${meta.label} yet.`;
+    }
+    if (counts.pending > 0) {
+      // If a tension is blocking commitment, lead with that
+      const blocker = tensions.find((t) => t.is_commitment_blocker);
+      if (blocker?.statement) return blocker.statement;
+      return `${counts.pending} interpretation${counts.pending === 1 ? "" : "s"} unresolved.`;
+    }
+    if (counts.accepted > 0 && counts.pending === 0) return `${counts.accepted} interpretation${counts.accepted === 1 ? "" : "s"} integrated.`;
+    return `All ${scopedRecs.length} interpretation${scopedRecs.length === 1 ? "" : "s"} reviewed.`;
+  }, [scopedRecs, counts, meta.label, latestRun, tensions]);
+
+  const editorialContext = useMemo(() => {
+    if (!latestRun?.summary) return null;
+    const paras = latestRun.summary.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    const headline = paras[0] ?? "";
+    const usedAsHeadline = headline.length > 0 && headline.length < 280;
+    return usedAsHeadline ? (paras[1] ?? null) : null;
+  }, [latestRun]);
+
+  const highCriticalTensions = useMemo(
+    () => tensions.filter((t) => t.pressure === "high" || t.pressure === "critical"),
+    [tensions],
+  );
+
+  const activeHierarchyRecs = useMemo(
+    () => scopedRecs.filter((r) => r.status !== "ignored"),
+    [scopedRecs],
+  );
+
+  const ignoredHierarchyRecs = useMemo(
+    () => scopedRecs.filter((r) => r.status === "ignored"),
+    [scopedRecs],
+  );
+
+  const activeHierarchyGrouped = useMemo(() => {
+    const linked: Map<string, CouncilRec[]> = new Map();
+    const unlinked: CouncilRec[] = [];
+    for (const rec of activeHierarchyRecs) {
+      const did = rec.decision_id;
+      const dec = did ? decisionMap.get(did) : null;
+      if (dec) {
+        const group = linked.get(dec.id) ?? [];
+        group.push(rec);
+        linked.set(dec.id, group);
+      } else {
+        unlinked.push(rec);
+      }
+    }
+    const result: Array<{ decision: DecisionSummary | null; recs: CouncilRec[] }> = [];
+    for (const [did, groupRecs] of linked.entries()) {
+      result.push({ decision: decisionMap.get(did) ?? null, recs: groupRecs });
+    }
+    if (unlinked.length > 0) result.push({ decision: null, recs: unlinked });
+    return result;
+  }, [activeHierarchyRecs, decisionMap]);
+
+  // ── Hierarchy layout ───────────────────────────────────────────────────────
+  if (hasHierarchy) {
+    const pressureNum = highCriticalTensions.length > 0 ? "01" : null;
+    const interpretationNum = highCriticalTensions.length > 0 ? "02" : "01";
+
+    return (
+      <HierarchyPageShell
+        eyebrowSegments={["Council"]}
+        h1Before="Advisory"
+        h1Signal="Council"
+        subhead="Things you might otherwise miss — tensions and outside interpretations worth a second look."
+        signalBasis={signalBasis}
+        compactHero
+      >
+        {/* § 01 STRATEGIC PRESSURE */}
+        {pressureNum && highCriticalTensions.length > 0 && (
+          <div style={{ marginBottom: 48 }}>
+            <HierarchySectionHeader number={pressureNum} label="Strategic Pressure" />
+            <p style={{ fontFamily: D.sans, fontSize: 13, color: D.inkSoft, lineHeight: 1.6, margin: "0 0 16px", maxWidth: 560 }}>
+              The tension the council is responding to.
+              {counts.pending > 0 && ` ${counts.pending} interpretation${counts.pending === 1 ? "" : "s"} remain unresolved.`}
+            </p>
+            <TensionBlock tensions={highCriticalTensions} context="council" showBlockerCallout={highCriticalTensions.some((t) => t.is_commitment_blocker)} lead />
+          </div>
+        )}
+
+        {/* § 01/02 ADVISORY INTERPRETATIONS */}
+        <div id="council-interpretations" style={{ marginBottom: 32 }}>
+          <HierarchySectionHeader number={interpretationNum} label="Advisory Interpretations" />
+
+          {/* Council selector with role descriptions */}
+          <div className="crpv-council-selector" style={{ marginBottom: 16 }}>
+            {COUNCIL_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={`crpv-council-selector-btn${councilKey === opt.key ? " active" : ""}`}
+                onClick={() => setCouncilKey(opt.key)}
+              >
+                <span className="crpv-council-selector-name">{opt.label}</span>
+                <span style={{ fontFamily: "monospace", fontSize: 10, color: D.signal, textTransform: "uppercase" as const, letterSpacing: "0.08em", display: "block", marginTop: 2 }}>{opt.role}</span>
+                <span className="crpv-council-selector-desc cap">{opt.desc}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Run + refresh row */}
+          <div className="crpv-council-run-row" style={{ marginBottom: 24 }}>
+            <button type="button" className="crpv-council-run-btn" onClick={runCouncil} disabled={running}>
+              {running ? `Running ${meta.label}…` : `Run ${meta.label}`}
+            </button>
+            {latestRun && (
+              <span className="crpv-council-run-meta cap">
+                {latestRun.recommendation_count} interpretation{latestRun.recommendation_count === 1 ? "" : "s"}
+              </span>
+            )}
+            <button type="button" className="btn ghost" onClick={load} disabled={loading || running}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          {error && <p className="crpv-ws-hint" style={{ color: "var(--crpv-hot)" }}>{error}</p>}
+
+          {/* Active interpretations (pending + accepted) */}
+          {loading ? (
+            <div className="crpv-ws-placeholder cap">Loading advisory interpretations…</div>
+          ) : activeHierarchyRecs.length === 0 ? (
+            <div className="crpv-ws-placeholder">
+              {scopedRecs.length === 0
+                ? `No advisory session run for ${meta.label} yet.`
+                : "No active interpretations."}
+            </div>
+          ) : (
+            <div className="crpv-council-recs">
+              {activeHierarchyGrouped.map((group, gi) => (
+                <div key={group.decision?.id ?? `unlinked-${gi}`}>
+                  {group.decision && (
+                    <div style={{ borderLeft: `2px solid ${decisionStateBorderColor(group.decision.decision_state)}`, paddingLeft: 10, marginBottom: 8, marginTop: gi > 0 ? 16 : 0 }}>
+                      <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: decisionStateColor(group.decision.decision_state), marginBottom: 2 }}>
+                        {DECISION_STATE_LABELS[group.decision.decision_state as keyof typeof DECISION_STATE_LABELS] ?? group.decision.decision_state}
+                      </p>
+                      <p style={{ fontFamily: "sans-serif", fontSize: 13, fontWeight: 500, color: "#233C4B", lineHeight: 1.35 }}>
+                        {group.decision.title}
+                      </p>
+                      {group.decision.decision_question && (
+                        <p style={{ fontFamily: "sans-serif", fontSize: 11, color: "#6E847F", marginTop: 2, fontStyle: "italic", lineHeight: 1.4 }}>
+                          {group.decision.decision_question}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {group.recs.map((rec) => {
+                    const daysPending = !rec.decided_at && rec.status === "pending"
+                      ? Math.floor((Date.now() - new Date(rec.created_at).getTime()) / 86400000)
+                      : 0;
+                    const isPersistent = daysPending >= 7;
+                    return (
+                      <article key={rec.id} className={`crpv-council-rec crpv-council-rec-${rec.status}${isPersistent ? " crpv-council-rec-persistent" : ""}`}>
+                        <div className="crpv-council-rec-hd">
+                          <span className="crpv-council-rec-title">{rec.title}</span>
+                          <div className="crpv-council-rec-badges">
+                            <span className={`crpv-council-badge crpv-council-priority-${rec.priority} cap`}>{rec.priority}</span>
+                            <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{rec.status === "pending" ? "Unresolved" : "Integrated"}</span>
+                          </div>
+                        </div>
+                        <p className="crpv-council-rec-meta cap">{rec.category} · {rec.confidence}% confidence</p>
+                        <p className="crpv-council-rec-body">{rec.recommendation}</p>
+                        {rec.rationale && (
+                          <div className="crpv-council-rationale">
+                            <p className="crpv-ws-label">Advisory pressure point</p>
+                            <p className="crpv-council-rationale-body">{rec.rationale}</p>
+                          </div>
+                        )}
+                        <div className="crpv-council-rec-footer">
+                          <span className="crpv-council-rec-date cap">
+                            {isPersistent ? `${daysPending}d unresolved · ` : ""}{councilFmtDate(rec.created_at)}
+                          </span>
+                          <div className="crpv-council-rec-actions">
+                            <button
+                              type="button"
+                              className={`crpv-council-action-accept${rec.status === "accepted" ? " active" : ""}`}
+                              onClick={() => decide(rec.id, "accepted")}
+                              disabled={!!decisionId || rec.status === "accepted"}
+                            >
+                              {decisionId === `${rec.id}:accepted` ? "Saving…" : "Accept"}
+                            </button>
+                            <button
+                              type="button"
+                              className={`crpv-council-action-ignore${rec.status === "ignored" ? " active" : ""}`}
+                              onClick={() => decide(rec.id, "ignored")}
+                              disabled={!!decisionId}
+                            >
+                              {decisionId === `${rec.id}:ignored` ? "Saving…" : "Ignore"}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Ignored items — collapsed by default */}
+          {ignoredHierarchyRecs.length > 0 && (
+            <div style={{ marginTop: 24, borderTop: `1px solid ${D.hairline}`, paddingTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setShowIgnored((v) => !v)}
+                style={{ fontFamily: "monospace", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: D.inkSoft, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                {showIgnored ? "Hide ignored ↑" : `Show ${ignoredHierarchyRecs.length} ignored ↓`}
+              </button>
+              {showIgnored && (
+                <div className="crpv-council-recs" style={{ marginTop: 12, opacity: 0.55 }}>
+                  {ignoredHierarchyRecs.map((rec) => (
+                    <article key={rec.id} className="crpv-council-rec crpv-council-rec-ignored">
+                      <div className="crpv-council-rec-hd">
+                        <span className="crpv-council-rec-title" style={{ textDecoration: "line-through" }}>{rec.title}</span>
+                        <span className="crpv-council-badge crpv-council-status-ignored cap">Set aside</span>
+                      </div>
+                      <p className="crpv-council-rec-body" style={{ textDecoration: "line-through" }}>{rec.recommendation}</p>
+                      <div className="crpv-council-rec-footer">
+                        <span className="crpv-council-rec-date cap">{councilFmtDate(rec.created_at)}</span>
+                        <div className="crpv-council-rec-actions">
+                          <button
+                            type="button"
+                            className="crpv-council-action-accept"
+                            onClick={() => decide(rec.id, "accepted")}
+                            disabled={!!decisionId}
+                          >
+                            {decisionId === `${rec.id}:accepted` ? "Saving…" : "Restore"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </HierarchyPageShell>
+    );
+  }
+
+  // ── Legacy layout ──────────────────────────────────────────────────────────
   return (
     <div className="crpv-ws-section crpv-ws-section-wide">
-      <SectionHeader title="Council" desc="Run an outside-in advisory session based on what the research and org signals have found so far." />
+
+      {/* ── STRATEGIC PRESSURE ─────────────────────────────────────────── */}
+      {/* Tensions lead — most structurally important signal */}
+      {highCriticalTensions.length > 0 && (
+        <div style={{ marginBottom: 32, paddingBottom: 28, borderBottom: "1px solid #e8ecea" }}>
+          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#b06a3c", margin: "0 0 12px" }}>
+            Strategic pressure
+          </p>
+          <TensionBlock tensions={highCriticalTensions} context="council" showBlockerCallout={highCriticalTensions.some((t) => t.is_commitment_blocker)} />
+        </div>
+      )}
+
+      {/* ── ADVISORY INTERPRETATION ────────────────────────────────────── */}
+      <div className="crpv-council-editorial">
+        <p className="crpv-council-editorial-eyebrow">
+          {scopedRuns.length > 1 ? "Interpretation evolving" : "Outside the current interpretation"}
+          {latestRun ? ` · ${meta.label} · ${councilFmtDate(latestRun.created_at)}` : ` · ${meta.label} · No session yet`}
+          {scopedRuns.length > 1 ? ` · ${scopedRuns.length} sessions` : ""}
+        </p>
+        <h2 className="crpv-council-editorial-headline">{editorialHeadline}</h2>
+        {editorialContext && (
+          <p className="crpv-council-editorial-context">{editorialContext}</p>
+        )}
+        {scopedRecs.length > 0 && (
+          <div className="crpv-council-editorial-badges">
+            {counts.pending > 0 && (
+              <span className="crpv-council-editorial-badge crpv-council-editorial-badge-pending">{counts.pending} unresolved</span>
+            )}
+            {counts.accepted > 0 && (
+              <span className="crpv-council-editorial-badge crpv-council-editorial-badge-accepted">{counts.accepted} integrated</span>
+            )}
+            {counts.ignored > 0 && (
+              <span className="crpv-council-editorial-badge">{counts.ignored} set aside</span>
+            )}
+          </div>
+        )}
+        {topPendingHighPriority && (
+          <div className="crpv-council-editorial-featured">
+            <p className="crpv-council-editorial-featured-label">Tension requiring a position</p>
+            <p className="crpv-council-editorial-featured-title">{topPendingHighPriority.title}</p>
+            <p className="crpv-council-editorial-featured-body">{topPendingHighPriority.recommendation}</p>
+          </div>
+        )}
+      </div>
 
       {/* Council selector */}
       <div className="crpv-ws-field">
-        <label className="crpv-ws-label">Select council</label>
         <div className="crpv-council-selector">
           {COUNCIL_OPTIONS.map((opt) => (
             <button
@@ -217,7 +568,7 @@ export default function WorkshopCouncilTab({ companyId, companyName }: { company
         </button>
         {latestRun && (
           <span className="crpv-council-run-meta cap">
-            Last run {councilFmtDate(latestRun.created_at)} · {latestRun.recommendation_count} recommendations
+            {latestRun.recommendation_count} interpretation{latestRun.recommendation_count === 1 ? "" : "s"}
           </span>
         )}
         <button type="button" className="btn ghost" onClick={load} disabled={loading || running}>
@@ -227,22 +578,37 @@ export default function WorkshopCouncilTab({ companyId, companyName }: { company
 
       {error && <p className="crpv-ws-hint" style={{ color: "var(--crpv-hot)" }}>{error}</p>}
 
-      {/* Latest run summary */}
-      {latestRun?.summary && (
-        <div className="crpv-ws-field">
-          <label className="crpv-ws-label">Summary</label>
-          <div className="crpv-ws-readonly crpv-council-summary">{latestRun.summary}</div>
-        </div>
-      )}
+      {/* Latest run summary — skip first para when used as editorial headline */}
+      {latestRun?.summary && (() => {
+        const paras = latestRun.summary.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+        const firstUsedAsHeadline = paras[0] && paras[0].length < 280;
+        const displayParas = firstUsedAsHeadline ? paras.slice(1) : paras;
+        if (displayParas.length === 0) return null;
+        return (
+          <div className="crpv-ws-field">
+            <div className="crpv-council-summary-body">
+              {displayParas.map((para, i) => (
+                <p key={i} className="crpv-council-summary-para">{para}</p>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
-      {/* Panel discussion (collapsible) */}
+      {/* Panel discussion — broken into readable sections */}
       {discussion && (
         <div className="crpv-ws-field">
           <details className="crpv-council-discussion">
             <summary className="crpv-ws-label" style={{ cursor: "pointer", listStyle: "none" }}>
-              Panel Discussion ▸
+              Advisory Dialogue ▸
             </summary>
-            <div className="crpv-ws-readonly crpv-council-discussion-body">{discussion}</div>
+            <div className="crpv-council-discussion-sections">
+              {discussion.split(/\n{2,}/).map((para, i) => (
+                para.trim() ? (
+                  <p key={i} className="crpv-council-discussion-para">{para.trim()}</p>
+                ) : null
+              ))}
+            </div>
           </details>
         </div>
       )}
@@ -264,54 +630,86 @@ export default function WorkshopCouncilTab({ companyId, companyName }: { company
         </div>
 
         {loading ? (
-          <div className="crpv-ws-placeholder cap">Loading council recommendations…</div>
+          <div className="crpv-ws-placeholder cap">Loading advisory interpretations…</div>
         ) : filtered.length === 0 ? (
           <div className="crpv-ws-placeholder">
             {scopedRecs.length === 0
-              ? `No recommendations yet. Run ${meta.label} to get started.`
-              : "No recommendations in this filter."}
+              ? `No advisory session run for ${meta.label} yet.`
+              : "No interpretations in this filter."}
           </div>
         ) : (
           <div className="crpv-council-recs">
-            {filtered.map((rec) => (
-              <article key={rec.id} className={`crpv-council-rec crpv-council-rec-${rec.status}`}>
-                <div className="crpv-council-rec-hd">
-                  <span className="crpv-council-rec-title">{rec.title}</span>
-                  <div className="crpv-council-rec-badges">
-                    <span className={`crpv-council-badge crpv-council-priority-${rec.priority} cap`}>{rec.priority}</span>
-                    <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{rec.status}</span>
-                  </div>
-                </div>
-                <p className="crpv-council-rec-meta cap">{rec.category} · {rec.confidence}% confidence</p>
-                <p className="crpv-council-rec-body">{rec.recommendation}</p>
-                {rec.rationale && (
-                  <div className="crpv-council-rationale">
-                    <p className="crpv-ws-label">Why this matters</p>
-                    <p className="crpv-council-rationale-body">{rec.rationale}</p>
+            {groupedRecs.map((group, gi) => (
+              <div key={group.decision?.id ?? `unlinked-${gi}`}>
+                {group.decision && (
+                  <div style={{
+                    borderLeft: `2px solid ${decisionStateBorderColor(group.decision.decision_state)}`,
+                    paddingLeft: 10,
+                    marginBottom: 8,
+                    marginTop: gi > 0 ? 16 : 0,
+                  }}>
+                    <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: decisionStateColor(group.decision.decision_state), marginBottom: 2 }}>
+                      {DECISION_STATE_LABELS[group.decision.decision_state as keyof typeof DECISION_STATE_LABELS] ?? group.decision.decision_state}
+                    </p>
+                    <p style={{ fontFamily: "sans-serif", fontSize: 13, fontWeight: 500, color: "#233C4B", lineHeight: 1.35 }}>
+                      {group.decision.title}
+                    </p>
+                    {group.decision.decision_question && (
+                      <p style={{ fontFamily: "sans-serif", fontSize: 11, color: "#6E847F", marginTop: 2, fontStyle: "italic", lineHeight: 1.4 }}>
+                        {group.decision.decision_question}
+                      </p>
+                    )}
                   </div>
                 )}
-                <div className="crpv-council-rec-footer">
-                  <span className="crpv-council-rec-date cap">{councilFmtDate(rec.created_at)}</span>
-                  <div className="crpv-council-rec-actions">
-                    <button
-                      type="button"
-                      className={`crpv-council-action-accept${rec.status === "accepted" ? " active" : ""}`}
-                      onClick={() => decide(rec.id, "accepted")}
-                      disabled={!!decisionId || rec.status === "accepted"}
-                    >
-                      {decisionId === `${rec.id}:accepted` ? "Saving…" : "Accept"}
-                    </button>
-                    <button
-                      type="button"
-                      className={`crpv-council-action-ignore${rec.status === "ignored" ? " active" : ""}`}
-                      onClick={() => decide(rec.id, "ignored")}
-                      disabled={!!decisionId || rec.status === "ignored"}
-                    >
-                      {decisionId === `${rec.id}:ignored` ? "Saving…" : "Ignore"}
-                    </button>
-                  </div>
-                </div>
-              </article>
+                {group.recs.map((rec) => {
+                  const daysPending = !rec.decided_at && rec.status === "pending"
+                    ? Math.floor((Date.now() - new Date(rec.created_at).getTime()) / 86400000)
+                    : 0;
+                  const isPersistent = daysPending >= 7;
+                  return (
+                    <article key={rec.id} className={`crpv-council-rec crpv-council-rec-${rec.status}${isPersistent ? " crpv-council-rec-persistent" : ""}`}>
+                      <div className="crpv-council-rec-hd">
+                        <span className="crpv-council-rec-title">{rec.title}</span>
+                        <div className="crpv-council-rec-badges">
+                          <span className={`crpv-council-badge crpv-council-priority-${rec.priority} cap`}>{rec.priority}</span>
+                          <span className={`crpv-council-badge crpv-council-status-${rec.status} cap`}>{rec.status === "pending" ? "Unresolved" : rec.status === "accepted" ? "Integrated" : "Set aside"}</span>
+                        </div>
+                      </div>
+                      <p className="crpv-council-rec-meta cap">{rec.category} · {rec.confidence}% confidence</p>
+                      <p className="crpv-council-rec-body">{rec.recommendation}</p>
+                      {rec.rationale && (
+                        <div className="crpv-council-rationale">
+                          <p className="crpv-ws-label">Advisory pressure point</p>
+                          <p className="crpv-council-rationale-body">{rec.rationale}</p>
+                        </div>
+                      )}
+                      <div className="crpv-council-rec-footer">
+                        <span className="crpv-council-rec-date cap">
+                          {isPersistent ? `${daysPending}d unresolved · ` : ""}{councilFmtDate(rec.created_at)}
+                        </span>
+                        <div className="crpv-council-rec-actions">
+                          <button
+                            type="button"
+                            className={`crpv-council-action-accept${rec.status === "accepted" ? " active" : ""}`}
+                            onClick={() => decide(rec.id, "accepted")}
+                            disabled={!!decisionId || rec.status === "accepted"}
+                          >
+                            {decisionId === `${rec.id}:accepted` ? "Saving…" : "Accept"}
+                          </button>
+                          <button
+                            type="button"
+                            className={`crpv-council-action-ignore${rec.status === "ignored" ? " active" : ""}`}
+                            onClick={() => decide(rec.id, "ignored")}
+                            disabled={!!decisionId || rec.status === "ignored"}
+                          >
+                            {decisionId === `${rec.id}:ignored` ? "Saving…" : "Ignore"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
             ))}
           </div>
         )}

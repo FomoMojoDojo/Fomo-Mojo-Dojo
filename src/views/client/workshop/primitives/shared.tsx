@@ -299,3 +299,14 @@ export function BaselineWarningBanner({ baseline }: { baseline: BaselineResult |
     </div>
   );
 }
+
+// ─── DataQualityMarker ────────────────────────────────────────────────────────
+
+export function DataQualityMarker({ type, prompt }: { type: "thin" | "ambiguous"; prompt: string }) {
+  const label = type === "ambiguous" ? "ambiguous signals" : "thin evidence";
+  return (
+    <span className={`crpv-dq-marker crpv-dq-marker--${type}`} title={prompt} aria-label={`Signal quality: ${label} — ${prompt}`}>
+      {label}
+    </span>
+  );
+}

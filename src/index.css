@@ -1,4 +1,5 @@
 @import "./styles/client-view.tokens.css";
+@import "./styles/mojomap-tokens.css";
 
 @tailwind base;
 @tailwind components;
@@ -5257,4 +5258,14 @@ body.mojo-shell-mounted {
   .dp-priority-title {
     font-size: var(--cv-text-priority-title-mobile);
   }
+}
+
+/* ── Strategic surface mount ─────────────────────────────────────────────── */
+@keyframes strategic-surface-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.strategic-surface {
+  animation: strategic-surface-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }

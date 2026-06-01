@@ -70,11 +70,18 @@ async function fetchCompanyRow(args: {
   };
 }
 
+const UPLOAD_REQUIRED_PROMPTS: Record<string, string> = {
+  no_results: "No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.",
+  thin: "Public evidence is too thin to infer a complete baseline. Upload internal documents to improve signal quality.",
+  ambiguous: "Search results don't clearly match this company. Verify the company name and domain, or upload internal documents to supplement.",
+};
+
 async function fetchEvidenceState(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
 }): Promise<{
   baselineStatus: string;
+  baselineQualityType?: string;
   uploadedFileCount: number;
   existingArtifactCount: number;
 }> {
@@ -86,10 +93,15 @@ async function fetchEvidenceState(args: {
     .limit(1)
     .maybeSingle();
 
+  const resultJson = (latestBaselineRun as { result_json?: unknown } | null)?.result_json as Record<string, unknown> | null;
+
   const baselineStatus = String(
-    ((latestBaselineRun as { result_json?: unknown } | null)?.result_json as { status?: unknown } | null)
-      ?.status || "missing",
+    (resultJson as { status?: unknown } | null)?.status || "missing",
   );
+
+  const baselineQualityType = String(
+    (resultJson?.data_quality_flag as { type?: unknown } | null)?.type || "",
+  ) || undefined;
 
   const { data: inputs } = await args.supabase
     .from("inputs")
@@ -121,6 +133,7 @@ async function fetchEvidenceState(args: {
 
   return {
     baselineStatus,
+    baselineQualityType,
     uploadedFileCount,
     existingArtifactCount:
       Number(existingOpportunityCount || 0) + Number(existingRouteCount || 0),
@@ -160,7 +173,7 @@ async function createFlowRun(args: {
 async function finalizeFlowRun(args: {
   supabase: ReturnType<typeof createClient>;
   runId: string;
-  status: "completed" | "failed" | "blocked";
+  status: "completed" | "failed" | "blocked" | "upload_required";
   summaryJson: Record<string, unknown>;
 }) {
   const { error } = await args.supabase
@@ -367,11 +380,44 @@ Deno.serve(async (req) => {
         baselineStatusBeforePublicCollection: evidenceState.baselineStatus,
         uploadedFileCount: evidenceState.uploadedFileCount,
         existingArtifactCount: evidenceState.existingArtifactCount,
+        baselineQualityType: evidenceState.baselineQualityType,
       };
 
       const adjResult = adjudicate(adjudicationInput);
       contextMode = adjResult.contextMode;
       adjudicationRationale = adjResult.rationale;
+
+      if (contextMode === "upload_required") {
+        const qualityType = adjResult.qualityType ?? "no_results";
+        const prompt = UPLOAD_REQUIRED_PROMPTS[qualityType] ?? UPLOAD_REQUIRED_PROMPTS.no_results;
+        await finishStageRun({
+          supabase,
+          stageRunId: adjudicationStageId,
+          status: "completed",
+          output: {
+            mode,
+            baseline_status: evidenceState.baselineStatus,
+            uploaded_file_count: evidenceState.uploadedFileCount,
+            existing_artifact_count: evidenceState.existingArtifactCount,
+            selected_context_mode: "upload_required",
+            quality_type: qualityType,
+            rationale: adjudicationRationale,
+          },
+          durationMs: Date.now() - adjudicationStart,
+        });
+        await finalizeFlowRun({
+          supabase,
+          runId,
+          status: "upload_required",
+          summaryJson: { status: "upload_required", quality_type: qualityType },
+        });
+        return json({
+          flow_run_id: runId,
+          status: "upload_required",
+          quality_type: qualityType,
+          prompt,
+        }, 200);
+      }
 
       await finishStageRun({
         supabase,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { PositioningCanvas, PositioningItem } from "@/lib/types";
+import { captureBaseline } from "@/lib/baselineCapture";
 
 type PositioningCanvasRow = {
   id: string;
@@ -16,6 +17,9 @@ type PositioningCanvasRow = {
   frameworks_used: string[];
   created_at: string;
   updated_at: string;
+  strategy_alignment: string | null;
+  strategy_alignment_reason: string | null;
+  strategy_alignment_evaluated_at: string | null;
 };
 
 function normalizeItems(value: unknown): PositioningItem[] {
@@ -84,6 +88,9 @@ function mapRow(row: PositioningCanvasRow): PositioningCanvas {
     current_tagline: row.current_tagline || "",
     proposed_tagline: row.proposed_tagline || "",
     frameworks_used: Array.isArray(row.frameworks_used) ? row.frameworks_used : [],
+    strategy_alignment: (row.strategy_alignment as "aligned" | "off_strategy" | "unknown" | null) ?? null,
+    strategy_alignment_reason: row.strategy_alignment_reason ?? null,
+    strategy_alignment_evaluated_at: row.strategy_alignment_evaluated_at ?? null,
   };
 }
 
@@ -101,9 +108,10 @@ type PositioningItemsField =
 
 type PositioningUpdateField = PositioningTextField | PositioningItemsField;
 
-export function usePositioningCanvas(companyId?: string) {
+export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<PositioningCanvas | null>(null);
+  const [canvasId, setCanvasId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingField, setSavingField] = useState<PositioningUpdateField | null>(null);
 
@@ -124,7 +132,7 @@ export function usePositioningCanvas(companyId?: string) {
       const { data, error } = await supabase
         .from("positioning_canvases")
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
         )
         .eq("company_id", companyId)
         .maybeSingle();
@@ -133,11 +141,17 @@ export function usePositioningCanvas(companyId?: string) {
 
       if (error) {
         const msg = error.message.toLowerCase();
-        if (
+        const isTransient =
           msg.includes("could not find the table") ||
           msg.includes("positioning_canvases") ||
-          msg.includes("schema cache")
-        ) {
+          msg.includes("schema cache") ||
+          msg.includes("load failed") ||
+          msg.includes("networkerror") ||
+          msg.includes("failed to fetch");
+        if (isTransient) {
+          if (msg.includes("load failed") || msg.includes("networkerror") || msg.includes("failed to fetch")) {
+            console.warn("[usePositioningCanvas] network error (transient):", error.message, { companyId });
+          }
           setItem(null);
           setError(null);
         } else {
@@ -145,7 +159,9 @@ export function usePositioningCanvas(companyId?: string) {
           setItem(null);
         }
       } else {
-        setItem(data ? mapRow(data as PositioningCanvasRow) : null);
+        const row = data as PositioningCanvasRow | null;
+        setItem(row ? mapRow(row) : null);
+        setCanvasId(row?.id ?? null);
       }
 
       setLoading(false);
@@ -154,19 +170,27 @@ export function usePositioningCanvas(companyId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, refreshKey]);
 
-  async function updateTextField(field: PositioningTextField, value: string) {
+  async function updateTextField(
+    field: PositioningTextField,
+    value: string,
+    opts?: { isManualInline?: boolean },
+  ) {
     if (!companyId) throw new Error("Select a company first.");
 
     setSavingField(field);
     try {
+      const patch: Record<string, unknown> = { [field]: String(value || "").trim() };
+      if (opts?.isManualInline) patch.source = "manual_inline";
+
       const { data, error } = await supabase
         .from("positioning_canvases")
-        .update({ [field]: String(value || "").trim() })
+        .update(patch)
         .eq("company_id", companyId)
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
         )
         .maybeSingle();
 
@@ -174,13 +198,15 @@ export function usePositioningCanvas(companyId?: string) {
         throw new Error(error.message || "Failed to update positioning text.");
       }
 
-      if (data) {
-        setItem(mapRow(data as PositioningCanvasRow));
+      const row = data as PositioningCanvasRow | null;
+      if (row) {
+        setItem(mapRow(row));
+        setCanvasId(row.id);
+        if (opts?.isManualInline) {
+          await captureBaseline(companyId, "positioning", row.id);
+        }
       } else if (item) {
-        setItem({
-          ...item,
-          [field]: String(value || "").trim(),
-        });
+        setItem({ ...item, [field]: String(value || "").trim() });
       }
     } finally {
       setSavingField(null);
@@ -197,7 +223,7 @@ export function usePositioningCanvas(companyId?: string) {
         .update({ [field]: items })
         .eq("company_id", companyId)
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
         )
         .maybeSingle();
 
@@ -228,7 +254,7 @@ export function usePositioningCanvas(companyId?: string) {
       .update({ frameworks_used: frameworks })
       .eq("company_id", companyId)
       .select(
-        "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at"
+        "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
       )
       .maybeSingle();
 
@@ -243,5 +269,5 @@ export function usePositioningCanvas(companyId?: string) {
     }
   }
 
-  return { loading, item, error, savingField, updateTextField, updateItemsField, updateFrameworks };
+  return { loading, item, canvasId, error, savingField, updateTextField, updateItemsField, updateFrameworks };
 }

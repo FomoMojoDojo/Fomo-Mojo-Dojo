@@ -1,0 +1,671 @@
+/* MojoMap Landing — design tokens + page styles, scoped under .mml-root */
+
+.mml-root {
+  --ink: #111;
+  --ink-2: #555;
+  --ink-3: #999;
+  --line: #d9d9d9;
+  --line-soft: #ededed;
+  --paper: #fff;
+  --page-bg: #efefec;
+  --accent: #111;
+  --highlight: #fff3c4;
+
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur-micro: .2s;
+  --dur-layer: .45s;
+  --dur-commit: .9s;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.mml-root {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.mml-root *,
+.mml-root *::before,
+.mml-root *::after {
+  box-sizing: border-box;
+}
+
+.mml-root .mono { font-family: var(--font-mono); }
+.mml-root .cap {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .cap-ink { color: var(--ink); }
+
+.mml-root em.hl {
+  font-style: normal;
+  font-weight: 500;
+  background: var(--highlight);
+  padding: 0 6px;
+}
+
+/* ─── Header ──────────────────────────────────────────────── */
+.mml-root .site-header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 22px 56px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.mml-root .site-header .brand {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.mml-root .site-header .brand b { font-weight: 500; }
+.mml-root .site-header .nav {
+  display: flex; gap: 36px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .site-header .nav a { color: var(--ink-3); text-decoration: none; cursor: pointer; transition: color .2s var(--ease); }
+.mml-root .site-header .nav a:hover { color: var(--ink); }
+.mml-root .site-header .nav .apply { color: var(--ink); border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
+
+/* ─── Buttons ─────────────────────────────────────────────── */
+.mml-root .btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 16px 22px;
+  display: inline-flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  line-height: 1;
+  text-decoration: none;
+  border-radius: 0;
+  transition: background .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease);
+}
+.mml-root .btn-primary { background: var(--ink); color: var(--paper); border: 1px solid var(--ink); }
+.mml-root .btn-primary:hover { background: #000; }
+.mml-root .btn-default { background: var(--paper); color: var(--ink); border: 1px solid var(--ink); }
+.mml-root .btn-default:hover { background: #f4f4f2; }
+.mml-root .btn .glyph { font-family: var(--font-mono); font-size: 13px; }
+
+/* ─── Hero ────────────────────────────────────────────────── */
+.mml-root .hero {
+  padding: 140px 56px 120px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.mml-root .hero-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 72px;
+  max-width: 1440px;
+}
+.mml-root .hero-side {
+  display: flex; flex-direction: column; gap: 14px;
+}
+.mml-root .hero-side .cap { color: var(--ink-3); }
+.mml-root .hero-side .rule {
+  height: 1px; background: var(--ink); width: 48px; margin-top: 4px;
+}
+.mml-root .hero-side .meta {
+  margin-top: 36px;
+  display: flex; flex-direction: column; gap: 28px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.mml-root .hero-side .meta .k { color: var(--ink-3); margin-bottom: 6px; }
+.mml-root .hero-side .meta .v { color: var(--ink); }
+
+.mml-root .hero h1 {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 96px;
+  line-height: 1.0;
+  letter-spacing: -0.035em;
+  margin: 0 0 44px;
+  max-width: 14ch;
+}
+.mml-root .hero .dek {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 24px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 54ch;
+  margin: 0 0 56px;
+}
+.mml-root .hero .ctas {
+  display: flex; gap: 14px; align-items: center;
+}
+.mml-root .hero .ctas .ghost {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-left: 18px;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 2px;
+}
+
+.mml-root .hero-stamp {
+  position: absolute;
+  top: 56px; right: 56px;
+  display: flex; gap: 28px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .hero-stamp b { color: var(--ink); font-weight: 500; }
+
+/* ─── Section scaffold ────────────────────────────────────── */
+.mml-root .section {
+  padding: 120px 56px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.mml-root .section.alt { background: var(--page-bg); }
+.mml-root .section.ink { background: var(--ink); color: var(--paper); }
+.mml-root .section.ink .cap,
+.mml-root .section.ink .num { color: rgba(255,255,255,.5); }
+
+.mml-root .sec-head {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 72px;
+  margin-bottom: 80px;
+  max-width: 1440px;
+}
+.mml-root .sec-head .num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .sec-head h2 {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 56px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 16px 0 0;
+  max-width: 18ch;
+}
+.mml-root .sec-head .lead {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 20px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 56ch;
+  padding-top: 6px;
+}
+
+.mml-root .body-wrap {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 72px;
+  max-width: 1440px;
+}
+
+/* ─── Problem ─────────────────────────────────────────────── */
+.mml-root .problem-list {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.mml-root .problem-list .row {
+  display: grid;
+  grid-template-columns: 60px 1fr 200px;
+  gap: 48px;
+  padding: 28px 0;
+  border-bottom: 1px solid var(--line);
+  align-items: baseline;
+}
+.mml-root .problem-list .row .n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--ink-3);
+}
+.mml-root .problem-list .row .stmt {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.mml-root .problem-list .row .stmt em {
+  font-style: normal; font-weight: 500;
+  background: var(--highlight); padding: 0 4px;
+}
+.mml-root .problem-list .row .stmt strike { color: var(--ink-3); text-decoration-thickness: 1px; }
+.mml-root .problem-list .row .tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: right;
+}
+
+/* ─── What we do ──────────────────────────────────────────── */
+.mml-root .outcomes {
+  display: flex; flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+.mml-root .outcomes .o-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 48px;
+  padding: 36px 0;
+  border-bottom: 1px solid var(--line);
+  align-items: baseline;
+}
+.mml-root .outcomes .o-row .o-k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .outcomes .o-row .o-v {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 28px;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.mml-root .outcomes .o-row .o-v em {
+  font-style: normal; font-weight: 500;
+}
+
+/* ─── How it works ────────────────────────────────────────── */
+.mml-root .steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border: 1px solid var(--line);
+}
+.mml-root .step {
+  padding: 48px 40px 56px;
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 28px;
+  min-height: 360px;
+  background: var(--paper);
+}
+.mml-root .step:last-child { border-right: 0; }
+.mml-root .step .s-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+}
+.mml-root .step .s-title {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 36px;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+.mml-root .step .s-body {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin-top: auto;
+}
+.mml-root .step .s-tags {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.mml-root .step .s-tags span {
+  padding: 6px 10px; border: 1px solid var(--line);
+  color: var(--ink-3);
+}
+
+/* ─── What changes (before/after) ─────────────────────────── */
+.mml-root .shift {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line);
+}
+.mml-root .shift .col {
+  padding: 40px 40px 48px;
+}
+.mml-root .shift .col.before { border-right: 1px solid var(--line); }
+.mml-root .shift .col .head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 32px;
+}
+.mml-root .shift .col .head .lbl {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .shift .col .head .arr {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+.mml-root .shift .col .item {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 22px;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mml-root .shift .col .item:last-child { border-bottom: 0; }
+.mml-root .shift .col.before .item { color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: var(--line); }
+.mml-root .shift .col.after .item { color: var(--ink); font-weight: 400; }
+.mml-root .shift .col.after .item em {
+  font-style: normal; font-weight: 500;
+  background: var(--highlight); padding: 0 4px;
+}
+
+/* ─── Redacted example ────────────────────────────────────── */
+.mml-root .example {
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.mml-root .ex-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  border-bottom: 1px solid var(--line);
+}
+.mml-root .ex-head .cell {
+  padding: 22px 28px;
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.mml-root .ex-head .cell:last-child { border-right: 0; }
+.mml-root .ex-head .cell .k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .ex-head .cell .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.mml-root .ex-head .cell .v b { font-weight: 500; }
+.mml-root .ex-head .cell .v.redacted {
+  background: var(--ink); color: var(--ink);
+  padding: 2px 10px; display: inline-block; width: fit-content;
+  font-size: 11px; letter-spacing: .2em;
+  user-select: none;
+}
+.mml-root .ex-body {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+}
+.mml-root .ex-center {
+  padding: 56px 48px;
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 36px;
+}
+.mml-root .ex-center .cap-row {
+  display: flex; gap: 16px; align-items: baseline;
+}
+.mml-root .ex-center .cap-row .cap { color: var(--ink); }
+.mml-root .ex-center .cap-row .dash {
+  flex: 1; height: 1px; background: var(--line);
+}
+.mml-root .ex-center .center-title {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 40px;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.mml-root .ex-center .center-title em {
+  font-style: normal; font-weight: 500;
+  background: var(--highlight); padding: 0 4px;
+}
+.mml-root .ex-center .contradiction {
+  border: 1px solid var(--ink);
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.mml-root .ex-center .contradiction .cap { color: var(--ink); }
+.mml-root .ex-center .contradiction .lines {
+  display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 17px; font-weight: 400; line-height: 1.4;
+}
+.mml-root .ex-center .contradiction .lines .b { color: var(--ink-2); }
+.mml-root .ex-center .contradiction .lines .b::before {
+  content: "vs."; font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: .14em; color: var(--ink-3);
+  margin-right: 8px;
+}
+
+.mml-root .ex-signals {
+  padding: 40px 40px 32px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.mml-root .ex-signals .s-cap {
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.mml-root .ex-signals .s-cap .cap { color: var(--ink); }
+.mml-root .ex-signals .s-cap .meta {
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: .14em; color: var(--ink-3);
+  text-transform: uppercase;
+}
+.mml-root .signal-list {
+  display: flex; flex-direction: column; gap: 0;
+  border-top: 1px solid var(--line-soft);
+}
+.mml-root .signal-list .sig {
+  display: grid;
+  grid-template-columns: 56px 1fr 80px;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.mml-root .signal-list .sig .delta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+.mml-root .signal-list .sig .delta.minus { color: var(--ink-2); }
+.mml-root .signal-list .sig .desc {
+  font-family: var(--font-sans);
+  font-size: 14px; font-weight: 400; line-height: 1.4;
+  color: var(--ink);
+}
+.mml-root .signal-list .sig .src {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: right;
+}
+.mml-root .signal-list .sig .src.redacted {
+  background: var(--ink-3); color: var(--ink-3);
+  user-select: none; padding: 1px 8px; margin-left: auto; display: inline-block;
+}
+
+.mml-root .ex-foot {
+  border-top: 1px solid var(--line);
+  padding: 18px 28px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .ex-foot b { color: var(--ink); font-weight: 500; }
+
+/* ─── Qualification ───────────────────────────────────────── */
+.mml-root .qual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--line);
+}
+.mml-root .qual .qcol {
+  padding: 44px 40px 48px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.mml-root .qual .qcol.is { border-right: 1px solid var(--line); background: var(--paper); }
+.mml-root .qual .qcol.not { background: var(--page-bg); }
+.mml-root .qual .qcol .qhead {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .qual .qcol.is .qhead { color: var(--ink); }
+.mml-root .qual .qcol .qline {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  padding-left: 20px;
+  position: relative;
+}
+.mml-root .qual .qcol .qline::before {
+  content: "";
+  position: absolute; left: 0; top: 12px;
+  width: 8px; height: 1px; background: var(--ink);
+}
+.mml-root .qual .qcol.not .qline { color: var(--ink-2); font-weight: 300; }
+.mml-root .qual .qcol.not .qline::before { background: var(--ink-3); }
+
+/* ─── Final CTA ───────────────────────────────────────────── */
+.mml-root .final {
+  padding: 160px 56px 140px;
+  background: var(--ink);
+  color: var(--paper);
+}
+.mml-root .final-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 72px;
+  max-width: 1440px;
+}
+.mml-root .final .cap { color: rgba(255,255,255,.45); }
+.mml-root .final h2 {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 64px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  margin: 16px 0 48px;
+  max-width: 20ch;
+  color: var(--paper);
+}
+.mml-root .final h2 em {
+  font-style: normal; font-weight: 500;
+  background: var(--highlight); color: var(--ink); padding: 0 6px;
+}
+.mml-root .final .sub {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 19px;
+  line-height: 1.55;
+  color: rgba(255,255,255,.7);
+  max-width: 54ch;
+  margin: 0 0 48px;
+}
+.mml-root .final .ctas { display: flex; gap: 14px; align-items: center; }
+.mml-root .final .btn-primary {
+  background: var(--paper); color: var(--ink); border-color: var(--paper);
+}
+.mml-root .final .btn-primary:hover { background: var(--highlight); }
+.mml-root .final .btn-default {
+  background: transparent; color: var(--paper); border-color: var(--paper);
+}
+.mml-root .final .btn-default:hover { background: rgba(255,255,255,.08); }
+.mml-root .final .fineprint {
+  margin-top: 56px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.45);
+}
+
+/* ─── Footer ──────────────────────────────────────────────── */
+.mml-root .site-footer {
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  padding: 36px 56px;
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mml-root .site-footer b { color: var(--ink); font-weight: 500; }
+.mml-root .site-footer .links { display: flex; gap: 28px; }
+.mml-root .site-footer .links a { color: var(--ink-3); text-decoration: none; cursor: pointer; }
+.mml-root .site-footer .links a:hover { color: var(--ink); }
+
+@media (max-width: 900px) {
+  .mml-root .site-header,
+  .mml-root .hero,
+  .mml-root .section,
+  .mml-root .final,
+  .mml-root .site-footer { padding-left: 24px; padding-right: 24px; }
+  .mml-root .hero h1 { font-size: 56px; }
+  .mml-root .hero .dek { font-size: 19px; }
+  .mml-root .sec-head h2 { font-size: 38px; }
+  .mml-root .hero-grid,
+  .mml-root .sec-head,
+  .mml-root .body-wrap,
+  .mml-root .final-grid { grid-template-columns: 1fr; gap: 28px; }
+  .mml-root .steps,
+  .mml-root .shift,
+  .mml-root .qual,
+  .mml-root .ex-body,
+  .mml-root .ex-head { grid-template-columns: 1fr; }
+  .mml-root .step,
+  .mml-root .shift .col,
+  .mml-root .qual .qcol { border-right: 0; border-bottom: 1px solid var(--line); }
+  .mml-root .hero-stamp { display: none; }
+  .mml-root .site-header .nav { display: none; }
+  .mml-root .problem-list .row { grid-template-columns: 40px 1fr; }
+  .mml-root .problem-list .row .tag { display: none; }
+  .mml-root .final h2 { font-size: 38px; }
+}

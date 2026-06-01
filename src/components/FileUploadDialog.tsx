@@ -79,15 +79,15 @@ const KEYWORDS_BY_INPUT_KEY: Array<{ key: string; terms: string[] }> = [
   { key: 'val-prop', terms: ['value', 'proposition', 'promise'] },
   { key: 'target-aud', terms: ['audience', 'persona', 'segment', 'customer'] },
   { key: 'market-cat', terms: ['market', 'category', 'landscape'] },
-  { key: 'program-model', terms: ['program', 'service', 'model', 'delivery'] },
-  { key: 'needs-assessment', terms: ['need', 'odi', 'jtbd', 'interview', 'survey'] },
-  { key: 'outcome-data', terms: ['outcome', 'impact', 'metric', 'kpi', 'result'] },
-  { key: 'referral-map', terms: ['referral', 'partner', 'ecosystem'] },
+  { key: 'operating-model', terms: ['program', 'service', 'model', 'delivery', 'operations'] },
+  { key: 'customer-research', terms: ['need', 'odi', 'jtbd', 'interview', 'survey'] },
+  { key: 'outcome-evidence', terms: ['outcome', 'impact', 'metric', 'kpi', 'result', 'evidence'] },
+  { key: 'acquisition-map', terms: ['referral', 'partner', 'ecosystem', 'acquisition', 'channel'] },
   { key: 'brand-narrative', terms: ['brand', 'narrative', 'messaging', 'story'] },
   { key: 'channel-strat', terms: ['channel', 'campaign', 'reach', 'distribution'] },
-  { key: 'donor-retention', terms: ['donor', 'retention', 'renewal'] },
-  { key: 'grant-pipeline', terms: ['grant', 'funding', 'pipeline'] },
-  { key: 'family-satisfaction', terms: ['family', 'satisfaction', 'feedback', 'experience'] },
+  { key: 'retention-signals', terms: ['retention', 'renewal', 'churn', 'loyalty'] },
+  { key: 'demand-pipeline', terms: ['pipeline', 'demand', 'funnel', 'revenue'] },
+  { key: 'customer-signals', terms: ['satisfaction', 'feedback', 'experience', 'nps'] },
 ];
 
 const PROVENANCE_TAG_OPTIONS = ['Public', 'Company', 'Research', 'Testing'] as const;

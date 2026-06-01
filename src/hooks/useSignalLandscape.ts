@@ -111,6 +111,7 @@ export function useSignalLandscape(companyId: string | undefined) {
         .from("signals")
         .select("signal_band, framing_fit, directness")
         .eq("company_id", companyId)
+        .eq("relevance_state", "active")
         .limit(2000);
 
       if (cancelled) return;

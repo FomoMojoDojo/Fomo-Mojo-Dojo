@@ -17,6 +17,8 @@ import OpportunitiesView from "./views/Opportunities";
 import PositioningView from "./views/Positioning";
 import AnalyticsView from "./views/Analytics";
 import RoutesView from "./views/Routes";
+import MovementView from "./views/Movement";
+import FMDStrategicField from "./views/FMDStrategicField";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminCompanies from "./pages/AdminCompanies";
@@ -30,6 +32,7 @@ import FilesRepository from "./pages/FilesRepository";
 import NotFound from "./pages/NotFound";
 import MapSignalPrototype from "./pages/MapSignalPrototype";
 import LandingPage4 from "./pages/LandingPage4";
+import MojoMapLanding from "./pages/MojoMapLanding";
 import ClientOnboardingMojoMap from "./pages/ClientOnboardingMojoMap";
 import ClientOnboardingMojoMapEditor from "./pages/ClientOnboardingMojoMapEditor";
 import ClientViewVisibilityAuditPage from "./pages/ClientViewVisibilityAudit";
@@ -38,6 +41,8 @@ import ClientRefinePreviewView from "./views/client/ClientRefinePreviewView";
 import ClientRefinePreviewRoutesView from "./views/client/ClientRefinePreviewRoutesView";
 import ClientRefinePreviewWorkshopView from "./views/client/ClientRefinePreviewWorkshopView";
 import ClientRefinePreviewPathView from "./views/client/ClientRefinePreviewPathView";
+import ClientRefinePreviewCompanyView from "./views/client/ClientRefinePreviewCompanyView";
+import DriftInboxView from "./views/client/DriftInboxView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
 import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useClientMapInteractionState";
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
@@ -46,6 +51,8 @@ import {
   CLIENT_REFINE_PREVIEW_ROUTES_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
   CLIENT_REFINE_PREVIEW_PATH_ROUTE,
+  CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   isClientRefinePreviewEnabled,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
@@ -169,12 +176,34 @@ function ClientRefinePreviewPathRoute() {
   );
 }
 
+function ClientRefinePreviewCompanyRoute() {
+  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <ClientRefinePreviewCompanyView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
+function ClientRefinePreviewInboxRoute() {
+  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <DriftInboxView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppErrorBoundary>
           <AuthProvider>
             <PresentationModeProvider>
@@ -194,11 +223,15 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTES_ROUTE} element={<ClientRefinePreviewRoutesRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE} element={<ClientRefinePreviewWorkshopRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_PATH_ROUTE} element={<ClientRefinePreviewPathRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ROUTE} element={<ClientRefinePreviewCompanyRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_INBOX_ROUTE} element={<ClientRefinePreviewInboxRoute />} />
                 <Route path="/strategy" element={<ModeAwareStrategyRoute />} />
                 <Route path="/opportunities" element={<ModeAwareFocusRoute />} />
                 <Route path="/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />
                 <Route path="/analytics" element={<ModeAwareScoreRoute />} />
                 <Route path="/routes" element={<InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute>} />
+                <Route path="/movement" element={<InternalViewOnlyRoute><MovementView /></InternalViewOnlyRoute>} />
+                <Route path="/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/admin" element={<AdminModeRoute><AdminDashboard /></AdminModeRoute>} />
@@ -223,6 +256,7 @@ const App = () => (
                 />
                 <Route path="/map-signal-prototype" element={<InternalViewOnlyRoute><MapSignalPrototype /></InternalViewOnlyRoute>} />
                 <Route path="/landing-page" element={<LandingPage4 />} />
+                <Route path="/mojomap-landing" element={<MojoMapLanding />} />
                 <Route path="*" element={<NotFound />} />
                 </Routes>
               </CompanyProvider>

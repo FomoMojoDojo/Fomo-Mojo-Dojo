@@ -33,6 +33,8 @@ const DEFAULT_RECEIVER_EMAIL = "dojocho@fomomojodojo.com";
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://fomomojodojo-launch.vercel.app",
   "https://happy-file-hugger-main.vercel.app",
+  "https://www.fomomojodojo.com",
+  "https://fomomojodojo.com",
 ];
 
 const present = (value?: string) => {

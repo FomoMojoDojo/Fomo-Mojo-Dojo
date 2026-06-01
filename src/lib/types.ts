@@ -178,6 +178,10 @@ export interface PositioningCanvas {
   current_tagline: string;
   proposed_tagline: string;
   frameworks_used?: string[];
+  // A68 strategy-alignment evaluation
+  strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
+  strategy_alignment_reason?: string | null;
+  strategy_alignment_evaluated_at?: string | null;
 }
 
 export interface PositioningItem {

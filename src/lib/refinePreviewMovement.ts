@@ -207,7 +207,7 @@ function authorityConflictMovementItem(activeRows: HypothesisProvenanceCard[], p
     headline: "The public story and strategic direction are not fully aligned.",
     whyItMatters: conflict.summary,
     confidenceImplication:
-      "Treat the current read cautiously until customer or stakeholder validation shows which story actually shapes decisions.",
+      "Hold this read loosely — we need customer or stakeholder input to know which story is actually driving decisions.",
     evidenceLines: conflict.evidenceLines,
     tone: "tension",
     priority: 2,

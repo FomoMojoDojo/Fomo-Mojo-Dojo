@@ -5,7 +5,7 @@ export type StrategicAssumption = {
   id: string;
   assumption: string;
   source: "client" | "intake" | "company" | "public" | "evidence";
-  status: "untested" | "validating" | "validated" | "invalidated";
+  status: "untested" | "validating" | "validated" | "invalidated" | "emerging" | "directional" | "strengthening" | "unstable" | "contradicted" | "reframed" | "retired";
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -31,8 +31,12 @@ function normalizeSource(value: unknown): StrategicAssumption["source"] {
 
 function normalizeStatus(value: unknown): StrategicAssumption["status"] {
   const status = String(value || "").toLowerCase();
-  if (status === "validating" || status === "validated" || status === "invalidated") {
-    return status;
+  const known: StrategicAssumption["status"][] = [
+    "untested", "validating", "validated", "invalidated",
+    "emerging", "directional", "strengthening", "unstable", "contradicted", "reframed", "retired",
+  ];
+  if (known.includes(status as StrategicAssumption["status"])) {
+    return status as StrategicAssumption["status"];
   }
   return "untested";
 }

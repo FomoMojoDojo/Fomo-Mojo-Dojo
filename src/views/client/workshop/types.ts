@@ -52,4 +52,8 @@ export interface BaselineResult {
     alignment_summary?: string;
   };
   outside_voice_signals?: BaselineVoiceSignal[];
+  data_quality_flag?: {
+    type: "no_results" | "thin" | "ambiguous";
+    prompt: string;
+  };
 }

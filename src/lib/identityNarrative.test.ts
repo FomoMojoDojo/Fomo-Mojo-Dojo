@@ -90,7 +90,7 @@ function makeRouteSeed(overrides: Partial<StrategicCenterRouteSeed> = {}): Strat
 }
 
 describe("identity narrative", () => {
-  it("preserves recognizable public and strategic identity language", () => {
+  it("derives public and strategic identity from the company's own center data — never a canned string", () => {
     const publicRow = makeRow();
     const orgRow = makeRow({
       hypothesis: {
@@ -125,7 +125,75 @@ describe("identity narrative", () => {
       strategicCenter: center,
     });
 
-    expect(narrative.publicIdentity).toBe("A craft-focused specialty coffee roaster");
-    expect(narrative.strategicIdentity).toContain("operational partner for cafe operators");
+    // publicIdentity is built from this company's own publicContextLabel
+    expect(narrative.publicIdentity).toBe("A company publicly known for craft quality and specialty coffee");
+    // strategicIdentity uses the own-data pattern — never a reference-company canned string
+    expect(narrative.strategicIdentity).toContain("A company increasingly centered on");
+    expect(narrative.strategicIdentity).not.toContain("cafe operators");
+    expect(narrative.strategicIdentity).not.toContain("responder");
+    // descriptors are raw center labels, not canned phrases
+    expect(narrative.publicDescriptor).toBe("craft quality and specialty coffee");
+    expect(narrative.strategicDescriptor).not.toBeNull();
+    expect(narrative.strategicDescriptor).not.toContain("cafe operators");
+  });
+
+  it("returns null identities when no center data is available", () => {
+    const narrative = inferIdentityNarrative({
+      activeRows: [],
+      phase: "diagnose",
+      strategicCenter: null,
+    });
+    expect(narrative.publicIdentity).toBeNull();
+    expect(narrative.strategicIdentity).toBeNull();
+    expect(narrative.publicDescriptor).toBeNull();
+    expect(narrative.strategicDescriptor).toBeNull();
+  });
+
+  it("does not emit reference-company strings when text contains trigger words from other companies", () => {
+    // A company whose evidence mentions "operator", "support", "impact", "governance"
+    // (common B2B words that previously triggered Cafe Barra's or the responder company's identity)
+    const triggerRow = makeRow({
+      hypothesis: {
+        ...makeRow().hypothesis,
+        statement: "The organization's governance and impact programs need stronger operator support.",
+      },
+      supportingClaims: [
+        {
+          ...makeRow().supportingClaims[0],
+          claim: {
+            ...makeRow().supportingClaims[0].claim,
+            statement: "Governance and impact reporting require consistent training and support.",
+          },
+          supportShape: { outside: 0, organization: 1, customer: 0 },
+        },
+      ],
+    });
+
+    const center = inferStrategicCenter({
+      activeRows: [triggerRow],
+      routeSeeds: [],
+      phase: "diagnose",
+    });
+    const narrative = inferIdentityNarrative({
+      activeRows: [triggerRow],
+      phase: "diagnose",
+      strategicCenter: center,
+    });
+
+    // publicIdentity may be null if no outside-band themes — either way, no foreign company string
+    if (narrative.publicIdentity !== null) {
+      expect(narrative.publicIdentity).not.toContain("cafe operators");
+      expect(narrative.publicIdentity).not.toContain("specialty coffee roaster");
+      expect(narrative.publicIdentity).not.toContain("responder");
+    }
+    // strategicIdentity is derived from center.label — must not carry another company's identity
+    if (narrative.strategicIdentity !== null) {
+      expect(narrative.strategicIdentity).not.toContain("cafe operators");
+      expect(narrative.strategicIdentity).not.toContain("responder");
+    }
+    if (narrative.strategicDescriptor !== null) {
+      expect(narrative.strategicDescriptor).not.toContain("cafe operators");
+      expect(narrative.strategicDescriptor).not.toContain("responder");
+    }
   });
 });

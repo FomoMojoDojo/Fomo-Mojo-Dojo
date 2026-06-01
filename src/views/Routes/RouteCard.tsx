@@ -67,6 +67,8 @@ export default function RouteCard({
   sequencingNarrative,
   commitmentRationale,
   routeTensions = [],
+  parentDecisionLabel,
+  isParentDestabilizing,
   claimId,
   claimState,
 }: {

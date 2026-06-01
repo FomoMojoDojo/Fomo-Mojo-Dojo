@@ -41,18 +41,6 @@ function rowNarrativeText(row: HypothesisProvenanceCard) {
   );
 }
 
-function routeNarrativeText(seed: StrategicCenterRouteSeed) {
-  return clean(
-    [
-      seed.route.title,
-      seed.route.short_description,
-      ...(seed.route.why_this_matters_json ?? []),
-      ...seed.assumptions.map((assumption) => assumption.statement),
-      ...seed.evidence.map((item) => item.title),
-    ].join(" "),
-  );
-}
-
 function collectBandText(rows: HypothesisProvenanceCard[], band: "outside" | "organization" | "customer", phase: string) {
   return lower(
     rows
@@ -66,116 +54,28 @@ function includesAny(text: string, patterns: string[]) {
   return patterns.some((pattern) => text.includes(pattern));
 }
 
-function fallbackPublicIdentity(publicContextLabel: string | null) {
-  const label = lower(publicContextLabel);
+// Derives public identity from the company's own public-context label.
+// Never emits a canned reference-company identity string.
+function inferPublicIdentity(center: StrategicCenter | null): string | null {
+  const publicLabel = clean(center?.publicContextLabel || null);
+  if (publicLabel) return `A company publicly known for ${publicLabel}`;
+  return null;
+}
+
+// Derives strategic identity from the company's own center label (the L153 pattern).
+// Never emits a canned reference-company identity string.
+function inferStrategicIdentity(center: StrategicCenter | null): string | null {
+  const label = clean(center?.label || null);
   if (!label) return null;
-  if (label.includes("craft quality") || label.includes("specialty coffee")) {
-    return "A craft-focused specialty coffee roaster";
-  }
-  if (label.includes("partner operational outcomes") || label.includes("operational reliability")) {
-    return "An operational partner for cafe operators";
-  }
-  if (label.includes("governance") || label.includes("impact")) {
-    return "A responder-support organization built around visible impact";
-  }
-  if (label.includes("strategic guidance")) {
-    return "A strategic guidance system";
-  }
-  if (label.includes("price") || label.includes("convenience")) {
-    return "A lower-friction convenience-led option";
-  }
-  return null;
+  return `A company increasingly centered on ${label}`;
 }
 
-function inferPublicIdentity(text: string, center: StrategicCenter | null) {
-  if (includesAny(text, ["specialty coffee", "craft", "roast", "roaster", "roasting", "artisanal", "small-batch"])) {
-    return "A craft-focused specialty coffee roaster";
+function inferCustomerIdentity(text: string, center: StrategicCenter | null): string | null {
+  if (includesAny(text, ["reliability", "consistency", "predictable"])) {
+    return "Early signs that reliability and consistency drive customer choice";
   }
-  if (includesAny(text, ["first responder", "responder", "donor", "fundraising", "endowment", "wellness"])) {
-    return "A premium responder-support organization";
-  }
-  if (includesAny(text, ["counterintuitive", "brand", "strategy", "guidance", "path selection"])) {
-    return "A strategic guidance system";
-  }
-  return fallbackPublicIdentity(center?.publicContextLabel ?? null);
-}
-
-function publicDescriptorFromIdentity(identity: string | null, center: StrategicCenter | null) {
-  const phrase = lower(identity);
-  if (phrase.includes("craft-focused specialty coffee roaster")) {
-    return "craft quality and specialty coffee";
-  }
-  if (phrase.includes("responder-support")) {
-    return "premium responder support";
-  }
-  if (phrase.includes("strategic guidance system")) {
-    return "strategic guidance";
-  }
-  return clean(center?.publicContextLabel || null) || null;
-}
-
-function inferStrategicIdentity(text: string, center: StrategicCenter | null) {
-  if (
-    includesAny(text, [
-      "operator",
-      "operators",
-      "partner operational outcomes",
-      "operational reliability",
-      "operator burden",
-      "repeat purchasing",
-      "repeat buying",
-      "consistency",
-      "predictable",
-      "training",
-      "documentation",
-      "support",
-    ])
-  ) {
-    return "An operational partner for cafe operators, centered on reliability and lower operator burden";
-  }
-  if (includesAny(text, ["first responder", "responder", "donor", "impact", "allocation", "funding", "governance"])) {
-    return "A responder-support organization centered on visible impact";
-  }
-  if (includesAny(text, ["guidance", "brand", "decision", "execution", "path", "rework", "prerequisite"])) {
-    return "A strategic guidance system";
-  }
-
-  const label = lower(center?.label);
-  if (label.includes("partner operational outcomes") || label.includes("operational reliability")) {
-    return "An operational partner for cafe operators, centered on reliability and lower operator burden";
-  }
-  if (label.includes("governance") || label.includes("impact")) {
-    return "A responder-support organization centered on visible impact";
-  }
-  if (label.includes("strategic guidance")) {
-    return "A strategic guidance system";
-  }
-  if (center?.label) {
-    return `A company increasingly centered on ${center.label}`;
-  }
-  return null;
-}
-
-function strategicDescriptorFromIdentity(identity: string | null, center: StrategicCenter | null) {
-  const phrase = lower(identity);
-  if (phrase.includes("operational partner for cafe operators")) {
-    return "partner operational outcomes and operational reliability";
-  }
-  if (phrase.includes("responder-support organization")) {
-    return "visible impact for responders and donors";
-  }
-  if (phrase.includes("strategic guidance system")) {
-    return "strategic guidance and better path selection";
-  }
-  return clean(center?.label || null) || null;
-}
-
-function inferCustomerIdentity(text: string, center: StrategicCenter | null) {
-  if (includesAny(text, ["reliability", "consistency", "predictable", "operator burden", "support"])) {
-    return "Early signs that day-to-day reliability matters";
-  }
-  if (includesAny(text, ["craft", "specialty coffee", "quality", "roast"])) {
-    return "Early signs that craft quality still matters";
+  if (includesAny(text, ["craft", "quality", "roast"])) {
+    return "Early signs that quality and standards drive customer choice";
   }
   if (includesAny(text, ["price", "convenience"])) {
     return "Early signs that price or convenience may carry more weight";
@@ -188,27 +88,20 @@ function inferCustomerIdentity(text: string, center: StrategicCenter | null) {
 
 export function inferIdentityNarrative(args: {
   activeRows: HypothesisProvenanceCard[];
+  // routeSeeds kept for API compatibility — not used internally after identity derivation moved to center
   routeSeeds?: StrategicCenterRouteSeed[];
   phase: string;
   strategicCenter?: StrategicCenter | null;
 }): IdentityNarrative {
   const rows = args.activeRows.filter((row) => row.hypothesis.is_active);
-  const routeSeeds = args.routeSeeds ?? [];
-  const publicText = collectBandText(rows, "outside", args.phase);
-  const organizationText = lower([
-    collectBandText(rows, "organization", args.phase),
-    routeSeeds.map(routeNarrativeText).join(" "),
-  ].join(" "));
   const customerText = collectBandText(rows, "customer", args.phase);
-
-  const publicIdentity = inferPublicIdentity(publicText, args.strategicCenter ?? null);
-  const strategicIdentity = inferStrategicIdentity(organizationText, args.strategicCenter ?? null);
+  const center = args.strategicCenter ?? null;
 
   return {
-    publicIdentity,
-    publicDescriptor: publicDescriptorFromIdentity(publicIdentity, args.strategicCenter ?? null),
-    strategicIdentity,
-    strategicDescriptor: strategicDescriptorFromIdentity(strategicIdentity, args.strategicCenter ?? null),
-    customerIdentity: inferCustomerIdentity(customerText, args.strategicCenter ?? null),
+    publicIdentity: inferPublicIdentity(center),
+    publicDescriptor: clean(center?.publicContextLabel || null) || null,
+    strategicIdentity: inferStrategicIdentity(center),
+    strategicDescriptor: clean(center?.label || null) || null,
+    customerIdentity: inferCustomerIdentity(customerText, center),
   };
 }

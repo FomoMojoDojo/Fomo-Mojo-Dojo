@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { AffectedArtifactSummary, StrategicEvent } from "@/lib/strategicGraphDomain";
 
+
 export type StrategicChangeSummary = {
   latestJobMapEvent: StrategicEvent | null;
   affectedArtifacts: AffectedArtifactSummary[];
@@ -15,34 +16,48 @@ export type StrategicChangeSummary = {
   debug: {
     latestEventId: string | null;
     latestEventAt: string | null;
-    latestArtifactVersionCount: number;
-    dependenciesCreatedCount: number;
+    latestArtifactVersionCount: number | null;
+    dependenciesCreatedCount: number | null;
   };
 };
 
-export function useStrategicChangeSummary(companyId?: string) {
+type StrategicChangeSummaryOptions = {
+  includeDebugCounts?: boolean;
+};
+
+function emptyStrategicChangeSummary(): StrategicChangeSummary {
+  return {
+    latestJobMapEvent: null,
+    affectedArtifacts: [],
+    affectedCounts: { total: 0, odi_needs: 0, routes: 0, desired_outcomes: 0 },
+    scoreNote: null,
+    debug: {
+      latestEventId: null,
+      latestEventAt: null,
+      latestArtifactVersionCount: null,
+      dependenciesCreatedCount: null,
+    },
+  };
+}
+
+export function useStrategicChangeSummary(
+  companyId?: string,
+  options: StrategicChangeSummaryOptions = {},
+) {
+  const includeDebugCounts = options.includeDebugCounts === true;
+
   return useQuery({
-    queryKey: ["strategic-change-summary", companyId],
+    queryKey: ["strategic-change-summary", companyId, includeDebugCounts ? "debug" : "preview"],
     enabled: Boolean(companyId),
-    queryFn: async (): Promise<StrategicChangeSummary> => {
+    queryFn: async ({ signal }): Promise<StrategicChangeSummary> => {
       if (!companyId) {
-        return {
-          latestJobMapEvent: null,
-          affectedArtifacts: [],
-          affectedCounts: { total: 0, odi_needs: 0, routes: 0, desired_outcomes: 0 },
-          scoreNote: null,
-          debug: {
-            latestEventId: null,
-            latestEventAt: null,
-            latestArtifactVersionCount: 0,
-            dependenciesCreatedCount: 0,
-          },
-        };
+        return emptyStrategicChangeSummary();
       }
 
       const latestEventRes = await supabase
         .from("strategic_events")
         .select("*")
+        .abortSignal(signal)
         .eq("company_id", companyId)
         .eq("event_type", "regenerated")
         .eq("object_type", "job_map")
@@ -56,27 +71,17 @@ export function useStrategicChangeSummary(companyId?: string) {
 
       const latestJobMapEvent = (latestEventRes.data as StrategicEvent | null) ?? null;
       if (!latestJobMapEvent) {
-        return {
-          latestJobMapEvent: null,
-          affectedArtifacts: [],
-          affectedCounts: { total: 0, odi_needs: 0, routes: 0, desired_outcomes: 0 },
-          scoreNote: null,
-          debug: {
-            latestEventId: null,
-            latestEventAt: null,
-            latestArtifactVersionCount: 0,
-            dependenciesCreatedCount: 0,
-          },
-        };
+        return emptyStrategicChangeSummary();
       }
 
       const eventId = latestJobMapEvent.id;
       const journeyKey = String((latestJobMapEvent.new_value as { journey_key?: string } | null)?.journey_key || "customer");
 
-      const [needsRes, routesRes, outcomesRes, versionRes, stepRowsRes] = await Promise.all([
+      const [needsRes, routesRes, outcomesRes, stepRowsRes] = await Promise.all([
         supabase
           .from("odi_needs")
           .select("id, desired_outcome, dependency_state, stale_reason, updated_at")
+          .abortSignal(signal)
           .eq("company_id", companyId)
           .eq("stale_since_event_id", eventId)
           .neq("dependency_state", "fresh")
@@ -84,6 +89,7 @@ export function useStrategicChangeSummary(companyId?: string) {
         supabase
           .from("routes")
           .select("id, title, dependency_state, stale_reason, updated_at")
+          .abortSignal(signal)
           .eq("company_id", companyId)
           .eq("stale_since_event_id", eventId)
           .neq("dependency_state", "fresh")
@@ -91,18 +97,15 @@ export function useStrategicChangeSummary(companyId?: string) {
         supabase
           .from("managed_outcomes")
           .select("id, outcome_title, outcome_statement, dependency_state, stale_reason, updated_at")
+          .abortSignal(signal)
           .eq("company_id", companyId)
           .eq("stale_since_event_id", eventId)
           .neq("dependency_state", "fresh")
           .order("updated_at", { ascending: false }),
         supabase
-          .from("artifact_versions")
-          .select("id", { count: "exact", head: true })
-          .eq("company_id", companyId)
-          .eq("source_event_id", eventId),
-        supabase
           .from("job_steps")
           .select("id")
+          .abortSignal(signal)
           .eq("company_id", companyId)
           .eq("journey_key", journeyKey)
           .eq("source_run_id", latestJobMapEvent.source_run_id || "__none__"),
@@ -111,24 +114,36 @@ export function useStrategicChangeSummary(companyId?: string) {
       if (needsRes.error) throw new Error(needsRes.error.message || "Failed to load affected needs.");
       if (routesRes.error) throw new Error(routesRes.error.message || "Failed to load affected routes.");
       if (outcomesRes.error) throw new Error(outcomesRes.error.message || "Failed to load affected outcomes.");
-      if (versionRes.error) throw new Error(versionRes.error.message || "Failed to load artifact version count.");
       if (stepRowsRes.error) throw new Error(stepRowsRes.error.message || "Failed to load regenerated job steps.");
 
       const stepIds = (stepRowsRes.data ?? []).map((row) => row.id);
-      let dependenciesCreatedCount = 0;
-      if (stepIds.length > 0) {
-        const dependencyRes = await supabase
-          .from("object_dependencies")
+      let latestArtifactVersionCount: number | null = null;
+      let dependenciesCreatedCount: number | null = null;
+      if (includeDebugCounts) {
+        const versionRes = await supabase
+          .from("artifact_versions")
           .select("id", { count: "exact", head: true })
+          .abortSignal(signal)
           .eq("company_id", companyId)
-          .or(
-            [
-              `and(upstream_object_type.eq.job_step,upstream_object_id.in.(${stepIds.join(",")}))`,
-              `and(downstream_object_type.eq.job_step,downstream_object_id.in.(${stepIds.join(",")}))`,
-            ].join(","),
-          );
-        if (dependencyRes.error) throw new Error(dependencyRes.error.message || "Failed to load dependency count.");
-        dependenciesCreatedCount = dependencyRes.count ?? 0;
+          .eq("source_event_id", eventId);
+        if (versionRes.error) throw new Error(versionRes.error.message || "Failed to load artifact version count.");
+        latestArtifactVersionCount = versionRes.count ?? 0;
+
+        if (stepIds.length > 0) {
+          const dependencyRes = await supabase
+            .from("object_dependencies")
+            .select("id", { count: "exact", head: true })
+            .abortSignal(signal)
+            .eq("company_id", companyId)
+            .or(
+              [
+                `and(upstream_object_type.eq.job_step,upstream_object_id.in.(${stepIds.join(",")}))`,
+                `and(downstream_object_type.eq.job_step,downstream_object_id.in.(${stepIds.join(",")}))`,
+              ].join(","),
+            );
+          if (dependencyRes.error) throw new Error(dependencyRes.error.message || "Failed to load dependency count.");
+          dependenciesCreatedCount = dependencyRes.count ?? 0;
+        }
       }
 
       const affectedArtifacts: AffectedArtifactSummary[] = [
@@ -175,7 +190,7 @@ export function useStrategicChangeSummary(companyId?: string) {
         debug: {
           latestEventId: latestJobMapEvent.id,
           latestEventAt: latestJobMapEvent.created_at,
-          latestArtifactVersionCount: versionRes.count ?? 0,
+          latestArtifactVersionCount,
           dependenciesCreatedCount,
         },
       };

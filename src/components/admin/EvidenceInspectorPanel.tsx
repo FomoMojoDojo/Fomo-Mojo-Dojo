@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useEvidenceGraph } from "@/hooks/useEvidenceGraph";
 import type { Claim, Signal } from "@/lib/evidenceDomain";
 
@@ -8,6 +10,10 @@ const c = {
   ink: "#233C4B",
   muted: "#6E847F",
   soft: "#F7F6F2",
+  deprioText: "#9aab9a",
+  deprioBg: "#f4f7f4",
+  actionDepriorize: "#a33",
+  actionRestore: "#2a6e3f",
 };
 
 type Props = {
@@ -19,12 +25,16 @@ function uniq(values: Array<string | null | undefined>) {
 }
 
 export default function EvidenceInspectorPanel({ companyId }: Props) {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useEvidenceGraph(companyId);
   const [bandFilter, setBandFilter] = useState("all");
   const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
   const [topicFilter, setTopicFilter] = useState("all");
   const [frameworkFilter, setFrameworkFilter] = useState("all");
+  const [showDeprioritized, setShowDeprioritized] = useState(false);
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const signals = data?.signals ?? [];
   const claims = data?.claims ?? [];
@@ -43,13 +53,14 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
   const filteredSignals = useMemo(
     () =>
       signals.filter((signal) => {
+        if (!showDeprioritized && signal.relevance_state === "deprioritized") return false;
         if (bandFilter !== "all" && signal.signal_band !== bandFilter) return false;
         if (sourceTypeFilter !== "all" && signal.source_type !== sourceTypeFilter) return false;
         if (topicFilter !== "all" && String(signal.topic || "") !== topicFilter) return false;
         if (frameworkFilter !== "all" && String(signal.framework || "") !== frameworkFilter) return false;
         return true;
       }),
-    [signals, bandFilter, sourceTypeFilter, topicFilter, frameworkFilter],
+    [signals, showDeprioritized, bandFilter, sourceTypeFilter, topicFilter, frameworkFilter],
   );
 
   const claimsById = useMemo(() => new Map(claims.map((claim) => [claim.id, claim])), [claims]);
@@ -72,6 +83,26 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
     return counts;
   }, [refs]);
 
+  const deprioritizedCount = useMemo(
+    () => signals.filter((s) => s.relevance_state === "deprioritized").length,
+    [signals],
+  );
+
+  async function setRelevanceState(signalId: string, nextState: "active" | "deprioritized") {
+    setSavingId(signalId);
+    setActionError(null);
+    const { error: updateError } = await supabase
+      .from("signals")
+      .update({ relevance_state: nextState })
+      .eq("id", signalId);
+    setSavingId(null);
+    if (updateError) {
+      setActionError(updateError.message);
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ["evidence-graph", companyId] });
+  }
+
   return (
     <section
       className="rounded-2xl p-5 shadow-sm"
@@ -86,8 +117,11 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
             Phase 1 substrate debug view — signals and derived claims only
           </div>
         </div>
-        <div className="font-mono text-[11px] tracking-[0.06em]" style={{ color: c.muted }}>
+        <div className="font-mono text-[11px] tracking-[0.06em] text-right" style={{ color: c.muted }}>
           {signals.length} signals · {claims.length} claims
+          {deprioritizedCount > 0 ? (
+            <div style={{ color: c.deprioText }}>{deprioritizedCount} deprioritized</div>
+          ) : null}
         </div>
       </div>
 
@@ -121,6 +155,20 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
               </select>
             </div>
 
+            {deprioritizedCount > 0 ? (
+              <label className="flex items-center gap-2 cursor-pointer select-none" style={{ color: c.muted }}>
+                <input
+                  type="checkbox"
+                  checked={showDeprioritized}
+                  onChange={(e) => setShowDeprioritized(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="font-mono text-[11px] tracking-[0.06em]">
+                  Show deprioritized ({deprioritizedCount})
+                </span>
+              </label>
+            ) : null}
+
             <div className="rounded-xl border overflow-hidden" style={{ borderColor: c.line }}>
               <div className="grid grid-cols-[120px_1fr_110px] gap-3 px-4 py-2 font-mono text-[10px] tracking-[0.08em] uppercase" style={{ color: c.muted, background: c.soft }}>
                 <div>Band</div>
@@ -128,30 +176,47 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
                 <div>Confidence</div>
               </div>
               <div className="max-h-[420px] overflow-auto divide-y" style={{ borderColor: c.line }}>
-                {filteredSignals.map((signal) => (
-                  <button
-                    key={signal.id}
-                    type="button"
-                    onClick={() => setSelectedSignalId(signal.id)}
-                    className="w-full grid grid-cols-[120px_1fr_110px] gap-3 px-4 py-3 text-left hover:bg-[#fafaf7]"
-                    style={{ background: selectedSignal?.id === signal.id ? "#fafaf7" : "#fff" }}
-                  >
-                    <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                      {signal.signal_band}
-                    </div>
-                    <div>
-                      <div className="font-sans text-[13px] leading-5" style={{ color: c.ink }}>
-                        {signal.claim_text}
+                {filteredSignals.map((signal) => {
+                  const isDeprioritized = signal.relevance_state === "deprioritized";
+                  const isSelected = selectedSignal?.id === signal.id;
+                  return (
+                    <button
+                      key={signal.id}
+                      type="button"
+                      onClick={() => setSelectedSignalId(signal.id)}
+                      className="w-full grid grid-cols-[120px_1fr_110px] gap-3 px-4 py-3 text-left hover:bg-[#fafaf7]"
+                      style={{ background: isSelected ? "#fafaf7" : isDeprioritized ? c.deprioBg : "#fff" }}
+                    >
+                      <div
+                        className="font-mono text-[10px] uppercase tracking-[0.08em]"
+                        style={{ color: isDeprioritized ? c.deprioText : c.muted }}
+                      >
+                        {signal.signal_band}
                       </div>
-                      <div className="mt-1 font-mono text-[10px] tracking-[0.06em]" style={{ color: c.muted }}>
-                        {signal.source_type}{signal.framework ? ` · ${signal.framework}` : ""}{signal.topic ? ` · ${signal.topic}` : ""}
+                      <div>
+                        <div
+                          className="font-sans text-[13px] leading-5"
+                          style={{
+                            color: isDeprioritized ? c.deprioText : c.ink,
+                            textDecoration: isDeprioritized ? "line-through" : "none",
+                          }}
+                        >
+                          {signal.claim_text}
+                        </div>
+                        <div className="mt-1 font-mono text-[10px] tracking-[0.06em]" style={{ color: c.deprioText }}>
+                          {isDeprioritized ? "deprioritized · " : ""}
+                          {signal.source_type}{signal.framework ? ` · ${signal.framework}` : ""}{signal.topic ? ` · ${signal.topic}` : ""}
+                        </div>
                       </div>
-                    </div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: c.muted }}>
-                      {signal.confidence_to_use}
-                    </div>
-                  </button>
-                ))}
+                      <div
+                        className="font-mono text-[10px] uppercase tracking-[0.08em]"
+                        style={{ color: isDeprioritized ? c.deprioText : c.muted }}
+                      >
+                        {signal.confidence_to_use}
+                      </div>
+                    </button>
+                  );
+                })}
                 {filteredSignals.length === 0 ? (
                   <div className="px-4 py-8 font-mono text-[11px] tracking-[0.06em]" style={{ color: c.muted }}>
                     No signals match the current filters.
@@ -193,12 +258,66 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
             </div>
             {selectedSignal ? (
               <div className="mt-3 space-y-3">
-                <div className="font-sans text-[15px] leading-6" style={{ color: c.ink }}>
+                <div
+                  className="font-sans text-[15px] leading-6"
+                  style={{
+                    color: selectedSignal.relevance_state === "deprioritized" ? c.deprioText : c.ink,
+                    textDecoration: selectedSignal.relevance_state === "deprioritized" ? "line-through" : "none",
+                  }}
+                >
                   {selectedSignal.claim_text}
                 </div>
                 <div className="font-mono text-[10px] tracking-[0.06em]" style={{ color: c.muted }}>
                   {selectedSignal.signal_band} · {selectedSignal.source_type} · {selectedSignal.evidence_type} · {selectedSignal.validation_status}
                 </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedSignal.relevance_state === "deprioritized" ? (
+                    <button
+                      type="button"
+                      disabled={savingId === selectedSignal.id}
+                      onClick={() => setRelevanceState(selectedSignal.id, "active")}
+                      className="rounded px-3 py-1.5 font-mono text-[11px] tracking-[0.06em]"
+                      style={{
+                        background: "#e8f4ec",
+                        color: c.actionRestore,
+                        border: `1px solid #b8d9c3`,
+                        opacity: savingId === selectedSignal.id ? 0.6 : 1,
+                        cursor: savingId === selectedSignal.id ? "wait" : "pointer",
+                      }}
+                    >
+                      {savingId === selectedSignal.id ? "Restoring…" : "Restore to active"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={savingId === selectedSignal.id}
+                      onClick={() => setRelevanceState(selectedSignal.id, "deprioritized")}
+                      className="rounded px-3 py-1.5 font-mono text-[11px] tracking-[0.06em]"
+                      style={{
+                        background: "#fdf0f0",
+                        color: c.actionDepriorize,
+                        border: `1px solid #e8c4c4`,
+                        opacity: savingId === selectedSignal.id ? 0.6 : 1,
+                        cursor: savingId === selectedSignal.id ? "wait" : "pointer",
+                      }}
+                    >
+                      {savingId === selectedSignal.id ? "Deprioritizing…" : "Deprioritize"}
+                    </button>
+                  )}
+                  {selectedSignal.relevance_state === "deprioritized" ? (
+                    <span className="font-mono text-[10px] tracking-[0.06em]" style={{ color: c.deprioText }}>
+                      off-strategy · zero weight in scoring
+                    </span>
+                  ) : null}
+                </div>
+
+                {actionError ? (
+                  <div className="font-mono text-[11px] tracking-[0.06em]" style={{ color: "#a33" }}>
+                    {actionError}
+                  </div>
+                ) : null}
+
                 {selectedSignal.evidence_excerpt ? (
                   <div className="rounded-lg border p-3 text-[13px] leading-6" style={{ borderColor: c.line, background: "#fff", color: c.ink }}>
                     {selectedSignal.evidence_excerpt}

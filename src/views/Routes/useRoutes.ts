@@ -63,9 +63,20 @@ export type RouteRow = {
   source_file_ids?: string[] | null;
   linked_tension_ids?: string[] | null;
   linked_need_ids?: string[] | null;
+  // A5 hierarchy fields
+  level?: 'route' | 'leg' | 'action' | string | null;
+  parent_id?: string | null;
+  relevance_state?: 'active' | 'deprioritized' | string | null;
+  rejected_alternatives?: Array<{ alternative_title: string; rejection_reason: string; considered_at?: string }> | null;
+  what_would_have_to_be_true?: Array<{ condition: string; satisfied_flag: boolean; evidence_refs?: string[] }> | null;
+  primary_desired_outcome_id?: string | null;
+  // A67 strategy-alignment evaluation
+  strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
+  strategy_alignment_reason?: string | null;
+  strategy_alignment_evaluated_at?: string | null;
 };
 
-export function useRoutes(companyId?: string) {
+export function useRoutes(companyId?: string, refreshKey = 0) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<RouteRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +101,7 @@ export function useRoutes(companyId?: string) {
         .select("*")
         .abortSignal(controller.signal)
         .eq("company_id", companyId)
+        .eq("relevance_state", "active")
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(500);
@@ -244,7 +256,8 @@ export function useRoutes(companyId?: string) {
       cancelled = true;
       controller.abort();
     };
-  }, [companyId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, refreshKey]);
 
   return { loading, items, error };
 }

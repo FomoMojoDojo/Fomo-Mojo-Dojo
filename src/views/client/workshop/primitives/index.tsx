@@ -544,5 +544,5 @@ export function SectionHeader({ title, desc, updatedAt }: { title: string; desc:
 }
 
 export { KanbanBoard } from "./KanbanBoard";
-export { ReviewControl, ReadonlyList, OutsideSignalItems, AnnotatableQuestionList, ReviewableBlock, BaselineWarningBanner } from "./shared";
+export { ReviewControl, ReadonlyList, OutsideSignalItems, AnnotatableQuestionList, ReviewableBlock, BaselineWarningBanner, DataQualityMarker } from "./shared";
 export { EvidenceImpactBanner, ARTIFACT_TO_TAB } from "./EvidenceImpactBanner";

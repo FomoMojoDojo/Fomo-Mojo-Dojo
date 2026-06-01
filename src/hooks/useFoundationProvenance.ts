@@ -233,6 +233,7 @@ export function useFoundationProvenance(args: {
           .from("signals")
           .select("*")
           .eq("company_id", companyId)
+          .eq("relevance_state", "active")
           .in("id", signalIds);
         if (signalsRes.error) throw new Error(signalsRes.error.message || "Failed to load linked signals.");
         signals = (signalsRes.data ?? []) as Signal[];

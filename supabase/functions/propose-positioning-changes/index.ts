@@ -263,18 +263,25 @@ Deno.serve(async (req: Request) => {
     .eq("company_id", company_id)
     .limit(20);
 
+  // C1.1: migrated from legacy `opportunities` table to `odi_needs` (current canonical source).
+  // Filter excludes off_strategy items so B2C/consumer-framed needs from pre-pivot data
+  // don't flow into positioning proposals for B2B-pivoted companies.
   const { data: opportunityRows } = await db
-    .from("opportunities")
-    .select("outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, priority_tier")
+    .from("odi_needs")
+    .select("desired_outcome as outcome, journey_key, step_number, step_label, importance, satisfaction, opportunity_score, tier as priority_tier")
     .eq("company_id", company_id)
+    .neq("strategy_alignment", "off_strategy")
     .order("opportunity_score", { ascending: false })
     .limit(30);
 
+  // C1.1: changed from .not("source", "like", "manual_%") to .neq("relevance_state", "deprioritized").
+  // The source filter excluded manual_ routes (operator-curated active routes) while
+  // including system-generated deprioritized routes — the opposite of intent.
   const { data: routeRows } = await db
     .from("routes")
     .select("category, title, short_description")
     .eq("company_id", company_id)
-    .not("source", "like", "manual_%")
+    .neq("relevance_state", "deprioritized")
     .limit(20);
 
   const baselineBrief = ["Public baseline context (augmented with uploaded files):", buildBaselineBrief(baselineResultJson)].filter(Boolean).join("\n\n");
@@ -285,13 +292,24 @@ Deno.serve(async (req: Request) => {
   // --- Build prompts (same as refresh-positioning + proposal_reason instruction) ---
   const positioningFrameworkKeys = getFrameworkRoutingPlan("positioning").map((f) => f.key);
 
+  // C1.1: when both the canvas and its cascade anchor have been manually set by the operator,
+  // the cascade's where_to_play defines the authoritative buyer. The public baseline reflects
+  // the company's website (often consumer-facing) and can contradict the operator's strategic
+  // intent. Conditional rule replaces the generic baseline-consistency rule for those fields.
+  const isManualCanvas = typeof canvas.source === "string" && (canvas.source as string).startsWith("manual_");
+  const isManualCascade = typeof (cascadeRow as Record<string, unknown> | null)?.source === "string" &&
+    ((cascadeRow as Record<string, unknown>).source as string).startsWith("manual_");
+  const audienceAnchorRule = (isManualCanvas || isManualCascade)
+    ? `- The positioning canvas and/or strategy cascade have been manually set by the operator. The cascade's where_to_play is the authoritative definition of the buyer and job context. For market_category and best_fit_customers, defer to the cascade anchor — not the public baseline or website, which may reflect a different go-to-market context. Identify drift FROM the operator-set positioning based on new evidence; do not revert toward the baseline audience.\n`
+    : `- Stay strictly consistent with the provided website, evidence, category, audience, and company context\n- market_category and best_fit_customers must align with the public baseline and website evidence\n`;
+
   const systemText =
     `You are generating an April Dunford style positioning canvas for a strategy platform.\n` +
     `Return ONLY valid JSON matching the schema. No prose outside the JSON.\n` +
     `Apply the framework guidance below as decision rules, not as output headings.\n\n` +
     `Framework guidance:\n${buildFrameworkBrief("positioning", getFrameworkRoutingPlan("positioning"))}\n\n` +
     `Rules:\n` +
-    `- Stay strictly consistent with the provided website, evidence, category, audience, and company context\n` +
+    audienceAnchorRule +
     `- Use April Dunford frame-of-reference logic plus ODI role clarity (job executor, chooser, user)\n` +
     `- Never switch industries, populations, or buyer types from the baseline evidence\n` +
     `- competitive_alternatives should be real alternatives, including manual workarounds or doing nothing when relevant\n` +
@@ -301,7 +319,6 @@ Deno.serve(async (req: Request) => {
     `- best_fit_customers should describe the clearest-fit audience in one paragraph and name buyer/executor context when possible\n` +
     `- market_category should be the category the company should claim or reshape and must be concise (2-8 words)\n` +
     `- ${STANDARD_MARKET_CATEGORY_GUIDANCE}\n` +
-    `- market_category and best_fit_customers must align with the public baseline and website evidence\n` +
     `- positioning should directly address the client-stated strategic problem framing when provided\n` +
     `- category_rationale should explain why this category frame of reference helps buyers understand the company in ODI job terms\n` +
     `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
