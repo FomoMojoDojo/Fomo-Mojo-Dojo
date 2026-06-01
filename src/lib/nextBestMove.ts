@@ -248,7 +248,7 @@ export function deriveNextBestMoveDebug({
     }
     return build({
       type: "validate_needs",
-      title: "Gather direct evidence from partner cafes",
+      title: "Gather direct evidence from customers",
       reason: "Route recommendations are working hypotheses until customer evidence confirms them.",
       isHypothesis: selectedRoute != null,
     });
