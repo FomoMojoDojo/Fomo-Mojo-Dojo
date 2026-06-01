@@ -596,7 +596,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                                 >
                                   <option value="">Pick a route…</option>
                                   {topLevelRoutes.map((r) => (
-                                    <option key={r.id} value={r.id}>{r.fitScore >= 1.2 ? `${r.title ?? r.id} (best match)` : (r.title ?? r.id)}</option>
+                                    <option key={r.id} value={r.id}>{r.fitScore >= 1.2 ? `${r.title ?? r.id} (suggested)` : (r.title ?? r.id)}</option>
                                   ))}
                                 </select>
                               )}
