@@ -2530,7 +2530,7 @@ export function RoutesOrgPanel({
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
   const { primary: desiredOutcome } = useDesiredOutcomes(activeCompany?.id);
-  const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+  const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
   const { landscape: routesSignalLandscape } = useSignalLandscape(activeCompany?.id);
   const [reEvalLoading, setReEvalLoading] = useState<string | null>(null);
   const [routeProposalRefreshKey, setRouteProposalRefreshKey] = useState(0);
@@ -2752,8 +2752,7 @@ export function RoutesOrgPanel({
     });
   }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
 
-  // Prefer the persisted DB score; fall back to live-computed
-  const displayMojoScore = dbMojoScore ?? liveMojoScore;
+  const displayMojoScore = liveMojoScore;
   const displayMojoHistory = mojoScoreHistory.length > 0 ? mojoScoreHistory : [];
 
   const isReroute = useMemo(() => {

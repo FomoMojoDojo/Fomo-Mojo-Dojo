@@ -361,7 +361,7 @@ export default function ClientRefinePreviewView() {
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id);
   const { needs, marketDefinition } = useOdiNeeds(activeCompany?.id);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
-  const { score: dbMojoScore, history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+  const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
 
   // Floor phase to what evidence actually supports — display-only, no DB write.
   const phase = floorEngagementPhase({
@@ -425,7 +425,7 @@ export default function ClientRefinePreviewView() {
       computedAt: new Date().toISOString(),
     });
   }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
-  const displayMojoScore: MojoScoreResult | null = dbMojoScore ?? liveMojoScore;
+  const displayMojoScore: MojoScoreResult | null = liveMojoScore;
   // Block 4: pick the need with the largest gap = highest opportunity_score
   // (opportunity_score = (importance − satisfaction) × importance)
   const topNeed = useMemo(() => {

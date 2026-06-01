@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import { computeMojoScore } from "../../../src/lib/mojoScore/computeMojoScore.ts";
-import { writeMojoScore } from "../../../src/lib/mojoScore/writeMojoScore.ts";
+import type { ClaimInput, RouteInput, NeedInput } from "../../../src/lib/mojoScore/types.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -954,12 +954,30 @@ async function snapshotMojoScore(
         .eq("company_id", companyId),
     ]);
 
-    const claims = (claimsResult.data ?? []) as Parameters<typeof computeMojoScore>[0]["claims"];
-    const routes = (routesResult.data ?? []) as Parameters<typeof computeMojoScore>[0]["routes"];
-    const needs  = (needsResult.data  ?? []) as Parameters<typeof computeMojoScore>[0]["needs"];
+    const claims = (claimsResult.data ?? []) as ClaimInput[];
+    const routes = (routesResult.data ?? []) as RouteInput[];
+    const needs  = (needsResult.data  ?? []) as NeedInput[];
 
     const result = computeMojoScore({ companyId, claims, routes, needs, computedAt: new Date().toISOString() });
-    await writeMojoScore(supabase, result);
+
+    // Inline insert — matches writeMojoScore.ts exactly (without its @supabase/supabase-js type dep).
+    const componentScores: Record<string, unknown> = {};
+    const explanationPayload: Record<string, unknown> = {};
+    for (const c of result.contributors) {
+      componentScores[c.key] = { score: c.score, weight: c.weight, weighted: c.weighted, sub_scores: c.sub_scores ?? {} };
+      explanationPayload[c.key] = { label: c.label, explanation: c.explanation };
+    }
+    explanationPayload["projected_raisers"] = result.projected_raisers;
+    explanationPayload["engagement_state"]  = result.engagement_state;
+    // mojo_scores is not in the edge-function schema type; cast to bypass — insert is correct at runtime
+    await (supabase as any).from("mojo_scores").insert({
+      company_id:          result.company_id,
+      computed_at:         result.computed_at,
+      total_score:         result.total_score,
+      component_scores:    componentScores,
+      explanation:         explanationPayload,
+      methodology_version: result.methodology_version,
+    });
 
     console.log(
       `[run-mojo-analysis] mojo_scores snapshot — company: ${companyId} | score: ${result.total_score} | contributors: ${result.contributors.length}`,
