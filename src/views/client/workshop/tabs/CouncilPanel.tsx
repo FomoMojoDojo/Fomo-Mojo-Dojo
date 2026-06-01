@@ -96,6 +96,30 @@ function recBadgeLabel(rec: CouncilRec): string {
   return "Accepted";
 }
 
+// Suggestion→route fit: text-overlap only (same tokenizer as routeOpportunityFitScore in
+// research-company, category bonus omitted — suggestion.category is "execution"/"routes",
+// not an opportunity priority_tier, so the route-category mapping doesn't apply).
+const ROUTE_FIT_STOP_WORDS = new Set([
+  "the", "and", "for", "with", "into", "from", "that", "this", "your", "their", "while", "through", "across",
+  "customer", "customers", "partner", "partners", "team", "teams", "step", "journey",
+  "increase", "reduce", "improve", "maximize", "minimize", "avoid",
+]);
+function routeFitTokens(text: string): Set<string> {
+  const tokens = String(text || "").toLowerCase().match(/[a-z][a-z-]{2,}/g) ?? [];
+  return new Set(tokens.filter((t) => !ROUTE_FIT_STOP_WORDS.has(t)));
+}
+function suggestionRouteFitScore(
+  suggestion: { title: string; recommendation: string },
+  route: { title: string; short_description: string | null },
+): number {
+  const suggTokens = routeFitTokens(`${suggestion.title} ${suggestion.recommendation}`);
+  const routeTokens = routeFitTokens(`${route.title} ${route.short_description ?? ""}`);
+  if (suggTokens.size === 0 || routeTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of suggTokens) { if (routeTokens.has(token)) overlap++; }
+  return overlap * 1.1;
+}
+
 async function extractCouncilError(error: unknown, fallback: string): Promise<string> {
   const err = error as { message?: string; context?: { text?: () => Promise<string> } } | null;
   const base = typeof err?.message === "string" && err.message.trim() ? err.message.trim() : fallback;
@@ -128,7 +152,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
   const [draftRecId, setDraftRecId]             = useState<string | null>(null);
   const [draftTitle, setDraftTitle]             = useState("");
   const [draftParentRouteId, setDraftParentRouteId] = useState<string | null>(null);
-  const [topLevelRoutes, setTopLevelRoutes]     = useState<Array<{ id: string; title: string }>>([]);
+  const [topLevelRoutes, setTopLevelRoutes]     = useState<Array<{ id: string; title: string; short_description: string | null; fitScore: number }>>([]);
   const [routesLoading, setRoutesLoading]       = useState(false);
   const [confirmingLeg, setConfirmingLeg]       = useState(false);
 
@@ -220,7 +244,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
           setDraftRecId(id);
           setDraftTitle(rec.title);
           setDraftParentRouteId(null);
-          void loadTopLevelRoutes();
+          void loadTopLevelRoutes(rec);
         }
       }
     } catch (err) {
@@ -230,17 +254,27 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
     }
   }
 
-  async function loadTopLevelRoutes() {
+  async function loadTopLevelRoutes(rec?: CouncilRec) {
     setRoutesLoading(true);
     try {
       const { data, error } = await sb.from("routes")
-        .select("id, title")
+        .select("id, title, short_description")
         .eq("company_id", companyId)
         .eq("level", "route")
-        .order("sort_order", { ascending: true })
         .limit(100);
       if (error) throw error;
-      setTopLevelRoutes((data ?? []) as Array<{ id: string; title: string }>);
+      const raw = (data ?? []) as Array<{ id: string; title: string; short_description: string | null }>;
+      const scored = raw.map((r) => ({
+        ...r,
+        fitScore: rec ? suggestionRouteFitScore(rec, r) : 0,
+      }));
+      // Sort best match first; ties keep DB order
+      scored.sort((a, b) => b.fitScore - a.fitScore);
+      setTopLevelRoutes(scored);
+      if (rec) {
+        const best = scored[0];
+        if (best && best.fitScore >= 1.2) setDraftParentRouteId(best.id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load routes");
     } finally {
@@ -525,7 +559,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                               <button
                                 type="button"
                                 className="crpv-council-action-accept"
-                                onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(); }}
+                                onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(rec); }}
                                 disabled={!!decisionId || confirmingLeg}
                               >
                                 Create leg
@@ -562,7 +596,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                                 >
                                   <option value="">Pick a route…</option>
                                   {topLevelRoutes.map((r) => (
-                                    <option key={r.id} value={r.id}>{r.title ?? r.id}</option>
+                                    <option key={r.id} value={r.id}>{r.fitScore >= 1.2 ? `${r.title ?? r.id} (best match)` : (r.title ?? r.id)}</option>
                                   ))}
                                 </select>
                               )}
@@ -855,7 +889,7 @@ export default function WorkshopCouncilTab({ companyId, companyName, tensions = 
                             <button
                               type="button"
                               className="crpv-council-action-accept"
-                              onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(); }}
+                              onClick={() => { setDraftRecId(rec.id); setDraftTitle(rec.title); setDraftParentRouteId(null); void loadTopLevelRoutes(rec); }}
                               disabled={!!decisionId || confirmingLeg}
                             >
                               Create leg
