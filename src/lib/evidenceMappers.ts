@@ -756,6 +756,10 @@ export function mapDifyFileOutputToSignals(args: {
   const customerDirectness = defaultCustomerDirectness(sourceType, sourceTitle);
   const customerFramingFit = isCustomerSignalSourceType(sourceType) ? "strong" : signalBand === "customer" ? "partial" : "partial";
   const customerConfidence = isCustomerSignalSourceType(sourceType) ? "high" : signalBand === "customer" ? "medium" : "medium";
+  // Uploaded company documents get "strong" framing_fit so org-band signals can
+  // satisfy Gate 1 ("supports"). mojo_analysis and unknown source types stay "partial".
+  const FILE_SOURCE_TYPES = new Set(["file", "uploaded_file", "file_proposal"]);
+  const orgFramingFit: "strong" | "partial" = FILE_SOURCE_TYPES.has(normalizedSourceType) ? "strong" : "partial";
 
   const summary = normalizeStatement(args.summary);
   if (summary) {
@@ -773,7 +777,7 @@ export function mapDifyFileOutputToSignals(args: {
       framework: "dify_summary",
       directness: signalBand === "customer" ? customerDirectness : "inferred",
       recency: null,
-      framing_fit: signalBand === "customer" ? customerFramingFit : "partial",
+      framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
       structure_level: "interpreted",
       validation_status: defaultValidationStatusForBand(signalBand),
       confidence_to_use: signalBand === "customer" ? customerConfidence : "medium",
@@ -798,7 +802,7 @@ export function mapDifyFileOutputToSignals(args: {
       framework: null,
       directness: signalBand === "customer" ? customerDirectness : "inferred",
       recency: null,
-      framing_fit: signalBand === "customer" ? customerFramingFit : "partial",
+      framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
       structure_level: "extracted",
       validation_status: defaultValidationStatusForBand(signalBand),
       confidence_to_use: signalBand === "customer" ? customerConfidence : "medium",
@@ -857,7 +861,7 @@ export function mapDifyFileOutputToSignals(args: {
         framework: framework || null,
         directness: signalBand === "customer" ? customerDirectness : "inferred",
         recency: null,
-        framing_fit: signalBand === "customer" ? customerFramingFit : "partial",
+        framing_fit: signalBand === "customer" ? customerFramingFit : orgFramingFit,
         structure_level: "interpreted",
         validation_status: defaultValidationStatusForBand(signalBand),
         confidence_to_use: confidenceFromValue(findingRecord.confidence, signalBand === "customer" ? customerConfidence : "medium"),

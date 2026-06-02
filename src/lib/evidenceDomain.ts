@@ -1,3 +1,5 @@
+import type { ClaimState } from "./claimState/types";
+
 export const SIGNAL_BANDS = ["outside", "organization", "customer"] as const;
 export type SignalBand = (typeof SIGNAL_BANDS)[number];
 
@@ -113,6 +115,7 @@ export type Claim = {
   statement: string;
   topic: string | null;
   claim_type: ClaimType;
+  state: ClaimState;
   outside_support_count: number;
   organization_support_count: number;
   customer_support_count: number;

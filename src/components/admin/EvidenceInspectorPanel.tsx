@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEvidenceGraph } from "@/hooks/useEvidenceGraph";
 import type { Claim, Signal } from "@/lib/evidenceDomain";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 
 const c = {
   panel: "#FFFFFF",
@@ -232,8 +233,11 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
               <div className="mt-3 space-y-3 max-h-[320px] overflow-auto">
                 {claims.map((claim) => (
                   <div key={claim.id} className="rounded-lg border p-3" style={{ borderColor: c.line, background: "#fff" }}>
-                    <div className="font-sans text-[13px] leading-5" style={{ color: c.ink }}>
-                      {claim.statement}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-sans text-[13px] leading-5" style={{ color: c.ink }}>
+                        {claim.statement}
+                      </div>
+                      <ClaimStateBadge state={claim.state ?? "outside_view"} claimId={claim.id} size="sm" />
                     </div>
                     <div className="mt-2 font-mono text-[10px] tracking-[0.06em]" style={{ color: c.muted }}>
                       {claim.claim_type} · {claim.triangulation_state} · {claim.confidence}

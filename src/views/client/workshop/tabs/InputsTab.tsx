@@ -1298,7 +1298,7 @@ export default function InputsTab({
           fileName:   row.title,
           fileType:   row.fileType ?? "",
           companyId,
-          sourceType: row.type,
+          sourceType: row.type === "file" ? "uploaded_file" : row.type,
         },
       });
       if (error || (data as Record<string, unknown> | null)?.error) {

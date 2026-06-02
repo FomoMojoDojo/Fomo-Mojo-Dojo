@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
+import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import {
   matchStrengthFromScore,
   mapDifyFileOutputToSignals,
@@ -150,6 +151,49 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
       .from("claim_signal_refs")
       .insert(refPayloads);
     if (refInsertError) throw new Error(`Failed inserting claim refs: ${refInsertError.message}`);
+  }
+
+  // Derive claim state from backing signals — single source of truth via inferClaimState.
+  // Omit linkedRoute/linkedOdiNeed/positioningCanvas: those drive focus/flow states that
+  // are set by separate flows (ODI scoring, route linkage). Only signal-driven states here.
+  const stateByValue = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    const claimId = claimIdByStatement.get(candidate.claim.statement);
+    if (!claimId) continue;
+
+    const signalRefs = candidate.sourceSignals
+      .map((ref) => {
+        const sig = signals[ref.signalIndex] as Record<string, unknown> | undefined;
+        if (!sig) return null;
+        return {
+          relationship: String(ref.relationship),
+          signal_band: String(sig.signal_band ?? "") as "outside" | "organization" | "customer",
+          directness: sig.directness as "direct" | "inferred" | "weak" | undefined,
+          structure_level: sig.structure_level as "raw" | "extracted" | "interpreted" | undefined,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const inferred = inferClaimState({
+      claimType: candidate.claim.claim_type,
+      signalRefs,
+      linkedRoute: null,
+      linkedOdiNeed: null,
+      positioningCanvas: null,
+    });
+
+    if (inferred !== "outside_view") {
+      if (!stateByValue.has(inferred)) stateByValue.set(inferred, []);
+      stateByValue.get(inferred)!.push(claimId);
+    }
+  }
+
+  for (const [state, ids] of stateByValue) {
+    const { error: stateUpdateError } = await supabase
+      .from("claims")
+      .update({ state })
+      .in("id", ids);
+    if (stateUpdateError) throw new Error(`Failed updating claim state to '${state}': ${stateUpdateError.message}`);
   }
 
   return {

@@ -122,6 +122,35 @@ describe("inferClaimState", () => {
     ).toBe("diagnose");
   });
 
+  it("infers diagnose with explicit directness=inferred, structure_level=extracted (uploaded-file defaults)", () => {
+    // Mirrors what G-STATE passes for org-band signals from uploaded company documents.
+    // directness='inferred' (≠'weak') and structure_level='extracted' (≠'raw') must pass Gate 1.
+    expect(
+      inferClaimState(
+        base({
+          signalRefs: [
+            { relationship: "supports", signal_band: "organization", directness: "inferred", structure_level: "extracted" },
+            { relationship: "supports", signal_band: "outside", directness: "inferred", structure_level: "extracted" },
+          ],
+        }),
+      ),
+    ).toBe("diagnose");
+  });
+
+  it("does not infer diagnose when org-band ref has directness=weak (quality gate)", () => {
+    // weak directness must prevent Gate 1 from advancing even with ≥2 total supporting.
+    expect(
+      inferClaimState(
+        base({
+          signalRefs: [
+            { relationship: "supports", signal_band: "organization", directness: "weak", structure_level: "extracted" },
+            { relationship: "supports", signal_band: "outside" },
+          ],
+        }),
+      ),
+    ).toBe("outside_view");
+  });
+
   it("does not infer diagnose from a single org-band 'supports' ref — needs ≥2 supporting", () => {
     expect(
       inferClaimState(
