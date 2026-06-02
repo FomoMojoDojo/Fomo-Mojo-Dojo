@@ -77,8 +77,6 @@ export default function ClientScoreView() {
     [activeCompany?.mojo_score, activeCompany?.evidence_status],
   );
   const mojoScore      = readiness.currentReadiness;
-  const potentialScore = readiness.nearTermPotential;
-  const projectedScore = readiness.structuralUpside;
   const scoreTone = scoreState(mojoScore);
   const scoreCeiling = readiness.structuralUpside;
   const proofLimited = isProofLimited(activeCompany?.evidence_status);
@@ -179,12 +177,6 @@ export default function ClientScoreView() {
                   <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
                     Current {mojoScore}
                   </span>
-                  <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Reachable now {potentialScore}
-                  </span>
-                  <span className="rounded-full border border-white/25 bg-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em]">
-                    Structural upside {projectedScore}
-                  </span>
                 </div>
               </div>
 
@@ -215,9 +207,6 @@ export default function ClientScoreView() {
                     <div className="rounded-xl border border-forest/25 bg-forest/5 px-4 py-3">
                       <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-forest">Fastest lift</p>
                       <p className="mt-1 font-sans text-[15px] leading-[1.45] text-t-primary">{fastestLift.action}</p>
-                      <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.08em] text-forest">
-                        Potential upside: +{Math.max(0, fastestLift.projected - mojoScore)}
-                      </p>
                     </div>
                   ) : null}
                   <div className="rounded-2xl border border-[#d8e1de] bg-white px-4 py-4">
