@@ -29,9 +29,9 @@
 
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ClaimState } from "../types";
-import { inferClaimState, type ClaimInferenceInput } from "./inferState";
-import { recomputeAndWriteDistribution } from "../distribution";
+import type { ClaimState } from "../types.ts";
+import { inferClaimState, type ClaimInferenceInput } from "./inferState.ts";
+import { recomputeAndWriteDistribution } from "../distribution.ts";
 
 // ── Deterministic UUID (v5-flavored) for canvas/cascade/hypothesis claims ─────
 //

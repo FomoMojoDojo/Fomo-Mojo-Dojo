@@ -9,7 +9,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EvidenceBand } from "@/lib/evidenceBands";
-import type { ClaimStateDistribution, ClaimState } from "./types";
+import type { ClaimStateDistribution, ClaimState } from "./types.ts";
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 

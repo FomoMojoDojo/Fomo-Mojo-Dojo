@@ -20,7 +20,7 @@ import type {
   EvidenceDelta,
   ActionCategory,
   ClaimStateOrRetired,
-} from "./types";
+} from "./types.ts";
 import {
   checkNoSkip,
   checkOutsideViewToDiagnose,
@@ -29,8 +29,8 @@ import {
   shouldRegressDiagnoseToOutsideView,
   shouldRegressFocusToDiagnose,
   shouldRegressFlowToFocus,
-} from "./gates";
-import { recomputeAndWriteDistribution } from "./distribution";
+} from "./gates.ts";
+import { recomputeAndWriteDistribution } from "./distribution.ts";
 
 // ── Result types ──────────────────────────────────────────────────────────────
 

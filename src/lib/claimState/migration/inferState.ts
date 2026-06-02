@@ -26,9 +26,9 @@
 //
 // Callers pass pre-loaded side-data so inference remains a pure function.
 
-import type { ClaimState } from "../types";
-import type { ClaimSignalRefForGate } from "../types";
-import { checkOutsideViewToDiagnose } from "../gates";
+import type { ClaimState } from "../types.ts";
+import type { ClaimSignalRefForGate } from "../types.ts";
+import { checkOutsideViewToDiagnose } from "../gates.ts";
 
 // ── Input shape ───────────────────────────────────────────────────────────────
 

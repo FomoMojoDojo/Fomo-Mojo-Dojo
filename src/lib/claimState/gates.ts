@@ -17,8 +17,8 @@ import type {
   ManagedOutcomeForGate,
   GateCheckResult,
   ClaimState,
-} from "./types";
-import { isNeedClaim, isSkipTransition, CLAIM_STATE_ORDER } from "./types";
+} from "./types.ts";
+import { isNeedClaim, isSkipTransition, CLAIM_STATE_ORDER } from "./types.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

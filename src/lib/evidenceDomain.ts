@@ -1,4 +1,4 @@
-import type { ClaimState } from "./claimState/types";
+import type { ClaimState } from "./claimState/types.ts";
 
 export const SIGNAL_BANDS = ["outside", "organization", "customer"] as const;
 export type SignalBand = (typeof SIGNAL_BANDS)[number];

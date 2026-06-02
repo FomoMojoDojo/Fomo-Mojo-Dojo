@@ -18,7 +18,7 @@ export type {
   NeedClaimType,
   DerivedStructuralTensionType,
   DerivedStructuralTensionRow,
-} from "./types";
+} from "./types.ts";
 
 export {
   CLAIM_STATE_ORDER,
@@ -26,7 +26,7 @@ export {
   claimStateIndex,
   isSkipTransition,
   isNeedClaim,
-} from "./types";
+} from "./types.ts";
 
 export {
   checkNoSkip,
@@ -36,20 +36,20 @@ export {
   shouldRegressDiagnoseToOutsideView,
   shouldRegressFocusToDiagnose,
   shouldRegressFlowToFocus,
-} from "./gates";
+} from "./gates.ts";
 
-export type { TransitionResult, RegressionResult, RegressionSweepResult } from "./machine";
+export type { TransitionResult, RegressionResult, RegressionSweepResult } from "./machine.ts";
 
-export { transitionClaim, retireClaim, regressionSweep } from "./machine";
+export { transitionClaim, retireClaim, regressionSweep } from "./machine.ts";
 
 export {
   computeClaimStateDistribution,
   recomputeAndWriteDistribution,
   stateDistributionToBand,
-} from "./distribution";
+} from "./distribution.ts";
 
-export type { ClaimInferenceInput } from "./migration/inferState";
-export { inferClaimState } from "./migration/inferState";
+export type { ClaimInferenceInput } from "./migration/inferState.ts";
+export { inferClaimState } from "./migration/inferState.ts";
 
-export type { MigrationRecord, MigrationRunResult } from "./migration/runner";
-export { runBackwardsCompatMigration } from "./migration/runner";
+export type { MigrationRecord, MigrationRunResult } from "./migration/runner.ts";
+export { runBackwardsCompatMigration } from "./migration/runner.ts";
