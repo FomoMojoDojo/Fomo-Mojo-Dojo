@@ -2160,7 +2160,7 @@ export function toDecisionPathViewModel(
         flow: {
           progressReview: `${activeCount}/${prioritizedActions.length || 1} priorities are already in motion or complete.`,
           signalShift: `The next meaningful shift is most likely to show up around ${weakestDriver.label.toLowerCase()}.`,
-          scoreMovement: `${mojoScore} → ${nextScore} → ${finalPotential}`,
+          scoreMovement: `Current: ${mojoScore}`,
           adaptation: "If the picture changes, the order should change with it before more work gets added.",
         },
       };

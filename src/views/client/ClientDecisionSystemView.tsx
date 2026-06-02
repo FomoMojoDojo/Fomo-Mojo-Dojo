@@ -378,8 +378,6 @@ export default function ClientDecisionSystemView() {
   );
 
   const score = useAnimatedNumber(viewModel.hero.trajectory.currentScore, 700);
-  const nextScore = useAnimatedNumber(viewModel.hero.trajectory.nextScore, 700);
-  const potentialScore = useAnimatedNumber(viewModel.hero.trajectory.potentialScore, 700);
   const diagnosisRows = useMemo(
     () => viewModel.phaseNarrative.diagnose?.rows ?? [],
     [viewModel.phaseNarrative.diagnose],
@@ -587,24 +585,10 @@ export default function ClientDecisionSystemView() {
                       <p>{viewModel.interpretation.fixLine}</p>
                     </div>
                   )}
-                  <div className="cv-score-trajectory" aria-label="Score trajectory">
+                  <div className="cv-score-trajectory" aria-label="Score">
                     <div className="cv-score-node">
                       <span>Current</span>
                       <strong>{score}</strong>
-                    </div>
-                    <span className="cv-score-arrow" aria-hidden>
-                      →
-                    </span>
-                    <div className="cv-score-node">
-                      <span>Next</span>
-                      <strong>{nextScore}</strong>
-                    </div>
-                    <span className="cv-score-arrow" aria-hidden>
-                      →
-                    </span>
-                    <div className="cv-score-node">
-                      <span>Reachable</span>
-                      <strong>{potentialScore}</strong>
                     </div>
                   </div>
                 </aside>
@@ -821,7 +805,6 @@ export default function ClientDecisionSystemView() {
                             <h3>{selectedPriority.action.title}</h3>
                           </div>
                           <div className="cv-route-meta">
-                            <span>Unlockable {selectedPriority.projectedScore}</span>
                             <span>{selectedPriority.impactedDriver}</span>
                           </div>
                         </div>

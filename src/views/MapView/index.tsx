@@ -307,19 +307,8 @@ export default function MapView() {
     (typeof activeCompany?.mojo_score === "number" ? activeCompany.mojo_score : null) ??
     fallbackScores.mojo_score ??
     0;
-  const displayPotential =
-    (typeof activeCompany?.potential_score === "number" ? activeCompany.potential_score : null) ??
-    fallbackScores.potential_score ??
-    0;
-  const displayProjected =
-    (typeof activeCompany?.projected_score === "number" ? activeCompany.projected_score : null) ??
-    fallbackScores.projected_score ??
-    0;
-
   const usingStoredScores = hasStoredCompanyScores(activeCompany);
   const score = Math.round(safeNumber(displayMojo, 0));
-  const potential = Math.round(safeNumber(displayPotential, 0));
-  const projected = Math.round(safeNumber(displayProjected, 0));
 
   const evidenceLabel = formatEvidenceLabel(activeCompany?.evidence_status ?? fallbackScores.evidence_status);
   const evidencePct = evidencePercent(activeCompany?.area_scores_json) ?? Math.round(fallbackScores.evidenceBreakdown.baseline_strength);
@@ -594,7 +583,6 @@ export default function MapView() {
               summary={summary}
               onAreaClick={openDeepDive}
               currentScore={score}
-              potentialScore={projected}
               routesData={mapRoutes}
             />
           </div>

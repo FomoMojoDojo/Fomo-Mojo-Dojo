@@ -2965,10 +2965,10 @@ export default function ClientRefinePreviewView() {
         },
         progress: {
           title: "PROGRESS",
-          headline: `${baseConfidence} → ${baseConfidence + confidenceLift} → ${confidenceTarget}`,
+          headline: `${baseConfidence} → ${baseConfidence + confidenceLift}`,
           compact: true,
           rows: [
-            { key: "Movement", value: `${baseConfidence} → ${baseConfidence + confidenceLift} → ${confidenceTarget}` },
+            { key: "Movement", value: `${baseConfidence} → ${baseConfidence + confidenceLift}` },
           ],
         },
       };

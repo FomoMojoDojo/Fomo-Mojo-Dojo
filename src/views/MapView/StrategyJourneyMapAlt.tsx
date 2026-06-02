@@ -58,7 +58,6 @@ interface Props {
   onAreaClick?: (areaKey: string) => void;
   onRouteSelect?: (route: Route) => void;
   currentScore?: number;
-  potentialScore?: number;
   routesData?: Route[];
 }
 
@@ -66,7 +65,6 @@ interface Props {
 export default function StrategyJourneyMapAlt({
   onRouteSelect,
   currentScore,
-  potentialScore,
   routesData = [],
 }: Props) {
   const { mojoScoreSummary: seedSummary } = ROUTES_DATA;
@@ -74,7 +72,6 @@ export default function StrategyJourneyMapAlt({
   const summary = {
     ...seedSummary,
     currentScore: currentScore ?? seedSummary.currentScore,
-    potentialScore: potentialScore ?? seedSummary.potentialScore,
   };
 
   const [catFilters, setCatFilters] = useState<Set<string>>(new Set(['fix', 'improve', 'create']));
@@ -225,27 +222,12 @@ export default function StrategyJourneyMapAlt({
                 <text x={currentX} y={cy - 12} textAnchor="middle" fontSize="11" fill="#fff" className="font-sans" fontWeight="600">Current</text>
                 <text x={currentX} y={cy + 2} textAnchor="middle" fontSize="11" fill="#fff" className="font-sans" fontWeight="600">Reality</text>
                 <text x={currentX} y={cy + 24} textAnchor="middle" fontSize="22" fill="#fff" className="font-sans" fontWeight="800">{Math.round(summary.currentScore)}</text>
-                {hoveredNode === 'current' && (
-                  <>
-                    <text x={currentX} y={cy + 42} textAnchor="middle" fontSize="8" fill="#ffffffaa" className="font-mono">Gap: {Math.round(summary.potentialScore - summary.currentScore)} pts</text>
-                  </>
-                )}
               </g>
 
-              {/* Desired Outcome node */}
-              <g
-                onMouseEnter={() => setHoveredNode('desired')}
-                onMouseLeave={() => setHoveredNode(null)}
-                className="cursor-pointer"
-                style={{ opacity: hoveredNode === 'desired' ? 1 : 0.9 }}
-              >
-                <circle cx={desiredX} cy={cy} r={desiredR} fill={hoveredNode === 'desired' ? c.teal : `${c.teal}cc`} stroke={c.teal} strokeWidth={hoveredNode === 'desired' ? 3 : 2} />
-                <text x={desiredX} y={cy - 8} textAnchor="middle" fontSize="11" fill="#fff" className="font-sans" fontWeight="600">Projected</text>
-                <text x={desiredX} y={cy + 6} textAnchor="middle" fontSize="11" fill="#fff" className="font-sans" fontWeight="600">Outcome</text>
-                <text x={desiredX} y={cy + 26} textAnchor="middle" fontSize="20" fill="#fff" className="font-sans" fontWeight="800">{Math.round(summary.potentialScore)}</text>
-                {hoveredNode === 'desired' && (
-                  <text x={desiredX} y={cy + 44} textAnchor="middle" fontSize="8" fill="#ffffffaa" className="font-mono">+{Math.round(summary.potentialScore - summary.currentScore)} from current</text>
-                )}
+              {/* Target node — projected number hidden until Phase 2 grounds the projection */}
+              <g style={{ opacity: 0.55 }}>
+                <circle cx={desiredX} cy={cy} r={desiredR} fill="none" stroke={c.teal} strokeWidth={2} strokeDasharray="5 4" />
+                <text x={desiredX} y={cy + 4} textAnchor="middle" fontSize="10" fill={c.teal} className="font-sans" fontWeight="600">Target</text>
               </g>
 
             </svg>
