@@ -30,6 +30,7 @@ export type RouteInput = {
   category: string;
   level?: string | null;
   parent_id?: string | null;
+  claim_id?: string | null;
   steps_json?: DetailItemInput[] | null;
   evidence_json?: DetailItemInput[] | null;
   why_this_matters_json?: string[] | null;

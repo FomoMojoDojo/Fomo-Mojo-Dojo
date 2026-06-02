@@ -101,7 +101,7 @@ export async function snapshotMojoScore(
         .eq("company_id", companyId),
       supabase
         .from("routes")
-        .select("id, category, level, parent_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
+        .select("id, category, level, parent_id, claim_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
         .eq("company_id", companyId),
       supabase
         .from("odi_needs")

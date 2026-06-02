@@ -244,6 +244,18 @@ export async function transitionClaim(
     };
   }
 
+  // Link route → claim when entering flow (only if not already linked)
+  if (toState === "flow" && opts.linkedRoute) {
+    const { error: linkErr } = await db
+      .from("routes")
+      .update({ claim_id: claimId })
+      .eq("id", opts.linkedRoute.id)
+      .is("claim_id", null);
+    if (linkErr) {
+      console.error("[claimState/machine] Failed to link route to claim:", linkErr.message);
+    }
+  }
+
   // Write event
   const eventId = await writeClaimEvent(db, {
     companyId: claim.company_id,

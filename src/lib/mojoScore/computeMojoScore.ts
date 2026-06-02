@@ -3,7 +3,7 @@
 // Pure function. Accepts a MojoScoreInput bundle and returns a MojoScoreResult.
 // No I/O, no side effects — safe to call in tests or UI previews.
 //
-// Methodology version: 'v1.0.0'
+// Methodology version: 'v1.1.0'
 // Bump this string whenever any contributor weight changes.
 
 import type {
@@ -20,7 +20,7 @@ import { scoreStructuralCompleteness } from "./contributors/structuralCompletene
 import { scoreEvidenceFreshness } from "./contributors/evidenceFreshness.ts";
 import { scoreOpportunityRouteCoverage } from "./contributors/opportunityRouteCoverage.ts";
 
-export const METHODOLOGY_VERSION = "v1.0.0";
+export const METHODOLOGY_VERSION = "v1.1.0";
 
 export function computeMojoScore(input: MojoScoreInput): MojoScoreResult {
   const contributors = [
