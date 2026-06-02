@@ -16,14 +16,19 @@
 //                OR a positioning canvas field (category/buyer/value) is non-empty
 //                for claims of type 'positioning'
 //
-//   diagnose   ─ claim has ≥2 signal refs (any band), OR
-//                ≥1 signal ref with signal_band = 'organization'
+//   diagnose   ─ Gate 1 satisfied: ≥1 org-band 'supports' signal ref
+//                (directness ≠ 'weak', structure_level ≠ 'raw') AND
+//                ≥2 total 'supports' signal refs.
+//                Delegates to checkOutsideViewToDiagnose — single source of truth.
 //
-//   outside_view ─ everything else
+//   outside_view ─ everything else (including org-band 'qualifies' refs,
+//                  outside-only refs, and <2 total supporting)
 //
 // Callers pass pre-loaded side-data so inference remains a pure function.
 
 import type { ClaimState } from "../types";
+import type { ClaimSignalRefForGate } from "../types";
+import { checkOutsideViewToDiagnose } from "../gates";
 
 // ── Input shape ───────────────────────────────────────────────────────────────
 
@@ -32,6 +37,10 @@ export type ClaimInferenceInput = {
   signalRefs: Array<{
     relationship: string;
     signal_band: "outside" | "organization" | "customer";
+    // Optional: when present, used for Gate 1 quality checks (directness≠weak,
+    // structure_level≠raw). Defaults to 'inferred' / 'extracted' when absent.
+    directness?: "direct" | "inferred" | "weak";
+    structure_level?: "raw" | "extracted" | "interpreted";
   }>;
   linkedRoute: {
     steps_json: Array<{ status: string }> | null;
@@ -75,11 +84,25 @@ export function inferClaimState(input: ClaimInferenceInput): ClaimState {
     if (populated.length >= 1) return "focus";
   }
 
-  // Diagnose: ≥2 signal refs, or ≥1 org-band signal ref
-  const hasOrgSignal = input.signalRefs.some(
-    (r) => r.signal_band === "organization",
-  );
-  if (hasOrgSignal || input.signalRefs.length >= 2) return "diagnose";
+  // Diagnose: delegate to Gate 1 (checkOutsideViewToDiagnose) — single source
+  // of truth for the "what makes a claim diagnosable" condition.
+  //
+  // Build ClaimSignalRefForGate from signalRefs. framing_fit and validation_status
+  // default to non-blocking values; Gate 1 does not inspect them.
+  const gateRefs: ClaimSignalRefForGate[] = input.signalRefs.map((r) => ({
+    relationship: r.relationship as "supports" | "contradicts" | "qualifies",
+    signal: {
+      signal_band: r.signal_band,
+      directness: r.directness ?? "inferred",
+      structure_level: r.structure_level ?? "extracted",
+      framing_fit: "partial" as const,
+      validation_status: "directional" as const,
+    },
+  }));
+
+  if (checkOutsideViewToDiagnose({ state: "outside_view", id: "" }, gateRefs).allowed) {
+    return "diagnose";
+  }
 
   return "outside_view";
 }

@@ -104,28 +104,61 @@ describe("inferClaimState", () => {
   });
 
   // ── diagnose ──────────────────────────────────────────────────────────────
+  //
+  // Gate 1 (delegated to checkOutsideViewToDiagnose):
+  //   • ≥1 org-band 'supports' ref (directness≠'weak', structure_level≠'raw')
+  //   • ≥2 total 'supports' refs
 
-  it("infers diagnose from a single org-band signal ref", () => {
+  it("infers diagnose from org-band 'supports' ref plus ≥2 total supporting", () => {
+    expect(
+      inferClaimState(
+        base({
+          signalRefs: [
+            { relationship: "supports", signal_band: "organization" },
+            { relationship: "supports", signal_band: "outside" },
+          ],
+        }),
+      ),
+    ).toBe("diagnose");
+  });
+
+  it("does not infer diagnose from a single org-band 'supports' ref — needs ≥2 supporting", () => {
     expect(
       inferClaimState(
         base({
           signalRefs: [{ relationship: "supports", signal_band: "organization" }],
         }),
       ),
-    ).toBe("diagnose");
+    ).toBe("outside_view");
   });
 
-  it("infers diagnose from ≥2 signal refs of any band", () => {
+  it("does not infer diagnose from ≥2 outside-band refs with no org-band supporting", () => {
     expect(
       inferClaimState(
         base({
           signalRefs: [
             { relationship: "supports", signal_band: "outside" },
-            { relationship: "supports", signal_band: "customer" },
+            { relationship: "supports", signal_band: "outside" },
           ],
         }),
       ),
-    ).toBe("diagnose");
+    ).toBe("outside_view");
+  });
+
+  it("does not infer diagnose from org-band 'qualifies' ref — only 'supports' counts", () => {
+    // This is the landmine: org-band presence (any relationship) must not advance
+    // a claim. All current Dify org signals land at 'qualifies' (framing_fit='partial'),
+    // so this must stay outside_view until the mapper assigns 'supports'.
+    expect(
+      inferClaimState(
+        base({
+          signalRefs: [
+            { relationship: "qualifies", signal_band: "organization" },
+            { relationship: "qualifies", signal_band: "organization" },
+          ],
+        }),
+      ),
+    ).toBe("outside_view");
   });
 
   it("does not infer diagnose from a single outside-band signal", () => {
@@ -157,12 +190,16 @@ describe("inferClaimState", () => {
     ).toBe("flow");
   });
 
-  it("infers focus even when org signal would give diagnose", () => {
+  it("infers focus even when diagnose-eligible signals are present", () => {
+    // focus (odi_need) takes priority over diagnose (Gate 1 satisfied)
     expect(
       inferClaimState(
         base({
           linkedOdiNeed: { importance: 5, satisfaction: 3 },
-          signalRefs: [{ relationship: "supports", signal_band: "organization" }],
+          signalRefs: [
+            { relationship: "supports", signal_band: "organization" },
+            { relationship: "supports", signal_band: "outside" },
+          ],
         }),
       ),
     ).toBe("focus");
