@@ -18,6 +18,21 @@ import { inferJourneyHypothesesForCompany } from "./journeyHypotheses.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
+// UUID v5-flavored deterministic ID for signal-derived claims.
+// Keyed on (companyId, normalizedStatement) → same signals produce the same UUID
+// across rebuilds, so claim rows persist in-place (no cascade-delete churn).
+// Uses Web Crypto API (available in Deno without imports).
+async function deterministicSignalClaimId(companyId: string, statement: string): Promise<string> {
+  const NAMESPACE = "signal-derived-claims-2026-06";
+  const input = `${NAMESPACE}:${companyId}:signal_derived:${statement.trim().toLowerCase()}`;
+  const hashBuffer = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(input));
+  const hash = new Uint8Array(hashBuffer);
+  hash[6] = (hash[6] & 0x0f) | 0x50; // version 5
+  hash[8] = (hash[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const h = Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
 type DependencyTarget = {
   upstream_object_type: string;
   upstream_object_id: string;
@@ -56,8 +71,9 @@ function normalizeSignalInsert(signal: SignalDraft) {
   };
 }
 
-function normalizeClaimInsert(claim: ClaimDraft) {
+function normalizeClaimInsert(claim: ClaimDraft & { id?: string }) {
   return {
+    ...(claim.id !== undefined ? { id: claim.id } : {}),
     company_id: claim.company_id,
     statement: claim.statement,
     topic: claim.topic,
@@ -77,6 +93,9 @@ function normalizeTopic(value: unknown) {
 }
 
 async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: string) {
+  // Load signals oldest-first: the first signal that maps to a given normalized key
+  // always sets the candidate statement. New signals (newest created_at) always come
+  // last, so accumulation never changes the statement → stable deterministic IDs.
   const { data: signalRows, error: signalError } = await supabase
     .from("signals")
     .select("*")
@@ -88,51 +107,79 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   const signals = Array.isArray(signalRows) ? signalRows : [];
   const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>);
 
+  // Always wipe + re-insert refs (safe: claim IDs are now stable, so re-inserted
+  // refs point at the same persisted claim rows).
   const { error: deleteRefsError } = await supabase.from("claim_signal_refs").delete().eq("company_id", companyId);
   if (deleteRefsError) throw new Error(`Failed clearing claim refs: ${deleteRefsError.message}`);
-  // Preserve claims whose raw_payload.source matches 'manual_%' — they were
-  // hand-approved and must survive the signal rebuild.
+
+  // Compute deterministic stable IDs for every candidate.
+  const stableIds = await Promise.all(
+    candidates.map((c) => deterministicSignalClaimId(companyId, c.claim.statement)),
+  );
+  const allCandidateIdSet = new Set(stableIds);
+
+  // Load existing non-manual claim rows to (a) preserve state on upsert and
+  // (b) identify rows to prune.
+  // Manual claims (raw_payload.source LIKE 'manual_%') are untouched throughout.
   const { data: manualClaimRows } = await supabase
     .from("claims")
     .select("id")
     .eq("company_id", companyId)
     .filter("raw_payload->>source", "like", "manual_%");
-  const manualClaimIds = (manualClaimRows || []).map((r: { id?: string }) => String(r.id || "")).filter(Boolean);
+  const manualClaimIds = new Set(
+    (manualClaimRows || []).map((r: { id?: string }) => String(r.id || "")).filter(Boolean),
+  );
 
-  const claimsDeleteQuery = supabase.from("claims").delete().eq("company_id", companyId);
-  const { error: deleteClaimsError } = manualClaimIds.length > 0
-    ? await claimsDeleteQuery.not("id", "in", `(${manualClaimIds.join(",")})`)
-    : await claimsDeleteQuery;
-  if (deleteClaimsError) throw new Error(`Failed clearing claims: ${deleteClaimsError.message}`);
-
-  if (candidates.length === 0) {
-    return {
-      signalCount: signals.length,
-      claimCount: 0,
-      refCount: 0,
-    };
-  }
-
-  const claimPayloads = candidates.map((candidate) => normalizeClaimInsert(candidate.claim));
-  const { data: insertedClaims, error: insertClaimsError } = await supabase
+  const { data: allExistingRows, error: loadExistingErr } = await supabase
     .from("claims")
-    .insert(claimPayloads)
-    .select("id, statement");
+    .select("id, state")
+    .eq("company_id", companyId);
+  if (loadExistingErr) throw new Error(`Failed loading existing claims for reconcile: ${loadExistingErr.message}`);
 
-  if (insertClaimsError) throw new Error(`Failed inserting claims: ${insertClaimsError.message}`);
-
-  const claimIdByStatement = new Map<string, string>();
-  for (const row of Array.isArray(insertedClaims) ? insertedClaims : []) {
-    const record = asRecord(row);
-    const id = String(record?.id ?? "").trim();
-    const statement = String(record?.statement ?? "").trim();
-    if (id && statement) claimIdByStatement.set(statement, id);
+  // Build id→state map for non-manual claims only.
+  const existingStateById = new Map<string, string>();
+  for (const row of (allExistingRows ?? []) as Array<{ id: string; state: string }>) {
+    if (!manualClaimIds.has(row.id)) existingStateById.set(row.id, row.state);
   }
 
+  // UPSERT: insert new candidates, update existing ones in-place.
+  // CRITICAL (R4): `state` is explicitly preserved for existing rows so G-STATE
+  // (which runs below) is the only writer for non-outside_view states.
+  // `action_category` and `need_statement` are NOT in the payload and are
+  // therefore untouched by the UPDATE path.
+  if (candidates.length > 0) {
+    const upsertPayloads = candidates.map((candidate, i) => ({
+      ...normalizeClaimInsert({ ...candidate.claim, id: stableIds[i] }),
+      // Preserve current state for existing rows; new rows default to outside_view
+      // (G-STATE below will advance them if signal evidence warrants it).
+      state: existingStateById.get(stableIds[i]) ?? "outside_view",
+    }));
+
+    const { error: upsertError } = await supabase
+      .from("claims")
+      .upsert(upsertPayloads, { onConflict: "id" });
+    if (upsertError) throw new Error(`Failed upserting claims: ${upsertError.message}`);
+  }
+
+  // PRUNE (R2): delete non-manual claims whose backing signals are gone.
+  // ON DELETE CASCADE on claim_events fires here — correct, those claims are
+  // genuinely gone. Log pruned IDs for observability.
+  const prunedIds = [...existingStateById.keys()].filter((id) => !allCandidateIdSet.has(id));
+  if (prunedIds.length > 0) {
+    console.log(
+      `[evidence/reconcile] Pruning ${prunedIds.length} stale signal-derived claim(s) for company=${companyId}: ${prunedIds.join(", ")}`,
+    );
+    const { error: pruneError } = await supabase
+      .from("claims")
+      .delete()
+      .in("id", prunedIds);
+    if (pruneError) throw new Error(`Failed pruning stale claims: ${pruneError.message}`);
+  }
+
+  // Re-insert claim_signal_refs (unchanged logic; stable IDs mean no orphan risk).
   const refPayloads: ClaimSignalRefDraft[] = [];
-  candidates.forEach((candidate) => {
-    const claimId = claimIdByStatement.get(candidate.claim.statement);
-    if (!claimId) return;
+  candidates.forEach((candidate, i) => {
+    const claimId = stableIds[i];
     candidate.sourceSignals.forEach((ref) => {
       const signal = signals[ref.signalIndex] as Record<string, unknown> | undefined;
       const signalId = String(signal?.id ?? "").trim();
@@ -153,13 +200,13 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     if (refInsertError) throw new Error(`Failed inserting claim refs: ${refInsertError.message}`);
   }
 
-  // Derive claim state from backing signals — single source of truth via inferClaimState.
-  // Omit linkedRoute/linkedOdiNeed/positioningCanvas: those drive focus/flow states that
-  // are set by separate flows (ODI scoring, route linkage). Only signal-driven states here.
+  // G-STATE: derive claim state from backing signals — single source of truth.
+  // Omit linkedRoute/linkedOdiNeed/positioningCanvas: focus/flow states are set
+  // by separate flows (ODI scoring, route linkage). Only signal-driven states here.
   const stateByValue = new Map<string, string[]>();
-  for (const candidate of candidates) {
-    const claimId = claimIdByStatement.get(candidate.claim.statement);
-    if (!claimId) continue;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const claimId = stableIds[i];
 
     const signalRefs = candidate.sourceSignals
       .map((ref) => {
@@ -198,7 +245,7 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   return {
     signalCount: signals.length,
-    claimCount: claimPayloads.length,
+    claimCount: candidates.length,
     refCount: refPayloads.length,
   };
 }

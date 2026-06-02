@@ -238,3 +238,99 @@ describe("evidence mappers", () => {
     ).toBe(0);
   });
 });
+
+// ── Claim statement stability (key pinning) ───────────────────────────────────
+//
+// These tests pin the exact statement output of mapSignalsToClaimCandidates for
+// known signal inputs. If the mapping code changes in a way that rewrites the
+// statement text (and thus drifts the deterministicSignalClaimId stable key),
+// these tests fail — alerting the developer before claim UUID churn hits prod.
+//
+// Do NOT update these expected strings without also running a migration to
+// update deterministicSignalClaimId keys for affected companies.
+
+describe("claim statement stability — key pinning", () => {
+  it("org-band uploaded_file signal produces a stable statement (R1 guard)", () => {
+    const signals = [
+      makeSignal({
+        source_type: "uploaded_file",
+        signal_band: "organization",
+        claim_text: "We struggle to track batch quality consistently across production runs",
+        evidence_excerpt: "We struggle to track batch quality consistently across production runs",
+        directness: "direct",
+        framing_fit: "strong",
+        structure_level: "interpreted",
+        validation_status: "validated",
+        confidence_to_use: "high",
+      }),
+      makeSignal({
+        source_type: "uploaded_file",
+        signal_band: "organization",
+        claim_text: "Batch quality tracking is unreliable across production cycles",
+        evidence_excerpt: "Batch quality tracking is unreliable across production cycles",
+        directness: "inferred",
+        framing_fit: "strong",
+        structure_level: "interpreted",
+        validation_status: "unvalidated",
+        confidence_to_use: "medium",
+      }),
+    ];
+
+    const candidates = mapSignalsToClaimCandidates("company-1", signals);
+    expect(candidates).toHaveLength(2);
+
+    // Pin the exact statement string for the first signal's candidate.
+    // synthesizeEvidenceStatement rewrites org-band signals via
+    // summarizeOrganizationEvidence — so the stable key is NOT the raw claim_text.
+    // If this assertion fails after a code change, the stable claim key would
+    // drift — triggering UUID churn for existing claims on the next rebuild.
+    const firstStatement = candidates[0].claim.statement;
+    expect(firstStatement).toBe(
+      "Batch variability is creating recipe-adjustment burden inside coffee operations.",
+    );
+
+    // The statement must be stable across a second call with identical inputs.
+    const candidates2 = mapSignalsToClaimCandidates("company-1", signals);
+    expect(candidates2[0].claim.statement).toBe(firstStatement);
+  });
+
+  it("accumulation: adding a second signal to an existing group does not change the statement", () => {
+    const baseSignal = makeSignal({
+      source_type: "uploaded_file",
+      signal_band: "organization",
+      claim_text: "Our goal is to be the Bay Area leader in youth mental health",
+      evidence_excerpt: "Our goal is to be the Bay Area leader in youth mental health",
+      directness: "direct",
+      framing_fit: "strong",
+      structure_level: "interpreted",
+      validation_status: "validated",
+      confidence_to_use: "high",
+    });
+
+    const accumulatedSignal = makeSignal({
+      source_type: "uploaded_file",
+      signal_band: "customer",
+      claim_text: "Our goal is to be the Bay Area leader in youth mental health support",
+      evidence_excerpt: "Our goal is to be the Bay Area leader in youth mental health support",
+      directness: "direct",
+      framing_fit: "strong",
+      structure_level: "interpreted",
+      validation_status: "validated",
+      confidence_to_use: "high",
+    });
+
+    const before = mapSignalsToClaimCandidates("company-1", [baseSignal]);
+    const after = mapSignalsToClaimCandidates("company-1", [baseSignal, accumulatedSignal]);
+
+    // If both signals normalize to the same key, they produce one candidate and
+    // the statement is set by the first (oldest) signal — unchanged by accumulation.
+    // If they produce two candidates, each statement is stable on its own.
+    const beforeStatements = before.map((c) => c.claim.statement);
+    const afterStatements = after.map((c) => c.claim.statement);
+
+    // Every statement present before accumulation must appear unchanged after.
+    for (const stmt of beforeStatements) {
+      expect(afterStatements).toContain(stmt);
+    }
+  });
+});
