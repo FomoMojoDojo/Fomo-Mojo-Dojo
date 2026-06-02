@@ -1212,6 +1212,10 @@ function ExecutionLens({
       if (error) throw error;
       setSaved(true);
       onLegUpdated?.(route.id);
+      // Fire-and-forget — refresh live mojo score after leg steps/evidence change.
+      // Bypasses the ingest path but still hits snapshotMojoScore via the shared module.
+      supabase.functions.invoke("refresh-mojo-score", { body: { company_id: route.company_id } })
+        .catch((e: unknown) => console.warn("[ExecutionLens] refresh-mojo-score:", e));
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
