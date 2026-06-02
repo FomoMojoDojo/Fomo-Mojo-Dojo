@@ -2,8 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
-import { computeMojoScore } from "../../../src/lib/mojoScore/computeMojoScore.ts";
-import type { ClaimInput, RouteInput, NeedInput } from "../../../src/lib/mojoScore/types.ts";
+import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -773,6 +772,7 @@ async function startDifyStream(params: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "Accept": "text/event-stream, application/json",
+        "Accept-Encoding": "identity",
       },
       body: JSON.stringify({ inputs, response_mode: "streaming", user: difyUserSessionId }),
       signal: controller.signal,
@@ -923,69 +923,6 @@ async function fetchDifyRunResult(params: {
   return { status, outputs, error };
 }
 
-// ── MojoScore snapshot ────────────────────────────────────────────────────────
-//
-// Fetches the current state of claims, routes, and needs for a company, computes
-// a MojoScore using the same function the compass displays, and persists one
-// insert-only row to mojo_scores so score history accrues across analysis runs.
-//
-// Called after saveResult has finalized claims and needs — routes are not
-// modified by run-mojo-analysis but are read fresh here for a consistent snapshot.
-//
-// Errors are caught and logged; a snapshot failure does not fail the analysis run.
-
-async function snapshotMojoScore(
-  supabase: ReturnType<typeof createClient>,
-  companyId: string,
-): Promise<void> {
-  try {
-    const [claimsResult, routesResult, needsResult] = await Promise.all([
-      supabase
-        .from("claims")
-        .select("id, state, claim_type, topic, outside_support_count, organization_support_count, customer_support_count, updated_at")
-        .eq("company_id", companyId),
-      supabase
-        .from("routes")
-        .select("id, category, level, parent_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")
-        .eq("company_id", companyId),
-      supabase
-        .from("odi_needs")
-        .select("id, desired_outcome, importance, satisfaction, opportunity_score, service_state, updated_at")
-        .eq("company_id", companyId),
-    ]);
-
-    const claims = (claimsResult.data ?? []) as ClaimInput[];
-    const routes = (routesResult.data ?? []) as RouteInput[];
-    const needs  = (needsResult.data  ?? []) as NeedInput[];
-
-    const result = computeMojoScore({ companyId, claims, routes, needs, computedAt: new Date().toISOString() });
-
-    // Inline insert — matches writeMojoScore.ts exactly (without its @supabase/supabase-js type dep).
-    const componentScores: Record<string, unknown> = {};
-    const explanationPayload: Record<string, unknown> = {};
-    for (const c of result.contributors) {
-      componentScores[c.key] = { score: c.score, weight: c.weight, weighted: c.weighted, sub_scores: c.sub_scores ?? {} };
-      explanationPayload[c.key] = { label: c.label, explanation: c.explanation };
-    }
-    explanationPayload["projected_raisers"] = result.projected_raisers;
-    explanationPayload["engagement_state"]  = result.engagement_state;
-    // mojo_scores is not in the edge-function schema type; cast to bypass — insert is correct at runtime
-    await (supabase as any).from("mojo_scores").insert({
-      company_id:          result.company_id,
-      computed_at:         result.computed_at,
-      total_score:         result.total_score,
-      component_scores:    componentScores,
-      explanation:         explanationPayload,
-      methodology_version: result.methodology_version,
-    });
-
-    console.log(
-      `[run-mojo-analysis] mojo_scores snapshot — company: ${companyId} | score: ${result.total_score} | contributors: ${result.contributors.length}`,
-    );
-  } catch (err) {
-    console.error("[run-mojo-analysis] mojo_scores snapshot failed (non-fatal):", String((err as Error)?.message ?? err));
-  }
-}
 
 // ── Proposal persistence ──────────────────────────────────────────────────────
 

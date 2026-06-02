@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encode as encodeBase64 } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
+import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -555,9 +556,10 @@ async function persistDifyResult(params: {
     .maybeSingle();
 
   if (proposalRow?.company_id) {
+    const companyId = String(proposalRow.company_id);
     await ingestDifyProposalSignals({
       supabase,
-      companyId: String(proposalRow.company_id),
+      companyId,
       proposalId,
       sourceType: String(proposalRow.source_type ?? sourceType ?? "file_proposal"),
       sourceTitle: String(proposalRow.file_name ?? "Dify proposal"),
@@ -568,6 +570,7 @@ async function persistDifyResult(params: {
       questionsToVerify,
       rawPayload: structuredOutputs,
     });
+    await snapshotMojoScore(supabase, companyId);
   }
 
   console.log("[dify-analyze-file] proposal updated, id:", proposalId);

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
+import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -282,9 +283,10 @@ serve(async (req) => {
         .maybeSingle();
 
       if (proposalRow?.company_id) {
+        const companyId = String(proposalRow.company_id);
         await ingestDifyProposalSignals({
           supabase,
-          companyId: String(proposalRow.company_id),
+          companyId,
           proposalId: proposal_id,
           sourceType: String(proposalRow.source_type ?? "mojo_analysis"),
           sourceTitle: String(proposalRow.file_name ?? "Mojo analysis proposal"),
@@ -295,6 +297,7 @@ serve(async (req) => {
           questionsToVerify,
           rawPayload: outputs,
         });
+        await snapshotMojoScore(supabase, companyId);
       }
       return jsonResponse({ status: "ready" });
     }
