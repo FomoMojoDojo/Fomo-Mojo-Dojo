@@ -164,6 +164,50 @@ export async function snapshotMojoScore(
         `[snapshotMojoScore] company: ${companyId} | live score: ${result.total_score} | potential: ${potential_score} | projected: ${projected_score} | band: ${band}`,
       );
     }
+
+    // ── Write claim_evidence_pct into area_scores_json (RMW, preserves all keys) ─
+    // Weights: outside_view=0, diagnose=33, focus=67, flow=100.
+    // Written here from the claims already loaded; only claim_evidence_pct is added
+    // (claim_state_distribution is intentionally NOT persisted from this path).
+    const claimTotal = claims.length;
+    let nDiagnose = 0, nFocus = 0, nFlow = 0;
+    for (const c of claims) {
+      if (c.state === "diagnose") nDiagnose++;
+      else if (c.state === "focus") nFocus++;
+      else if (c.state === "flow") nFlow++;
+    }
+    const claimEvidencePct: number | null = claimTotal > 0
+      ? Math.round((nDiagnose * 33 + nFocus * 67 + nFlow * 100) / claimTotal)
+      : null;
+
+    if (claimEvidencePct !== null) {
+      const { data: companyRow } = await supabase
+        .from("companies")
+        .select("area_scores_json")
+        .eq("id", companyId)
+        .maybeSingle();
+
+      const existing =
+        companyRow && typeof companyRow === "object" && "area_scores_json" in companyRow
+          ? ((companyRow as { area_scores_json: unknown }).area_scores_json ?? {})
+          : {};
+
+      const merged = {
+        ...(typeof existing === "object" && existing !== null ? existing : {}),
+        claim_evidence_pct: claimEvidencePct,
+      };
+
+      const { error: asjErr } = await supabase
+        .from("companies")
+        .update({ area_scores_json: merged })
+        .eq("id", companyId);
+
+      if (asjErr) {
+        console.error("[snapshotMojoScore] claim_evidence_pct write failed:", asjErr.message);
+      } else {
+        console.log(`[snapshotMojoScore] claim_evidence_pct=${claimEvidencePct} written for ${companyId}`);
+      }
+    }
   } catch (err) {
     console.error("[snapshotMojoScore] failed (non-fatal):", String((err as Error)?.message ?? err));
   }

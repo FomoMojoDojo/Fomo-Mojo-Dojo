@@ -118,3 +118,12 @@ export function stateDistributionToBand(
   if (focusOrFlow > 0.2 || diagnoseOrAbove > 0.5) return "directional_not_validated";
   return "hypothesis_only";
 }
+
+// Weights: outside_view=0, diagnose=33, focus=67, flow=100.
+// Returns null when total=0 (no claims → caller falls back to legacy baseline_strength).
+export function computeClaimEvidencePct(dist: ClaimStateDistribution): number | null {
+  if (dist.total === 0) return null;
+  return Math.round(
+    (dist.outside_view * 0 + dist.diagnose * 33 + dist.focus * 67 + dist.flow * 100) / dist.total,
+  );
+}

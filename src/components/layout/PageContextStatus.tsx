@@ -25,11 +25,9 @@ function confidenceScore(
   confidencePercent?: number | null,
   publicEvidenceStatus?: string | null,
 ) {
-  if (
-    typeof confidencePercent === "number" &&
-    Number.isFinite(confidencePercent) &&
-    confidencePercent > 0
-  ) {
+  // >= 0: a genuine 0 (e.g. all claims at outside_view) renders as "0% · low".
+  // null/undefined/non-finite falls through to the signal-based fallback below.
+  if (typeof confidencePercent === "number" && Number.isFinite(confidencePercent) && confidencePercent >= 0) {
     return Math.max(0, Math.min(100, Math.round(confidencePercent)));
   }
   let fallback = 0;

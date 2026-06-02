@@ -85,16 +85,21 @@ function formatEvidenceLabel(status: unknown) {
   }
 }
 
-function evidencePercent(areaScoresJson: unknown) {
-  if (
-    typeof areaScoresJson === "object" &&
-    areaScoresJson !== null &&
-    typeof (areaScoresJson as { evidence?: { baseline_strength?: unknown } }).evidence?.baseline_strength === "number"
-  ) {
-    return Math.round(
-      (areaScoresJson as { evidence: { baseline_strength: number } }).evidence.baseline_strength,
-    );
+function evidencePercent(areaScoresJson: unknown): number | null {
+  if (typeof areaScoresJson !== "object" || areaScoresJson === null) return null;
+  const asj = areaScoresJson as Record<string, unknown>;
+
+  // Prefer claim-evidence maturity written by snapshotMojoScore (0 = honest zero).
+  if (typeof asj.claim_evidence_pct === "number") {
+    return Math.round(asj.claim_evidence_pct);
   }
+
+  // Fall back to legacy public baseline strength (0 = uninitialized, treat as no-data).
+  const evidence = asj.evidence as { baseline_strength?: unknown } | undefined;
+  if (typeof evidence?.baseline_strength === "number" && evidence.baseline_strength > 0) {
+    return Math.round(evidence.baseline_strength);
+  }
+
   return null;
 }
 

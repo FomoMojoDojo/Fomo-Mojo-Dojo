@@ -46,6 +46,7 @@ export {
   computeClaimStateDistribution,
   recomputeAndWriteDistribution,
   stateDistributionToBand,
+  computeClaimEvidencePct,
 } from "./distribution.ts";
 
 export type { ClaimInferenceInput } from "./migration/inferState.ts";
