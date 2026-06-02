@@ -203,10 +203,15 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // G-STATE: derive claim state from backing signals — single source of truth.
   // Omit linkedRoute/linkedOdiNeed/positioningCanvas: focus/flow states are set
   // by separate flows (ODI scoring, route linkage). Only signal-driven states here.
+  // GUARD: skip focus/flow claims — those are operator decision states and must not
+  // be re-derived from signals. Only outside_view and diagnose are signal-managed.
   const stateByValue = new Map<string, string[]>();
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     const claimId = stableIds[i];
+
+    const currentState = existingStateById.get(claimId);
+    if (currentState === "focus" || currentState === "flow") continue;
 
     const signalRefs = candidate.sourceSignals
       .map((ref) => {
