@@ -42,7 +42,7 @@ function deriveBand(route: RouteInput): EvidenceBand {
   const total = ev.length;
   if (total === 0) return "hypothesis_only";
 
-  const supporting = ev.filter((e) => e.status !== "missing").length;
+  const supporting = ev.filter((e) => e.status === "complete").length;
   const missing = ev.filter((e) => e.status === "missing").length;
   const isDerived = route.id.startsWith("derived-");
 
@@ -54,7 +54,7 @@ function deriveBand(route: RouteInput): EvidenceBand {
 
   if (!hasCustomerSignal && missing > supporting) return "directional_not_validated";
   if (!hasCustomerSignal) return "customer_evidenced";
-  if (missing === 0 && hasCustomerSignal) return "market_validated";
+  if (supporting === total && hasCustomerSignal) return "market_validated";
   return "customer_evidenced";
 }
 

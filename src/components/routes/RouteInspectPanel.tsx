@@ -1296,7 +1296,7 @@ function ExecutionLens({
           </div>
         )}
         <p style={{ margin: "6px 0 0", fontFamily: MONO, fontSize: 8.5, color: c.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          Any status other than "Missing" counts as supporting evidence and moves the band score.
+          "Complete" moves the evidence band score. "In progress" is directional only.
         </p>
       </div>
 
