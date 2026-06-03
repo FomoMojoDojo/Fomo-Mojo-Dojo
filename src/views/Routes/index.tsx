@@ -19,6 +19,8 @@ import PageContextStatus from "@/components/layout/PageContextStatus";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
 import RouteCard from "./RouteCard";
 import TopLevelRouteCard from "./TopLevelRouteCard";
+import FlowCommitSheet from "@/components/claims/FlowCommitSheet";
+import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import StrategicDirectionInspectPanel from "@/components/direction/StrategicDirectionInspectPanel";
@@ -563,6 +565,8 @@ export default function RoutesView() {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
   const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
+  const [claimsRefreshKey, setClaimsRefreshKey] = useState(0);
+  const [flowCommitClaim, setFlowCommitClaim] = useState<{ id: string; statement: string } | null>(null);
 
   // Sync from DB when company changes
   useEffect(() => {
@@ -570,7 +574,7 @@ export default function RoutesView() {
     setDecisionSavedAt(activeCompany?.selected_route_updated_at ?? null);
   }, [activeCompany?.id]);
   const { loading, items, error } = useRoutes(activeCompany?.id, routesRefreshKey);
-  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id, claimsRefreshKey);
   const { primary: primaryOutcome } = useDesiredOutcomes(activeCompany?.id);
   const { item: cascade } = useStrategyCascade(activeCompany?.id);
   const { item: positioning } = usePositioningCanvas(activeCompany?.id);
@@ -879,6 +883,23 @@ export default function RoutesView() {
   const safestCommitment = portfolio.safeToCommit[0] ?? null;
   const activeSignals = strategicHypothesisRows.filter((h) => h.hypothesis.is_active).slice(0, 5);
 
+  // ── Claim-state sections ──────────────────────────────────────────────────
+  const focusClaims = useMemo(
+    () => [...claimsMap.values()].filter((c) => c.state === "focus"),
+    [claimsMap],
+  );
+  const flowClaims = useMemo(
+    () => [...claimsMap.values()].filter((c) => c.state === "flow"),
+    [claimsMap],
+  );
+  const routeByClaimId = useMemo(() => {
+    const map = new Map<string, (typeof items)[0]>();
+    for (const route of items) {
+      if (route.claim_id) map.set(route.claim_id, route);
+    }
+    return map;
+  }, [items]);
+
   // ── A5 hierarchy ──────────────────────────────────────────────────────────
   const topLevelRoutes = useMemo(
     () => items.filter((r) => r.level === "route"),
@@ -1163,6 +1184,69 @@ export default function RoutesView() {
               />
             )}
 
+            {/* ── NEEDS READY TO COMMIT ─────────────────────────────────── */}
+            {focusClaims.length > 0 && (
+              <section style={{ paddingTop: 12, paddingBottom: 12, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.14em", color: c.muted, margin: 0, opacity: 0.8 }}>
+                    Needs Ready to Commit
+                  </p>
+                  <span style={{ fontSize: 10, fontFamily: "monospace", color: "#3A6B28", background: "rgba(58,107,40,0.08)", borderRadius: 3, padding: "1px 6px" }}>
+                    {focusClaims.length}
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {focusClaims.map((claim) => (
+                    <div key={claim.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <p style={{ flex: 1, fontSize: 13, color: c.charcoal, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {claim.statement ?? "(no statement)"}
+                      </p>
+                      <ClaimStateBadge state={claim.state} claimId={claim.id} size="sm" />
+                      <button
+                        type="button"
+                        onClick={() => setFlowCommitClaim({ id: claim.id, statement: claim.statement ?? "" })}
+                        style={{ flexShrink: 0, fontSize: 12, fontFamily: "monospace", color: "#3A6B28", background: "none", border: "1px solid #3A6B28", borderRadius: 4, padding: "4px 10px", cursor: "pointer" }}
+                      >
+                        Commit to Route →
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* ── COMMITTED CLAIMS ──────────────────────────────────────── */}
+            {flowClaims.length > 0 && (
+              <section style={{ paddingTop: 12, paddingBottom: 12, borderBottom: `1px solid ${c.lineFaint}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.14em", color: c.muted, margin: 0, opacity: 0.8 }}>
+                    Committed
+                  </p>
+                  <span style={{ fontSize: 10, fontFamily: "monospace", color: c.secondary, background: "rgba(70,96,109,0.08)", borderRadius: 3, padding: "1px 6px" }}>
+                    {flowClaims.length}
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {flowClaims.map((claim) => {
+                    const linkedRoute = routeByClaimId.get(claim.id);
+                    return (
+                      <div key={claim.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <p style={{ flex: 1, fontSize: 13, color: c.charcoal, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {claim.statement ?? "(no statement)"}
+                        </p>
+                        {linkedRoute && (
+                          <span style={{ fontSize: 11, color: c.muted, flexShrink: 0, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                            {linkedRoute.title}
+                          </span>
+                        )}
+                        <ClaimStateBadge state={claim.state} claimId={claim.id} size="sm" />
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             {/* ── ROUTE HIERARCHY (primary layout when hierarchy exists) ── */}
             {hasHierarchy ? (
               <div style={{ paddingTop: 12 }}>
@@ -1283,6 +1367,22 @@ export default function RoutesView() {
           />
         )}
       />
+
+      {/* ── FLOW COMMIT SHEET ─────────────────────────────────────────────── */}
+      {flowCommitClaim && (
+        <FlowCommitSheet
+          open={!!flowCommitClaim}
+          onOpenChange={(open) => { if (!open) setFlowCommitClaim(null); }}
+          claimId={flowCommitClaim.id}
+          claimStatement={flowCommitClaim.statement}
+          companyId={activeCompany?.id ?? ""}
+          onSuccess={() => {
+            setFlowCommitClaim(null);
+            setClaimsRefreshKey((k) => k + 1);
+            setRoutesRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

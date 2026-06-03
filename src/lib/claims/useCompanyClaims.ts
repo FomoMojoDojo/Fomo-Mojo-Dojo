@@ -14,7 +14,7 @@ export type ClaimRow = {
   updated_at: string | null;
 };
 
-export function useCompanyClaims(companyId?: string) {
+export function useCompanyClaims(companyId?: string, refreshKey = 0) {
   const [claims, setClaims] = useState<Map<string, ClaimRow>>(new Map());
   const [loading, setLoading] = useState(false);
 
@@ -43,7 +43,7 @@ export function useCompanyClaims(companyId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
   return { claims, loading };
 }
