@@ -36,7 +36,6 @@ import {
   Home,
   ListChecks,
   Map,
-  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Shield,
@@ -66,33 +65,32 @@ type NavItem = {
   adminOnly?: boolean;
 };
 
-// Orientation nav — three-tier operating model
+// Orientation nav — three-tier operating model (legacy surface)
 // Review: primary strategic operating surfaces
 const reviewItems: NavItem[] = [
-  { label: "Commitment Review", path: "/routes", icon: Map },
-  { label: "Movement", path: "/movement", icon: Activity },
-  { label: "Council", path: "/preview/client-refine/workshop?tab=council", icon: MessageSquare },
+  { label: "Commitment Review", path: "/legacy/routes", icon: Map },
+  { label: "Movement", path: "/legacy/movement", icon: Activity },
 ];
 
 // Lenses: analytical depth — supporting interpretation
 const lensItems: NavItem[] = [
-  { label: "Direction", path: "/strategy", icon: Compass },
-  { label: "Positioning", path: "/positioning", icon: FileText },
-  { label: "Customer Research", path: "/job-steps#needs", icon: TrendingUp },
-  { label: "Job Map", path: "/job-steps", icon: Sparkles, flag: "show_job_steps" },
+  { label: "Direction", path: "/legacy/strategy", icon: Compass },
+  { label: "Positioning", path: "/legacy/positioning", icon: FileText },
+  { label: "Customer Research", path: "/legacy/job-steps#needs", icon: TrendingUp },
+  { label: "Job Map", path: "/legacy/job-steps", icon: Sparkles, flag: "show_job_steps" },
 ];
 
 // Workbench: evidence and reference
 const workbenchItems: NavItem[] = [
-  { label: "Evidence", path: "/inputs", icon: ListChecks },
+  { label: "Evidence", path: "/legacy/inputs", icon: ListChecks },
 ];
 
 const coreItems: NavItem[] = [
   { label: "MojoMap", path: "/", icon: Home },
-  { label: "Positioning", path: "/positioning", icon: FileText },
-  { label: "Opportunities", path: "/opportunities", icon: TrendingUp },
-  { label: "Routes", path: "/routes", icon: Map },
-  { label: "Strategy", path: "/strategy", icon: Compass },
+  { label: "Positioning", path: "/legacy/positioning", icon: FileText },
+  { label: "Opportunities", path: "/legacy/opportunities", icon: TrendingUp },
+  { label: "Routes", path: "/legacy/routes", icon: Map },
+  { label: "Strategy", path: "/legacy/strategy", icon: Compass },
 ];
 
 const clientCoreItems: NavItem[] = [
@@ -512,6 +510,13 @@ export default function TopNav() {
             )}
           </div>
 
+          {location.pathname.startsWith("/legacy") && (
+            <div style={{ padding: "4px 12px", background: "rgba(160,100,20,0.18)", borderBottom: "1px solid rgba(160,100,20,0.25)" }}>
+              <p style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#c09060", margin: 0 }}>
+                {sidebarOpen ? "Legacy prototype — not maintained" : "L"}
+              </p>
+            </div>
+          )}
           <div className={`flex-1 space-y-4 overflow-y-auto ${sidebarOpen ? "px-3 py-5" : "px-2 py-3"}`}>
             {isClientView ? (
               renderGroup("Core", visibleCore)
@@ -642,7 +647,7 @@ export default function TopNav() {
                             : "text-[#c7cde4] hover:bg-white/8"
                         }`}
                       >
-                        Refine Preview
+                        MojoMap
                       </button>
                     </div>
                   </div>
@@ -724,8 +729,8 @@ export default function TopNav() {
                     type="button"
                     onClick={() => onClientVersionChange(isRefinePreviewActive ? "current" : "refine_preview")}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 font-mono text-[8px] uppercase tracking-[0.08em] text-[#c7cde4] transition-colors hover:bg-white/8 hover:text-white"
-                    title={`Client Version: ${currentClientVersionLabel}. Click to switch.`}
-                    aria-label={`Client version ${currentClientVersionLabel}. Click to switch.`}
+                    title={`Open MojoMap. Currently: ${currentClientVersionLabel}.`}
+                    aria-label={`Open MojoMap. Currently: ${currentClientVersionLabel}.`}
                   >
                     {isRefinePreviewActive ? "RP" : "CU"}
                   </button>

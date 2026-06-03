@@ -53,7 +53,6 @@ import {
   CLIENT_REFINE_PREVIEW_PATH_ROUTE,
   CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
-  isClientRefinePreviewEnabled,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
 import {
@@ -71,7 +70,8 @@ function InternalViewOnlyRoute({ children }: { children: JSX.Element }) {
 
 function ModeAwareMapRoute() {
   const { mode } = usePresentationMode();
-  return mode === "client" ? <ClientDecisionSystemView /> : <MapView />;
+  if (mode === "client") return <ClientDecisionSystemView />;
+  return <Navigate to={CLIENT_REFINE_PREVIEW_ROUTE} replace />;
 }
 
 function ClientModePathSync() {
@@ -133,7 +133,6 @@ function AdminModeRoute({ children }: { children: JSX.Element }) {
 }
 
 function ClientRefinePreviewRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -144,7 +143,6 @@ function ClientRefinePreviewRoute() {
 }
 
 function ClientRefinePreviewRoutesRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -155,7 +153,6 @@ function ClientRefinePreviewRoutesRoute() {
 }
 
 function ClientRefinePreviewWorkshopRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -166,7 +163,6 @@ function ClientRefinePreviewWorkshopRoute() {
 }
 
 function ClientRefinePreviewPathRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -177,7 +173,6 @@ function ClientRefinePreviewPathRoute() {
 }
 
 function ClientRefinePreviewCompanyRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -188,7 +183,6 @@ function ClientRefinePreviewCompanyRoute() {
 }
 
 function ClientRefinePreviewInboxRoute() {
-  if (!isClientRefinePreviewEnabled()) return <Navigate to="/" replace />;
   return (
     <AdminModeRoute>
       <InternalViewOnlyRoute>
@@ -216,22 +210,36 @@ const App = () => (
                 <Route path="/decision" element={<ClientPhaseAliasRoute phase="focus" fallbackPath="/strategy" />} />
                 <Route path="/execution" element={<ClientPhaseAliasRoute phase="execution" fallbackPath="/opportunities" />} />
                 <Route path="/learning" element={<ClientPhaseAliasRoute phase="execution" fallbackPath="/analytics" />} />
-                <Route path="/inputs" element={<InternalViewOnlyRoute><InputsView /></InternalViewOnlyRoute>} />
-                <Route path="/files" element={<InternalViewOnlyRoute><FilesRepository /></InternalViewOnlyRoute>} />
-                <Route path="/job-steps" element={<InternalViewOnlyRoute><JobStepsView /></InternalViewOnlyRoute>} />
+                {/* Surface A — MojoMap (product) */}
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTE} element={<ClientRefinePreviewRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTES_ROUTE} element={<ClientRefinePreviewRoutesRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE} element={<ClientRefinePreviewWorkshopRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_PATH_ROUTE} element={<ClientRefinePreviewPathRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ROUTE} element={<ClientRefinePreviewCompanyRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_INBOX_ROUTE} element={<ClientRefinePreviewInboxRoute />} />
-                <Route path="/strategy" element={<ModeAwareStrategyRoute />} />
-                <Route path="/opportunities" element={<ModeAwareFocusRoute />} />
-                <Route path="/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />
-                <Route path="/analytics" element={<ModeAwareScoreRoute />} />
-                <Route path="/routes" element={<InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute>} />
-                <Route path="/movement" element={<InternalViewOnlyRoute><MovementView /></InternalViewOnlyRoute>} />
-                <Route path="/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
+                {/* Surface B — Legacy prototype (frozen, not maintained) */}
+                <Route path="/legacy/map" element={<InternalViewOnlyRoute><MapView /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/strategy" element={<ModeAwareStrategyRoute />} />
+                <Route path="/legacy/opportunities" element={<ModeAwareFocusRoute />} />
+                <Route path="/legacy/positioning" element={<InternalViewOnlyRoute><PositioningView /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/analytics" element={<ModeAwareScoreRoute />} />
+                <Route path="/legacy/routes" element={<InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/movement" element={<InternalViewOnlyRoute><MovementView /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
+                <Route path="/legacy/inputs" element={<InternalViewOnlyRoute><InputsView /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/files" element={<InternalViewOnlyRoute><FilesRepository /></InternalViewOnlyRoute>} />
+                <Route path="/legacy/job-steps" element={<InternalViewOnlyRoute><JobStepsView /></InternalViewOnlyRoute>} />
+                {/* Old Surface B paths — redirect to /legacy/* so bookmarks still resolve */}
+                <Route path="/strategy" element={<Navigate to="/legacy/strategy" replace />} />
+                <Route path="/opportunities" element={<Navigate to="/legacy/opportunities" replace />} />
+                <Route path="/positioning" element={<Navigate to="/legacy/positioning" replace />} />
+                <Route path="/analytics" element={<Navigate to="/legacy/analytics" replace />} />
+                <Route path="/routes" element={<Navigate to="/legacy/routes" replace />} />
+                <Route path="/movement" element={<Navigate to="/legacy/movement" replace />} />
+                <Route path="/fmd" element={<Navigate to="/legacy/fmd" replace />} />
+                <Route path="/inputs" element={<Navigate to="/legacy/inputs" replace />} />
+                <Route path="/files" element={<Navigate to="/legacy/files" replace />} />
+                <Route path="/job-steps" element={<Navigate to="/legacy/job-steps" replace />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/admin" element={<AdminModeRoute><AdminDashboard /></AdminModeRoute>} />

@@ -62,6 +62,7 @@ export default function FlowCommitSheet({
         .eq("company_id", companyId)
         .is("claim_id", null)
         .eq("relevance_state", "active")
+        .eq("level", "route")
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(50),

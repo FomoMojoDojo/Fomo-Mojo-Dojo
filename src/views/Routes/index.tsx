@@ -973,13 +973,6 @@ export default function RoutesView() {
           <p className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "#9298B5" }}>
             Commitment Review · {activeCompany?.name || "No company selected"} · {initiativeContext.primaryJourneyTitle}
           </p>
-          <Link
-            to="/preview/client-refine/workshop?tab=council"
-            className="font-mono text-[10px] uppercase tracking-[0.1em] underline"
-            style={{ color: "#6a9e94", opacity: 0.7 }}
-          >
-            Council →
-          </Link>
           <GenericAuditTraceNote
             active={auditMode}
             className="mt-3 max-w-5xl"

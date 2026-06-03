@@ -3516,8 +3516,8 @@ export default function ClientRefinePreviewView() {
       <section className="crpv-page">
         {!hasCompany ? (
           <article className="crpv-empty-state">
-            <p className="cap">Client Refine Preview · Read-only</p>
-            <h1>Select a company to preview the strict refine design.</h1>
+            <p className="cap">MojoMap</p>
+            <h1>Select a company to begin.</h1>
             {companiesLoading ? (
               <p className="crpv-muted">Loading companies…</p>
             ) : companies.length > 0 ? (
@@ -3663,7 +3663,7 @@ export default function ClientRefinePreviewView() {
                             audienceShort={audienceShort}
                             memberCount={memberCount}
                             onGoToRoutes={goToRoutesPreview}
-                            onGoToOpportunities={() => navigate("/opportunities")}
+                            onGoToOpportunities={() => navigate("/legacy/opportunities")}
                             onGoToWorkshop={goToWorkshopInputs}
                             navSlot={null}
                           />
