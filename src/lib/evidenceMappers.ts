@@ -873,7 +873,9 @@ export function mapDifyFileOutputToSignals(args: {
         evidence_type: evidenceType,
         claim_text: claimText,
         evidence_excerpt: asString(findingRecord.evidence) || claimText,
-        topic: asString(findingRecord.mojo_area) || topicFromFramework(framework),
+        topic: signalBand === "organization" && isCompanySubjectStatement(claimText)
+          ? "strategy"
+          : asString(findingRecord.mojo_area) || topicFromFramework(framework),
         framework: framework || null,
         directness: signalBand === "customer" ? customerDirectness : "inferred",
         recency: null,
