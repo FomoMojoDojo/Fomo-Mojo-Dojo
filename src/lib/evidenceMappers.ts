@@ -508,6 +508,22 @@ function detectBandFromSourceMeta(sourceType: string, sourceTitle: string): Sign
   return isCustomerSignalSourceType(sourceType) ? "customer" : "organization";
 }
 
+// Tunable heuristic — conservative by design; prefer precision over recall.
+// Returns true when the leading subject is the company itself (first-person "we/our"
+// or a proper-noun name) paired with an aspirational or strategic verb.
+// These signals belong in the foundation/tensions layer, not in claims.
+function isCompanySubjectStatement(text: string): boolean {
+  const t = text.trim();
+  // First-person "our …" — goal/mission/vision/aspiration declarations
+  if (/^our (?:goal|aim|mission|vision|aspiration|winning aspiration|objective|purpose)\b/i.test(t)) return true;
+  // First-person "we …" — aspirational/strategic verbs
+  if (/^we (?:aim|seek|win|believe|aspire|intend|will|are committed|position|focus|strive)\b/i.test(t)) return true;
+  // Third-person proper-noun company: "Edgewood aims to…" / "Cafe Barra seeks to…"
+  // No 'i' flag on company-name segment so "the company aims to" doesn't match.
+  if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?:aims to|seeks to|is committed to|positions itself|wins by|aspires to|intends to|strives to)\b/.test(t)) return true;
+  return false;
+}
+
 function detectEvidenceType(sourceType: string, signalBand: SignalBand, sourceTitle: string): EvidenceType {
   if (signalBand === "customer") return "customer_validation";
   if (sourceType === "public_baseline_run") return "market_signal";
@@ -798,7 +814,7 @@ export function mapDifyFileOutputToSignals(args: {
       evidence_type: evidenceType,
       claim_text: text,
       evidence_excerpt: text,
-      topic: signalBand === "customer" ? "problem" : "unknown",
+      topic: signalBand === "customer" ? "problem" : (signalBand === "organization" && isCompanySubjectStatement(text) ? "strategy" : "unknown"),
       framework: null,
       directness: signalBand === "customer" ? customerDirectness : "inferred",
       recency: null,
