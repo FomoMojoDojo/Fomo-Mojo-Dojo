@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
-import { transitionClaim } from "@/lib/claimState";
-import type { TensionForGate, ActionCategory } from "@/lib/claimState";
+import { transitionClaim } from "@/lib/claimState/machine";
+import type { TensionForGate, ActionCategory } from "@/lib/claimState/types";
 
 type UnclaimedRoute = {
   id: string;
