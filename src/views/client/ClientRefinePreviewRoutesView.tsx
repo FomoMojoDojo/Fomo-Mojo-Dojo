@@ -69,6 +69,7 @@ import { SignalBasisChip } from "@/components/design-system/SignalBasisChip";
 import { useRouteProposals, type RouteProposalRow } from "@/hooks/useRouteProposals";
 import { useAuth } from "@/hooks/useAuth";
 import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
+import FlowCommitSheet from "@/components/claims/FlowCommitSheet";
 
 // ─── Design tokens (inline-style safe — no CSS var access) ───────────────────
 const R = {
@@ -2480,6 +2481,7 @@ export default function ClientRefinePreviewRoutesView() {
             routeIdParam={routeIdParam}
             onClearRouteIdParam={clearRouteIdParam}
             needs={needs}
+            onCommitSuccess={() => setRoutesRefreshKey((k) => k + 1)}
           />
         </div>
       </div>
@@ -2508,6 +2510,7 @@ export function RoutesOrgPanel({
   nextBestMove,
   needs,
   onRouteActivate,
+  onCommitSuccess,
 }: {
   routes: RouteRow[];
   loading: boolean;
@@ -2518,6 +2521,7 @@ export function RoutesOrgPanel({
   nextBestMove?: NextBestMove;
   needs?: OdiNeedRow[];
   onRouteActivate?: (routeId: string) => void;
+  onCommitSuccess?: () => void;
 }) {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
@@ -2528,7 +2532,9 @@ export function RoutesOrgPanel({
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
-  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id);
+  const [claimsRefreshKey, setClaimsRefreshKey] = useState(0);
+  const [flowCommitClaim, setFlowCommitClaim] = useState<{ id: string; statement: string } | null>(null);
+  const { claims: claimsMap } = useCompanyClaims(activeCompany?.id, claimsRefreshKey);
   const { primary: desiredOutcome } = useDesiredOutcomes(activeCompany?.id);
   const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
   const { landscape: routesSignalLandscape } = useSignalLandscape(activeCompany?.id);
@@ -2710,6 +2716,22 @@ export function RoutesOrgPanel({
   const ungroupedFix     = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "fix"),     [ungroupedRoutes]);
   const ungroupedImprove = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "improve"), [ungroupedRoutes]);
   const ungroupedCreate  = useMemo(() => ungroupedRoutes.filter((r) => String(r.category).toLowerCase() === "create"),  [ungroupedRoutes]);
+
+  const focusClaims = useMemo(
+    () => Array.from(claimsMap.values()).filter((c) => c.state === "focus"),
+    [claimsMap],
+  );
+  const flowClaims = useMemo(
+    () => Array.from(claimsMap.values()).filter((c) => c.state === "flow"),
+    [claimsMap],
+  );
+  const routeByClaimId = useMemo(() => {
+    const map = new Map<string, RouteRow>();
+    for (const r of routes) {
+      if (r.claim_id) map.set(r.claim_id, r);
+    }
+    return map;
+  }, [routes]);
 
   // Live-compute MojoScore from in-memory data (fallback when no DB row exists yet)
   const liveMojoScore = useMemo(() => {
@@ -3101,6 +3123,96 @@ export function RoutesOrgPanel({
         </div>
       ) : null}
 
+      {/* ── Claims: Ready to commit (focus state) ── */}
+      {focusClaims.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint, margin: "0 0 10px" }}>
+            Ready to Commit
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {focusClaims.map((claim) => (
+              <div
+                key={claim.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  padding: "10px 14px",
+                  border: `1px solid ${R.hairline}`,
+                  borderRadius: 6,
+                  background: "#fff",
+                }}
+              >
+                <p style={{ fontFamily: R.sans, fontSize: 13, color: R.ink, margin: 0, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
+                  {claim.statement ?? claim.topic ?? "—"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setFlowCommitClaim({ id: claim.id, statement: claim.statement ?? claim.topic ?? "" })}
+                  style={{
+                    flexShrink: 0,
+                    fontFamily: R.mono,
+                    fontSize: 9,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.1em",
+                    color: "#3A6B28",
+                    background: "none",
+                    border: "1px solid #3A6B28",
+                    borderRadius: 4,
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Commit →
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Claims: In flow (committed) ── */}
+      {flowClaims.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkFaint, margin: "0 0 10px" }}>
+            In Flow
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {flowClaims.map((claim) => {
+              const linkedRoute = routeByClaimId.get(claim.id);
+              return (
+                <div
+                  key={claim.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 12,
+                    padding: "10px 14px",
+                    border: `1px solid ${R.hairline}`,
+                    borderRadius: 6,
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontFamily: R.sans, fontSize: 13, color: R.ink, margin: 0, lineHeight: 1.4 }}>
+                      {claim.statement ?? claim.topic ?? "—"}
+                    </p>
+                    {linkedRoute && (
+                      <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: R.inkFaint, margin: "4px 0 0" }}>
+                        Route · {linkedRoute.title}
+                      </p>
+                    )}
+                  </div>
+                  <ClaimStateBadge state={claim.state} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="crpv-ws-placeholder cap">Loading routes…</div>
       ) : (
@@ -3227,6 +3339,21 @@ export function RoutesOrgPanel({
           onRefresh={() => setDriftBadgeRefreshKey((k) => k + 1)}
           onProposeChanges={() => handleGenerateRouteProposal(driftPanel.surfaceId)}
           proposeChangesLabel="Propose route changes from current evidence"
+        />
+      )}
+
+      {flowCommitClaim && activeCompany?.id && (
+        <FlowCommitSheet
+          open={!!flowCommitClaim}
+          onOpenChange={(o) => { if (!o) setFlowCommitClaim(null); }}
+          claimId={flowCommitClaim.id}
+          claimStatement={flowCommitClaim.statement}
+          companyId={activeCompany.id}
+          onSuccess={() => {
+            setFlowCommitClaim(null);
+            setClaimsRefreshKey((k) => k + 1);
+            onCommitSuccess?.();
+          }}
         />
       )}
     </div>
