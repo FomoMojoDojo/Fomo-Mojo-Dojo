@@ -297,7 +297,7 @@ function summarizeOrganizationEvidence(claimText: string, evidenceText: string) 
       return "Internal planning assumes partner relationships need a minimum volume threshold.";
     }
   }
-  return compactStatement(takeLeadClause(evidenceText || claimText));
+  return compactStatement(takeLeadClause(claimText || evidenceText));
 }
 
 function summarizeOutsideEvidence(text: string) {
@@ -914,6 +914,10 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
       validationStatus: signal.validation_status,
     });
     if (!claimType) return;
+    // Reject aspirations, positioning statements, and strategic beliefs — these are
+    // not unmet-need hypotheses and pollute the commit picker. Manual claims
+    // (raw_payload.source = manual_*) never enter this path so they are unaffected.
+    if (claimType === "strategic_belief" || topic === "positioning" || topic === "strategy") return;
 
     const key = normalizeClaimKey(statement);
     if (!key) return;
