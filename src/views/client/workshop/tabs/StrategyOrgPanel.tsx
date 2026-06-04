@@ -304,7 +304,20 @@ export default function StrategyOrgPanel({
   const { savedField, flash } = useSaveFlash();
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
-  if (!strategy) return <div className="crpv-ws-placeholder">No strategy data yet.</div>;
+  if (!strategy) {
+    // Still render the foundation delta even when no cascade is defined yet.
+    if (companyId) {
+      return (
+        <div className="crpv-ws-section crpv-ws-section-wide">
+          <StrategicDirectionDelta companyId={companyId} />
+          <p style={{ fontFamily: D.mono, fontSize: 10, color: D.inkFaint, marginTop: 12 }}>
+            No strategic cascade yet — add winning aspiration, where to play, and how to win above.
+          </p>
+        </div>
+      );
+    }
+    return <div className="crpv-ws-placeholder">No strategy data yet.</div>;
+  }
 
   // ── Hierarchy layout ───────────────────────────────────────────────────────
   if (hasHierarchy) {
