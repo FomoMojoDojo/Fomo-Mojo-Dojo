@@ -20,6 +20,7 @@ import ClaimStateBadge from "@/components/claims/ClaimStateBadge";
 import type { ClaimState } from "@/lib/claimState";
 import { useDerivedTensions } from "@/hooks/useDerivedTensions";
 import TensionBlock from "@/components/tensions/TensionBlock";
+import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
 import {
   OUTCOME_LEVEL_META,
   OUTCOME_LEVELS,
@@ -1545,6 +1546,10 @@ export default function StrategyView() {
               <section style={{ borderTop: `1px solid ${c.lineFaint}`, paddingTop: 16, paddingBottom: 16 }}>
                 <TensionBlock tensions={strategyTensions} context="strategy" />
               </section>
+            )}
+
+            {activeCompany?.id && (
+              <StrategicDirectionDelta companyId={activeCompany.id} />
             )}
 
             <section style={{ borderTop: `1px solid ${c.line}`, paddingTop: 32, paddingBottom: 24 }}>
