@@ -258,45 +258,7 @@ function summarizeOrganizationEvidence(claimText: string, evidenceText: string) 
   if (META_ANALYSIS_PATTERNS.some((pattern) => pattern.test(claimText)) || META_ANALYSIS_PATTERNS.some((pattern) => pattern.test(evidenceText))) {
     return null;
   }
-  if (looksLikeFeatureList(claimText) || looksLikeFeatureList(evidenceText)) {
-    if (/(barra roast method|partner fit profile|last mile excellence)/.test(evidence)) {
-      return "Cafe Barra's differentiation rests on roast method, partner selectivity, and preparation standards.";
-    }
-    return null;
-  }
-  if (/(curiosity labs|educational sessions)/.test(evidence)) {
-    return "Cafe Barra uses education sessions to reinforce customer experience and partner support.";
-  }
-  if (/(prospective partnerships|business allies|not just another vendor)/.test(evidence)) {
-    return "Cafe Barra frames B2B relationships as partnerships rather than vendor transactions.";
-  }
-
-  if (/(owner led|story oriented|staff willing to train|sufficient volume|local brand ambition)/.test(evidence)) {
-    return "Partner fit is defined by owner-led ambition, training willingness, and sustainable volume.";
-  }
-  if (/(sufficient volume|volume threshold|sustain relationship)/.test(evidence)) {
-    return "Sustainable partnerships appear to require a minimum volume threshold.";
-  }
-  if (/(roast|batch|recipe|flavor)/.test(evidence) && /(adapt|adjust|variation|variability|consisten)/.test(evidence)) {
-    return "Batch variability is creating recipe-adjustment burden inside coffee operations.";
-  }
-  if (/(support|documentation|service model|detailed support)/.test(evidence)) {
-    return "Partnership support currently depends on hands-on service and documentation.";
-  }
-  if (/(partner|position|brand|differenti)/.test(evidence) && /(right partners|matters most|not the biggest)/.test(evidence)) {
-    return "Internal strategy favors depth with selected partners over broad wholesale volume.";
-  }
-  if (IMPERATIVE_LEAD_PATTERNS.test(claimText)) {
-    if (/(differentiat|distinctive coffee offering)/.test(claim)) {
-      return "Differentiation is being framed around a distinctive coffee offering.";
-    }
-    if (/(relevance|impact|strategic partnerships)/.test(claim)) {
-      return "Internal strategy assumes selective partnerships will strengthen brand relevance.";
-    }
-    if (/(threshold|sufficient volume)/.test(claim)) {
-      return "Internal planning assumes partner relationships need a minimum volume threshold.";
-    }
-  }
+  if (looksLikeFeatureList(claimText) || looksLikeFeatureList(evidenceText)) return null;
   return compactStatement(takeLeadClause(claimText || evidenceText));
 }
 
