@@ -518,9 +518,10 @@ function isCompanySubjectStatement(text: string): boolean {
   if (/^our (?:goal|aim|mission|vision|aspiration|winning aspiration|objective|purpose)\b/i.test(t)) return true;
   // First-person "we …" — aspirational/strategic verbs
   if (/^we (?:aim|seek|win|believe|aspire|intend|will|are committed|position|focus|strive)\b/i.test(t)) return true;
-  // Third-person proper-noun company: "Edgewood aims to…" / "Cafe Barra seeks to…"
+  // Third-person proper-noun company: "Edgewood aims to…" / "Edgewood Center for Children and Families aims to…"
+  // Lowercase connectors (for/of/and/&/the/at/in/with) allowed between capitalized name words.
   // No 'i' flag on company-name segment so "the company aims to" doesn't match.
-  if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?:aims to|seeks to|is committed to|positions itself|wins by|aspires to|intends to|strives to)\b/.test(t)) return true;
+  if (/^(?:[A-Z][a-z]+)(?:\s+(?:[A-Z][a-z]+|for|of|and|&|the|at|in|with)){0,8}\s+(?:aims to|seeks to|is committed to|positions itself|wins by|aspires to|intends to|strives to)\b/.test(t)) return true;
   return false;
 }
 
