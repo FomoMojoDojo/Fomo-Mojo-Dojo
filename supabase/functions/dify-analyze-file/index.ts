@@ -602,6 +602,9 @@ function parseSseEventBlock(block: string): { event?: string; payload?: Record<s
   }
 }
 
+// Reads the Dify SSE stream only until workflow_run_id appears in the first
+// workflow_started event, then cancels the reader and returns immediately.
+// Does NOT drain the full stream — the background monitor polls for completion.
 async function startDifyWorkflowStreaming(params: {
   difyApiKey: string;
   difyEndpoint: string;
@@ -609,13 +612,15 @@ async function startDifyWorkflowStreaming(params: {
 }) {
   const { difyApiKey, difyEndpoint, difyRequestBody } = params;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("startup-timeout"), DIFY_STARTUP_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), DIFY_STARTUP_TIMEOUT_MS);
   try {
     const response = await fetch(difyEndpoint, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${difyApiKey}`,
         "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json",
+        "Accept-Encoding": "identity",
       },
       body: JSON.stringify({ ...difyRequestBody, response_mode: "streaming" }),
       signal: controller.signal,
@@ -635,33 +640,59 @@ async function startDifyWorkflowStreaming(params: {
     let buffer = "";
     let workflowRunId = "";
     let taskId = "";
+    let chunkCount = 0;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\n\n+/);
-      buffer = blocks.pop() ?? "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunkCount += 1;
+        const chunkText = decoder.decode(value, { stream: true });
+        if (chunkCount <= 3) {
+          console.log(
+            "[dify-analyze-file] Dify startup chunk:", chunkCount,
+            "| bytes:", value.length,
+            "| preview:", JSON.stringify(chunkText.slice(0, 240)),
+          );
+        }
+        buffer += chunkText;
+        const blocks = buffer.split(/\n\n+/);
+        buffer = blocks.pop() ?? "";
 
-      for (const block of blocks) {
-        const parsed = parseSseEventBlock(block);
-        const payload = parsed?.payload;
-        if (!payload) continue;
+        for (const block of blocks) {
+          const parsed = parseSseEventBlock(block);
+          const payload = parsed?.payload;
+          if (!payload) continue;
 
-        workflowRunId ||= String(
-          payload.workflow_run_id ??
-          (asRecord(payload.data)?.workflow_run_id ?? "")
-        ).trim();
-        taskId ||= String(
-          payload.task_id ??
-          (asRecord(payload.data)?.task_id ?? "")
-        ).trim();
+          workflowRunId ||= String(
+            payload.workflow_run_id ??
+            (asRecord(payload.data)?.workflow_run_id ?? "")
+          ).trim();
+          taskId ||= String(
+            payload.task_id ??
+            (asRecord(payload.data)?.task_id ?? "")
+          ).trim();
 
-        if (workflowRunId) {
-          controller.abort("run-id-captured");
-          return { workflowRunId, taskId };
+          if (workflowRunId) {
+            // Stop reading immediately — do NOT drain to workflow_finished.
+            // The background monitor polls GET /workflows/run/<id> for completion.
+            try {
+              await reader.cancel();
+            } catch {
+              // Best-effort connection cleanup; we already have the run ID.
+            }
+            return { workflowRunId, taskId };
+          }
         }
       }
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      // Startup timeout fired — no run ID captured in time.
+      if (msg.includes("AbortError") || msg.includes("abort") || controller.signal.aborted) {
+        throw new Error(`Dify startup timed out after ${DIFY_STARTUP_TIMEOUT_MS / 1000}s — no workflow_run_id received`);
+      }
+      throw err;
     }
 
     if (!workflowRunId) {
@@ -669,12 +700,6 @@ async function startDifyWorkflowStreaming(params: {
     }
 
     return { workflowRunId, taskId };
-  } catch (error) {
-    const message = String((error as Error)?.message ?? error);
-    if (message.includes("run-id-captured")) {
-      return { workflowRunId: "", taskId: "" };
-    }
-    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -864,14 +889,21 @@ async function startDifyRun(params: PersistContext) {
     throw new Error(`Failed to save Dify run identifiers: ${error.message}`);
   }
 
-  waitUntil(
-    monitorDifyRunInBackground({
-      supabase,
-      difyApiKey,
-      difyBaseUrl,
-      proposalId,
-    }),
-  );
+  const monitorPromise = monitorDifyRunInBackground({
+    supabase,
+    difyApiKey,
+    difyBaseUrl,
+    proposalId,
+  }).catch(async (err) => {
+    const msg = String((err as Error)?.message ?? err);
+    console.error("[dify-analyze-file] monitor error:", msg);
+    await markProposalFailed({ supabase, proposalId, summary: "Background monitor error", error: msg });
+  });
+
+  const registered = waitUntil(monitorPromise);
+  if (!registered) {
+    console.log("[dify-analyze-file] local dev: waitUntil unavailable; monitor running as detached promise (server is long-lived)");
+  }
 
   return { workflowRunId, taskId };
 }
