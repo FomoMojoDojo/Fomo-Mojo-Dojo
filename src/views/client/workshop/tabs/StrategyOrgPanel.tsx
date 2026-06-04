@@ -16,6 +16,7 @@ import type { EngagementPhase } from "@/lib/engagementPhase";
 import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 import type { ClaimRow } from "@/lib/claims/useCompanyClaims";
 import type { CascadeProposalRow } from "@/hooks/useCascadeProposal";
+import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
 
 // ── Design tokens (mirrors PositioningOrgPanel hierarchy tokens) ───────────────
 const P = {
@@ -268,6 +269,7 @@ export default function StrategyOrgPanel({
   onCheckSurfaceDrift,
   checkingSurfaceId,
   companyName,
+  companyId,
 }: {
   strategy: StrategyCascade | null;
   loading: boolean;
@@ -296,6 +298,7 @@ export default function StrategyOrgPanel({
   onCheckSurfaceDrift?: (surfaceType: string, surfaceId: string) => void;
   checkingSurfaceId?: string | null;
   companyName?: string;
+  companyId?: string;
 }) {
   const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
@@ -369,6 +372,8 @@ export default function StrategyOrgPanel({
               reEvalProgress={reEvalProgress}
             />
           )}
+
+          {companyId && <StrategicDirectionDelta companyId={companyId} />}
 
           {/* § 01 WINNING ASPIRATION */}
           <div style={{ marginBottom: 48 }}>
@@ -559,6 +564,8 @@ export default function StrategyOrgPanel({
           reEvalProgress={reEvalProgress}
         />
       )}
+
+      {companyId && <StrategicDirectionDelta companyId={companyId} />}
 
       <StatementField
         label="Where you're headed"

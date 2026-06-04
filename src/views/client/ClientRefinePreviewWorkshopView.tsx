@@ -1366,6 +1366,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onCheckSurfaceDrift={handleCheckSurfaceDrift}
         checkingSurfaceId={driftCheckingSurfaceId}
         companyName={activeCompany?.name}
+        companyId={companyId}
       />
       );
     }
