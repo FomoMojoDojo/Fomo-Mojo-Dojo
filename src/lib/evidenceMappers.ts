@@ -836,7 +836,11 @@ export function mapDifyFileOutputToSignals(args: {
         evidence_type: evidenceType,
         claim_text: claimText,
         evidence_excerpt: asString(findingRecord.evidence) || claimText,
-        topic: signalBand === "organization" && isCompanySubjectStatement(claimText)
+        // D+A: org-band + discovery framework = company recommendation, not customer need.
+        // Re-topic to "strategy" so Bug-2 excludes from claims; signal is retained in DB.
+        topic: signalBand === "organization" &&
+            (isCompanySubjectStatement(claimText) ||
+              framework.includes("torres") || framework.includes("jtbd") || framework.includes("odi"))
           ? "strategy"
           : asString(findingRecord.mojo_area) || topicFromFramework(framework),
         framework: framework || null,
