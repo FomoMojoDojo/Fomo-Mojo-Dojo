@@ -2,7 +2,7 @@ import { type DragEvent, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useCompany } from '@/hooks/useCompany';
-import { useInputs, useUploadInputFile } from '@/hooks/useInputs';
+import { useInputs, useUploadInputFile, useSeedInputs } from '@/hooks/useInputs';
 import type { InputItem } from '@/lib/types';
 import { FILE_CATEGORIES, type FileCategory } from '@/lib/fileCategories';
 import { supabase } from '@/integrations/supabase/client';
@@ -419,8 +419,20 @@ export default function FileUploadDialog({
   const [alignmentRunning, setAlignmentRunning] = useState(false);
   const queryClient = useQueryClient();
   const uploadMutation = useUploadInputFile();
+  const seedMutation = useSeedInputs();
   const { activeCompany } = useCompany();
   const { query } = useInputs(companyId);
+  const seedCompanyId = companyId ?? activeCompany?.id ?? null;
+  const handleSeedInputs = async () => {
+    if (!seedCompanyId) { toast.error('No company selected'); return; }
+    try {
+      const result = await seedMutation.mutateAsync({ companyId: seedCompanyId });
+      await query.refetch();
+      toast.success(result.inserted > 0 ? `${result.inserted} input areas set up` : 'Inputs already set up');
+    } catch (e) {
+      toast.error(`Could not set up inputs — ${(e as Error)?.message ?? 'unknown error'}`);
+    }
+  };
   const inputs = useMemo(() => query.data ?? [], [query.data]);
   const eligibleInputs = useMemo(() => {
     const filtered = inputs.filter((input) => !isInputNotApplicable(input));
@@ -863,8 +875,18 @@ export default function FileUploadDialog({
                 Missing Inputs
               </div>
               <p className="mt-1 font-sans text-[13px] leading-relaxed" style={{ color: '#6c4638' }}>
-                This company has no input rows yet. Run AI research first, then upload files.
+                This company has no input areas yet. Set them up to start uploading files —
+                no AI research required.
               </p>
+              <button
+                type="button"
+                onClick={handleSeedInputs}
+                disabled={seedMutation.isPending || !seedCompanyId}
+                className="mt-2 inline-flex items-center gap-2 border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: '#915e46', color: '#915e46' }}
+              >
+                {seedMutation.isPending ? 'Setting up…' : 'Set up inputs'}
+              </button>
             </div>
           ) : null}
 

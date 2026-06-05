@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { InputItem, InputFile } from '@/lib/types';
 import { useCompany } from '@/hooks/useCompany';
 import { deriveInputImpact } from '@/lib/scoring/inputImpact';
+import { STANDARD_INPUT_AREAS } from '@/lib/inputTaxonomy';
 
 type InputRow = {
   id: string;
@@ -288,6 +289,50 @@ export function useToggleSubitem() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['inputs'] }),
+  });
+}
+
+// Non-destructive scaffold: insert the standard input areas for a company that has
+// none (or is missing some), without running research-company. Idempotent — only
+// inserts keys not already present. See src/lib/inputTaxonomy.ts.
+export function useSeedInputs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ companyId }: { companyId: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not signed in');
+
+      const { data: existing, error: readErr } = await supabase
+        .from('inputs')
+        .select('input_key')
+        .eq('company_id', companyId);
+      if (readErr) throw readErr;
+
+      const present = new Set((existing ?? []).map((r) => String(r.input_key)));
+      const toInsert = STANDARD_INPUT_AREAS
+        .filter((area) => !present.has(area.input_key))
+        .map((area) => ({
+          company_id: companyId,
+          user_id: user.id,
+          input_key: area.input_key,
+          input_label: area.input_label,
+          group_key: area.group_key,
+          group_label: area.group_label,
+          description: '',
+          status: 'not_started' as const,
+          completeness: 0,
+        }));
+
+      if (toInsert.length === 0) return { inserted: 0 };
+
+      const { error: insertErr } = await supabase.from('inputs').insert(toInsert);
+      if (insertErr) throw insertErr;
+      return { inserted: toInsert.length };
+    },
+    onSuccess: (_data, { companyId }) => {
+      qc.invalidateQueries({ queryKey: ['inputs', companyId] });
+      qc.invalidateQueries({ queryKey: ['inputs'] });
+    },
   });
 }
 
