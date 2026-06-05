@@ -42,13 +42,19 @@ export function computeFoundationStatus(
   const topLevelRoutes = routes.filter((r) => r.level === "route");
   const directionCount = topLevelRoutes.length;
 
+  // wrapPresent grounds Foundation on the actual strategic bets (insight-bearing
+  // legs), not the empty parent groupings. A bet is "wrapped" when it carries a
+  // what_would_have_to_be_true (win-conditions, derived from movement_condition).
+  // rejected_alternatives is intentionally NOT required — there is no honest source
+  // for it (it would have to be LLM-generated/fabricated). Only legs that carry
+  // route_insights_json are gated; ungrounded legs (e.g. operational chores, or an
+  // intended-but-ungrounded bet) are exempt by design.
+  const insightLegs = routes.filter(
+    (r) => r.level === "leg" && r.route_insights_json != null,
+  );
   const wrapPresent =
-    topLevelRoutes.length > 0 &&
-    topLevelRoutes.every(
-      (r) =>
-        (r.rejected_alternatives?.length ?? 0) > 0 &&
-        (r.what_would_have_to_be_true?.length ?? 0) > 0,
-    );
+    insightLegs.length > 0 &&
+    insightLegs.every((r) => (r.what_would_have_to_be_true?.length ?? 0) > 0);
 
   const leaningTitle = directionEvidence?.leaning
     ? (directionEvidence.directions.find((d) => d.id === directionEvidence.leaning)?.title ?? null)
