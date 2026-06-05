@@ -379,7 +379,14 @@ export default function ClientRefinePreviewView() {
   let sectionVisibility = phaseSectionVis;
 
   // ── Hierarchy-aware computed values ────────────────────────────────────────
-  const hasHierarchy = useMemo(() => routes.some((r) => r.level === "route"), [routes]);
+  // White DIAGNOSE design (HomepageHierarchy) renders for EVERY company, regardless of
+  // route hierarchy. `hasHierarchy` is the master gate used throughout this view; forcing
+  // it true routes every company through the white sidebar branch and makes the gray
+  // "Strategic field" fallback (all the `!hasHierarchy` branches) unreachable.
+  // computeMojoScore handles empty data (zeroed result) and HomepageHierarchy degrades
+  // gracefully, so thin/empty companies (e.g. zero-route Edgewood) get an honest early state.
+  // Cafe Barra (3 route-level routes) was already `true`, so it is unchanged.
+  const hasHierarchy = true;
   const ENGAGEMENT_DAY = useMemo((): number | null => {
     const startAt = activeCompany?.engagement_started_at;
     if (!startAt) return null;
@@ -397,7 +404,9 @@ export default function ClientRefinePreviewView() {
     return states[0] ?? null;
   }, [hasHierarchy, topLevelRoutes, claimsMap]);
   const liveMojoScore = useMemo((): MojoScoreResult | null => {
-    if (!hasHierarchy || !activeCompany?.id) return null;
+    // Score computes for every company now (computeMojoScore handles empty data);
+    // null only when there is no active company.
+    if (!activeCompany?.id) return null;
     return computeMojoScore({
       companyId: activeCompany.id,
       claims: Array.from(claimsMap.values()).map((c) => ({
