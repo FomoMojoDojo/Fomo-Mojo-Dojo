@@ -2526,8 +2526,6 @@ async function runConsistencyReview(opts: {
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
-    `Positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
-    `Strategy:\n${JSON.stringify(opts.strategy)}\n\n` +
     `Review the full draft bundle for cross-artifact consistency.`;
 
   const systemText =
@@ -2536,9 +2534,7 @@ async function runConsistencyReview(opts: {
     `Your job is to review, not rewrite.\n` +
     `Check for:\n` +
     `- strategic problem alignment: drafts should clearly connect to client-stated problems\n` +
-    `- buyer / chooser / user consistency across baseline, journeys, ODI, positioning, and strategy\n` +
-    `- market category consistency across baseline, positioning, and strategy\n` +
-    `- market category phrasing anchored to a standard, well-known category (not bespoke jargon)\n` +
+    `- buyer / chooser / user consistency across baseline, journeys, and ODI\n` +
     `- opportunity rows correctly tied to journey steps\n` +
     `- routes that meaningfully connect to opportunities and job-step gaps\n` +
     `- any sign of wrong-company drift, adjacent-market drift, or contradictory language\n` +
@@ -2624,8 +2620,6 @@ async function runEvidenceReview(opts: {
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
-    `Positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
-    `Strategy:\n${JSON.stringify(opts.strategy)}\n\n` +
     `Review the draft bundle for evidence grounding and overclaiming.`;
 
   const systemText =
