@@ -31,6 +31,11 @@ import {
   type EvidenceLevel,
 } from "../_shared/desiredOutcome.ts";
 import {
+  getIndustryStepAnchors,
+  anchorsToPromptBlock,
+  inferStandardMarketCategory as inferAnchorCategory,
+} from "../_shared/industryStepAnchors.ts";
+import {
   buildRouteWhyThisMattersNarrative,
   rewriteRouteLanguage,
 } from "../../../src/lib/routeLanguage.ts";
@@ -5611,6 +5616,52 @@ Deno.serve(async (req) => {
     const journeyFrameworkBrief = buildFrameworkBrief("journeys", journeyFrameworks);
     const journeyFrameworkKeys = journeyFrameworks.map((framework) => framework.key);
 
+    // ── ONB-3: thin-evidence cold-start industry-standard ODI anchoring ──
+    // With no uploaded internal evidence (external_only tier) the customer job
+    // map cannot be honestly evidenced, which previously left all 8 steps
+    // designed=no/gap and blocked the consistency gate. Instead, anchor the
+    // customer checkpoints to the industry-standard universal ODI job map
+    // (flagged implied / to-validate) so the bootstrap yields a usable map.
+    // Evidence-present companies keep honest-gap behavior unchanged.
+    const thinEvidenceColdStart = researchContextMode === "public_baseline";
+    const anchorCategory = thinEvidenceColdStart
+      ? inferAnchorCategory(
+          company_name,
+          website,
+          (effectiveBaselineResultJson as { category_archetype?: unknown } | null)?.category_archetype,
+        )
+      : "";
+    const industryAnchors = anchorCategory ? getIndustryStepAnchors(anchorCategory) : null;
+    const BARE_UNIVERSAL_JOB_MAP =
+      `1 (define): Determine what a successful outcome looks like and which criteria matter most.\n` +
+      `2 (locate): Find and gather the options, information, and inputs needed to proceed.\n` +
+      `3 (prepare): Set up and organize what is needed before the core work begins.\n` +
+      `4 (confirm): Verify readiness and that the right inputs and conditions are in place.\n` +
+      `5 (execute): Carry out the core task that produces the intended outcome.\n` +
+      `6 (monitor): Track live progress and detect whether the job is on track.\n` +
+      `7 (modify): Adjust or correct course when results deviate from the goal.\n` +
+      `8 (conclude): Finish, confirm the outcome was achieved, and decide what comes next.`;
+    const anchorBlock = industryAnchors ? anchorsToPromptBlock(industryAnchors) : BARE_UNIVERSAL_JOB_MAP;
+    const anchorSourceNote = industryAnchors
+      ? `industry-standard ODI job map for ${anchorCategory}`
+      : `industry-standard universal ODI job map`;
+
+    // Step-grounding rules: anchored (thin cold start) vs honest-gap (default).
+    const jobStepGroundingRules = thinEvidenceColdStart
+      ? `Evidence is thin for this company (no uploaded internal evidence). For CUSTOMER journeys, anchor each of the ${JTBD_CHECKPOINT_COUNT} checkpoints to the ${anchorSourceNote} hypotheses below — adapt the wording to this company's job executor and category, but keep the job-progression intent of each checkpoint:\n` +
+        `${anchorBlock}\n` +
+        `- Customer journey steps: set designed=true, has_gap=false, gap_note="", evidence_status=implied, evidence_confidence at most 50, and evidence_basis="${anchorSourceNote}; to validate with customer evidence"\n` +
+        `- These customer steps are industry-standard hypotheses TO VALIDATE — realistic for the category, not asserted as company-proven facts\n` +
+        `- For non-customer journeys, keep honest evidence marking: designed=false and has_gap=true when evidence is unclear\n`
+      : `- designed=true only when the step appears intentionally supported and evidence_status is evidenced or implied\n` +
+        `- designed=false when evidence_status is unclear\n` +
+        `- has_gap=true when there is a visible weakness, missing capability, or unclear handoff\n` +
+        `- if has_gap=false, set gap_note to an empty string\n`;
+
+    const jobStepUserClosing = thinEvidenceColdStart
+      ? `For customer journeys, anchor each checkpoint to the industry-standard hypothesis above; set designed=true, has_gap=false, evidence_status=implied, and treat them as industry-standard steps to validate.\n`
+      : `Mark designed=false and has_gap=true when evidence remains unclear.\n`;
+
     const journeysSystemText =
       `You are generating an executive-quality journey map for a strategy platform.\n` +
       `Return ONLY valid JSON that matches the schema. No prose.\n` +
@@ -5634,10 +5685,7 @@ Deno.serve(async (req) => {
       `- evidence_basis 8–24 words explaining the evidence or inference behind the step status\n` +
       evidenceConfidenceConstraint +
       `- gap_note 6–18 words and specific when there is a gap\n` +
-      `- designed=true only when the step appears intentionally supported and evidence_status is evidenced or implied\n` +
-      `- designed=false when evidence_status is unclear\n` +
-      `- has_gap=true when there is a visible weakness, missing capability, or unclear handoff\n` +
-      `- if has_gap=false, set gap_note to an empty string\n`;
+      jobStepGroundingRules;
 
     const journeysUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -5649,7 +5697,7 @@ Deno.serve(async (req) => {
       `Non-customer journeys can include 6-8 ODI-style steps, numbered 1..N.\n` +
       `Make the sequence realistic for this exact company category and audience.\n` +
       `Do not use generic labels like "Engagement" or "Operations" unless they are qualified.\n` +
-      `Mark designed=false and has_gap=true when evidence remains unclear.\n`;
+      jobStepUserClosing;
 
     const journeysResult = await callOpenAIJSON({
       apiKey: openaiKey,
