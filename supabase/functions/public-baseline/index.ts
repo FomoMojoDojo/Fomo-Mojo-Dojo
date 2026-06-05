@@ -1684,6 +1684,10 @@ Deno.serve(async (req) => {
 
     const company_name = String(body?.company_name || companyRow?.name || "").trim();
     const website = String(body?.website || companyRow?.website || "").trim();
+    // When true, run the outside baseline as a pure MONITOR — do not chain into
+    // run-mojo-analysis (which would delete+regenerate the 'customer' journey).
+    // Default false → cold-start/bootstrap callers still chain as before.
+    const skip_mojo_analysis = body?.skip_mojo_analysis === true;
     const sourceFilters = normalizePublicSourceFilters(
       body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
     );
@@ -2569,11 +2573,15 @@ Deno.serve(async (req) => {
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
 
-    waitUntil(triggerMojoAnalysis(
-      company_id,
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    ));
+    if (skip_mojo_analysis) {
+      console.log("[baseline] skip_mojo_analysis=true — monitor-only run, not chaining run-mojo-analysis");
+    } else {
+      waitUntil(triggerMojoAnalysis(
+        company_id,
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      ));
+    }
 
     return json({
       message: "Public baseline complete",
