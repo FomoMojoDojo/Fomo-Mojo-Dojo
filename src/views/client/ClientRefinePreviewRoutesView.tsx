@@ -1786,6 +1786,7 @@ function LegRow({
   const showLegStateTag = legClaimState !== null && legClaimState !== routeClaimState;
   const steps    = (Array.isArray(leg.steps_json)    ? leg.steps_json    : []) as DetailItem[];
   const evidence = (Array.isArray(leg.evidence_json) ? leg.evidence_json : []) as DetailItem[];
+  const conditions = (Array.isArray(leg.what_would_have_to_be_true) ? leg.what_would_have_to_be_true : []) as WrapCond[];
   const completedSteps = steps.filter((s) => s.status === "complete").length;
 
   return (
@@ -1877,6 +1878,30 @@ function LegRow({
                       Still needed: {rationale.mustBecomeTrue}
                     </p>
                   )}
+                </div>
+              )}
+              {conditions.length > 0 && (
+                <div>
+                  <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 8px" }}>
+                    What Would Have to Be True
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {conditions.map((cond, i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                        <span style={{
+                          width: 11, height: 11, borderRadius: 2, flexShrink: 0, marginTop: 3,
+                          border: `1.5px solid ${cond.satisfied_flag ? R.signal : R.hairline}`,
+                          background: cond.satisfied_flag ? R.signal : "transparent",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          {cond.satisfied_flag && <span style={{ color: "#fff", fontSize: 7 }}>✓</span>}
+                        </span>
+                        <span style={{ fontFamily: R.sans, fontSize: 13, color: cond.satisfied_flag ? "rgba(17,17,17,0.55)" : R.ink, lineHeight: 1.45 }}>
+                          {cond.condition}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               {steps.length > 0 && (
@@ -1974,8 +1999,10 @@ function HierarchyRouteSection({
   const claimState = route.claim_id
     ? ((claimsMap?.get(route.claim_id)?.state ?? null) as ClaimState | null)
     : null;
-  const alternatives  = Array.isArray(route.rejected_alternatives)      ? route.rejected_alternatives      : [];
-  const conditions    = Array.isArray(route.what_would_have_to_be_true) ? route.what_would_have_to_be_true : [];
+  // FND-4 (display-only): WRAP grounding lives on the bets (legs), not the parent
+  // grouping — its own field is empty. Aggregate the chip counts from the legs prop.
+  const alternatives  = legs.flatMap((l) => (Array.isArray(l.rejected_alternatives) ? l.rejected_alternatives : []));
+  const conditions    = legs.flatMap((l) => (Array.isArray(l.what_would_have_to_be_true) ? l.what_would_have_to_be_true : []));
   const metConditions = conditions.filter((c: WrapCond) => c.satisfied_flag).length;
   const isCommitted   = legs.some((l) => l.id === selectedRouteId);
   const isMonitored   = claimState === "diagnose" || claimState === "focus" || claimState === "flow";
