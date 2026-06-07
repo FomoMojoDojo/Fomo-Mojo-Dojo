@@ -885,7 +885,7 @@ function inferSourceType(url: string, title = "", snippet = ""): string {
   const text = `${title} ${snippet}`.toLowerCase();
 
   if (hostMatchesAnyDomain(host, ["glassdoor.com", "indeed.com"])) return "employee_review";
-  if (hostMatchesAnyDomain(host, ["g2.com", "capterra.com", "trustpilot.com", "yelp.com"])) return "customer_review";
+  if (hostMatchesAnyDomain(host, ["g2.com", "capterra.com", "trustpilot.com", "yelp.com", "homeadvisor.com", "angi.com", "angieslist.com", "thumbtack.com", "bbb.org", "houzz.com", "porch.com"])) return "customer_review";
   if (hostMatchesAnyDomain(host, ["reddit.com", "quora.com"])) return "community_discussion";
   if (hostMatchesAnyDomain(host, ["linkedin.com"])) return "profile_or_company_page";
   if (hostMatchesAnyDomain(host, ["x.com", "twitter.com", "facebook.com", "instagram.com", "youtube.com", "youtu.be", "tiktok.com", "threads.net"])) return "profile_or_company_page";
@@ -1428,6 +1428,125 @@ async function callOpenAI(opts: {
     : new Error(String(lastModelError || "OpenAI call failed after retries and model fallback."));
 }
 
+// OE-1: defensively extract a JSON object from model text (strip fences, slice braces).
+function parseJsonObjectDefensive(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+  let t = String(text).trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  try {
+    const o = JSON.parse(t);
+    if (o && typeof o === "object") return o as Record<string, unknown>;
+  } catch (_) { /* fall through */ }
+  const first = t.indexOf("{");
+  const last = t.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try {
+      const o = JSON.parse(t.slice(first, last + 1));
+      if (o && typeof o === "object") return o as Record<string, unknown>;
+    } catch (_) { /* give up */ }
+  }
+  return null;
+}
+
+// OE-1: Claude web-search synthesis. Collapses discovery+synthesis — Claude runs its
+// own web_search to surface GENUINE outside voices (employee/customer reviews, community)
+// that the searx→crawl→OpenAI path yields at zero today. Returns the SAME result_json
+// schema the OpenAI path emits. External cloud model only (api.anthropic.com) → PUBLIC
+// boundary preserved; no local/Dify touch. Deliberately NOT handed the crawl evidence —
+// isolates the outside-voice yield test.
+async function callClaudeWebSearch(opts: {
+  apiKey: string;
+  model: string;
+  companyName: string;
+  website: string;
+  domain: string;
+  resolvedCategory?: string;
+}): Promise<Record<string, unknown>> {
+  const schemaHint =
+    `{\n` +
+    `  "category_archetype": "<string>",\n` +
+    `  "lens_card": { "primary_buyer","chooser","user","switching_costs","adoption_constraints","value_chain","risk_surface","economic_engine": "<string each>" },\n` +
+    `  "evidence_ledger": [ { "url":"<real url>","source_type":"<type>","date":"YYYY-MM-DD","snippet":"<string>","bucket":"<string>","signal_strength":"weak|medium|strong","confidence":<0-100 int> } ],\n` +
+    `  "top_hypotheses": ["<string>"],\n` +
+    `  "open_questions": ["<string>"],\n` +
+    `  "market_initiative_success": { "proven":<bool>,"low_pct":<int>,"typical_pct":<int>,"high_pct":<int>,"source":"<string>","as_of":"<string>","confidence":<0-100 int>,"evidence_urls":["<url>"],"evidence_snippets":["<string>"] },\n` +
+    `  "message_alignment": { "company_claim_posture","outside_voice_posture","alignment_status","alignment_summary": "<string each>" },\n` +
+    `  "outside_voice_signals": [ { "perspective":"<string>","source_type":"<type>","signal":"<string>","sentiment":"<string>","alignment":"<string>","url":"<real url>","confidence":<0-100 int> } ]\n` +
+    `}`;
+
+  const prompt =
+    `You are an outside-in strategy analyst. Research the company "${opts.companyName}" ` +
+    `(website: ${opts.website || opts.domain}) comprehensively using web search.\n` +
+    (opts.resolvedCategory ? `Likely category: ${opts.resolvedCategory}.\n` : "") +
+    `Cover BOTH the company's own public material AND — most importantly — GENUINE OUTSIDE VOICES. ` +
+    `Run explicit searches against:\n` +
+    `- employee reviews: glassdoor.com, indeed.com\n` +
+    `- customer reviews: g2.com, trustpilot.com, capterra.com, yelp.com\n` +
+    `- community discussion: reddit.com, quora.com, industry forums\n` +
+    `- third-party profiles / news: crunchbase.com, press coverage\n` +
+    `Prioritise surfacing real third-party sentiment over the company's own claims.\n\n` +
+    `Then output a SINGLE JSON object — and NOTHING else — matching exactly this shape:\n${schemaHint}\n\n` +
+    `Rules:\n` +
+    `- Use ONLY facts found via your web searches. Do NOT fabricate reviews, quotes, ratings, or URLs.\n` +
+    `- Every outside_voice_signals[].url and evidence_ledger[].url MUST be a real URL returned by a search.\n` +
+    `- source_type ∈ {employee_review, customer_review, community_discussion, third_party_profile, profile_or_company_page, news_signal, review_signal, public_web}.\n` +
+    `- For genuine third-party voices set bucket="outside_voice_signal".\n` +
+    `- Include ≥1 employee_review, ≥1 customer_review, and ≥1 community_discussion IF such public sources exist; ` +
+    `if a type genuinely has no public source, omit it rather than inventing one.\n` +
+    `- confidence is 0-100. Emit the JSON object only — no markdown fences, no prose before or after.`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": opts.apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: opts.model,
+      max_tokens: 8000,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Anthropic web-search call failed: HTTP ${res.status} ${errText.slice(0, 500)}`);
+  }
+  const data = await res.json();
+  const blocks = Array.isArray((data as any)?.content) ? (data as any).content : [];
+  // Multiple content blocks (text / server_tool_use / web_search_tool_result). The JSON
+  // answer is in the FINAL text block, after the tool calls — not block[0].
+  const textBlocks = blocks.filter((b: any) => b?.type === "text" && typeof b?.text === "string");
+  const finalText = textBlocks.length > 0 ? String(textBlocks[textBlocks.length - 1].text) : "";
+  const parsed = parseJsonObjectDefensive(finalText);
+  if (!parsed) {
+    throw new Error(`Anthropic web-search: could not parse JSON from final text block (len=${finalText.length}, blocks=${blocks.length})`);
+  }
+  // Normalize each discovered URL's source_type — NON-DESTRUCTIVELY. inferSourceType is
+  // authoritative only when it confidently matches a known domain (returns a non-public_web
+  // bucket); when it returns the public_web fallback, KEEP Claude's own page-level label
+  // (Claude read the page; it out-classifies a bare domain match for sites the list misses).
+  // Empty/missing Claude label → public_web. No fabrication either way.
+  const reclassify = (arr: unknown) =>
+    (Array.isArray(arr) ? arr : []).map((e: any) => {
+      const url = String(e?.url || "").trim();
+      if (!url) return e;
+      const inferred = inferSourceType(url, String(e?.perspective || e?.bucket || ""), String(e?.signal || e?.snippet || ""));
+      const claudeLabel = String(e?.source_type || "").trim();
+      const source_type = inferred !== "public_web" ? inferred : (claudeLabel || "public_web");
+      return { ...e, source_type };
+    });
+  if (Array.isArray((parsed as any).outside_voice_signals)) {
+    (parsed as any).outside_voice_signals = reclassify((parsed as any).outside_voice_signals);
+  }
+  if (Array.isArray((parsed as any).evidence_ledger)) {
+    (parsed as any).evidence_ledger = reclassify((parsed as any).evidence_ledger);
+  }
+  return parsed;
+}
+
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous", string> = {
   no_results: "No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.",
   thin: "Public evidence is too thin to infer a complete baseline. Upload internal documents to improve signal quality.",
@@ -1637,6 +1756,9 @@ Deno.serve(async (req) => {
       Deno.env.get("OPENAI_FALLBACK_MODEL") ||
       "",
     );
+    // OE-1: Claude web-search synthesis (flagged alternative). External cloud model only.
+    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const anthropicModel = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
     const runLedger = {
       provider: "openai_public",
       model: openaiModel,
@@ -1688,6 +1810,13 @@ Deno.serve(async (req) => {
     // run-mojo-analysis (which would delete+regenerate the 'customer' journey).
     // Default false → cold-start/bootstrap callers still chain as before.
     const skip_mojo_analysis = body?.skip_mojo_analysis === true;
+    // OE-1: synthesis engine flag. 'openai' (DEFAULT — unchanged) | 'claude_websearch'.
+    // Unset ⇒ zero behavior change. claude_websearch collapses discovery+synthesis via
+    // Claude's web_search to surface genuine third-party voice the OpenAI path yields at 0.
+    const synthesis_engine = String(body?.synthesis_engine || "openai").toLowerCase();
+    if (synthesis_engine === "claude_websearch" && !anthropicKey) {
+      return json({ error: "Missing ANTHROPIC_API_KEY (required for synthesis_engine=claude_websearch)" }, 500);
+    }
     const sourceFilters = normalizePublicSourceFilters(
       body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
     );
@@ -2502,15 +2631,25 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Normal: OpenAI baseline
-    const result = await callOpenAI({
-      apiKey: openaiKey,
-      model: openaiModel,
-      fallbackModels: openaiFallbackModels,
-      companyName: company_name,
-      companyUrl: website,
-      evidence,
-    });
+    // Synthesis: OpenAI baseline (DEFAULT, unchanged) OR flagged Claude web-search (OE-1).
+    // claude_websearch bypasses the assembled `evidence` (Claude runs its own web_search);
+    // the parsed object is handed to the SAME downstream below, unchanged.
+    const result = synthesis_engine === "claude_websearch"
+      ? await callClaudeWebSearch({
+          apiKey: anthropicKey ?? "",
+          model: anthropicModel,
+          companyName: company_name,
+          website,
+          domain,
+        })
+      : await callOpenAI({
+          apiKey: openaiKey,
+          model: openaiModel,
+          fallbackModels: openaiFallbackModels,
+          companyName: company_name,
+          companyUrl: website,
+          evidence,
+        });
     const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
       .filter((entry) => String(entry?.url || "").trim().length > 0)
       .filter((entry) =>
