@@ -714,12 +714,19 @@ function PublicSourceFiltersBlock({
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
-    const merged: Record<string, unknown> = { ...(initialJson ?? {}), exclude_domains: domains };
+    // Flush a valid pending input so a typed domain isn't dropped on Save without Add/Enter.
+    const pending = normalizeDomain(inputVal);
+    const effectiveDomains = pending && pending.includes(".") && !domains.includes(pending)
+      ? [...domains, pending]
+      : domains;
+    const merged: Record<string, unknown> = { ...(initialJson ?? {}), exclude_domains: effectiveDomains };
     const { error } = await supabase.from("companies")
       .update({ public_source_filters_json: merged })
       .eq("id", companyId);
     setSaving(false);
     if (error) { setSaveError(error.message); return; }
+    setDomains(effectiveDomains);
+    setInputVal("");
     setEditing(false);
     onSaved();
   }

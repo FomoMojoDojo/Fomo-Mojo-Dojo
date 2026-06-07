@@ -1462,6 +1462,7 @@ async function callClaudeWebSearch(opts: {
   website: string;
   domain: string;
   resolvedCategory?: string;
+  excludeDomains?: string[];
 }): Promise<Record<string, unknown>> {
   const schemaHint =
     `{\n` +
@@ -1496,6 +1497,13 @@ async function callClaudeWebSearch(opts: {
     `if a type genuinely has no public source, omit it rather than inventing one.\n` +
     `- confidence is 0-100. Emit the JSON object only — no markdown fences, no prose before or after.`;
 
+  // Honor the company's exclude_domains: tell web_search not to search those hosts.
+  const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 8 };
+  if (Array.isArray(opts.excludeDomains) && opts.excludeDomains.length > 0) {
+    webSearchTool.blocked_domains = opts.excludeDomains;
+  }
+  console.log(`[baseline] claude web_search tool config: ${JSON.stringify(webSearchTool)}`);
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -1506,7 +1514,7 @@ async function callClaudeWebSearch(opts: {
     body: JSON.stringify({
       model: opts.model,
       max_tokens: 8000,
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+      tools: [webSearchTool],
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -2641,6 +2649,7 @@ Deno.serve(async (req) => {
           companyName: company_name,
           website,
           domain,
+          excludeDomains: sourceFilters.exclude_domains,
         })
       : await callOpenAI({
           apiKey: openaiKey,
