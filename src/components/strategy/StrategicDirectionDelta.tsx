@@ -98,48 +98,178 @@ function InternalRow({
   );
 }
 
-// ─── Public theme row ─────────────────────────────────────────────────────────
+// ─── Public read: provenance helpers + section + trend ────────────────────────
 
-function PublicThemeRow({ theme }: { theme: PublicTheme }) {
-  const [open, setOpen] = useState(false);
+// Short per-row provenance tag from source_type.
+const SOURCE_TAG: Record<string, string> = {
+  customer_review: "Customer review",
+  employee_review: "Employee review",
+  news_signal: "News",
+  third_party_profile: "Listing",
+  community_discussion: "Community",
+  review_signal: "Review",
+  profile_or_company_page: "Company-stated",
+  public_web: "Web",
+};
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function provenanceTag(s: DeltaSignal): string {
+  const st = typeof s.rawPayload.source_type === "string" ? s.rawPayload.source_type : "";
+  const tag = SOURCE_TAG[st] ?? "Public mention";
+  const url = typeof s.rawPayload.url === "string" ? s.rawPayload.url : "";
+  const host = hostOf(url);
+  return host ? `${tag} · ${host}` : tag;
+}
+
+// Profile-link discoveries carry a generic "declared in page metadata (/)" /
+// "fallback social link discovered from …" claim — show the actual URL instead of
+// that useless string.
+function rowContent(s: DeltaSignal): string {
+  const claim = (s.claim_text ?? "").trim();
+  const url = typeof s.rawPayload.url === "string" ? s.rawPayload.url : "";
+  if (!claim || /declared in page metadata|fallback social link/i.test(claim)) {
+    return url || claim;
+  }
+  return claim;
+}
+
+// One source-type section: humanized header + provenance-tagged rows.
+function PublicSection({ theme, primary }: { theme: PublicTheme; primary: boolean }) {
   return (
-    <div style={{ marginBottom: 8 }}>
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        style={{
-          display: "flex", alignItems: "baseline", gap: 8, width: "100%",
-          background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left",
-        }}
-      >
-        <span style={{
-          fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase",
-          letterSpacing: "0.1em", color: A.publicLabel, flexShrink: 0, minWidth: 56,
+    <div style={{ marginBottom: primary ? 20 : 12 }}>
+      <p style={{
+        fontFamily: D.mono, fontSize: primary ? 10 : 8.5, textTransform: "uppercase",
+        letterSpacing: "0.1em", color: A.publicLabel, margin: "0 0 8px",
+      }}>
+        {theme.label}
+      </p>
+      {theme.signals.map(s => (
+        <div key={s.id} style={{
+          marginBottom: 8, paddingLeft: 8, borderLeft: `1px solid ${D.hairlineFaint}`,
         }}>
-          {theme.label}
-        </span>
-        <span style={{
-          fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft,
-          lineHeight: 1.45, flex: 1,
-        }}>
-          {truncate(theme.headline, 100)}
-        </span>
-        <span style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint, flexShrink: 0 }}>
-          {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && (
-        <div style={{ marginTop: 6, paddingLeft: 64, display: "flex", flexDirection: "column", gap: 6 }}>
-          {theme.signals.map(s => (
-            <p key={s.id} style={{
-              fontFamily: D.sans, fontSize: 11.5, color: D.inkFaint, lineHeight: 1.5,
-              margin: 0, paddingLeft: 8, borderLeft: `1px solid ${D.hairlineFaint}`,
+          <p style={{
+            fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
+            letterSpacing: "0.06em", color: D.inkFaint, margin: "0 0 2px",
+          }}>
+            {provenanceTag(s)}
+          </p>
+          <p style={{
+            fontFamily: D.sans, fontSize: primary ? 13 : 11.5,
+            color: primary ? D.ink : D.inkSoft, lineHeight: 1.45, margin: 0,
+            wordBreak: "break-word",
+          }}>
+            {truncate(rowContent(s), primary ? 220 : 140)}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function shortStatus(status: string | null): string {
+  if (!status) return "—";
+  const head = status.split(/[—:.]/)[0].trim();
+  return head || status.slice(0, 16);
+}
+
+function statusColor(status: string | null): string {
+  const s = (status ?? "").toLowerCase();
+  if (s.startsWith("aligned")) return A.intentional;
+  if (s.startsWith("partial")) return A.queued;
+  return D.inkFaint;
+}
+
+// Run-over-run alignment: horizontal strip (primary) / vertical stack (sidebar).
+function AlignmentTrend({
+  trend, currentRunId, primary,
+}: {
+  trend: { run_id: number; alignment_status: string | null; alignment_summary: string | null }[];
+  currentRunId: number | null;
+  primary: boolean;
+}) {
+  if (!trend || trend.length < 2) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <p style={{
+        fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase",
+        letterSpacing: "0.1em", color: A.publicLabel, margin: "0 0 8px",
+      }}>
+        Alignment over time
+      </p>
+      <div style={primary
+        ? { display: "flex", gap: 12, flexWrap: "wrap" }
+        : { display: "flex", flexDirection: "column", gap: 8 }}>
+        {trend.map(p => {
+          const isNow = p.run_id === currentRunId;
+          return (
+            <div key={p.run_id} style={{
+              flex: primary ? "1 1 200px" : undefined,
+              opacity: isNow ? 1 : 0.6,
+              paddingLeft: 8, borderLeft: `2px solid ${statusColor(p.alignment_status)}`,
             }}>
-              {truncate(s.claim_text, 160)}
-            </p>
-          ))}
+              <p style={{ fontFamily: D.mono, fontSize: 8.5, color: D.inkFaint, margin: "0 0 1px" }}>
+                #{p.run_id}{isNow ? " · now" : ""}
+                <span style={{ color: statusColor(p.alignment_status), marginLeft: 6 }}>
+                  {shortStatus(p.alignment_status)}
+                </span>
+              </p>
+              {primary && p.alignment_summary && (
+                <p style={{ fontFamily: D.sans, fontSize: 11, color: D.inkFaint, lineHeight: 1.4, margin: 0 }}>
+                  {truncate(p.alignment_summary, 150)}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// The public read, rendered either as the primary 1fr column or the 260px sidebar.
+function PublicPanel({
+  variant, currentRunId, currentAlignment, alignmentTrend, themes,
+}: {
+  variant: "primary" | "sidebar";
+  currentRunId: number | null;
+  currentAlignment: { alignment_status: string | null } | null;
+  alignmentTrend: { run_id: number; alignment_status: string | null; alignment_summary: string | null }[];
+  themes: PublicTheme[];
+}) {
+  const primary = variant === "primary";
+  return (
+    <div style={primary ? undefined : { background: A.publicBg, borderRadius: 4, padding: "12px 14px" }}>
+      <p style={{
+        fontFamily: D.mono, fontSize: primary ? 9 : 8.5, textTransform: "uppercase",
+        letterSpacing: "0.12em", color: primary ? D.signal : A.publicLabel, margin: "0 0 12px",
+      }}>
+        Presented Publicly
+        {currentRunId != null && (
+          <span style={{ color: A.publicLabel, opacity: 0.7 }}> · Snapshot #{currentRunId}</span>
+        )}
+      </p>
+      {currentAlignment?.alignment_status && (
+        <div style={{ marginBottom: 14 }}>
+          <span style={{
+            fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
+            letterSpacing: "0.1em", color: A.publicLabel, display: "block", marginBottom: 2,
+          }}>
+            Alignment vs strategy
+          </span>
+          <p style={{ fontFamily: D.sans, fontSize: primary ? 12 : 11, color: D.inkFaint, lineHeight: 1.45, margin: 0 }}>
+            {currentAlignment.alignment_status}
+          </p>
         </div>
       )}
+      {themes.map(t => <PublicSection key={t.key} theme={t} primary={primary} />)}
+      <AlignmentTrend trend={alignmentTrend} currentRunId={currentRunId} primary={primary} />
     </div>
   );
 }
@@ -223,6 +353,12 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
   const primaryLabel   = hasBet ? "Strategic Bet · Internal" : "Recommendations & Gaps · Internal";
   const showRecsSecondary = hasBet && hasRecs;
 
+  // PVT-2: when there's no internal data, the PUBLIC read is the story — promote
+  // it to the primary 1fr column. Once internal data exists it demotes to the
+  // 260px sidebar beside the internal spine.
+  const hasInternal = hasBet || hasRecs;
+  const publicPrimary = !hasInternal && hasPublic;
+
   return (
     <div style={{
       borderTop: `1px solid ${D.hairline}`,
@@ -239,69 +375,63 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
         Strategic Foundation
       </p>
 
-      {/* Hero + public side-by-side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 24, alignItems: "start" }}>
-
-        {/* LEFT — primary internal spine */}
+      {publicPrimary ? (
+        /* ── PUBLIC PRIMARY (no internal data yet) ── */
         <div>
+          <PublicPanel
+            variant="primary"
+            currentRunId={currentRunId}
+            currentAlignment={currentAlignment}
+            alignmentTrend={alignmentTrend}
+            themes={publicThemes}
+          />
           <p style={{
             fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
-            letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px",
+            letterSpacing: "0.1em", color: D.inkFaint, marginTop: 20,
           }}>
-            {primaryLabel}
+            Internal strategy — build it in Diagnose to compare against this public read.
           </p>
-          {primarySignals.length === 0 ? (
-            <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.5 }}>
-              No internal signals yet.
+        </div>
+      ) : (
+        /* ── INTERNAL PRIMARY + public sidebar ── */
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 24, alignItems: "start" }}>
+
+          {/* LEFT — primary internal spine */}
+          <div>
+            <p style={{
+              fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
+              letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px",
+            }}>
+              {primaryLabel}
             </p>
-          ) : (
-            primarySignals.map(sig => (
-              <InternalRow
-                key={sig.id}
-                sig={sig}
-                disposition={dispositions.get(sig.id)}
-                onSet={setDisposition}
-              />
-            ))
+            {primarySignals.length === 0 ? (
+              <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.5 }}>
+                No internal signals yet.
+              </p>
+            ) : (
+              primarySignals.map(sig => (
+                <InternalRow
+                  key={sig.id}
+                  sig={sig}
+                  disposition={dispositions.get(sig.id)}
+                  onSet={setDisposition}
+                />
+              ))
+            )}
+          </div>
+
+          {/* RIGHT — public baseline, visually secondary */}
+          {hasPublic && (
+            <PublicPanel
+              variant="sidebar"
+              currentRunId={currentRunId}
+              currentAlignment={currentAlignment}
+              alignmentTrend={alignmentTrend}
+              themes={publicThemes}
+            />
           )}
         </div>
-
-        {/* RIGHT — public baseline, visually secondary */}
-        {hasPublic && (
-          <div style={{
-            background: A.publicBg,
-            borderRadius: 4,
-            padding: "12px 14px",
-          }}>
-            <p style={{
-              fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase",
-              letterSpacing: "0.12em", color: A.publicLabel, margin: "0 0 10px",
-            }}>
-              Presented publicly
-              {currentRunId != null && (
-                <span style={{ color: A.publicLabel, opacity: 0.7 }}> · snapshot #{currentRunId}</span>
-              )}
-            </p>
-            {currentAlignment?.alignment_status && (
-              <p style={{
-                fontFamily: D.sans, fontSize: 11, lineHeight: 1.45,
-                color: D.inkFaint, margin: "0 0 10px",
-              }}>
-                <span style={{
-                  fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
-                  letterSpacing: "0.1em", color: A.publicLabel, display: "block", marginBottom: 2,
-                }}>
-                  Alignment vs strategy
-                </span>
-                {currentAlignment.alignment_status}
-              </p>
-            )}
-            {publicThemes.map(t => (
-              <PublicThemeRow key={t.key} theme={t} />
-            ))}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Recommendations & Gaps — secondary block (only if cascade signals exist) */}
       {showRecsSecondary && (

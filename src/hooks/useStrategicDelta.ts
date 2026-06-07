@@ -13,10 +13,13 @@ export type DeltaSignal = {
   rawPayload: Record<string, unknown>;
 };
 
+// PVT-2: public reads are grouped by SOURCE TYPE (who is speaking), with a
+// humanized section label — not by identity/offering/market, and not headlined
+// off sigs[0].claim_text (which surfaced thin strings like "Declared in page
+// metadata (/)").
 export type PublicTheme = {
-  key: "identity" | "offering" | "market";
-  label: string;
-  headline: string;
+  key: string;            // source_type (customer_review, employee_review, …)
+  label: string;          // humanized section header
   signals: DeltaSignal[];
 };
 
@@ -46,36 +49,50 @@ export type StrategicDeltaData = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function bucketToTheme(bucket: string | null, topic: string): "identity" | "offering" | "market" {
-  const s = (bucket ?? topic).toLowerCase();
-  if (/product|offering|service|inventory|roast|coffee/.test(s)) return "offering";
-  if (/market|competitive|adoption|buyer|customer|switching/.test(s) || topic === "market") return "market";
-  return "identity";
+// Humanized section header per source type, most-independent voice first.
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  customer_review: "What customers say",
+  employee_review: "What employees say",
+  news_signal: "In the news",
+  third_party_profile: "Third-party listings",
+  community_discussion: "Community discussion",
+  review_signal: "Reviews & ratings",
+  profile_or_company_page: "What they say about themselves",
+  public_web: "Around the web",
+};
+const SOURCE_TYPE_ORDER = [
+  "customer_review", "employee_review", "news_signal", "community_discussion",
+  "review_signal", "third_party_profile", "profile_or_company_page", "public_web",
+];
+
+function sourceTypeOf(sig: DeltaSignal): string {
+  const st = typeof sig.rawPayload.source_type === "string" ? sig.rawPayload.source_type.trim() : "";
+  if (st) return st;
+  const bucket = typeof sig.rawPayload.bucket === "string" ? sig.rawPayload.bucket.trim() : "";
+  // outside_voice_signal is a bucket, not a source type — fall back to web.
+  if (bucket && bucket !== "outside_voice_signal") return bucket;
+  return "public_web";
 }
 
-function groupPublicByTheme(signals: DeltaSignal[]): PublicTheme[] {
-  const buckets = new Map<"identity" | "offering" | "market", DeltaSignal[]>([
-    ["identity", []],
-    ["offering", []],
-    ["market",   []],
-  ]);
+function humanizeSourceType(key: string): string {
+  return SOURCE_TYPE_LABEL[key]
+    ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function groupPublicBySourceType(signals: DeltaSignal[]): PublicTheme[] {
+  const groups = new Map<string, DeltaSignal[]>();
   for (const sig of signals) {
-    const bucket = typeof sig.rawPayload.bucket === "string" ? sig.rawPayload.bucket : null;
-    const theme = bucketToTheme(bucket, sig.topic);
-    buckets.get(theme)!.push(sig);
+    const st = sourceTypeOf(sig);
+    if (!groups.has(st)) groups.set(st, []);
+    groups.get(st)!.push(sig);
   }
-  const labels: Record<string, string> = { identity: "Identity", offering: "Offering", market: "Market" };
-  const result: PublicTheme[] = [];
-  for (const [key, sigs] of buckets) {
-    if (sigs.length === 0) continue;
-    result.push({
-      key,
-      label: labels[key],
-      headline: sigs[0].claim_text.slice(0, 120),
-      signals: sigs,
-    });
-  }
-  return result;
+  const rank = (k: string) => {
+    const i = SOURCE_TYPE_ORDER.indexOf(k);
+    return i === -1 ? SOURCE_TYPE_ORDER.length : i;
+  };
+  return [...groups.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]))
+    .map(([key, sigs]) => ({ key, label: humanizeSourceType(key), signals: sigs }));
 }
 
 function toRaw(payload: unknown): Record<string, unknown> {
@@ -173,7 +190,7 @@ export function useStrategicDelta(companyId?: string) {
         ? publicRows
         : publicRows.filter((r) => Number(r.source_id) === currentRunId);
       const publicSignals = currentRows.map((r) => toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0]));
-      const publicThemes = groupPublicByTheme(publicSignals);
+      const publicThemes = groupPublicBySourceType(publicSignals);
 
       const dispositions = new Map<string, DispositionValue>();
       for (const row of (dispRes.data ?? []) as Array<{ signal_id: string; disposition: string }>) {
