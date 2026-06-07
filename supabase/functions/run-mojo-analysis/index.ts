@@ -1159,6 +1159,36 @@ serve(async (req) => {
     const validTriggers = ["manual", "baseline_complete", "scheduled", "jobmap_regenerate"];
     const triggerLabel = validTriggers.includes(trigger_type) ? trigger_type : "manual";
 
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    // ── OE-1c (L4): preserve existing job steps on automatic runs ──
+    // Regenerate the job map ONLY on an explicit operator rebuild
+    // (trigger_type='jobmap_regenerate') or a true bootstrap (company has zero
+    // job_steps across ALL journey_keys). Every automatic trigger
+    // (baseline_complete / scheduled / manual) PRESERVES existing steps — skip the
+    // delete, the Dify job-step generation, and the inserts entirely (no wasted Dify
+    // call). This stops the destructive reset of on-strategy job steps; it does NOT
+    // change the hardcoded journeyKey or add discovered-category logic (next stage).
+    const { count: existingJobStepCount } = await supabase
+      .from("job_steps")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", company_id);
+    const shouldRegenerate = jobmapOnly || (existingJobStepCount ?? 0) === 0;
+    if (!shouldRegenerate) {
+      console.log(
+        `[run-mojo-analysis] preserve: company=${company_id} trigger=${triggerLabel} existing_job_steps=${existingJobStepCount} — skipping job-step regen (no delete, no Dify call)`,
+      );
+      return jsonResponse({
+        status: "preserved",
+        reason: "existing job steps preserved on automatic run (not jobmap_regenerate, not bootstrap)",
+        trigger_type: triggerLabel,
+        existing_job_steps: existingJobStepCount ?? 0,
+      });
+    }
+
     const DIFY_API_KEY = await resolveMojoAnalysisApiKey();
 
     if (!DIFY_API_KEY) {
@@ -1168,11 +1198,6 @@ serve(async (req) => {
     const baseUrlEnv = Deno.env.get("DIFY_API_BASE_URL");
     const baseUrlFile = baseUrlEnv ? undefined : await readLocalEnvValue("DIFY_API_BASE_URL");
     const DIFY_BASE_URLS = await buildDifyBaseUrlCandidates((baseUrlEnv ?? baseUrlFile ?? "https://api.dify.ai").replace(/\/$/, ""));
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
 
     // Create the proposal row first so startup success/failure is always traceable.
     const { data: proposal, error: insertError } = await supabase
