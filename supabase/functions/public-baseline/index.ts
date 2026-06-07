@@ -1145,6 +1145,54 @@ async function scrubHistoricalBlacklistedReferences(args: {
   return updated;
 }
 
+// CONTAM-1: a public run treats an excluded domain as a HARD DELETE of the
+// matching public_baseline_run signals (not a display-filter / status-flag).
+// Extends the historical scrub (which only cleans run payloads) to the signals
+// table. Matches the excluded domain in the signal's URL (host) OR anywhere in
+// its claim_text / raw_payload (snippet) — so it also catches reads tagged to a
+// different host whose provenance text references the excluded domain (e.g. a
+// LinkedIn-tagged "fallback social link discovered from http://iaqm.co.uk/").
+async function deleteBlockedPublicSignals(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  filters: PublicSourceFilters;
+}): Promise<number> {
+  if (!args.companyId || args.filters.exclude_domains.length === 0) return 0;
+
+  const { data: sigs, error } = await args.supabase
+    .from("signals")
+    .select("id, source_url, claim_text, raw_payload")
+    .eq("company_id", args.companyId)
+    .eq("source_type", "public_baseline_run");
+
+  if (error) {
+    console.log("[baseline] blocked-signal fetch error:", error.message);
+    return 0;
+  }
+
+  const domainsLower = args.filters.exclude_domains.map((d) => String(d || "").toLowerCase());
+  const idsToDelete: string[] = [];
+  for (const s of (Array.isArray(sigs) ? sigs : [])) {
+    const row = s as { id?: unknown; source_url?: unknown; claim_text?: unknown; raw_payload?: unknown };
+    const rawUrl = String((row.raw_payload as { url?: unknown } | null)?.url ?? "");
+    const url = String(row.source_url ?? "") || rawUrl;
+    const urlBlocked = url ? isUrlBlockedByDomainPolicy(url, args.filters) : false;
+    const text = `${String(row.claim_text ?? "")} ${JSON.stringify(row.raw_payload ?? "")}`.toLowerCase();
+    const textBlocked = domainsLower.some((d) => d.length > 0 && text.includes(d));
+    if (urlBlocked || textBlocked) idsToDelete.push(String(row.id));
+  }
+
+  if (idsToDelete.length === 0) return 0;
+
+  const { error: delErr } = await args.supabase.from("signals").delete().in("id", idsToDelete);
+  if (delErr) {
+    console.log("[baseline] blocked-signal delete error:", delErr.message);
+    return 0;
+  }
+  console.log(`[baseline] deleted ${idsToDelete.length} public_baseline_run signal(s) matching exclude_domains for company=${args.companyId}`);
+  return idsToDelete.length;
+}
+
 function extractResponsesOutputText(data: any): string | null {
   if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
 
@@ -1839,6 +1887,20 @@ Deno.serve(async (req) => {
         console.log("[baseline] historical reference scrub applied", {
           company_id,
           scrubbed_runs: scrubbedCount,
+          exclude_domains: sourceFilters.exclude_domains,
+        });
+      }
+      // CONTAM-1: also HARD DELETE matching public_baseline_run signals (the scrub
+      // above only cleans run payloads, not the signals table the panels read).
+      const deletedSignals = await deleteBlockedPublicSignals({
+        supabase,
+        companyId: company_id,
+        filters: sourceFilters,
+      });
+      if (deletedSignals > 0) {
+        console.log("[baseline] blocked public signals deleted", {
+          company_id,
+          deleted_signals: deletedSignals,
           exclude_domains: sourceFilters.exclude_domains,
         });
       }
