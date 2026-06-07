@@ -200,8 +200,14 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
   if (!data) return null;
 
-  const { internal, publicThemes, dispositions } = data;
+  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend } = data;
   const { strategicBet, recommendations, sourceReads } = internal;
+
+  // PVT-1: current snapshot's public-vs-internal alignment (minimal surface; rich
+  // run-over-run trend rendering is the #2 step).
+  const currentAlignment =
+    alignmentTrend.find(p => p.run_id === currentRunId) ??
+    (alignmentTrend.length > 0 ? alignmentTrend[alignmentTrend.length - 1] : null);
 
   // Nothing at all — skip the section entirely
   if (strategicBet.length + recommendations.length + sourceReads.length + publicThemes.length === 0) {
@@ -272,7 +278,24 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
               letterSpacing: "0.12em", color: A.publicLabel, margin: "0 0 10px",
             }}>
               Presented publicly
+              {currentRunId != null && (
+                <span style={{ color: A.publicLabel, opacity: 0.7 }}> · snapshot #{currentRunId}</span>
+              )}
             </p>
+            {currentAlignment?.alignment_status && (
+              <p style={{
+                fontFamily: D.sans, fontSize: 11, lineHeight: 1.45,
+                color: D.inkFaint, margin: "0 0 10px",
+              }}>
+                <span style={{
+                  fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
+                  letterSpacing: "0.1em", color: A.publicLabel, display: "block", marginBottom: 2,
+                }}>
+                  Alignment vs strategy
+                </span>
+                {currentAlignment.alignment_status}
+              </p>
+            )}
             {publicThemes.map(t => (
               <PublicThemeRow key={t.key} theme={t} />
             ))}

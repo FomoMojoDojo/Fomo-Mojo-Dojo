@@ -26,10 +26,22 @@ export type InternalGroups = {
   sourceReads: DeltaSignal[];       // dify_summary  (behind disclosure)
 };
 
+// Run-over-run public-vs-internal alignment, straight from each run's
+// result_json.message_alignment (no recompute). Ordered oldest → newest.
+export type AlignmentPoint = {
+  run_id: number;
+  created_at: string;
+  alignment_status: string | null;
+  alignment_summary: string | null;
+};
+
 export type StrategicDeltaData = {
   internal: InternalGroups;
   publicThemes: PublicTheme[];
   dispositions: Map<string, DispositionValue>;
+  // PVT-1: current public snapshot = the latest run that has outside signals.
+  currentRunId: number | null;
+  alignmentTrend: AlignmentPoint[];
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -93,9 +105,11 @@ export function useStrategicDelta(companyId?: string) {
         internal: { strategicBet: [], recommendations: [], sourceReads: [] },
         publicThemes: [],
         dispositions: new Map(),
+        currentRunId: null,
+        alignmentTrend: [],
       };
 
-      const [internalRes, publicRes, dispRes] = await Promise.all([
+      const [internalRes, publicRes, dispRes, runsRes] = await Promise.all([
         supabase
           .from("signals")
           .select("id, framework, claim_text, topic, raw_payload")
@@ -105,7 +119,7 @@ export function useStrategicDelta(companyId?: string) {
           .order("created_at", { ascending: true }),
         supabase
           .from("signals")
-          .select("id, framework, claim_text, topic, raw_payload")
+          .select("id, framework, claim_text, topic, raw_payload, source_id")
           .eq("company_id", companyId)
           .eq("signal_band", "outside")
           .eq("source_type", "public_baseline_run")
@@ -115,6 +129,12 @@ export function useStrategicDelta(companyId?: string) {
           .from("delta_dispositions")
           .select("signal_id, disposition")
           .eq("company_id", companyId),
+        // PVT-1: per-run public-vs-internal alignment trend (no recompute).
+        supabase
+          .from("public_baseline_runs")
+          .select("id, created_at, result_json")
+          .eq("company_id", companyId)
+          .order("id", { ascending: true }),
       ]);
 
       const toDeltaSignal = (r: {
@@ -141,7 +161,18 @@ export function useStrategicDelta(companyId?: string) {
         sourceReads:     internalSignals.filter(s => s.framework === "dify_summary"),
       };
 
-      const publicSignals = (publicRes.data ?? []).map(toDeltaSignal);
+      // PVT-1: current public snapshot = the latest run that actually has outside
+      // signals. Resolve from the signals themselves (max source_id) so a failed /
+      // empty later run can't blank the panel. Was: union of ALL runs (the blob).
+      const publicRows = (publicRes.data ?? []) as Array<Record<string, unknown>>;
+      const runIds = publicRows
+        .map((r) => Number(r.source_id))
+        .filter((n) => Number.isFinite(n));
+      const currentRunId = runIds.length > 0 ? Math.max(...runIds) : null;
+      const currentRows = currentRunId === null
+        ? publicRows
+        : publicRows.filter((r) => Number(r.source_id) === currentRunId);
+      const publicSignals = currentRows.map((r) => toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0]));
       const publicThemes = groupPublicByTheme(publicSignals);
 
       const dispositions = new Map<string, DispositionValue>();
@@ -151,7 +182,21 @@ export function useStrategicDelta(companyId?: string) {
         }
       }
 
-      return { internal, publicThemes, dispositions };
+      const alignmentTrend: AlignmentPoint[] = (
+        (runsRes.data ?? []) as Array<{ id: number; created_at: string; result_json: unknown }>
+      ).map((run) => {
+        const ma = (run.result_json as {
+          message_alignment?: { alignment_status?: unknown; alignment_summary?: unknown };
+        } | null)?.message_alignment ?? null;
+        return {
+          run_id: Number(run.id),
+          created_at: String(run.created_at ?? ""),
+          alignment_status: ma?.alignment_status != null ? String(ma.alignment_status) : null,
+          alignment_summary: ma?.alignment_summary != null ? String(ma.alignment_summary) : null,
+        };
+      });
+
+      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend };
     },
   });
 
