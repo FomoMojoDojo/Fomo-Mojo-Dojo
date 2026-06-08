@@ -326,10 +326,10 @@ export default function StrategyOrgPanel({
     return (
       <>
         <HierarchyPageShell
-          eyebrowSegments={["Cascade"]}
+          eyebrowSegments={["Strategy"]}
           h1Before="Your Strategic"
           h1Signal="Direction"
-          subhead={`The full cascade — from the change ${companyName ?? "your company"} is building toward, down to the systems that keep it delivering.`}
+          subhead={`Your full strategy — from the change you're building toward, down to the systems that keep you delivering.`}
           signalBasis={signalBasis}
           compactHero
         >
@@ -395,7 +395,7 @@ export default function StrategyOrgPanel({
           <div style={{ marginBottom: 48 }}>
             <HierarchySectionHeader number="01" label="Winning Aspiration" />
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.55, margin: "0 0 14px", maxWidth: 560 }}>
-              The change {companyName ?? "your company"} is building toward — what becomes possible if this strategy wins.
+              The change you're building toward — what becomes possible if this strategy wins.
             </p>
             <InlineTextareaEdit
               value={strategy.winning_aspiration?.trim() ?? ""}
@@ -434,7 +434,7 @@ export default function StrategyOrgPanel({
           <div style={{ marginBottom: 48 }}>
             <HierarchySectionHeader number="04" label="Capabilities" />
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.55, margin: "0 0 16px", maxWidth: 560 }}>
-              What {companyName ?? "your company"} has to be able to do to win.
+              What you have to be able to do to win.
             </p>
             {strategy.capabilities.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column" }}>

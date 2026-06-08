@@ -4,6 +4,7 @@ import type { SignalLandscape } from "@/hooks/useSignalLandscape";
 import type { DirectionEvidence } from "@/hooks/useDirectionEvidence";
 import type { FoundationStatus } from "@/hooks/useFoundationStatus";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
+import type { InsightNextTurn } from "@/hooks/useInsightNextTurn";
 
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ function deriveDayCount(createdAt: string | null | undefined): number {
 
 function deriveDetourLabel(state: HomepageState): string {
   switch (state) {
-    case "outside_view": return "OUTSIDE SIGNALS";
+    case "outside_view": return "THE OUTSIDE WORLD";
     case "diagnose":     return "CUSTOMER EVIDENCE";
     case "focus":        return "DIRECTION VALIDATION";
     case "flow":         return "EXECUTION";
@@ -164,11 +165,74 @@ function StrategicCompass({
 
 // ── The Next Turn block ────────────────────────────────────────────────────────
 
+// The forward move inside the Open beat — the phrase that carries --signal, mirroring
+// the original Next Turn headline's black-sentence / orange-tail grammar (relocated to
+// the Open). Styling only: highlights an existing substring, never rewrites the text.
+const OPEN_MOVE_PATTERNS = [
+  /first few customer conversations/i,
+  /first customer conversations?/i,
+  /conversations with customers/i,
+  /customer conversations?/i,
+  /create that first real signal/i,
+  /first real signal/i,
+];
+function renderOpenWithAccent(text: string): React.ReactNode {
+  for (const re of OPEN_MOVE_PATTERNS) {
+    const m = text.match(re);
+    if (m && m.index != null) {
+      return (
+        <>
+          {text.slice(0, m.index)}
+          <span style={{ color: T.signal }}>{m[0]}</span>
+          {text.slice(m.index + m[0].length)}
+        </>
+      );
+    }
+  }
+  // Fallback: accent the resolving clause after the last em-dash.
+  const dash = text.lastIndexOf("—");
+  if (dash !== -1) {
+    return <>{text.slice(0, dash)}<span style={{ color: T.signal }}>{text.slice(dash)}</span></>;
+  }
+  return text;
+}
+
+// Insight three-beat as the MojoMap hero: Observe is the black hero title (the fact),
+// then a tight chain — Name (the held-open tension) → Open (the evidence move, with the
+// orange forward phrase + arrow). One hero unit; no PTS — an insight is an opening.
+function InsightBeats({ beats, isSolo }: { beats: InsightNextTurn; isSolo: boolean }) {
+  const observe = adaptTeamLanguage(beats.observe, isSolo);
+  const name = adaptTeamLanguage(beats.name_tension, isSolo);
+  const open = adaptTeamLanguage(beats.open, isSolo);
+  return (
+    <div style={{ marginBottom: 52 }}>
+      <p style={{ fontFamily: T.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: T.inkFaint, margin: "0 0 16px" }}>
+        THE NEXT TURN
+      </p>
+      {/* Observe — the hero title: fully black, hero weight/scale + the original rhythm */}
+      <p style={{ fontFamily: T.sans, fontSize: 46, fontWeight: 800, color: T.ink, lineHeight: 1.1, letterSpacing: "-0.03em", margin: "0 0 22px", maxWidth: 720 }}>
+        {observe}
+      </p>
+      {/* Name → Open — the resolving chain, set tight under the title as one unit */}
+      <div style={{ maxWidth: 660, display: "flex", flexDirection: "column", gap: 12 }}>
+        <p style={{ fontFamily: T.sans, fontSize: 20, fontWeight: 400, color: T.inkSoft, lineHeight: 1.4, letterSpacing: "-0.01em", margin: 0 }}>
+          {name}
+        </p>
+        <p style={{ fontFamily: T.sans, fontSize: 20, fontWeight: 700, color: T.ink, lineHeight: 1.4, letterSpacing: "-0.01em", margin: 0, textIndent: "-1.1em", paddingLeft: "1.1em" }}>
+          <span style={{ color: T.signal }}>→ </span>{renderOpenWithAccent(open)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function NextTurnBlock({
-  action, scoreLift, isSolo,
+  action, scoreLift, isSolo, insight,
 }: {
-  action: string; scoreLift: number; isSolo: boolean;
+  action: string; scoreLift: number; isSolo: boolean; insight?: InsightNextTurn | null;
 }) {
+  // Insight-anchored (2b): render the three beats, suppress PTS. Fallback untouched.
+  if (insight) return <InsightBeats beats={insight} isSolo={isSolo} />;
   const adapted = adaptTeamLanguage(action, isSolo);
   // Split at the first sentence boundary; fall back to 55% word-count ratio
   const sentenceMatch = adapted.match(/^(.+?[.!?])\s+(.+)$/s);
@@ -229,11 +293,11 @@ function SignalSection({
             "{humanized}"
           </p>
           <p style={{ fontFamily: T.mono, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkFaint, margin: "0 0 28px" }}>
-            — TOP OPPORTUNITY · TEAM ANALYSIS · 1 OF {needCount}
+            — TOP OPPORTUNITY · WHAT YOUR TEAM MAPPED · 1 OF {needCount}
           </p>
         </>
       ) : (
-        <p style={{ fontSize: 14, color: T.inkFaint, margin: "0 0 28px" }}>No customer findings mapped yet.</p>
+        <p style={{ fontSize: 14, color: T.inkFaint, margin: "0 0 28px" }}>No customer input yet.</p>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 22, maxWidth: 400 }}>
@@ -404,6 +468,9 @@ export interface HomepageHierarchyProps {
   engagementDay?: number | null;
   /** Override the score-derived Next Turn action (e.g. from cascade context). */
   nextTurnOverride?: string;
+  /** Insight-anchored Next Turn (2b): three-beat content. When set, replaces the
+   *  action and suppresses PTS. Null/undefined → existing score-derived fallback. */
+  insightNextTurn?: InsightNextTurn | null;
   /** Company's own audience noun phrase from odi_market_definitions.job_executor. */
   audienceShort?: string | null;
   /** Number of active company members — used to adapt team-assuming language. */
@@ -426,6 +493,7 @@ export function HomepageHierarchy({
   companyCreatedAt,
   engagementDay,
   nextTurnOverride,
+  insightNextTurn,
   audienceShort,
   memberCount = 1,
   onGoToRoutes,
@@ -451,9 +519,9 @@ export function HomepageHierarchy({
       {/* Strategic Compass — STANDING → DESTINATION with DETOUR badge */}
       <StrategicCompass current={current} reachable={reachable} unlockable={unlockable} state={state} />
 
-      {/* The Next Turn — hyper-specific action block */}
-      {nextTurnAction && (
-        <NextTurnBlock action={nextTurnAction} scoreLift={scoreLift} isSolo={isSolo} />
+      {/* The Next Turn — insight three-beat when available, else score-derived action */}
+      {(insightNextTurn || nextTurnAction) && (
+        <NextTurnBlock action={nextTurnAction ?? ""} scoreLift={scoreLift} isSolo={isSolo} insight={insightNextTurn} />
       )}
 
       {/* §01 CONTEXT · §02 SIGNAL · §03 DIRECTIONS — three-column bento */}

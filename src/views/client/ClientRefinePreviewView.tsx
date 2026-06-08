@@ -71,6 +71,7 @@ import type { ClaimState } from "@/lib/claimState";
 
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
+import { useInsightNextTurn } from "@/hooks/useInsightNextTurn";
 import { useFoundationStatus } from "@/hooks/useFoundationStatus";
 import { HomepageHierarchy } from "@/components/client/HomepageHierarchy";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
@@ -283,7 +284,7 @@ function statusLabel(value: string) {
 }
 
 function stageLabel(value: string) {
-  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "outside signals";
+  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "the outside world";
   if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
   if (value === "focus" || value === "validate_focus") return "focus";
   if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
@@ -448,6 +449,19 @@ export default function ClientRefinePreviewView() {
   const { evidence: directionEvidence } = useDirectionEvidence(
     hasHierarchy ? activeCompany?.id : undefined,
     routes,
+  );
+
+  // Insight-anchored Next Turn (2b): primary-finding three-beat, else profile-absence
+  // template from the signal-band counts. Drives the Next Turn block only.
+  const insightNextTurn = useInsightNextTurn(
+    hasHierarchy ? activeCompany?.id : undefined,
+    signalLandscape
+      ? {
+          outside: signalLandscape.byBand.outside.count,
+          organization: signalLandscape.byBand.organization.count,
+          customer: signalLandscape.byBand.customer.count,
+        }
+      : null,
   );
 
   const { item: positioning } = usePositioningCanvas(activeCompany?.id);
@@ -3669,6 +3683,7 @@ export default function ClientRefinePreviewView() {
                             companyCreatedAt={activeCompany?.created_at}
                             engagementDay={ENGAGEMENT_DAY ?? undefined}
                             nextTurnOverride={nextTurnOverride}
+                            insightNextTurn={insightNextTurn}
                             audienceShort={audienceShort}
                             memberCount={memberCount}
                             onGoToRoutes={goToRoutesPreview}
@@ -4613,7 +4628,7 @@ export default function ClientRefinePreviewView() {
                         </div>
                       </div>
                       <div className="crpv-tweaks-note">
-                        Treat outside signals as market-facing evidence. Customer truth still needs direct validation when framing changes.
+                        Treat what the outside world shows as real evidence to weigh against your internal view. Customer truth still needs direct validation when framing changes.
                       </div>
                     </div>
                   )}

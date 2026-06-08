@@ -961,7 +961,7 @@ export default function ClientRefinePreviewWorkshopView() {
       const cat = String(selectedRoute.category || "").toLowerCase();
       const catLabel = cat === "fix" ? "Fix" : cat === "create" ? "Create" : "Improve";
       return nonMissingCount > 0
-        ? `${catLabel} route committed — ${nonMissingCount} supporting signal${nonMissingCount === 1 ? "" : "s"} holding.`
+        ? `${catLabel} route committed — backed by ${nonMissingCount} piece${nonMissingCount === 1 ? "" : "s"} of evidence.`
         : `${catLabel} route committed — execution proof is the current constraint.`;
     }
     if (positioning?.value_for_customer && positioning?.best_fit_customers && positioning?.market_category) {

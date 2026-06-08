@@ -6,12 +6,15 @@ import { supabase } from "@/integrations/supabase/client";
 // delta (PVT-2). Reads the findings store directly (NOT useStrategicDelta's
 // snapshot query). Runs under the app's admin session, which RLS requires.
 
+export type FindingBeats = { observe: string; name_tension: string; open: string };
+
 export type Finding = {
   id: string;
   origin_run_id: number | null;
   origin_signal_id: string | null;
-  kind: "observation" | "watch_out";
+  kind: "observation" | "watch_out" | "frontier";
   body: string;
+  beats: FindingBeats | null; // second-person three-beat; display the Observe, fall back to body
   status: "open" | "resolved";
   host: string | null; // provenance host, derived from the origin signal url when present
 };
@@ -51,7 +54,7 @@ export function useStandingFindings(companyId?: string) {
 
       const [openRes, primaryRes, companyRes] = await Promise.all([
         db.from("findings")
-          .select("id, origin_run_id, origin_signal_id, kind, body, status")
+          .select("id, origin_run_id, origin_signal_id, kind, body, beats, status")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: true }),

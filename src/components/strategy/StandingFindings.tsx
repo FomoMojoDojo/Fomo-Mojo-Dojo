@@ -52,14 +52,14 @@ function FindingRow({
         </p>
       )}
       <p style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, lineHeight: 1.5, margin: 0 }}>
-        {truncate(f.body)}
+        {f.beats?.observe ?? truncate(f.body)}
       </p>
       <p style={{
         fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
         letterSpacing: "0.07em", color: D.inkFaint, margin: "3px 0 0",
       }}>
-        {f.kind === "watch_out" ? "Watch-out" : "Observation"}
-        {f.origin_run_id != null && ` · Snapshot #${f.origin_run_id}`}
+        {f.kind === "watch_out" ? "Watch-out" : f.kind === "frontier" ? "Your bet" : "Observation"}
+        {f.origin_run_id != null && ` · Update #${f.origin_run_id}`}
         {showHost && ` · ${showHost}`}
       </p>
       <div style={{ display: "flex", gap: 12, marginTop: 5 }}>
@@ -82,10 +82,11 @@ export function StandingFindings({ companyId }: { companyId: string }) {
   // Quiet: hidden entirely when there are no open findings.
   if (!data || data.findings.length === 0) return null;
 
-  // Watch-outs first, then observations (matches the resolver's lead heuristic).
+  // Watch-outs, then your bet (frontier), then observations (matches the resolver's lead heuristic).
   const watchOuts = data.findings.filter((f) => f.kind === "watch_out");
+  const frontiers = data.findings.filter((f) => f.kind === "frontier");
   const observations = data.findings.filter((f) => f.kind === "observation");
-  const ordered = [...watchOuts, ...observations];
+  const ordered = [...watchOuts, ...frontiers, ...observations];
 
   return (
     <div style={{
@@ -98,13 +99,13 @@ export function StandingFindings({ companyId }: { companyId: string }) {
         fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
         letterSpacing: "0.16em", color: D.inkFaint, margin: "0 0 6px",
       }}>
-        Standing Findings
+        What Keeps Surfacing
       </p>
       <p style={{
         fontFamily: D.sans, fontSize: 11.5, color: D.inkFaint, lineHeight: 1.5,
         margin: "0 0 16px", maxWidth: 560,
       }}>
-        What persists across snapshots until you resolve it — watch-outs and observations the public read keeps surfacing.
+        What keeps coming up until you resolve it — the watch-outs and patterns the outside world keeps surfacing.
       </p>
       {ordered.map((f) => (
         <FindingRow

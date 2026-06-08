@@ -57,8 +57,8 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   third_party_profile: "Third-party listings",
   community_discussion: "Community discussion",
   review_signal: "Reviews & ratings",
-  profile_or_company_page: "What they say about themselves",
-  public_web: "Around the web",
+  profile_or_company_page: "What you say about yourself",
+  public_web: "What the web says about you",
 };
 const SOURCE_TYPE_ORDER = [
   "customer_review", "employee_review", "news_signal", "community_discussion",
