@@ -18,6 +18,7 @@ import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/
 import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
 import { getRefinePreviewActiveHypotheses } from "@/components/client/RefinePreviewHypothesesSection";
 import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
+import { stageLabel } from "@/lib/phaseDisplay";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -281,14 +282,6 @@ function statusLabel(value: string) {
   if (value === "parked") return "Parked";
   if (value === "done") return "Done";
   return "Planned";
-}
-
-function stageLabel(value: string) {
-  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "the outside world";
-  if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
-  if (value === "focus" || value === "validate_focus") return "focus";
-  if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
-  return "diagnose";
 }
 
 function stateLabel(layer: LayerState) {
@@ -858,7 +851,7 @@ export default function ClientRefinePreviewView() {
         } else if (hasOrganization) {
           supportLevel = "Internal positioning claim";
           supportReason = "This is coming mainly from company material, not external market response.";
-          validationNote = "Treat as directional until outside signals or customer response support it.";
+          validationNote = "This stays directional until outside signals or customer response support it.";
         }
       } else {
         if (hasOrganization && hasOutside) {
@@ -3055,11 +3048,11 @@ export default function ClientRefinePreviewView() {
 
     if (phase === "validate_outside") {
       const row1 = diagObs     || obs    || "The external signals are consistent enough to share";
-      const row2 = diagTension || detail || "The outside read may not match how the company sees itself";
+      const row2 = diagTension || detail || "The outside read may not match how you see yourselves";
       const row3 = diagMissing || diagQ  || actionHeadline;
       const row4 = ifMissed || "The next phase starts from a shared understanding";
       return [
-        { label: "What the outside view says", lead: "", emphasis: row1, tail: ". This is what the outside read looks like before the client weighs in." },
+        { label: "What the outside view says", lead: "", emphasis: row1, tail: ". This is what the outside read looks like before you weigh in." },
         { label: "Why it matters to check",    lead: "", emphasis: row2, tail: ". The client's reaction shapes what comes next." },
         { label: "What we haven't heard",      lead: "", emphasis: row3, tail: ". That's the gap this moment closes." },
         { label: "What changes if we get it",  lead: "", emphasis: row4, tail: ", not an untested assumption." },

@@ -53,7 +53,7 @@ function deriveDayCount(createdAt: string | null | undefined): number {
 
 function deriveDetourLabel(state: HomepageState): string {
   switch (state) {
-    case "outside_view": return "THE OUTSIDE WORLD";
+    case "outside_view": return "CUSTOMER EVIDENCE";
     case "diagnose":     return "CUSTOMER EVIDENCE";
     case "focus":        return "DIRECTION VALIDATION";
     case "flow":         return "EXECUTION";

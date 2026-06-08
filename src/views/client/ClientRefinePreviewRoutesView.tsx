@@ -7,6 +7,7 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
+import { stageLabel } from "@/lib/phaseDisplay";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
@@ -88,7 +89,7 @@ type RouteCategory = "fix" | "improve" | "create";
 const CATEGORY_META: Record<RouteCategory, { label: string; subtitle: string; hypothesisSubtitle: string }> = {
   fix:     { label: "Under Pressure",    subtitle: "Unresolved friction the evidence flags as actively limiting.",        hypothesisSubtitle: "Gaps that appear in the evidence — not yet confirmed." },
   improve: { label: "Under Validation",  subtitle: "Areas showing partial progress where evidence suggests continued pressure.", hypothesisSubtitle: "Areas showing partial progress — worth confirming." },
-  create:  { label: "Directional",       subtitle: "New directions suggested by the evidence — no existing path covers this.", hypothesisSubtitle: "New directions suggested by the signals — hypothesis only." },
+  create:  { label: "Directional",       subtitle: "New directions suggested by the evidence — no existing path covers this.", hypothesisSubtitle: "New directions from the outside signals — hypothesis only." },
 };
 
 const CATEGORY_POSTURE_LABEL: Record<string, string> = {
@@ -99,14 +100,6 @@ const CATEGORY_POSTURE_LABEL: Record<string, string> = {
 
 function isHypothesisPhase(phase: string): boolean {
   return ["outside_signals", "validate_outside", "diagnose", "validate_diagnose"].includes(phase);
-}
-
-function stageLabel(value: string) {
-  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "outside signals";
-  if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
-  if (value === "focus" || value === "validate_focus") return "focus";
-  if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
-  return "diagnose";
 }
 
 function toSentence(value: string | null | undefined) {
@@ -124,12 +117,12 @@ function deriveClientWhyReasons(route: RouteRow): string[] {
   if (desc) reasons.push(desc);
   if (category === "fix") {
     reasons.push("The evidence flags this gap as actively limiting outcomes.");
-    if (reasons.length < 2) reasons.push("Addressing this removes a constraint that the signals say is compounding.");
+    if (reasons.length < 2) reasons.push("Addressing this removes a constraint that's compounding.");
   } else if (category === "improve") {
     reasons.push("Evidence shows partial progress — this route targets the remaining gap.");
     if (reasons.length < 2) reasons.push("Strengthening here removes an active constraint the evidence has surfaced.");
   } else {
-    reasons.push("The signals suggest an unmet need — no existing path currently covers this.");
+    reasons.push("This points to an unmet need — no existing path currently covers this.");
     if (reasons.length < 2) reasons.push("This reflects demand visible in the evidence that has no active route.");
   }
   return reasons.slice(0, 3);
@@ -161,7 +154,7 @@ function deriveCanonicalRouteSentence(route: RouteRow): string {
   }
   return topReason
     ? `This direction was surfaced because ${lc(topReason)}.`
-    : "No existing path covers this area. The signals suggest unmet demand.";
+    : "No existing path covers this area. This points to unmet demand.";
 }
 
 type EvidenceItem = { id: string; title: string; status: "complete" | "in_progress" | "missing" };
@@ -1537,7 +1530,7 @@ const HIERARCHY_FRAMING: Record<string, { heading: string; body: string }> = {
   flow:         { heading: "Active commitments",      body: "The organization has committed to these directions. Focus is on strengthening evidence and closing execution gaps." },
   focus:        { heading: "Priority routes",         body: "Evidence validates these as the most actionable directions. The work is narrowing from candidate to chosen path." },
   diagnose:     { heading: "Routes under consideration", body: "Candidate directions grounded in internal evidence. Customer validation is the next layer needed to focus around one." },
-  outside_view: { heading: "Early directions",        body: "These routes are based on outside signals. Internal and customer validation is needed before committing." },
+  outside_view: { heading: "Early directions",        body: "These routes are based on outside signals. You'll still need to validate them internally and with customers before committing." },
 };
 
 // ─── Hierarchy spec §4-§7: visual system ─────────────────────────────────────
@@ -3132,7 +3125,7 @@ export function RoutesOrgPanel({
       {(activeCompany?.excluded_signals_json?.length ?? 0) > 0 && (
         <div style={{ border: "1px solid #FAC846", borderRadius: 6, padding: "10px 16px", marginBottom: 16, background: "#fef9ec" }}>
           <p style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.08em", color: "#FAC846", textTransform: "uppercase", fontWeight: 600, margin: 0, lineHeight: 1.5 }}>
-            Some outside signals were excluded. These recommendations may need review.
+            Some outside signals were excluded. You may want to review these recommendations.
           </p>
         </div>
       )}

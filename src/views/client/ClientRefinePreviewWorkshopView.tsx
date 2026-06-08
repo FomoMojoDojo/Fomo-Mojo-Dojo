@@ -20,6 +20,7 @@ import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useSourceConfidence } from "@/hooks/useSourceConfidence";
 import { useSignalExclusion } from "@/hooks/useSignalExclusion";
 import { computeExclusionImpact, computeLatestExclusionAt } from "@/lib/evidenceImpact";
+import { stageLabel } from "@/lib/phaseDisplay";
 import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
@@ -68,14 +69,6 @@ import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function stageLabel(value: string) {
-  if (value === "outside_signals" || value === "validate_outside" || value === "outside") return "outside signals";
-  if (value === "diagnose" || value === "validate_diagnose" || value === "diagnosis") return "diagnose";
-  if (value === "focus" || value === "validate_focus") return "focus";
-  if (value === "flow" || value === "validate_flow" || value === "execution") return "flow";
-  return "diagnose";
 }
 
 function sanitizeWebsite(url?: string) {
