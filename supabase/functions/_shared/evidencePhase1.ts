@@ -16,6 +16,7 @@ import {
 } from "./strategicHypotheses.ts";
 import { inferJourneyHypothesesForCompany } from "./journeyHypotheses.ts";
 import { generateFindingBeats } from "./findingBeats.ts";
+import { generateFrontier } from "./frontierFinding.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -537,6 +538,19 @@ export async function ingestPublicBaselineSignals(args: {
     }
   } catch (err) {
     console.log("[evidence] beats generation exception:", String(err instanceof Error ? err.message : err));
+  }
+  // Frontier finding (2c): mine the org-band corpus into the company's single most
+  // load-bearing untested bet, gated on mineability (returns null when thin/placeholder
+  // or no audience). Non-fatal — a frontier failure must not break ingest.
+  try {
+    const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+    if (openaiApiKey) {
+      await generateFrontier({ supabase: args.supabase, companyId: args.companyId, runId: args.runId, openaiApiKey });
+    } else {
+      console.log("[evidence] frontier skipped — no OPENAI_API_KEY");
+    }
+  } catch (err) {
+    console.log("[evidence] frontier generation exception:", String(err instanceof Error ? err.message : err));
   }
   const journeyStats = await inferJourneyHypothesesForCompany({
     supabase: args.supabase as any,
