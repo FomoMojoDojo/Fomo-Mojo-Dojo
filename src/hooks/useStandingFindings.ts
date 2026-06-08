@@ -19,6 +19,9 @@ export type Finding = {
 export type StandingFindingsData = {
   findings: Finding[];
   primaryId: string | null;
+  // The company's own domain — used to suppress same-domain provenance hosts
+  // (synthesis reads are stamped with the company website as source_url).
+  companyDomain: string | null;
 };
 
 // findings / operator_primary_selection are not in the generated Database types yet.
@@ -44,16 +47,22 @@ export function useStandingFindings(companyId?: string) {
     enabled: Boolean(companyId),
     staleTime: 60_000,
     queryFn: async (): Promise<StandingFindingsData> => {
-      if (!companyId) return { findings: [], primaryId: null };
+      if (!companyId) return { findings: [], primaryId: null, companyDomain: null };
 
-      const [openRes, primaryRes] = await Promise.all([
+      const [openRes, primaryRes, companyRes] = await Promise.all([
         db.from("findings")
           .select("id, origin_run_id, origin_signal_id, kind, body, status")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: true }),
         db.rpc("find_primary_finding", { p_company_id: companyId }),
+        db.from("companies").select("website").eq("id", companyId).maybeSingle(),
       ]);
+
+      const companyWebsite = (companyRes as { data?: { website?: unknown } | null }).data?.website;
+      const companyDomain = typeof companyWebsite === "string" && companyWebsite
+        ? hostOf(companyWebsite)
+        : null;
 
       const rows = (openRes.data ?? []) as Array<Omit<Finding, "host">>;
 
@@ -86,7 +95,7 @@ export function useStandingFindings(companyId?: string) {
         ? String((primaryRow as { id: unknown }).id)
         : null;
 
-      return { findings, primaryId };
+      return { findings, primaryId, companyDomain };
     },
   });
 

@@ -26,13 +26,17 @@ function truncate(t: string, max = 240): string {
 }
 
 function FindingRow({
-  f, isPrimary, onMakePrimary, onResolve,
+  f, isPrimary, companyDomain, onMakePrimary, onResolve,
 }: {
   f: Finding;
   isPrimary: boolean;
+  companyDomain: string | null;
   onMakePrimary: (id: string) => void;
   onResolve: (id: string) => void;
 }) {
+  // Show provenance host only when it's a genuine third-party source — suppress the
+  // company's own domain (synthesis reads are stamped with the company website).
+  const showHost = f.host && f.host !== companyDomain ? f.host : null;
   const accent = isPrimary ? A.primary : (f.kind === "watch_out" ? A.watchOut : D.hairline);
   return (
     <div style={{
@@ -56,7 +60,7 @@ function FindingRow({
       }}>
         {f.kind === "watch_out" ? "Watch-out" : "Observation"}
         {f.origin_run_id != null && ` · Snapshot #${f.origin_run_id}`}
-        {f.host && ` · ${f.host}`}
+        {showHost && ` · ${showHost}`}
       </p>
       <div style={{ display: "flex", gap: 12, marginTop: 5 }}>
         {!isPrimary && (
@@ -107,6 +111,7 @@ export function StandingFindings({ companyId }: { companyId: string }) {
           key={f.id}
           f={f}
           isPrimary={f.id === data.primaryId}
+          companyDomain={data.companyDomain}
           onMakePrimary={markPrimary}
           onResolve={resolve}
         />
