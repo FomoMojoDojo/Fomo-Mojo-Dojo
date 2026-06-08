@@ -191,7 +191,15 @@ export function useStrategicDelta(companyId?: string) {
       const currentRows = currentRunId === null
         ? publicRows
         : publicRows.filter((r) => Number(r.source_id) === currentRunId);
-      const publicSignals = currentRows.map((r) => toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0]));
+      // F-2: synthesis reads (source_type='analysis') leave the public-voice panel —
+      // they now live in StandingFindings (auto-captured at ingest). Voice (WEB · host)
+      // + company-stated reads stay. (The 'analysis'→public_web mapping in sourceTypeOf
+      // is now unreachable for the panel; left as a harmless backstop.)
+      const voiceRows = currentRows.filter((r) => {
+        const rp = r.raw_payload as { source_type?: unknown } | null;
+        return !(rp && typeof rp.source_type === "string" && rp.source_type.trim() === "analysis");
+      });
+      const publicSignals = voiceRows.map((r) => toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0]));
       const publicThemes = groupPublicBySourceType(publicSignals);
 
       const dispositions = new Map<string, DispositionValue>();

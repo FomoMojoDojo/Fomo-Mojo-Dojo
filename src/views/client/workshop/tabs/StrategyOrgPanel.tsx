@@ -17,6 +17,7 @@ import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 import type { ClaimRow } from "@/lib/claims/useCompanyClaims";
 import type { CascadeProposalRow } from "@/hooks/useCascadeProposal";
 import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
+import { StandingFindings } from "@/components/strategy/StandingFindings";
 
 // ── Design tokens (mirrors PositioningOrgPanel hierarchy tokens) ───────────────
 const P = {
@@ -310,6 +311,7 @@ export default function StrategyOrgPanel({
       return (
         <div className="crpv-ws-section crpv-ws-section-wide">
           <StrategicDirectionDelta companyId={companyId} />
+          <StandingFindings companyId={companyId} />
           <p style={{ fontFamily: D.mono, fontSize: 10, color: D.inkFaint, marginTop: 12 }}>
             No strategic cascade yet — add winning aspiration, where to play, and how to win above.
           </p>
@@ -387,6 +389,7 @@ export default function StrategyOrgPanel({
           )}
 
           {companyId && <StrategicDirectionDelta companyId={companyId} />}
+          {companyId && <StandingFindings companyId={companyId} />}
 
           {/* § 01 WINNING ASPIRATION */}
           <div style={{ marginBottom: 48 }}>
@@ -579,6 +582,7 @@ export default function StrategyOrgPanel({
       )}
 
       {companyId && <StrategicDirectionDelta companyId={companyId} />}
+      {companyId && <StandingFindings companyId={companyId} />}
 
       <StatementField
         label="Where you're headed"
