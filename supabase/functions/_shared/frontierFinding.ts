@@ -19,6 +19,7 @@
 // PRESERVES status (a resolved frontier stays resolved; only body/beats/run refresh).
 
 import { callOpenAIJSON } from "./openaiClient.ts";
+import { FINDING_VOICE, BEAT_LENGTH_RULE } from "./findingVoice.ts";
 
 type AnySupabase = { from: (t: string) => any };
 
@@ -38,12 +39,14 @@ const FRONTIER_SCHEMA = {
     body: {
       type: "string",
       description:
-        "The single most load-bearing, least-validated strategic bet, stated in the company's OWN terms. " +
-        "Mined from the corpus — invent nothing. Empty string if mineable is false.",
+        "The single most load-bearing, least-validated strategic bet, second person: 'You're betting that…'. " +
+        "Grounded in the provided material — invent nothing. One sentence. Empty string if mineable is false.",
     },
     observe: {
       type: "string",
-      description: "Restate the bet precisely as the company holds it. No new facts. Empty if not mineable.",
+      description:
+        "Restate the bet precisely, second person ('you'/'your'), as ONE short sentence. No new facts. " +
+        "No internal jargon (no 'signal'/'read'/'band'). Empty if not mineable.",
     },
     name_tension: {
       type: "string",
@@ -62,33 +65,36 @@ const FRONTIER_SCHEMA = {
 
 function buildSystemText(): string {
   return (
-    "You mine a company's INTERNAL strategic signal for its single most load-bearing bet — the one belief the " +
-    "whole strategy rests on that has NOT yet been tested against outside or customer reality — and frame it as " +
-    "a three-beat opening for discussion. You do NOT invent. Every claim must be grounded in the provided corpus.\n\n" +
+    "You read what a company's own team has mapped about its strategy and name its single most load-bearing " +
+    "bet — the one belief the whole strategy rests on that has NOT yet been tested against the outside world or " +
+    "real customers — then frame it as a three-beat opening for discussion. You do NOT invent; every claim must " +
+    "be grounded in what the team has actually mapped (the material provided).\n\n" +
+    `${FINDING_VOICE}\n\n${BEAT_LENGTH_RULE}\n\n` +
     "FRONTIER: the most consequential, least-validated strategic bet. Not the safest claim, not a summary — the " +
-    "load-bearing assumption that, if wrong, breaks the strategy. State it in the company's own terms.\n\n" +
-    "MINEABILITY: Set mineable=false when the corpus is placeholder, generic, templated, or merely structural " +
+    "load-bearing assumption that, if wrong, breaks the strategy. Name it as THEIR bet: 'You're betting that…'.\n\n" +
+    "MINEABILITY: Set mineable=false when the material is placeholder, generic, templated, or merely structural " +
     "(e.g. 'market demand exists', 'product roadmap lists features', 'customer surveys show pain points') — " +
     "i.e. there is no specific, company-particular bet to name. Only set mineable=true when a real, particular " +
     "strategic bet is present. When in doubt, prefer mineable=false. Never force a frontier.\n\n" +
     "When mineable=true:\n" +
-    "  body — the bet itself, in the company's own words, mined from the corpus.\n" +
-    "  observe — restate that bet precisely; add no facts the corpus does not contain.\n" +
-    "  name_tension — what would have to be true for the bet to hold once it meets outside/customer reality; " +
-    "a question of belief, held open, never resolved into a verdict.\n" +
+    "  body — the bet itself, second person, in their own words: 'You're betting that…'.\n" +
+    "  observe — restate that bet precisely in one short sentence; add no facts not in the material.\n" +
+    "  name_tension — what would have to be true for the bet to hold once it meets the outside world and real " +
+    "customers; a question of belief, held open, never a verdict.\n" +
     "  open — one specific, evidence-seeking move to test the bet, aimed at the named real audience. " +
-    "Use that audience (e.g. families and funders, independent cafe operators), NEVER the generic word 'customers'.\n\n" +
-    "ANTI-FABRICATION: mine real internal belief and name the real gap. NEVER fabricate customer reality, outside " +
-    "reception, or evidence that does not exist. The Open seeks evidence; it does not assert it.\n\n" +
-    "Each beat is one or two plain sentences. No headers, labels, or markdown."
+    "Use that audience (e.g. children, teens, and their families; independent cafe operators), " +
+    "NEVER the generic word 'customers'.\n\n" +
+    "ANTI-FABRICATION: name the real bet and the real gap. NEVER fabricate customer reality, outside reception, " +
+    "or evidence that does not exist. The Open seeks evidence; it does not assert it.\n\n" +
+    "No headers, labels, or markdown."
   );
 }
 
 function buildUserText(companyName: string, jobExecutor: string, bodies: string[]): string {
   return (
     `Company: ${companyName}\n` +
-    `Real audience (job executor) — aim the Open at THIS, not "customers": ${jobExecutor}\n\n` +
-    `INTERNAL strategic signal (the company's own org-band claims — the only material you may mine):\n` +
+    `Real audience — aim the Open at THIS, not "customers": ${jobExecutor}\n\n` +
+    `What your team has mapped about the strategy (the only material to draw on):\n` +
     bodies.map((b, i) => `${i + 1}. ${b}`).join("\n") +
     `\n\nIdentify the single most load-bearing, least-validated strategic bet and produce the frontier.`
   );

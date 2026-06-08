@@ -15,6 +15,7 @@
 // Render-side (Next Turn) is a separate item (2b) — nothing here renders.
 
 import { callOpenAIJSON } from "./openaiClient.ts";
+import { FINDING_VOICE, BEAT_LENGTH_RULE } from "./findingVoice.ts";
 
 // Loose client type — this module is called from both edge functions (service role)
 // and the shared ingest path. We only use .from()/.select()/.update().
@@ -48,8 +49,9 @@ const BEATS_SCHEMA = {
     observe: {
       type: "string",
       description:
-        "Faithful, precise restatement of ONLY the factual claim in the finding body. " +
-        "Strip editorializing and hedging. Add no facts not present in the body.",
+        "Faithful, precise restatement of ONLY the factual claim in the finding body, in second person " +
+        "('you'/'your'), as ONE short sentence. Strip editorializing and hedging. Add no facts not present " +
+        "in the body. No internal jargon (no 'signal'/'read'/'band').",
     },
     name_tension: {
       type: "string",
@@ -70,20 +72,19 @@ const BEATS_SCHEMA = {
 function buildSystemText(): string {
   return (
     "You turn a single strategic finding into a three-beat opening for a discussion — " +
-    "NOT a verdict, NOT advice, NOT a plan. The three beats are Observe, Name-the-tension, and Open. " +
-    "Tone is calm, curious, and gentle throughout: you are opening a conversation, not delivering a judgment.\n\n" +
-    "OBSERVE: Restate ONLY the factual claim already in the finding body. Strip editorializing, alarm, and " +
-    "recommendation. Invent no facts the body does not contain. Be precise and concrete.\n\n" +
+    "NOT a verdict, NOT advice, NOT a plan. The three beats are Observe, Name-the-tension, and Open.\n\n" +
+    `${FINDING_VOICE}\n\n${BEAT_LENGTH_RULE}\n\n` +
+    "OBSERVE: Restate ONLY the factual claim already in the finding body, in second person. Strip editorializing, " +
+    "alarm, and recommendation. Invent no facts the body does not contain. One short sentence.\n\n" +
     "NAME-THE-TENSION: Surface the underlying assumption or gap as a 'what would have to be true' question — " +
-    "the belief that would have to hold for this to matter, or the thing not yet known. Hold it open. " +
-    "Never resolve it into a conclusion or a verdict.\n\n" +
-    "OPEN: Offer one provisional, evidence-seeking discussion question that invites looking, not concluding. " +
+    "the belief that would have to hold for this to matter, or the thing not yet known. Hold it open; " +
+    "never resolve it into a verdict.\n\n" +
+    "OPEN: Offer one provisional, evidence-seeking question that invites looking, not concluding. " +
     "It must be answerable by gathering evidence, and phrased gently.\n\n" +
     "WATCH-OUT vs OBSERVATION: For a watch_out, treat the finding as worth verifying, NEVER as an established " +
-    "problem or accusation. Attribute claims to their source rather than asserting them. For example, a finding " +
-    "about an alleged-fraud review must read like 'one HomeAdvisor review alleges X — worth understanding whether " +
-    "it is isolated', not 'you have a reputation problem'. An observation is a neutral pattern to explore.\n\n" +
-    "Each beat is one or two plain sentences. No headers, no labels, no markdown — just the prose for each field."
+    "problem. Attribute the fact to its source — 'there's one review about your post-tornado work that alleges X', " +
+    "not 'you have a reputation problem'. An observation is a neutral pattern to explore.\n\n" +
+    "No headers, no labels, no markdown — just the prose for each field."
   );
 }
 
