@@ -29,11 +29,13 @@ describe("route language", () => {
     expect(quality.reasons).toContain("generic_start");
   });
 
-  it("rewrites generic Fomo route language into a decision-shaped path", () => {
+  it("passes the route's own title/description through without canned substitution", () => {
+    // Canned-substitution branches were removed: matching keywords must no longer
+    // overwrite a route with a hardcoded coffee/commerce/marketing string.
     const rewritten = rewriteRouteLanguage(makeInput());
-    expect(rewritten.title).toBe("Reduce uncertainty about which path fits the brand");
-    expect(rewritten.shortDescription).toContain("before effort is committed");
-    expect(rewritten.qualityAfter.quality).toMatch(/strong|highly_specific/);
+    expect(rewritten.title).toBe("Enhance Path Selection Confidence");
+    expect(rewritten.title).not.toBe("Reduce uncertainty about which path fits the brand");
+    expect(rewritten.shortDescription).toBe(makeInput().shortDescription);
   });
 
   // TODO: route-language generation for non-coffee/nonprofit domains is
@@ -61,7 +63,7 @@ describe("route language", () => {
     expect(rewritten.shortDescription).toContain("future support depends less on trust alone");
   });
 
-  it("uses linked hypothesis context to sharpen repeat-purchase routes", () => {
+  it("keeps the route's own title and still surfaces linked-hypothesis context", () => {
     const rewritten = rewriteRouteLanguage({
       category: "create",
       title: "Create repeat-purchase measurement loop",
@@ -80,7 +82,9 @@ describe("route language", () => {
       ],
     });
 
-    expect(rewritten.title).toBe("Test whether operational proof changes repeat purchasing confidence");
+    expect(rewritten.title).toBe("Create repeat-purchase measurement loop");
+    expect(rewritten.title).not.toBe("Test whether operational proof changes repeat purchasing confidence");
+    // Input-derived humanization (from the linked hypothesis) still flows through.
     expect(rewritten.whyThisMatters.join(" ")).toContain("supplier switching must remain easy enough");
   });
 

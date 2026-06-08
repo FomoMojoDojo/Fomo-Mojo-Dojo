@@ -283,134 +283,18 @@ export function classifyRouteQuality(input: RouteLanguageInput): RouteQualityAss
   return { quality, score, reasons };
 }
 
-function hypothesisText(input: RouteLanguageInput) {
-  return normalize(strongestHypothesisLine(input));
-}
-
-function buildTemplate(input: RouteLanguageInput): RewriteTemplate | null {
-  const text = normalize(textBundle(input));
-  const hypothesis = hypothesisText(input);
-
-  if (/repeat purchase|purchase frequency|retention|switching/.test(text) || /switching risk/.test(hypothesis)) {
-    return {
-      title: "Test whether operational proof changes repeat purchasing confidence",
-      shortDescription: "Use repeat-purchase signals to learn whether visible reliability proof is strong enough to keep customers coming back.",
-      whyHint: "This route matters if supplier value stays hard to perceive before customers decide whether to come back.",
-    };
-  }
-
-  if (/\bpos\b|point of sale|inventory|manual counts|reorder triggers|sales velocity/.test(text)) {
-    return {
-      title: "Reduce stock-out risk before manual counts fail",
-      shortDescription: "Make reorder signals visible early enough that sales velocity drives supply decisions before stock-outs appear.",
-      whyHint: "This route matters if inventory risk is still becoming visible only after sales momentum is already lost.",
-    };
-  }
-
-  if (/supplier agreement|lead time|pricing tier|supplier terms|unclear terms/.test(text)) {
-    return {
-      title: "Reduce reorder friction caused by unclear supplier terms",
-      shortDescription: "Make lead times and pricing predictable enough that repeat orders do not trigger renegotiation or margin surprises.",
-      whyHint: "This route matters if reorder friction is eroding trust before the product can prove its value.",
-    };
-  }
-
-  if (/pricing|margin/.test(text)) {
-    return {
-      title: "Make margin tradeoffs visible before pricing changes",
-      shortDescription: "Turn pricing into a decision rule so growth does not quietly erase the margins the business depends on.",
-      whyHint: "This route matters if pricing choices are still being made faster than margin consequences become visible.",
-    };
-  }
-
-  if (/staff preparation|opening and closing|quality gaps|onboarding|manager dependency|prep/.test(text)) {
-    return {
-      title: "Shift preparation quality from manager-dependent to system-supported",
-      shortDescription: "Reduce quality drift by making preparation standards visible enough to hold across shifts, not just strong managers.",
-      whyHint: "This route matters if quality still depends on who happens to be running the shift.",
-    };
-  }
-
-  if (/marketing success metrics|measurable success|success criteria/.test(text)) {
-    return {
-      title: "Reduce uncertainty about what success should look like",
-      shortDescription: "Set a clearer decision rule for progress so the team can tell whether a path is working before confidence drifts.",
-      whyHint: "This route matters if the team still cannot tell whether a strategic path is succeeding before time and energy are already spent.",
-    };
-  }
-
-  if (/path selection|strategic fit|brand positioning/.test(text)) {
-    return {
-      title: "Reduce uncertainty about which path fits the brand",
-      shortDescription: "Help the team see which marketing path actually fits the brand before effort is committed.",
-      whyHint: "This route matters if the wrong path can feel plausible until the execution cost is already sunk.",
-    };
-  }
-
-  if (/execution blockers|delays delaying|starting execution promptly/.test(text)) {
-    return {
-      title: "Reduce drag before execution can start",
-      shortDescription: "Surface the blockers that stop work from moving so momentum does not depend on improvisation.",
-      whyHint: "This route matters if execution is slowing down before the real work has even begun.",
-    };
-  }
-
-  if (/prerequisite alignment|prerequisites|readiness|stakeholder alignment/.test(text)) {
-    return {
-      title: "Expose missing prerequisites before execution stalls",
-      shortDescription: "Make missing inputs visible earlier so execution does not slow down because the setup was never real.",
-      whyHint: "This route matters if teams are committing to execution before the needed conditions are actually in place.",
-    };
-  }
-
-  if (/credibility validation|feasibility and credibility|proof to win trust/.test(text) || /credible proof/.test(hypothesis)) {
-    return {
-      title: "Make strategy proof visible before commitment",
-      shortDescription: "Show whether a strategic path is credible before the team commits budget, effort, or reputation to it.",
-      whyHint: "This route matters if belief is forming faster than proof.",
-    };
-  }
-
-  if (/rework|execution delays|momentum toward goals/.test(text)) {
-    return {
-      title: "Reduce rework before momentum is lost",
-      shortDescription: "Cut the delays that force teams to restart work after they think execution has already begun.",
-      whyHint: "This route matters if execution quality is falling apart after momentum already looks real from the outside.",
-    };
-  }
-
-  if (/progress tracking|quality signals during marketing execution|real-time/.test(text)) {
-    return {
-      title: "Make progress visible before confidence drops",
-      shortDescription: "Make progress easy to read while the work is still underway so the team can adjust before trust erodes.",
-      whyHint: "This route matters if the team is learning too late that a path is drifting off course.",
-    };
-  }
-
-  if (/adaptive marketing adjustments|conditions or results change|market realities/.test(text)) {
-    return {
-      title: "Act on new signals before wasted effort compounds",
-      shortDescription: "Respond to new evidence quickly enough that marketing direction changes before wasted effort compounds.",
-      whyHint: "This route matters if the market moves faster than the team can act on what it is learning.",
-    };
-  }
-
-  if (/lessons capture|closing loops|lessons learned/.test(text)) {
-    return {
-      title: "Turn finished work into proof for the next decision",
-      shortDescription: "Capture what actually worked so the next strategic choice depends less on memory and more on proof.",
-      whyHint: "This route matters if the organization keeps paying to relearn what it already discovered.",
-    };
-  }
-
-  if (/operational proof|trust/.test(hypothesis) && /proof|trust|credibility|validation/.test(text)) {
-    return {
-      title: "Make proof of reliability visible earlier",
-      shortDescription: "Surface operational proof sooner so buyers can decide with more confidence before trust erodes.",
-      whyHint: "This route matters if trust is weakening before the operational value becomes visible.",
-    };
-  }
-
+function buildTemplate(_input: RouteLanguageInput): RewriteTemplate | null {
+  // Domain-specific canned-substitution branches were removed. They matched over-broad
+  // keyword regexes (prep/POS/supplier/pricing/marketing/etc.) and overwrote ANY
+  // company's matching routes with a fixed coffee/commerce/marketing string at
+  // research-company write time — producing cross-company contamination (e.g. a
+  // coffee-shop "shift preparation quality" route on a youth-mental-health org) and
+  // byte-identical false duplicates when two routes tripped the same branch.
+  //
+  // Route text now passes through unchanged. Genuine per-company humanization is still
+  // derived from the route's OWN text via buildRouteWhyThisMattersNarrative and
+  // fallbackDescription — never from a hardcoded literal. Do not reintroduce canned
+  // title/shortDescription literals here.
   return null;
 }
 
