@@ -67,7 +67,9 @@ const SOURCE_TYPE_ORDER = [
 
 function sourceTypeOf(sig: DeltaSignal): string {
   const st = typeof sig.rawPayload.source_type === "string" ? sig.rawPayload.source_type.trim() : "";
-  if (st) return st;
+  // 'analysis' is the synthesis terminal-fallback stamp (findings layer) — render it
+  // in the same bucket blank source_type uses today (public_web), net-zero change.
+  if (st && st !== "analysis") return st;
   const bucket = typeof sig.rawPayload.bucket === "string" ? sig.rawPayload.bucket.trim() : "";
   // outside_voice_signal is a bucket, not a source type — fall back to web.
   if (bucket && bucket !== "outside_voice_signal") return bucket;

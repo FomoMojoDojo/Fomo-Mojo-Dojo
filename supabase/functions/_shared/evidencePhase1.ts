@@ -491,6 +491,39 @@ export async function ingestPublicBaselineSignals(args: {
     sourceType: "public_baseline_run",
     signals,
   });
+  // Findings layer: auto-capture this run's synthesis reads (source_type='analysis')
+  // as standing findings. Additive + idempotent (ON CONFLICT DO NOTHING via the
+  // (company_id, origin_signal_id) unique); never deletes/replaces. kind defaults to
+  // 'observation' (classification beyond default deferred).
+  try {
+    const runIdNum = Number(args.runId);
+    const { data: analysisSignals } = await args.supabase
+      .from("signals")
+      .select("id, claim_text")
+      .eq("company_id", args.companyId)
+      .eq("source_type", "public_baseline_run")
+      .eq("source_id", String(args.runId))
+      .eq("raw_payload->>source_type", "analysis");
+    const findingRows = (Array.isArray(analysisSignals) ? analysisSignals : [])
+      .filter((s: { claim_text?: unknown }) => typeof s.claim_text === "string" && s.claim_text.trim().length > 0)
+      .map((s: { id: string; claim_text: string }) => ({
+        company_id: args.companyId,
+        origin_run_id: Number.isFinite(runIdNum) ? runIdNum : null,
+        origin_signal_id: s.id,
+        kind: "observation",
+        body: s.claim_text,
+        status: "open",
+      }));
+    if (findingRows.length > 0) {
+      const { error: findingsErr } = await args.supabase
+        .from("findings")
+        .upsert(findingRows, { onConflict: "company_id,origin_signal_id", ignoreDuplicates: true });
+      if (findingsErr) console.log("[evidence] findings auto-capture error:", findingsErr.message);
+      else console.log(`[evidence] findings auto-capture: ${findingRows.length} analysis read(s) for company=${args.companyId} run=${args.runId}`);
+    }
+  } catch (err) {
+    console.log("[evidence] findings auto-capture exception:", String(err instanceof Error ? err.message : err));
+  }
   const journeyStats = await inferJourneyHypothesesForCompany({
     supabase: args.supabase as any,
     companyId: args.companyId,

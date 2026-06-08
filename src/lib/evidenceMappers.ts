@@ -704,7 +704,10 @@ export function mapPublicBaselineOutputToSignals(args: {
       structure_level: "interpreted",
       validation_status: "unvalidated",
       confidence_to_use: "medium",
-      raw_payload: { hypothesis: text },
+      // Findings layer: hypotheses are synthesis reads (no voice source type). Stamp
+      // 'analysis' as the terminal fallback so ingest auto-captures them as findings;
+      // render bucketing maps 'analysis' to the bucket blank used (net-zero visible).
+      raw_payload: { hypothesis: text, source_type: "analysis" },
     });
   }
 

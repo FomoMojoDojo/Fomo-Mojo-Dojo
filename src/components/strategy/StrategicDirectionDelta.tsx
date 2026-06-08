@@ -110,6 +110,7 @@ const SOURCE_TAG: Record<string, string> = {
   review_signal: "Review",
   profile_or_company_page: "Company-stated",
   public_web: "Web",
+  analysis: "Public mention",   // findings-layer synthesis stamp — same as blank's fallback (net-zero)
 };
 
 function hostOf(url: string): string {
