@@ -47,6 +47,9 @@ verify_jwt = false
 [functions.refresh-positioning]
 verify_jwt = false
 
+[functions.generate-finding-beats]
+verify_jwt = false
+
 [edge_runtime.secrets]
 OPENAI_API_KEY = "env(OPENAI_API_KEY)"
 OPENAI_MODEL = "env(OPENAI_MODEL)"

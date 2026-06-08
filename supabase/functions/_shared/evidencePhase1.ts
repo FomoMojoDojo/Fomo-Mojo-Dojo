@@ -15,6 +15,7 @@ import {
   rebuildStrategicHypothesesForCompany,
 } from "./strategicHypotheses.ts";
 import { inferJourneyHypothesesForCompany } from "./journeyHypotheses.ts";
+import { generateFindingBeats } from "./findingBeats.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -523,6 +524,19 @@ export async function ingestPublicBaselineSignals(args: {
     }
   } catch (err) {
     console.log("[evidence] findings auto-capture exception:", String(err instanceof Error ? err.message : err));
+  }
+  // Insight-anchored beats (2a): generate Observe/Name/Open for any findings still
+  // missing them (the rows just captured, plus any older null seeds). Idempotent —
+  // beats IS NULL only — and non-fatal: a beat-gen failure must not break ingest.
+  try {
+    const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+    if (openaiApiKey) {
+      await generateFindingBeats({ supabase: args.supabase, companyId: args.companyId, openaiApiKey });
+    } else {
+      console.log("[evidence] beats skipped — no OPENAI_API_KEY");
+    }
+  } catch (err) {
+    console.log("[evidence] beats generation exception:", String(err instanceof Error ? err.message : err));
   }
   const journeyStats = await inferJourneyHypothesesForCompany({
     supabase: args.supabase as any,
