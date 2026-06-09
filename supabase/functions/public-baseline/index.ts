@@ -1873,6 +1873,15 @@ Deno.serve(async (req) => {
     if (synthesis_engine === "claude_websearch" && !anthropicKey) {
       return json({ error: "Missing ANTHROPIC_API_KEY (required for synthesis_engine=claude_websearch)" }, 500);
     }
+    // OE-1: stamp the ledger for the engine actually used (the literal above is the
+    // openai default; override for claude so a claude run is traceable as such).
+    if (synthesis_engine === "claude_websearch") {
+      runLedger.provider = "anthropic_websearch";
+      runLedger.model = anthropicModel;
+      runLedger.fallback_models = [];
+      runLedger.endpoint = "https://api.anthropic.com/v1/messages";
+      runLedger.path = "claude_web_search";
+    }
     const sourceFilters = normalizePublicSourceFilters(
       body?.public_source_filters_json ?? companyRow?.public_source_filters_json ?? null,
     );
@@ -2739,7 +2748,10 @@ Deno.serve(async (req) => {
     const resultWithDiscoveredSources = {
       ...mergeDiscoveredEvidenceIntoLedger({
         result: typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {},
-        discoveredEvidence: discoveredProfileEvidence,
+        // OE-1: claude runs its own web_search; injecting searx-discovered profile evidence
+        // would commingle searx sources into a "pure claude" result_json. Skip the inject
+        // for claude (the merge is inject-only, so [] is a no-op). OpenAI path unchanged.
+        discoveredEvidence: synthesis_engine === "claude_websearch" ? [] : discoveredProfileEvidence,
       }),
       status: "ok" as const,
     };
