@@ -30,7 +30,7 @@ import type {
 import { runBackwardsCompatMigration } from "@/lib/claimState/migration/runner";
 
 const SUPABASE_URL = "http://127.0.0.1:54321";
-const SERVICE_KEY = "***REMOVED***";
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const CAFE_BARRA_ID = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
 const MIGRATIONS_DIR = path.join(process.cwd(), "supabase/migrations");

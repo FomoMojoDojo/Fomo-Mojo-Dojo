@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const repoRoot = '/Users/fomomojodojo/dev/happy-file-hugger-main';
 const supabaseUrl = 'http://127.0.0.1:54321';
-const serviceKey = '***REMOVED***';
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
