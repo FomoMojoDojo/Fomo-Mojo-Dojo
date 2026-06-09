@@ -38,6 +38,24 @@ export type AlignmentPoint = {
   alignment_summary: string | null;
 };
 
+// PVT Phase 2: signal-level run-over-run delta in public voice. Source-level, honest
+// (not inflated to signal counts). Identity key = normalized source_url (trim+lower
+// only — distinct pages stay distinct). Endpoints only: baseline = min(source_id),
+// current = max(source_id). Computed in-hook from rows already loaded; no LLM, no write.
+export type DeltaSourceEntry = {
+  url: string;           // normalized (trim + lowercase)
+  host: string | null;   // for display
+  tag: string;           // humanized source-type label
+  claims: string[];      // claim_texts at this source in the relevant run
+};
+export type PublicVoiceDelta = {
+  baselineRunId: number | null;
+  currentRunId: number | null;
+  newSources: DeltaSourceEntry[];      // current ∖ baseline
+  droppedSources: DeltaSourceEntry[];  // baseline ∖ current (rows still exist — read only)
+  shiftedSources: DeltaSourceEntry[];  // persisting source whose claim set moved (APPROXIMATE)
+};
+
 export type StrategicDeltaData = {
   internal: InternalGroups;
   publicThemes: PublicTheme[];
@@ -45,6 +63,8 @@ export type StrategicDeltaData = {
   // PVT-1: current public snapshot = the latest run that has outside signals.
   currentRunId: number | null;
   alignmentTrend: AlignmentPoint[];
+  // PVT-2: source-level public-voice delta between baseline and current run.
+  publicVoiceDelta: PublicVoiceDelta;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -104,6 +124,24 @@ function toRaw(payload: unknown): Record<string, unknown> {
   return {};
 }
 
+// PVT-2 identity normalization: trim + lowercase ONLY — do not strip path/query, so
+// distinct pages remain distinct sources.
+function normalizeUrl(u: unknown): string {
+  return String(u ?? "").trim().toLowerCase();
+}
+function deltaHostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 // Direct signal reader — NOT claim-mediated.
@@ -126,6 +164,7 @@ export function useStrategicDelta(companyId?: string) {
         dispositions: new Map(),
         currentRunId: null,
         alignmentTrend: [],
+        publicVoiceDelta: { baselineRunId: null, currentRunId: null, newSources: [], droppedSources: [], shiftedSources: [] },
       };
 
       const [internalRes, publicRes, dispRes, runsRes] = await Promise.all([
@@ -138,7 +177,7 @@ export function useStrategicDelta(companyId?: string) {
           .order("created_at", { ascending: true }),
         supabase
           .from("signals")
-          .select("id, framework, claim_text, topic, raw_payload, source_id")
+          .select("id, framework, claim_text, topic, raw_payload, source_id, source_url")
           .eq("company_id", companyId)
           .eq("signal_band", "outside")
           .eq("source_type", "public_baseline_run")
@@ -184,9 +223,14 @@ export function useStrategicDelta(companyId?: string) {
       // signals. Resolve from the signals themselves (max source_id) so a failed /
       // empty later run can't blank the panel. Was: union of ALL runs (the blob).
       const publicRows = (publicRes.data ?? []) as Array<Record<string, unknown>>;
+      // Run ids: ignore rows with a blank/non-numeric source_id. (Number("") === 0 is
+      // finite, so a blank source_id would otherwise inject a phantom "run 0" — which
+      // min() would wrongly pick as the PVT-2 baseline.)
       const runIds = publicRows
-        .map((r) => Number(r.source_id))
-        .filter((n) => Number.isFinite(n));
+        .map((r) => String(r.source_id ?? "").trim())
+        .filter((s) => s !== "")
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n) && n > 0);
       const currentRunId = runIds.length > 0 ? Math.max(...runIds) : null;
       const currentRows = currentRunId === null
         ? publicRows
@@ -201,6 +245,54 @@ export function useStrategicDelta(companyId?: string) {
       });
       const publicSignals = voiceRows.map((r) => toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0]));
       const publicThemes = groupPublicBySourceType(publicSignals);
+
+      // PVT-2: source-level run-over-run delta (endpoints: baseline = min run, current = max).
+      // Diffs VOICE rows only (same analysis-exclusion as the panel), keyed on normalized
+      // source_url. No LLM, no write — pure set arithmetic over rows already loaded.
+      const isVoiceRow = (r: Record<string, unknown>) => {
+        const rp = r.raw_payload as { source_type?: unknown } | null;
+        return !(rp && typeof rp.source_type === "string" && rp.source_type.trim() === "analysis");
+      };
+      const baselineRunId = runIds.length > 0 ? Math.min(...runIds) : null;
+      const indexSourcesByUrl = (rows: Array<Record<string, unknown>>) => {
+        const m = new Map<string, { rawUrl: string; tag: string; claims: Set<string> }>();
+        for (const r of rows) {
+          const rawUrl = String(r.source_url ?? "");
+          const u = normalizeUrl(rawUrl);
+          if (!u) continue;
+          if (!m.has(u)) {
+            const tag = humanizeSourceType(sourceTypeOf(toDeltaSignal(r as Parameters<typeof toDeltaSignal>[0])));
+            m.set(u, { rawUrl, tag, claims: new Set<string>() });
+          }
+          const claim = String(r.claim_text ?? "").trim().toLowerCase();
+          if (claim) m.get(u)!.claims.add(claim);
+        }
+        return m;
+      };
+      const toEntry = (u: string, v: { rawUrl: string; tag: string; claims: Set<string> }): DeltaSourceEntry => ({
+        url: u,
+        host: deltaHostOf(v.rawUrl || u),
+        tag: v.tag,
+        claims: [...v.claims],
+      });
+      let publicVoiceDelta: PublicVoiceDelta = {
+        baselineRunId, currentRunId, newSources: [], droppedSources: [], shiftedSources: [],
+      };
+      // Only meaningful with ≥2 distinct runs (baseline must differ from current).
+      if (baselineRunId !== null && currentRunId !== null && baselineRunId !== currentRunId) {
+        const baselineRows = publicRows.filter((r) => Number(r.source_id) === baselineRunId && isVoiceRow(r));
+        const baseIdx = indexSourcesByUrl(baselineRows);
+        const currIdx = indexSourcesByUrl(voiceRows);
+        const newSources: DeltaSourceEntry[] = [];
+        const shiftedSources: DeltaSourceEntry[] = [];
+        for (const [u, v] of currIdx) {
+          if (!baseIdx.has(u)) newSources.push(toEntry(u, v));
+          else if (!setsEqual(v.claims, baseIdx.get(u)!.claims)) shiftedSources.push(toEntry(u, v));
+        }
+        const droppedSources: DeltaSourceEntry[] = [];
+        for (const [u, v] of baseIdx) if (!currIdx.has(u)) droppedSources.push(toEntry(u, v));
+        publicVoiceDelta = { baselineRunId, currentRunId, newSources, droppedSources, shiftedSources };
+      }
 
       const dispositions = new Map<string, DispositionValue>();
       for (const row of (dispRes.data ?? []) as Array<{ signal_id: string; disposition: string }>) {
@@ -223,7 +315,7 @@ export function useStrategicDelta(companyId?: string) {
         };
       });
 
-      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend };
+      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta };
     },
   });
 

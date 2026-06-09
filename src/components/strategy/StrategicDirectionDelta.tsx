@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useStrategicDelta, type DeltaSignal, type PublicTheme, type DispositionValue } from "@/hooks/useStrategicDelta";
+import { useStrategicDelta, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta } from "@/hooks/useStrategicDelta";
 import { D } from "@/components/design-system/tokens";
 
 // Local accent constants — not in D.* yet
@@ -235,14 +235,85 @@ function AlignmentTrend({
 }
 
 // The public read, rendered either as the primary 1fr column or the 260px sidebar.
+// PVT-2: what moved in public voice between the baseline run and the current run.
+// Source-level + honest (counts are sources, never inflated to signals). Client voice,
+// second person. Dropped sources are shown struck/quiet — both runs' rows still exist;
+// this is a read, nothing deleted. Shifted is labelled APPROXIMATE (claim_text is
+// LLM-regenerated, so a moved claim set is a hint, not a verdict).
+function PublicVoiceDeltaBlock({ delta, primary }: { delta: PublicVoiceDelta; primary: boolean }) {
+  const { baselineRunId, currentRunId, newSources, droppedSources, shiftedSources } = delta;
+  const labelStyle: React.CSSProperties = {
+    fontFamily: D.mono, fontSize: 8, textTransform: "uppercase",
+    letterSpacing: "0.1em", color: A.publicLabel, display: "block", marginBottom: 4,
+  };
+  // Empty state: fewer than 2 runs → nothing to diff yet.
+  if (baselineRunId == null || currentRunId == null || baselineRunId === currentRunId) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <span style={labelStyle}>What changed in public voice</span>
+        <p style={{ fontFamily: D.sans, fontSize: primary ? 12 : 11, color: D.inkFaint, lineHeight: 1.45, margin: 0 }}>
+          Baseline established — no delta yet.
+        </p>
+      </div>
+    );
+  }
+  const total = newSources.length + droppedSources.length + shiftedSources.length;
+  // Show the page, not just the host — distinct pages on one host (iaqm.com/blog vs
+  // iaqm.com/about vs bare iaqm.com) are distinct sources and must read as distinct.
+  const nameOf = (e: { host: string | null; url: string }) =>
+    e.url.replace(/^https?:\/\//, "").replace(/^www\./, "") || e.host || e.url;
+  const rowStyle: React.CSSProperties = {
+    fontFamily: D.sans, fontSize: primary ? 12 : 11, color: D.ink, lineHeight: 1.5, margin: "0 0 4px",
+  };
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <span style={labelStyle}>
+        What changed since snapshot #{baselineRunId}
+        {" · "}
+        <span style={{ color: D.inkFaint }}>
+          {newSources.length} new · {droppedSources.length} quiet · {shiftedSources.length} shifted
+        </span>
+      </span>
+      {total === 0 ? (
+        <p style={{ fontFamily: D.sans, fontSize: primary ? 12 : 11, color: D.inkFaint, lineHeight: 1.45, margin: 0 }}>
+          Public voice is holding steady — same sources as the baseline.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {newSources.map((e) => (
+            <p key={`n-${e.url}`} style={rowStyle}>
+              <span style={{ color: D.signal, fontWeight: 600 }}>+ </span>
+              You're now hearing from <strong>{nameOf(e)}</strong>.
+            </p>
+          ))}
+          {shiftedSources.map((e) => (
+            <p key={`s-${e.url}`} style={rowStyle}>
+              <span style={{ color: A.queued, fontWeight: 600 }}>~ </span>
+              <strong>{nameOf(e)}</strong> is still talking, but the voice has moved
+              <span style={{ color: D.inkFaint }}> (approximate)</span>.
+            </p>
+          ))}
+          {droppedSources.map((e) => (
+            <p key={`d-${e.url}`} style={{ ...rowStyle, color: D.inkFaint }}>
+              <span style={{ fontWeight: 600 }}>– </span>
+              <span style={{ textDecoration: "line-through" }}>{nameOf(e)}</span> has gone quiet since baseline.
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PublicPanel({
-  variant, currentRunId, currentAlignment, alignmentTrend, themes,
+  variant, currentRunId, currentAlignment, alignmentTrend, themes, delta,
 }: {
   variant: "primary" | "sidebar";
   currentRunId: number | null;
   currentAlignment: { alignment_status: string | null } | null;
   alignmentTrend: { run_id: number; alignment_status: string | null; alignment_summary: string | null }[];
   themes: PublicTheme[];
+  delta: PublicVoiceDelta;
 }) {
   const primary = variant === "primary";
   return (
@@ -269,6 +340,7 @@ function PublicPanel({
           </p>
         </div>
       )}
+      <PublicVoiceDeltaBlock delta={delta} primary={primary} />
       {themes.map(t => <PublicSection key={t.key} theme={t} primary={primary} />)}
       <AlignmentTrend trend={alignmentTrend} currentRunId={currentRunId} primary={primary} />
     </div>
@@ -331,7 +403,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
   if (!data) return null;
 
-  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend } = data;
+  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta } = data;
   const { strategicBet, recommendations, sourceReads } = internal;
 
   // PVT-1: current snapshot's public-vs-internal alignment (minimal surface; rich
@@ -385,6 +457,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
             currentAlignment={currentAlignment}
             alignmentTrend={alignmentTrend}
             themes={publicThemes}
+            delta={publicVoiceDelta}
           />
           <p style={{
             fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
@@ -429,6 +502,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
               currentAlignment={currentAlignment}
               alignmentTrend={alignmentTrend}
               themes={publicThemes}
+              delta={publicVoiceDelta}
             />
           )}
         </div>
