@@ -294,6 +294,17 @@ export default function MapView() {
   const { items: oppItems } = useOpportunities(activeCompany?.id);
   const { items: routeItems } = useRoutes(activeCompany?.id);
 
+  // On-strategy set resolved at the data layer (operator pin → else SQL heuristic).
+  const [primaryJourneyKey, setPrimaryJourneyKey] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!activeCompany?.id) { setPrimaryJourneyKey(undefined); return; }
+    let cancelled = false;
+    (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown }> })
+      .rpc("resolve_primary_job_step_set", { p_company_id: activeCompany.id })
+      .then(({ data }) => { if (!cancelled) setPrimaryJourneyKey(typeof data === "string" ? data : undefined); });
+    return () => { cancelled = true; };
+  }, [activeCompany?.id]);
+
   const fallbackScores = useMemo(
     () =>
       scoreCompanyMojo({
@@ -304,8 +315,9 @@ export default function MapView() {
         routes: Array.isArray(routeItems) ? routeItems : [],
         strategicProblems,
         baselineRunResultJson: null,
+        primaryJourneyKey,
       }),
-    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems],
+    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, primaryJourneyKey],
   );
 
   const displayMojo =

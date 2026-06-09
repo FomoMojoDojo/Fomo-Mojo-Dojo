@@ -481,6 +481,11 @@ function tokenizeStrategicText(value: unknown) {
 function deriveInitiativeContext(
   jobSteps: ScoreableJobStep[],
   strategicProblems: StrategicProblemInput[],
+  // The on-strategy journey_key resolved at the data layer by
+  // resolve_primary_job_step_set (operator pin → else SQL heuristic). The local rank
+  // heuristic has been REMOVED — it now lives ONLY in that SQL resolver. When no key is
+  // supplied (unwired callers), default to "customer" rather than re-deriving here.
+  resolvedPrimaryJourneyKey?: string,
 ) {
   const byJourney = new Map<string, {
     count: number;
@@ -502,35 +507,16 @@ function deriveInitiativeContext(
     byJourney.set(key, current);
   }
 
-  if (!byJourney.size) {
-    return {
-      primary_journey_key: "customer",
-      primary_journey_title: "Customer Journey",
-      initiative_keywords: ["customer", "journey"],
-    };
-  }
-
-  const ranked = Array.from(byJourney.entries())
-    .map(([key, value]) => {
-      const text = `${value.title} ${value.subtitle}`.toLowerCase();
-      const economicSignal = /(revenue|investment|investor|funding|capital|contract|pipeline)/.test(text) ? 2 : 0;
-      const customCustomerSignal = key.startsWith("customer-") ? 2 : 0;
-      const nonGenericSignal = key !== "customer" ? 3 : 0;
-      return {
-        key,
-        value,
-        score: value.count + economicSignal + customCustomerSignal + nonGenericSignal,
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const selected = ranked[0];
-  const title = selected.value.title || titleFromJourneyKey(selected.key);
+  const primaryKey = resolvedPrimaryJourneyKey && resolvedPrimaryJourneyKey.trim()
+    ? normalizeJourneyKey(resolvedPrimaryJourneyKey)
+    : "customer";
+  const value = byJourney.get(primaryKey) ?? { count: 0, title: "", subtitle: "" };
+  const title = value.title || titleFromJourneyKey(primaryKey);
   const primaryProblem = String(strategicProblems[0]?.statement || "");
-  const keywords = tokenizeStrategicText(`${selected.key} ${title} ${selected.value.subtitle} ${primaryProblem}`).slice(0, 24);
+  const keywords = tokenizeStrategicText(`${primaryKey} ${title} ${value.subtitle} ${primaryProblem}`).slice(0, 24);
 
   return {
-    primary_journey_key: selected.key,
+    primary_journey_key: primaryKey,
     primary_journey_title: title,
     initiative_keywords: keywords.length > 0 ? keywords : tokenizeStrategicText(title).slice(0, 12),
   };
@@ -720,6 +706,7 @@ export function computeGateScores(
   strategicProblems: StrategicProblemInput[] = [],
   routes: ScoreableRoute[] = [],
   excludedLedgerFingerprints?: ReadonlySet<string>,
+  resolvedPrimaryJourneyKey?: string,
 ): GateScoreResult {
   const safeInputs = Array.isArray(inputs) ? inputs : [];
   const safeSteps = Array.isArray(jobSteps) ? jobSteps : [];
@@ -788,7 +775,7 @@ export function computeGateScores(
     routes,
   );
   const desiredOutcomeContext = computeDesiredOutcomeAlignment(desiredOutcomes, safeOpps, routes);
-  const initiativeBase = deriveInitiativeContext(safeSteps, strategicProblems);
+  const initiativeBase = deriveInitiativeContext(safeSteps, strategicProblems, resolvedPrimaryJourneyKey);
   const initiativeSteps = safeSteps.filter((step) => {
     const key = normalizeJourneyKey(step.journey_key);
     if (key === initiativeBase.primary_journey_key) return true;
@@ -1184,6 +1171,9 @@ export function scoreCompanyMojo(args: {
   gamma?: number;
   excludedLedgerFingerprints?: ReadonlySet<string>;
   needsSourcePaths?: string[];
+  // On-strategy journey_key resolved by resolve_primary_job_step_set (operator pin → else
+  // SQL heuristic). Single authority for which set drives the score; omitted ⇒ "customer".
+  primaryJourneyKey?: string;
 }): FullMojoScoreResult {
   const gateResult = computeGateScores(
     args.inputs,
@@ -1194,6 +1184,7 @@ export function scoreCompanyMojo(args: {
     args.strategicProblems ?? [],
     args.routes ?? [],
     args.excludedLedgerFingerprints,
+    args.primaryJourneyKey,
   );
 
   const evidenceResult = computeEvidenceMultiplier(

@@ -3684,6 +3684,9 @@ function titleFromJourneyKey(key: string) {
 function deriveInitiativeFocusContext(args: {
   jobSteps: Array<{ journey_key?: unknown; journey_title?: unknown; journey_subtitle?: unknown }>;
   strategicProblems?: StrategicProblemStatement[];
+  // Operator-pinned on-strategy journey_key (read from operator_primary_selection). Honored
+  // when it matches a generated set; otherwise the in-memory heuristic below decides.
+  pinnedJourneyKey?: string;
 }) {
   const byJourney = new Map<string, { count: number; title: string; subtitle: string }>();
   const steps = Array.isArray(args.jobSteps) ? args.jobSteps : [];
@@ -3724,7 +3727,11 @@ function deriveInitiativeFocusContext(args: {
     })
     .sort((a, b) => b.score - a.score);
 
-  const selected = ranked[0];
+  // Operator pin is authority when it names a generated set; else the heuristic top-rank.
+  const pinned = normalizeJourneyKey(args.pinnedJourneyKey);
+  const selected = pinned && byJourney.has(pinned)
+    ? { key: pinned, value: byJourney.get(pinned)!, score: 0 }
+    : ranked[0];
   const title = selected.value.title || titleFromJourneyKey(selected.key);
   const primaryProblem = String(args.strategicProblems?.[0]?.statement || "");
   const keywords = tokenizeStrategicText(`${selected.key} ${title} ${selected.value.subtitle} ${primaryProblem}`).slice(0, 24);
@@ -4156,6 +4163,9 @@ function scoreCompanyMojo(args: {
   gamma?: number;
   excludedFingerprints?: ReadonlySet<string>;
   needsSourcePaths?: string[];
+  // Operator-pinned on-strategy journey_key (from operator_primary_selection), threaded to
+  // the initiative gate; honored only if it matches a generated set, else the heuristic.
+  primaryJourneyKey?: string;
 }) {
   const marketBaseline = deriveMarketBaselineCalibration(args.baselineResultJson);
   const safeInputs = Array.isArray(args.inputs) ? args.inputs : [];
@@ -4224,6 +4234,7 @@ function scoreCompanyMojo(args: {
   const initiativeBase = deriveInitiativeFocusContext({
     jobSteps: safeSteps,
     strategicProblems: args.strategicProblems,
+    pinnedJourneyKey: args.primaryJourneyKey,
   });
   const initiativeSteps = safeSteps.filter((step) => {
     const key = normalizeJourneyKey(step?.journey_key);
@@ -7357,8 +7368,19 @@ Deno.serve(async (req) => {
     // -------------------------
     const run = baselineRun ?? null;
 
+    // On-strategy: honor the operator's pinned set if one exists (the derive gate validates
+    // it against the generated sets; non-matching pins fall back to the in-memory heuristic).
+    const { data: onStrategyPin } = await supabase
+      .from("operator_primary_selection")
+      .select("item_key")
+      .eq("company_id", company_id)
+      .eq("domain", "job_step_set")
+      .maybeSingle();
+    const pinnedJourneyKey = (onStrategyPin as { item_key?: unknown } | null)?.item_key;
+
     const scored = scoreCompanyMojo({
       baselineResultJson: effectiveBaselineResultJson,
+      primaryJourneyKey: typeof pinnedJourneyKey === "string" ? pinnedJourneyKey : undefined,
       inputs,
       jobSteps: journeys.flatMap((journey) => Array.isArray(journey?.steps) ? journey.steps.map((step: any) => ({
         journey_key: journey?.journey_key,

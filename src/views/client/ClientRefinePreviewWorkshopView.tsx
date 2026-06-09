@@ -40,6 +40,7 @@ import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
+import { OnStrategyPin } from "@/components/strategy/OnStrategyPin";
 import { StrategyCompare, PositioningCompare } from "./workshop/tabs/ComparePanel";
 import { PositioningOutside, StrategyOutside, NeedsOutside, NeedsOutsideCompare } from "./workshop/tabs/OutsidePanels";
 import "@/styles/client-refine-preview.css";
@@ -1810,6 +1811,11 @@ export default function ClientRefinePreviewWorkshopView() {
                     <option value="__all__">Show all maps</option>
                   </select>
                 )}
+                <OnStrategyPin
+                  companyId={companyId}
+                  journeyOptions={journeyOptions}
+                  focusedJourneyKey={showAllJourneys ? null : focusedJourneyKey}
+                />
                 <button
                   type="button"
                   className="btn ghost"
