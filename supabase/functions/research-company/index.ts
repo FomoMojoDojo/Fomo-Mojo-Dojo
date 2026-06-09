@@ -5414,8 +5414,35 @@ Deno.serve(async (req) => {
         }, 422);
       }
     }
-    const jobMapUpdateJourneyKeys: JourneyKey[] =
+    let jobMapUpdateJourneyKeys: JourneyKey[] =
       explicitSelectedJourneyKeys.length > 0 ? explicitSelectedJourneyKeys : targetJourneyKeys;
+    // ADDITIVE-PRESERVE (mechanic 1): never wipe the operator's pinned on-strategy set, and
+    // additively add genuinely-new discovered sets. We protect ONLY a deliberate operator
+    // pin (operator_primary_selection) — not the heuristic-resolved default — so unpinned
+    // companies keep prior regen behavior. Scopes to job_steps only; the rest of the spine
+    // is still wiped below (out of scope for this mechanic).
+    const existingJourneyKeySet = new Set(
+      (existingJobStepRows ?? [])
+        .map((r) => normalizeJourneyKey((r as { journey_key?: unknown })?.journey_key))
+        .filter((k): k is string => Boolean(k)),
+    );
+    const { data: pinRowForPreserve } = await supabase
+      .from("operator_primary_selection")
+      .select("item_key")
+      .eq("company_id", company_id)
+      .eq("domain", "job_step_set")
+      .maybeSingle();
+    const pinnedPreserveKeyRaw = normalizeJourneyKey((pinRowForPreserve as { item_key?: unknown } | null)?.item_key);
+    // Preserve only when the pinned set actually has existing steps to protect.
+    const pinnedPreserveKey = pinnedPreserveKeyRaw && existingJourneyKeySet.has(pinnedPreserveKeyRaw)
+      ? pinnedPreserveKeyRaw
+      : null;
+    if (pinnedPreserveKey) {
+      jobMapUpdateJourneyKeys = jobMapUpdateJourneyKeys.filter(
+        (k) => normalizeJourneyKey(k) !== pinnedPreserveKey,
+      );
+      console.log(`[research-company] additive-preserve: pinned set '${pinnedPreserveKey}' excluded from regen — its job_steps are preserved`);
+    }
     const jobMapUpdateJourneyKeySet = new Set(jobMapUpdateJourneyKeys);
     const targetJourneyKeySet = new Set(targetJourneyKeys);
     const selectedJobMapByKey = new Map<JourneyKey, SelectedJobMap>(
@@ -6677,7 +6704,17 @@ Deno.serve(async (req) => {
     for (const journey of journeys) {
       const journeyKey = normalizeJourneyKey(journey?.journey_key);
       if (!journeyKey) continue;
-      if (!jobMapUpdateJourneyKeySet.has(journeyKey)) continue;
+      if (!jobMapUpdateJourneyKeySet.has(journeyKey)) {
+        // GAP-MARK SEAM (mechanic 2, not yet built): when this is the preserved pinned set,
+        // `journey.steps` holds the freshly-discovered steps we intentionally do NOT write —
+        // mechanic 2 will diff these against the preserved rows and route gaps to drift.
+        if (journeyKey === pinnedPreserveKey) continue;
+        // ADDITIVE: insert a genuinely-new discovered set (not previously stored). The delete
+        // above never touched it (nothing to delete), so there is no duplicate. An existing,
+        // non-targeted set is left untouched (skip).
+        if (existingJourneyKeySet.has(journeyKey)) continue;
+        console.log(`[research-company] additive-add: inserting newly-discovered set '${journeyKey}'`);
+      }
 
       const steps = Array.isArray(journey?.steps) ? journey.steps : [];
       for (const step of steps) {
