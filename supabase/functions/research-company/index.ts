@@ -2846,6 +2846,10 @@ async function callOpenAIJSON(opts: {
     const activeModel = modelCandidates[modelIndex];
     let modelError: unknown = null;
     try {
+      // budgetLoop labels the attempt loop so a truncation-driven retry can advance to the
+      // NEXT (larger) budget. Without the label, `break` only exits the transient loop and
+      // the `if (lastError) throw` below fires first — so budgets[1..] were never used.
+      budgetLoop:
       for (let attempt = 0; attempt < budgets.length; attempt++) {
         const retryNote =
           attempt === 0
@@ -2909,7 +2913,7 @@ async function callOpenAIJSON(opts: {
                   nextBudget: budgets[attempt + 1],
                 });
                 lastError = e;
-                break;
+                continue budgetLoop;
               }
 
               throw withSchemaContext(e);
@@ -4942,7 +4946,11 @@ async function runFinalizer(opts: {
     schema: repairBundleSchema,
     systemText,
     userText,
-    maxOutputTokens: 2800,
+    // The finalizer echoes the FULL repaired bundle, so output scales with bundle size, not
+    // repairs. Observed full-bundle output ~3,000-3,700 tokens (truncation analysis 2026-06-10),
+    // so 2800 truncated on the first attempt. 4000 clears typical bundles in one shot; the
+    // retry ladder (×1.75, ×2.5 → 7000, 10000) is the safety net for larger ones.
+    maxOutputTokens: 4000,
     temperature: 0.15,
   });
 }
@@ -6323,6 +6331,7 @@ Deno.serve(async (req) => {
     );
 
     let finalizerApplied = false;
+    let finalizerError: string | null = null;
 
     if (highSeverityReviews.length > 0) {
       try {
@@ -6396,9 +6405,19 @@ Deno.serve(async (req) => {
           (entry) => String(entry.review?.severity || "low").toLowerCase() === "high",
         );
       } catch (error) {
-        console.log("[research-company] finalizer failed; preserving pre-finalizer artifacts", {
-          message: String(error instanceof Error ? error.message : error),
-        });
+        finalizerError = String(error instanceof Error ? error.message : error);
+        // LOUD: silent degradation is the worse half of this bug. The repair pass did NOT run,
+        // so the artifacts (and any review block below) reflect the UNREPAIRED draft — not a
+        // clean reviewer verdict on a finalized bundle. Surfaced in the 422 response too.
+        console.warn(
+          "[research-company] ⚠ FINALIZER DID NOT RUN — preserving PRE-FINALIZER artifacts; " +
+            "any review block below reflects the unrepaired draft, NOT a clean verdict",
+          {
+            company_id,
+            baseline_run_id: baselineRun?.id ?? null,
+            message: finalizerError,
+          },
+        );
       }
     }
 
@@ -6438,6 +6457,9 @@ Deno.serve(async (req) => {
         status: "review_blocked",
         baseline_run_id: baselineRun?.id ?? null,
         reviews: reviewResults,
+        finalizer_applied: finalizerApplied,
+        finalizer_failed: finalizerError != null,
+        finalizer_error: finalizerError,
       }, 422);
       } // end !dry_run block
     }
