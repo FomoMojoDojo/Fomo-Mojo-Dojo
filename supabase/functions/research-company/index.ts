@@ -388,7 +388,173 @@ function extractResponsesOutputText(data: any): string | null {
   return null;
 }
 
-function buildBaselineBrief(baselineResultJson: unknown): string {
+// Claim provenance: which company self-claims are independently corroborated. Judged by a
+// dedicated structured call against the baseline's own independent items (third-party
+// profiles, outside-voice signals, news) — never by keyword matching on claim text.
+// "unverified" is the loud deterministic fallback when the judge call fails: every
+// company_claim item is tagged self-reported without asserting a corroboration verdict.
+type ClaimProvenanceEntry = {
+  ledger_index: number | null;
+  claim: string;
+  status: "corroborated" | "uncorroborated" | "contradicted" | "unverified";
+  basis_urls: string[];
+};
+
+function listCompanyClaimLedgerItems(baselineResultJson: unknown) {
+  const baseline = baselineResultJson as {
+    evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string }>;
+  } | null;
+  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+  return ledger
+    .map((item, index) => ({ index, item }))
+    .filter((entry) => String(entry.item?.bucket || "") === "company_claim");
+}
+
+const claimProvenanceSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    claims: {
+      type: "array",
+      minItems: 0,
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ledger_index: { type: ["integer", "null"] },
+          claim: { type: "string" },
+          status: { type: "string", enum: ["corroborated", "uncorroborated", "contradicted"] },
+          basis_urls: { type: "array", items: { type: "string" } },
+        },
+        required: ["ledger_index", "claim", "status", "basis_urls"],
+      },
+    },
+  },
+  required: ["claims"],
+};
+
+async function deriveClaimProvenance(opts: {
+  apiKey: string;
+  model: string;
+  baselineResultJson: unknown;
+}): Promise<ClaimProvenanceEntry[]> {
+  const baseline = opts.baselineResultJson as {
+    evidence_ledger?: Array<{
+      bucket?: string;
+      snippet?: string;
+      url?: string;
+      source_type?: string;
+    }>;
+    outside_voice_signals?: Array<{
+      signal?: string;
+      alignment?: string;
+      sentiment?: string;
+      url?: string;
+      perspective?: string;
+    }>;
+    message_alignment?: { alignment_summary?: string };
+  } | null;
+
+  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson);
+  const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
+  if (companyClaims.length === 0 && !alignmentSummary) return [];
+
+  const independentItems = ledger
+    .map((item, index) => ({ index, item }))
+    .filter((entry) => String(entry.item?.bucket || "") !== "company_claim");
+  const outsideSignals = Array.isArray(baseline?.outside_voice_signals)
+    ? baseline.outside_voice_signals
+    : [];
+
+  // Deterministic post-validation set: corroboration may only cite these URLs.
+  const independentUrls = new Set<string>(
+    [
+      ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
+      ...outsideSignals.map((signal) => String(signal?.url || "").trim()),
+    ].filter(Boolean),
+  );
+
+  const userText =
+    `Company self-claims (from the evidence ledger, with their ledger index):\n` +
+    (companyClaims.length
+      ? companyClaims
+          .map((entry) => `[index ${entry.index}] ${entry.item?.snippet || "No snippet"}`)
+          .join("\n")
+      : "None in ledger.") +
+    `\n\nCompany-attributed claims may also appear in this alignment summary (use ledger_index null for claims found only here):\n` +
+    (alignmentSummary || "None.") +
+    `\n\nIndependent evidence (third-party profiles, news, customer/outside voice — the ONLY admissible corroboration basis):\n` +
+    independentItems
+      .map((entry) => `- [${entry.item?.bucket || "signal"}] ${entry.item?.snippet || "No snippet"} (url: ${entry.item?.url || "unknown"})`)
+      .join("\n") +
+    `\n\nOutside voice signals:\n` +
+    outsideSignals
+      .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
+      .join("\n") +
+    `\n\nJudge every company self-claim listed above.`;
+
+  const systemText =
+    `You are a claim provenance judge.\n` +
+    `Return ONLY valid JSON matching the schema. No prose.\n` +
+    `For each company self-claim, decide from the independent evidence ONLY:\n` +
+    `- corroborated: at least one independent item attests the claim's core fact (even with different wording). basis_urls MUST cite the attesting independent item URL(s).\n` +
+    `- contradicted: independent evidence cuts against the claim's core fact.\n` +
+    `- uncorroborated: no independent item speaks to the claim either way.\n` +
+    `Judge the claim's core fact, not its exact phrasing. Never treat the company's own pages or profiles as corroboration.\n` +
+    `Echo each ledger claim with its given ledger_index; claims found only in the alignment summary get ledger_index null.\n`;
+
+  const result = await callOpenAIJSON({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    schemaName: "mojo_claim_provenance_v1",
+    schema: claimProvenanceSchema,
+    systemText,
+    userText,
+    maxOutputTokens: 1200,
+    temperature: 0.1,
+  });
+
+  const rows: any[] = Array.isArray(result?.claims) ? result.claims : [];
+  // Corroboration must be earned, not asserted: basis_urls must be a subset of the provided
+  // independent-item URLs; a corroborated verdict with no valid citation downgrades.
+  return rows.map((row) => {
+    const basis = (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
+      .map((url: unknown) => String(url || "").trim())
+      .filter((url: string) => independentUrls.has(url));
+    let status = String(row?.status || "uncorroborated") as ClaimProvenanceEntry["status"];
+    if (!["corroborated", "uncorroborated", "contradicted"].includes(status)) {
+      status = "uncorroborated";
+    }
+    if (status === "corroborated" && basis.length === 0) status = "uncorroborated";
+    return {
+      ledger_index: typeof row?.ledger_index === "number" ? row.ledger_index : null,
+      claim: String(row?.claim || ""),
+      status,
+      basis_urls: basis,
+    };
+  });
+}
+
+const CLAIM_PROVENANCE_PREFIX: Record<ClaimProvenanceEntry["status"], string> = {
+  corroborated: "",
+  uncorroborated: "SELF-REPORTED, UNCORROBORATED: ",
+  contradicted: "SELF-REPORTED, CONTRADICTED by independent evidence: ",
+  unverified: "SELF-REPORTED (corroboration unverified): ",
+};
+
+const CLAIM_PROVENANCE_LABEL: Record<ClaimProvenanceEntry["status"], string> = {
+  corroborated: "CORROBORATED by independent sources — keep its substance",
+  uncorroborated: "SELF-REPORTED, UNCORROBORATED — qualify as self-reported, aspirational, or developing; never assert as established fact",
+  contradicted: "SELF-REPORTED, CONTRADICTED — independent evidence cuts against this; do not assert it",
+  unverified: "SELF-REPORTED, corroboration unverified — treat as self-reported",
+};
+
+function buildBaselineBrief(
+  baselineResultJson: unknown,
+  claimProvenance?: ClaimProvenanceEntry[],
+): string {
   const baseline = baselineResultJson as {
     category_archetype?: string;
     lens_card?: {
@@ -435,9 +601,15 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
   if (!baseline) return "No public baseline available.";
 
   const lens = baseline.lens_card ?? {};
-  const evidence = Array.isArray(baseline.evidence_ledger)
-    ? baseline.evidence_ledger.slice(0, 8)
-    : [];
+  // Keep original ledger indexes so provenance verdicts (judged by index) attach to the
+  // right item after slicing.
+  const evidence = (Array.isArray(baseline.evidence_ledger) ? baseline.evidence_ledger : [])
+    .map((item, ledgerIndex) => ({ item, ledgerIndex }))
+    .slice(0, 8);
+  const provenanceByIndex = new Map<number, ClaimProvenanceEntry>();
+  for (const entry of claimProvenance ?? []) {
+    if (typeof entry.ledger_index === "number") provenanceByIndex.set(entry.ledger_index, entry);
+  }
   const hypotheses = Array.isArray(baseline.top_hypotheses)
     ? baseline.top_hypotheses.slice(0, 4)
     : [];
@@ -446,9 +618,19 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     : [];
   const alignment = baseline.message_alignment ?? {};
   const marketSuccess = baseline.market_initiative_success ?? {};
-  const outsideSignals = Array.isArray(baseline.outside_voice_signals)
-    ? baseline.outside_voice_signals.slice(0, 3)
+  // Sentiment-aware selection: the unordered slice(0,3) could truncate negative/mixed
+  // voices out (a latent input gap for a positives-first company). Guarantee negative
+  // voices are represented (up to 3) while keeping some positive context (up to 2), so
+  // the spine grounds in the real outside voice rather than a rosy subset.
+  const isNegativeSentiment = (s: { sentiment?: string }) =>
+    /negativ/i.test(String(s?.sentiment || ""));
+  const allOutsideSignals = Array.isArray(baseline.outside_voice_signals)
+    ? baseline.outside_voice_signals
     : [];
+  const outsideSignals = [
+    ...allOutsideSignals.filter(isNegativeSentiment).slice(0, 3),
+    ...allOutsideSignals.filter((s) => !isNegativeSentiment(s)).slice(0, 2),
+  ];
 
   return [
     `Category archetype: ${baseline.category_archetype || "unknown"}`,
@@ -465,8 +647,10 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     evidence.length
       ? `Evidence:\n${evidence
           .map(
-            (item, index) =>
-              `${index + 1}. [${item.bucket || "signal"} | ${item.signal_strength || "unknown"} | conf ${item.confidence ?? "?"}] ${item.snippet || "No snippet"}`
+            ({ item, ledgerIndex }, index) =>
+              `${index + 1}. [${item.bucket || "signal"} | ${item.signal_strength || "unknown"} | conf ${item.confidence ?? "?"}] ${
+                CLAIM_PROVENANCE_PREFIX[provenanceByIndex.get(ledgerIndex)?.status ?? "corroborated"]
+              }${item.snippet || "No snippet"}`
           )
           .join("\n")}`
       : "Evidence: none",
@@ -480,7 +664,33 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
       : "Outside voice signals: none",
     hypotheses.length ? `Top hypotheses:\n- ${hypotheses.join("\n- ")}` : "Top hypotheses: none",
     openQuestions.length ? `Open questions:\n- ${openQuestions.join("\n- ")}` : "Open questions: none",
-  ].join("\n");
+    claimProvenance && claimProvenance.length
+      ? `Company self-claim provenance (judged against independent evidence only):\n${claimProvenance
+          .map(
+            (entry) =>
+              `- [${CLAIM_PROVENANCE_LABEL[entry.status]}] ${entry.claim}${
+                entry.basis_urls.length ? ` (basis: ${entry.basis_urls.join(", ")})` : ""
+              }`
+          )
+          .join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// Known tensions: the acknowledge-and-scope slot for serious negatives in the outside voice.
+// Perception register: each entry observes what the public record visibly contains — never
+// adjudicates truth. Rendered into reviewer and finalizer context so an acknowledgment that
+// exists can be credited.
+function buildKnownTensionsBrief(knownTensions: unknown): string {
+  const items = Array.isArray(knownTensions) ? knownTensions : [];
+  if (!items.length) return "None declared.";
+  return items
+    .map((tension: any, index: number) =>
+      `${index + 1}. ${tension?.title || "Untitled"} — visible in the record: ${tension?.what_we_see || "?"} | its place and weight: ${tension?.what_it_is || "?"} | what it is not: ${tension?.what_it_isnt || "?"} | the record shifts when: ${tension?.resolution_condition || "?"}`
+    )
+    .join("\n");
 }
 
 type UploadedEvidenceInputRow = {
@@ -2521,6 +2731,7 @@ async function runConsistencyReview(opts: {
   routes: unknown;
   positioning: unknown;
   strategy: unknown;
+  knownTensions?: unknown;
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
@@ -2531,6 +2742,7 @@ async function runConsistencyReview(opts: {
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Known tensions (the draft explicitly acknowledges and scopes these):\n${buildKnownTensionsBrief(opts.knownTensions)}\n\n` +
     `Review the full draft bundle for cross-artifact consistency.`;
 
   const systemText =
@@ -2617,6 +2829,7 @@ async function runEvidenceReview(opts: {
   routes: unknown;
   positioning: unknown;
   strategy: unknown;
+  knownTensions?: unknown;
 }) {
   const userText =
     `Company: ${opts.companyName}\nWebsite: ${opts.website || "unknown"}\n\n` +
@@ -2625,6 +2838,7 @@ async function runEvidenceReview(opts: {
     `Journeys:\n${buildJourneyBrief(opts.journeys)}\n\n` +
     `Opportunities:\n${buildOpportunityBrief(opts.opportunities)}\n\n` +
     `Routes:\n${buildRouteBrief(opts.routes)}\n\n` +
+    `Known tensions (the draft explicitly acknowledges and scopes these):\n${buildKnownTensionsBrief(opts.knownTensions)}\n\n` +
     `Review the draft bundle for evidence grounding and overclaiming.`;
 
   const systemText =
@@ -2637,6 +2851,14 @@ async function runEvidenceReview(opts: {
     `- invented specifics such as channels, buyer types, operating details, or differentiators not supported by evidence\n` +
     `- excessive certainty where baseline evidence is thin\n` +
     `- downstream artifacts that should say unknown, developing, or uncertain instead of asserting facts\n` +
+    // Input interpretation ONLY — review criteria and severity rules above are unchanged.
+    // Added after two misattribution blocks (findings citing artifacts not in this reviewer's
+    // input, and "not acknowledged" findings contradicted by the known-tensions section that
+    // was in its input).
+    `How to read your input:\n` +
+    `- You are reviewing the DRAFT artifacts (journeys, opportunities, routes). The evidence context is source material, not part of the draft: never attribute its contents to the draft, and cite only artifacts that are actually in your input.\n` +
+    `- Company self-claims marked SELF-REPORTED, UNCORROBORATED or CONTRADICTED in the evidence context are already qualified at the data level. Flag such a claim ONLY when a draft artifact asserts it as established fact. A draft that omits the claim, or references it as qualified, aspirational, or a hypothesis to validate, is correct and must not be flagged for it.\n` +
+    `- The "Known tensions" section IS the draft's acknowledgment of serious negatives in the outside voice. When a serious negative is named there, do not report it as unacknowledged — judge only whether the entry's scoping is honest. When a serious negative is NOT named there or anywhere in the draft, report it exactly as before.\n` +
     `Use severity=high only when the draft materially overclaims or presents unsupported specifics as fact.\n`;
 
   return await callOpenAIJSON({
@@ -2711,6 +2933,7 @@ async function runAllDraftReviews(opts: {
   // positioning/strategy are leaf outputs — their review is deferred to A37+ leaf-output review pass
   positioning?: unknown;
   strategy?: unknown;
+  knownTensions?: unknown;
 }) {
   // NOTE (A37): Orchestrator reviews only the 5 upstream surfaces: inputs, journeys,
   // managed_outcomes, opportunities, routes. positioningReview and strategyReview are
@@ -2730,6 +2953,7 @@ async function runAllDraftReviews(opts: {
       routes: opts.routes,
       positioning: opts.positioning ?? null,
       strategy: opts.strategy ?? null,
+      knownTensions: opts.knownTensions,
     }),
     runEvidenceReview({
       apiKey: opts.apiKey,
@@ -2743,6 +2967,7 @@ async function runAllDraftReviews(opts: {
       routes: opts.routes,
       positioning: opts.positioning ?? null,
       strategy: opts.strategy ?? null,
+      knownTensions: opts.knownTensions,
     }),
   ]);
   const positioningReview = null;
@@ -4612,6 +4837,21 @@ const INPUT_KEYS: string[] = [
   "customer-signals",
 ];
 
+// Acknowledge-and-scope shape for serious negatives in the outside voice (Observe/Name/Open):
+// what we see, what it is, what it isn't, and what would have to be true to resolve it.
+const knownTensionItemSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    what_we_see: { type: "string" },
+    what_it_is: { type: "string" },
+    what_it_isnt: { type: "string" },
+    resolution_condition: { type: "string" },
+  },
+  required: ["title", "what_we_see", "what_it_is", "what_it_isnt", "resolution_condition"],
+};
+
 const repairBundleSchema = {
   type: "object",
   additionalProperties: false,
@@ -4825,8 +5065,14 @@ const repairBundleSchema = {
         "assumptions",
       ],
     },
+    known_tensions: {
+      type: "array",
+      minItems: 0,
+      maxItems: 3,
+      items: knownTensionItemSchema,
+    },
   },
-  required: ["inputs", "journeys", "opportunities", "routes", "positioning", "strategy"],
+  required: ["inputs", "journeys", "opportunities", "routes", "positioning", "strategy", "known_tensions"],
 };
 
 const managedOutcomesSchema = {
@@ -4913,6 +5159,7 @@ async function runFinalizer(opts: {
   routes: unknown;
   positioning: unknown;
   strategy: unknown;
+  knownTensions?: unknown;
   reviews: unknown;
 }) {
   const userText =
@@ -4926,6 +5173,7 @@ async function runFinalizer(opts: {
     `Current routes:\n${buildRouteBrief(opts.routes)}\n\n` +
     `Current positioning:\n${buildPositioningBrief(opts.positioning)}\n\n` +
     `Current strategy:\n${buildStrategyBrief(opts.strategy)}\n\n` +
+    `Current known tensions (acknowledged serious negatives):\n${buildKnownTensionsBrief(opts.knownTensions)}\n\n` +
     `Reviewer findings:\n${JSON.stringify(opts.reviews)}\n\n` +
     `Revise only the flagged areas and return the full repaired bundle.`;
 
@@ -4937,6 +5185,10 @@ async function runFinalizer(opts: {
     `Stay strictly consistent with the provided evidence context and ODI context.\n` +
     `Ensure revisions remain aligned to client-stated strategic problems.\n` +
     `If a reviewer flags unsupported certainty, reduce precision instead of inventing facts.\n` +
+    `Any company self-claim not independently corroborated in the evidence (press, third-party profiles, or customer voice) must be qualified as self-reported, aspirational, or developing — never asserted as established fact; claims the evidence does support keep their substance.\n` +
+    `Where outside-voice evidence contains a serious negative, the messaging must acknowledge it and scope it honestly (what it is, what it isn't, what would have to be true to resolve it) — never ignore it, never let positive claims sit unqualified beside it, and never inflate one negative into the whole story.\n` +
+    `known_tensions is the dedicated home for that acknowledgment: when a reviewer flags an unacknowledged serious negative, add or sharpen a known_tensions entry rather than scattering caveats across other artifacts.\n` +
+    `known_tensions stay in the PERCEPTION register: they describe what the public record visibly contains, the signal's place and weight in that record, and what observable change in the record would shift the picture — never a ruling that an allegation is true, false, or isolated.\n` +
     `Keep market category and where-to-play phrasing aligned to a standard category frame of reference and ODI job context.\n`;
 
   return await callOpenAIJSON({
@@ -5559,16 +5811,48 @@ Deno.serve(async (req) => {
     // the public-vs-internal reconciliation are the local pipeline's domain. Public baseline
     // is the sole evidence context here, regardless of researchContextMode.
     const baselineContextIntro = "Public baseline context:";
+
+    // Claim provenance: judge company self-claims against the baseline's independent evidence
+    // BEFORE building the brief, so every downstream consumer (gen stages, reviewers,
+    // finalizer) sees uncorroborated self-claims pre-qualified at the data level.
+    let claimProvenance: ClaimProvenanceEntry[] = [];
+    try {
+      claimProvenance = await deriveClaimProvenance({
+        apiKey: openaiKey,
+        model: openaiModel,
+        baselineResultJson: effectiveBaselineResultJson,
+      });
+      console.log("[research-company] claim provenance derived", {
+        judged: claimProvenance.length,
+        corroborated: claimProvenance.filter((entry) => entry.status === "corroborated").length,
+        uncorroborated: claimProvenance.filter((entry) => entry.status === "uncorroborated").length,
+        contradicted: claimProvenance.filter((entry) => entry.status === "contradicted").length,
+      });
+    } catch (error) {
+      // LOUD deterministic fallback: every company_claim item is tagged self-reported by
+      // bucket provenance alone — no corroboration verdict is asserted.
+      console.warn(
+        "[research-company] ⚠ CLAIM PROVENANCE JUDGE FAILED — tagging all company_claim items SELF-REPORTED (corroboration unverified)",
+        { message: String(error instanceof Error ? error.message : error) },
+      );
+      claimProvenance = listCompanyClaimLedgerItems(effectiveBaselineResultJson).map((entry) => ({
+        ledger_index: entry.index,
+        claim: String(entry.item?.snippet || ""),
+        status: "unverified" as const,
+        basis_urls: [],
+      }));
+    }
+
     const baselineBrief = [
       baselineContextIntro,
-      buildBaselineBrief(effectiveBaselineResultJson),
+      buildBaselineBrief(effectiveBaselineResultJson, claimProvenance),
     ]
       .filter(Boolean)
       .join("\n\n");
     const evidenceConsistencyConstraint =
-      researchContextMode === "uploaded_evidence_fallback"
-        ? "- Stay strictly consistent with uploaded company evidence, website, buyer context, and selected job maps\n"
-        : "- Stay strictly consistent with the public baseline, website, buyer context, and company category\n";
+      "- Stay strictly consistent with the public baseline, website, buyer context, and company category\n" +
+      "- Ground every claim in the public evidence. Any company self-claim not independently corroborated (press, third-party, or customer voice) must be qualified as self-reported, aspirational, or developing — never asserted as established fact\n" +
+      "- Where outside-voice evidence contains a serious negative, acknowledge it and scope it honestly (what it is, what it isn't, what would resolve it) — never ignore it, never let positive claims sit unqualified beside it, never inflate one negative into the whole story\n";
     const noIndustrySwitchConstraint =
       researchContextMode === "uploaded_evidence_fallback"
         ? "- Never switch industries, populations, service models, or buyer types from uploaded evidence context\n"
@@ -6181,8 +6465,21 @@ Deno.serve(async (req) => {
     ]));
 
     // -------------------------
-    // 4) Generate ROUTES (customer-focused)
+    // 4) Generate ROUTES (customer-focused) + known tensions
     // -------------------------
+    // Structural requirement, driven by data-level provenance (sentiment field on outside
+    // voice signals — never claim-text keywords): when the outside voice carries a serious
+    // negative, the schema REQUIRES at least one known_tensions entry. The acknowledgment
+    // cannot be omitted; the model only chooses its wording.
+    const hasSeriousNegativeOutsideVoice = (
+      Array.isArray((effectiveBaselineResultJson as any)?.outside_voice_signals)
+        ? (effectiveBaselineResultJson as any).outside_voice_signals
+        : []
+    ).some(
+      (signal: any) =>
+        /negativ/i.test(String(signal?.sentiment || "")) && Number(signal?.confidence ?? 0) >= 60,
+    );
+
     const routesSchema = {
       type: "object",
       additionalProperties: false,
@@ -6234,8 +6531,14 @@ Deno.serve(async (req) => {
             required: ["category", "title", "short_description", "pts_value", "effort", "type", "sort_order", "rejected_alternatives", "what_would_have_to_be_true"],
           },
         },
+        known_tensions: {
+          type: "array",
+          minItems: hasSeriousNegativeOutsideVoice ? 1 : 0,
+          maxItems: 3,
+          items: knownTensionItemSchema,
+        },
       },
-      required: ["routes"],
+      required: ["routes", "known_tensions"],
     };
 
     const routesSystemText =
@@ -6258,7 +6561,15 @@ Deno.serve(async (req) => {
       `- Fix = remove blockers/gaps, Improve = strengthen existing systems, Create = build net-new strategic assets\n` +
       `- type must match category in title case\n` +
       `- For each route, generate 2–3 rejected_alternatives: real candidate directions that were plausible but not chosen. Each needs alternative_title (5–10 words, specific) and rejection_reason (one sentence naming the concrete tension that made this route less compelling than the chosen one). Do not use strawmen — name genuine alternatives.\n` +
-      `- For each route, generate 2–3 what_would_have_to_be_true items: testable conditions that must hold for this route to succeed. Phrase each condition as a falsifiable claim ("Customer X values Y enough to Z"; "Operational capability W can be built within timeframe V"). Set satisfied_flag=false for all — these are unvalidated assumptions at research time.\n`;
+      `- For each route, generate 2–3 what_would_have_to_be_true items: testable conditions that must hold for this route to succeed. Phrase each condition as a falsifiable claim ("Customer X values Y enough to Z"; "Operational capability W can be built within timeframe V"). Set satisfied_flag=false for all — these are unvalidated assumptions at research time.\n` +
+      `- Claims marked SELF-REPORTED, UNCORROBORATED in the evidence may appear in routes only as hypotheses to validate or prove (e.g. "Validate and prove X before leading with it") — never phrased as established possessions or facts the company already owns\n` +
+      `- known_tensions speak in the PERCEPTION register, never adjudication: this is an outside run on publicly visible information, so the claim is always "this exists and is visible in the public record" — never "this is true", "this is false", or "this was an isolated incident"\n` +
+      `- what_we_see: what the public record contains and where it is visible (who says what, on which surface) — report the signal's existence and visibility, not its truth\n` +
+      `- what_it_is / what_it_isnt: the signal's place and weight in the record — one signal among how many, what it alleges, and what scope the record itself gives it (use the source's own scoping, e.g. the reviewer's own words) — never a verdict on the underlying conduct\n` +
+      `- resolution_condition: the observable change in the public record that would shift this picture (new reviews, a public response, independent coverage) — something a future snapshot of the record can be checked against\n` +
+      (hasSeriousNegativeOutsideVoice
+        ? `- The outside voice contains at least one serious negative signal. Produce at least one known_tensions entry that names it directly — do not soften it away, do not omit it, and do not bury it inside a route description\n`
+        : `- If the outside voice contains no serious negative, known_tensions may be empty\n`);
 
     const routesUserText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -6282,6 +6593,14 @@ Deno.serve(async (req) => {
 
     let routes: any[] = Array.isArray(routesResult?.routes) ? routesResult.routes : [];
     if (routes.length < 4) return jsonResponse({ error: `Expected >=4 routes, got ${routes.length}` }, 500);
+
+    let knownTensions: any[] = Array.isArray(routesResult?.known_tensions)
+      ? routesResult.known_tensions
+      : [];
+    console.log("[research-company] known tensions generated", {
+      count: knownTensions.length,
+      required: hasSeriousNegativeOutsideVoice,
+    });
 
     // -------------------------
     // 5) Positioning canvas + strategy cascade delegated to leaf functions
@@ -6313,6 +6632,7 @@ Deno.serve(async (req) => {
       journeys,
       opportunities,
       routes,
+      knownTensions,
     });
 
     let reviewResults = [
@@ -6347,6 +6667,7 @@ Deno.serve(async (req) => {
           journeys,
           opportunities,
           routes,
+          knownTensions,
           reviews: reviewResults,
         });
 
@@ -6358,6 +6679,12 @@ Deno.serve(async (req) => {
         }
         if (Array.isArray(repairedBundle?.routes) && repairedBundle.routes.length > 0) {
           routes = repairedBundle.routes;
+        }
+        // length>0 guard (same pattern as routes/opportunities above): the finalizer echoes
+        // the full bundle and can echo known_tensions as [] even when untouched by findings —
+        // an empty echo must not wipe a schema-required acknowledgment.
+        if (Array.isArray(repairedBundle?.known_tensions) && repairedBundle.known_tensions.length > 0) {
+          knownTensions = repairedBundle.known_tensions;
         }
         const repairedJourneyByKey = new Map<string, any>();
         for (const journey of journeys) {
@@ -6388,6 +6715,7 @@ Deno.serve(async (req) => {
           journeys,
           opportunities,
           routes,
+          knownTensions,
         }));
 
         reviewResults = [
@@ -7429,6 +7757,10 @@ Deno.serve(async (req) => {
     // 8b) Invoke leaf functions (cascade + positioning) — always runs; dry_run forwarded
     // -------------------------
     const authorizationHeader = req.headers.get("Authorization") ?? "";
+    console.log("[research-company] handing off to positioning leaf", {
+      known_tensions: knownTensions.length,
+      claim_provenance: claimProvenance.length,
+    });
     const [cascadeInvokeResult, positioningInvokeResult] = await Promise.all([
       supabase.functions.invoke("refresh-cascade", {
         body: { company_id, skip_lock: true, dry_run },
@@ -7438,7 +7770,15 @@ Deno.serve(async (req) => {
         return { data: null, error: err };
       }),
       supabase.functions.invoke("refresh-positioning", {
-        body: { company_id, skip_lock: true, dry_run },
+        body: {
+          company_id,
+          skip_lock: true,
+          dry_run,
+          // Reviewed acknowledgments + claim provenance ride along so the canvas leaf
+          // persists the tensions verbatim and sees the same pre-qualified evidence brief.
+          known_tensions: knownTensions,
+          claim_provenance: claimProvenance,
+        },
         headers: { Authorization: authorizationHeader },
       }).catch((err: unknown) => {
         console.error("[research-company] refresh-positioning invoke error:", err);
@@ -7595,6 +7935,9 @@ Deno.serve(async (req) => {
           market_category: String((freshPositioningRow as any)?.market_category || ""),
           proposed_tagline: String((freshPositioningRow as any)?.proposed_tagline || ""),
         },
+        // Durability: the reviewed known-tensions text survives here even if the
+        // positioning leaf fails to persist it (it lived only in memory before this).
+        known_tensions: knownTensions,
         strategy: {
           winning_aspiration: String((freshCascadeRow as any)?.winning_aspiration || ""),
           where_to_play: String((freshCascadeRow as any)?.where_to_play || ""),

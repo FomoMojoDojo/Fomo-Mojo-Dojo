@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildBaselineBrief,
+  buildKnownTensionsBrief,
   buildCascadeContext,
   buildInputBrief,
   buildJourneyBrief,
@@ -112,9 +113,13 @@ Deno.serve(async (req) => {
     const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
 
     // Accept service role key directly (internal/orchestrator calls) or user JWT.
+    // Dedicated service-role identity in auth.users — email: system@mojomap.internal (A55).
+    // user_id is a NOT NULL uuid; the literal "service_role" breaks the insert (22P02).
+    // Migration: 20260518000002_create_service_role_user.sql
+    const SERVICE_ROLE_UUID = "1a27cf29-554a-46e9-bab8-0e238f9dc088";
     let userId: string;
     if (bearerToken === serviceRoleKey) {
-      userId = "service_role";
+      userId = SERVICE_ROLE_UUID;
     } else {
       const anonClient = createClient(supabaseUrl, anonKey, {
         global: { headers: { Authorization: authHeader } },
@@ -131,6 +136,20 @@ Deno.serve(async (req) => {
     const dry_run = !!(body as Record<string, unknown>)?.dry_run;
     // skip_lock: accepted from orchestrator (research-company already holds the lock); no-op here
     const _skip_lock = !!(body as Record<string, unknown>)?.skip_lock;
+    // Orchestrator-provided context: reviewed known tensions (persisted verbatim — they
+    // already passed review) and claim provenance for the evidence brief. Optional; standalone
+    // invocations carry tensions forward from the latest canvas instead of dropping them.
+    const bodyKnownTensions = Array.isArray((body as Record<string, unknown>)?.known_tensions)
+      ? ((body as Record<string, unknown>).known_tensions as unknown[])
+      : null;
+    const claimProvenance = Array.isArray((body as Record<string, unknown>)?.claim_provenance)
+      ? ((body as Record<string, unknown>).claim_provenance as Array<{
+          ledger_index?: number | null;
+          claim?: string;
+          status?: string;
+          basis_urls?: string[];
+        }>)
+      : undefined;
 
     if (!company_id) return jsonResponse({ error: "company_id required" }, 400);
 
@@ -256,10 +275,25 @@ Deno.serve(async (req) => {
 
     const cascadeContext = buildCascadeContext(cascadeRow ?? null);
 
+    // --- Known tensions: orchestrator-provided, else carried forward from latest canvas ---
+    let knownTensions: unknown[] = bodyKnownTensions ?? [];
+    if (!bodyKnownTensions) {
+      const { data: priorCanvas } = await supabase
+        .from("positioning_canvases")
+        .select("known_tensions_json")
+        .eq("company_id", company_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (Array.isArray((priorCanvas as { known_tensions_json?: unknown } | null)?.known_tensions_json)) {
+        knownTensions = (priorCanvas as { known_tensions_json: unknown[] }).known_tensions_json;
+      }
+    }
+
     // --- Build context ---
     const baselineBrief = [
       "Public baseline context (augmented with uploaded files):",
-      buildBaselineBrief(baselineResultJson),
+      buildBaselineBrief(baselineResultJson, claimProvenance),
     ].filter(Boolean).join("\n\n");
 
     const routes = Array.isArray(routeRows) ? routeRows : [];
@@ -293,6 +327,8 @@ Deno.serve(async (req) => {
       `- current_tagline should be an exact homepage or website phrase if publicly evidenced; if not clearly present, return 'unknown'\n` +
       `- proposed_tagline should be a strategist-quality direction, not a generic slogan\n` +
       `- highlighted=true only for the strongest or most differentiating items\n` +
+      `- Any company self-claim marked SELF-REPORTED/UNCORROBORATED in the evidence must stay qualified (self-reported, aspirational, or developing) — never asserted as established fact; corroborated claims keep their substance\n` +
+      `- The known tensions below are already acknowledged in the strategy spine. Keep the canvas coherent with them: do not contradict them, relitigate them, or let unique_attributes/value_for_customer overclaim against them.\n` +
       `- The current strategy cascade below is the strategic anchor. Positioning must be coherent with it.\n`;
 
     const userText =
@@ -304,6 +340,7 @@ Deno.serve(async (req) => {
       `Generated strategy inputs:\n${buildInputBrief(inputRows ?? [])}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunityRows ?? [])}\n\n` +
       `Generated routes:\n${routesSummary}\n\n` +
+      `Known tensions (already acknowledged; keep the canvas coherent with them):\n${buildKnownTensionsBrief(knownTensions)}\n\n` +
       `Generate a positioning canvas for this exact company.`;
 
     // --- Dry run: return prompts without calling LLM ---
@@ -348,20 +385,28 @@ Deno.serve(async (req) => {
       category_rationale: String(positioningResult?.category_rationale || ""),
       current_tagline: String(positioningResult?.current_tagline || ""),
       proposed_tagline: String(positioningResult?.proposed_tagline || ""),
+      // Persisted verbatim: these passed the orchestrator's review gate (or were carried
+      // forward from the prior canvas). The canvas LLM never rewrites them.
+      known_tensions_json: knownTensions,
+      // No updated_at trigger on this table — set explicitly so refreshes are visible.
+      updated_at: new Date().toISOString(),
     };
 
+    // Upsert: positioning_canvases is one row per company (positioning_canvases_company_id_key),
+    // so a plain insert can never refresh an existing canvas (23505). The manual-preserve
+    // guard above already returned before any write for manual canvases.
     let { data: inserted, error: insertErr } = await supabase
       .from("positioning_canvases")
-      .insert(payload)
+      .upsert(payload, { onConflict: "company_id" })
       .select("id")
       .single();
 
     if (insertErr && String(insertErr.message || "").toLowerCase().includes("frameworks_used")) {
       const fallback = await supabase
         .from("positioning_canvases")
-        .insert({
+        .upsert({
           company_id,
-          user_id: user.id,
+          user_id: userId,
           source: "system",
           provenance_type: "public_research",
           competitive_alternatives_json: payload.competitive_alternatives_json,
@@ -372,7 +417,9 @@ Deno.serve(async (req) => {
           category_rationale: payload.category_rationale,
           current_tagline: payload.current_tagline,
           proposed_tagline: payload.proposed_tagline,
-        })
+          known_tensions_json: payload.known_tensions_json,
+          updated_at: payload.updated_at,
+        }, { onConflict: "company_id" })
         .select("id")
         .single();
       inserted = fallback.data;

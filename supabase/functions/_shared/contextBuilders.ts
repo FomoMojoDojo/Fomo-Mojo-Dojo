@@ -106,7 +106,35 @@ function buildStrategicAssumptionBrief(assumptions: StrategicAssumptionStatement
   ].join("\n");
 }
 
-function buildBaselineBrief(baselineResultJson: unknown): string {
+// Claim provenance entries are judged upstream (research-company's deriveClaimProvenance)
+// and passed through so leaf briefs show the same data-level qualification of company
+// self-claims. When absent, the brief renders exactly as before.
+type SharedClaimProvenanceEntry = {
+  ledger_index?: number | null;
+  claim?: string;
+  status?: string;
+  basis_urls?: string[];
+};
+
+const SHARED_CLAIM_PROVENANCE_PREFIX: Record<string, string> = {
+  corroborated: "",
+  uncorroborated: "SELF-REPORTED, UNCORROBORATED: ",
+  contradicted: "SELF-REPORTED, CONTRADICTED by independent evidence: ",
+  unverified: "SELF-REPORTED (corroboration unverified): ",
+};
+
+const SHARED_CLAIM_PROVENANCE_LABEL: Record<string, string> = {
+  corroborated: "CORROBORATED by independent sources — keep its substance",
+  uncorroborated:
+    "SELF-REPORTED, UNCORROBORATED — qualify as self-reported, aspirational, or developing; never assert as established fact",
+  contradicted: "SELF-REPORTED, CONTRADICTED — independent evidence cuts against this; do not assert it",
+  unverified: "SELF-REPORTED, corroboration unverified — treat as self-reported",
+};
+
+function buildBaselineBrief(
+  baselineResultJson: unknown,
+  claimProvenance?: SharedClaimProvenanceEntry[],
+): string {
   const baseline = baselineResultJson as {
     category_archetype?: string;
     lens_card?: {
@@ -152,14 +180,31 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
   if (!baseline) return "No public baseline available.";
 
   const lens = baseline.lens_card ?? {};
-  const evidence = Array.isArray(baseline.evidence_ledger) ? baseline.evidence_ledger.slice(0, 8) : [];
+  // Keep original ledger indexes so provenance verdicts (judged by index) attach to the
+  // right item after slicing.
+  const evidence = (Array.isArray(baseline.evidence_ledger) ? baseline.evidence_ledger : [])
+    .map((item, ledgerIndex) => ({ item, ledgerIndex }))
+    .slice(0, 8);
+  const provenanceByIndex = new Map<number, SharedClaimProvenanceEntry>();
+  for (const entry of claimProvenance ?? []) {
+    if (typeof entry.ledger_index === "number") provenanceByIndex.set(entry.ledger_index, entry);
+  }
   const hypotheses = Array.isArray(baseline.top_hypotheses) ? baseline.top_hypotheses.slice(0, 4) : [];
   const openQuestions = Array.isArray(baseline.open_questions) ? baseline.open_questions.slice(0, 3) : [];
   const alignment = baseline.message_alignment ?? {};
   const marketSuccess = baseline.market_initiative_success ?? {};
-  const outsideSignals = Array.isArray(baseline.outside_voice_signals)
-    ? baseline.outside_voice_signals.slice(0, 3)
+  // Sentiment-aware selection (mirrors research-company): an unordered slice(0,3) can
+  // truncate negative/mixed voices out for a positives-first company. Guarantee negative
+  // voices are represented (up to 3) while keeping some positive context (up to 2).
+  const isNegativeSentiment = (signal: { sentiment?: string }) =>
+    /negativ/i.test(String(signal?.sentiment || ""));
+  const allOutsideSignals = Array.isArray(baseline.outside_voice_signals)
+    ? baseline.outside_voice_signals
     : [];
+  const outsideSignals = [
+    ...allOutsideSignals.filter(isNegativeSentiment).slice(0, 3),
+    ...allOutsideSignals.filter((signal) => !isNegativeSentiment(signal)).slice(0, 2),
+  ];
 
   return [
     `Category archetype: ${baseline.category_archetype || "unknown"}`,
@@ -175,8 +220,10 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
     `Outside voice posture: ${alignment.outside_voice_posture || "unknown"}`,
     evidence.length
       ? `Evidence:\n${
-        evidence.map((item, index) =>
-          `${index + 1}. [${item.bucket || "signal"} | ${item.signal_strength || "unknown"} | conf ${item.confidence ?? "?"}] ${item.snippet || "No snippet"}`
+        evidence.map(({ item, ledgerIndex }, index) =>
+          `${index + 1}. [${item.bucket || "signal"} | ${item.signal_strength || "unknown"} | conf ${item.confidence ?? "?"}] ${
+            SHARED_CLAIM_PROVENANCE_PREFIX[String(provenanceByIndex.get(ledgerIndex)?.status || "corroborated")] ?? ""
+          }${item.snippet || "No snippet"}`
         ).join("\n")
       }`
       : "Evidence: none",
@@ -189,7 +236,36 @@ function buildBaselineBrief(baselineResultJson: unknown): string {
       : "Outside voice signals: none",
     hypotheses.length ? `Top hypotheses:\n- ${hypotheses.join("\n- ")}` : "Top hypotheses: none",
     openQuestions.length ? `Open questions:\n- ${openQuestions.join("\n- ")}` : "Open questions: none",
-  ].join("\n");
+    claimProvenance && claimProvenance.length
+      ? `Company self-claim provenance (judged against independent evidence only):\n${claimProvenance
+        .map((entry) =>
+          `- [${SHARED_CLAIM_PROVENANCE_LABEL[String(entry.status || "unverified")] ?? "SELF-REPORTED"}] ${entry.claim || ""}${
+            Array.isArray(entry.basis_urls) && entry.basis_urls.length ? ` (basis: ${entry.basis_urls.join(", ")})` : ""
+          }`
+        ).join("\n")}`
+      : "",
+  ].filter(Boolean).join("\n");
+}
+
+// Known tensions: acknowledge-and-scope entries for serious negatives in the outside voice,
+// generated and reviewed in the research-company spine and passed to leaves for persistence.
+// Perception register: each entry observes what the public record visibly contains — never
+// adjudicates truth.
+function buildKnownTensionsBrief(knownTensions: unknown): string {
+  const items = Array.isArray(knownTensions) ? knownTensions : [];
+  if (!items.length) return "None declared.";
+  return items
+    .map((tension, index) => {
+      const entry = tension as {
+        title?: string;
+        what_we_see?: string;
+        what_it_is?: string;
+        what_it_isnt?: string;
+        resolution_condition?: string;
+      };
+      return `${index + 1}. ${entry?.title || "Untitled"} — visible in the record: ${entry?.what_we_see || "?"} | its place and weight: ${entry?.what_it_is || "?"} | what it is not: ${entry?.what_it_isnt || "?"} | the record shifts when: ${entry?.resolution_condition || "?"}`;
+    })
+    .join("\n");
 }
 
 function buildJourneyBrief(journeys: unknown): string {
@@ -350,6 +426,7 @@ export {
   normalizeStrategicAssumptions,
   buildStrategicAssumptionBrief,
   buildBaselineBrief,
+  buildKnownTensionsBrief,
   buildJourneyBrief,
   buildOpportunityBrief,
   buildInputBrief,

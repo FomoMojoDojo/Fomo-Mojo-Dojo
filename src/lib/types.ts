@@ -182,6 +182,16 @@ export interface PositioningCanvas {
   strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
   strategy_alignment_reason?: string | null;
   strategy_alignment_evaluated_at?: string | null;
+  // Acknowledged serious negatives from the outside voice (acknowledge-and-scope shape)
+  known_tensions?: KnownTension[];
+}
+
+export interface KnownTension {
+  title: string;
+  what_we_see: string;
+  what_it_is: string;
+  what_it_isnt: string;
+  resolution_condition: string;
 }
 
 export interface PositioningItem {

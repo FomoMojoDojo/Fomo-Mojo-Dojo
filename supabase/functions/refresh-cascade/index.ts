@@ -111,9 +111,13 @@ Deno.serve(async (req) => {
     const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
 
     // Accept service role key directly (internal/orchestrator calls) or user JWT.
+    // Dedicated service-role identity in auth.users — email: system@mojomap.internal (A55).
+    // user_id is a NOT NULL uuid; the literal "service_role" breaks the insert (22P02).
+    // Migration: 20260518000002_create_service_role_user.sql
+    const SERVICE_ROLE_UUID = "1a27cf29-554a-46e9-bab8-0e238f9dc088";
     let userId: string;
     if (bearerToken === serviceRoleKey) {
-      userId = "service_role";
+      userId = SERVICE_ROLE_UUID;
     } else {
       const anonClient = createClient(supabaseUrl, anonKey, {
         global: { headers: { Authorization: authHeader } },
@@ -330,18 +334,23 @@ Deno.serve(async (req) => {
         ? cascadeResult.management_systems
         : [],
       assumptions_json: Array.isArray(cascadeResult?.assumptions) ? cascadeResult.assumptions : [],
+      // No updated_at trigger on this table — set explicitly so refreshes are visible.
+      updated_at: new Date().toISOString(),
     };
 
+    // Upsert: strategy_cascades is one row per company (strategy_cascades_company_id_key),
+    // so a plain insert can never refresh an existing cascade (23505). The manual-preserve
+    // guard above already returned before any write for manual cascades.
     let { data: inserted, error: insertErr } = await supabase
       .from("strategy_cascades")
-      .insert(payload)
+      .upsert(payload, { onConflict: "company_id" })
       .select("id")
       .single();
 
     if (insertErr && String(insertErr.message || "").toLowerCase().includes("frameworks_used")) {
       const fallback = await supabase
         .from("strategy_cascades")
-        .insert({
+        .upsert({
           company_id,
           user_id: userId,
           source: "system",
@@ -352,7 +361,8 @@ Deno.serve(async (req) => {
           capabilities_json: payload.capabilities_json,
           management_systems_json: payload.management_systems_json,
           assumptions_json: payload.assumptions_json,
-        })
+          updated_at: payload.updated_at,
+        }, { onConflict: "company_id" })
         .select("id")
         .single();
       inserted = fallback.data;

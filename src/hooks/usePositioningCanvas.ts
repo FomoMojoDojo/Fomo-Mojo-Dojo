@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { PositioningCanvas, PositioningItem } from "@/lib/types";
+import type { KnownTension, PositioningCanvas, PositioningItem } from "@/lib/types";
 import { captureBaseline } from "@/lib/baselineCapture";
 
 type PositioningCanvasRow = {
@@ -20,7 +20,33 @@ type PositioningCanvasRow = {
   strategy_alignment: string | null;
   strategy_alignment_reason: string | null;
   strategy_alignment_evaluated_at: string | null;
+  known_tensions_json: unknown;
 };
+
+function normalizeKnownTensions(value: unknown): KnownTension[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const entry = item as {
+        title?: unknown;
+        what_we_see?: unknown;
+        what_it_is?: unknown;
+        what_it_isnt?: unknown;
+        resolution_condition?: unknown;
+      };
+      const title = typeof entry?.title === "string" ? entry.title.trim() : "";
+      if (!title) return null;
+      return {
+        title,
+        what_we_see: typeof entry?.what_we_see === "string" ? entry.what_we_see : "",
+        what_it_is: typeof entry?.what_it_is === "string" ? entry.what_it_is : "",
+        what_it_isnt: typeof entry?.what_it_isnt === "string" ? entry.what_it_isnt : "",
+        resolution_condition:
+          typeof entry?.resolution_condition === "string" ? entry.resolution_condition : "",
+      };
+    })
+    .filter((item): item is KnownTension => item !== null);
+}
 
 function normalizeItems(value: unknown): PositioningItem[] {
   if (!Array.isArray(value)) return [];
@@ -91,6 +117,7 @@ function mapRow(row: PositioningCanvasRow): PositioningCanvas {
     strategy_alignment: (row.strategy_alignment as "aligned" | "off_strategy" | "unknown" | null) ?? null,
     strategy_alignment_reason: row.strategy_alignment_reason ?? null,
     strategy_alignment_evaluated_at: row.strategy_alignment_evaluated_at ?? null,
+    known_tensions: normalizeKnownTensions(row.known_tensions_json),
   };
 }
 
@@ -132,7 +159,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
       const { data, error } = await supabase
         .from("positioning_canvases")
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
         .eq("company_id", companyId)
         .maybeSingle();
@@ -190,7 +217,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
         .update(patch)
         .eq("company_id", companyId)
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
         .maybeSingle();
 
@@ -223,7 +250,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
         .update({ [field]: items })
         .eq("company_id", companyId)
         .select(
-          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
+          "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
         .maybeSingle();
 
@@ -254,7 +281,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
       .update({ frameworks_used: frameworks })
       .eq("company_id", companyId)
       .select(
-        "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at"
+        "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
       )
       .maybeSingle();
 

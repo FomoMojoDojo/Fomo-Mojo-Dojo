@@ -672,6 +672,41 @@ export default function PositioningOrgPanel({
             </div>
           )}
 
+          {/* § 07 — WHAT WE NAME OPENLY (known tensions: acknowledge-and-scope, read-only) */}
+          {(canvas.known_tensions?.length ?? 0) > 0 && (
+            <div style={{ marginBottom: 52 }}>
+              <HPos_SectionHeader number="07" label="What We Name Openly" />
+              {/* Perception register: this section reports what the public record visibly
+                  contains and what would shift it — it never rules on what is true. */}
+              <p style={{ fontFamily: P.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", color: P.inkFaint, margin: "0 0 16px" }}>
+                From the public record
+              </p>
+              {canvas.known_tensions!.map((tension, index) => (
+                <div key={index} style={{ borderLeft: `2px solid ${P.signal}`, padding: "4px 0 4px 20px", marginBottom: index < canvas.known_tensions!.length - 1 ? 28 : 0 }}>
+                  <p style={{ fontFamily: P.sans, fontSize: 17, fontWeight: 600, color: P.ink, margin: "0 0 8px", lineHeight: 1.35 }}>
+                    {tension.title}
+                  </p>
+                  {tension.what_we_see && (
+                    <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.8)", lineHeight: 1.6, margin: "0 0 8px" }}>
+                      {tension.what_we_see}
+                    </p>
+                  )}
+                  {(tension.what_it_is || tension.what_it_isnt) && (
+                    <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.7)", lineHeight: 1.6, margin: "0 0 8px" }}>
+                      {[tension.what_it_is, tension.what_it_isnt].filter(Boolean).join(" ")}
+                    </p>
+                  )}
+                  {tension.resolution_condition && (
+                    <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.55)", lineHeight: 1.6, margin: 0 }}>
+                      <span style={{ fontFamily: P.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: P.inkFaint, marginRight: 8 }}>The record shifts when</span>
+                      {tension.resolution_condition}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
         </div>
       </>
     );
@@ -872,6 +907,30 @@ export default function PositioningOrgPanel({
         singleLine
         isSaved={savedField === "tagline_proposed"}
       />
+
+      {(canvas.known_tensions?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <p style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9aaba5", margin: "0 0 8px" }}>
+            What we name openly · from the public record
+          </p>
+          {canvas.known_tensions!.map((tension, index) => (
+            <div key={index} style={{ borderLeft: "2px solid #c8d2ce", padding: "2px 0 2px 14px", marginBottom: 16 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: "#2a3a35", margin: "0 0 6px", lineHeight: 1.4 }}>{tension.title}</p>
+              {tension.what_we_see && (
+                <p style={{ fontSize: 13, color: "#4a5a55", lineHeight: 1.55, margin: "0 0 6px" }}>{tension.what_we_see}</p>
+              )}
+              {(tension.what_it_is || tension.what_it_isnt) && (
+                <p style={{ fontSize: 13, color: "#5a6a65", lineHeight: 1.55, margin: "0 0 6px" }}>
+                  {[tension.what_it_is, tension.what_it_isnt].filter(Boolean).join(" ")}
+                </p>
+              )}
+              {tension.resolution_condition && (
+                <p style={{ fontSize: 13, color: "#7a8a85", lineHeight: 1.55, margin: 0 }}>The record shifts when {tension.resolution_condition}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ paddingTop: 8, display: "flex", justifyContent: "flex-start" }}>
         <button
