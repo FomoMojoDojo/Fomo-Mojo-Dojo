@@ -5125,20 +5125,72 @@ Deno.serve(async (req) => {
 
     const fallbackStrongBaseline =
       recentBaselineRuns.find((run) => !isWeakBaselineStatus(baselineStatusFor(run))) ?? null;
-    const baselineRun = fallbackStrongBaseline ?? latestBaselineRun;
 
-    if (
-      latestBaselineRun &&
-      baselineRun &&
-      String(latestBaselineRun?.id ?? "") !== String(baselineRun?.id ?? "")
-    ) {
-      console.log("[research-company] latest baseline weak; falling back to prior strong baseline", {
+    // Phase B: optional baseline_run_id override. When present, pin that exact
+    // public_baseline_runs snapshot (scoped to company_id) instead of the
+    // newest-non-weak heuristic — for validation/replay against a known run.
+    // Absent → unchanged. Selected-but-missing/not-owned → reject; weak/empty →
+    // fail loud (never silently fall back to a different snapshot).
+    const requestedBaselineRunId = bodyRecord?.baseline_run_id;
+    const hasBaselineRunOverride =
+      requestedBaselineRunId !== undefined &&
+      requestedBaselineRunId !== null &&
+      String(requestedBaselineRunId).trim() !== "";
+
+    let baselineRun: BaselineRunRow | null;
+    if (hasBaselineRunOverride) {
+      const { data: pinnedBaselineRun, error: pinnedBaselineErr } = await supabase
+        .from("public_baseline_runs")
+        .select("id, created_at, result_json")
+        .eq("company_id", company_id)
+        .eq("id", requestedBaselineRunId)
+        .maybeSingle();
+      if (pinnedBaselineErr) {
+        console.log("[research-company] baseline_run_id fetch error:", pinnedBaselineErr.message);
+      }
+      const pinnedRow = (pinnedBaselineRun ?? null) as BaselineRunRow | null;
+      if (!pinnedRow) {
+        return jsonResponse({
+          error: "baseline_run_not_found",
+          message: `baseline_run_id ${String(requestedBaselineRunId)} not found for this company.`,
+          baseline_run_id: requestedBaselineRunId,
+          company_id,
+        }, 404);
+      }
+      const pinnedStatus = baselineStatusFor(pinnedRow);
+      const pinnedEmpty = !pinnedRow.result_json;
+      if (pinnedEmpty || isWeakBaselineStatus(pinnedStatus)) {
+        return jsonResponse({
+          error: "baseline_run_weak_or_empty",
+          message: `Pinned baseline_run_id ${String(requestedBaselineRunId)} is ${
+            pinnedEmpty ? "empty" : pinnedStatus
+          }; refusing to run on a weak snapshot (no silent fallback).`,
+          baseline_run_id: requestedBaselineRunId,
+          baseline_status: pinnedStatus,
+        }, 422);
+      }
+      baselineRun = pinnedRow;
+      console.log("[research-company] baseline_run_id override — pinned snapshot", {
         company_id,
-        latest_baseline_run_id: latestBaselineRun?.id ?? null,
-        latest_status: baselineStatusFor(latestBaselineRun),
-        fallback_baseline_run_id: baselineRun?.id ?? null,
-        fallback_status: baselineStatusFor(baselineRun),
+        baseline_run_id: pinnedRow.id ?? requestedBaselineRunId,
+        status: pinnedStatus,
       });
+    } else {
+      baselineRun = fallbackStrongBaseline ?? latestBaselineRun;
+
+      if (
+        latestBaselineRun &&
+        baselineRun &&
+        String(latestBaselineRun?.id ?? "") !== String(baselineRun?.id ?? "")
+      ) {
+        console.log("[research-company] latest baseline weak; falling back to prior strong baseline", {
+          company_id,
+          latest_baseline_run_id: latestBaselineRun?.id ?? null,
+          latest_status: baselineStatusFor(latestBaselineRun),
+          fallback_baseline_run_id: baselineRun?.id ?? null,
+          fallback_status: baselineStatusFor(baselineRun),
+        });
+      }
     }
 
     const baselineStatus = baselineStatusFor(baselineRun);
