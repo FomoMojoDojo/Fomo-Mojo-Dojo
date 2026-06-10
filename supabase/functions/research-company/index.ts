@@ -5251,11 +5251,12 @@ Deno.serve(async (req) => {
     }
 
     const strategicAssumptions = normalizeStrategicAssumptions(strategicAssumptionRows ?? []);
-    const strategicProblemBrief = [
-      buildStrategicProblemBrief(strategicProblems),
-      buildStrategicAssumptionBrief(strategicAssumptions),
-      "Use both strategic problems and assumptions to determine what to prioritize, what to test next, and where confidence is still low.",
-    ].join("\n\n");
+    // OPTION B (Phase 1): client-stated strategic problems + assumptions are INTERNAL —
+    // they must not reach research-company's OpenAI calls (gen + reviewers). Held out of the
+    // OpenAI pool here; they remain available to the local pipeline. (strategicProblems is
+    // still used downstream for the local §9 score's initiative-focus keywords.)
+    void buildStrategicProblemBrief; void buildStrategicAssumptionBrief; void strategicAssumptions;
+    const strategicProblemBrief = "";
     const suggestedJobMaps = inferSuggestedJobMapsFromBaseline({
       companyName: String(company_name),
       baselineResultJson: effectiveBaselineResultJson,
@@ -5397,9 +5398,17 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
-    const targetJourneyKeys: JourneyKey[] = [
+    // OPTION B (Phase 1): research-company generates the PUBLIC/CUSTOMER-FACING spine only.
+    // The internal/operational journey is the local pipeline's domain (run-mojo-analysis) —
+    // generating it from public-only context would produce ungrounded internal claims the
+    // reviewer rightly flags. Excluded from both generation (here) and the regen delete list.
+    const isInternalJourneyKey = (k: unknown): boolean => {
+      const n = normalizeJourneyKey(k);
+      return n === "internal" || n.startsWith("internal");
+    };
+    let targetJourneyKeys: JourneyKey[] = [
       ...new Set(selectedJobMaps.map((map) => map.journey_key)),
-    ];
+    ].filter((k) => !isInternalJourneyKey(k));
     if (strictSingleJourneyMode) {
       const strictJourneyKey = runtimeContract.journey_key as JourneyKey;
       if (targetJourneyKeys.length !== 1 || targetJourneyKeys[0] !== strictJourneyKey) {
@@ -5443,6 +5452,10 @@ Deno.serve(async (req) => {
       );
       console.log(`[research-company] additive-preserve: pinned set '${pinnedPreserveKey}' excluded from regen — its job_steps are preserved`);
     }
+    // OPTION B (Phase 1): the internal journey isn't generated here (filtered above), so keep
+    // its job_steps out of the delete/insert too — otherwise an explicit internal target would
+    // delete rows gen no longer reproduces. The internal journey stays owned by run-mojo-analysis.
+    jobMapUpdateJourneyKeys = jobMapUpdateJourneyKeys.filter((k) => !isInternalJourneyKey(k));
     const jobMapUpdateJourneyKeySet = new Set(jobMapUpdateJourneyKeys);
     const targetJourneyKeySet = new Set(targetJourneyKeys);
     const selectedJobMapByKey = new Map<JourneyKey, SelectedJobMap>(
@@ -5481,14 +5494,14 @@ Deno.serve(async (req) => {
       required: ["inputs"],
     };
 
-    const baselineContextIntro =
-      researchContextMode === "uploaded_evidence_fallback"
-        ? "Public baseline was weak or ambiguous. Use uploaded company evidence as primary context."
-        : "Public baseline context (augmented with uploaded files):";
+    // OPTION B (Phase 1): research-company is PUBLIC-ONLY. The uploaded/internal evidence
+    // (uploadedEvidenceContext.brief) NEVER enters the OpenAI pool — the internal layer and
+    // the public-vs-internal reconciliation are the local pipeline's domain. Public baseline
+    // is the sole evidence context here, regardless of researchContextMode.
+    const baselineContextIntro = "Public baseline context:";
     const baselineBrief = [
       baselineContextIntro,
       buildBaselineBrief(effectiveBaselineResultJson),
-      uploadedEvidenceContext.brief,
     ]
       .filter(Boolean)
       .join("\n\n");
