@@ -7620,13 +7620,21 @@ Deno.serve(async (req) => {
     // 8b) Invoke leaf functions (cascade + positioning) — always runs; dry_run forwarded
     // -------------------------
     const authorizationHeader = req.headers.get("Authorization") ?? "";
+    // One run, one snapshot, every surface: forward the RESOLVED baseline run id (pinned or
+    // defaulted — both cases, since newest-non-weak can change between orchestrator
+    // resolution and leaf execution) so the leaves build from the same snapshot the spine
+    // was generated and reviewed against.
+    const resolvedBaselineRunId = baselineRun?.id ?? null;
+    console.log("[research-company] forwarding baseline_run_id to leaves", {
+      baseline_run_id: resolvedBaselineRunId,
+    });
     console.log("[research-company] handing off to positioning leaf", {
       known_tensions: knownTensions.length,
       claim_provenance: claimProvenance.length,
     });
     const [cascadeInvokeResult, positioningInvokeResult] = await Promise.all([
       supabase.functions.invoke("refresh-cascade", {
-        body: { company_id, skip_lock: true, dry_run },
+        body: { company_id, skip_lock: true, dry_run, baseline_run_id: resolvedBaselineRunId },
         headers: { Authorization: authorizationHeader },
       }).catch((err: unknown) => {
         console.error("[research-company] refresh-cascade invoke error:", err);
@@ -7637,6 +7645,7 @@ Deno.serve(async (req) => {
           company_id,
           skip_lock: true,
           dry_run,
+          baseline_run_id: resolvedBaselineRunId,
           // Reviewed acknowledgments + claim provenance ride along so the canvas leaf
           // persists the tensions verbatim and sees the same pre-qualified evidence brief.
           known_tensions: knownTensions,

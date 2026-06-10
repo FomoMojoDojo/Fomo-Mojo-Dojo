@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
         );
       }
       baselineRun = pinnedRun;
-      console.log("[refresh-positioning] baseline_run_id override — pinned snapshot", {
+      console.log("[refresh-positioning] building from baseline_run_id override", {
         baseline_run_id: bodyBaselineRunId,
       });
     } else {

@@ -172,20 +172,45 @@ Deno.serve(async (req) => {
     const website = String(companyRow.website || "");
 
     // --- Fetch baseline (prefer latest strong run, fall back to latest) ---
-    const { data: baselineRuns } = await supabase
-      .from("public_baseline_runs")
-      .select("id, result_json")
-      .eq("company_id", company_id)
-      .order("created_at", { ascending: false })
-      .limit(12);
+    // Optional baseline_run_id override (same scoped pattern as refresh-positioning and
+    // research-company): the orchestrator forwards its RESOLVED run id so every surface of
+    // one run builds from one snapshot. Scoped to company_id, 404 if not owned, never a
+    // silent fallback. Absent → byte-identical newest-non-weak behavior.
+    const bodyBaselineRunId = Number((body as Record<string, unknown>)?.baseline_run_id) || null;
+    let baselineRun: { id: unknown; result_json: unknown } | null = null;
+    if (bodyBaselineRunId) {
+      const { data: pinnedRun } = await supabase
+        .from("public_baseline_runs")
+        .select("id, result_json")
+        .eq("company_id", company_id)
+        .eq("id", bodyBaselineRunId)
+        .maybeSingle();
+      if (!pinnedRun) {
+        return jsonResponse(
+          { error: "baseline_run_not_found", baseline_run_id: bodyBaselineRunId, company_id },
+          404,
+        );
+      }
+      baselineRun = pinnedRun;
+      console.log("[refresh-cascade] building from baseline_run_id override", {
+        baseline_run_id: bodyBaselineRunId,
+      });
+    } else {
+      const { data: baselineRuns } = await supabase
+        .from("public_baseline_runs")
+        .select("id, result_json")
+        .eq("company_id", company_id)
+        .order("created_at", { ascending: false })
+        .limit(12);
 
-    const isWeakStatus = (run: { result_json?: unknown }) =>
-      ["ambiguous_public_evidence", "insufficient_public_evidence"].includes(
-        String((run?.result_json as { status?: string } | null)?.status || ""),
-      );
+      const isWeakStatus = (run: { result_json?: unknown }) =>
+        ["ambiguous_public_evidence", "insufficient_public_evidence"].includes(
+          String((run?.result_json as { status?: string } | null)?.status || ""),
+        );
 
-    const runs = Array.isArray(baselineRuns) ? baselineRuns : [];
-    const baselineRun = runs.find((r) => !isWeakStatus(r)) ?? runs[0] ?? null;
+      const runs = Array.isArray(baselineRuns) ? baselineRuns : [];
+      baselineRun = runs.find((r) => !isWeakStatus(r)) ?? runs[0] ?? null;
+    }
     const baselineResultJson = baselineRun?.result_json ?? null;
 
     // --- Fetch strategic problems and assumptions ---
