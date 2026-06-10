@@ -24,6 +24,7 @@ import {
   normalizeStrategicProblems,
 } from "../_shared/contextBuilders.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
+import { deriveClaimProvenance, judgeAttributeEvidence } from "../_shared/claimProvenance.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -70,8 +71,13 @@ const positioningCanvasSchema = {
           name: { type: "string" },
           description: { type: "string" },
           highlighted: { type: "boolean" },
+          // Structure over instruction: the model must choose a provenance status per
+          // attribute. The choice is then VERIFIED by judgeAttributeEvidence — the judge's
+          // verdict overrides this self-assignment.
+          evidence_status: { type: "string", enum: ["corroborated", "self_reported"] },
+          basis_urls: { type: "array", items: { type: "string" } },
         },
-        required: ["id", "name", "description", "highlighted"],
+        required: ["id", "name", "description", "highlighted", "evidence_status", "basis_urls"],
       },
     },
     value_for_customer: { type: "string" },
@@ -142,7 +148,7 @@ Deno.serve(async (req) => {
     const bodyKnownTensions = Array.isArray((body as Record<string, unknown>)?.known_tensions)
       ? ((body as Record<string, unknown>).known_tensions as unknown[])
       : null;
-    const claimProvenance = Array.isArray((body as Record<string, unknown>)?.claim_provenance)
+    const bodyClaimProvenance = Array.isArray((body as Record<string, unknown>)?.claim_provenance)
       ? ((body as Record<string, unknown>).claim_provenance as Array<{
           ledger_index?: number | null;
           claim?: string;
@@ -188,20 +194,44 @@ Deno.serve(async (req) => {
     const website = String(companyRow.website || "");
 
     // --- Fetch baseline ---
-    const { data: baselineRuns } = await supabase
-      .from("public_baseline_runs")
-      .select("id, result_json")
-      .eq("company_id", company_id)
-      .order("created_at", { ascending: false })
-      .limit(12);
+    // Optional baseline_run_id override (mirrors research-company's committed pattern):
+    // pin a specific snapshot, scoped to company_id, 404 if not owned — never a silent
+    // fallback. Absent → byte-identical newest-non-weak behavior.
+    const bodyBaselineRunId = Number((body as Record<string, unknown>)?.baseline_run_id) || null;
+    let baselineRun: { id: unknown; result_json: unknown } | null = null;
+    if (bodyBaselineRunId) {
+      const { data: pinnedRun } = await supabase
+        .from("public_baseline_runs")
+        .select("id, result_json")
+        .eq("company_id", company_id)
+        .eq("id", bodyBaselineRunId)
+        .maybeSingle();
+      if (!pinnedRun) {
+        return jsonResponse(
+          { error: "baseline_run_not_found", baseline_run_id: bodyBaselineRunId, company_id },
+          404,
+        );
+      }
+      baselineRun = pinnedRun;
+      console.log("[refresh-positioning] baseline_run_id override — pinned snapshot", {
+        baseline_run_id: bodyBaselineRunId,
+      });
+    } else {
+      const { data: baselineRuns } = await supabase
+        .from("public_baseline_runs")
+        .select("id, result_json")
+        .eq("company_id", company_id)
+        .order("created_at", { ascending: false })
+        .limit(12);
 
-    const isWeakStatus = (run: { result_json?: unknown }) =>
-      ["ambiguous_public_evidence", "insufficient_public_evidence"].includes(
-        String((run?.result_json as { status?: string } | null)?.status || ""),
-      );
+      const isWeakStatus = (run: { result_json?: unknown }) =>
+        ["ambiguous_public_evidence", "insufficient_public_evidence"].includes(
+          String((run?.result_json as { status?: string } | null)?.status || ""),
+        );
 
-    const runs = Array.isArray(baselineRuns) ? baselineRuns : [];
-    const baselineRun = runs.find((r) => !isWeakStatus(r)) ?? runs[0] ?? null;
+      const runs = Array.isArray(baselineRuns) ? baselineRuns : [];
+      baselineRun = runs.find((r) => !isWeakStatus(r)) ?? runs[0] ?? null;
+    }
     const baselineResultJson = baselineRun?.result_json ?? null;
 
     // --- Fetch strategic problems and assumptions ---
@@ -290,6 +320,30 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- Claim provenance: orchestrator-provided, else self-derived (standalone runs) ---
+    // The tagged brief is what shapes the gen toward qualified claims; without it a
+    // standalone refresh would regenerate from an untagged brief and re-overclaim.
+    let claimProvenance = bodyClaimProvenance;
+    if (!claimProvenance && baselineResultJson) {
+      try {
+        claimProvenance = await deriveClaimProvenance({
+          apiKey: openaiKey,
+          model: openaiModel,
+          baselineResultJson,
+        });
+        console.log("[refresh-positioning] claim provenance self-derived", {
+          judged: claimProvenance.length,
+        });
+      } catch (error) {
+        // LOUD: the brief proceeds untagged; the attribute judge below is the backstop.
+        console.warn(
+          "[refresh-positioning] ⚠ CLAIM PROVENANCE SELF-DERIVATION FAILED — brief proceeds untagged; attribute judge remains the backstop",
+          { message: String(error instanceof Error ? error.message : error) },
+        );
+        claimProvenance = undefined;
+      }
+    }
+
     // --- Build context ---
     const baselineBrief = [
       "Public baseline context (augmented with uploaded files):",
@@ -317,6 +371,8 @@ Deno.serve(async (req) => {
       `- competitive_alternatives should be real alternatives, including manual workarounds or doing nothing when relevant\n` +
       `- competitive_alternatives must serve the same customer/job context as the company; do not list alternatives from unrelated sectors\n` +
       `- unique_attributes should be specific and credible, not vague marketing claims\n` +
+      `- For each unique attribute, set evidence_status: "corroborated" ONLY when independent evidence (third-party profiles, news, customer/outside voice) attests the attribute's core fact, and cite the attesting URLs in basis_urls; otherwise "self_reported" with basis_urls []. Never treat the company's own pages or self-descriptions as corroboration\n` +
+      `- A self_reported attribute keeps its substance — it is the company's claim, honestly labeled as not yet echoed by outside voices\n` +
       `- value_for_customer should describe what customers can do or achieve that they could not before\n` +
       `- best_fit_customers should describe the clearest-fit audience in one paragraph and name buyer/executor context when possible\n` +
       `- market_category should be the category the company should claim or reshape and must be concise (2-8 words)\n` +
@@ -366,6 +422,59 @@ Deno.serve(async (req) => {
       temperature: 0.2,
     });
 
+    // --- Verify attribute evidence_status against the baseline's independent evidence ---
+    // The schema forced the gen to choose a status; the judge re-derives it from the
+    // evidence and its verdict WINS. Deterministic subset-check on citations happens inside
+    // judgeAttributeEvidence (unearned corroboration downgrades). Failure fallback is loud
+    // and provenance-true: every attribute self_reported.
+    let uniqueAttributes: any[] = Array.isArray(positioningResult?.unique_attributes)
+      ? positioningResult.unique_attributes
+      : [];
+    try {
+      const verdicts = await judgeAttributeEvidence({
+        apiKey: openaiKey,
+        model: openaiModel,
+        baselineResultJson,
+        attributes: uniqueAttributes,
+        companyWebsite: website,
+      });
+      const verdictByIndex = new Map(verdicts.map((verdict) => [verdict.index, verdict]));
+      const disagreements: Array<{ index: number; name: string; gen: string; judge: string }> = [];
+      uniqueAttributes = uniqueAttributes.map((attribute, index) => {
+        const verdict = verdictByIndex.get(index);
+        // No verdict for this index → provenance-true default: self_reported.
+        const finalStatus = verdict?.evidence_status ?? "self_reported";
+        const genStatus = attribute?.evidence_status === "corroborated" ? "corroborated" : "self_reported";
+        if (genStatus !== finalStatus) {
+          disagreements.push({ index, name: String(attribute?.name || ""), gen: genStatus, judge: finalStatus });
+        }
+        return {
+          ...attribute,
+          evidence_status: finalStatus,
+          basis_urls: verdict?.basis_urls ?? [],
+        };
+      });
+      // Countable quality signal (same class as operator-override frequency): one line,
+      // fixed shape — grep "attr-evidence verdicts" and sum `disagreements`.
+      console.log("[refresh-positioning] attr-evidence verdicts", {
+        total: uniqueAttributes.length,
+        corroborated: uniqueAttributes.filter((a) => a.evidence_status === "corroborated").length,
+        self_reported: uniqueAttributes.filter((a) => a.evidence_status === "self_reported").length,
+        disagreements: disagreements.length,
+        disagreement_detail: disagreements,
+      });
+    } catch (error) {
+      console.warn(
+        "[refresh-positioning] ⚠ ATTRIBUTE EVIDENCE JUDGE FAILED — all attributes marked self_reported (provenance-true fallback)",
+        { message: String(error instanceof Error ? error.message : error) },
+      );
+      uniqueAttributes = uniqueAttributes.map((attribute) => ({
+        ...attribute,
+        evidence_status: "self_reported",
+        basis_urls: [],
+      }));
+    }
+
     // --- Persist to DB ---
     const payload = {
       company_id,
@@ -376,9 +485,7 @@ Deno.serve(async (req) => {
       competitive_alternatives_json: Array.isArray(positioningResult?.competitive_alternatives)
         ? positioningResult.competitive_alternatives
         : [],
-      unique_attributes_json: Array.isArray(positioningResult?.unique_attributes)
-        ? positioningResult.unique_attributes
-        : [],
+      unique_attributes_json: uniqueAttributes,
       value_for_customer: String(positioningResult?.value_for_customer || ""),
       best_fit_customers: String(positioningResult?.best_fit_customers || ""),
       market_category: String(positioningResult?.market_category || ""),

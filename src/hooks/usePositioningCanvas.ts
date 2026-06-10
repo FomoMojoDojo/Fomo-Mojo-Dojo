@@ -73,6 +73,8 @@ function normalizeItems(value: unknown): PositioningItem[] {
         description?: unknown;
         detail?: unknown;
         highlighted?: unknown;
+        evidence_status?: unknown;
+        basis_urls?: unknown;
       };
       const name = (
         typeof entry?.name === "string"
@@ -93,11 +95,19 @@ function normalizeItems(value: unknown): PositioningItem[] {
             : ""
       ).trim();
       if (!name) return null;
+      const evidenceStatus =
+        entry?.evidence_status === "corroborated" || entry?.evidence_status === "self_reported"
+          ? entry.evidence_status
+          : undefined;
       return {
         id: typeof entry?.id === "string" && entry.id.trim() ? entry.id : `item-${index}`,
         name,
         description,
         highlighted: !!entry?.highlighted,
+        ...(evidenceStatus ? { evidence_status: evidenceStatus } : {}),
+        ...(Array.isArray(entry?.basis_urls)
+          ? { basis_urls: entry.basis_urls.map(String).filter(Boolean) }
+          : {}),
       };
     })
     .filter((item): item is PositioningItem => item !== null);

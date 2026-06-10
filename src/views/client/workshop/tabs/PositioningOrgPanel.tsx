@@ -562,7 +562,14 @@ export default function PositioningOrgPanel({
                     {String(idx + 1).padStart(2, "0")}
                   </span>
                   <div style={{ minWidth: 0 }}>
-                    <p style={{ fontFamily: P.sans, fontSize: 18, fontWeight: 600, color: P.ink, margin: "0 0 4px", lineHeight: 1.25, letterSpacing: "-0.01em" }}>{item.name}</p>
+                    <p style={{ fontFamily: P.sans, fontSize: 18, fontWeight: 600, color: P.ink, margin: "0 0 4px", lineHeight: 1.25, letterSpacing: "-0.01em" }}>
+                      {item.name}
+                      {item.evidence_status === "self_reported" && (
+                        <span style={{ fontFamily: P.mono, fontSize: 9, fontWeight: 400, textTransform: "uppercase", letterSpacing: "0.12em", color: P.signal, border: `1px solid rgba(255,91,41,0.4)`, borderRadius: 2, padding: "2px 7px", marginLeft: 10, position: "relative", top: -3, whiteSpace: "nowrap" }}>
+                          Yours to prove
+                        </span>
+                      )}
+                    </p>
                     {item.description && (
                       <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.7)", margin: 0, lineHeight: 1.55, maxWidth: 520 }}>{item.description}</p>
                     )}
@@ -573,6 +580,11 @@ export default function PositioningOrgPanel({
                 </div>
               ))}
               <HPos_AddRow placeholder="Add a differentiator…" gridFirstCol="80px" onAdd={(name) => addItem("unique_attributes_json", differentiators, name)} />
+              {differentiators.some((item) => item.evidence_status === "self_reported") && (
+                <p style={{ fontFamily: P.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", lineHeight: 1.6, margin: "14px 0 0", maxWidth: 560 }}>
+                  Unmarked claims are echoed by outside voices. The ones marked yours to prove are differentiators you've claimed that the market isn't repeating yet — earning public proof for them is part of the work.
+                </p>
+              )}
             </div>
           </div>
 
@@ -826,6 +838,11 @@ export default function PositioningOrgPanel({
         warningWords={attrWarningWords}
         warningTooltip="Hard to defend vs competitors"
       />
+      {canvas.unique_attributes.some((item) => item.evidence_status === "self_reported") && (
+        <p style={{ fontSize: 13, color: "#7a8a85", lineHeight: 1.6, margin: "-8px 0 20px" }}>
+          Unmarked claims are echoed by outside voices. The ones marked yours to prove are differentiators you've claimed that the market isn't repeating yet — earning public proof for them is part of the work.
+        </p>
+      )}
 
       <StatementField
         label="The real value you deliver"

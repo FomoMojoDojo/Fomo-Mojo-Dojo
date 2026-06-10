@@ -499,6 +499,13 @@ export function ListEditor({
                           onPhraseClick={toggleInsight}
                         />
                       : item.name}
+                    {/* Candor marker, not a warning: the claim is the company's own,
+                        not yet echoed by outside voices. */}
+                    {item.evidence_status === "self_reported" && (
+                      <span style={{ fontFamily: "monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#ff5b29", border: "1px solid rgba(255,91,41,0.4)", borderRadius: 2, padding: "1px 6px", marginLeft: 8, whiteSpace: "nowrap" }}>
+                        Yours to prove
+                      </span>
+                    )}
                   </div>
                 )}
                 {isWarned && <FieldWarningDot onClick={toggleInsight} />}

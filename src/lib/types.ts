@@ -199,6 +199,11 @@ export interface PositioningItem {
   name: string;
   description: string;
   highlighted?: boolean;
+  // Verified provenance of the claim (unique attributes): corroborated by independent
+  // evidence, or the company's own claim not yet echoed outside. Absent on items that
+  // predate verification and on operator-added items.
+  evidence_status?: "corroborated" | "self_reported";
+  basis_urls?: string[];
 }
 
 export interface ScoreHistoryPoint {

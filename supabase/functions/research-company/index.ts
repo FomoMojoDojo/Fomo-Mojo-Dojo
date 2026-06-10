@@ -21,6 +21,11 @@ import {
   validateSolutionTest,
 } from "../_shared/opportunityTreeSemantics.ts";
 import {
+  deriveClaimProvenance,
+  listCompanyClaimLedgerItems,
+  type ClaimProvenanceEntry,
+} from "../_shared/claimProvenance.ts";
+import {
   composeDesiredOutcomeFromParts,
   deriveDesiredOutcomeParts,
   normalizeDesiredOutcomeDirection,
@@ -388,154 +393,9 @@ function extractResponsesOutputText(data: any): string | null {
   return null;
 }
 
-// Claim provenance: which company self-claims are independently corroborated. Judged by a
-// dedicated structured call against the baseline's own independent items (third-party
-// profiles, outside-voice signals, news) — never by keyword matching on claim text.
-// "unverified" is the loud deterministic fallback when the judge call fails: every
-// company_claim item is tagged self-reported without asserting a corroboration verdict.
-type ClaimProvenanceEntry = {
-  ledger_index: number | null;
-  claim: string;
-  status: "corroborated" | "uncorroborated" | "contradicted" | "unverified";
-  basis_urls: string[];
-};
-
-function listCompanyClaimLedgerItems(baselineResultJson: unknown) {
-  const baseline = baselineResultJson as {
-    evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string }>;
-  } | null;
-  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-  return ledger
-    .map((item, index) => ({ index, item }))
-    .filter((entry) => String(entry.item?.bucket || "") === "company_claim");
-}
-
-const claimProvenanceSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    claims: {
-      type: "array",
-      minItems: 0,
-      maxItems: 12,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ledger_index: { type: ["integer", "null"] },
-          claim: { type: "string" },
-          status: { type: "string", enum: ["corroborated", "uncorroborated", "contradicted"] },
-          basis_urls: { type: "array", items: { type: "string" } },
-        },
-        required: ["ledger_index", "claim", "status", "basis_urls"],
-      },
-    },
-  },
-  required: ["claims"],
-};
-
-async function deriveClaimProvenance(opts: {
-  apiKey: string;
-  model: string;
-  baselineResultJson: unknown;
-}): Promise<ClaimProvenanceEntry[]> {
-  const baseline = opts.baselineResultJson as {
-    evidence_ledger?: Array<{
-      bucket?: string;
-      snippet?: string;
-      url?: string;
-      source_type?: string;
-    }>;
-    outside_voice_signals?: Array<{
-      signal?: string;
-      alignment?: string;
-      sentiment?: string;
-      url?: string;
-      perspective?: string;
-    }>;
-    message_alignment?: { alignment_summary?: string };
-  } | null;
-
-  const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson);
-  const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
-  if (companyClaims.length === 0 && !alignmentSummary) return [];
-
-  const independentItems = ledger
-    .map((item, index) => ({ index, item }))
-    .filter((entry) => String(entry.item?.bucket || "") !== "company_claim");
-  const outsideSignals = Array.isArray(baseline?.outside_voice_signals)
-    ? baseline.outside_voice_signals
-    : [];
-
-  // Deterministic post-validation set: corroboration may only cite these URLs.
-  const independentUrls = new Set<string>(
-    [
-      ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
-      ...outsideSignals.map((signal) => String(signal?.url || "").trim()),
-    ].filter(Boolean),
-  );
-
-  const userText =
-    `Company self-claims (from the evidence ledger, with their ledger index):\n` +
-    (companyClaims.length
-      ? companyClaims
-          .map((entry) => `[index ${entry.index}] ${entry.item?.snippet || "No snippet"}`)
-          .join("\n")
-      : "None in ledger.") +
-    `\n\nCompany-attributed claims may also appear in this alignment summary (use ledger_index null for claims found only here):\n` +
-    (alignmentSummary || "None.") +
-    `\n\nIndependent evidence (third-party profiles, news, customer/outside voice — the ONLY admissible corroboration basis):\n` +
-    independentItems
-      .map((entry) => `- [${entry.item?.bucket || "signal"}] ${entry.item?.snippet || "No snippet"} (url: ${entry.item?.url || "unknown"})`)
-      .join("\n") +
-    `\n\nOutside voice signals:\n` +
-    outsideSignals
-      .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
-      .join("\n") +
-    `\n\nJudge every company self-claim listed above.`;
-
-  const systemText =
-    `You are a claim provenance judge.\n` +
-    `Return ONLY valid JSON matching the schema. No prose.\n` +
-    `For each company self-claim, decide from the independent evidence ONLY:\n` +
-    `- corroborated: at least one independent item attests the claim's core fact (even with different wording). basis_urls MUST cite the attesting independent item URL(s).\n` +
-    `- contradicted: independent evidence cuts against the claim's core fact.\n` +
-    `- uncorroborated: no independent item speaks to the claim either way.\n` +
-    `Judge the claim's core fact, not its exact phrasing. Never treat the company's own pages or profiles as corroboration.\n` +
-    `Echo each ledger claim with its given ledger_index; claims found only in the alignment summary get ledger_index null.\n`;
-
-  const result = await callOpenAIJSON({
-    apiKey: opts.apiKey,
-    model: opts.model,
-    schemaName: "mojo_claim_provenance_v1",
-    schema: claimProvenanceSchema,
-    systemText,
-    userText,
-    maxOutputTokens: 1200,
-    temperature: 0.1,
-  });
-
-  const rows: any[] = Array.isArray(result?.claims) ? result.claims : [];
-  // Corroboration must be earned, not asserted: basis_urls must be a subset of the provided
-  // independent-item URLs; a corroborated verdict with no valid citation downgrades.
-  return rows.map((row) => {
-    const basis = (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
-      .map((url: unknown) => String(url || "").trim())
-      .filter((url: string) => independentUrls.has(url));
-    let status = String(row?.status || "uncorroborated") as ClaimProvenanceEntry["status"];
-    if (!["corroborated", "uncorroborated", "contradicted"].includes(status)) {
-      status = "uncorroborated";
-    }
-    if (status === "corroborated" && basis.length === 0) status = "uncorroborated";
-    return {
-      ledger_index: typeof row?.ledger_index === "number" ? row.ledger_index : null,
-      claim: String(row?.claim || ""),
-      status,
-      basis_urls: basis,
-    };
-  });
-}
+// Claim provenance machinery lives in _shared/claimProvenance.ts (single source, extracted
+// 2026-06-10 for the canvas leaf). The local callOpenAIJSON (budget-ladder retry) is injected
+// at the call site, so behavior here is unchanged.
 
 const CLAIM_PROVENANCE_PREFIX: Record<ClaimProvenanceEntry["status"], string> = {
   corroborated: "",
@@ -5821,6 +5681,9 @@ Deno.serve(async (req) => {
         apiKey: openaiKey,
         model: openaiModel,
         baselineResultJson: effectiveBaselineResultJson,
+        // Inject the local client (budget-ladder retry) — identical behavior to the
+        // pre-extraction local function.
+        callJson: callOpenAIJSON,
       });
       console.log("[research-company] claim provenance derived", {
         judged: claimProvenance.length,
@@ -6565,8 +6428,8 @@ Deno.serve(async (req) => {
       `- Claims marked SELF-REPORTED, UNCORROBORATED in the evidence may appear in routes only as hypotheses to validate or prove (e.g. "Validate and prove X before leading with it") — never phrased as established possessions or facts the company already owns\n` +
       `- known_tensions speak in the PERCEPTION register, never adjudication: this is an outside run on publicly visible information, so the claim is always "this exists and is visible in the public record" — never "this is true", "this is false", or "this was an isolated incident"\n` +
       `- what_we_see: what the public record contains and where it is visible (who says what, on which surface) — report the signal's existence and visibility, not its truth\n` +
-      `- what_it_is / what_it_isnt: the signal's place and weight in the record — one signal among how many, what it alleges, and what scope the record itself gives it (use the source's own scoping, e.g. the reviewer's own words) — never a verdict on the underlying conduct\n` +
-      `- resolution_condition: the observable change in the public record that would shift this picture (new reviews, a public response, independent coverage) — something a future snapshot of the record can be checked against\n` +
+      `- what_it_is / what_it_isnt: the signal's place and weight in the record — one signal among how many, what it alleges, and what scope the record itself gives it (use the source's own scoping, e.g. the reviewer's own words) — never a verdict on the underlying conduct, never an effect judgment (how influential or damaging it is), and never a scope verdict that restates what the record-level sentence already establishes\n` +
+      `- resolution_condition: the observable change in the public record that would shift this picture (new reviews, a public response, independent coverage) — something a future snapshot of the record can be checked against; frame the shift as the record addressing or resolving the signal, never as disproving it\n` +
       (hasSeriousNegativeOutsideVoice
         ? `- The outside voice contains at least one serious negative signal. Produce at least one known_tensions entry that names it directly — do not soften it away, do not omit it, and do not bury it inside a route description\n`
         : `- If the outside voice contains no serious negative, known_tensions may be empty\n`);
@@ -7938,6 +7801,7 @@ Deno.serve(async (req) => {
         // Durability: the reviewed known-tensions text survives here even if the
         // positioning leaf fails to persist it (it lived only in memory before this).
         known_tensions: knownTensions,
+        claim_provenance: claimProvenance,
         strategy: {
           winning_aspiration: String((freshCascadeRow as any)?.winning_aspiration || ""),
           where_to_play: String((freshCascadeRow as any)?.where_to_play || ""),
