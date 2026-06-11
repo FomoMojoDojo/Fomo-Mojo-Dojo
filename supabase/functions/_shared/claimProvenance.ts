@@ -9,7 +9,7 @@
 // callOpenAIJSON (budget-ladder retry); leaves pass _shared/openaiClient's.
 
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
-import { buildClientCorpus, resolveSyndication, type ClientCorpus } from "./syndication.ts";
+import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 
 type CallJson = (opts: {
   apiKey: string;
@@ -104,7 +104,22 @@ async function gateBasisBySyndication<T>(opts: {
   let unresolved = 0;
   for (const entry of opts.entries) {
     const text = opts.getText(entry);
-    const verdict = await resolveSyndication(text, opts.corpus, opts.clientSample);
+    // B2.0.1: durable store first — one content identity, one verdict. The store read/
+    // write lives in resolveSyndicationDurable; the no-supabase fallback (callers without
+    // persistence context) still resolves live, in-memory only.
+    const verdict = opts.persist
+      ? await resolveSyndicationDurable({
+          supabase: opts.persist.supabase,
+          companyId: opts.persist.companyId,
+          sourceUrl: opts.getUrl(entry),
+          itemText: text,
+          corpus: opts.corpus,
+          clientSampleForLlm: opts.clientSample,
+          label: opts.label,
+        })
+      : await resolveSyndication(text, opts.corpus, opts.clientSample);
+    // Signals lazy write-back runs on stored verdicts too: a NULL-stamped signals row
+    // carrying the same content converges to the store verdict (the floor reads stamps).
     if (opts.persist && verdict.syndicated !== null) {
       try {
         await opts.persist.supabase

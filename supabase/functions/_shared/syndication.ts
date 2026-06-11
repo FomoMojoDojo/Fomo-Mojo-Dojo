@@ -51,7 +51,7 @@ const BAND_SHINGLE_THRESHOLD = 0.1;
 type SyndicationVerdict = {
   score: number;
   syndicated: boolean | null; // null = uncertain band unresolved (local LLM unavailable)
-  method: "deterministic" | "local_llm" | "unresolved";
+  method: "deterministic" | "local_llm" | "unresolved" | "stored";
 };
 
 function normalizeWords(text: string): string[] {
@@ -180,7 +180,12 @@ async function localLlmSyndicationCheck(itemText: string, clientSample: string):
   // (empty) shell env at stack start. Vars NOT in that mapping pass through (Dify pattern).
   const base = (globalThis as any).Deno?.env?.get?.("OLLAMA_SYNDICATION_BASE_URL") ||
     (globalThis as any).Deno?.env?.get?.("OLLAMA_BASE_URL");
-  const model = (globalThis as any).Deno?.env?.get?.("OLLAMA_SYNDICATION_MODEL") || "llama3:8b";
+  // B2.0.1: band judge upgraded to llama3:70b (council; forcing data = within-run flip on
+  // bouncewatch + ZoomInfo PPP false positive). 70b judges the band DIRECTLY — no 8b first
+  // pass: a confirm-by-70b design runs 70b on every band item anyway, so the 8b pass adds
+  // latency plus a second flip surface and saves nothing. Measured ~18s cold / a few s warm
+  // per item; band items are rare (2-3 per run).
+  const model = (globalThis as any).Deno?.env?.get?.("OLLAMA_SYNDICATION_MODEL") || "llama3:70b";
   if (!base) { console.warn("[syndication] local LLM: no base URL in runtime env (OLLAMA_SYNDICATION_BASE_URL / OLLAMA_BASE_URL both unset)"); return null; }
   try {
     // OLLAMA_BASE_URL in this stack ends in /v1 (OpenAI-compat path); the native
@@ -232,6 +237,78 @@ export async function resolveSyndication(
     return { score, syndicated: null, method: "unresolved" };
   }
   return { score, syndicated: llm, method: "local_llm" };
+}
+
+// ── B2.0.1: durable verdict store — one content identity, one verdict ─────────────
+// Verdicts are keyed by (company_id, source_url, hash of NORMALIZED judged text), so the
+// same evidence item gets the same verdict in every consumer (claim judge, attribute
+// judge, ingest stamping) within a run and across runs. First resolved verdict wins
+// (insert-ignore). Unresolved (local model unavailable) is never persisted: the item is
+// excluded this call and the question stays open — fail-safe is exclusion, not a verdict.
+// Normalizing before hashing makes the identity robust to whitespace/punctuation drift
+// between a ledger snippet and a signals claim_text carrying the same content.
+
+export async function syndicationTextHash(text: string): Promise<string> {
+  const normalized = normalizeWords(text).join(" ");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+export async function resolveSyndicationDurable(opts: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  sourceUrl: string;
+  itemText: string;
+  corpus: ClientCorpus;
+  clientSampleForLlm: string;
+  label: string;
+}): Promise<SyndicationVerdict> {
+  const hash = await syndicationTextHash(opts.itemText);
+  try {
+    const { data } = await opts.supabase
+      .from("syndication_verdicts")
+      .select("syndicated, syndication_score, method")
+      .eq("company_id", opts.companyId)
+      .eq("source_url", opts.sourceUrl)
+      .eq("text_hash", hash)
+      .maybeSingle();
+    if (data && typeof (data as any).syndicated === "boolean") {
+      console.log(`[syndication] ${opts.label} stored verdict read`, {
+        url: opts.sourceUrl,
+        syndicated: (data as any).syndicated,
+        score: Number((data as any).syndication_score),
+        original_method: String((data as any).method),
+      });
+      return { score: Number((data as any).syndication_score), syndicated: (data as any).syndicated, method: "stored" };
+    }
+  } catch (error) {
+    console.warn(`[syndication] ${opts.label} verdict store read failed — resolving live`, {
+      message: String(error instanceof Error ? error.message : error).slice(0, 200),
+    });
+  }
+  const verdict = await resolveSyndication(opts.itemText, opts.corpus, opts.clientSampleForLlm);
+  if (verdict.syndicated !== null) {
+    try {
+      await opts.supabase
+        .from("syndication_verdicts")
+        .upsert(
+          {
+            company_id: opts.companyId,
+            source_url: opts.sourceUrl,
+            text_hash: hash,
+            syndicated: verdict.syndicated,
+            syndication_score: Number(verdict.score.toFixed(4)),
+            method: verdict.method,
+          },
+          { onConflict: "company_id,source_url,text_hash", ignoreDuplicates: true },
+        );
+    } catch (error) {
+      console.warn(`[syndication] ${opts.label} verdict store write failed — in-memory verdict still applied this call`, {
+        message: String(error instanceof Error ? error.message : error).slice(0, 200),
+      });
+    }
+  }
+  return verdict;
 }
 
 export const SYNDICATION_PARAMS = { SHINGLE_N, HIGH_THRESHOLD, LOW_THRESHOLD, BAND_SHINGLE_N, BAND_SHINGLE_THRESHOLD };

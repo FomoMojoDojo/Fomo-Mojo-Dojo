@@ -10,7 +10,7 @@ import {
   scoreClaimToNeedMatch,
 } from "../../../src/lib/evidenceMappers.ts";
 import { upsertDependenciesForArtifact } from "./strategicGraph.ts";
-import { buildClientCorpus, buildCorpusFromTexts, resolveSyndication } from "./syndication.ts";
+import { buildClientCorpus, buildCorpusFromTexts, resolveSyndicationDurable } from "./syndication.ts";
 import {
   rebuildRouteHypothesisDependencies,
   rebuildStrategicHypothesesForCompany,
@@ -512,7 +512,17 @@ export async function ingestPublicBaselineSignals(args: {
     let stamped = 0, flagged = 0;
     for (const draft of signals) {
       if (draft.voice_class !== "outside_voice_about_client") continue;
-      const verdict = await resolveSyndication(draft.claim_text || "", corpus, clientSample);
+      // B2.0.1: ingest consults the same durable verdict store as both judges — one
+      // content identity, one verdict across every consumer.
+      const verdict = await resolveSyndicationDurable({
+        supabase: args.supabase as unknown as { from: (t: string) => any },
+        companyId: args.companyId,
+        sourceUrl: String(draft.source_url || ""),
+        itemText: draft.claim_text || "",
+        corpus,
+        clientSampleForLlm: clientSample,
+        label: "ingest",
+      });
       draft.syndication_score = Number(verdict.score.toFixed(4));
       if (verdict.syndicated !== null) {
         draft.syndicated_from_client = verdict.syndicated;
