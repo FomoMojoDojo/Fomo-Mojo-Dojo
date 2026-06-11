@@ -21,10 +21,21 @@ import {
   validateSolutionTest,
 } from "../_shared/opportunityTreeSemantics.ts";
 import {
+  classifyVoice,
   deriveClaimProvenance,
   listCompanyClaimLedgerItems,
   type ClaimProvenanceEntry,
 } from "../_shared/claimProvenance.ts";
+
+// Host extraction for voice classification at the tensions floor (matches the shared
+// module's urlHost semantics).
+function urlHostForVoice(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
 import {
   composeDesiredOutcomeFromParts,
   deriveDesiredOutcomeParts,
@@ -6335,14 +6346,26 @@ Deno.serve(async (req) => {
     // voice signals — never claim-text keywords): when the outside voice carries a serious
     // negative, the schema REQUIRES at least one known_tensions entry. The acknowledgment
     // cannot be omitted; the model only chooses its wording.
-    const hasSeriousNegativeOutsideVoice = (
+    // B1: only outside_voice_about_client may fire the tensions floor — a negative
+    // competitor or market-context signal must not require a client tension. Legacy
+    // unclassified signals fall back to outside_voice_about_client (documented residual
+    // in _shared/claimProvenance.ts classifyVoice), preserving prior behavior.
+    const tensionFloorSignals = (
       Array.isArray((effectiveBaselineResultJson as any)?.outside_voice_signals)
         ? (effectiveBaselineResultJson as any).outside_voice_signals
         : []
-    ).some(
+    ).filter((signal: any) => classifyVoice(signal, urlHostForVoice(website)) === "outside_voice_about_client");
+    const hasSeriousNegativeOutsideVoice = tensionFloorSignals.some(
       (signal: any) =>
         /negativ/i.test(String(signal?.sentiment || "")) && Number(signal?.confidence ?? 0) >= 60,
     );
+    console.log("[research-company] tensions floor composition", {
+      outside_voice_signals_total: Array.isArray((effectiveBaselineResultJson as any)?.outside_voice_signals)
+        ? (effectiveBaselineResultJson as any).outside_voice_signals.length
+        : 0,
+      admitted_outside_voice_about_client: tensionFloorSignals.length,
+      floor_required: hasSeriousNegativeOutsideVoice,
+    });
 
     const routesSchema = {
       type: "object",

@@ -642,6 +642,9 @@ export function mapPublicBaselineOutputToSignals(args: {
       source_title: sourceTitle,
       source_url: asString(record.url) || sourceUrl || null,
       signal_band: "outside",
+      // B1: discovery-time voice class rides into signals.voice_class; signal_band
+      // stamping above is deliberately unchanged (claim-state gates depend on it).
+      voice_class: asString(record.voice_class) || null,
       evidence_type: "market_signal",
       claim_text: claimText,
       evidence_excerpt: claimText,
@@ -668,6 +671,7 @@ export function mapPublicBaselineOutputToSignals(args: {
       source_title: sourceTitle,
       source_url: asString(record.url) || sourceUrl || null,
       signal_band: "outside",
+      voice_class: asString(record.voice_class) || null,
       evidence_type: "market_signal",
       claim_text: claimText,
       evidence_excerpt: asString(record.snippet) || claimText,

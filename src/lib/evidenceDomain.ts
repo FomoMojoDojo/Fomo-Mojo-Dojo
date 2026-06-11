@@ -102,6 +102,10 @@ export type Signal = {
   validation_status: ValidationStatus;
   confidence_to_use: ConfidenceLevel;
   relevance_state: string;
+  // B1: four-class voice taxonomy (client_voice | outside_voice_about_client |
+  // competitor_voice | market_context). Optional: legacy rows are NULL and read
+  // through the binary fallback in classifyVoice. Never a substitute for signal_band.
+  voice_class?: string | null;
   raw_payload: unknown;
   created_at: string;
   updated_at: string;

@@ -1516,12 +1516,12 @@ async function callClaudeWebSearch(opts: {
     `{\n` +
     `  "category_archetype": "<string>",\n` +
     `  "lens_card": { "primary_buyer","chooser","user","switching_costs","adoption_constraints","value_chain","risk_surface","economic_engine": "<string each>" },\n` +
-    `  "evidence_ledger": [ { "url":"<real url>","source_type":"<type>","date":"YYYY-MM-DD","snippet":"<string>","bucket":"<string>","signal_strength":"weak|medium|strong","confidence":<0-100 int> } ],\n` +
+    `  "evidence_ledger": [ { "url":"<real url>","source_type":"<type>","voice_class":"<class>","date":"YYYY-MM-DD","snippet":"<string>","bucket":"<string>","signal_strength":"weak|medium|strong","confidence":<0-100 int> } ],\n` +
     `  "top_hypotheses": ["<string>"],\n` +
     `  "open_questions": ["<string>"],\n` +
     `  "market_initiative_success": { "proven":<bool>,"low_pct":<int>,"typical_pct":<int>,"high_pct":<int>,"source":"<string>","as_of":"<string>","confidence":<0-100 int>,"evidence_urls":["<url>"],"evidence_snippets":["<string>"] },\n` +
     `  "message_alignment": { "company_claim_posture","outside_voice_posture","alignment_status","alignment_summary": "<string each>" },\n` +
-    `  "outside_voice_signals": [ { "perspective":"<string>","source_type":"<type>","signal":"<string>","sentiment":"<string>","alignment":"<string>","url":"<real url>","confidence":<0-100 int> } ]\n` +
+    `  "outside_voice_signals": [ { "perspective":"<string>","source_type":"<type>","voice_class":"<class>","signal":"<string>","sentiment":"<string>","alignment":"<string>","url":"<real url>","confidence":<0-100 int> } ]\n` +
     `}`;
 
   const prompt =
@@ -1550,6 +1550,7 @@ async function callClaudeWebSearch(opts: {
     `- Use ONLY facts found via your web searches. Do NOT fabricate reviews, quotes, ratings, or URLs.\n` +
     `- Every outside_voice_signals[].url and evidence_ledger[].url MUST be a real URL returned by a search.\n` +
     `- source_type ∈ {employee_review, customer_review, community_discussion, third_party_profile, profile_or_company_page, news_signal, review_signal, public_web}.\n` +
+    `- voice_class ∈ {client_voice, outside_voice_about_client, market_context}: client_voice = the company speaking about itself (its site, its profiles, its posts); outside_voice_about_client = a genuine third party speaking ABOUT this company (reviews, press about them, partner/customer mentions, registries attesting them); market_context = category/market information not about this company specifically (industry stats, category coverage). When unsure between outside_voice_about_client and market_context, ask: does this source attest something about THIS company? If not, it is market_context.\n` +
     `- For genuine third-party voices set bucket="outside_voice_signal".\n` +
     `- Include ≥1 employee_review, ≥1 customer_review, and ≥1 community_discussion IF such public sources exist; ` +
     `if a type genuinely has no public source, omit it rather than inventing one.\n` +
@@ -1596,6 +1597,29 @@ async function callClaudeWebSearch(opts: {
   // bucket); when it returns the public_web fallback, KEEP Claude's own page-level label
   // (Claude read the page; it out-classifies a bare domain match for sites the list misses).
   // Empty/missing Claude label → public_web. No fabrication either way.
+  //
+  // B1: same overlay pattern for voice_class. Claude labels each item
+  // (client_voice | outside_voice_about_client | market_context); the deterministic guard
+  // CORRECTS, never discards: any item on the company's own domain is client_voice
+  // regardless of the model's label. competitor_voice is in the enum but unreachable
+  // until B2's competitor discovery exists. Unknown/missing label → null (legacy fallback
+  // semantics downstream in _shared/claimProvenance.ts classifyVoice).
+  const VOICE_CLASSES = new Set(["client_voice", "outside_voice_about_client", "competitor_voice", "market_context"]);
+  const companyHostForGuard = (() => {
+    try {
+      return new URL(opts.website || `https://${opts.domain}`).hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      return String(opts.domain || "").replace(/^www\./, "").toLowerCase();
+    }
+  })();
+  const isCompanyHostUrl = (url: string) => {
+    try {
+      const h = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+      return !!companyHostForGuard && (h === companyHostForGuard || h.endsWith(`.${companyHostForGuard}`));
+    } catch {
+      return false;
+    }
+  };
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();
@@ -1603,7 +1627,11 @@ async function callClaudeWebSearch(opts: {
       const inferred = inferSourceType(url, String(e?.perspective || e?.bucket || ""), String(e?.signal || e?.snippet || ""));
       const claudeLabel = String(e?.source_type || "").trim();
       const source_type = inferred !== "public_web" ? inferred : (claudeLabel || "public_web");
-      return { ...e, source_type };
+      const labeledClass = String(e?.voice_class || "").trim();
+      const voice_class = isCompanyHostUrl(url)
+        ? "client_voice"
+        : (VOICE_CLASSES.has(labeledClass) ? labeledClass : null);
+      return { ...e, source_type, voice_class };
     });
   if (Array.isArray((parsed as any).outside_voice_signals)) {
     (parsed as any).outside_voice_signals = reclassify((parsed as any).outside_voice_signals);
@@ -2746,6 +2774,28 @@ Deno.serve(async (req) => {
     // Synthesis: OpenAI baseline (DEFAULT, unchanged) OR flagged Claude web-search (OE-1).
     // claude_websearch bypasses the assembled `evidence` (Claude runs its own web_search);
     // the parsed object is handed to the SAME downstream below, unchanged.
+    // B1: revive resolvedCategory from the latest prior run's PUBLIC-derived archetype.
+    // Boundary note: this adds only prior-public-run content to the outbound prompt —
+    // category_archetype was itself produced from public discovery. First-ever run ⇒
+    // no prior row ⇒ param absent ⇒ prompt unchanged.
+    let priorCategoryArchetype: string | undefined;
+    if (synthesis_engine === "claude_websearch") {
+      const { data: priorRun } = await supabase
+        .from("public_baseline_runs")
+        .select("id, result_json")
+        .eq("company_id", company_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const archetype = String((priorRun as any)?.result_json?.category_archetype || "").trim();
+      if (archetype) {
+        priorCategoryArchetype = archetype;
+        console.log("[baseline] resolvedCategory from prior run", {
+          prior_run_id: (priorRun as any)?.id ?? null,
+          category: archetype,
+        });
+      }
+    }
     const result = synthesis_engine === "claude_websearch"
       ? await callClaudeWebSearch({
           apiKey: anthropicKey ?? "",
@@ -2753,6 +2803,7 @@ Deno.serve(async (req) => {
           companyName: company_name,
           website,
           domain,
+          resolvedCategory: priorCategoryArchetype,
           excludeDomains: sourceFilters.exclude_domains,
         })
       : await callOpenAI({

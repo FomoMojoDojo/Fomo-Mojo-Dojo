@@ -69,6 +69,7 @@ function normalizeSignalInsert(signal: SignalDraft) {
     structure_level: signal.structure_level,
     validation_status: signal.validation_status,
     confidence_to_use: signal.confidence_to_use,
+    voice_class: signal.voice_class ?? null,
     raw_payload: signal.raw_payload ?? {},
   };
 }

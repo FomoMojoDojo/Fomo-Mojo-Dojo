@@ -54,6 +54,36 @@ function isCompanySource(
   return false;
 }
 
+// B1: four-class voice taxonomy. Only outside_voice_about_client may corroborate or fire
+// tensions; competitor_voice (unreachable until B2) and market_context ground other
+// surfaces but corroborate NOTHING. Reads the discovery-time voice_class when present;
+// the deterministic company-source guard overrides any label (an item on the company's
+// domain is client_voice no matter what the model said).
+//
+// ACCEPTED RESIDUAL (council 2026-06-10): legacy items with no voice_class fall back to
+// the binary test — isCompanySource ⇒ client_voice, else outside_voice_about_client.
+// That preserves current behavior for legacy runs, which means legacy NON-client signals
+// (including competitor-adjacent ones) retain corroboration rights until a fresh run
+// reclassifies them. The leak is closed for everything classified going forward.
+type VoiceClass = "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context";
+const VOICE_CLASSES: ReadonlySet<string> = new Set([
+  "client_voice",
+  "outside_voice_about_client",
+  "competitor_voice",
+  "market_context",
+]);
+
+function classifyVoice(
+  entry: { voice_class?: string; bucket?: string; source_type?: string; url?: string },
+  companyHost: string,
+): VoiceClass {
+  if (isCompanySource(entry, companyHost)) return "client_voice";
+  const labeled = String(entry?.voice_class || "").trim();
+  if (VOICE_CLASSES.has(labeled)) return labeled as VoiceClass;
+  // Legacy fallback (documented residual above): unclassified non-client ⇒ outside voice.
+  return "outside_voice_about_client";
+}
+
 function listCompanyClaimLedgerItems(baselineResultJson: unknown, companyWebsite?: string) {
   const baseline = baselineResultJson as {
     evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string; source_type?: string }>;
@@ -121,15 +151,31 @@ async function deriveClaimProvenance(opts: {
   const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
   if (companyClaims.length === 0 && !alignmentSummary) return [];
 
-  // Independence is the negation of the company-source predicate — same authority that
-  // selected the claims above, so an item can never be both claim and corroboration basis.
+  // B1 rights enforcement: the corroboration basis is outside_voice_about_client ONLY.
+  // classifyVoice keeps the company-source guard as branch 1 (an item can never be both
+  // claim and corroboration basis) and additionally excludes competitor_voice and
+  // market_context — closing the binary predicate's rights leak for classified items.
   const independentItems = ledger
     .map((item, index) => ({ index, item }))
-    .filter((entry) => !isCompanySource(entry.item, companyHost));
+    .filter((entry) => classifyVoice(entry.item, companyHost) === "outside_voice_about_client");
   const outsideSignals = (Array.isArray(baseline?.outside_voice_signals)
     ? baseline.outside_voice_signals
     : []
-  ).filter((signal) => !isCompanySource(signal, companyHost));
+  ).filter((signal) => classifyVoice(signal, companyHost) === "outside_voice_about_client");
+  // Basis-composition evidence (countable): what the whole baseline contained vs what
+  // was admitted as corroboration basis.
+  {
+    const tally = (arr: Array<{ voice_class?: string; bucket?: string; source_type?: string; url?: string }>) => {
+      const out: Record<string, number> = {};
+      for (const e of arr) { const c = classifyVoice(e, companyHost); out[c] = (out[c] || 0) + 1; }
+      return out;
+    };
+    console.log("[claimProvenance] corroboration basis composition", {
+      ledger_by_class: tally(ledger),
+      admitted_ledger_items: independentItems.length,
+      admitted_outside_signals: outsideSignals.length,
+    });
+  }
 
   // Deterministic post-validation set: corroboration may only cite these URLs.
   const independentUrls = new Set<string>(
@@ -264,13 +310,20 @@ async function judgeAttributeEvidence(opts: {
   // shared company-source predicate — the validation run that motivated it corroborated
   // "42 states" off iaqm.com/about when bucket vocabulary alone was the test.
   const companyHost = urlHost(String(opts.companyWebsite || ""));
+  // B1 rights enforcement: corroboration basis = outside_voice_about_client only (see
+  // classifyVoice — competitor_voice and market_context may ground other surfaces but
+  // corroborate nothing).
   const independentItems = ledger
     .map((item, index) => ({ index, item }))
-    .filter((entry) => !isCompanySource(entry.item, companyHost));
+    .filter((entry) => classifyVoice(entry.item, companyHost) === "outside_voice_about_client");
   const outsideSignals = (Array.isArray(baseline?.outside_voice_signals)
     ? baseline.outside_voice_signals
     : []
-  ).filter((signal) => !isCompanySource(signal, companyHost));
+  ).filter((signal) => classifyVoice(signal, companyHost) === "outside_voice_about_client");
+  console.log("[attrEvidence] corroboration basis composition", {
+    admitted_ledger_items: independentItems.length,
+    admitted_outside_signals: outsideSignals.length,
+  });
   const independentUrls = new Set<string>(
     [
       ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
@@ -334,6 +387,7 @@ async function judgeAttributeEvidence(opts: {
 
 export {
   claimProvenanceSchema,
+  classifyVoice,
   deriveClaimProvenance,
   judgeAttributeEvidence,
   listCompanyClaimLedgerItems,
