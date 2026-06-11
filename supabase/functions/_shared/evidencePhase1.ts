@@ -12,6 +12,7 @@ import {
 import { upsertDependenciesForArtifact } from "./strategicGraph.ts";
 import { buildClientCorpus, buildCorpusFromTexts, resolveSyndicationDurable } from "./syndication.ts";
 import { recordIntegrityRun } from "./integrity.ts";
+import { fireMarketReconcile } from "./marketReconcileTrigger.ts";
 import {
   rebuildRouteHypothesisDependencies,
   rebuildStrategicHypothesesForCompany,
@@ -554,6 +555,16 @@ export async function ingestPublicBaselineSignals(args: {
     sourceId: args.runId,
     sourceType: "public_baseline_run",
     signals,
+  });
+
+  // Reconciler trigger (a): a completed-and-ingested public baseline run is new
+  // information on the EXTERNAL side of the market comparison. public-baseline is the
+  // sole caller of this ingest, so this is the single chokepoint for all its persist
+  // paths. Fire-and-forget — a broken reconcile never breaks a paid baseline run.
+  await fireMarketReconcile({
+    supabase: args.supabase as unknown as { from: (t: string) => any },
+    companyId: args.companyId,
+    source: "public_baseline_run",
   });
   // Findings layer: auto-capture this run's synthesis reads (source_type='analysis')
   // as standing findings. Additive + idempotent (ON CONFLICT DO NOTHING via the

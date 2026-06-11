@@ -139,6 +139,8 @@ type DimensionFinding = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // Captured for the failure path: a crashed reconcile records its own failed row.
+  let reconcileScope: { supabase: { from: (t: string) => any }; companyId: string } | null = null;
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -157,6 +159,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey) as unknown as { from: (t: string) => any };
     const body = await req.json().catch(() => ({}));
     const company_id = String((body as Record<string, unknown>)?.company_id || "").trim();
+    reconcileScope = { supabase, companyId: company_id };
     const dry_run = !!(body as Record<string, unknown>)?.dry_run;
     if (!company_id) return json({ error: "company_id required" }, 400);
 
@@ -574,6 +577,12 @@ Deno.serve(async (req) => {
     return json({ status: "ok", company_id, surface_id: mktdef.id, baseline: isBaseline, drift_state: driftState, computed_state: computedState, dimensions: dimensions.map((d) => ({ dimension: d.dimension, verdict: d.verdict })) });
   } catch (error) {
     console.error("[market-reconcile] error", error);
+    if (reconcileScope?.companyId) {
+      await recordIntegrityRun(reconcileScope.supabase, {
+        company_id: reconcileScope.companyId, component: "market_reconcile", status: "failed",
+        error: String(error instanceof Error ? error.message : error).slice(0, 500),
+      });
+    }
     return json({ error: String(error instanceof Error ? error.message : error) }, 500);
   }
 });

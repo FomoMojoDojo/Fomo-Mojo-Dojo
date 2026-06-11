@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
+import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -1167,6 +1168,13 @@ Deno.serve(async (req) => {
         return json({ error: `Failed inserting ODI market definition: ${marketInsertError.message}` }, 500);
       }
     }
+    // Reconciler trigger (c): the INTERNAL side of the market comparison changed
+    // (update and insert branches both reach here). Fire-and-forget.
+    await fireMarketReconcile({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(companyId),
+      source: "definition_change",
+    });
 
     return json({
       status: "ok",

@@ -27,6 +27,7 @@ import {
   type ClaimProvenanceEntry,
 } from "../_shared/claimProvenance.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
+import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 // B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
 // corroboration-side gating lives in _shared/claimProvenance.ts.
 
@@ -7485,6 +7486,13 @@ Deno.serve(async (req) => {
       console.error("[research-company] odi market definition insert error:", odiMarketErr);
     } else {
       odiMarketDefinitionsInserted++;
+      // Reconciler trigger (c): the INTERNAL side of the market comparison changed.
+      // Fire-and-forget — a broken reconcile never breaks a research run.
+      await fireMarketReconcile({
+        supabase: supabase as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        source: "definition_change",
+      });
     }
 
     for (let needIndex = 0; needIndex < opportunities.length; needIndex += 1) {

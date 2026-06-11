@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { useCompany } from "@/hooks/useCompany";
 import { renderMarketDriftSummary } from "@/lib/marketDriftVoice";
+import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
 import { useDriftInbox, type DriftInboxItem, type InboxFilter } from "@/hooks/useDriftInbox";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
@@ -315,6 +316,10 @@ export default function DriftInboxView() {
   } = useDriftInbox(companyId, { filter });
 
   const { totalUnresolved: navCount, newCount: navNew } = useDriftInboxCount(companyId);
+  // Reconciler trigger law: a failed market reconcile is a recorded, VISIBLE event —
+  // the inbox carries the signed didn't-complete line whether or not drift rows exist.
+  const reconcileIntegrity = useIntegrityRecord(companyId, "market_reconcile");
+  const reconcileFailed = reconcileIntegrity.record?.status === "failed";
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
@@ -473,6 +478,14 @@ export default function DriftInboxView() {
           {error && !isLoading && (
             <div style={{ padding: "24px 32px", fontFamily: MONO, fontSize: 10, color: "#c0392b" }}>
               Error: {error}
+            </div>
+          )}
+
+          {!isLoading && !error && reconcileFailed && (
+            <div style={{ padding: "10px 20px", borderBottom: `1px solid ${HAIRLINE}` }}>
+              <p style={{ fontFamily: MONO, fontSize: 10, color: MATERIAL_COLOR, margin: 0, letterSpacing: "0.04em" }}>
+                Market check: This check didn't complete — it will run again on the next scan.
+              </p>
             </div>
           )}
 

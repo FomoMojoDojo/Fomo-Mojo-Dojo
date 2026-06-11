@@ -18,6 +18,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { persistSignalsAndRebuildClaims } from "../_shared/evidencePhase1.ts";
+import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -340,6 +341,10 @@ Deno.serve(async (req) => {
       excluded_candidates: excluded.length,
       dropped_client_items: dropped.length,
     });
+
+    // Reconciler trigger (b): a completed competitor-discovery run is new information
+    // on the external side. Fire-and-forget; dry_run returns earlier and never fires.
+    await fireMarketReconcile({ supabase, companyId: company_id, source: "competitor_discovery_run" });
 
     return json({ status: "ok", company_id, run_id: runRow.id, signals: drafts.length, by_class: classTally, excluded_candidates: excluded, dropped_client_items: dropped });
   } catch (err) {
