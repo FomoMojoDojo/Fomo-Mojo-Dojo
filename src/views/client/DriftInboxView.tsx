@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { useCompany } from "@/hooks/useCompany";
+import { renderMarketDriftSummary } from "@/lib/marketDriftVoice";
 import { useDriftInbox, type DriftInboxItem, type InboxFilter } from "@/hooks/useDriftInbox";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
@@ -96,6 +97,9 @@ function DriftInboxRow({
 }) {
   const isNew = !item.operator_seen_at;
   const isAccepting = acceptingId === item.id;
+  const marketVoice = item.surface_type === "market_definition"
+    ? renderMarketDriftSummary(item.assessment_basis)
+    : null;
 
   return (
     <div
@@ -140,11 +144,26 @@ function DriftInboxRow({
           </span>
         </div>
 
-        {item.llm_confirmation && (
+        {/* B2.2c Client-Facing Voice: market_definition rows say the structured findings
+            plainly (operator-signed pattern); scores/model names/dimension keys stay in
+            assessment_basis behind View surface. Other surface types render unchanged. */}
+        {item.surface_type === "market_definition" && marketVoice ? (
+          <div style={{ margin: "0 0 4px" }}>
+            <p style={{ fontFamily: MONO, fontSize: 10, color: INK, fontWeight: 600, margin: "0 0 2px", lineHeight: 1.5 }}>
+              {marketVoice.headline}
+            </p>
+            <p style={{ fontFamily: MONO, fontSize: 10, color: INK_QUIET, margin: "0 0 2px", lineHeight: 1.5 }}>
+              {marketVoice.sentences.join(" ")}
+            </p>
+            <p style={{ fontFamily: MONO, fontSize: 10, color: INK_QUIET, fontStyle: "italic", margin: 0, lineHeight: 1.5 }}>
+              {marketVoice.closing}
+            </p>
+          </div>
+        ) : item.llm_confirmation ? (
           <p style={{ fontFamily: MONO, fontSize: 10, color: INK_QUIET, margin: "0 0 4px", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
             {item.llm_confirmation}
           </p>
-        )}
+        ) : null}
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontFamily: MONO, fontSize: 9, color: INK_FAINT, letterSpacing: "0.05em" }}>

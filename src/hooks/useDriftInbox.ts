@@ -40,6 +40,9 @@ async function fetchDisplayNames(
     if (item.surface_type === "cascade") {
       names[item.surface_id] = "Strategy Cascade";
     }
+    if (item.surface_type === "market_definition") {
+      names[item.surface_id] = "Market Definition";
+    }
   }
 
   // Positioning: market_category
