@@ -1528,13 +1528,23 @@ async function callClaudeWebSearch(opts: {
     `You are an outside-in strategy analyst. Research the company "${opts.companyName}" ` +
     `(website: ${opts.website || opts.domain}) comprehensively using web search.\n` +
     (opts.resolvedCategory ? `Likely category: ${opts.resolvedCategory}.\n` : "") +
-    `Cover BOTH the company's own public material AND — most importantly — GENUINE OUTSIDE VOICES. ` +
-    `Run explicit searches against:\n` +
-    `- employee reviews: glassdoor.com, indeed.com\n` +
-    `- customer reviews: g2.com, trustpilot.com, capterra.com, yelp.com\n` +
-    `- community discussion: reddit.com, quora.com, industry forums\n` +
-    `- third-party profiles / news: crunchbase.com, press coverage\n` +
-    `Prioritise surfacing real third-party sentiment over the company's own claims.\n\n` +
+    `First, establish from the company's own site what kind of business this is — category, ` +
+    `offering, geography. Then discover its REAL PUBLIC FOOTPRINT: the places where outside ` +
+    `voices actually talk about THIS kind of business. Cover each footprint class below, ` +
+    `choosing the platforms that genuinely serve this company's category and locale — the ` +
+    `named sites are illustrations, not a checklist; skip any that don't fit and find the ` +
+    `ones that do:\n` +
+    `1. Customer reviews — wherever this category is actually reviewed (e.g. Google/Yelp for local service and retail; G2/Capterra/Trustpilot for software; HomeAdvisor/Angi for home services; TripAdvisor for hospitality).\n` +
+    `2. Employee reviews, where the company is large enough to have them (e.g. Glassdoor, Indeed).\n` +
+    `3. Local and trade press — local news outlets and the category's trade publications.\n` +
+    `4. Social presence — the company's actual profiles, with audience-size and engagement signals.\n` +
+    `5. Marketplace, retail, and ordering listings — wherever its products or services are sold or listed.\n` +
+    `6. Partner and customer mentions — other businesses' sites that reference this company.\n` +
+    `7. Directories and registries — BBB, chambers of commerce, licensing bodies, as applicable.\n` +
+    `Prioritise genuine third-party sentiment over the company's own claims.\n\n` +
+    `DISAMBIGUATION LAW (precision over coverage):\n` +
+    `- Anchor every search to the exact entity: the name, the domain (${opts.domain}), and the location and category you established from its own site.\n` +
+    `- If you cannot be confident a result refers to THIS company, EXCLUDE it. Same-named or similarly-named organizations elsewhere are contamination, not coverage.\n\n` +
     `Then output a SINGLE JSON object — and NOTHING else — matching exactly this shape:\n${schemaHint}\n\n` +
     `Rules:\n` +
     `- Use ONLY facts found via your web searches. Do NOT fabricate reviews, quotes, ratings, or URLs.\n` +
@@ -1546,7 +1556,8 @@ async function callClaudeWebSearch(opts: {
     `- confidence is 0-100. Emit the JSON object only — no markdown fences, no prose before or after.`;
 
   // Honor the company's exclude_domains: tell web_search not to search those hosts.
-  const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 8 };
+  // OE-2: 12 = one search per footprint class plus disambiguation/follow-up headroom.
+  const webSearchTool: Record<string, unknown> = { type: "web_search_20250305", name: "web_search", max_uses: 12 };
   if (Array.isArray(opts.excludeDomains) && opts.excludeDomains.length > 0) {
     webSearchTool.blocked_domains = opts.excludeDomains;
   }
@@ -1815,7 +1826,16 @@ Deno.serve(async (req) => {
     // OE-1: Claude web-search synthesis (flagged alternative). External cloud model only.
     const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
     const anthropicModel = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
-    const runLedger = {
+    const runLedger: {
+      provider: string;
+      model: string;
+      fallback_models: string[];
+      endpoint: string;
+      path: string;
+      local_only: boolean;
+      generated_at: string;
+      degraded_default?: string;
+    } = {
       provider: "openai_public",
       model: openaiModel,
       fallback_models: openaiFallbackModels,
@@ -1866,12 +1886,25 @@ Deno.serve(async (req) => {
     // run-mojo-analysis (which would delete+regenerate the 'customer' journey).
     // Default false → cold-start/bootstrap callers still chain as before.
     const skip_mojo_analysis = body?.skip_mojo_analysis === true;
-    // OE-1: synthesis engine flag. 'openai' (DEFAULT — unchanged) | 'claude_websearch'.
-    // Unset ⇒ zero behavior change. claude_websearch collapses discovery+synthesis via
-    // Claude's web_search to surface genuine third-party voice the OpenAI path yields at 0.
-    const synthesis_engine = String(body?.synthesis_engine || "openai").toLowerCase();
+    // OE-2: claude_websearch is the DEFAULT engine (council 2026-06-10 — searx discovery
+    // produced 0 independent items across 3 companies; claude_websearch produced 7 on the
+    // same company the same day). The searx→crawl→OpenAI path stays reachable by explicit
+    // synthesis_engine: "openai".
+    const requestedEngine = String(body?.synthesis_engine || "").toLowerCase();
+    let synthesis_engine = requestedEngine || "claude_websearch";
     if (synthesis_engine === "claude_websearch" && !anthropicKey) {
-      return json({ error: "Missing ANTHROPIC_API_KEY (required for synthesis_engine=claude_websearch)" }, 500);
+      if (requestedEngine === "claude_websearch") {
+        // Explicitly requested by name — missing key is a hard error, never a silent swap.
+        return json({ error: "Missing ANTHROPIC_API_KEY (required for synthesis_engine=claude_websearch)" }, 500);
+      }
+      // DEFAULT resolution without a key: degrade LOUDLY to the openai path. The ledger
+      // stamps the engine ACTUALLY used plus a degraded-default marker — a silently
+      // downgraded run is the failure mode this makes impossible.
+      console.warn(
+        "[baseline] ⚠ ANTHROPIC_API_KEY missing — default engine claude_websearch DEGRADED to openai path for this run",
+      );
+      synthesis_engine = "openai";
+      runLedger.degraded_default = "claude_websearch_unavailable_no_key";
     }
     // OE-1: stamp the ledger for the engine actually used (the literal above is the
     // openai default; override for claude so a claude run is traceable as such).
