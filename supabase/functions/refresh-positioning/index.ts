@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildBaselineBrief,
+  buildCompetitorMarketBrief,
   buildKnownTensionsBrief,
   buildCascadeContext,
   buildInputBrief,
@@ -305,6 +306,16 @@ Deno.serve(async (req) => {
 
     const cascadeContext = buildCascadeContext(cascadeRow ?? null);
 
+    // B2.1: latest competitor-discovery snapshot grounds alternatives + category.
+    const { data: competitorRun } = await supabase
+      .from("competitor_discovery_runs")
+      .select("id, result_json")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const competitorMarketBrief = buildCompetitorMarketBrief((competitorRun as { result_json?: unknown } | null)?.result_json ?? null);
+
     // --- Known tensions: orchestrator-provided, else carried forward from latest canvas ---
     let knownTensions: unknown[] = bodyKnownTensions ?? [];
     if (!bodyKnownTensions) {
@@ -372,6 +383,9 @@ Deno.serve(async (req) => {
       `- Use April Dunford frame-of-reference logic plus ODI role clarity (job executor, chooser, user)\n` +
       `- Never switch industries, populations, or buyer types from the baseline evidence\n` +
       `- competitive_alternatives should be real alternatives, including manual workarounds or doing nothing when relevant\n` +
+      `- When ALTERNATIVES EVIDENCE is provided below, competitive_alternatives MUST name the real discovered competitors from it (with their substance) rather than inventing generic alternatives; manual workarounds and doing-nothing may still appear alongside\n` +
+      `- When CATEGORY/MARKET EVIDENCE is provided below, market_category and category_rationale must stay consistent with it\n` +
+      `- The ALTERNATIVES and CATEGORY/MARKET evidence sections ground alternatives and category ONLY — they may NEVER be used to support, corroborate, or strengthen any claim the client makes about itself\n` +
       `- competitive_alternatives must serve the same customer/job context as the company; do not list alternatives from unrelated sectors\n` +
       `- unique_attributes should be specific and credible, not vague marketing claims\n` +
       `- For each unique attribute, set evidence_status: "corroborated" ONLY when independent evidence (third-party profiles, news, customer/outside voice) attests the attribute's core fact, and cite the attesting URLs in basis_urls; otherwise "self_reported" with basis_urls []. Never treat the company's own pages or self-descriptions as corroboration\n` +
@@ -400,6 +414,7 @@ Deno.serve(async (req) => {
       `Generated opportunities:\n${buildOpportunityBrief(opportunityRows ?? [])}\n\n` +
       `Generated routes:\n${routesSummary}\n\n` +
       `Known tensions (already acknowledged; keep the canvas coherent with them):\n${buildKnownTensionsBrief(knownTensions)}\n\n` +
+      (competitorMarketBrief ? `${competitorMarketBrief}\n\n` : "") +
       `Generate a positioning canvas for this exact company.`;
 
     // --- Dry run: return prompts without calling LLM ---

@@ -110,7 +110,11 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   if (signalError) throw new Error(`Failed to load signals for claim rebuild: ${signalError.message}`);
 
-  const signals = Array.isArray(signalRows) ? signalRows : [];
+  const allSignals = Array.isArray(signalRows) ? signalRows : [];
+  // B2.1: competitor_voice signals are evidence about OTHER companies — they must never
+  // become claim candidates in the CLIENT's claim layer. Only this class is excluded;
+  // market_context keeps its pre-existing rebuild behavior.
+  const signals = allSignals.filter((row) => (row as { voice_class?: string | null })?.voice_class !== "competitor_voice");
   const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>);
 
   // Always wipe + re-insert refs (safe: claim IDs are now stable, so re-inserted

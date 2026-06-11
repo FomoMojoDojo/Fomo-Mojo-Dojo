@@ -247,6 +247,39 @@ function buildBaselineBrief(
   ].filter(Boolean).join("\n");
 }
 
+// B2.1: competitor/market evidence brief — TWO bounded sections with hard-stated rights.
+// ALTERNATIVES (competitor_voice) grounds "who else they could choose" ONLY; CATEGORY/
+// MARKET (market_context) grounds category and where-to-play ONLY. Neither may ever
+// support a client claim (the judges enforce this; the wording here keeps gens honest).
+function buildCompetitorMarketBrief(competitorRunJson: unknown): string {
+  const run = competitorRunJson as {
+    competitors?: Array<{ name?: string; domain?: string; items?: Array<{ url?: string; snippet?: string; voice_class?: string }> }>;
+    market_context_items?: Array<{ url?: string; snippet?: string }>;
+  } | null;
+  if (!run) return "";
+  const competitors = Array.isArray(run.competitors) ? run.competitors : [];
+  const marketItems = Array.isArray(run.market_context_items) ? run.market_context_items : [];
+  if (competitors.length === 0 && marketItems.length === 0) return "";
+  const parts: string[] = [];
+  if (competitors.length > 0) {
+    parts.push(
+      "ALTERNATIVES EVIDENCE (competitor voice — grounds 'who else they could choose' ONLY; may never support a client claim):\n" +
+      competitors.map((competitor) => {
+        const items = (Array.isArray(competitor.items) ? competitor.items : []).slice(0, 4);
+        return `- ${competitor.name || "Unknown"} (${competitor.domain || "no domain"}):\n` +
+          items.map((item) => `    · [${item.voice_class || "market_context"}] ${(item.snippet || "").slice(0, 180)} (${item.url || "no url"})`).join("\n");
+      }).join("\n"),
+    );
+  }
+  if (marketItems.length > 0) {
+    parts.push(
+      "CATEGORY/MARKET EVIDENCE (market context — grounds category and where-to-play ONLY; may never support a client claim):\n" +
+      marketItems.slice(0, 6).map((item) => `- ${(item.snippet || "").slice(0, 180)} (${item.url || "no url"})`).join("\n"),
+    );
+  }
+  return parts.join("\n\n");
+}
+
 // Known tensions: acknowledge-and-scope entries for serious negatives in the outside voice,
 // generated and reviewed in the research-company spine and passed to leaves for persistence.
 // Perception register: each entry observes what the public record visibly contains — never
@@ -426,6 +459,7 @@ export {
   normalizeStrategicAssumptions,
   buildStrategicAssumptionBrief,
   buildBaselineBrief,
+  buildCompetitorMarketBrief,
   buildKnownTensionsBrief,
   buildJourneyBrief,
   buildOpportunityBrief,

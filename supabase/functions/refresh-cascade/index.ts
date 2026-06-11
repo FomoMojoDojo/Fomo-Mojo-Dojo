@@ -9,6 +9,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
+  buildCompetitorMarketBrief,
   buildBaselineBrief,
   buildInputBrief,
   buildJourneyBrief,
@@ -274,6 +275,16 @@ Deno.serve(async (req) => {
       .limit(20);
 
     // --- Build context briefs ---
+    // B2.1: latest competitor-discovery snapshot grounds where-to-play context.
+    const { data: competitorRun } = await supabase
+      .from("competitor_discovery_runs")
+      .select("id, result_json")
+      .eq("company_id", company_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const competitorMarketBrief = buildCompetitorMarketBrief((competitorRun as { result_json?: unknown } | null)?.result_json ?? null);
+
     const baselineBrief = [
       "Public baseline context (augmented with uploaded files):",
       buildBaselineBrief(baselineResultJson),
@@ -309,7 +320,9 @@ Deno.serve(async (req) => {
       `- status=gap when it appears important but weak, missing, or unproven\n` +
       `- note should be a short evidence-based explanation, 6-16 words\n` +
       `- assumptions should read like untested strategic beliefs or claims implied by the company story\n` +
-      `- assumptions.note should explain why the assumption is untested or what would validate it\n`;
+      `- assumptions.note should explain why the assumption is untested or what would validate it\n` +
+      `- When CATEGORY/MARKET EVIDENCE is provided, where_to_play must stay consistent with the real competitive set and market context it describes\n` +
+      `- The ALTERNATIVES and CATEGORY/MARKET evidence sections ground where-to-play and category context ONLY — they may NEVER be used to support, corroborate, or strengthen any claim the client makes about itself\n`;
 
     const userText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
@@ -320,6 +333,7 @@ Deno.serve(async (req) => {
       `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunityRows ?? [])}\n\n` +
       `Generated routes:\n${routesSummary}\n\n` +
+      (competitorMarketBrief ? `${competitorMarketBrief}\n\n` : "") +
       `Generate a full strategy cascade for this exact company in the supplied schema.`;
 
     // --- Dry run: return prompts without calling LLM ---
