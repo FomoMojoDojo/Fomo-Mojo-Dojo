@@ -49,8 +49,17 @@ export function renderMarketDriftSummary(assessmentBasis: unknown): MarketDriftS
     );
   }
 
+  // Buyer split (operator-signed sentences, 2026-06-11) — each renders only when its
+  // own dimension diverges.
+  if (diverged.has("buyer_beneficiary_alignment")) {
+    sentences.push("The people your strategy says you serve aren't yet visible in how the public talks about you.");
+  }
+  if (diverged.has("buyer_chooser_alignment")) {
+    sentences.push("The people the public shows choosing services like yours aren't the buyers your strategy names.");
+  }
+  // Legacy compound dimension (retired 2026-06-11): historical assessment rows still
+  // render honestly; new runs never produce it.
   if (diverged.has("buyer_executor_alignment")) {
-    // "And" only when this sentence follows others — pure position logic, not content.
     sentences.push(
       sentences.length > 0
         ? "And the buyers the market describes don't quite match the people your strategy says you serve."
