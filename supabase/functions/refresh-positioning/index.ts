@@ -330,6 +330,7 @@ Deno.serve(async (req) => {
           apiKey: openaiKey,
           model: openaiModel,
           baselineResultJson,
+          companyWebsite: website,
         });
         console.log("[refresh-positioning] claim provenance self-derived", {
           judged: claimProvenance.length,

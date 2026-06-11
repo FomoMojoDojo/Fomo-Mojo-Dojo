@@ -5681,6 +5681,7 @@ Deno.serve(async (req) => {
         apiKey: openaiKey,
         model: openaiModel,
         baselineResultJson: effectiveBaselineResultJson,
+        companyWebsite: website,
         // Inject the local client (budget-ladder retry) — identical behavior to the
         // pre-extraction local function.
         callJson: callOpenAIJSON,
@@ -5698,7 +5699,7 @@ Deno.serve(async (req) => {
         "[research-company] ⚠ CLAIM PROVENANCE JUDGE FAILED — tagging all company_claim items SELF-REPORTED (corroboration unverified)",
         { message: String(error instanceof Error ? error.message : error) },
       );
-      claimProvenance = listCompanyClaimLedgerItems(effectiveBaselineResultJson).map((entry) => ({
+      claimProvenance = listCompanyClaimLedgerItems(effectiveBaselineResultJson, website).map((entry) => ({
         ledger_index: entry.index,
         claim: String(entry.item?.snippet || ""),
         status: "unverified" as const,

@@ -28,14 +28,41 @@ type ClaimProvenanceEntry = {
   basis_urls: string[];
 };
 
-function listCompanyClaimLedgerItems(baselineResultJson: unknown) {
+function urlHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// Company-source predicate — the single independence authority for claim extraction AND
+// corroboration basis. All data-level provenance, never claim text: bucket vocabulary
+// drifts across baseline generations (some runs emit free-text buckets), so bucket alone
+// is reliable in NEITHER direction — a self-claim can hide under a free-text bucket, and
+// a company page can masquerade as an independent item.
+function isCompanySource(
+  entry: { bucket?: string; source_type?: string; url?: string },
+  companyHost: string,
+): boolean {
+  if (String(entry?.bucket || "") === "company_claim") return true;
+  if (String(entry?.source_type || "") === "profile_or_company_page") return true;
+  const host = urlHost(String(entry?.url || ""));
+  if (host && companyHost && (host === companyHost || host.endsWith(`.${companyHost}`))) {
+    return true;
+  }
+  return false;
+}
+
+function listCompanyClaimLedgerItems(baselineResultJson: unknown, companyWebsite?: string) {
   const baseline = baselineResultJson as {
-    evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string }>;
+    evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string; source_type?: string }>;
   } | null;
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
+  const companyHost = urlHost(String(companyWebsite || ""));
   return ledger
     .map((item, index) => ({ index, item }))
-    .filter((entry) => String(entry.item?.bucket || "") === "company_claim");
+    .filter((entry) => isCompanySource(entry.item, companyHost));
 }
 
 const claimProvenanceSchema = {
@@ -66,6 +93,7 @@ async function deriveClaimProvenance(opts: {
   apiKey: string;
   model: string;
   baselineResultJson: unknown;
+  companyWebsite?: string;
   callJson?: CallJson;
 }): Promise<ClaimProvenanceEntry[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
@@ -82,21 +110,26 @@ async function deriveClaimProvenance(opts: {
       sentiment?: string;
       url?: string;
       perspective?: string;
+      source_type?: string;
     }>;
     message_alignment?: { alignment_summary?: string };
   } | null;
 
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
-  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson);
+  const companyHost = urlHost(String(opts.companyWebsite || ""));
+  const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson, opts.companyWebsite);
   const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
   if (companyClaims.length === 0 && !alignmentSummary) return [];
 
+  // Independence is the negation of the company-source predicate — same authority that
+  // selected the claims above, so an item can never be both claim and corroboration basis.
   const independentItems = ledger
     .map((item, index) => ({ index, item }))
-    .filter((entry) => String(entry.item?.bucket || "") !== "company_claim");
-  const outsideSignals = Array.isArray(baseline?.outside_voice_signals)
+    .filter((entry) => !isCompanySource(entry.item, companyHost));
+  const outsideSignals = (Array.isArray(baseline?.outside_voice_signals)
     ? baseline.outside_voice_signals
-    : [];
+    : []
+  ).filter((signal) => !isCompanySource(signal, companyHost));
 
   // Deterministic post-validation set: corroboration may only cite these URLs.
   const independentUrls = new Set<string>(
@@ -203,14 +236,6 @@ const attributeEvidenceSchema = {
   required: ["attributes"],
 };
 
-function urlHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
 async function judgeAttributeEvidence(opts: {
   apiKey: string;
   model: string;
@@ -235,29 +260,17 @@ async function judgeAttributeEvidence(opts: {
   } | null;
   const ledger = Array.isArray(baseline?.evidence_ledger) ? baseline.evidence_ledger : [];
 
-  // Independence is judged by PROVENANCE, all data-level (never claim text):
-  // not bucket=company_claim, not source_type=profile_or_company_page, and not hosted on
-  // the company's own domain. Bucket vocabulary drifts across baseline generations (some
-  // runs emit free-text buckets), so bucket alone is not a reliable independence test —
-  // the validation run proved it by corroborating "42 states" off iaqm.com/about.
+  // Independence is judged by PROVENANCE, all data-level (never claim text), via the
+  // shared company-source predicate — the validation run that motivated it corroborated
+  // "42 states" off iaqm.com/about when bucket vocabulary alone was the test.
   const companyHost = urlHost(String(opts.companyWebsite || ""));
-  const isCompanyOwnedUrl = (url: string) => {
-    const host = urlHost(url);
-    if (!host || !companyHost) return false;
-    return host === companyHost || host.endsWith(`.${companyHost}`);
-  };
-  const isIndependentSource = (entry: { bucket?: string; source_type?: string; url?: string }) =>
-    String(entry?.bucket || "") !== "company_claim" &&
-    String(entry?.source_type || "") !== "profile_or_company_page" &&
-    !isCompanyOwnedUrl(String(entry?.url || ""));
-
   const independentItems = ledger
     .map((item, index) => ({ index, item }))
-    .filter((entry) => isIndependentSource(entry.item));
+    .filter((entry) => !isCompanySource(entry.item, companyHost));
   const outsideSignals = (Array.isArray(baseline?.outside_voice_signals)
     ? baseline.outside_voice_signals
     : []
-  ).filter((signal) => isIndependentSource(signal));
+  ).filter((signal) => !isCompanySource(signal, companyHost));
   const independentUrls = new Set<string>(
     [
       ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
