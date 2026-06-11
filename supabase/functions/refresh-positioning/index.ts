@@ -331,6 +331,8 @@ Deno.serve(async (req) => {
           model: openaiModel,
           baselineResultJson,
           companyWebsite: website,
+          supabase,
+          companyId: company_id,
         });
         console.log("[refresh-positioning] claim provenance self-derived", {
           judged: claimProvenance.length,
@@ -438,6 +440,8 @@ Deno.serve(async (req) => {
         baselineResultJson,
         attributes: uniqueAttributes,
         companyWebsite: website,
+        supabase,
+        companyId: company_id,
       });
       const verdictByIndex = new Map(verdicts.map((verdict) => [verdict.index, verdict]));
       const disagreements: Array<{ index: number; name: string; gen: string; judge: string }> = [];

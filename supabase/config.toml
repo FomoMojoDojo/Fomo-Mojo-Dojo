@@ -56,6 +56,9 @@ OPENAI_MODEL = "env(OPENAI_MODEL)"
 COUNCIL_OPENAI_MODEL = "env(COUNCIL_OPENAI_MODEL)"
 SEARXNG_URL = "env(SEARXNG_URL)"
 OLLAMA_BASE_URL = "env(OLLAMA_BASE_URL)"
+# B2.0 syndication gate: literal (not env()) so it survives shells that lack the var.
+# Local host URL, not a secret. The /v1-less root serves Ollama's native generate API.
+OLLAMA_SYNDICATION_BASE_URL = "http://host.docker.internal:11434"
 OLLAMA_MODEL = "env(OLLAMA_MODEL)"
 INTERNAL_AI_FILE_ANALYSIS_ENABLED = "env(INTERNAL_AI_FILE_ANALYSIS_ENABLED)"
 INTERNAL_AI_DEEP_DIVE_ENABLED = "env(INTERNAL_AI_DEEP_DIVE_ENABLED)"

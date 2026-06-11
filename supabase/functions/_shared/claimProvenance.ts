@@ -9,6 +9,7 @@
 // callOpenAIJSON (budget-ladder retry); leaves pass _shared/openaiClient's.
 
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
+import { buildClientCorpus, resolveSyndication, type ClientCorpus } from "./syndication.ts";
 
 type CallJson = (opts: {
   apiKey: string;
@@ -84,6 +85,52 @@ function classifyVoice(
   return "outside_voice_about_client";
 }
 
+// B2.0 syndication gate: filters an already class-admitted (outside_voice_about_client)
+// basis list down to non-syndicated items, lazily stamping the matching signals rows
+// (compute once, persist) when a supabase client is provided. Unresolved verdicts
+// (local LLM unavailable on the uncertain band) are excluded from the basis this call
+// but NOT persisted — rights-conservative, never silent.
+async function gateBasisBySyndication<T>(opts: {
+  entries: T[];
+  getUrl: (e: T) => string;
+  getText: (e: T) => string;
+  corpus: ClientCorpus;
+  clientSample: string;
+  persist?: { supabase: { from: (t: string) => any }; companyId: string };
+  label: string;
+}): Promise<{ kept: T[]; excludedSyndicated: number; unresolved: number }> {
+  const kept: T[] = [];
+  let excludedSyndicated = 0;
+  let unresolved = 0;
+  for (const entry of opts.entries) {
+    const text = opts.getText(entry);
+    const verdict = await resolveSyndication(text, opts.corpus, opts.clientSample);
+    if (opts.persist && verdict.syndicated !== null) {
+      try {
+        await opts.persist.supabase
+          .from("signals")
+          .update({ syndicated_from_client: verdict.syndicated, syndication_score: Number(verdict.score.toFixed(4)) })
+          .eq("company_id", opts.persist.companyId)
+          .eq("source_url", opts.getUrl(entry))
+          .eq("claim_text", text)
+          .is("syndicated_from_client", null);
+      } catch (_) { /* stamp write-back is best-effort; the in-memory gate already held */ }
+    }
+    if (verdict.syndicated === true) {
+      excludedSyndicated++;
+      console.log(`[syndication] ${opts.label} EXCLUDED syndicated item`, {
+        url: opts.getUrl(entry),
+        score: Number(verdict.score.toFixed(4)),
+        method: verdict.method,
+      });
+      continue;
+    }
+    if (verdict.syndicated === null) { unresolved++; continue; }
+    kept.push(entry);
+  }
+  return { kept, excludedSyndicated, unresolved };
+}
+
 function listCompanyClaimLedgerItems(baselineResultJson: unknown, companyWebsite?: string) {
   const baseline = baselineResultJson as {
     evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string; source_type?: string }>;
@@ -125,6 +172,9 @@ async function deriveClaimProvenance(opts: {
   baselineResultJson: unknown;
   companyWebsite?: string;
   callJson?: CallJson;
+  // B2.0: enables the syndication gate's store corpus + lazy write-back stamping.
+  supabase?: { from: (t: string) => any };
+  companyId?: string;
 }): Promise<ClaimProvenanceEntry[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   const baseline = opts.baselineResultJson as {
@@ -162,8 +212,34 @@ async function deriveClaimProvenance(opts: {
     ? baseline.outside_voice_signals
     : []
   ).filter((signal) => classifyVoice(signal, companyHost) === "outside_voice_about_client");
-  // Basis-composition evidence (countable): what the whole baseline contained vs what
-  // was admitted as corroboration basis.
+  // B2.0 syndication gate: class admission alone is not enough — a third-party host
+  // republishing client copy must not corroborate. Deterministic-first, local-LLM band,
+  // lazy write-back to matching signals rows.
+  const clientLedgerTexts = ledger
+    .filter((item) => classifyVoice(item, companyHost) === "client_voice")
+    .map((item) => String(item?.snippet || ""))
+    .filter(Boolean);
+  const corpus: ClientCorpus = opts.supabase && opts.companyId
+    ? await buildClientCorpus(opts.supabase, opts.companyId, companyHost, clientLedgerTexts)
+    : (await import("./syndication.ts")).buildCorpusFromTexts(clientLedgerTexts);
+  const clientSample = clientLedgerTexts.join("\n").slice(0, 4000);
+  const persist = opts.supabase && opts.companyId ? { supabase: opts.supabase, companyId: opts.companyId } : undefined;
+  const ledgerGate = await gateBasisBySyndication({
+    entries: independentItems,
+    getUrl: (e) => String(e.item?.url || ""),
+    getText: (e) => String(e.item?.snippet || ""),
+    corpus, clientSample, persist, label: "claimProvenance/ledger",
+  });
+  const independentItemsGated = ledgerGate.kept;
+  const signalsGate = await gateBasisBySyndication({
+    entries: outsideSignals,
+    getUrl: (e) => String(e?.url || ""),
+    getText: (e) => String(e?.signal || ""),
+    corpus, clientSample, persist, label: "claimProvenance/signals",
+  });
+  const outsideSignalsGated = signalsGate.kept;
+
+  // Basis-composition evidence (countable): class admission AND the syndication dimension.
   {
     const tally = (arr: Array<{ voice_class?: string; bucket?: string; source_type?: string; url?: string }>) => {
       const out: Record<string, number> = {};
@@ -172,16 +248,23 @@ async function deriveClaimProvenance(opts: {
     };
     console.log("[claimProvenance] corroboration basis composition", {
       ledger_by_class: tally(ledger),
-      admitted_ledger_items: independentItems.length,
-      admitted_outside_signals: outsideSignals.length,
+      class_admitted_ledger: independentItems.length,
+      syndicated_excluded_ledger: ledgerGate.excludedSyndicated,
+      unresolved_ledger: ledgerGate.unresolved,
+      admitted_ledger_items: independentItemsGated.length,
+      class_admitted_signals: outsideSignals.length,
+      syndicated_excluded_signals: signalsGate.excludedSyndicated,
+      unresolved_signals: signalsGate.unresolved,
+      admitted_outside_signals: outsideSignalsGated.length,
     });
   }
 
-  // Deterministic post-validation set: corroboration may only cite these URLs.
+  // Deterministic post-validation set: corroboration may only cite these URLs —
+  // class-admitted AND non-syndicated.
   const independentUrls = new Set<string>(
     [
-      ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
-      ...outsideSignals.map((signal) => String(signal?.url || "").trim()),
+      ...independentItemsGated.map((entry) => String(entry.item?.url || "").trim()),
+      ...outsideSignalsGated.map((signal) => String(signal?.url || "").trim()),
     ].filter(Boolean),
   );
 
@@ -195,11 +278,11 @@ async function deriveClaimProvenance(opts: {
     `\n\nCompany-attributed claims may also appear in this alignment summary (use ledger_index null for claims found only here):\n` +
     (alignmentSummary || "None.") +
     `\n\nIndependent evidence (third-party profiles, news, customer/outside voice — the ONLY admissible corroboration basis):\n` +
-    independentItems
+    independentItemsGated
       .map((entry) => `- [${entry.item?.bucket || "signal"}] ${entry.item?.snippet || "No snippet"} (url: ${entry.item?.url || "unknown"})`)
       .join("\n") +
     `\n\nOutside voice signals:\n` +
-    outsideSignals
+    outsideSignalsGated
       .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
       .join("\n") +
     `\n\nJudge every company self-claim listed above.`;
@@ -289,6 +372,9 @@ async function judgeAttributeEvidence(opts: {
   attributes: Array<{ name?: string; description?: string }>;
   companyWebsite?: string;
   callJson?: CallJson;
+  // B2.0: enables the syndication gate's store corpus + lazy write-back stamping.
+  supabase?: { from: (t: string) => any };
+  companyId?: string;
 }): Promise<AttributeEvidenceVerdict[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   if (!opts.attributes.length) return [];
@@ -320,14 +406,44 @@ async function judgeAttributeEvidence(opts: {
     ? baseline.outside_voice_signals
     : []
   ).filter((signal) => classifyVoice(signal, companyHost) === "outside_voice_about_client");
+  // B2.0 syndication gate (same discipline as the claim judge).
+  const clientLedgerTextsA = ledger
+    .filter((item) => classifyVoice(item, companyHost) === "client_voice")
+    .map((item) => String(item?.snippet || ""))
+    .filter(Boolean);
+  const corpusA: ClientCorpus = opts.supabase && opts.companyId
+    ? await buildClientCorpus(opts.supabase, opts.companyId, companyHost, clientLedgerTextsA)
+    : (await import("./syndication.ts")).buildCorpusFromTexts(clientLedgerTextsA);
+  const clientSampleA = clientLedgerTextsA.join("\n").slice(0, 4000);
+  const persistA = opts.supabase && opts.companyId ? { supabase: opts.supabase, companyId: opts.companyId } : undefined;
+  const ledgerGateA = await gateBasisBySyndication({
+    entries: independentItems,
+    getUrl: (e) => String(e.item?.url || ""),
+    getText: (e) => String(e.item?.snippet || ""),
+    corpus: corpusA, clientSample: clientSampleA, persist: persistA, label: "attrEvidence/ledger",
+  });
+  const independentItemsGatedA = ledgerGateA.kept;
+  const signalsGateA = await gateBasisBySyndication({
+    entries: outsideSignals,
+    getUrl: (e) => String(e?.url || ""),
+    getText: (e) => String(e?.signal || ""),
+    corpus: corpusA, clientSample: clientSampleA, persist: persistA, label: "attrEvidence/signals",
+  });
+  const outsideSignalsGatedA = signalsGateA.kept;
   console.log("[attrEvidence] corroboration basis composition", {
-    admitted_ledger_items: independentItems.length,
-    admitted_outside_signals: outsideSignals.length,
+    class_admitted_ledger: independentItems.length,
+    syndicated_excluded_ledger: ledgerGateA.excludedSyndicated,
+    unresolved_ledger: ledgerGateA.unresolved,
+    admitted_ledger_items: independentItemsGatedA.length,
+    class_admitted_signals: outsideSignals.length,
+    syndicated_excluded_signals: signalsGateA.excludedSyndicated,
+    unresolved_signals: signalsGateA.unresolved,
+    admitted_outside_signals: outsideSignalsGatedA.length,
   });
   const independentUrls = new Set<string>(
     [
-      ...independentItems.map((entry) => String(entry.item?.url || "").trim()),
-      ...outsideSignals.map((signal) => String(signal?.url || "").trim()),
+      ...independentItemsGatedA.map((entry) => String(entry.item?.url || "").trim()),
+      ...outsideSignalsGatedA.map((signal) => String(signal?.url || "").trim()),
     ].filter(Boolean),
   );
 
@@ -337,11 +453,11 @@ async function judgeAttributeEvidence(opts: {
       .map((attribute, index) => `[index ${index}] ${attribute?.name || "Untitled"} — ${attribute?.description || "No description"}`)
       .join("\n") +
     `\n\nIndependent evidence (third-party profiles, news, customer/outside voice — the ONLY admissible corroboration basis):\n` +
-    independentItems
+    independentItemsGatedA
       .map((entry) => `- [${entry.item?.bucket || "signal"}] ${entry.item?.snippet || "No snippet"} (url: ${entry.item?.url || "unknown"})`)
       .join("\n") +
     `\n\nOutside voice signals:\n` +
-    outsideSignals
+    outsideSignalsGatedA
       .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
       .join("\n") +
     `\n\nJudge every attribute listed above.`;

@@ -26,6 +26,8 @@ import {
   listCompanyClaimLedgerItems,
   type ClaimProvenanceEntry,
 } from "../_shared/claimProvenance.ts";
+// B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
+// corroboration-side gating lives in _shared/claimProvenance.ts.
 
 // Host extraction for voice classification at the tensions floor (matches the shared
 // module's urlHost semantics).
@@ -5693,6 +5695,8 @@ Deno.serve(async (req) => {
         model: openaiModel,
         baselineResultJson: effectiveBaselineResultJson,
         companyWebsite: website,
+        supabase,
+        companyId: String(company_id),
         // Inject the local client (budget-ladder retry) — identical behavior to the
         // pre-extraction local function.
         callJson: callOpenAIJSON,
@@ -6350,19 +6354,50 @@ Deno.serve(async (req) => {
     // competitor or market-context signal must not require a client tension. Legacy
     // unclassified signals fall back to outside_voice_about_client (documented residual
     // in _shared/claimProvenance.ts classifyVoice), preserving prior behavior.
-    const tensionFloorSignals = (
+    const floorHost = urlHostForVoice(website);
+    const classAdmittedFloorSignals = (
       Array.isArray((effectiveBaselineResultJson as any)?.outside_voice_signals)
         ? (effectiveBaselineResultJson as any).outside_voice_signals
         : []
-    ).filter((signal: any) => classifyVoice(signal, urlHostForVoice(website)) === "outside_voice_about_client");
+    ).filter((signal: any) => classifyVoice(signal, floorHost) === "outside_voice_about_client");
+    // B2.0 gate decision (council): NEGATIVES ARE EXEMPT from the syndication gate at the
+    // tensions floor. Syndication stripping exists to stop self-praise laundered through
+    // third-party hosts; a company does not syndicate attacks on itself, and tension-firing
+    // is an OBLIGATION, not a corroboration right. The floor filters by class only.
+    // Corroboration-side syndication gating (both judges) stays exactly as built.
+    const tensionFloorSignals = classAdmittedFloorSignals;
     const hasSeriousNegativeOutsideVoice = tensionFloorSignals.some(
       (signal: any) =>
         /negativ/i.test(String(signal?.sentiment || "")) && Number(signal?.confidence ?? 0) >= 60,
     );
+    // Exemption visibility: when a NEGATIVE admitted to the floor carries a persisted
+    // syndicated stamp, say so loudly — the floor honored the obligation despite the stamp.
+    try {
+      const negativeFloorSignals = tensionFloorSignals.filter(
+        (signal: any) => /negativ/i.test(String(signal?.sentiment || "")) && Number(signal?.confidence ?? 0) >= 60,
+      );
+      for (const signal of negativeFloorSignals) {
+        const { data: stampedRows } = await supabase
+          .from("signals")
+          .select("id, syndication_score")
+          .eq("company_id", company_id)
+          .eq("source_url", String(signal?.url || ""))
+          .eq("claim_text", String(signal?.signal || ""))
+          .eq("syndicated_from_client", true)
+          .limit(1);
+        if (Array.isArray(stampedRows) && stampedRows.length > 0) {
+          console.log("[research-company] tensions floor EXEMPTION — stamped-syndicated NEGATIVE admitted (obligation over stamp)", {
+            url: String(signal?.url || ""),
+            syndication_score: (stampedRows[0] as any)?.syndication_score ?? null,
+          });
+        }
+      }
+    } catch (_) { /* exemption logging is best-effort; the floor decision above already held */ }
     console.log("[research-company] tensions floor composition", {
       outside_voice_signals_total: Array.isArray((effectiveBaselineResultJson as any)?.outside_voice_signals)
         ? (effectiveBaselineResultJson as any).outside_voice_signals.length
         : 0,
+      class_admitted: classAdmittedFloorSignals.length,
       admitted_outside_voice_about_client: tensionFloorSignals.length,
       floor_required: hasSeriousNegativeOutsideVoice,
     });

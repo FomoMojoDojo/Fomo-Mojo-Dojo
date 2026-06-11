@@ -10,6 +10,7 @@ import {
   scoreClaimToNeedMatch,
 } from "../../../src/lib/evidenceMappers.ts";
 import { upsertDependenciesForArtifact } from "./strategicGraph.ts";
+import { buildClientCorpus, buildCorpusFromTexts, resolveSyndication } from "./syndication.ts";
 import {
   rebuildRouteHypothesisDependencies,
   rebuildStrategicHypothesesForCompany,
@@ -70,6 +71,8 @@ function normalizeSignalInsert(signal: SignalDraft) {
     validation_status: signal.validation_status,
     confidence_to_use: signal.confidence_to_use,
     voice_class: signal.voice_class ?? null,
+    syndicated_from_client: signal.syndicated_from_client ?? null,
+    syndication_score: signal.syndication_score ?? null,
     raw_payload: signal.raw_payload ?? {},
   };
 }
@@ -487,6 +490,39 @@ export async function ingestPublicBaselineSignals(args: {
     sourceUrl: args.website ?? null,
     resultJson: args.resultJson,
   });
+
+  // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
+  // verdict at persistence. client_voice/market_context (and B2.1's competitor_voice)
+  // skip — they hold no corroboration rights to strip. Detection is deterministic-first
+  // with a LOCAL-LLM uncertain band; never an external-model call.
+  try {
+    const companyHost = (() => {
+      try { return new URL(String(args.website || "")).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; }
+    })();
+    const inRunClientTexts = signals
+      .filter((s) => s.voice_class === "client_voice")
+      .map((s) => s.claim_text)
+      .filter(Boolean);
+    const corpus = await buildClientCorpus(args.supabase as unknown as { from: (t: string) => any }, args.companyId, companyHost, inRunClientTexts);
+    const clientSample = inRunClientTexts.join("\n").slice(0, 4000);
+    let stamped = 0, flagged = 0;
+    for (const draft of signals) {
+      if (draft.voice_class !== "outside_voice_about_client") continue;
+      const verdict = await resolveSyndication(draft.claim_text || "", corpus, clientSample);
+      draft.syndication_score = Number(verdict.score.toFixed(4));
+      if (verdict.syndicated !== null) {
+        draft.syndicated_from_client = verdict.syndicated;
+        stamped++;
+        if (verdict.syndicated) flagged++;
+      }
+    }
+    console.log("[syndication] ingest stamping", { stamped, flagged_syndicated: flagged });
+  } catch (error) {
+    console.warn("[syndication] ⚠ ingest stamping failed — drafts persist UNSTAMPED (lazy path will stamp at first judge read)", {
+      message: String(error instanceof Error ? error.message : error),
+    });
+  }
+
   const stats = await persistSignalsAndRebuildClaims({
     supabase: args.supabase,
     companyId: args.companyId,

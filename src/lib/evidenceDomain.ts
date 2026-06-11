@@ -106,6 +106,10 @@ export type Signal = {
   // competitor_voice | market_context). Optional: legacy rows are NULL and read
   // through the binary fallback in classifyVoice. Never a substitute for signal_band.
   voice_class?: string | null;
+  // B2.0: content-level provenance. NULL = unstamped (lazy-stamped at first judge read).
+  // true strips corroboration rights; score kept for threshold calibration.
+  syndicated_from_client?: boolean | null;
+  syndication_score?: number | null;
   raw_payload: unknown;
   created_at: string;
   updated_at: string;
