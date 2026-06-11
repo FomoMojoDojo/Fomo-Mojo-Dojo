@@ -25,7 +25,9 @@ import {
   normalizeStrategicProblems,
 } from "../_shared/contextBuilders.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
-import { deriveClaimProvenance, judgeAttributeEvidence } from "../_shared/claimProvenance.ts";
+import { classifyVoice, deriveClaimProvenance, judgeAttributeEvidence } from "../_shared/claimProvenance.ts";
+import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
+import { buildClientCorpus } from "../_shared/syndication.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -331,6 +333,53 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- B2.2a: store supplement (Option C) — previously-established outside evidence ---
+    // Built ONCE per run; the gen brief and BOTH judges read the identical admitted set.
+    // The pinned snapshot remains the brief; this only supplements it.
+    let storeSupplement: StoreSupplement | null = null;
+    if (baselineRun?.id != null && baselineResultJson) {
+      try {
+        const pinnedRunId = Number(baselineRun.id);
+        const companyHost = (() => {
+          try { return new URL(String(website || "")).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; }
+        })();
+        const snapshot = baselineResultJson as {
+          evidence_ledger?: Array<{ snippet?: string; url?: string; bucket?: string; source_type?: string }>;
+          outside_voice_signals?: Array<{ signal?: string; url?: string }>;
+        };
+        const ledgerItems = Array.isArray(snapshot?.evidence_ledger) ? snapshot.evidence_ledger : [];
+        // Content-identity dedup inputs (amended rule 3): url + text pairs.
+        const currentRunItems = [
+          ...ledgerItems.map((i) => ({ url: String(i?.url || "").trim(), text: String(i?.snippet || "").trim() })),
+          ...(Array.isArray(snapshot?.outside_voice_signals) ? snapshot.outside_voice_signals : []).map((sig) => ({
+            url: String(sig?.url || "").trim(),
+            text: String(sig?.signal || "").trim(),
+          })),
+        ].filter((i) => i.url && i.text);
+        const clientTexts = ledgerItems
+          .filter((i) => classifyVoice(i, companyHost) === "client_voice")
+          .map((i) => String(i?.snippet || ""))
+          .filter(Boolean);
+        const corpus = await buildClientCorpus(supabase as unknown as { from: (t: string) => any }, String(company_id), companyHost, clientTexts);
+        storeSupplement = await buildStoreSupplement({
+          supabase: supabase as unknown as { from: (t: string) => any },
+          companyId: String(company_id),
+          pinnedRunId,
+          companyHost,
+          corpus,
+          clientSample: clientTexts.join("\n").slice(0, 4000),
+          currentRunItems,
+          classify: (entry) => classifyVoice(entry, companyHost),
+          label: "refresh-positioning",
+        });
+      } catch (error) {
+        console.warn("[storeSupplement] refresh-positioning build FAILED — brief and judges proceed snapshot-only (loud, not silent)", {
+          message: String(error instanceof Error ? error.message : error),
+        });
+        storeSupplement = null;
+      }
+    }
+
     // --- Claim provenance: orchestrator-provided, else self-derived (standalone runs) ---
     // The tagged brief is what shapes the gen toward qualified claims; without it a
     // standalone refresh would regenerate from an untagged brief and re-overclaim.
@@ -344,6 +393,7 @@ Deno.serve(async (req) => {
           companyWebsite: website,
           supabase,
           companyId: company_id,
+          supplement: storeSupplement,
         });
         console.log("[refresh-positioning] claim provenance self-derived", {
           judged: claimProvenance.length,
@@ -386,6 +436,7 @@ Deno.serve(async (req) => {
       `- When ALTERNATIVES EVIDENCE is provided below, competitive_alternatives MUST name the real discovered competitors from it (with their substance) rather than inventing generic alternatives; manual workarounds and doing-nothing may still appear alongside\n` +
       `- When CATEGORY/MARKET EVIDENCE is provided below, market_category and category_rationale must stay consistent with it\n` +
       `- The ALTERNATIVES and CATEGORY/MARKET evidence sections ground alternatives and category ONLY — they may NEVER be used to support, corroborate, or strengthen any claim the client makes about itself\n` +
+      `- The PREVIOUSLY ESTABLISHED OUTSIDE EVIDENCE section (when present) is established outside evidence from prior public scans, each item stamped with its run of origin: usable as corroboration context for evidence_status/basis_urls, NEVER a substitute for naming what the current scan shows\n` +
       `- competitive_alternatives must serve the same customer/job context as the company; do not list alternatives from unrelated sectors\n` +
       `- unique_attributes should be specific and credible, not vague marketing claims\n` +
       `- For each unique attribute, set evidence_status: "corroborated" ONLY when independent evidence (third-party profiles, news, customer/outside voice) attests the attribute's core fact, and cite the attesting URLs in basis_urls; otherwise "self_reported" with basis_urls []. Never treat the company's own pages or self-descriptions as corroboration\n` +
@@ -407,6 +458,7 @@ Deno.serve(async (req) => {
     const userText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `Public baseline context:\n${baselineBrief}\n\n` +
+      (buildStoreSupplementBrief(storeSupplement) ? `${buildStoreSupplementBrief(storeSupplement)}\n\n` : "") +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Current strategy cascade (positioning anchor):\n${cascadeContext}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief || "none"}\n\n` +
@@ -457,6 +509,7 @@ Deno.serve(async (req) => {
         companyWebsite: website,
         supabase,
         companyId: company_id,
+        supplement: storeSupplement,
       });
       const verdictByIndex = new Map(verdicts.map((verdict) => [verdict.index, verdict]));
       const disagreements: Array<{ index: number; name: string; gen: string; judge: string }> = [];

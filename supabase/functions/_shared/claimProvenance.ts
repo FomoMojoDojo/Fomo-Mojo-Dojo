@@ -10,6 +10,7 @@
 
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
+import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
 
 type CallJson = (opts: {
   apiKey: string;
@@ -190,6 +191,9 @@ async function deriveClaimProvenance(opts: {
   // B2.0: enables the syndication gate's store corpus + lazy write-back stamping.
   supabase?: { from: (t: string) => any };
   companyId?: string;
+  // B2.2a: previously-established outside evidence (store supplement) — prebuilt by the
+  // caller so the brief and both judges read the IDENTICAL admitted set.
+  supplement?: StoreSupplement | null;
 }): Promise<ClaimProvenanceEntry[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   const baseline = opts.baselineResultJson as {
@@ -271,6 +275,8 @@ async function deriveClaimProvenance(opts: {
       syndicated_excluded_signals: signalsGate.excludedSyndicated,
       unresolved_signals: signalsGate.unresolved,
       admitted_outside_signals: outsideSignalsGated.length,
+      supplement_admitted: opts.supplement?.items.length ?? 0,
+      supplement_digest: opts.supplement?.digest ?? null,
     });
   }
 
@@ -280,8 +286,12 @@ async function deriveClaimProvenance(opts: {
     [
       ...independentItemsGated.map((entry) => String(entry.item?.url || "").trim()),
       ...outsideSignalsGated.map((signal) => String(signal?.url || "").trim()),
+      // B2.2a: subset-validation extends to the supplement — a cited supplement URL
+      // must be in the admitted supplement set (which already passed all four rules).
+      ...(opts.supplement?.items ?? []).map((i) => i.url.trim()),
     ].filter(Boolean),
   );
+  const supplementSection = buildStoreSupplementBrief(opts.supplement ?? null);
 
   const userText =
     `Company self-claims (from the evidence ledger, with their ledger index):\n` +
@@ -300,6 +310,7 @@ async function deriveClaimProvenance(opts: {
     outsideSignalsGated
       .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
       .join("\n") +
+    (supplementSection ? `\n\n${supplementSection}` : "") +
     `\n\nJudge every company self-claim listed above.`;
 
   const systemText =
@@ -327,9 +338,12 @@ async function deriveClaimProvenance(opts: {
   // Corroboration must be earned, not asserted: basis_urls must be a subset of the provided
   // independent-item URLs; a corroborated verdict with no valid citation downgrades.
   return rows.map((row) => {
-    const basis = (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
-      .map((url: unknown) => String(url || "").trim())
-      .filter((url: string) => independentUrls.has(url));
+    // Amended rule 3 (B2.2a gate): one URL = at most one citation in any basis.
+    const basis = Array.from(new Set<string>(
+      (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
+        .map((url: unknown) => String(url || "").trim())
+        .filter((url: string) => independentUrls.has(url)),
+    ));
     let status = String(row?.status || "uncorroborated") as ClaimProvenanceEntry["status"];
     if (!["corroborated", "uncorroborated", "contradicted"].includes(status)) {
       status = "uncorroborated";
@@ -390,6 +404,8 @@ async function judgeAttributeEvidence(opts: {
   // B2.0: enables the syndication gate's store corpus + lazy write-back stamping.
   supabase?: { from: (t: string) => any };
   companyId?: string;
+  // B2.2a: prebuilt store supplement (see deriveClaimProvenance).
+  supplement?: StoreSupplement | null;
 }): Promise<AttributeEvidenceVerdict[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   if (!opts.attributes.length) return [];
@@ -454,13 +470,17 @@ async function judgeAttributeEvidence(opts: {
     syndicated_excluded_signals: signalsGateA.excludedSyndicated,
     unresolved_signals: signalsGateA.unresolved,
     admitted_outside_signals: outsideSignalsGatedA.length,
+    supplement_admitted: opts.supplement?.items.length ?? 0,
+    supplement_digest: opts.supplement?.digest ?? null,
   });
   const independentUrls = new Set<string>(
     [
       ...independentItemsGatedA.map((entry) => String(entry.item?.url || "").trim()),
       ...outsideSignalsGatedA.map((signal) => String(signal?.url || "").trim()),
+      ...(opts.supplement?.items ?? []).map((i) => i.url.trim()),
     ].filter(Boolean),
   );
+  const supplementSectionA = buildStoreSupplementBrief(opts.supplement ?? null);
 
   const userText =
     `Positioning unique attributes (judge each by its index):\n` +
@@ -475,6 +495,7 @@ async function judgeAttributeEvidence(opts: {
     outsideSignalsGatedA
       .map((signal) => `- [${signal?.perspective || "outside voice"} | ${signal?.sentiment || "unknown"}] ${signal?.signal || "No signal"} | alignment: ${signal?.alignment || "unknown"} (url: ${signal?.url || "unknown"})`)
       .join("\n") +
+    (supplementSectionA ? `\n\n${supplementSectionA}` : "") +
     `\n\nJudge every attribute listed above.`;
 
   const systemText =
@@ -503,9 +524,12 @@ async function judgeAttributeEvidence(opts: {
   return rows
     .filter((row) => typeof row?.index === "number")
     .map((row) => {
-      const basis = (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
-        .map((url: unknown) => String(url || "").trim())
-        .filter((url: string) => independentUrls.has(url));
+      // Amended rule 3 (B2.2a gate): one URL = at most one citation in any basis.
+      const basis = Array.from(new Set<string>(
+        (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
+          .map((url: unknown) => String(url || "").trim())
+          .filter((url: string) => independentUrls.has(url)),
+      ));
       let status = row?.evidence_status === "corroborated" ? "corroborated" : "self_reported";
       if (status === "corroborated" && basis.length === 0) status = "self_reported";
       return {

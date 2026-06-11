@@ -7,6 +7,9 @@
 // dry_run=true returns the prompt without calling OpenAI or writing to DB.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { classifyVoice } from "../_shared/claimProvenance.ts";
+import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
+import { buildClientCorpus } from "../_shared/syndication.ts";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildCompetitorMarketBrief,
@@ -285,9 +288,55 @@ Deno.serve(async (req) => {
       .maybeSingle();
     const competitorMarketBrief = buildCompetitorMarketBrief((competitorRun as { result_json?: unknown } | null)?.result_json ?? null);
 
+    // B2.2a: store supplement (Option C) — the pinned snapshot remains the brief; this
+    // adds previously-established outside evidence, clearly bounded and as-of stamped.
+    let storeSupplement: StoreSupplement | null = null;
+    if (baselineRun?.id != null && baselineResultJson) {
+      try {
+        const companyHost = (() => {
+          try { return new URL(String(website || "")).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; }
+        })();
+        const snapshot = baselineResultJson as {
+          evidence_ledger?: Array<{ snippet?: string; url?: string; bucket?: string; source_type?: string }>;
+          outside_voice_signals?: Array<{ signal?: string; url?: string }>;
+        };
+        const ledgerItems = Array.isArray(snapshot?.evidence_ledger) ? snapshot.evidence_ledger : [];
+        // Content-identity dedup inputs (amended rule 3): url + text pairs.
+        const currentRunItems = [
+          ...ledgerItems.map((i) => ({ url: String(i?.url || "").trim(), text: String(i?.snippet || "").trim() })),
+          ...(Array.isArray(snapshot?.outside_voice_signals) ? snapshot.outside_voice_signals : []).map((sig) => ({
+            url: String(sig?.url || "").trim(),
+            text: String(sig?.signal || "").trim(),
+          })),
+        ].filter((i) => i.url && i.text);
+        const clientTexts = ledgerItems
+          .filter((i) => classifyVoice(i, companyHost) === "client_voice")
+          .map((i) => String(i?.snippet || ""))
+          .filter(Boolean);
+        const corpus = await buildClientCorpus(supabase as unknown as { from: (t: string) => any }, String(company_id), companyHost, clientTexts);
+        storeSupplement = await buildStoreSupplement({
+          supabase: supabase as unknown as { from: (t: string) => any },
+          companyId: String(company_id),
+          pinnedRunId: Number(baselineRun.id),
+          companyHost,
+          corpus,
+          clientSample: clientTexts.join("\n").slice(0, 4000),
+          currentRunItems,
+          classify: (entry) => classifyVoice(entry, companyHost),
+          label: "refresh-cascade",
+        });
+      } catch (error) {
+        console.warn("[storeSupplement] refresh-cascade build FAILED — brief proceeds snapshot-only (loud, not silent)", {
+          message: String(error instanceof Error ? error.message : error),
+        });
+        storeSupplement = null;
+      }
+    }
+
     const baselineBrief = [
       "Public baseline context (augmented with uploaded files):",
       buildBaselineBrief(baselineResultJson),
+      buildStoreSupplementBrief(storeSupplement),
     ].filter(Boolean).join("\n\n");
 
     const routes = Array.isArray(routeRows) ? routeRows : [];
@@ -322,7 +371,8 @@ Deno.serve(async (req) => {
       `- assumptions should read like untested strategic beliefs or claims implied by the company story\n` +
       `- assumptions.note should explain why the assumption is untested or what would validate it\n` +
       `- When CATEGORY/MARKET EVIDENCE is provided, where_to_play must stay consistent with the real competitive set and market context it describes\n` +
-      `- The ALTERNATIVES and CATEGORY/MARKET evidence sections ground where-to-play and category context ONLY — they may NEVER be used to support, corroborate, or strengthen any claim the client makes about itself\n`;
+      `- The ALTERNATIVES and CATEGORY/MARKET evidence sections ground where-to-play and category context ONLY — they may NEVER be used to support, corroborate, or strengthen any claim the client makes about itself\n` +
+      `- The PREVIOUSLY ESTABLISHED OUTSIDE EVIDENCE section (when present) is established outside evidence from prior public scans, each item stamped with its run of origin: usable as corroboration context, NEVER a substitute for naming what the current scan shows\n`;
 
     const userText =
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
