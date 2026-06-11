@@ -54,6 +54,7 @@ function SurfaceTypeChip({ type }: { type: string }) {
     positioning: "Positioning",
     route: "Route",
     opportunity: "Opportunity",
+    market_definition: "Market",
   };
   return (
     <span
@@ -267,7 +268,10 @@ function BulkConfirm({
 
 export default function DriftInboxView() {
   const navigate = useNavigate();
-  const { activeCompany, companyId } = useCompany();
+  const { activeCompany } = useCompany();
+  // B2.2b: the context provides no `companyId` member — destructuring it yielded
+  // undefined, so the inbox never queried for ANY company (pre-existing defect).
+  const companyId = activeCompany?.id ?? null;
 
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());

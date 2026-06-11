@@ -25,6 +25,7 @@ function navPath(surfaceType: string): string {
     case "positioning": return `${WORKSHOP}?tab=positioning`;
     case "route": return ROUTES;
     case "opportunity": return `${WORKSHOP}?tab=needs`;
+    case "market_definition": return `${WORKSHOP}?tab=jtbd`;
     default: return WORKSHOP;
   }
 }
