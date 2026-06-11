@@ -11,6 +11,7 @@
 import { callOpenAIJSON as sharedCallOpenAIJSON } from "./openaiClient.ts";
 import { buildClientCorpus, resolveSyndication, resolveSyndicationDurable, type ClientCorpus } from "./syndication.ts";
 import { buildStoreSupplementBrief, type StoreSupplement } from "./storeSupplement.ts";
+import { recordIntegrityRun } from "./integrity.ts";
 
 type CallJson = (opts: {
   apiKey: string;
@@ -130,7 +131,13 @@ async function gateBasisBySyndication<T>(opts: {
           .eq("source_url", opts.getUrl(entry))
           .eq("claim_text", text)
           .is("syndicated_from_client", null);
-      } catch (_) { /* stamp write-back is best-effort; the in-memory gate already held */ }
+      } catch (error) {
+        // Integrity: previously the only fully silent catch in this family.
+        console.warn("[syndication] signals stamp write-back failed (best-effort; in-memory gate held)", {
+          url: opts.getUrl(entry).slice(0, 80),
+          message: String(error instanceof Error ? error.message : error).slice(0, 160),
+        });
+      }
     }
     if (verdict.syndicated === true) {
       excludedSyndicated++;
@@ -194,6 +201,8 @@ async function deriveClaimProvenance(opts: {
   // B2.2a: previously-established outside evidence (store supplement) — prebuilt by the
   // caller so the brief and both judges read the IDENTICAL admitted set.
   supplement?: StoreSupplement | null;
+  // Integrity logging: baseline run (or equivalent) this judgment keys to.
+  runRef?: string | null;
 }): Promise<ClaimProvenanceEntry[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
   const baseline = opts.baselineResultJson as {
@@ -218,7 +227,16 @@ async function deriveClaimProvenance(opts: {
   const companyHost = urlHost(String(opts.companyWebsite || ""));
   const companyClaims = listCompanyClaimLedgerItems(opts.baselineResultJson, opts.companyWebsite);
   const alignmentSummary = String(baseline?.message_alignment?.alignment_summary || "");
-  if (companyClaims.length === 0 && !alignmentSummary) return [];
+  if (companyClaims.length === 0 && !alignmentSummary) {
+    // Integrity: "nothing to judge" is a recorded outcome, not silence.
+    if (opts.supabase && opts.companyId) {
+      await recordIntegrityRun(opts.supabase, {
+        company_id: opts.companyId, component: "claim_provenance",
+        status: "skipped_empty_input", examined: 0, run_ref: opts.runRef ?? null,
+      });
+    }
+    return [];
+  }
 
   // B1 rights enforcement: the corroboration basis is outside_voice_about_client ONLY.
   // classifyVoice keeps the company-source guard as branch 1 (an item can never be both
@@ -265,7 +283,7 @@ async function deriveClaimProvenance(opts: {
       for (const e of arr) { const c = classifyVoice(e, companyHost); out[c] = (out[c] || 0) + 1; }
       return out;
     };
-    console.log("[claimProvenance] corroboration basis composition", {
+    const composition = {
       ledger_by_class: tally(ledger),
       class_admitted_ledger: independentItems.length,
       syndicated_excluded_ledger: ledgerGate.excludedSyndicated,
@@ -277,7 +295,16 @@ async function deriveClaimProvenance(opts: {
       admitted_outside_signals: outsideSignalsGated.length,
       supplement_admitted: opts.supplement?.items.length ?? 0,
       supplement_digest: opts.supplement?.digest ?? null,
-    });
+    };
+    console.log("[claimProvenance] corroboration basis composition", composition);
+    if (opts.supabase && opts.companyId) {
+      await recordIntegrityRun(opts.supabase, {
+        company_id: opts.companyId, component: "claim_provenance", status: "completed",
+        examined: ledger.length + (Array.isArray(baseline?.outside_voice_signals) ? baseline.outside_voice_signals.length : 0),
+        admitted: independentItemsGated.length + outsideSignalsGated.length + (opts.supplement?.items.length ?? 0),
+        excluded_by_rule: composition, run_ref: opts.runRef ?? null,
+      });
+    }
   }
 
   // Deterministic post-validation set: corroboration may only cite these URLs —
@@ -406,9 +433,18 @@ async function judgeAttributeEvidence(opts: {
   companyId?: string;
   // B2.2a: prebuilt store supplement (see deriveClaimProvenance).
   supplement?: StoreSupplement | null;
+  runRef?: string | null;
 }): Promise<AttributeEvidenceVerdict[]> {
   const callJson = opts.callJson ?? sharedCallOpenAIJSON;
-  if (!opts.attributes.length) return [];
+  if (!opts.attributes.length) {
+    if (opts.supabase && opts.companyId) {
+      await recordIntegrityRun(opts.supabase, {
+        company_id: opts.companyId, component: "attr_evidence", surface_type: "positioning",
+        status: "skipped_empty_input", examined: 0, run_ref: opts.runRef ?? null,
+      });
+    }
+    return [];
+  }
 
   const baseline = opts.baselineResultJson as {
     evidence_ledger?: Array<{ bucket?: string; snippet?: string; url?: string; source_type?: string }>;
@@ -521,15 +557,19 @@ async function judgeAttributeEvidence(opts: {
   const rows: any[] = Array.isArray(result?.attributes) ? result.attributes : [];
   // Corroboration must be earned: citations outside the independent-URL set are dropped,
   // and a corroborated verdict left without valid citations downgrades to self_reported.
-  return rows
+  // Integrity paths 7/8: per-attribute misses and rejected citations are no longer silent —
+  // they land in the completed record's excluded_by_rule.
+  const rejectedCitations: Array<{ index: number; rejected: string[] }> = [];
+  const verdicts = rows
     .filter((row) => typeof row?.index === "number")
     .map((row) => {
+      const rawBasis = (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
+        .map((url: unknown) => String(url || "").trim())
+        .filter(Boolean);
       // Amended rule 3 (B2.2a gate): one URL = at most one citation in any basis.
-      const basis = Array.from(new Set<string>(
-        (Array.isArray(row?.basis_urls) ? row.basis_urls : [])
-          .map((url: unknown) => String(url || "").trim())
-          .filter((url: string) => independentUrls.has(url)),
-      ));
+      const basis = Array.from(new Set<string>(rawBasis.filter((url: string) => independentUrls.has(url))));
+      const rejected = rawBasis.filter((url: string) => !independentUrls.has(url));
+      if (rejected.length > 0) rejectedCitations.push({ index: row.index as number, rejected });
       let status = row?.evidence_status === "corroborated" ? "corroborated" : "self_reported";
       if (status === "corroborated" && basis.length === 0) status = "self_reported";
       return {
@@ -538,6 +578,37 @@ async function judgeAttributeEvidence(opts: {
         basis_urls: basis,
       };
     });
+  const returnedIndices = new Set(verdicts.map((v) => v.index));
+  const missingVerdictIndices = opts.attributes.map((_, i) => i).filter((i) => !returnedIndices.has(i));
+  if (missingVerdictIndices.length > 0) {
+    console.warn("[attrEvidence] judge omitted verdicts for attribute indices — caller defaults them self_reported", {
+      missing: missingVerdictIndices,
+    });
+  }
+  if (opts.supabase && opts.companyId) {
+    await recordIntegrityRun(opts.supabase, {
+      company_id: opts.companyId, component: "attr_evidence", surface_type: "positioning",
+      status: "completed",
+      examined: opts.attributes.length,
+      admitted: verdicts.filter((v) => v.evidence_status === "corroborated").length,
+      excluded_by_rule: {
+        class_admitted_ledger: independentItems.length,
+        syndicated_excluded_ledger: ledgerGateA.excludedSyndicated,
+        unresolved_ledger: ledgerGateA.unresolved,
+        admitted_ledger_items: independentItemsGatedA.length,
+        class_admitted_signals: outsideSignals.length,
+        syndicated_excluded_signals: signalsGateA.excludedSyndicated,
+        unresolved_signals: signalsGateA.unresolved,
+        admitted_outside_signals: outsideSignalsGatedA.length,
+        supplement_admitted: opts.supplement?.items.length ?? 0,
+        supplement_digest: opts.supplement?.digest ?? null,
+        missing_verdict_indices: missingVerdictIndices,
+        rejected_citations: rejectedCitations,
+      },
+      run_ref: opts.runRef ?? null,
+    });
+  }
+  return verdicts;
 }
 
 export {

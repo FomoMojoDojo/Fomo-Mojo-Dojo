@@ -1,5 +1,12 @@
-import { formatDistanceToNow, parseISO } from "date-fns";
+import { differenceInDays, formatDistanceToNow, parseISO } from "date-fns";
 import { useDriftAssessment } from "@/hooks/useDriftAssessment";
+import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
+
+// Integrity: an "assessed N ago" older than this is no longer reassurance — it renders
+// as possibly out of date. 14 days: beyond any plausible scan cadence (baselines have
+// run sub-weekly), but short enough that a quarter-old assessment can never read as
+// current.
+const STALENESS_DAYS = 14;
 
 type Variant = "panel" | "link";
 
@@ -26,11 +33,13 @@ export default function ProposeChangesButton({
   stopPropagation = false,
   refreshKey = 0,
 }: Props) {
-  const { assessment } = useDriftAssessment(
+  const { assessment, error: assessmentError } = useDriftAssessment(
     surfaceId ? surfaceType : null,
     surfaceId ?? null,
     refreshKey,
   );
+  // Latest drift_scan execution record for THIS surface (record-scope law: surface-keyed).
+  const driftIntegrity = useIntegrityRecord(null, "drift_scan", surfaceId ?? null);
 
   const driftState =
     !assessment || assessment.accepted_as_aligned_at
@@ -49,16 +58,27 @@ export default function ProposeChangesButton({
     onGenerate();
   };
 
-  // Sub-text for panel variant only, shown when no drift is detected
+  // Sub-text for panel variant only, shown when no drift is detected.
+  // Integrity states: couldn't-check (query error or failed scan record) and stale
+  // (assessed beyond STALENESS_DAYS) are visibly distinct from fresh reassurance.
   let statusText: string | null = null;
+  let statusTone: "quiet" | "attention" = "quiet";
   if (!generateLoading && !hasDrift) {
-    if (!assessment) {
-      statusText = "Not yet assessed";
+    if (assessmentError || driftIntegrity.record?.status === "failed") {
+      statusText = "This check didn't complete — it will run again on the next scan.";
+      statusTone = "attention";
+    } else if (!assessment) {
+      statusText = "Not yet checked";
     } else if (assessment.drift_state === "aligned" || assessment.accepted_as_aligned_at) {
-      const ago = assessment.last_assessed_at
-        ? `· assessed ${formatDistanceToNow(parseISO(assessment.last_assessed_at))} ago`
-        : "";
-      statusText = `No drift detected ${ago}`.trim();
+      const assessedAt = assessment.last_assessed_at ? parseISO(assessment.last_assessed_at) : null;
+      const daysOld = assessedAt ? differenceInDays(new Date(), assessedAt) : null;
+      if (daysOld !== null && daysOld > STALENESS_DAYS) {
+        statusText = `Last checked ${formatDistanceToNow(assessedAt!)} ago — may be out of date`;
+        statusTone = "attention";
+      } else {
+        const ago = assessedAt ? `· assessed ${formatDistanceToNow(assessedAt)} ago` : "";
+        statusText = `No drift detected ${ago}`.trim();
+      }
     }
   }
 
@@ -155,7 +175,7 @@ export default function ProposeChangesButton({
         <p style={{
           fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
           fontSize: 9,
-          color: "rgba(17,17,17,0.35)",
+          color: statusTone === "attention" ? "#c45c00" : "rgba(17,17,17,0.35)",
           margin: "5px 0 0",
           letterSpacing: "0.04em",
         }}>

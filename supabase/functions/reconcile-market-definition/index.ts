@@ -29,6 +29,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildClientCorpus, resolveSyndicationDurable, type ClientCorpus } from "../_shared/syndication.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -497,6 +498,18 @@ Deno.serve(async (req) => {
       ledger_size: Object.keys(ledgerOut).length,
     });
 
+    await recordIntegrityRun(supabase, {
+      company_id, component: "market_reconcile", surface_type: "market_definition",
+      surface_id: String(mktdef.id), status: "completed",
+      examined: dimensions.length, admitted: dimensions.filter((d) => d.verdict === "aligned").length,
+      excluded_by_rule: {
+        dimensions: dimensions.map((d) => ({ dimension: d.dimension, verdict: d.verdict, method: d.method, score: d.score })),
+        external_evidence: basis.latest.external_evidence,
+        computed_state: computedState, baseline: isBaseline, changed_since_prior: changed,
+      },
+      run_ref: archetypeSource || null,
+    });
+
     if (dry_run) return json({ status: "dry_run", company_id, drift_state: driftState, basis });
 
     const payload = {
@@ -508,6 +521,11 @@ Deno.serve(async (req) => {
       llm_confirmation: divergent.length ? divergent.map((d) => `${d.dimension}: ${d.detail}`).join(" ") : null,
       assessment_basis: basis,
       last_assessed_at: new Date().toISOString(),
+      // Council Q5 (2026-06-11): acceptance is PER-ASSESSMENT. A changed comparison
+      // that alerts is a NEW assessment — a prior "accept as aligned" must not mute
+      // it, and the operator hasn't seen it yet. Quiet updates leave operator state
+      // untouched.
+      ...(driftState !== "aligned" ? { accepted_as_aligned_at: null, operator_seen_at: null } : {}),
     };
     if ((existingRow as { id?: string } | null)?.id) {
       await supabase.from("surface_drift_assessments").update(payload).eq("id", (existingRow as { id: string }).id);

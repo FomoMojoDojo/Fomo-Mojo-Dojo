@@ -11,6 +11,7 @@ import {
 } from "../../../src/lib/evidenceMappers.ts";
 import { upsertDependenciesForArtifact } from "./strategicGraph.ts";
 import { buildClientCorpus, buildCorpusFromTexts, resolveSyndicationDurable } from "./syndication.ts";
+import { recordIntegrityRun } from "./integrity.ts";
 import {
   rebuildRouteHypothesisDependencies,
   rebuildStrategicHypothesesForCompany,
@@ -531,9 +532,19 @@ export async function ingestPublicBaselineSignals(args: {
       }
     }
     console.log("[syndication] ingest stamping", { stamped, flagged_syndicated: flagged });
+    await recordIntegrityRun(args.supabase as unknown as { from: (t: string) => any }, {
+      company_id: args.companyId, component: "syndication_ingest", status: "completed",
+      examined: signals.filter((s) => s.voice_class === "outside_voice_about_client").length,
+      admitted: stamped, excluded_by_rule: { flagged_syndicated: flagged },
+      run_ref: String(args.runId),
+    });
   } catch (error) {
     console.warn("[syndication] ⚠ ingest stamping failed — drafts persist UNSTAMPED (lazy path will stamp at first judge read)", {
       message: String(error instanceof Error ? error.message : error),
+    });
+    await recordIntegrityRun(args.supabase as unknown as { from: (t: string) => any }, {
+      company_id: args.companyId, component: "syndication_ingest", status: "failed",
+      error: String(error instanceof Error ? error.message : error), run_ref: String(args.runId),
     });
   }
 

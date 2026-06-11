@@ -28,6 +28,7 @@ import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/framewo
 import { classifyVoice, deriveClaimProvenance, judgeAttributeEvidence } from "../_shared/claimProvenance.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -376,6 +377,11 @@ Deno.serve(async (req) => {
         console.warn("[storeSupplement] refresh-positioning build FAILED — brief and judges proceed snapshot-only (loud, not silent)", {
           message: String(error instanceof Error ? error.message : error),
         });
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "store_supplement", status: "failed",
+          error: String(error instanceof Error ? error.message : error),
+          run_ref: String(baselineRun.id),
+        });
         storeSupplement = null;
       }
     }
@@ -394,6 +400,7 @@ Deno.serve(async (req) => {
           supabase,
           companyId: company_id,
           supplement: storeSupplement,
+          runRef: baselineRun?.id != null ? String(baselineRun.id) : null,
         });
         console.log("[refresh-positioning] claim provenance self-derived", {
           judged: claimProvenance.length,
@@ -404,6 +411,11 @@ Deno.serve(async (req) => {
           "[refresh-positioning] ⚠ CLAIM PROVENANCE SELF-DERIVATION FAILED — brief proceeds untagged; attribute judge remains the backstop",
           { message: String(error instanceof Error ? error.message : error) },
         );
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "claim_provenance", status: "failed",
+          error: String(error instanceof Error ? error.message : error),
+          run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+        });
         claimProvenance = undefined;
       }
     }
@@ -510,6 +522,7 @@ Deno.serve(async (req) => {
         supabase,
         companyId: company_id,
         supplement: storeSupplement,
+        runRef: baselineRun?.id != null ? String(baselineRun.id) : null,
       });
       const verdictByIndex = new Map(verdicts.map((verdict) => [verdict.index, verdict]));
       const disagreements: Array<{ index: number; name: string; gen: string; judge: string }> = [];
@@ -541,6 +554,15 @@ Deno.serve(async (req) => {
         "[refresh-positioning] ⚠ ATTRIBUTE EVIDENCE JUDGE FAILED — all attributes marked self_reported (provenance-true fallback)",
         { message: String(error instanceof Error ? error.message : error) },
       );
+      // Integrity path 6: the fail-safe canvas is no longer indistinguishable from an
+      // honestly-all-self-reported one — the failure is on record. Fail-safe-and-save
+      // behavior unchanged (council Q1: blocking is not introduced).
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: String(company_id), component: "attr_evidence", surface_type: "positioning",
+        status: "failed", examined: uniqueAttributes.length,
+        error: String(error instanceof Error ? error.message : error),
+        run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+      });
       uniqueAttributes = uniqueAttributes.map((attribute) => ({
         ...attribute,
         evidence_status: "self_reported",

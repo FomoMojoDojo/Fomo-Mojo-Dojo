@@ -13,6 +13,8 @@ import { SignalBasisChip, type SignalBasis } from "@/components/design-system/Si
 import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
 import DriftBadge from "@/components/drift/DriftBadge";
+import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
+import { IntegrityEmptyState } from "@/components/design-system/IntegrityEmptyState";
 import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import type { EngagementPhase } from "@/lib/engagementPhase";
 import {
@@ -312,6 +314,8 @@ function HPos_AddRow({ placeholder, gridFirstCol, onAdd }: { placeholder: string
 export default function PositioningOrgPanel({
   canvas,
   loading,
+  companyId,
+  canvasError,
   updatedAt,
   baseline,
   signals,
@@ -339,6 +343,8 @@ export default function PositioningOrgPanel({
 }: {
   canvas: PositioningCanvas | null;
   loading: boolean;
+  companyId?: string | null;
+  canvasError?: string | null;
   updatedAt?: string;
   baseline: BaselineResult | null;
   signals: SourceConfidenceSignals;
@@ -366,6 +372,10 @@ export default function PositioningOrgPanel({
 }) {
   const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
+  // Integrity record backing the tensions-absence render: the evidence reviewer is the
+  // component that produces/validates known tensions (company-scoped; the positioning
+  // canvas is a per-company singleton, so company scope IS this surface's scope).
+  const tensionsIntegrity = useIntegrityRecord(companyId ?? null, "evidence_review");
   const { isAdmin } = useAuth();
 
   const categoryHighlights = useMemo(
@@ -684,7 +694,19 @@ export default function PositioningOrgPanel({
             </div>
           )}
 
-          {/* § 07 — WHAT WE NAME OPENLY (known tensions: acknowledge-and-scope, read-only) */}
+          {/* § 07 — WHAT WE NAME OPENLY (known tensions: acknowledge-and-scope, read-only).
+              Integrity law: absence is never silent — when no tensions exist, the section
+              renders looked / not-yet / couldn't-check from the evidence_review record. */}
+          {(canvas.known_tensions?.length ?? 0) === 0 && (
+            <div style={{ marginBottom: 52 }}>
+              <HPos_SectionHeader number="07" label="What We Name Openly" />
+              <IntegrityEmptyState
+                record={tensionsIntegrity.record}
+                hookError={canvasError ?? tensionsIntegrity.error}
+                emptyText="no unresolved tensions on record"
+              />
+            </div>
+          )}
           {(canvas.known_tensions?.length ?? 0) > 0 && (
             <div style={{ marginBottom: 52 }}>
               <HPos_SectionHeader number="07" label="What We Name Openly" />

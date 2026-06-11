@@ -1278,6 +1278,8 @@ export default function ClientRefinePreviewWorkshopView() {
           </div>
         )}
         <PositioningOrgPanel
+          companyId={companyId}
+          canvasError={posError ?? null}
           canvas={positioning}
           loading={posLoading}
           baseline={baseline}

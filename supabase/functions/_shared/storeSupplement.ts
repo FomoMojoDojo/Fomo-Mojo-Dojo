@@ -39,6 +39,7 @@
 // window on young datasets; the window exists for the long-lived store.
 
 import { resolveSyndicationDurable, syndicationTextHash, type ClientCorpus } from "./syndication.ts";
+import { recordIntegrityRun } from "./integrity.ts";
 
 export const SUPPLEMENT_WINDOW_DAYS = 90;
 
@@ -212,6 +213,11 @@ export async function buildStoreSupplement(opts: {
     digest,
   };
   console.log(`[storeSupplement] ${opts.label} composition`, composition);
+  await recordIntegrityRun(opts.supabase, {
+    company_id: opts.companyId, component: "store_supplement", status: "completed",
+    examined: candidates.length, admitted: admitted.length,
+    excluded_by_rule: composition, run_ref: String(opts.pinnedRunId),
+  });
   return { items: admitted, digest, composition };
 }
 

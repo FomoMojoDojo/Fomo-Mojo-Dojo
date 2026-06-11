@@ -10,6 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { classifyVoice } from "../_shared/claimProvenance.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildCompetitorMarketBrief,
@@ -328,6 +329,11 @@ Deno.serve(async (req) => {
       } catch (error) {
         console.warn("[storeSupplement] refresh-cascade build FAILED — brief proceeds snapshot-only (loud, not silent)", {
           message: String(error instanceof Error ? error.message : error),
+        });
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "store_supplement", status: "failed",
+          error: String(error instanceof Error ? error.message : error),
+          run_ref: String(baselineRun.id),
         });
         storeSupplement = null;
       }

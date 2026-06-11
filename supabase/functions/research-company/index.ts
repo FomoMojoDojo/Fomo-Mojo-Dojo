@@ -26,6 +26,7 @@ import {
   listCompanyClaimLedgerItems,
   type ClaimProvenanceEntry,
 } from "../_shared/claimProvenance.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 // B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
 // corroboration-side gating lives in _shared/claimProvenance.ts.
 
@@ -5697,6 +5698,7 @@ Deno.serve(async (req) => {
         companyWebsite: website,
         supabase,
         companyId: String(company_id),
+        runRef: baselineRun?.id != null ? String(baselineRun.id) : null,
         // Inject the local client (budget-ladder retry) — identical behavior to the
         // pre-extraction local function.
         callJson: callOpenAIJSON,
@@ -5714,6 +5716,11 @@ Deno.serve(async (req) => {
         "[research-company] ⚠ CLAIM PROVENANCE JUDGE FAILED — tagging all company_claim items SELF-REPORTED (corroboration unverified)",
         { message: String(error instanceof Error ? error.message : error) },
       );
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: String(company_id), component: "claim_provenance", status: "failed",
+        error: String(error instanceof Error ? error.message : error),
+        run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+      });
       claimProvenance = listCompanyClaimLedgerItems(effectiveBaselineResultJson, website).map((entry) => ({
         ledger_index: entry.index,
         claim: String(entry.item?.snippet || ""),
@@ -6537,24 +6544,52 @@ Deno.serve(async (req) => {
       opportunities,
     });
 
-    let {
-      consistencyReview,
-      positioningReview,
-      evidenceReview,
-      strategyReview,
-    } = await runAllDraftReviews({
-      apiKey: openaiKey,
-      model: openaiModel,
-      companyName: company_name,
-      website,
-      baselineBrief,
-      strategicProblemBrief,
-      odiBrief,
-      inputs,
-      journeys,
-      opportunities,
-      routes,
-      knownTensions,
+    let consistencyReview, positioningReview, evidenceReview, strategyReview;
+    try {
+      ({
+        consistencyReview,
+        positioningReview,
+        evidenceReview,
+        strategyReview,
+      } = await runAllDraftReviews({
+        apiKey: openaiKey,
+        model: openaiModel,
+        companyName: company_name,
+        website,
+        baselineBrief,
+        strategicProblemBrief,
+        odiBrief,
+        inputs,
+        journeys,
+        opportunities,
+        routes,
+        knownTensions,
+      }));
+    } catch (error) {
+      // Integrity path 1: a reviewer crash is no longer indistinguishable from "review
+      // never attempted" — the failure is on record BEFORE the rethrow (behavior
+      // unchanged: the run still fails loudly).
+      const msg = String(error instanceof Error ? error.message : error);
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: String(company_id), component: "evidence_review", status: "failed",
+        error: msg, run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+      });
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: String(company_id), component: "consistency_review", status: "failed",
+        error: msg, run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+      });
+      throw error;
+    }
+    const reviewRunRef = baselineRun?.id != null ? String(baselineRun.id) : null;
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: String(company_id), component: "consistency_review", status: "completed",
+      excluded_by_rule: { pass: consistencyReview?.pass ?? null, severity: consistencyReview?.severity ?? null, findings: Array.isArray(consistencyReview?.findings) ? consistencyReview.findings.length : 0 },
+      run_ref: reviewRunRef,
+    });
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: String(company_id), component: "evidence_review", status: "completed",
+      excluded_by_rule: { pass: evidenceReview?.pass ?? null, severity: evidenceReview?.severity ?? null, findings: Array.isArray(evidenceReview?.findings) ? evidenceReview.findings.length : 0 },
+      run_ref: reviewRunRef,
     });
 
     let reviewResults = [
@@ -6594,6 +6629,10 @@ Deno.serve(async (req) => {
         });
 
         finalizerApplied = true;
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "finalizer", status: "completed",
+          examined: reviewResults.length, run_ref: reviewRunRef,
+        });
         inputs = Array.isArray(repairedBundle?.inputs) ? repairedBundle.inputs : inputs;
         journeys = Array.isArray(repairedBundle?.journeys) ? repairedBundle.journeys : journeys;
         if (Array.isArray(repairedBundle?.opportunities) && repairedBundle.opportunities.length > 0) {
@@ -6620,25 +6659,53 @@ Deno.serve(async (req) => {
           .map((key) => repairedJourneyByKey.get(key))
           .filter(Boolean);
 
-        ({
-          consistencyReview,
-          positioningReview,
-          evidenceReview,
-          strategyReview,
-        } = await runAllDraftReviews({
-          apiKey: openaiKey,
-          model: openaiModel,
-          companyName: company_name,
-          website,
-          baselineBrief,
-          strategicProblemBrief,
-          odiBrief,
-          inputs,
-          journeys,
-          opportunities,
-          routes,
-          knownTensions,
-        }));
+        // Integrity path 3: a re-review failure after a successful finalizer was the
+        // silent stale-verdict path — now recorded before the (behavior-preserving)
+        // rethrow into the outer catch.
+        try {
+          ({
+            consistencyReview,
+            positioningReview,
+            evidenceReview,
+            strategyReview,
+          } = await runAllDraftReviews({
+            apiKey: openaiKey,
+            model: openaiModel,
+            companyName: company_name,
+            website,
+            baselineBrief,
+            strategicProblemBrief,
+            odiBrief,
+            inputs,
+            journeys,
+            opportunities,
+            routes,
+            knownTensions,
+          }));
+        } catch (error) {
+          const msg = String(error instanceof Error ? error.message : error);
+          await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+            company_id: String(company_id), component: "evidence_review", status: "failed",
+            error: `re-review after finalizer: ${msg}`, excluded_by_rule: { re_review: true, stale_verdict_in_use: true },
+            run_ref: reviewRunRef,
+          });
+          await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+            company_id: String(company_id), component: "consistency_review", status: "failed",
+            error: `re-review after finalizer: ${msg}`, excluded_by_rule: { re_review: true, stale_verdict_in_use: true },
+            run_ref: reviewRunRef,
+          });
+          throw error;
+        }
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "evidence_review", status: "completed",
+          excluded_by_rule: { re_review: true, pass: evidenceReview?.pass ?? null, severity: evidenceReview?.severity ?? null, findings: Array.isArray(evidenceReview?.findings) ? evidenceReview.findings.length : 0 },
+          run_ref: reviewRunRef,
+        });
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "consistency_review", status: "completed",
+          excluded_by_rule: { re_review: true, pass: consistencyReview?.pass ?? null, severity: consistencyReview?.severity ?? null, findings: Array.isArray(consistencyReview?.findings) ? consistencyReview.findings.length : 0 },
+          run_ref: reviewRunRef,
+        });
 
         reviewResults = [
           { key: "consistency", review: consistencyReview },
@@ -6656,6 +6723,10 @@ Deno.serve(async (req) => {
         );
       } catch (error) {
         finalizerError = String(error instanceof Error ? error.message : error);
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "finalizer", status: "failed",
+          error: finalizerError, run_ref: reviewRunRef,
+        });
         // LOUD: silent degradation is the worse half of this bug. The repair pass did NOT run,
         // so the artifacts (and any review block below) reflect the UNREPAIRED draft — not a
         // clean reviewer verdict on a finalized bundle. Surfaced in the 422 response too.

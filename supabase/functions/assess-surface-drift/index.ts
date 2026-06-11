@@ -16,6 +16,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -228,6 +229,11 @@ async function assessSurface(
 
   if (newSignalIds.length === 0) {
     console.log(`[assess-surface-drift] ${surfaceType}/${surfaceId}: empty diff → aligned (fast-path)`);
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+      status: "completed", examined: 0, admitted: 0,
+      excluded_by_rule: { fast_path: "empty_diff" },
+    });
     await upsertAssessment(supabase, {
       company_id: companyId,
       surface_type: surfaceType,
@@ -250,6 +256,10 @@ async function assessSurface(
 
   if (sigErr) {
     console.error(`[assess-surface-drift] ${surfaceType}/${surfaceId}: signal fetch error:`, sigErr.message);
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+      status: "failed", error: `signal fetch: ${sigErr.message}`,
+    });
     return null;
   }
 
@@ -272,12 +282,20 @@ async function assessSurface(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[assess-surface-drift] ${surfaceType}/${surfaceId}: LLM error: ${message}`);
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+      status: "failed", error: `LLM: ${message}`, examined: signals.length,
+    });
     return null;
   }
 
   const validStates = ["aligned", "slight_drift", "material_drift"];
   if (!validStates.includes(llmResult.drift_state)) {
     console.error(`[assess-surface-drift] ${surfaceType}/${surfaceId}: unexpected drift_state: ${llmResult.drift_state}`);
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+      status: "failed", error: `invalid drift_state from model: ${llmResult.drift_state}`, examined: signals.length,
+    });
     return null;
   }
 
@@ -297,6 +315,11 @@ async function assessSurface(
     last_assessed_at: new Date().toISOString(),
   });
 
+  await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+    company_id: companyId, component: "drift_scan", surface_type: surfaceType, surface_id: surfaceId,
+    status: "completed", examined: signals.length,
+    excluded_by_rule: { drift_state: llmResult.drift_state, score: llmResult.score },
+  });
   return { surfaceId, drift_state: llmResult.drift_state };
 }
 
@@ -323,6 +346,12 @@ async function assessCascades(
   for (const row of (data ?? []) as CascadeRow[]) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] cascade/${row.id}: no baseline — skipping`);
+      // Integrity: a surface skipped for lack of an evidence baseline is a recorded
+      // outcome, not silence — found live during integrity validation (IAQM canvas).
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: companyId, component: "drift_scan", surface_type: "cascade", surface_id: row.id,
+        status: "skipped_empty_input", excluded_by_rule: { reason: "no_evidence_baseline" },
+      });
       continue;
     }
     const result = await assessSurface(
@@ -360,6 +389,12 @@ async function assessPositioning(
   for (const row of (data ?? []) as PositioningRow[]) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] positioning/${row.id}: no baseline — skipping`);
+      // Integrity: a surface skipped for lack of an evidence baseline is a recorded
+      // outcome, not silence — found live during integrity validation (IAQM canvas).
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: companyId, component: "drift_scan", surface_type: "positioning", surface_id: row.id,
+        status: "skipped_empty_input", excluded_by_rule: { reason: "no_evidence_baseline" },
+      });
       continue;
     }
     const result = await assessSurface(
@@ -398,6 +433,12 @@ async function assessRoutes(
   for (const row of (data ?? []) as RouteRow[]) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] route/${row.id}: no baseline — skipping`);
+      // Integrity: a surface skipped for lack of an evidence baseline is a recorded
+      // outcome, not silence — found live during integrity validation (IAQM canvas).
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: companyId, component: "drift_scan", surface_type: "route", surface_id: row.id,
+        status: "skipped_empty_input", excluded_by_rule: { reason: "no_evidence_baseline" },
+      });
       continue;
     }
     const result = await assessSurface(
@@ -435,6 +476,12 @@ async function assessOpportunities(
   for (const row of (data ?? []) as OpportunityRow[]) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] opportunity/${row.id}: no baseline — skipping`);
+      // Integrity: a surface skipped for lack of an evidence baseline is a recorded
+      // outcome, not silence — found live during integrity validation (IAQM canvas).
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id: companyId, component: "drift_scan", surface_type: "opportunity", surface_id: row.id,
+        status: "skipped_empty_input", excluded_by_rule: { reason: "no_evidence_baseline" },
+      });
       continue;
     }
     const result = await assessSurface(
