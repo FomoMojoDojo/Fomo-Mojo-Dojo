@@ -399,6 +399,7 @@ export default function ClientRefinePreviewWorkshopView() {
     publicCount:   workshopSignalLandscape.byBand.outside.count,
     teamCount:     workshopSignalLandscape.byBand.organization.count,
     customerCount: workshopSignalLandscape.byBand.customer.count,
+    publicBreakdown: workshopSignalLandscape.publicBreakdown,
   } : undefined;
 
   const exclusionImpact = useMemo(
