@@ -579,6 +579,11 @@ export default function PositioningOrgPanel({
                           Yours to prove
                         </span>
                       )}
+                      {item.evidence_status === "declared" && (
+                        <span style={{ fontFamily: P.mono, fontSize: 9, fontWeight: 400, textTransform: "uppercase", letterSpacing: "0.12em", color: "#b45309", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 2, padding: "2px 7px", marginLeft: 10, position: "relative", top: -3, whiteSpace: "nowrap" }}>
+                          Declared
+                        </span>
+                      )}
                     </p>
                     {item.description && (
                       <p style={{ fontFamily: P.sans, fontSize: 14, color: "rgba(17,17,17,0.7)", margin: 0, lineHeight: 1.55, maxWidth: 520 }}>{item.description}</p>

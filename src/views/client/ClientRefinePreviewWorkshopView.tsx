@@ -6,11 +6,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
-import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import { usePositioningCanvas, mapRow as mapPositioningCanvasRow } from "@/hooks/usePositioningCanvas";
 import { usePositioningProposal } from "@/hooks/usePositioningProposal";
 import { useCascadeProposal } from "@/hooks/useCascadeProposal";
 import { useOpportunityProposalHandlers } from "@/hooks/useOpportunityProposalHandlers";
-import { useStrategyCascade } from "@/hooks/useStrategyCascade";
+import { useStrategyCascade, mapRow as mapStrategyCascadeRow } from "@/hooks/useStrategyCascade";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useJobSteps } from "@/hooks/useJobSteps";
 import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
@@ -488,6 +488,114 @@ export default function ClientRefinePreviewWorkshopView() {
     updateListField,
     cascadeId,
   } = useStrategyCascade(companyId, cascadeRefreshKey);
+
+  // ── Gate 3b: declared-direction artifacts (operator-signed dual render) ────
+  // All of this renders NOTHING unless a declared artifact exists — companies
+  // without one are byte-identical to the single-render behavior.
+  const [declaredCanvasRow, setDeclaredCanvasRow] = useState<Record<string, unknown> | null>(null);
+  const [declaredCascadeRow, setDeclaredCascadeRow] = useState<Record<string, unknown> | null>(null);
+  const [directionView, setDirectionView] = useState<"declared" | "market">("market");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!companyId) { setDeclaredCanvasRow(null); setDeclaredCascadeRow(null); setDirectionView("market"); return; }
+      const sb = supabase as unknown as { from: (t: string) => any };
+      const [c, k, p] = await Promise.all([
+        sb.from("positioning_canvases").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle(),
+        sb.from("strategy_cascades").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle(),
+        sb.from("operator_primary_selection").select("item_key").eq("company_id", companyId).eq("domain", "job_step_set").maybeSingle(),
+      ]);
+      if (cancelled) return;
+      const canvasRow = (c?.data ?? null) as Record<string, unknown> | null;
+      const cascadeRow = (k?.data ?? null) as Record<string, unknown> | null;
+      setDeclaredCanvasRow(canvasRow);
+      setDeclaredCascadeRow(cascadeRow);
+      // Pin resolution (operator-ruled): declared is primary ONLY when the
+      // job_step_set pin matches the declared artifacts' direction — pinning is
+      // the promotion act; declared-but-unpinned keeps the market read primary.
+      const pinnedKey = String((p?.data as { item_key?: unknown } | null)?.item_key ?? "").toLowerCase();
+      const dirKey = String((canvasRow?.source_direction_key ?? cascadeRow?.source_direction_key) ?? "").toLowerCase();
+      setDirectionView((canvasRow || cascadeRow) && pinnedKey && pinnedKey === dirKey ? "declared" : "market");
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, posRefreshKey, cascadeRefreshKey]);
+
+  const declaredCanvas = useMemo(
+    () => (declaredCanvasRow ? mapPositioningCanvasRow(declaredCanvasRow as Parameters<typeof mapPositioningCanvasRow>[0]) : null),
+    [declaredCanvasRow],
+  );
+  const declaredCascade = useMemo(
+    () => (declaredCascadeRow ? mapStrategyCascadeRow(declaredCascadeRow as Parameters<typeof mapStrategyCascadeRow>[0]) : null),
+    [declaredCascadeRow],
+  );
+  const declaredCanvasId = declaredCanvasRow ? String(declaredCanvasRow.id ?? "") : null;
+  const declaredCascadeId = declaredCascadeRow ? String(declaredCascadeRow.id ?? "") : null;
+
+  // Declared edits write to the declared row by id — operator reshaping targets
+  // the declared artifact, never the market read.
+  const updateDeclaredCanvasText = useCallback(async (field: "value_for_customer" | "best_fit_customers" | "market_category" | "category_rationale" | "current_tagline" | "proposed_tagline", value: string) => {
+    if (!declaredCanvasId) return;
+    await (supabase as unknown as { from: (t: string) => any }).from("positioning_canvases")
+      .update({ [field]: value, updated_at: new Date().toISOString() }).eq("id", declaredCanvasId);
+    setPosRefreshKey((x) => x + 1);
+  }, [declaredCanvasId]);
+  const updateDeclaredCanvasItems = useCallback(async (field: "competitive_alternatives_json" | "unique_attributes_json", items: unknown[]) => {
+    if (!declaredCanvasId) return;
+    await (supabase as unknown as { from: (t: string) => any }).from("positioning_canvases")
+      .update({ [field]: items, updated_at: new Date().toISOString() }).eq("id", declaredCanvasId);
+    setPosRefreshKey((x) => x + 1);
+  }, [declaredCanvasId]);
+  const updateDeclaredCascadeNarrative = useCallback(async (field: "winning_aspiration" | "where_to_play" | "how_to_win", value: string) => {
+    if (!declaredCascadeId) return;
+    await (supabase as unknown as { from: (t: string) => any }).from("strategy_cascades")
+      .update({ [field]: value, updated_at: new Date().toISOString() }).eq("id", declaredCascadeId);
+    setCascadeRefreshKey((x) => x + 1);
+  }, [declaredCascadeId]);
+  const updateDeclaredCascadeList = useCallback(async (field: "capabilities_json" | "management_systems_json", items: unknown[]) => {
+    if (!declaredCascadeId) return;
+    await (supabase as unknown as { from: (t: string) => any }).from("strategy_cascades")
+      .update({ [field]: items, updated_at: new Date().toISOString() }).eq("id", declaredCascadeId);
+    setCascadeRefreshKey((x) => x + 1);
+  }, [declaredCascadeId]);
+
+  // Operator-signed strings (Gate 3b checkpoint): pane names and the Declared
+  // treatment. The subline is the signed declared-direction sentence, verbatim.
+  const renderDirectionToggle = (hasDeclared: boolean) => {
+    if (!hasDeclared) return null;
+    const btn = (key: "declared" | "market", label: string) => (
+      <button
+        type="button"
+        onClick={() => setDirectionView(key)}
+        style={{
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em",
+          padding: "5px 12px", borderRadius: 2, cursor: "pointer",
+          border: directionView === key ? "1px solid #b45309" : "1px solid rgba(17,17,17,0.15)",
+          background: directionView === key ? "#fef3c7" : "transparent",
+          color: directionView === key ? "#b45309" : "rgba(17,17,17,0.55)",
+        }}
+      >
+        {label}
+      </button>
+    );
+    return (
+      <div style={{ margin: "0 0 16px" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {btn("declared", "Where you're going")}
+          {btn("market", "What the market sees")}
+        </div>
+        {directionView === "declared" && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "#b45309", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 2, padding: "3px 8px" }}>
+              Declared
+            </span>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(17,17,17,0.6)", lineHeight: 1.5 }}>
+              Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const {
     loading: odiLoading,
@@ -1294,6 +1402,22 @@ export default function ClientRefinePreviewWorkshopView() {
             })()}
           </div>
         )}
+        {renderDirectionToggle(Boolean(declaredCanvas))}
+        {directionView === "declared" && declaredCanvas ? (
+          <PositioningOrgPanel
+            companyId={companyId}
+            canvasError={null}
+            canvas={declaredCanvas}
+            loading={posLoading}
+            baseline={baseline}
+            signals={sourceSignals}
+            updateTextField={updateDeclaredCanvasText}
+            updateItemsField={updateDeclaredCanvasItems as Parameters<typeof PositioningOrgPanel>[0]["updateItemsField"]}
+            hasHierarchy={workshopHasHierarchy}
+            canvasId={declaredCanvasId ?? undefined}
+            phase={activeCompany?.engagement_phase}
+          />
+        ) : (
         <PositioningOrgPanel
           companyId={companyId}
           canvasError={posError ?? null}
@@ -1323,6 +1447,7 @@ export default function ClientRefinePreviewWorkshopView() {
           onCheckSurfaceDrift={handleCheckSurfaceDrift}
           checkingSurfaceId={driftCheckingSurfaceId}
         />
+        )}
       </>
     );
     if (activeTab === "jobmap") return (
@@ -1352,6 +1477,23 @@ export default function ClientRefinePreviewWorkshopView() {
           })()
         : null;
       return (
+      <>
+      {renderDirectionToggle(Boolean(declaredCascade))}
+      {directionView === "declared" && declaredCascade ? (
+        <StrategyOrgPanel
+          strategy={declaredCascade}
+          loading={stratLoading}
+          baseline={baseline}
+          signals={sourceSignals}
+          updateNarrativeField={updateDeclaredCascadeNarrative as Parameters<typeof StrategyOrgPanel>[0]["updateNarrativeField"]}
+          updateListField={updateDeclaredCascadeList as Parameters<typeof StrategyOrgPanel>[0]["updateListField"]}
+          hasHierarchy={workshopHasHierarchy}
+          cascadeId={declaredCascadeId ?? undefined}
+          phase={activeCompany?.engagement_phase}
+          companyName={activeCompany?.name}
+          companyId={companyId}
+        />
+      ) : (
       <StrategyOrgPanel
         strategy={strategy}
         loading={stratLoading}
@@ -1381,6 +1523,8 @@ export default function ClientRefinePreviewWorkshopView() {
         companyName={activeCompany?.name}
         companyId={companyId}
       />
+      )}
+      </>
       );
     }
     if (odiError) {

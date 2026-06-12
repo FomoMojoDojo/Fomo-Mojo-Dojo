@@ -200,9 +200,10 @@ export interface PositioningItem {
   description: string;
   highlighted?: boolean;
   // Verified provenance of the claim (unique attributes): corroborated by independent
-  // evidence, or the company's own claim not yet echoed outside. Absent on items that
+  // evidence, the company's own claim not yet echoed outside, or a declared-direction
+  // claim (Gate 3b — cites no public sources by definition). Absent on items that
   // predate verification and on operator-added items.
-  evidence_status?: "corroborated" | "self_reported";
+  evidence_status?: "corroborated" | "self_reported" | "declared";
   basis_urls?: string[];
 }
 

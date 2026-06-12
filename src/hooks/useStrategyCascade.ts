@@ -63,7 +63,8 @@ function normalizeAssumptions(value: unknown): CascadeAssumption[] {
     .filter((item): item is CascadeAssumption => item !== null);
 }
 
-function mapRow(row: StrategyCascadeRow): StrategyCascade {
+// Exported for the Gate 3b declared-direction render.
+export function mapRow(row: StrategyCascadeRow): StrategyCascade {
   return {
     winning_aspiration: row.winning_aspiration || "",
     where_to_play: row.where_to_play || "",

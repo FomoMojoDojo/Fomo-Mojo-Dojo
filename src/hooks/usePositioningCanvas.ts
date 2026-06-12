@@ -96,7 +96,7 @@ function normalizeItems(value: unknown): PositioningItem[] {
       ).trim();
       if (!name) return null;
       const evidenceStatus =
-        entry?.evidence_status === "corroborated" || entry?.evidence_status === "self_reported"
+        entry?.evidence_status === "corroborated" || entry?.evidence_status === "self_reported" || entry?.evidence_status === "declared"
           ? entry.evidence_status
           : undefined;
       return {
@@ -113,7 +113,9 @@ function normalizeItems(value: unknown): PositioningItem[] {
     .filter((item): item is PositioningItem => item !== null);
 }
 
-function mapRow(row: PositioningCanvasRow): PositioningCanvas {
+// Exported for the Gate 3b declared-direction render (workshop maps declared
+// rows with the SAME normalizers the market read uses).
+export function mapRow(row: PositioningCanvasRow): PositioningCanvas {
   return {
     competitive_alternatives: normalizeItems(row.competitive_alternatives_json),
     unique_attributes: normalizeItems(row.unique_attributes_json),
