@@ -3199,6 +3199,7 @@ export type Database = {
         | "framework_adjudicated"
         | "odi_survey"
         | "manual"
+        | "internal_declared"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3335,6 +3336,7 @@ export const Constants = {
         "framework_adjudicated",
         "odi_survey",
         "manual",
+        "internal_declared",
       ],
     },
   },

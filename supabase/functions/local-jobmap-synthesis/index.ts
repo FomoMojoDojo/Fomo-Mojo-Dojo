@@ -25,6 +25,19 @@ const corsHeaders = {
 
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 const OLLAMA_TIMEOUT_MS = 120_000;
+// Gate 2a: declared-direction runs generate a long JSON on the 70b model — 120s is
+// not enough; deterministic fallback is prohibited on those runs, so the longer
+// window is the honest alternative to silently writing a non-document-derived set.
+const OLLAMA_REQUIRE_MODEL_TIMEOUT_MS = 300_000;
+// Gate 2a sidecar budget (operator-amended): B2B_-prefixed core documents get up to
+// 2,000 chars each; remaining files share the rest of the 12,000-char total.
+const SIDECAR_TOTAL_BUDGET = 12_000;
+const SIDECAR_CORE_CAP = 2_000;
+// Abort-over-truncate: if the assembled user prompt exceeds this, fail loudly
+// rather than silently dropping context below the per-file caps.
+const USER_TEXT_ABORT_CHARS = 28_000;
+const DECLARED_EVIDENCE_BASIS =
+  "Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.";
 const STANDARD_MARKET_CATEGORY_LIST =
   "B2B SaaS, B2C SaaS, Marketplace, E-commerce, Professional Services, Healthcare Services, Financial Services, Education Services, Nonprofit Services, Hospitality/Foodservice, Logistics/Transportation, Manufacturing, Public Sector/Government";
 
@@ -40,7 +53,7 @@ type NormalizedStep = {
   description: string;
   designed: boolean;
   has_gap: boolean;
-  evidence_status: "evidenced" | "implied" | "unclear";
+  evidence_status: "evidenced" | "implied" | "unclear" | "declared";
   evidence_basis: string;
   evidence_confidence: number;
   gap_note: string;
@@ -126,7 +139,7 @@ function defaultJourneySubtitle(key: string) {
   return "How this journey progresses from clear intent to measurable outcomes.";
 }
 
-function parseSelectedJobMaps(raw: unknown) {
+function parseSelectedJobMaps(raw: unknown, injectCustomerDefault = true) {
   const rows = Array.isArray(raw) ? raw : [];
   const byKey = new Map<string, SelectedJobMap>();
 
@@ -144,7 +157,12 @@ function parseSelectedJobMaps(raw: unknown) {
     });
   }
 
-  if (byKey.size === 0) {
+  // Gate 2a incident fix: under selected_maps_only the caller's keys are the WHOLE
+  // write universe — this injection put "customer" into requestedMaps even when the
+  // caller asked only for another key, and regeneration's delete-per-journey_key
+  // then destroyed an existing customer spine. Injection now only happens when the
+  // caller has not constrained the map set.
+  if (injectCustomerDefault && byKey.size === 0) {
     byKey.set("customer", {
       journey_key: "customer",
       journey_title: defaultJourneyTitle("customer"),
@@ -152,7 +170,7 @@ function parseSelectedJobMaps(raw: unknown) {
     });
   }
 
-  if (![...byKey.keys()].some((key) => isCustomerJourneyKey(key))) {
+  if (injectCustomerDefault && ![...byKey.keys()].some((key) => isCustomerJourneyKey(key))) {
     byKey.set("customer", {
       journey_key: "customer",
       journey_title: defaultJourneyTitle("customer"),
@@ -469,6 +487,8 @@ async function callLocalSynthesis(args: {
   contextJson: Record<string, unknown>;
   industryLabel?: string;
   industryAnchors?: IndustryStepAnchor | null;
+  timeoutMs?: number;
+  skipNeeds?: boolean;
 }) {
   const industryBlock = args.industryAnchors
     ? "\n\nIndustry step hypotheses for this company's market category: " +
@@ -514,7 +534,11 @@ async function callLocalSynthesis(args: {
     "market_definition: { job_executor, chooser, jtbd, market_context }\n" +
     "journeys: array of { journey_key, journey_title, journey_subtitle, steps }\n" +
     "step shape: { step_number, step_label, description, evidence_status, evidence_basis, evidence_confidence, has_gap, gap_note, designed }\n" +
-    "needs: array of { desired_outcome, step_number, importance, satisfaction, opportunity_score, evidence_basis }\n" +
+    (args.skipNeeds
+      // This function never writes synthesized needs; on declared-direction runs the
+      // output-token budget goes to the journey instead.
+      ? "needs: return an empty array.\n"
+      : "needs: array of { desired_outcome, step_number, importance, satisfaction, opportunity_score, evidence_basis }\n") +
     `market_definition rules:\n` +
     `- market_context must be framed around the job executor and the job they are trying to accomplish — not a product category.\n` +
     `- Format: \"[Job executor plural] trying to [accomplish the job]\" — e.g. \"Independent cafe operators trying to create a repeatable premium coffee experience.\"\n` +
@@ -523,9 +547,22 @@ async function callLocalSynthesis(args: {
     "Customer journeys must contain exactly 8 checkpoints numbered 1..8.\n" +
     "Desired outcomes must be clear ODI-style statements in common language: directional verb (Minimize/Increase/Reduce/Improve) + measurable object + context.";
 
+  if (userText.length > USER_TEXT_ABORT_CHARS) {
+    throw new Error(
+      `Assembled synthesis prompt is ${userText.length} chars (> ${USER_TEXT_ABORT_CHARS}) — aborting rather than truncating below the approved per-file caps.`,
+    );
+  }
+  console.log(`[local-jobmap-synthesis] assembled prompt chars: system=${systemText.length} user=${userText.length}`);
+
+  // The /v1 OpenAI-compat endpoint ignores `options`, so num_ctx cannot be raised
+  // there — the native /api/chat endpoint is the only way to guarantee the full
+  // prompt fits the context window instead of being silently truncated.
+  const nativeBase = args.ollamaUrl.replace(/\/v1\/?$/, "");
   const payload = {
     model: args.ollamaModel,
-    response_format: { type: "json_object" },
+    format: "json",
+    stream: false,
+    options: { num_ctx: 8192 },
     messages: [
       { role: "system", content: systemText },
       { role: "user", content: userText },
@@ -533,9 +570,9 @@ async function callLocalSynthesis(args: {
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), args.timeoutMs ?? OLLAMA_TIMEOUT_MS);
   try {
-    const resp = await fetch(`${args.ollamaUrl}/chat/completions`, {
+    const resp = await fetch(`${nativeBase}/api/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -551,9 +588,14 @@ async function callLocalSynthesis(args: {
     }
 
     const data = await resp.json().catch(() => ({}));
-    const content = data?.choices?.[0]?.message?.content;
+    const content = data?.message?.content;
     const parsed = safeParseJsonObject(content);
-    if (!parsed) throw new Error("Local synthesis model returned invalid JSON.");
+    if (!parsed) {
+      const contentStr = typeof content === "string" ? content : "";
+      throw new Error(
+        `Local synthesis model returned invalid JSON (done_reason=${data?.done_reason ?? "unknown"}, eval_count=${data?.eval_count ?? "?"}, prompt_eval_count=${data?.prompt_eval_count ?? "?"}, content_tail=${JSON.stringify(contentStr.slice(-160))}).`,
+      );
+    }
     return parsed;
   } finally {
     clearTimeout(timeoutId);
@@ -799,8 +841,27 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const companyId = safeText((body as Record<string, unknown>)?.company_id);
     const trigger = safeText((body as Record<string, unknown>)?.trigger) || "manual";
-    const requestedMaps = parseSelectedJobMaps((body as Record<string, unknown>)?.selected_job_maps);
+    // Gate 2a flags (operator-approved):
+    // selected_maps_only — write ONLY the caller-sent journey keys; neither the
+    //   parser's customer-default injection nor the post-normalization unshift may
+    //   add keys, so existing spines under other keys are structurally untouchable
+    //   (regeneration deletes per journey_key).
+    // require_model — model failure/timeout is a loud error with ZERO writes;
+    //   deterministic fallback is prohibited (it would write a set not derived from
+    //   the documents while looking like success).
+    // declared_direction — written steps carry the operator-signed declared-direction
+    //   evidence wording, applied after normalization so the sanitizer cannot coerce it.
+    const selectedMapsOnly = Boolean((body as Record<string, unknown>)?.selected_maps_only);
+    const requireModel = Boolean((body as Record<string, unknown>)?.require_model);
+    const declaredDirection = Boolean((body as Record<string, unknown>)?.declared_direction);
+    const requestedMaps = parseSelectedJobMaps(
+      (body as Record<string, unknown>)?.selected_job_maps,
+      !selectedMapsOnly,
+    );
     if (!companyId) return json({ error: "company_id is required" }, 400);
+    if (selectedMapsOnly && requestedMaps.length === 0) {
+      return json({ error: "selected_maps_only requires at least one valid selected_job_maps entry." }, 400);
+    }
 
     const supabase = createClient(supabaseUrl, serviceRole);
     const authHeader = req.headers.get("Authorization");
@@ -876,7 +937,7 @@ Deno.serve(async (req) => {
     const { data: inputFiles } = inputIds.length > 0
       ? await supabase
           .from("input_files")
-          .select("input_id,file_name,tags,uploaded_at")
+          .select("input_id,file_name,file_path,tags,uploaded_at")
           .in("input_id", inputIds)
           .order("uploaded_at", { ascending: false })
           .limit(180)
@@ -890,6 +951,45 @@ Deno.serve(async (req) => {
     const files = Array.isArray(inputFiles) ? inputFiles : [];
     const marketDef = asRecord(marketDefRow as Record<string, unknown> | null);
     const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
+
+    // Gate 2a: .extracted.txt sidecar excerpts join the synthesis context — a new
+    // LOCAL read (Supabase storage download) with no boundary change. Uneven budget
+    // per the operator amendment: B2B_-prefixed core docs up to SIDECAR_CORE_CAP
+    // chars each; the rest share what remains of SIDECAR_TOTAL_BUDGET.
+    const sidecarOrder = [
+      ...files.filter((row) => safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
+      ...files.filter((row) => !safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
+    ];
+    const coreCount = sidecarOrder.filter((row) =>
+      safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")
+    ).length;
+    const remainderCount = Math.max(1, sidecarOrder.length - coreCount);
+    const perFileRemainderCap = Math.max(
+      200,
+      Math.floor((SIDECAR_TOTAL_BUDGET - coreCount * SIDECAR_CORE_CAP) / remainderCount),
+    );
+    const internalDocuments: Array<{ file_name: string; excerpt: string }> = [];
+    for (const row of sidecarOrder) {
+      const filePath = safeText((row as Record<string, unknown>)?.file_path);
+      const fileName = safeText((row as Record<string, unknown>)?.file_name);
+      if (!filePath) continue;
+      const cap = fileName.startsWith("B2B_") ? SIDECAR_CORE_CAP : perFileRemainderCap;
+      try {
+        const { data: sidecar, error: sidecarErr } = await supabase.storage
+          .from("input-files")
+          .download(`${filePath}.extracted.txt`);
+        if (sidecarErr || !sidecar) continue;
+        const text = (await sidecar.text()).replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        internalDocuments.push({ file_name: fileName, excerpt: text.slice(0, cap) });
+      } catch {
+        // Missing sidecar = that document simply contributes nothing; the file list
+        // itself still appears in the `files` block below.
+      }
+    }
+    console.log(
+      `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${sidecarOrder.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (core=${coreCount}@${SIDECAR_CORE_CAP}, rest@${perFileRemainderCap})`,
+    );
 
     const industryLabel = inferStandardMarketCategory(
       safeText(baseline?.category_archetype),
@@ -932,7 +1032,12 @@ Deno.serve(async (req) => {
         status: safeText((row as Record<string, unknown>)?.status),
         completeness: Number((row as Record<string, unknown>)?.completeness) || 0,
       })),
-      files: files.map((row) => ({
+      // Declared-direction context-window fit (measured: prompt_eval 7,190 of 8,192
+      // left the JSON output truncated at done_reason=length): the files metadata
+      // block is fully redundant with internal_documents on declared runs, and the
+      // public-baseline ledger is context, not source, for an internal derivation.
+      // The signed sidecar budget is untouched by these trims.
+      files: declaredDirection ? [] : files.map((row) => ({
         input_id: safeText((row as Record<string, unknown>)?.input_id),
         file_name: safeText((row as Record<string, unknown>)?.file_name),
         tags: Array.isArray((row as Record<string, unknown>)?.tags)
@@ -948,14 +1053,17 @@ Deno.serve(async (req) => {
         economic_engine: safeText(lensCard?.economic_engine),
       },
       baseline_signals: evidenceLedger
-        .slice(0, 18)
+        .slice(0, declaredDirection ? 10 : 18)
         .map((item) => ({
           bucket: safeText((item as Record<string, unknown>)?.bucket),
-          snippet: safeText((item as Record<string, unknown>)?.snippet),
+          snippet: declaredDirection
+            ? safeText((item as Record<string, unknown>)?.snippet).slice(0, 160)
+            : safeText((item as Record<string, unknown>)?.snippet),
         }))
         .filter((item) => item.bucket || item.snippet),
       industry_label: industryLabel || "",
       industry_step_anchors: industryAnchors || null,
+      internal_documents: internalDocuments,
     };
 
     const contextHint = buildContextHint({
@@ -992,8 +1100,18 @@ Deno.serve(async (req) => {
         contextJson: evidenceContext,
         industryLabel: industryLabel || undefined,
         industryAnchors: industryAnchors || undefined,
+        timeoutMs: requireModel ? OLLAMA_REQUIRE_MODEL_TIMEOUT_MS : undefined,
+        skipNeeds: declaredDirection,
       });
     } catch (error) {
+      if (requireModel) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("[local-jobmap-synthesis] require_model set — model failure is terminal, nothing written", error);
+        return json(
+          { error: `Local synthesis model failed and require_model is set — nothing was written: ${message}` },
+          502,
+        );
+      }
       synthesisMode = "fallback";
       console.error("[local-jobmap-synthesis] local model failed, falling back to deterministic synthesis", error);
       llmOutput = {};
@@ -1040,7 +1158,11 @@ Deno.serve(async (req) => {
         forceContextualDescriptions: true,
         industryExclusions,
       });
-    if (!normalizedJourneys.some((journey) => isCustomerJourneyKey(journey.journey_key))) {
+    // selected_maps_only: the synthesized customer journey stays available as
+    // context (executor inference, needs grounding, response stats) but is never
+    // injected into the write set — regeneration deletes per journey_key, so an
+    // unrequested "customer" write would destroy an existing spine under that key.
+    if (!selectedMapsOnly && !normalizedJourneys.some((journey) => isCustomerJourneyKey(journey.journey_key))) {
       normalizedJourneys.unshift(primaryCustomerJourney);
     }
 
@@ -1099,9 +1221,22 @@ Deno.serve(async (req) => {
     }
 
     const sourceRunId = crypto.randomUUID();
+    const requestedMapKeys = new Set(requestedMaps.map((map) => map.journey_key));
     const journeysToWrite = normalizedJourneys
       .filter((j) => !difyProtectedKeys.has(j.journey_key))
+      .filter((j) => !selectedMapsOnly || requestedMapKeys.has(j.journey_key))
       .sort((a, b) => Number(isCustomerJourneyKey(a.journey_key)) - Number(isCustomerJourneyKey(b.journey_key)));
+    if (declaredDirection) {
+      // Operator-signed declared-direction wording, applied after normalization so
+      // sanitizeEvidenceStatus cannot coerce it back to "unclear".
+      for (const journey of journeysToWrite) {
+        journey.steps = journey.steps.map((step) => ({
+          ...step,
+          evidence_status: "declared" as NormalizedStep["evidence_status"],
+          evidence_basis: DECLARED_EVIDENCE_BASIS,
+        }));
+      }
+    }
     let stepsInserted = 0;
     let affectedArtifactsMarked = 0;
     let dependenciesCreated = 0;
@@ -1142,7 +1277,10 @@ Deno.serve(async (req) => {
           job_executor: marketDefinition.job_executor,
           chooser: marketDefinition.chooser,
           jtbd: marketDefinition.jtbd,
-          provenance_type: "framework_adjudicated",
+          // Gate 2a addendum: declared-direction runs must not leave internally
+          // derived content under a borrowed label — internal_declared is the
+          // honest enum value (widened by migration 20260612000002).
+          provenance_type: declaredDirection ? "internal_declared" : "framework_adjudicated",
           source_path: preserveManualMarket ? safeText(existingMarket?.source_path) : "local_jobmap_synthesis",
           frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
           updated_at: new Date().toISOString(),
@@ -1157,7 +1295,7 @@ Deno.serve(async (req) => {
       const { error: marketInsertError } = await supabase.from("odi_market_definitions").insert({
         company_id: companyId,
         user_id: runUserId,
-        provenance_type: "framework_adjudicated",
+        provenance_type: declaredDirection ? "internal_declared" : "framework_adjudicated",
         job_executor: marketDefinition.job_executor,
         chooser: marketDefinition.chooser,
         jtbd: marketDefinition.jtbd,
