@@ -28,6 +28,8 @@ import {
 } from "../_shared/claimProvenance.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
+import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
+import { buildClientCorpus } from "../_shared/syndication.ts";
 // B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
 // corroboration-side gating lives in _shared/claimProvenance.ts.
 
@@ -2734,6 +2736,7 @@ async function runEvidenceReview(opts: {
     `- You are reviewing the DRAFT artifacts (journeys, opportunities, routes). The evidence context is source material, not part of the draft: never attribute its contents to the draft, and cite only artifacts that are actually in your input.\n` +
     `- Company self-claims marked SELF-REPORTED, UNCORROBORATED or CONTRADICTED in the evidence context are already qualified at the data level. Flag such a claim ONLY when a draft artifact asserts it as established fact. A draft that omits the claim, or references it as qualified, aspirational, or a hypothesis to validate, is correct and must not be flagged for it.\n` +
     `- The "Known tensions" section IS the draft's acknowledgment of serious negatives in the outside voice. When a serious negative is named there, do not report it as unacknowledged — judge only whether the entry's scoping is honest. When a serious negative is NOT named there or anywhere in the draft, report it exactly as before.\n` +
+    `- The "PREVIOUSLY ESTABLISHED OUTSIDE EVIDENCE" section (when present) is established prior outside evidence from earlier public scans, each item stamped with its run of origin. A claim marked CORROBORATED on that basis is legitimately corroborated — do not flag it as unsupported merely because the current scan's items don't repeat it. It is never a substitute for what the current scan shows about NEW facts.\n` +
     `Use severity=high only when the draft materially overclaims or presents unsupported specifics as fact.\n`;
 
   return await callOpenAIJSON({
@@ -5687,6 +5690,58 @@ Deno.serve(async (req) => {
     // is the sole evidence context here, regardless of researchContextMode.
     const baselineContextIntro = "Public baseline context:";
 
+    // B2.2a residual closed: the deep-rebuild path judges with the same memory the leaf
+    // paths have. Store supplement built ONCE (same _shared builder, same four admission
+    // rules, replay-deterministic against the resolved baseline run); read by the claim
+    // judge AND the brief (gen stages + reviewers + finalizer all see the same clearly
+    // bounded section).
+    let storeSupplement: StoreSupplement | null = null;
+    if (baselineRun?.id != null && effectiveBaselineResultJson) {
+      try {
+        const companyHostS = (() => {
+          try { return new URL(String(website || "")).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; }
+        })();
+        const snapshotS = effectiveBaselineResultJson as {
+          evidence_ledger?: Array<{ snippet?: string; url?: string; bucket?: string; source_type?: string }>;
+          outside_voice_signals?: Array<{ signal?: string; url?: string }>;
+        };
+        const ledgerItemsS = Array.isArray(snapshotS?.evidence_ledger) ? snapshotS.evidence_ledger : [];
+        const currentRunItemsS = [
+          ...ledgerItemsS.map((i) => ({ url: String(i?.url || "").trim(), text: String(i?.snippet || "").trim() })),
+          ...(Array.isArray(snapshotS?.outside_voice_signals) ? snapshotS.outside_voice_signals : []).map((sig) => ({
+            url: String(sig?.url || "").trim(),
+            text: String(sig?.signal || "").trim(),
+          })),
+        ].filter((i) => i.url && i.text);
+        const clientTextsS = ledgerItemsS
+          .filter((i) => classifyVoice(i, companyHostS) === "client_voice")
+          .map((i) => String(i?.snippet || ""))
+          .filter(Boolean);
+        const corpusS = await buildClientCorpus(supabase as unknown as { from: (t: string) => any }, String(company_id), companyHostS, clientTextsS);
+        storeSupplement = await buildStoreSupplement({
+          supabase: supabase as unknown as { from: (t: string) => any },
+          companyId: String(company_id),
+          pinnedRunId: Number(baselineRun.id),
+          companyHost: companyHostS,
+          corpus: corpusS,
+          clientSample: clientTextsS.join("\n").slice(0, 4000),
+          currentRunItems: currentRunItemsS,
+          classify: (entry) => classifyVoice(entry, companyHostS),
+          label: "research-company",
+        });
+      } catch (error) {
+        console.warn("[storeSupplement] research-company build FAILED — judge and brief proceed snapshot-only (loud, not silent)", {
+          message: String(error instanceof Error ? error.message : error),
+        });
+        await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+          company_id: String(company_id), component: "store_supplement", status: "failed",
+          error: String(error instanceof Error ? error.message : error),
+          run_ref: baselineRun?.id != null ? String(baselineRun.id) : null,
+        });
+        storeSupplement = null;
+      }
+    }
+
     // Claim provenance: judge company self-claims against the baseline's independent evidence
     // BEFORE building the brief, so every downstream consumer (gen stages, reviewers,
     // finalizer) sees uncorroborated self-claims pre-qualified at the data level.
@@ -5699,6 +5754,7 @@ Deno.serve(async (req) => {
         companyWebsite: website,
         supabase,
         companyId: String(company_id),
+        supplement: storeSupplement,
         runRef: baselineRun?.id != null ? String(baselineRun.id) : null,
         // Inject the local client (budget-ladder retry) — identical behavior to the
         // pre-extraction local function.
@@ -5709,6 +5765,12 @@ Deno.serve(async (req) => {
         corroborated: claimProvenance.filter((entry) => entry.status === "corroborated").length,
         uncorroborated: claimProvenance.filter((entry) => entry.status === "uncorroborated").length,
         contradicted: claimProvenance.filter((entry) => entry.status === "contradicted").length,
+        // Observability only (supplement-integration validation): per-claim verdicts.
+        claims: claimProvenance.map((entry) => ({
+          claim: String(entry.claim || "").slice(0, 60),
+          status: entry.status,
+          basis: entry.basis_urls.map((u) => u.slice(0, 60)),
+        })),
       });
     } catch (error) {
       // LOUD deterministic fallback: every company_claim item is tagged self-reported by
@@ -5733,6 +5795,7 @@ Deno.serve(async (req) => {
     const baselineBrief = [
       baselineContextIntro,
       buildBaselineBrief(effectiveBaselineResultJson, claimProvenance),
+      buildStoreSupplementBrief(storeSupplement),
     ]
       .filter(Boolean)
       .join("\n\n");
