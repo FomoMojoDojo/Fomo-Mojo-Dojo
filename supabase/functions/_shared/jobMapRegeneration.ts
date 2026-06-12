@@ -11,6 +11,7 @@ import {
   snapshotArtifactVersion,
   upsertDependenciesForArtifact,
 } from "./strategicGraph.ts";
+import { DELETABLE_PROVENANCE_OR_FILTER } from "./journeyProtection.ts";
 
 type SupabaseClientLike = {
   from: (table: string) => {
@@ -128,7 +129,9 @@ async function restoreJobStepsForJourney(
   journeyKey: string,
   rows: Record<string, unknown>[],
 ) {
-  const { error: deleteError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
+  // Gate 2b row-level backstop: protected-provenance rows are never deleted,
+  // even on the restore path. NULL stays deletable (legacy law).
+  const { error: deleteError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey).or(DELETABLE_PROVENANCE_OR_FILTER);
   if (deleteError) {
     throw new Error(deleteError.message || "Failed clearing regenerated job steps before restore.");
   }
@@ -268,7 +271,10 @@ export async function regenerateJobMapJourney(args: {
       });
     }
 
-    const { error: deleteExistingError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", normalizedKey);
+    // Gate 2b row-level backstop (operator-approved Option A): internal_derived /
+    // operator_authored rows never enter a delete — callers must key-exclude
+    // protected journeys; this guard holds even if they regress.
+    const { error: deleteExistingError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", normalizedKey).or(DELETABLE_PROVENANCE_OR_FILTER);
     if (deleteExistingError) {
       throw new Error(deleteExistingError.message || "Failed clearing existing job steps before regeneration.");
     }

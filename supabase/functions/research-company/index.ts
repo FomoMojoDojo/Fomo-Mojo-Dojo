@@ -28,6 +28,7 @@ import {
 } from "../_shared/claimProvenance.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
+import { DELETABLE_PROVENANCE_OR_FILTER, isProtectedJourneyKey, protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
@@ -5601,17 +5602,20 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
-    // OPTION B (Phase 1): research-company generates the PUBLIC/CUSTOMER-FACING spine only.
-    // The internal/operational journey is the local pipeline's domain (run-mojo-analysis) —
-    // generating it from public-only context would produce ungrounded internal claims the
-    // reviewer rightly flags. Excluded from both generation (here) and the regen delete list.
-    const isInternalJourneyKey = (k: unknown): boolean => {
-      const n = normalizeJourneyKey(k);
-      return n === "internal" || n.startsWith("internal");
-    };
+    // Gate 2b (supersedes the OPTION B name predicate): protection keys off
+    // provenance_type, never journey name. A key with any internal_derived or
+    // operator_authored row never enters generation targeting or the delete list
+    // — research-company generates the PUBLIC spine only, and internal/declared
+    // sets are reshaped by the operator (delete-then-rederive is the consent flow).
+    const provenanceProtectedKeys = protectedJourneyKeys(
+      (existingJobStepRows ?? []) as Array<{ journey_key?: unknown; provenance_type?: string | null }>,
+    );
+    if (provenanceProtectedKeys.size > 0) {
+      console.log(`[research-company] provenance-protected journey keys (never targeted, never deleted): ${[...provenanceProtectedKeys].join(", ")}`);
+    }
     let targetJourneyKeys: JourneyKey[] = [
       ...new Set(selectedJobMaps.map((map) => map.journey_key)),
-    ].filter((k) => !isInternalJourneyKey(k));
+    ].filter((k) => !isProtectedJourneyKey(k, provenanceProtectedKeys));
     if (strictSingleJourneyMode) {
       const strictJourneyKey = runtimeContract.journey_key as JourneyKey;
       if (targetJourneyKeys.length !== 1 || targetJourneyKeys[0] !== strictJourneyKey) {
@@ -5655,10 +5659,10 @@ Deno.serve(async (req) => {
       );
       console.log(`[research-company] additive-preserve: pinned set '${pinnedPreserveKey}' excluded from regen — its job_steps are preserved`);
     }
-    // OPTION B (Phase 1): the internal journey isn't generated here (filtered above), so keep
-    // its job_steps out of the delete/insert too — otherwise an explicit internal target would
-    // delete rows gen no longer reproduces. The internal journey stays owned by run-mojo-analysis.
-    jobMapUpdateJourneyKeys = jobMapUpdateJourneyKeys.filter((k) => !isInternalJourneyKey(k));
+    // Gate 2b: provenance-protected keys stay out of the delete/insert set too —
+    // an explicit selection of a protected key must not delete rows this gen will
+    // not (and must not) reproduce.
+    jobMapUpdateJourneyKeys = jobMapUpdateJourneyKeys.filter((k) => !isProtectedJourneyKey(k, provenanceProtectedKeys));
     const jobMapUpdateJourneyKeySet = new Set(jobMapUpdateJourneyKeys);
     const targetJourneyKeySet = new Set(targetJourneyKeys);
     const selectedJobMapByKey = new Map<JourneyKey, SelectedJobMap>(
@@ -7020,11 +7024,14 @@ Deno.serve(async (req) => {
     }
 
     if (jobMapUpdateJourneyKeys.length > 0) {
+      // Gate 2b row-level backstop: protected-provenance rows survive even if the
+      // key-level exclusion above ever regresses. NULL stays deletable (legacy law).
       await supabase
         .from("job_steps")
         .delete()
         .eq("company_id", company_id)
-        .in("journey_key", jobMapUpdateJourneyKeys);
+        .in("journey_key", jobMapUpdateJourneyKeys)
+        .or(DELETABLE_PROVENANCE_OR_FILTER);
     }
     await supabase.from("solution_tests").delete().eq("company_id", company_id);
     await supabase.from("solution_ideas").delete().eq("company_id", company_id);

@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestDifyProposalSignals } from "../_shared/evidencePhase1.ts";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
+import { DELETABLE_PROVENANCE_OR_FILTER, protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
 
 const corsHeaders = {
@@ -273,7 +274,8 @@ async function writeJourneySteps(
   sourceRunId: string | null = null,
 ) {
   const runTag = `dify_mojo_analysis:${new Date().toISOString().slice(0, 10)}`;
-  await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
+  // Gate 2b row-level backstop: protected-provenance rows never enter a delete.
+  await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey).or(DELETABLE_PROVENANCE_OR_FILTER);
   for (const step of steps) {
     const payload: Record<string, unknown> = {
       // Phase 2 Gate 1: Dify-derived steps are internal provenance — mechanically
@@ -395,7 +397,8 @@ async function restoreJobStepsForJourney(
   journeyKey: string,
   rows: Record<string, unknown>[],
 ) {
-  const { error: deleteError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
+  // Gate 2b row-level backstop: protected-provenance rows never enter a delete.
+  const { error: deleteError } = await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey).or(DELETABLE_PROVENANCE_OR_FILTER);
   if (deleteError) {
     throw new Error(deleteError.message || "Failed clearing regenerated job steps before restore.");
   }
@@ -505,7 +508,21 @@ async function applyJobStepsFromDify(
   if (!userId) return;
 
   const normalizedKey = journeyKey.trim() || "customer";
-  if (internalSteps.length >= 4) {
+  // Gate 2b (operator-approved Option A, absolute): a journey key holding
+  // internal_derived or operator_authored rows is never a regeneration target —
+  // re-apply onto an existing set would silently destroy operator curation.
+  // Deliberate delete-then-rederive is the consent flow.
+  const { data: existingProvRows } = await supabase
+    .from("job_steps")
+    .select("journey_key, provenance_type")
+    .eq("company_id", companyId);
+  const protectedKeys = protectedJourneyKeys(
+    (existingProvRows ?? []) as Array<{ journey_key?: unknown; provenance_type?: string | null }>,
+  );
+  if (protectedKeys.size > 0) {
+    console.log(`[run-mojo-analysis] provenance-protected journey keys (regeneration skipped): ${[...protectedKeys].join(", ")}`);
+  }
+  if (internalSteps.length >= 4 && !protectedKeys.has("internal")) {
     const internalTitle = "Internal Operations";
     const internalSubtitle = "How the organization supports the customer job internally";
     const internalResult = await regenerateJobMapJourney({
@@ -525,7 +542,7 @@ async function applyJobStepsFromDify(
     console.log("[run-mojo-analysis] wrote", internalSteps.length, "internal operational steps | affected artifacts:", internalResult.affectedArtifactCount);
   }
 
-  if (customerSteps.length >= 4) {
+  if (customerSteps.length >= 4 && !protectedKeys.has(normalizedKey.toLowerCase())) {
     const customerTitle = jobPerformer
       ? `Checkpoint Map: ${jobPerformer}`
       : "Customer Checkpoint Map";

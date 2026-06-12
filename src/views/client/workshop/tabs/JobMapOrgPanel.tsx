@@ -1071,13 +1071,16 @@ export default function JobMapOrgPanel({
     grouped.get(s.journey_key)!.push(s);
   }
 
-  function isInternalJourneyKey(key: string): boolean {
+  // Gate 2b: DISPLAY TAXONOMY ONLY — this name test decides which section of the
+  // panel a journey renders in, never protection. All write-protection keys off
+  // provenance_type in the edge functions (_shared/journeyProtection.ts).
+  function isInternallyNamedKey(key: string): boolean {
     const k = key.toLowerCase().trim();
     return k === "internal" || k === "operations" || k.startsWith("internal-") || k.startsWith("internal_");
   }
 
-  const primaryKeys  = journeyOrder.filter((k) => !isInternalJourneyKey(k));
-  const internalKeys = journeyOrder.filter((k) =>  isInternalJourneyKey(k));
+  const primaryKeys  = journeyOrder.filter((k) => !isInternallyNamedKey(k));
+  const internalKeys = journeyOrder.filter((k) =>  isInternallyNamedKey(k));
 
   // ── Hierarchy layout — horizontal tab bar ────────────────────────────────
   if (hasHierarchy) {
