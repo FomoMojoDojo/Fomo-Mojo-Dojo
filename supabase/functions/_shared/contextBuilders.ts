@@ -403,6 +403,11 @@ function buildJourneysFromJobSteps(jobStepRows: unknown[]): JourneyObject[] {
 
   for (const row of jobStepRows) {
     const r = row as Record<string, unknown>;
+    // Phase 2 Gate 1 — defensive backstop behind the jobFramingGate chokepoint:
+    // every current consumer of this builder is external-bound (OpenAI briefs), so
+    // any row that is not explicitly public-provenance is dropped here even if a
+    // future caller forgets the gate. Callers must select provenance_type.
+    if (r.provenance_type !== "public_baseline") continue;
     const key = String(r.journey_key || "").trim();
     if (!key) continue;
     if (!byKey.has(key)) {

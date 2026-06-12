@@ -27,6 +27,7 @@ import {
   type ClaimProvenanceEntry,
 } from "../_shared/claimProvenance.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
+import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
@@ -5467,7 +5468,7 @@ Deno.serve(async (req) => {
 
     const { data: existingJobStepRows, error: existingJobStepsErr } = await supabase
       .from("job_steps")
-      .select("journey_key, journey_title, journey_subtitle, created_at")
+      .select("journey_key, journey_title, journey_subtitle, created_at, provenance_type")
       .eq("company_id", company_id)
       .order("created_at", { ascending: false })
       .limit(240);
@@ -5475,7 +5476,19 @@ Deno.serve(async (req) => {
     if (existingJobStepsErr) {
       console.log("[research-company] existing job map fetch error:", existingJobStepsErr.message);
     }
-    const existingJobMaps = deriveExistingJobMaps(existingJobStepRows ?? []);
+    // Phase 2 Gate 1: stored step content enters this pipeline's external prompts only
+    // through these rows (titles/subtitles flow into selectedJobMapBrief). Gate to
+    // public provenance; non-public existing maps neither frame prompts nor drive
+    // selection — suggested maps (derived from the current public run) and explicit
+    // body selections take over, and the operator pin's preserve mechanic is separate
+    // (resolve_primary_job_step_set) and untouched.
+    const existingStepsGate = await gateJobStepsForExternal({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      rows: (existingJobStepRows ?? []) as Array<{ provenance_type?: string | null }>,
+      consumer: "research-company",
+    });
+    const existingJobMaps = deriveExistingJobMaps(existingStepsGate.admissible);
 
     const selectedBase: SelectedJobMap[] =
       submittedJobMaps.length > 0
@@ -5654,6 +5667,7 @@ Deno.serve(async (req) => {
     const selectedJobMapBrief = selectedJobMaps
       .map((map, index) => `${index + 1}. ${map.journey_key} | ${map.journey_title} | ${map.journey_subtitle}`)
       .join("\n");
+    const selectedJobMapBriefSafe = selectedJobMapBrief.trim() ? selectedJobMapBrief : JOB_FRAMING_FALLBACK_LINE;
 
     // -------------------------
     // 1) Generate INPUTS (14) — schema does NOT include group fields
@@ -6036,7 +6050,7 @@ Deno.serve(async (req) => {
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
-      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBriefSafe}\n\n` +
       `Create these journeys: ${targetJourneyKeys.join(", ")}.\n` +
       `Customer journeys must include exactly ${JTBD_CHECKPOINT_COUNT} checkpoints, numbered 1..${JTBD_CHECKPOINT_COUNT}.\n` +
       `Non-customer journeys can include 6-8 ODI-style steps, numbered 1..N.\n` +
@@ -6266,7 +6280,7 @@ Deno.serve(async (req) => {
       `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Managed outcomes:\n${buildManagedOutcomeBrief(managedOutcomes)}\n\n` +
-      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBriefSafe}\n\n` +
       `Generated journeys and steps:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generate 8–20 opportunities for the customer journey only.\n` +
       `Tie each opportunity to an existing step_number + step_label from the generated journeys above.\n` +
@@ -6568,7 +6582,7 @@ Deno.serve(async (req) => {
       `Company: ${company_name}\nWebsite: ${website || "unknown"}\n\n` +
       `${evidenceContextHeading}:\n${baselineBrief}\n\n` +
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
-      `Selected job maps:\n${selectedJobMapBrief}\n\n` +
+      `Selected job maps:\n${selectedJobMapBriefSafe}\n\n` +
       `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunities)}\n\n` +
       `Generate routes that synthesize these into coherent strategic workstreams.\n`;

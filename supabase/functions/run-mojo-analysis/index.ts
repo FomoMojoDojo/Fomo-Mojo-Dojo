@@ -276,6 +276,9 @@ async function writeJourneySteps(
   await supabase.from("job_steps").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
   for (const step of steps) {
     const payload: Record<string, unknown> = {
+      // Phase 2 Gate 1: Dify-derived steps are internal provenance — mechanically
+      // inadmissible to external prompt framing.
+      provenance_type: "internal_derived",
       company_id: companyId,
       user_id: userId,
       journey_key: journeyKey,

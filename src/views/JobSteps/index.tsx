@@ -2209,6 +2209,9 @@ export default function JobStepsView() {
     const rows = draftCheckpointSeed.map((seed, index) => ({
       company_id: activeCompanyId,
       user_id: authData.user.id,
+      // Phase 2 Gate 1: operator-authored steps are inadmissible to external prompt
+      // framing (council decision 3 — same standing as internal).
+      provenance_type: "operator_authored",
       journey_key: args.key,
       journey_title: args.title,
       journey_subtitle: args.subtitle,

@@ -11,6 +11,7 @@ import { classifyVoice } from "../_shared/claimProvenance.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
+import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildCompetitorMarketBrief,
@@ -245,15 +246,22 @@ Deno.serve(async (req) => {
     const { data: jobStepRows } = await supabase
       .from("job_steps")
       .select(
-        "journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence",
+        "journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence, provenance_type",
       )
       .eq("company_id", company_id)
       .order("journey_key", { ascending: true })
       .order("step_number", { ascending: true })
       .limit(240);
 
-    const journeys = buildJourneysFromJobSteps(jobStepRows ?? []);
-    const selectedJobMapBrief = buildSelectedJobMapBrief(journeys);
+    // Phase 2 Gate 1: only public-provenance steps may reach external prompt framing.
+    const jobGate = await gateJobStepsForExternal({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      rows: (jobStepRows ?? []) as Array<{ provenance_type?: string | null }>,
+      consumer: "refresh-cascade",
+    });
+    const journeys = buildJourneysFromJobSteps(jobGate.admissible);
+    const selectedJobMapBrief = jobGate.fallback ? JOB_FRAMING_FALLBACK_LINE : buildSelectedJobMapBrief(journeys);
 
     // --- Fetch inputs ---
     const { data: inputRows } = await supabase
@@ -386,7 +394,7 @@ Deno.serve(async (req) => {
       `Client-stated strategic problems:\n${strategicProblemBrief}\n\n` +
       `Selected job maps:\n${selectedJobMapBrief || "none"}\n\n` +
       `Generated strategy inputs:\n${buildInputBrief(inputRows ?? [])}\n\n` +
-      `Generated journeys:\n${buildJourneyBrief(journeys)}\n\n` +
+      `Generated journeys:\n${jobGate.fallback ? JOB_FRAMING_FALLBACK_LINE : buildJourneyBrief(journeys)}\n\n` +
       `Generated opportunities:\n${buildOpportunityBrief(opportunityRows ?? [])}\n\n` +
       `Generated routes:\n${routesSummary}\n\n` +
       (competitorMarketBrief ? `${competitorMarketBrief}\n\n` : "") +

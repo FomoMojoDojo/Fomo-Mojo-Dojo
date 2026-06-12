@@ -278,6 +278,11 @@ export async function regenerateJobMapJourney(args: {
     const stepPayload = steps.map((step) => ({
       company_id: companyId,
       user_id: userId,
+      // Phase 2 Gate 1: both callers of this module (local-jobmap-synthesis,
+      // run-mojo-analysis) are internal pipelines — their steps are mechanically
+      // inadmissible to external prompt framing. Restore paths re-insert previously
+      // selected rows, so original provenance round-trips untouched.
+      provenance_type: "internal_derived",
       journey_key: normalizedKey,
       journey_title: journeyTitle,
       journey_subtitle: journeySubtitle,

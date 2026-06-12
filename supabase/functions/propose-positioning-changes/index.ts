@@ -23,6 +23,7 @@ import {
   normalizeStrategicAssumptions,
   normalizeStrategicProblems,
 } from "../_shared/contextBuilders.ts";
+import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
 
 const corsHeaders: Record<string, string> = {
@@ -248,14 +249,20 @@ Deno.serve(async (req: Request) => {
 
   const { data: jobStepRows } = await db
     .from("job_steps")
-    .select("journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence")
+    .select("journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence, provenance_type")
     .eq("company_id", company_id)
     .order("journey_key", { ascending: true })
     .order("step_number", { ascending: true })
     .limit(240);
 
-  const journeys = buildJourneysFromJobSteps(jobStepRows ?? []);
-  const selectedJobMapBrief = buildSelectedJobMapBrief(journeys);
+  const jobGate = await gateJobStepsForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    rows: (jobStepRows ?? []) as Array<{ provenance_type?: string | null }>,
+    consumer: "propose-positioning-changes",
+  });
+  const journeys = buildJourneysFromJobSteps(jobGate.admissible);
+  const selectedJobMapBrief = jobGate.fallback ? JOB_FRAMING_FALLBACK_LINE : buildSelectedJobMapBrief(journeys);
 
   const { data: inputRows } = await db
     .from("inputs")

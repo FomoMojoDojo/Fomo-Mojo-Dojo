@@ -1328,6 +1328,9 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
     const rows = LOCAL_ODI_STEP_SEED.map((seed, index) => ({
       company_id: companyId,
       user_id: userId,
+      // Phase 2 Gate 1: intake-quiz seed maps are operator-submitted content —
+      // inadmissible to external prompt framing (council decision 3).
+      provenance_type: "operator_authored",
       journey_key: "customer",
       journey_title: journeyTitle,
       journey_subtitle: journeySubtitle,
