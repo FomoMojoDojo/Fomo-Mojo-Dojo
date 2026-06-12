@@ -347,7 +347,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const { user, isAdmin } = useAuth();
-  const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany } = useCompany();
+  const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany , fetchError: companiesFetchError } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 0 });
   const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
@@ -390,7 +390,9 @@ export default function ClientRefinePreviewWorkshopView() {
     restoreSignal: signalExclusion.restoreSignal,
   };
 
-  const { preferredRun: baselineRun, loading: baselineLoading } = usePublicBaseline(companyId);
+  const { preferredRun: baselineRun, loading: baselineLoading, error: baselineError } = usePublicBaseline(companyId);
+  // Integrity sweep: the outside panels distinguish looked / not-yet / couldn't-check.
+  const baselineIntegrity = { run: baselineRun, error: baselineError ?? null };
   const baseline = baselineOf(baselineRun);
   const dataQualityFlag = baseline?.data_quality_flag ?? null;
 
@@ -1241,6 +1243,11 @@ export default function ClientRefinePreviewWorkshopView() {
           ) : (
             <p className="crpv-muted">No companies available.</p>
           )}
+          {/* Integrity sweep: fetch failure renders REGARDLESS of the fallback company
+              injection — the dead-branch version of this line could never fire. */}
+          {companiesFetchError && (
+            <p className="crpv-muted" style={{ color: "#c45c00" }}>Couldn't load companies — try reloading.</p>
+          )}
         </article>
       </section>
     );
@@ -1258,11 +1265,11 @@ export default function ClientRefinePreviewWorkshopView() {
 
   function renderOutsideTab() {
     if (baselineLoading) return <div className="crpv-ws-placeholder cap">Loading outside signals…</div>;
-    if (activeTab === "positioning") return <PositioningOutside baseline={baseline} companyId={companyId} exclusion={exclusionControls} />;
-    if (activeTab === "strategy")   return <StrategyOutside baseline={baseline} companyId={companyId} />;
+    if (activeTab === "positioning") return <PositioningOutside baseline={baseline} companyId={companyId} exclusion={exclusionControls} integrity={baselineIntegrity} />;
+    if (activeTab === "strategy")   return <StrategyOutside baseline={baseline} companyId={companyId} integrity={baselineIntegrity} />;
     if (activeTab === "jobmap")     return null;
     if (activeTab === "routes")     return null;
-    return <NeedsOutside baseline={baseline} exclusion={exclusionControls} />;
+    return <NeedsOutside baseline={baseline} exclusion={exclusionControls} integrity={baselineIntegrity} />;
   }
 
   function renderOrgTab() {
@@ -1468,7 +1475,7 @@ export default function ClientRefinePreviewWorkshopView() {
       <>
         <div className="crpv-ws-cmp-support">
           <div className="crpv-ws-cmp-support-col">
-            <NeedsOutsideCompare baseline={baseline} />
+            <NeedsOutsideCompare baseline={baseline} integrity={baselineIntegrity} />
           </div>
           <div className="crpv-ws-cmp-support-col">
             {odiError
@@ -1878,7 +1885,17 @@ export default function ClientRefinePreviewWorkshopView() {
               </button>
             </div>
           )}
-          {companyId && !baselineLoading && !baselineRun && (
+          {companiesFetchError && (
+            <div className="crpv-dq-notice">
+              <p className="crpv-dq-notice-prompt" style={{ color: "#c45c00" }}>Couldn't load companies — try reloading.</p>
+            </div>
+          )}
+          {companyId && !baselineLoading && baselineError && (
+            <div className="crpv-dq-notice">
+              <p className="crpv-dq-notice-prompt" style={{ color: "#c45c00" }}>This check didn't complete — it will run again on the next scan.</p>
+            </div>
+          )}
+          {companyId && !baselineLoading && !baselineError && !baselineRun && (
             <div className="crpv-dq-notice">
               <p className="crpv-dq-notice-prompt">No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.</p>
               <button

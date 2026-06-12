@@ -294,7 +294,7 @@ function stateLabel(layer: LayerState) {
 export default function ClientRefinePreviewView() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
-  const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
+  const { companies, setActiveCompanyId, loading: companiesLoading , fetchError: companiesFetchError } = useCompany();
   const {
     activeCompany,
     hasCompany,
@@ -3555,6 +3555,10 @@ export default function ClientRefinePreviewView() {
             ) : (
               <p className="crpv-muted">No companies available.</p>
             )}
+            {/* Integrity sweep: renders regardless of the fallback company injection. */}
+            {companiesFetchError && (
+              <p className="crpv-muted" style={{ color: "#c45c00" }}>Couldn't load companies — try reloading.</p>
+            )}
           </article>
         ) : (
           <div ref={stageRef} className={stageClassName}>
@@ -3663,6 +3667,10 @@ export default function ClientRefinePreviewView() {
                         )}
                       </div>
                       <div className="crpv-command-main">
+                        {/* Integrity sweep: renders regardless of the fallback company injection. */}
+                        {companiesFetchError && (
+                          <p className="crpv-muted" style={{ color: "#c45c00", margin: "0 0 12px" }}>Couldn't load companies — try reloading.</p>
+                        )}
                         {displayMojoScore && foundationStatus ? (
                           <HomepageHierarchy
                             score={displayMojoScore}

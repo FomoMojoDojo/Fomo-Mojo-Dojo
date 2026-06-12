@@ -8,12 +8,14 @@ import { SectionHeader, StatementField } from "../primitives";
 export default function JTBDOrgPanel({
   marketDef,
   loading,
+  error,
   companyId,
   baseline,
   updateMarketDefinition,
 }: {
   marketDef: OdiMarketDefinitionRow | null;
   loading: boolean;
+  error?: string | null;
   companyId: string;
   baseline: BaselineResult | null;
   updateMarketDefinition: (patch: Partial<Pick<OdiMarketDefinitionRow, "innovation_strategy">>) => Promise<void>;
@@ -21,6 +23,8 @@ export default function JTBDOrgPanel({
   const { savedField, flash } = useSaveFlash();
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
+  // Integrity sweep: a fetch failure is not "no definition yet".
+  if (error && !marketDef) return <div className="crpv-ws-placeholder" style={{ color: "#c45c00" }}>Couldn't load this section — try reloading.</div>;
   if (!marketDef) return <div className="crpv-ws-placeholder">No market definition yet.</div>;
 
   async function saveTextField(field: "job_executor" | "chooser" | "jtbd", value: string) {

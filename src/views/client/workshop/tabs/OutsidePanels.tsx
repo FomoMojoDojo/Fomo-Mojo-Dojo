@@ -147,21 +147,50 @@ export function SignalBar({
 }
 
 
-// ─── Positioning ──────────────────────────────────────────────────────────────
+// ─── Outside empty states (integrity sweep, 2026-06-12) ──────────────────────
+// Law: "all clear" that never asked isn't all clear. The outside panels' empty
+// render distinguishes looked ("Scanned {date} — none found", sourced from the real
+// public_baseline_runs row) / not-yet ("No scan yet") / couldn't-check (the signed
+// didn't-complete string) instead of one "No outside signals found." for all three.
+export type BaselineIntegrity = { run?: { created_at?: string } | null; error?: string | null };
 
-export function PositioningOutside({ baseline, companyId, exclusion }: { baseline: BaselineResult | null; companyId: string | undefined; exclusion?: ExclusionControls }) {
-  const { getStatus, setStatus } = useSignalReview(companyId);
-
-  if (!baseline) {
+function OutsideEmptyState({ integrity, hint }: { integrity?: BaselineIntegrity; hint?: boolean }) {
+  if (integrity?.error) {
     return (
       <div className="crpv-ws-section">
-        <div className="crpv-ws-placeholder">
-          <p>No outside signals found.</p>
-          <p className="crpv-ws-hint">Run baseline research for this company to see what the market says publicly.</p>
+        <div className="crpv-ws-placeholder" style={{ color: "#c45c00" }}>
+          This check didn't complete — it will run again on the next scan.
         </div>
       </div>
     );
   }
+  if (integrity?.run?.created_at) {
+    let when = integrity.run.created_at;
+    try { when = new Date(integrity.run.created_at).toLocaleDateString(); } catch { /* raw */ }
+    return (
+      <div className="crpv-ws-section">
+        <div className="crpv-ws-placeholder">
+          <p>Scanned {when} — none found.</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="crpv-ws-section">
+      <div className="crpv-ws-placeholder">
+        <p>No scan yet.</p>
+        {hint && <p className="crpv-ws-hint">Run baseline research for this company to see what the market says publicly.</p>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Positioning ──────────────────────────────────────────────────────────────
+
+export function PositioningOutside({ baseline, companyId, exclusion, integrity }: { baseline: BaselineResult | null; companyId: string | undefined; exclusion?: ExclusionControls; integrity?: BaselineIntegrity }) {
+  const { getStatus, setStatus } = useSignalReview(companyId);
+
+  if (!baseline) return <OutsideEmptyState integrity={integrity} hint />;
 
   const { message_alignment, outside_voice_signals = [], category_archetype } = baseline;
 
@@ -200,16 +229,10 @@ export function PositioningOutside({ baseline, companyId, exclusion }: { baselin
 
 // ─── Strategy ─────────────────────────────────────────────────────────────────
 
-export function StrategyOutside({ baseline, companyId }: { baseline: BaselineResult | null; companyId: string | undefined }) {
+export function StrategyOutside({ baseline, companyId, integrity }: { baseline: BaselineResult | null; companyId: string | undefined; integrity?: BaselineIntegrity }) {
   const { getStatus, setStatus } = useSignalReview(companyId);
 
-  if (!baseline) {
-    return (
-      <div className="crpv-ws-section">
-        <div className="crpv-ws-placeholder">No outside signals found.</div>
-      </div>
-    );
-  }
+  if (!baseline) return <OutsideEmptyState integrity={integrity} />;
 
   const { lens_card, top_hypotheses = [], open_questions = [] } = baseline;
   const stratDqFlag = baseline.data_quality_flag;
@@ -244,16 +267,10 @@ export function StrategyOutside({ baseline, companyId }: { baseline: BaselineRes
 
 // ─── JTBD ─────────────────────────────────────────────────────────────────────
 
-export function JTBDOutside({ baseline, companyId }: { baseline: BaselineResult | null; companyId: string | undefined }) {
+export function JTBDOutside({ baseline, companyId, integrity }: { baseline: BaselineResult | null; companyId: string | undefined; integrity?: BaselineIntegrity }) {
   const { getStatus, setStatus } = useSignalReview(companyId);
 
-  if (!baseline) {
-    return (
-      <div className="crpv-ws-section">
-        <div className="crpv-ws-placeholder">No outside signals found.</div>
-      </div>
-    );
-  }
+  if (!baseline) return <OutsideEmptyState integrity={integrity} />;
 
   const { lens_card, top_hypotheses = [], open_questions = [] } = baseline;
 
@@ -287,14 +304,8 @@ export function JTBDOutside({ baseline, companyId }: { baseline: BaselineResult 
 
 // ─── Needs ────────────────────────────────────────────────────────────────────
 
-export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult | null; exclusion?: ExclusionControls }) {
-  if (!baseline) {
-    return (
-      <div className="crpv-ws-section">
-        <div className="crpv-ws-placeholder">No outside signals found.</div>
-      </div>
-    );
-  }
+export function NeedsOutside({ baseline, exclusion, integrity }: { baseline: BaselineResult | null; exclusion?: ExclusionControls; integrity?: BaselineIntegrity }) {
+  if (!baseline) return <OutsideEmptyState integrity={integrity} />;
 
   const { outside_voice_signals = [], evidence_ledger = [] } = baseline;
 
@@ -390,10 +401,8 @@ export function NeedsOutside({ baseline, exclusion }: { baseline: BaselineResult
 // Focused outside view for the Needs compare column:
 // shows inferred jobs/needs from hypotheses + voice signals,
 // NOT the raw evidence ledger (which isn't comparable to ODI desired outcomes).
-export function NeedsOutsideCompare({ baseline }: { baseline: BaselineResult | null }) {
-  if (!baseline) {
-    return <div className="crpv-ws-placeholder">No outside signals found. Run the baseline research for this company first.</div>;
-  }
+export function NeedsOutsideCompare({ baseline, integrity }: { baseline: BaselineResult | null; integrity?: BaselineIntegrity }) {
+  if (!baseline) return <OutsideEmptyState integrity={integrity} hint />;
 
   const hypotheses = baseline.top_hypotheses ?? [];
 

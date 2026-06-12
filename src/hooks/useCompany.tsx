@@ -45,6 +45,7 @@ interface CompanyCtx {
   companies: Company[];
   activeCompany: Company | null;
   setActiveCompanyId: (id: string) => void;
+  fetchError?: string | null;
   loading: boolean;
   refetch: () => Promise<void>;
 }
@@ -95,6 +96,7 @@ function isAbortLikeError(error: { message?: string; details?: string } | null |
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const { user, isAdmin, loading: authLoading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(() =>
     safeLocalStorageGet('active_company_id')
   );
@@ -189,11 +191,16 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
     if (error) {
       console.error("[companies] fetch error:", error);
+      // Integrity sweep: the failure is now VISIBLE state, not just a console line —
+      // fallback behavior unchanged (UI stays usable), but consumers can stop
+      // rendering "No companies available" over a dead query.
+      setFetchError(error.message || "companies fetch failed");
       // Keep UI usable even when DB access fails.
       setFallbackPublicCompany();
       setLoading(false);
       return;
     }
+    setFetchError(null);
 
     const companies = ((data as Company[]) || []).map((row) => ({
       ...row,
@@ -233,7 +240,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     null;
 
   return (
-    <CompanyContext.Provider value={{ companies, activeCompany, setActiveCompanyId, loading, refetch: fetchCompanies }}>
+    <CompanyContext.Provider value={{ companies, activeCompany, setActiveCompanyId, loading, fetchError, refetch: fetchCompanies }}>
       {children}
     </CompanyContext.Provider>
   );

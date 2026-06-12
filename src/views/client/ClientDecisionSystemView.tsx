@@ -301,7 +301,7 @@ export default function ClientDecisionSystemView() {
   const [selectedFlowDriverId, setSelectedFlowDriverId] = useState<string | null>(null);
   const [clientViewTheme, setClientViewTheme] = useState<"dark" | "light">("dark");
   const [hasMounted, setHasMounted] = useState(false);
-  const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
+  const { companies, setActiveCompanyId, loading: companiesLoading , fetchError: companiesFetchError } = useCompany();
 
   const {
     activeCompany,
@@ -522,10 +522,17 @@ export default function ClientDecisionSystemView() {
               ) : (
                 <p className="cv-empty-meta">No companies are available right now.</p>
               )}
+              {/* Integrity sweep: renders regardless of the fallback company injection. */}
+              {companiesFetchError && (
+                <p className="cv-empty-meta" style={{ color: "#c45c00" }}>Couldn't load companies — try reloading.</p>
+              )}
             </motion.div>
           </section>
         ) : (
           <div className="cv-shell">
+            {companiesFetchError && (
+              <p className="cv-empty-meta" style={{ color: "#c45c00" }}>Couldn't load companies — try reloading.</p>
+            )}
             <DecisionPhaseNav
               activePhase={phase}
               onSelectPhase={setPhase}

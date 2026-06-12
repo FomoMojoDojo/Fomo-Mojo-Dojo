@@ -5,6 +5,16 @@ import type { BaselineVoiceSignal, ExclusionControls, BaselineResult } from "../
 
 // ─── ReviewControl ────────────────────────────────────────────────────────────
 
+// Integrity sweep (2026-06-12): list primitives no longer collapse a dead data path
+// into "No data found". Parents pass `error` where their hook exposes one; genuinely
+// empty lists (healthy path) keep their plain empty strings.
+function ListEmptyState({ error, fallback }: { error?: string | null; fallback: string }) {
+  if (error) {
+    return <div className="crpv-ws-readonly crpv-ws-readonly-empty" style={{ color: "#c45c00" }}>This check didn't complete — it will run again on the next scan.</div>;
+  }
+  return <div className="crpv-ws-readonly crpv-ws-readonly-empty">{fallback}</div>;
+}
+
 export function ReviewControl({
   content,
   status,
@@ -46,11 +56,13 @@ export function ReadonlyList({
   items,
   getStatus,
   setStatus,
+  error,
 }: {
   label: string;
   items: string[];
   getStatus?: (content: string) => ReviewStatus;
   setStatus?: (content: string, s: ReviewStatus) => void;
+  error?: string | null;
 }) {
   return (
     <div className="crpv-ws-field">
@@ -75,7 +87,7 @@ export function ReadonlyList({
           })}
         </div>
       ) : (
-        <div className="crpv-ws-readonly crpv-ws-readonly-empty">No data found</div>
+        <ListEmptyState error={error} fallback="No data found" />
       )}
     </div>
   );
@@ -89,12 +101,14 @@ export function OutsideSignalItems({
   getStatus,
   setStatus,
   exclusion,
+  error,
 }: {
   label: string;
   signals: BaselineVoiceSignal[];
   getStatus?: (content: string) => ReviewStatus;
   setStatus?: (content: string, s: ReviewStatus) => void;
   exclusion?: ExclusionControls;
+  error?: string | null;
 }) {
   const activeSignals   = exclusion ? signals.filter((s) => !exclusion.isExcluded((s.signal || s.perspective || "").slice(0, 200))) : signals;
   const excludedSignals = exclusion ? signals.filter((s) =>  exclusion.isExcluded((s.signal || s.perspective || "").slice(0, 200))) : [];
@@ -157,7 +171,7 @@ export function OutsideSignalItems({
           )}
         </div>
       ) : (
-        <div className="crpv-ws-readonly crpv-ws-readonly-empty">No signals found</div>
+        <ListEmptyState error={error} fallback="No signals found" />
       )}
     </div>
   );
@@ -223,10 +237,12 @@ export function AnnotatableQuestionList({
   label,
   questions,
   companyId,
+  error,
 }: {
   label: string;
   questions: string[];
   companyId: string | undefined;
+  error?: string | null;
 }) {
   const { getAnnotation, updateAnnotation } = useQuestionAnnotations(companyId);
 
@@ -245,7 +261,7 @@ export function AnnotatableQuestionList({
           ))}
         </div>
       ) : (
-        <div className="crpv-ws-readonly crpv-ws-readonly-empty">No questions found</div>
+        <ListEmptyState error={error} fallback="No questions found" />
       )}
     </div>
   );
