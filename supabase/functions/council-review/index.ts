@@ -8,6 +8,7 @@ import {
   getPhaseGuardrailText,
   type EngagementPhase,
 } from "../_shared/phaseFrameworks.ts";
+import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1506,8 +1507,24 @@ Deno.serve(async (req) => {
       fetchRowsOptional(serviceClient, "job_steps", companyId, 500),
       fetchRowsOptional(serviceClient, "opportunities", companyId, 500),
       fetchRowsOptional(serviceClient, "routes", companyId, 500),
-      fetchRowsOptional(serviceClient, "positioning_canvases", companyId, 20),
-      fetchRowsOptional(serviceClient, "strategy_cascades", companyId, 20),
+      fetchRowsOptional(serviceClient, "positioning_canvases", companyId, 20).then((rows) =>
+        gateStrategyArtifactsForExternal({
+          supabase: serviceClient as unknown as { from: (t: string) => any },
+          companyId,
+          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+          artifactKind: "positioning_canvas",
+          consumer: "council-review",
+        }).then((gate) => gate.admissible),
+      ),
+      fetchRowsOptional(serviceClient, "strategy_cascades", companyId, 20).then((rows) =>
+        gateStrategyArtifactsForExternal({
+          supabase: serviceClient as unknown as { from: (t: string) => any },
+          companyId,
+          artifacts: rows as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+          artifactKind: "strategy_cascade",
+          consumer: "council-review",
+        }).then((gate) => gate.admissible),
+      ),
       fetchRowsOptional(serviceClient, "strategy_problem_statements", companyId, 200),
       fetchRowsOptional(serviceClient, "strategy_assumptions", companyId, 200),
       fetchRowsOptional(serviceClient, "odi_market_definitions", companyId, 50),

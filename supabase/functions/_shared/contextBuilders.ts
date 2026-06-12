@@ -449,8 +449,15 @@ function buildCascadeContext(cascade: {
   winning_aspiration?: string | null;
   where_to_play?: string | null;
   how_to_win?: string | null;
+  artifact_role?: string | null;
 } | null): string {
   if (!cascade) return "No existing strategy cascade. Generate positioning from evidence only.";
+  // Gate 3a defensive backstop: callers gate before building, but a
+  // declared_direction row must never be formatted into an external prompt even
+  // if a caller regresses.
+  if (cascade.artifact_role != null && cascade.artifact_role !== "market_read") {
+    return "No existing strategy cascade. Generate positioning from evidence only.";
+  }
   return [
     `Current winning aspiration: ${cascade.winning_aspiration || "not set"}`,
     `Current where to play: ${cascade.where_to_play || "not set"}`,

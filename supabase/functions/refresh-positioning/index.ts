@@ -30,6 +30,7 @@ import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement }
 import { buildClientCorpus } from "../_shared/syndication.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
+import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -169,6 +170,7 @@ Deno.serve(async (req) => {
       .from("positioning_canvases")
       .select("id, source")
       .eq("company_id", company_id)
+      .eq("artifact_role", "market_read")
       .like("source", "manual_%")
       .maybeSingle();
 
@@ -309,13 +311,22 @@ Deno.serve(async (req) => {
     // --- Fetch current cascade as positioning anchor (strategy-as-lens) ---
     const { data: cascadeRow } = await supabase
       .from("strategy_cascades")
-      .select("winning_aspiration, where_to_play, how_to_win, source")
+      .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type")
       .eq("company_id", company_id)
+      .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    const cascadeContext = buildCascadeContext(cascadeRow ?? null);
+    // Gate 3a: cascade content feeds this external prompt.
+    const cascadeRowGate = await gateStrategyArtifactForExternal({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifactKind: "strategy_cascade",
+      consumer: "refresh-positioning",
+    });
+    const cascadeContext = buildCascadeContext(cascadeRowGate.admissible ?? null);
 
     // B2.1: latest competitor-discovery snapshot grounds alternatives + category.
     const { data: competitorRun } = await supabase
@@ -332,13 +343,22 @@ Deno.serve(async (req) => {
     if (!bodyKnownTensions) {
       const { data: priorCanvas } = await supabase
         .from("positioning_canvases")
-        .select("known_tensions_json")
+        .select("known_tensions_json, artifact_role, provenance_type")
         .eq("company_id", company_id)
+        .eq("artifact_role", "market_read")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (Array.isArray((priorCanvas as { known_tensions_json?: unknown } | null)?.known_tensions_json)) {
-        knownTensions = (priorCanvas as { known_tensions_json: unknown[] }).known_tensions_json;
+      // Gate 3a: carried-forward tensions re-enter external prompt context.
+      const priorCanvasGate = await gateStrategyArtifactForExternal({
+        supabase: supabase as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        artifact: (priorCanvas ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+        artifactKind: "positioning_canvas",
+        consumer: "refresh-positioning",
+      });
+      if (Array.isArray((priorCanvasGate.admissible as { known_tensions_json?: unknown } | null)?.known_tensions_json)) {
+        knownTensions = (priorCanvasGate.admissible as { known_tensions_json: unknown[] }).known_tensions_json;
       }
     }
 
@@ -598,6 +618,10 @@ Deno.serve(async (req) => {
       // Persisted verbatim: these passed the orchestrator's review gate (or were carried
       // forward from the prior canvas). The canvas LLM never rewrites them.
       known_tensions_json: knownTensions,
+      // Gate 3a: the public refresh writes the market read explicitly — it can
+      // never land on a declared_direction row (constraint-keyed, not convention).
+      artifact_role: "market_read",
+      source_direction_key: "",
       // No updated_at trigger on this table — set explicitly so refreshes are visible.
       updated_at: new Date().toISOString(),
     };
@@ -607,7 +631,7 @@ Deno.serve(async (req) => {
     // guard above already returned before any write for manual canvases.
     let { data: inserted, error: insertErr } = await supabase
       .from("positioning_canvases")
-      .upsert(payload, { onConflict: "company_id" })
+      .upsert(payload, { onConflict: "company_id,artifact_role,source_direction_key" })
       .select("id")
       .single();
 
@@ -619,6 +643,8 @@ Deno.serve(async (req) => {
           user_id: userId,
           source: "system",
           provenance_type: "public_research",
+          artifact_role: "market_read",
+          source_direction_key: "",
           competitive_alternatives_json: payload.competitive_alternatives_json,
           unique_attributes_json: payload.unique_attributes_json,
           value_for_customer: payload.value_for_customer,
@@ -629,7 +655,7 @@ Deno.serve(async (req) => {
           proposed_tagline: payload.proposed_tagline,
           known_tensions_json: payload.known_tensions_json,
           updated_at: payload.updated_at,
-        }, { onConflict: "company_id" })
+        }, { onConflict: "company_id,artifact_role,source_direction_key" })
         .select("id")
         .single();
       inserted = fallback.data;

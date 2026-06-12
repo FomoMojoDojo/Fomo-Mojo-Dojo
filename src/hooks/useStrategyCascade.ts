@@ -104,6 +104,7 @@ export function useStrategyCascade(companyId?: string, refreshKey = 0) {
           "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
         )
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -155,6 +156,7 @@ export function useStrategyCascade(companyId?: string, refreshKey = 0) {
         .from("strategy_cascades")
         .update(patch)
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .select(
           "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
         )
@@ -189,6 +191,7 @@ export function useStrategyCascade(companyId?: string, refreshKey = 0) {
       .from("strategy_cascades")
       .update({ [field]: items })
       .eq("company_id", companyId)
+      .eq("artifact_role", "market_read")
       .select(
         "id, company_id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, frameworks_used, created_at, updated_at"
       )

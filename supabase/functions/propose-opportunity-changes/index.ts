@@ -12,6 +12,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
+import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -119,14 +120,27 @@ Deno.serve(async (req: Request) => {
   // --- Fetch strategy cascade ---
   const { data: cascadeData, error: cascadeError } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win")
+    .select("winning_aspiration, where_to_play, how_to_win, artifact_role, provenance_type")
     .eq("company_id", company_id)
+    .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (cascadeError || !cascadeData) {
     return jsonResponse({ error: cascadeError?.message ?? "No strategy cascade found" }, 404);
+  }
+
+  // Gate 3a: external-bound cascade content passes the strategy-artifact gate.
+  const cascadeDataGate = await gateStrategyArtifactForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    artifact: cascadeData as { artifact_role?: string | null; provenance_type?: string | null },
+    artifactKind: "strategy_cascade",
+    consumer: "propose-opportunity-changes",
+  });
+  if (!cascadeDataGate.admissible) {
+    return jsonResponse({ error: "No externally admissible strategy cascade found" }, 404);
   }
   const cascade = cascadeData as { winning_aspiration: string; where_to_play: string; how_to_win: string };
 

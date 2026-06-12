@@ -808,6 +808,8 @@ Deno.serve(async (req) => {
           .from("positioning_canvases")
           .select("id,market_category,value_for_customer,current_tagline,proposed_tagline,best_fit_customers,competitive_alternatives_json,unique_attributes_json,updated_at")
           .eq("company_id", companyId)
+          // Gate 3a: role-scoped, deliberately ungated — internal→local is legal.
+          .eq("artifact_role", "market_read")
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
@@ -815,6 +817,7 @@ Deno.serve(async (req) => {
           .from("strategy_cascades")
           .select("id,winning_aspiration,where_to_play,how_to_win,capabilities_json,management_systems_json,assumptions_json,updated_at")
           .eq("company_id", companyId)
+          .eq("artifact_role", "market_read")
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle(),

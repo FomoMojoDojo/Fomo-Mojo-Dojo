@@ -148,6 +148,7 @@ Deno.serve(async (req) => {
       .from("strategy_cascades")
       .select("id, source")
       .eq("company_id", company_id)
+      .eq("artifact_role", "market_read")
       .like("source", "manual_%")
       .maybeSingle();
 
@@ -437,6 +438,9 @@ Deno.serve(async (req) => {
         ? cascadeResult.management_systems
         : [],
       assumptions_json: Array.isArray(cascadeResult?.assumptions) ? cascadeResult.assumptions : [],
+      // Gate 3a: the public refresh writes the market read explicitly.
+      artifact_role: "market_read",
+      source_direction_key: "",
       // No updated_at trigger on this table — set explicitly so refreshes are visible.
       updated_at: new Date().toISOString(),
     };
@@ -446,7 +450,7 @@ Deno.serve(async (req) => {
     // guard above already returned before any write for manual cascades.
     let { data: inserted, error: insertErr } = await supabase
       .from("strategy_cascades")
-      .upsert(payload, { onConflict: "company_id" })
+      .upsert(payload, { onConflict: "company_id,artifact_role,source_direction_key" })
       .select("id")
       .single();
 
@@ -458,6 +462,8 @@ Deno.serve(async (req) => {
           user_id: userId,
           source: "system",
           provenance_type: "public_research",
+          artifact_role: "market_read",
+          source_direction_key: "",
           winning_aspiration: payload.winning_aspiration,
           where_to_play: payload.where_to_play,
           how_to_win: payload.how_to_win,
@@ -465,7 +471,7 @@ Deno.serve(async (req) => {
           management_systems_json: payload.management_systems_json,
           assumptions_json: payload.assumptions_json,
           updated_at: payload.updated_at,
-        }, { onConflict: "company_id" })
+        }, { onConflict: "company_id,artifact_role,source_direction_key" })
         .select("id")
         .single();
       inserted = fallback.data;

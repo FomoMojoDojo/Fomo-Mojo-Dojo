@@ -25,6 +25,7 @@ import {
 } from "../_shared/contextBuilders.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { buildFrameworkBrief, getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
+import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -191,10 +192,22 @@ Deno.serve(async (req: Request) => {
   // --- Fetch current canvas (any source — proposals are safe even for manual canvases) ---
   const { data: canvasRow } = await db
     .from("positioning_canvases")
-    .select("id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, source")
+    .select("id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, source, artifact_role, provenance_type")
     .eq("company_id", company_id)
+    .eq("artifact_role", "market_read")
     .maybeSingle();
   if (!canvasRow) return jsonResponse({ error: "No positioning canvas found for this company" }, 404);
+  // Gate 3a: external-bound artifact content passes the strategy-artifact gate.
+  const canvasRowGate = await gateStrategyArtifactForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    artifact: canvasRow as { artifact_role?: string | null; provenance_type?: string | null },
+    artifactKind: "positioning_canvas",
+    consumer: "propose-positioning-changes",
+  });
+  if (!canvasRowGate.admissible) {
+    return jsonResponse({ error: "No externally admissible positioning canvas found" }, 404);
+  }
 
   const canvas = canvasRow as Record<string, unknown>;
   const currentState = buildSnapshot(canvas, {}, "current");
@@ -202,12 +215,20 @@ Deno.serve(async (req: Request) => {
   // --- Fetch cascade ---
   const { data: cascadeRow } = await db
     .from("strategy_cascades")
-    .select("winning_aspiration, where_to_play, how_to_win, source")
+    .select("winning_aspiration, where_to_play, how_to_win, source, artifact_role, provenance_type")
     .eq("company_id", company_id)
+    .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const cascadeContext = buildCascadeContext(cascadeRow ?? null);
+  const cascadeRowGate = await gateStrategyArtifactForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    artifact: (cascadeRow ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+    artifactKind: "strategy_cascade",
+    consumer: "propose-positioning-changes",
+  });
+  const cascadeContext = buildCascadeContext(cascadeRowGate.admissible ?? null);
 
   // --- Fetch context (mirrors refresh-positioning) ---
   const { data: baselineRuns } = await db

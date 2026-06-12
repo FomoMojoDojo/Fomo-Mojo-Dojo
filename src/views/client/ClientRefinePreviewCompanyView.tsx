@@ -58,10 +58,12 @@ function useCompanyProvenance(companyId: string | undefined, refreshKey = 0): Pr
       supabase.from("strategy_cascades")
         .select("source, updated_at")
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .maybeSingle(),
       supabase.from("positioning_canvases")
         .select("source, updated_at")
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .maybeSingle(),
       supabase.from("routes")
         .select("updated_at")

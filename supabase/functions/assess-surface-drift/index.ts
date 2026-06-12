@@ -17,6 +17,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
+import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -343,13 +344,23 @@ async function assessCascades(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("strategy_cascades")
-    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, evidence_baseline_signal_ids, evidence_baseline_captured_at")
-    .eq("company_id", companyId);
+    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type")
+    .eq("company_id", companyId)
+    .eq("artifact_role", "market_read");
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);
 
-  const { data, error } = await query;
+  const { data: fetched, error } = await query;
   if (error) { console.error("[assess-surface-drift] cascade fetch:", error.message); return { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 }; }
+  // Gate 3a: this assessor ships artifact content to the external model.
+  const cascadeGate = await gateStrategyArtifactsForExternal({
+    supabase: supabase as unknown as { from: (t: string) => any },
+    companyId,
+    artifacts: (fetched ?? []) as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+    artifactKind: "strategy_cascade",
+    consumer: "assess-surface-drift",
+  });
+  const data = cascadeGate.admissible;
 
   const counts = { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 };
   for (const row of (data ?? []) as CascadeRow[]) {
@@ -386,13 +397,22 @@ async function assessPositioning(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("positioning_canvases")
-    .select("id, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, competitive_alternatives_json, unique_attributes_json, evidence_baseline_signal_ids, evidence_baseline_captured_at")
-    .eq("company_id", companyId);
+    .select("id, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, competitive_alternatives_json, unique_attributes_json, evidence_baseline_signal_ids, evidence_baseline_captured_at, artifact_role, provenance_type")
+    .eq("company_id", companyId)
+    .eq("artifact_role", "market_read");
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);
 
-  const { data, error } = await query;
+  const { data: fetched, error } = await query;
   if (error) { console.error("[assess-surface-drift] positioning fetch:", error.message); return { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 }; }
+  const canvasGate = await gateStrategyArtifactsForExternal({
+    supabase: supabase as unknown as { from: (t: string) => any },
+    companyId,
+    artifacts: (fetched ?? []) as Array<{ artifact_role?: string | null; provenance_type?: string | null }>,
+    artifactKind: "positioning_canvas",
+    consumer: "assess-surface-drift",
+  });
+  const data = canvasGate.admissible;
 
   const counts = { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 };
   for (const row of (data ?? []) as PositioningRow[]) {

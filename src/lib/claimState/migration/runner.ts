@@ -392,6 +392,7 @@ async function createClaimsFromPositioningCanvas(
     .from("positioning_canvases")
     .select("value_for_customer,market_category,best_fit_customers")
     .eq("company_id", companyId);
+    .eq("artifact_role", "market_read")
 
   if (error || !rows?.length) {
     if (error) errors.push({ source: "positioning_canvases", sourceId: "*", error: error.message });
@@ -487,6 +488,7 @@ async function createClaimsFromStrategyCascade(
     .from("strategy_cascades")
     .select("winning_aspiration,where_to_play,how_to_win,assumptions_json")
     .eq("company_id", companyId);
+    .eq("artifact_role", "market_read")
 
   if (error || !rows?.length) {
     if (error) errors.push({ source: "strategy_cascades", sourceId: "*", error: error.message });
@@ -771,6 +773,7 @@ async function loadInferenceInput(
       ? db.from("positioning_canvases")
           .select("market_category,best_fit_customers,value_for_customer")
           .eq("company_id", companyId)
+          .eq("artifact_role", "market_read")
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);

@@ -27,6 +27,7 @@ import {
 } from "../_shared/contextBuilders.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { getFrameworkRoutingPlan } from "../_shared/frameworkLibrary.ts";
+import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -204,12 +205,24 @@ Deno.serve(async (req: Request) => {
   // --- Fetch current cascade (latest row — same ordering as alignment evaluators) ---
   const { data: cascadeRow } = await db
     .from("strategy_cascades")
-    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, source")
+    .select("id, winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, source, artifact_role, provenance_type")
     .eq("company_id", company_id)
+    .eq("artifact_role", "market_read")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!cascadeRow) return jsonResponse({ error: "No strategy cascade found for this company" }, 404);
+  // Gate 3a: external-bound artifact content passes the strategy-artifact gate.
+  const cascadeRowGate = await gateStrategyArtifactForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    artifact: cascadeRow as { artifact_role?: string | null; provenance_type?: string | null },
+    artifactKind: "strategy_cascade",
+    consumer: "propose-cascade-changes",
+  });
+  if (!cascadeRowGate.admissible) {
+    return jsonResponse({ error: "No externally admissible strategy cascade found" }, 404);
+  }
   const cascade = cascadeRow as CascadeRow;
   const currentState = buildCurrentSnapshot(cascade);
 

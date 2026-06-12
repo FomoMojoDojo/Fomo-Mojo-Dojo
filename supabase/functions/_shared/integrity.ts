@@ -23,7 +23,8 @@ export type IntegrityRecord = {
     | "store_supplement"
     | "market_reconcile"
     | "drift_scan"
-    | "job_framing_gate";
+    | "job_framing_gate"
+    | "strategy_artifact_gate";
   surface_type?: string | null;
   surface_id?: string | null;
   status: "completed" | "failed" | "skipped_empty_input";

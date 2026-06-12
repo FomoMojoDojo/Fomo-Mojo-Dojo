@@ -172,6 +172,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
           "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .maybeSingle();
 
       if (cancelled) return;
@@ -226,6 +227,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
         .from("positioning_canvases")
         .update(patch)
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .select(
           "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
@@ -259,6 +261,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
         .from("positioning_canvases")
         .update({ [field]: items })
         .eq("company_id", companyId)
+        .eq("artifact_role", "market_read")
         .select(
           "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
         )
@@ -290,6 +293,7 @@ export function usePositioningCanvas(companyId?: string, refreshKey = 0) {
       .from("positioning_canvases")
       .update({ frameworks_used: frameworks })
       .eq("company_id", companyId)
+      .eq("artifact_role", "market_read")
       .select(
         "id, company_id, competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, frameworks_used, created_at, updated_at, strategy_alignment, strategy_alignment_reason, strategy_alignment_evaluated_at, known_tensions_json"
       )

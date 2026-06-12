@@ -63,6 +63,7 @@ import {
   buildRouteWhyThisMattersNarrative,
   rewriteRouteLanguage,
 } from "../../../src/lib/routeLanguage.ts";
+import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -7905,21 +7906,40 @@ Deno.serve(async (req) => {
     // -------------------------
     // 8c) Read fresh cascade + positioning from DB (leaves have committed by this point)
     // -------------------------
-    const { data: freshCascadeRow } = await supabase
+    const { data: freshCascadeRowRaw } = await supabase
       .from("strategy_cascades")
-      .select("winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json")
+      .select("winning_aspiration, where_to_play, how_to_win, capabilities_json, management_systems_json, assumptions_json, artifact_role, provenance_type")
       .eq("company_id", company_id)
+      .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    const { data: freshPositioningRow } = await supabase
+    const { data: freshPositioningRowRaw } = await supabase
       .from("positioning_canvases")
-      .select("competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline")
+      .select("competitive_alternatives_json, unique_attributes_json, value_for_customer, best_fit_customers, market_category, category_rationale, current_tagline, proposed_tagline, artifact_role, provenance_type")
       .eq("company_id", company_id)
+      .eq("artifact_role", "market_read")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    // Gate 3a: these rows flow into the run result and downstream context.
+    const freshCascadeGate = await gateStrategyArtifactForExternal({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      artifact: (freshCascadeRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifactKind: "strategy_cascade",
+      consumer: "research-company",
+    });
+    const freshPositioningGate = await gateStrategyArtifactForExternal({
+      supabase: supabase as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      artifact: (freshPositioningRowRaw ?? null) as { artifact_role?: string | null; provenance_type?: string | null } | null,
+      artifactKind: "positioning_canvas",
+      consumer: "research-company",
+    });
+    const freshCascadeRow = freshCascadeGate.admissible;
+    const freshPositioningRow = freshPositioningGate.admissible;
 
     // -------------------------
     // 9) Use baselineRun (fetched once) + update company scores
