@@ -102,6 +102,10 @@ function stepPosture(step: JobStepRow): { label: string; color: string; bg: stri
   if (ev === "evidenced" && gap)  return { label: "Under pressure",    color: "#c2410c", bg: "#fff4ec" };
   if (ev === "implied"   && !gap) return { label: "Weak signal",       color: "#6b7280", bg: "#f3f4f6" };
   if (ev === "implied"   && gap)  return { label: "Validation needed", color: "#b45309", bg: "#fef9ec" };
+  // Declared direction (operator-signed treatment): one amber state regardless of
+  // has_gap — provenance is a single posture; the gap signal rides the existing
+  // gap affordances rather than inventing a compound state.
+  if (ev === "declared")          return { label: "Declared",          color: "#b45309", bg: "#fef3c7" };
   if (ev === "unclear"   && gap)  return { label: "Under pressure",    color: "#c2410c", bg: "#fff4ec" };
   return                                 { label: "Emerging",          color: "#6d28d9", bg: "#f5f3ff" };
 }
@@ -253,7 +257,11 @@ function deriveInternalConditions(step: JobStepRow, odiLabel: string, limit: num
     if (c) conditions.push(c);
   }
 
-  if (step.evidence_basis && conditions.length < limit) {
+  // Honesty rule (operator-signed): a declared step's evidence_basis NEVER becomes
+  // a "what must be true" condition — condFromBasis would truncate the signed
+  // disclaimer and append "is tracked and current", inverting its meaning.
+  // Declared steps derive conditions from gap_note/description/ownership only.
+  if (step.evidence_basis && step.evidence_status !== "declared" && conditions.length < limit) {
     const c = condFromBasis(step.evidence_basis);
     if (c) conditions.push(c);
   }
@@ -273,6 +281,7 @@ const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
   evidenced: { label: "Evidenced", color: "#16a34a" },
   implied:   { label: "Implied",   color: "#E8A317" },
   unclear:   { label: "Unclear",   color: "#ef4444" },
+  declared:  { label: "Declared",  color: "#b45309" },
 };
 
 function EvidenceStatus({ step }: { step: JobStepRow }) {
@@ -688,7 +697,7 @@ function JourneySection({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div>
             {title && <h2 className="crpv-ws-jobmap-title">{title}</h2>}
-            {subtitle && <p className="crpv-ws-jobmap-sub">{subtitle}</p>}
+            {/* Vocabulary gate: subtitle not rendered (operator ruling) — both layouts. */}
             {summaryParts.length > 0 && (
               <p className="crpv-ws-jobmap-summary">{summaryParts.join(" · ")}</p>
             )}
@@ -928,6 +937,8 @@ function JobStepInspectPanel({
                     "Under pressure":    "A gap has been flagged here. This checkpoint may be blocking progress.",
                     "Weak signal":       "Evidence for this checkpoint is inferred, not directly confirmed.",
                     "Validation needed": "Evidence is thin and a gap exists — this area needs attention.",
+                    // Operator-signed declared-direction sentence, reused verbatim.
+                    "Declared":          "Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.",
                     "Emerging":          "No evidence has been classified for this checkpoint yet.",
                   };
                   return (
@@ -1247,12 +1258,11 @@ export default function JobMapOrgPanel({
             <span style={{ width: 5, height: 5, borderRadius: "50%", background: D.signal, display: "inline-block", flexShrink: 0 }} />
             {"Strategy · Job Map"}
           </p>
-          <h1 style={{ fontFamily: D.sans, fontSize: 30, fontWeight: 700, color: D.ink, margin: "0 0 10px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
+          <h1 style={{ fontFamily: D.sans, fontSize: 30, fontWeight: 700, color: D.ink, margin: "0 0 20px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
             The {journeyHeadingWord} <span style={{ color: D.signal }}>Job</span>
           </h1>
-          <p style={{ fontFamily: D.sans, fontSize: 13, color: "rgba(17,17,17,0.55)", margin: signalBasis ? "0 0 10px" : "0 0 20px", lineHeight: 1.55, maxWidth: 600 }}>
-            {allPrimarySteps.length} checkpoint{allPrimarySteps.length !== 1 ? "s" : ""} across the {journeyHeadingWord.toLowerCase()} journey.
-          </p>
+          {/* Vocabulary gate: the subtitle line is not rendered (operator ruling —
+              the step tabs show the count; "journey" never renders client-facing). */}
           {signalBasis && <div style={{ marginBottom: 16 }}><SignalBasisChip {...signalBasis} /></div>}
 
           {/* Journey selector — only shown when more than one primary journey exists */}
