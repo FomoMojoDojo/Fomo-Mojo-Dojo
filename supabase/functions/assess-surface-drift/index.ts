@@ -189,6 +189,9 @@ type AssessmentPayload = {
   llm_confirmation: string | null;
   assessment_basis: unknown;
   last_assessed_at: string;
+  // Per-assessment acceptance law: present (as null) only on alerting assessments.
+  accepted_as_aligned_at?: null;
+  operator_seen_at?: null;
 };
 
 async function upsertAssessment(supabase: ReturnType<typeof createClient>, payload: AssessmentPayload) {
@@ -313,6 +316,12 @@ async function assessSurface(
       top_candidates: candidateIds,
     },
     last_assessed_at: new Date().toISOString(),
+    // Per-assessment acceptance law (operator-signed at the integrity gate; same fix
+    // as reconcile-market-definition): "I accept this" is a judgment about THAT
+    // assessment, never a permanent waiver. An alerting assessment is a NEW
+    // assessment — prior acceptance must not mute it, and the operator hasn't seen
+    // it yet. Aligned updates leave operator state untouched.
+    ...(llmResult.drift_state !== "aligned" ? { accepted_as_aligned_at: null, operator_seen_at: null } : {}),
   });
 
   await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
