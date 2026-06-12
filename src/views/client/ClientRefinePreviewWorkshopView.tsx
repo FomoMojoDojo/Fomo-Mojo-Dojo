@@ -395,6 +395,15 @@ export default function ClientRefinePreviewWorkshopView() {
   const dataQualityFlag = baseline?.data_quality_flag ?? null;
 
   const { landscape: workshopSignalLandscape } = useSignalLandscape(companyId);
+  // DAY-52 hardcode removed (queue item): same formula as the homepage's ENGAGEMENT_DAY
+  // (ClientRefinePreviewView) — computed from companies.engagement_started_at, "—" when unset.
+  const workshopEngagementDay = useMemo((): number | null => {
+    const startAt = activeCompany?.engagement_started_at;
+    if (!startAt) return null;
+    const ms = Date.now() - new Date(startAt).getTime();
+    return Math.max(1, Math.floor(ms / 86_400_000));
+  }, [activeCompany?.engagement_started_at]);
+
   const workshopSignalBasis: SignalBasis | undefined = workshopSignalLandscape ? {
     publicCount:   workshopSignalLandscape.byBand.outside.count,
     teamCount:     workshopSignalLandscape.byBand.organization.count,
@@ -1505,7 +1514,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <b>Mojo</b>
           {workshopHasHierarchy ? (
             <span className="cap">
-              [{activeCompany?.name?.toUpperCase() || "COMPANY"}] · DAY 52 · {workshopDominantClaimState ? workshopDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(activeCompany?.engagement_phase ?? "diagnose").toUpperCase()}
+              [{activeCompany?.name?.toUpperCase() || "COMPANY"}] · DAY {workshopEngagementDay ?? "—"} · {workshopDominantClaimState ? workshopDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(activeCompany?.engagement_phase ?? "diagnose").toUpperCase()}
             </span>
           ) : (
             <CompanySwitcher
