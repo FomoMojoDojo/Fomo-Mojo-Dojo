@@ -7036,11 +7036,22 @@ Deno.serve(async (req) => {
     }
     await supabase.from("solution_tests").delete().eq("company_id", company_id);
     await supabase.from("solution_ideas").delete().eq("company_id", company_id);
-    await supabase.from("opportunities").delete().eq("company_id", company_id);
+    // Declared-opportunities gate (a): a public research run deletes ONLY the
+    // public-class rows it owns — research-company writes opportunities and
+    // odi_needs exclusively as 'public_research'. Curated ('manual') and declared
+    // ('internal_declared') rows survive this regeneration untouched.
+    await supabase.from("opportunities").delete().eq("company_id", company_id).eq("provenance_type", "public_research");
     // LIKE 'manual_%' preserves all manual-origin routes/legs (manual_inline, manual_a5_recovery, etc.)
     await supabase.from("routes").delete().eq("company_id", company_id).not("source", "like", "manual_%");
-    await supabase.from("managed_outcomes").delete().eq("company_id", company_id);
-    await supabase.from("odi_needs").delete().eq("company_id", company_id);
+    // managed_outcomes has no provenance_type column (flagged for a separate schema
+    // gate). Scope its delete by journey to the journeys this run regenerates —
+    // jobMapUpdateJourneyKeys is already provenance-protection-filtered, so declared
+    // journeys (e.g. b2b-buyer) and their outcomes survive. Mirrors the job_steps
+    // delete scope above.
+    if (jobMapUpdateJourneyKeys.length > 0) {
+      await supabase.from("managed_outcomes").delete().eq("company_id", company_id).in("journey_key", jobMapUpdateJourneyKeys);
+    }
+    await supabase.from("odi_needs").delete().eq("company_id", company_id).eq("provenance_type", "public_research");
     await supabase.from("odi_market_definitions").delete().eq("company_id", company_id);
     // positioning_canvases and strategy_cascades are owned by leaf functions (A37)
 
