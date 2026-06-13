@@ -9,6 +9,8 @@
 // unresolved never persisted. Dry runs read the store but never write it
 // (zero-DB-writes law for dry runs); write runs persist resolved verdicts.
 
+import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
+
 const JUDGE_TIMEOUT_MS = 120_000;
 
 export type PerspectiveVerdict = {
@@ -18,16 +20,6 @@ export type PerspectiveVerdict = {
   verdict: "buyer" | "seller";
   from_store: boolean;
 };
-
-function normalizeForHash(value: string) {
-  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 async function judgeOne(args: {
   ollamaUrl: string;
