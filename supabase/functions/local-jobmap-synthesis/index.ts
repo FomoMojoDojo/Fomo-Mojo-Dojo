@@ -3,6 +3,7 @@ import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import { protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
+import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
@@ -885,7 +886,7 @@ Deno.serve(async (req) => {
     }
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
-    const ollamaModel = Deno.env.get("OLLAMA_MODEL") ?? "llama3:70b";
+    const ollamaModelEnv = Deno.env.get("OLLAMA_MODEL") ?? "llama3:70b";
     if (!isLocalOllamaUrl(ollamaUrl)) {
       return json(
         { error: "Local-only policy violation: OLLAMA_BASE_URL must resolve to localhost/host.docker.internal." },
@@ -909,6 +910,14 @@ Deno.serve(async (req) => {
     const selectedMapsOnly = Boolean((body as Record<string, unknown>)?.selected_maps_only);
     const requireModel = Boolean((body as Record<string, unknown>)?.require_model);
     const declaredDirection = Boolean((body as Record<string, unknown>)?.declared_direction);
+    // Model-experiment gate: dry_run = full assembly + generation + normalization
+    // + ALL strict guards + judge verdicts, ZERO DB writes of any kind (no steps,
+    // no market def, no reconcile, no integrity record, no verdict persists).
+    // model_override is honored on dry runs and on the single operator-authorized
+    // winner-write (recorded in the local_synthesis integrity record).
+    const dryRun = Boolean((body as Record<string, unknown>)?.dry_run);
+    const modelOverride = safeText((body as Record<string, unknown>)?.model_override);
+    const ollamaModel = modelOverride || ollamaModelEnv;
     const requestedMaps = parseSelectedJobMaps(
       (body as Record<string, unknown>)?.selected_job_maps,
       !selectedMapsOnly,
@@ -1285,7 +1294,9 @@ Deno.serve(async (req) => {
     const sourceRunId = crypto.randomUUID();
     const requestedMapKeys = new Set(requestedMaps.map((map) => map.journey_key));
     const journeysToWrite = normalizedJourneys
-      .filter((j) => !provenanceProtectedKeys.has(j.journey_key.toLowerCase()))
+      // Provenance protection guards WRITES; dry runs write nothing, and the
+      // model experiment must be able to dry-generate against an existing set.
+      .filter((j) => dryRun || !provenanceProtectedKeys.has(j.journey_key.toLowerCase()))
       .filter((j) => !selectedMapsOnly || requestedMapKeys.has(j.journey_key))
       .sort((a, b) => Number(isCustomerJourneyKey(a.journey_key)) - Number(isCustomerJourneyKey(b.journey_key)));
     if (declaredDirection) {
@@ -1298,6 +1309,60 @@ Deno.serve(async (req) => {
           evidence_basis: DECLARED_EVIDENCE_BASIS,
         }));
       }
+    }
+
+    // Executor-perspective judge (operator-approved, band-judge pattern): declared
+    // steps must be provably buyer-side. Uncertain → 'seller' → loud block.
+    let perspectiveVerdicts: Awaited<ReturnType<typeof judgeStepPerspectives>> = [];
+    if (declaredDirection && journeysToWrite.length > 0) {
+      const executorBrief = [
+        safeText(marketDef?.job_executor),
+        safeText(marketDef?.jtbd),
+      ].filter(Boolean).join(" — ") || "the buying-side job executor";
+      const judgeSteps = journeysToWrite.flatMap((j) => j.steps.map((step) => ({
+        step_number: step.step_number,
+        step_label: step.step_label,
+        description: step.description,
+      })));
+      perspectiveVerdicts = await judgeStepPerspectives({
+        supabase: supabase as unknown as { from: (t: string) => any },
+        companyId,
+        steps: judgeSteps,
+        executorBrief,
+        ollamaUrl,
+        persist: !dryRun,
+      });
+      const sellerSteps = perspectiveVerdicts.filter((v) => v.verdict === "seller");
+      if (!dryRun && sellerSteps.length > 0) {
+        return json({
+          error: `executor-perspective judge: ${sellerSteps.length} step(s) judged seller-perspective — refusing write. ` +
+            sellerSteps.map((v) => `step ${v.step_number} "${v.step_label}"`).join("; "),
+          perspective_verdicts: perspectiveVerdicts,
+        }, 502);
+      }
+    }
+
+    // Dry run: visibility is the product — render everything, write nothing.
+    if (dryRun) {
+      return json({
+        status: "dry_run",
+        company_id: companyId,
+        provider: "ollama_local",
+        model: ollamaModel,
+        synthesis_mode: synthesisMode,
+        journeys: journeysToWrite.map((j) => ({
+          journey_key: j.journey_key,
+          journey_title: j.journey_title,
+          steps: j.steps.map((step) => ({
+            step_number: step.step_number,
+            step_label: step.step_label,
+            description: step.description,
+            gap_note: step.gap_note,
+          })),
+        })),
+        perspective_verdicts: perspectiveVerdicts,
+        debug: { raw_model_journeys: rawModelJourneys },
+      });
     }
     let stepsInserted = 0;
     let affectedArtifactsMarked = 0;
@@ -1337,7 +1402,7 @@ Deno.serve(async (req) => {
       status: "completed",
       examined: rawModelJourneys.reduce((sum, j) => sum + j.raw_step_count, 0),
       admitted: stepsInserted,
-      excluded_by_rule: { raw_model_journeys: rawModelJourneys, substitution_refused: false },
+      excluded_by_rule: { raw_model_journeys: rawModelJourneys, substitution_refused: false, model: ollamaModel, model_overridden: Boolean(modelOverride) },
       run_ref: trigger,
     });
 
