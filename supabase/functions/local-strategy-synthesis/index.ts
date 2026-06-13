@@ -25,6 +25,7 @@ import { classifyVoice } from "../_shared/claimProvenance.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildCompetitorMarketBrief } from "../_shared/contextBuilders.ts";
+import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,8 +37,7 @@ const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.doc
 const OLLAMA_TIMEOUT_MS = 300_000;
 const NUM_CTX = 32_768;
 const ABORT_CHARS = 90_000;
-const SIDECAR_TOTAL_BUDGET = 12_000;
-const SIDECAR_CORE_CAP = 2_000;
+
 const DECLARED_EVIDENCE_BASIS =
   "Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.";
 
@@ -287,14 +287,13 @@ Deno.serve(async (req) => {
       ...files.filter((f) => safeText(f?.file_name).startsWith("B2B_")),
       ...files.filter((f) => !safeText(f?.file_name).startsWith("B2B_")),
     ];
-    const coreCount = ordered.filter((f) => safeText(f?.file_name).startsWith("B2B_")).length;
-    const restCap = Math.max(200, Math.floor((SIDECAR_TOTAL_BUDGET - coreCount * SIDECAR_CORE_CAP) / Math.max(1, ordered.length - coreCount)));
     const internalDocuments: Array<{ file_name: string; excerpt: string }> = [];
     for (const f of ordered) {
       const filePath = safeText(f?.file_path);
       const fileName = safeText(f?.file_name);
       if (!filePath) continue;
-      const cap = fileName.startsWith("B2B_") ? SIDECAR_CORE_CAP : restCap;
+      // Operator-approved tiered allocation (shared with local-jobmap-synthesis).
+      const cap = sidecarCapForFile(fileName);
       try {
         const { data: sidecar, error } = await supabase.storage.from("input-files").download(`${filePath}.extracted.txt`);
         if (error || !sidecar) continue;

@@ -210,6 +210,9 @@ export function normalizeToEightCheckpointSpine(
     defaultEvidenceBasis?: string;
     defaultConfidence?: number;
     defaultGapNote?: string;
+    // Substitution-fix gate: under strict (require_model) content mode, any fill
+    // or replacement of label/description text is a loud failure, never silent.
+    strictModelContent?: boolean;
   },
 ) {
   const byStep = new Map<number, JtbdProcessStepDraft>();
@@ -231,10 +234,31 @@ export function normalizeToEightCheckpointSpine(
       "Capture the exact reason this step breaks down for this customer before changing the process.",
   };
 
+  if (options?.strictModelContent) {
+    const missing = JTBD_ODI_CHECKPOINTS.filter((c) => !byStep.has(c.stepNumber)).map((c) => c.stepNumber);
+    if (missing.length > 0) {
+      throw new Error(
+        `strict model content: customer spine is missing checkpoint(s) ${missing.join(", ")} — refusing canonical-row substitution.`,
+      );
+    }
+  }
+
   return JTBD_ODI_CHECKPOINTS.map((checkpoint) => {
     const existing = byStep.get(checkpoint.stepNumber);
     const existingLabel = validateActionLabel(safeText(existing?.step_label));
     const existingDescription = safeText(existing?.description);
+    if (options?.strictModelContent) {
+      if (!existingLabel) {
+        throw new Error(
+          `strict model content: checkpoint ${checkpoint.stepNumber} label ${JSON.stringify(safeText(existing?.step_label))} failed validation — refusing canonical-label substitution.`,
+        );
+      }
+      if (!existingDescription) {
+        throw new Error(
+          `strict model content: checkpoint ${checkpoint.stepNumber} has no description — refusing template-description substitution.`,
+        );
+      }
+    }
     const fallbackGap = existing?.has_gap ? safeText(existing?.gap_note) : defaults.defaultGapNote;
     return {
       step_number: checkpoint.stepNumber,

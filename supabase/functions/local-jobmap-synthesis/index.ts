@@ -1,6 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import { protectedJourneyKeys } from "../_shared/journeyProtection.ts";
+import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
+import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
@@ -30,13 +32,15 @@ const OLLAMA_TIMEOUT_MS = 120_000;
 // not enough; deterministic fallback is prohibited on those runs, so the longer
 // window is the honest alternative to silently writing a non-document-derived set.
 const OLLAMA_REQUIRE_MODEL_TIMEOUT_MS = 300_000;
-// Gate 2a sidecar budget (operator-amended): B2B_-prefixed core documents get up to
-// 2,000 chars each; remaining files share the rest of the 12,000-char total.
-const SIDECAR_TOTAL_BUDGET = 12_000;
-const SIDECAR_CORE_CAP = 2_000;
 // Abort-over-truncate: if the assembled user prompt exceeds this, fail loudly
 // rather than silently dropping context below the per-file caps.
 const USER_TEXT_ABORT_CHARS = 28_000;
+// Substitution-fix gate: declared runs carry the rebalanced ~32.6k-char sidecar
+// allocation — qwen2.5's 32k window is the runtime truth (8,192 was the
+// llama3-era constraint). Abort-over-truncate retained at half the window.
+const DECLARED_USER_TEXT_ABORT_CHARS = 60_000;
+const DEFAULT_NUM_CTX = 8_192;
+const DECLARED_NUM_CTX = 32_768;
 const DECLARED_EVIDENCE_BASIS =
   "Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.";
 const STANDARD_MARKET_CATEGORY_LIST =
@@ -490,6 +494,8 @@ async function callLocalSynthesis(args: {
   industryAnchors?: IndustryStepAnchor | null;
   timeoutMs?: number;
   skipNeeds?: boolean;
+  numCtx?: number;
+  abortChars?: number;
 }) {
   const industryBlock = args.industryAnchors
     ? "\n\nIndustry step hypotheses for this company's market category: " +
@@ -546,11 +552,13 @@ async function callLocalSynthesis(args: {
     `- Do NOT start market_context with \"Category:\" or name a product/industry category.\n` +
     `- Keep market_context to 1-2 sentences.\n` +
     "Customer journeys must contain exactly 8 checkpoints numbered 1..8.\n" +
+    "Non-customer journeys (e.g. 'b2b-buyer'): produce 6 to 8 steps. Each step must describe what THIS journey's job executor (see the declared market definition) is trying to accomplish, grounded in how the internal_documents describe that executor's reality — what they evaluate, require, vet, and confirm. Never name the company's own methods, programs, or offerings in steps; steps describe the buyer's job, not the seller's solution. Step labels stay solution-agnostic ODI form (verb + object + context; verbs like determine, identify, evaluate, validate, confirm, detect, adjust). Do not return generic stage names like 'Define desired progress' — every label and description must be specific to this company's declared direction. STEP LABELS MUST NOT CONTAIN ANY of these words (they fail validation and abort the run): feature, dashboard, portal, campaign, launch, tool, app, platform, build, implement, rollout, template, mvp, ui, productize, standardize, integrate, promote, negotiate, supplier, vendor, pricing, terms, partnership, onboarding. Describe relationships in job terms instead — e.g. 'the sourcing relationship', 'the roaster they buy from'. DOMAIN TEXTURE REQUIREMENT: every step label and description must be written in the job executor's domain vocabulary as the internal_documents portray it — for this company that means concrete nouns like roast quality, origin sourcing, volume capability, consistency, training, the venue's offering. Abstract business nouns ('partnership approach', 'performance data', 'feedback mechanisms', 'fit and value') are prohibited unless anchored to a domain-specific object. Form exemplar from an UNRELATED industry (a clinic sourcing laboratory services) — match this texture, never these facts: label 'Verify turnaround holds under peak sample volume', description 'The clinic confirms the lab's stated 48-hour result turnaround will hold through flu-season peaks, because late results back up appointment scheduling and force repeat draws.' That is the expected texture: the executor's world, domain nouns, solution-agnostic, no vendor named. Return steps in the journeys array under the requested journey_key.\n" +
     "Desired outcomes must be clear ODI-style statements in common language: directional verb (Minimize/Increase/Reduce/Improve) + measurable object + context.";
 
-  if (userText.length > USER_TEXT_ABORT_CHARS) {
+  const abortChars = args.abortChars ?? USER_TEXT_ABORT_CHARS;
+  if (userText.length > abortChars) {
     throw new Error(
-      `Assembled synthesis prompt is ${userText.length} chars (> ${USER_TEXT_ABORT_CHARS}) — aborting rather than truncating below the approved per-file caps.`,
+      `Assembled synthesis prompt is ${userText.length} chars (> ${abortChars}) — aborting rather than truncating below the approved per-file caps.`,
     );
   }
   console.log(`[local-jobmap-synthesis] assembled prompt chars: system=${systemText.length} user=${userText.length}`);
@@ -563,7 +571,7 @@ async function callLocalSynthesis(args: {
     model: args.ollamaModel,
     format: "json",
     stream: false,
-    options: { num_ctx: 8192 },
+    options: { num_ctx: args.numCtx ?? DEFAULT_NUM_CTX },
     messages: [
       { role: "system", content: systemText },
       { role: "user", content: userText },
@@ -610,6 +618,7 @@ function normalizeCustomerJourney(args: {
   contextHint?: string;
   forceContextualDescriptions?: boolean;
   industryExclusions?: Set<string>;
+  strictModelContent?: boolean;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
   const contextTopic = normalizeContextTopic(args.contextHint || "");
@@ -633,6 +642,7 @@ function normalizeCustomerJourney(args: {
       defaultEvidenceBasis: args.evidenceBasis,
       defaultConfidence: 52,
       defaultGapNote: contextualGapNote,
+      strictModelContent: args.strictModelContent,
     },
   ).map((step, index) => {
     const checkpoint = JTBD_ODI_CHECKPOINTS[index];
@@ -640,15 +650,26 @@ function normalizeCustomerJourney(args: {
     const rawDescription = safeText(step.description);
     const contextualDescription = contextualStepDescription(checkpoint.stepNumber, contextTopic);
     const description = rawDescription || contextualDescription;
-    const repairedLabel = containsSolutionPrescriptiveLanguage(label, args.industryExclusions) || containsNonOdiProcessLanguage(label)
-      ? checkpoint.canonicalLabel
-      : label;
+    const labelViolates = containsSolutionPrescriptiveLanguage(label, args.industryExclusions) || containsNonOdiProcessLanguage(label);
+    const repairedLabel = labelViolates ? checkpoint.canonicalLabel : label;
     const shouldUseContextual =
       args.forceContextualDescriptions ||
       !rawDescription ||
       rawDescription === checkpoint.description ||
       containsSolutionPrescriptiveLanguage(rawDescription, args.industryExclusions) ||
       containsNonOdiProcessLanguage(rawDescription);
+    if (args.strictModelContent) {
+      if (labelViolates) {
+        throw new Error(
+          `strict model content: customer checkpoint ${checkpoint.stepNumber} label ${JSON.stringify(label)} violates the vocabulary law — refusing canonical-label substitution.`,
+        );
+      }
+      if (shouldUseContextual) {
+        throw new Error(
+          `strict model content: customer checkpoint ${checkpoint.stepNumber} description would be replaced by template text (${!rawDescription ? "empty" : rawDescription === checkpoint.description ? "echoed canonical template" : "vocabulary violation"}) — refusing substitution.`,
+        );
+      }
+    }
     const repairedDescription = shouldUseContextual ? contextualDescription : description;
 
     return {
@@ -698,15 +719,43 @@ function normalizeNonCustomerJourney(args: {
   rawJourney: Record<string, unknown> | null;
   evidenceBasis: string;
   industryExclusions?: Set<string>;
+  // Substitution-fix gate: under strict (require_model) content mode, ANY branch
+  // that would write template text in place of model text throws with a named
+  // reason — caught by the require_model handler: loud 502, zero writes.
+  strictModelContent?: boolean;
 }) {
   const rawSteps = Array.isArray(args.rawJourney?.steps) ? args.rawJourney?.steps : [];
+  if (args.strictModelContent && rawSteps.length < 6) {
+    throw new Error(
+      `strict model content: journey '${args.map.journey_key}' parsed only ${rawSteps.length} steps (<6) — refusing template substitution (would have written JTBD_ODI_CHECKPOINTS 1..6).`,
+    );
+  }
   const parsed: NormalizedStep[] = rawSteps
     .map((entry, index) => {
       const row = asRecord(entry);
       const fallback = JTBD_ODI_CHECKPOINTS[Math.min(index, JTBD_ODI_CHECKPOINTS.length - 1)];
       const stepNumber = clampInt(Number(row?.step_number) || (index + 1), 1, 8);
-      const label = safeText(row?.step_label) || fallback.canonicalLabel;
-      const description = safeText(row?.description) || fallback.description;
+      const rawLabel = safeText(row?.step_label);
+      const rawDescriptionText = safeText(row?.description);
+      if (args.strictModelContent) {
+        if (!rawLabel) {
+          throw new Error(
+            `strict model content: journey '${args.map.journey_key}' step ${stepNumber} has no label — refusing canonical-label substitution.`,
+          );
+        }
+        if (!rawDescriptionText) {
+          throw new Error(
+            `strict model content: journey '${args.map.journey_key}' step ${stepNumber} has no description — refusing template-description substitution.`,
+          );
+        }
+        if (containsSolutionPrescriptiveLanguage(rawLabel, args.industryExclusions)) {
+          throw new Error(
+            `strict model content: journey '${args.map.journey_key}' step ${stepNumber} label ${JSON.stringify(rawLabel)} violates the solution-agnostic vocabulary law — refusing canonical-label substitution; the model must rephrase.`,
+          );
+        }
+      }
+      const label = rawLabel || fallback.canonicalLabel;
+      const description = rawDescriptionText || fallback.description;
       return {
         step_number: stepNumber,
         step_label: containsSolutionPrescriptiveLanguage(label, args.industryExclusions) ? fallback.canonicalLabel : label,
@@ -722,6 +771,11 @@ function normalizeNonCustomerJourney(args: {
     .sort((a, b) => a.step_number - b.step_number)
     .slice(0, 8);
 
+  if (args.strictModelContent && parsed.length < 6) {
+    throw new Error(
+      `strict model content: journey '${args.map.journey_key}' normalized to ${parsed.length} steps (<6) — refusing template substitution.`,
+    );
+  }
   const withFallback = parsed.length >= 6
     ? parsed
     : JTBD_ODI_CHECKPOINTS.slice(0, 6).map((checkpoint) => ({
@@ -961,20 +1015,13 @@ Deno.serve(async (req) => {
       ...files.filter((row) => safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
       ...files.filter((row) => !safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
     ];
-    const coreCount = sidecarOrder.filter((row) =>
-      safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")
-    ).length;
-    const remainderCount = Math.max(1, sidecarOrder.length - coreCount);
-    const perFileRemainderCap = Math.max(
-      200,
-      Math.floor((SIDECAR_TOTAL_BUDGET - coreCount * SIDECAR_CORE_CAP) / remainderCount),
-    );
     const internalDocuments: Array<{ file_name: string; excerpt: string }> = [];
     for (const row of sidecarOrder) {
       const filePath = safeText((row as Record<string, unknown>)?.file_path);
       const fileName = safeText((row as Record<string, unknown>)?.file_name);
       if (!filePath) continue;
-      const cap = fileName.startsWith("B2B_") ? SIDECAR_CORE_CAP : perFileRemainderCap;
+      // Operator-approved tiered allocation (shared with local-strategy-synthesis).
+      const cap = sidecarCapForFile(fileName);
       try {
         const { data: sidecar, error: sidecarErr } = await supabase.storage
           .from("input-files")
@@ -989,7 +1036,7 @@ Deno.serve(async (req) => {
       }
     }
     console.log(
-      `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${sidecarOrder.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (core=${coreCount}@${SIDECAR_CORE_CAP}, rest@${perFileRemainderCap})`,
+      `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${sidecarOrder.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (tiered allocation)`,
     );
 
     const industryLabel = inferStandardMarketCategory(
@@ -1103,6 +1150,8 @@ Deno.serve(async (req) => {
         industryAnchors: industryAnchors || undefined,
         timeoutMs: requireModel ? OLLAMA_REQUIRE_MODEL_TIMEOUT_MS : undefined,
         skipNeeds: declaredDirection,
+        numCtx: requireModel ? DECLARED_NUM_CTX : DEFAULT_NUM_CTX,
+        abortChars: requireModel ? DECLARED_USER_TEXT_ABORT_CHARS : USER_TEXT_ABORT_CHARS,
       });
     } catch (error) {
       if (requireModel) {
@@ -1127,6 +1176,16 @@ Deno.serve(async (req) => {
       if (!rawJourneyByKey.has(key)) rawJourneyByKey.set(key, obj || {});
     }
 
+    // Substitution-fix gate (3c): raw per-journey parsed-step counts are logged,
+    // returned, and durably recorded — substitution can never again be invisible.
+    const rawModelJourneys = requestedMaps.map((map) => ({
+      journey_key: map.journey_key,
+      raw_step_count: Array.isArray(rawJourneyByKey.get(map.journey_key)?.steps)
+        ? (rawJourneyByKey.get(map.journey_key)?.steps as unknown[]).length
+        : 0,
+    }));
+    console.log(`[local-jobmap-synthesis] raw model journeys (pre-normalization): ${JSON.stringify(rawModelJourneys)}`);
+
     const basis = industryAnchors
       ? `industry_anchor:${industryLabel}`
       : "industry_unresolved";
@@ -1140,9 +1199,10 @@ Deno.serve(async (req) => {
           contextHint,
           forceContextualDescriptions: synthesisMode === "fallback",
           industryExclusions,
+          strictModelContent: requireModel,
         });
       }
-      return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis, industryExclusions });
+      return normalizeNonCustomerJourney({ map, rawJourney, evidenceBasis: basis, industryExclusions, strictModelContent: requireModel });
     });
 
     const primaryCustomerJourney =
@@ -1271,6 +1331,16 @@ Deno.serve(async (req) => {
       console.log("[local-jobmap-synthesis] synthesized ODI needs were computed for context only and not written.");
     }
 
+    await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+      company_id: companyId,
+      component: "local_synthesis",
+      status: "completed",
+      examined: rawModelJourneys.reduce((sum, j) => sum + j.raw_step_count, 0),
+      admitted: stepsInserted,
+      excluded_by_rule: { raw_model_journeys: rawModelJourneys, substitution_refused: false },
+      run_ref: trigger,
+    });
+
     let marketDefinitionAction = "inserted";
     if (existingMarket?.id) {
       const { error: marketUpdateError } = await supabase
@@ -1341,6 +1411,7 @@ Deno.serve(async (req) => {
         customer_checkpoint_count: primaryCustomerJourney.steps.length,
         customer_step_numbers: primaryCustomerJourney.steps.map((step) => step.step_number),
       },
+      debug: { raw_model_journeys: rawModelJourneys },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
