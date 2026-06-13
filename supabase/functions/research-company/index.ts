@@ -7036,8 +7036,9 @@ Deno.serve(async (req) => {
         .in("journey_key", jobMapUpdateJourneyKeys)
         .or(DELETABLE_PROVENANCE_OR_FILTER);
     }
-    await supabase.from("solution_tests").delete().eq("company_id", company_id);
-    await supabase.from("solution_ideas").delete().eq("company_id", company_id);
+    // PCT-2 downstream fix: the solution_tests + solution_ideas wipes MOVED from here
+    // to after the opportunities reconcile (they are scoped to exclude preserved
+    // opps' artifacts, and the preserved-opp set isn't known until the reconcile runs).
     // PCT-2: public opportunities and odi_needs are RECONCILED by content identity
     // (keep/add/preserve) below — no longer delete+insert. The provenance-scoped
     // deletes (gate a) are gone: a public re-run keeps unchanged findings, adds new
@@ -7414,6 +7415,33 @@ Deno.serve(async (req) => {
       insertedOpportunities,
       helpers: { clamp, normalizeJourneyKey, isCustomerJourneyKey, ensureRequiredFrameworkKeys, JTBD_CHECKPOINT_COUNT },
     })).oppsInserted;
+
+    // PCT-2 downstream fix (moved from the early §7 clears): wipe solution_ideas +
+    // solution_tests ONLY for the opps being rebuilt this run (insertedOpportunities =
+    // kept + added, all public_research). Everything NOT regenerated — preserved
+    // public opps AND curated (manual) / declared (internal_declared) opps — keeps
+    // its artifacts untouched ("preserve = untouched" extends to a finding's
+    // per-opp artifacts). Both FKs are NOT NULL, so no null handling is needed.
+    // Routes stay wiped early (R3, accepted): a surviving idea's route_id may go
+    // null via the routes SET-NULL FK — an accepted route-less state, not a regression.
+    if (!dry_run) {
+      const rebuiltOppIds = insertedOpportunities.map((o) => o.id).filter(Boolean);
+      if (rebuiltOppIds.length > 0) {
+        // Tests first (delete by idea-of-rebuilt-opp); their ideas are deleted next.
+        const { data: rebuiltIdeaRows } = await supabase
+          .from("solution_ideas")
+          .select("id")
+          .eq("company_id", company_id)
+          .in("opportunity_id", rebuiltOppIds);
+        const rebuiltIdeaIds = (rebuiltIdeaRows ?? [])
+          .map((r) => String((r as Record<string, unknown>).id || ""))
+          .filter(Boolean);
+        if (rebuiltIdeaIds.length > 0) {
+          await supabase.from("solution_tests").delete().eq("company_id", company_id).in("solution_idea_id", rebuiltIdeaIds);
+        }
+        await supabase.from("solution_ideas").delete().eq("company_id", company_id).in("opportunity_id", rebuiltOppIds);
+      }
+    }
     const customerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const baselineLens = (effectiveBaselineResultJson as {
       lens_card?: {
