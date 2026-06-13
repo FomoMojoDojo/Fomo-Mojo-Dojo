@@ -30,6 +30,7 @@ import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { DELETABLE_PROVENANCE_OR_FILTER, isProtectedJourneyKey, protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { planReconcile } from "../_shared/reconcilePublicSynthesis.ts";
+import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/researchSynthesisWrite.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
@@ -7396,193 +7397,23 @@ Deno.serve(async (req) => {
       }, 422);
     }
 
-    // PCT-2: reconcile public opportunities by content identity (keep/add/preserve).
-    // The current research run is anchored to its baseline run — that id is the run
-    // identity stamped on adds and advanced on kept rows.
+    // PCT-2: reconcile public opportunities + needs by content identity. The
+    // reconcile+write+tempKey->id seeding loops live in _shared/researchSynthesisWrite.ts
+    // (faithful extraction, real in-scope helpers injected) so the parent-seeding path
+    // is unit-testable. reconcileRunId is computed once and passed to both.
     const reconcileRunId = baselineRun?.id != null ? String(baselineRun.id) : null;
-    const oppPrepared = hierarchicalOpportunities.map((opp, i) => {
-      const journeyKey = normalizeJourneyKey(opp?.journey_key) || "customer";
-      const rawStepNumber = Number(opp?.step_number) || 0;
-      const stepNumber = isCustomerJourneyKey(journeyKey)
-        ? clamp(rawStepNumber || 1, 1, JTBD_CHECKPOINT_COUNT)
-        : Math.max(1, rawStepNumber || 1);
-      const stepLabel = isCustomerJourneyKey(journeyKey)
-        ? customerStepLabelByNumber.get(stepNumber) || String(opp?.step_label || "").trim()
-        : String(opp?.step_label || "").trim();
-      const importance = clamp(Number(opp?.importance) || 5, 1, 10);
-      const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
-      const opportunity_score = clamp(Number(opp?.opportunity_score) || (importance + (10 - satisfaction)), 0, 20);
-      const priority_tier = opportunity_score >= 12 ? "focus" : opportunity_score >= 7 ? "monitor" : "defer";
-      return {
-        opp, journeyKey, stepNumber, stepLabel, importance, satisfaction, opportunity_score, priority_tier,
-        tempKey: String(opp.__temp_key || "").trim(),
-        outcome: String(opp?.outcome || ""),
-        ref: String(opp.__temp_key || "").trim() || `idx:${i}`,
-      };
-    });
-
-    const { data: existingOppRows } = await supabase
-      .from("opportunities")
-      .select("id, outcome, content_identity, journey_key, step_number")
-      .eq("company_id", company_id)
-      .eq("provenance_type", "public_research")
-      .eq("status", "active");
-    const existingOppById = new Map<string, Record<string, unknown>>(
-      (existingOppRows ?? []).map((r) => [String((r as Record<string, unknown>).id), r as Record<string, unknown>]),
-    );
-    const oppPlan = await planReconcile(
-      (existingOppRows ?? []).map((r) => {
-        const rr = r as Record<string, unknown>;
-        return {
-          id: String(rr.id),
-          statement: String(rr.outcome || ""),
-          content_identity: (rr.content_identity as string | null) ?? null,
-          journey_key: String(rr.journey_key || ""),
-          step_number: Number(rr.step_number) || 0,
-        };
-      }),
-      oppPrepared.map((p) => ({ ref: p.ref, statement: p.outcome, journey_key: p.journeyKey, step_number: p.stepNumber })),
-    );
-    const oppEntryByRef = new Map(oppPlan.entries.map((e) => [e.ref, e]));
-    // Lazy identity backfill on existing rows, through the single TS helper.
-    for (const b of oppPlan.identityBackfill) {
-      await supabase.from("opportunities").update({ content_identity: b.identity }).eq("id", b.id);
-    }
-
-    const persistedOpportunityIdByTempKey = new Map<string, string>();
-    let parentOpportunityColumnAvailable = true;
-    for (const p of oppPrepared) {
-      const entry = oppEntryByRef.get(p.ref);
-      const { journeyKey, stepNumber, stepLabel, importance, satisfaction, opportunity_score, priority_tier } = p;
-
-      // KEEP: matched an existing active public row — do NOT insert. Seed the temp
-      // key map with the KEPT id so new children of a kept parent resolve their
-      // parent_opportunity_id correctly. The row is left untouched (text/scores/tree
-      // position retained); only last_confirmed advances (batched below).
-      if (entry && entry.action === "keep") {
-        const existing = existingOppById.get(entry.existingId) || {};
-        if (p.tempKey) persistedOpportunityIdByTempKey.set(p.tempKey, entry.existingId);
-        insertedOpportunities.push({
-          id: entry.existingId,
-          outcome: String(existing.outcome || p.outcome),
-          step_label: stepLabel,
-          step_number: stepNumber,
-          journey_key: journeyKey,
-          priority_tier,
-          opportunity_score,
-        });
-        oppsInserted++;
-        continue;
-      }
-
-      // ADD
-      const managedOutcomeId = managedOutcomeIdByJourney.get(journeyKey) || null;
-      const parentOpportunityId = parentOpportunityColumnAvailable
-        ? persistedOpportunityIdByTempKey.get(String(p.opp.__parent_key || "")) || null
-        : null;
-      const reconcileCols = {
-        content_identity: entry?.identity ?? null,
-        status: "active",
-        source_run_id: reconcileRunId,
-        last_confirmed_run_id: reconcileRunId,
-      };
-      let insert = await supabase
-        .from("opportunities")
-        .insert({
-          company_id,
-          user_id: user.id,
-          provenance_type: "public_research",
-          frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
-          managed_outcome_id: managedOutcomeId,
-          ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
-          outcome: p.outcome,
-          step_number: stepNumber,
-          step_label: stepLabel,
-          journey_key: journeyKey,
-          importance,
-          satisfaction,
-          opportunity_score,
-          priority_tier,
-          ...reconcileCols,
-        })
-        .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
-        .single();
-
-      let insertMessage = String(insert.error?.message || "").toLowerCase();
-      if (insert.error && insertMessage.includes("parent_opportunity_id") && parentOpportunityColumnAvailable) {
-        parentOpportunityColumnAvailable = false;
-        insert = await supabase
-          .from("opportunities")
-          .insert({
-            company_id,
-            user_id: user.id,
-            provenance_type: "public_research",
-            frameworks_used: ensureRequiredFrameworkKeys(opportunityFrameworkKeys),
-            managed_outcome_id: managedOutcomeId,
-            outcome: p.outcome,
-            step_number: stepNumber,
-            step_label: stepLabel,
-            journey_key: journeyKey,
-            importance,
-            satisfaction,
-            opportunity_score,
-            priority_tier,
-            ...reconcileCols,
-          })
-          .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
-          .single();
-        insertMessage = String(insert.error?.message || "").toLowerCase();
-      }
-
-      if (insert.error && insertMessage.includes("frameworks_used")) {
-        insert = await supabase
-          .from("opportunities")
-          .insert({
-            company_id,
-            user_id: user.id,
-            provenance_type: "public_research",
-            managed_outcome_id: managedOutcomeId,
-            ...(parentOpportunityColumnAvailable ? { parent_opportunity_id: parentOpportunityId } : {}),
-            outcome: p.outcome,
-            step_number: stepNumber,
-            step_label: stepLabel,
-            journey_key: journeyKey,
-            importance,
-            satisfaction,
-            opportunity_score,
-            priority_tier,
-            ...reconcileCols,
-          })
-          .select("id, outcome, step_label, step_number, journey_key, priority_tier, opportunity_score")
-          .single();
-      }
-
-      if (insert.error) {
-        console.error("[research-company] opportunity insert error:", insert.error);
-      } else {
-        const row = (insert.data || {}) as Record<string, unknown>;
-        const insertedId = String(row.id || "");
-        if (insertedId) {
-          if (p.tempKey) persistedOpportunityIdByTempKey.set(p.tempKey, insertedId);
-          insertedOpportunities.push({
-            id: insertedId,
-            outcome: String(row.outcome || ""),
-            step_label: String(row.step_label || ""),
-            step_number: Number(row.step_number) || stepNumber,
-            journey_key: String(row.journey_key || journeyKey),
-            priority_tier: String(row.priority_tier || priority_tier),
-            opportunity_score: Number(row.opportunity_score) || opportunity_score,
-          });
-        }
-        oppsInserted++;
-      }
-    }
-
-    // Advance last_confirmed_run_id on kept rows (status stays active; nothing else changes).
-    if (oppPlan.keptExistingIds.length > 0 && reconcileRunId) {
-      await supabase.from("opportunities").update({ last_confirmed_run_id: reconcileRunId }).in("id", oppPlan.keptExistingIds);
-    }
-    console.log(`[research-company] opportunities reconcile: kept=${oppPlan.keptExistingIds.length} added=${oppPlan.entries.filter((e) => e.action === "add").length} preserved=${oppPlan.preservedExistingIds.length}`);
+    oppsInserted = (await writeReconciledOpportunities({
+      supabase,
+      company_id: String(company_id),
+      user,
+      hierarchicalOpportunities,
+      customerStepLabelByNumber,
+      managedOutcomeIdByJourney,
+      opportunityFrameworkKeys,
+      reconcileRunId,
+      insertedOpportunities,
+      helpers: { clamp, normalizeJourneyKey, isCustomerJourneyKey, ensureRequiredFrameworkKeys, JTBD_CHECKPOINT_COUNT },
+    })).oppsInserted;
     const customerJourney = journeys.find((journey) => isCustomerJourneyKey(journey?.journey_key));
     const baselineLens = (effectiveBaselineResultJson as {
       lens_card?: {
@@ -7657,83 +7488,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // PCT-2: reconcile public needs by content identity (keep/add/preserve). Flat
-    // (no tree), all journey_key 'customer'. Statement to hash = canonical if set,
-    // else the normalized desired_outcome.
-    const needPrepared = opportunities.map((opp, needIndex) => {
-      const rawStepNumber = Number(opp?.step_number) || 0;
-      const stepNumber = clamp(rawStepNumber || 1, 1, JTBD_CHECKPOINT_COUNT);
-      const stepLabel = customerStepLabelByNumber.get(stepNumber) || String(opp?.step_label || "").trim();
-      const importance = clamp(Number(opp?.importance) || 5, 1, 10);
-      const satisfaction = clamp(Number(opp?.satisfaction) || 5, 1, 10);
-      const opportunity_score = clamp(Number(opp?.opportunity_score) || (importance + (10 - satisfaction)), 0, 20);
-      const desiredOutcome = normalizeOutcomeLanguage(String(opp?.outcome || ""));
-      const canonical = (opp?.odi_canonical_statement as string | null) || null;
-      const statement = (canonical && String(canonical).trim()) ? String(canonical) : desiredOutcome;
-      return { needIndex, stepNumber, stepLabel, importance, satisfaction, opportunity_score, desiredOutcome, canonical, statement };
-    });
-
-    const { data: existingNeedRows } = await supabase
-      .from("odi_needs")
-      .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
-      .eq("company_id", company_id)
-      .eq("provenance_type", "public_research")
-      .eq("status", "active");
-    const needPlan = await planReconcile(
-      (existingNeedRows ?? []).map((r) => {
-        const rr = r as Record<string, unknown>;
-        const canon = (rr.odi_canonical_statement as string | null) || "";
-        return {
-          id: String(rr.id),
-          statement: (canon && String(canon).trim()) ? String(canon) : String(rr.desired_outcome || ""),
-          content_identity: (rr.content_identity as string | null) ?? null,
-          journey_key: String(rr.journey_key || ""),
-          step_number: Number(rr.step_number) || 0,
-        };
-      }),
-      needPrepared.map((p) => ({ ref: `n:${p.needIndex}`, statement: p.statement, journey_key: "customer", step_number: p.stepNumber })),
-    );
-    const needEntryByRef = new Map(needPlan.entries.map((e) => [e.ref, e]));
-    for (const b of needPlan.identityBackfill) {
-      await supabase.from("odi_needs").update({ content_identity: b.identity }).eq("id", b.id);
-    }
-
-    for (const p of needPrepared) {
-      const entry = needEntryByRef.get(`n:${p.needIndex}`);
-      // KEEP: row stays as-is; last_confirmed advances below. Count it present.
-      if (entry && entry.action === "keep") { odiNeedsInserted++; continue; }
-
-      const { error: odiNeedErr } = await supabase.from("odi_needs").insert({
-        company_id,
-        user_id: user.id,
-        provenance_type: "public_research",
-        tier: "need",
-        desired_outcome: p.desiredOutcome,
-        odi_canonical_statement: p.canonical,
-        journey_key: "customer",
-        step_number: p.stepNumber,
-        step_label: p.stepLabel,
-        importance: p.importance,
-        satisfaction: p.satisfaction,
-        opportunity_score: p.opportunity_score,
-        sort_order: p.needIndex + 1,
-        service_state: odiServiceState(p.importance, p.satisfaction),
-        source_path: artifactSourcePath,
-        frameworks_used: odiFrameworkKeys,
-        content_identity: entry?.identity ?? null,
-        status: "active",
-        source_run_id: reconcileRunId,
-        last_confirmed_run_id: reconcileRunId,
-      });
-
-      if (odiNeedErr) console.error("[research-company] odi need insert error:", odiNeedErr);
-      else odiNeedsInserted++;
-    }
-
-    if (needPlan.keptExistingIds.length > 0 && reconcileRunId) {
-      await supabase.from("odi_needs").update({ last_confirmed_run_id: reconcileRunId }).in("id", needPlan.keptExistingIds);
-    }
-    console.log(`[research-company] odi_needs reconcile: kept=${needPlan.keptExistingIds.length} added=${needPlan.entries.filter((e) => e.action === "add").length} preserved=${needPlan.preservedExistingIds.length}`);
+    // PCT-2: reconcile public needs — extracted to researchSynthesisWrite.ts.
+    odiNeedsInserted = (await writeReconciledNeeds({
+      supabase,
+      company_id: String(company_id),
+      user,
+      opportunities,
+      customerStepLabelByNumber,
+      odiFrameworkKeys,
+      artifactSourcePath,
+      reconcileRunId,
+      helpers: { clamp, normalizeOutcomeLanguage, odiServiceState, JTBD_CHECKPOINT_COUNT },
+    })).odiNeedsInserted;
 
     // Build a flat step list for route detail generation
     const allFlatSteps: FlatStep[] = [];
