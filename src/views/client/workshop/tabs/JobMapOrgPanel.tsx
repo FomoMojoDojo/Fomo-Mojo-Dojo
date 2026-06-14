@@ -174,107 +174,65 @@ function gerundPhrase(label: string): string {
   return rest.length ? `${g} ${rest.join(" ").toLowerCase()}` : g;
 }
 
-// Gap → resolved condition: strips negation, wraps the core noun as a requirement.
-// If coreOf barely changed the input the gap note doesn't follow negation patterns — use it directly.
-function condFromGap(gap_note: string, step_label: string): string {
-  const core = coreOf(gap_note);
-  if (core.length < 4) return `${step_label} requirements are documented before the step begins`;
-  if (core.length >= gap_note.trim().length * 0.85) {
-    return trunc(gap_note.trim().replace(/[.!?]+\s*$/, ""), 70);
+// ── Condition-builder honesty gate (b-i, operator-signed 2026-06-13) ──────────
+// The former deriveInternalConditions mad-libbed a step's own prose (gap_note →
+// description → evidence_basis → ownership → ODI phase) into canned assertions
+// ("… is established", "… requirements are established", "Ownership of … is named
+// and documented", "… is tracked and current", and 8 ODI-phase boilerplate
+// sentences) rendered as the live "What must be true" panel. That is fabrication:
+// a template-transformed assertion is NOT a model-authored condition. It also
+// leaked internal run-tags (e.g. "Run_mojo_analysis:… is tracked and current").
+//
+// b-i removes the fabrication entirely. The only genuine source it drew from
+// (gap_note) is already surfaced honestly elsewhere — the gap badge in the
+// expanded detail and tileSignal on the tile — so nothing real is lost. A
+// labeled best-guess condition is the generator's job (b-ii), never a template.
+//
+// What remains is the STANDING GATE below. assertNoCannedConditionString refuses
+// the canned class (and the run-tag leak shape), and InternalConditions — the
+// SOLE sanctioned path for rendering step conditions — routes every string
+// through it, so a future generator (b-ii) cannot silently reintroduce garble:
+// any conditions render MUST pass this gate.
+
+// Canned/template assertion class produced by the removed builder. A string
+// matching any of these is refused at the render boundary (dropped; loud in dev).
+const CANNED_CONDITION_PATTERNS: RegExp[] = [
+  /\b(?:is|are)\s+established\b/i,
+  /requirements?\s+(?:are\s+established|(?:are\s+)?documented\s+before\s+the\s+step\s+begins)/i,
+  /\bmust\s+be\s+confirmed\b/i,
+  /\bis\s+named\s+and\s+documented\b/i,
+  /\bis\s+tracked\s+and\s+current\b/i,
+  /\bis\s+captured\s+before\s+decisions\s+are\s+made\b/i,
+  // ODI-phase boilerplate stems:
+  /can\s+state\s+what\s+a\s+successful\b/i,
+  /\bis\s+documented,\s+not\s+held\s+by\s+one\s+person\b/i,
+  /\bis\s+written\s+down,\s+not\s+assumed\b/i,
+  /\bhas\s+the\s+authority\s+to\s+act\s+without\s+escalating\b/i,
+  /\ba\s+named\s+signal\b|\bnot\s+a\s+gut\s+check\b/i,
+  /\bgo\s+through\s+an\s+identified\s+reviewer\b/i,
+  /\bhanded\s+off\s+in\s+a\s+form\s+the\s+next\s+step\s+can\s+use\b/i,
+  /\bsomeone\s+updates\s+the\s+approach\s+based\s+on\s+what\s+happened\b/i,
+];
+// Internal run-tag leak shape (e.g. "run_mojo_analysis:2026-06-10",
+// "dify_mojo_analysis:…") — never client-facing as a condition.
+const RUN_TAG_CONDITION_PATTERN = /^\s*(?:run|dify)_mojo_analysis\s*:/i;
+
+// Render-boundary guard: returns true if `s` is a canned/templated assertion or a
+// run-tag leak that must NOT render as a condition. Throws loudly in dev so a
+// regression is caught at the source; in prod it returns true and the caller
+// drops the string (fail-closed, never render garble).
+function assertNoCannedConditionString(s: string): boolean {
+  const str = String(s ?? "");
+  const canned =
+    RUN_TAG_CONDITION_PATTERN.test(str) ||
+    CANNED_CONDITION_PATTERNS.some((re) => re.test(str));
+  if (canned && import.meta.env?.DEV) {
+    throw new Error(
+      `[JobMapOrgPanel] Refused canned/templated condition string: ${JSON.stringify(str.slice(0, 120))}. ` +
+        `Conditions must be model-authored, not template-substituted (b-i honesty gate).`,
+    );
   }
-  return `${ucFirst(trunc(core, 62))} is established`;
-}
-
-const LEADING_SUBJECT_RE = /^(?:the\s+)?(?:teams?|staff|organization|company|we|vendor|supplier|partners?)\s+/i;
-const LEADING_VERB_RE = /^(?:review|confirm|check|negotiate|prepare|finalize|sign|define|identify|assess|evaluate|plan|approve|execute|monitor|coordinate|document|process|manage|complete|establish|ensure|verify)\s+/i;
-
-// Description → what's involved must be confirmed: prefers explicit noun lists, else first clause.
-function condFromDescription(desc: string, step_label: string): string | null {
-  const gp = gerundPhrase(step_label);
-  const stripped = desc.replace(LEADING_SUBJECT_RE, "").replace(LEADING_VERB_RE, "").trim();
-  if (stripped.length < 6) return null;
-  const listRe = /\b([a-z][a-z\s-]{1,20}(?:,\s*[a-z][a-z\s-]{1,20})+(?:,?\s*and\s+[a-z][a-z\s-]{1,20})?)/i;
-  const m = stripped.match(listRe);
-  if (m) {
-    const list = m[1].replace(/\s+(?:with|for|from|to|in|by|at|of)\s.*$/i, "").trim();
-    if (list.length >= 6) return `${ucFirst(wordTrunc(list, 62))} must be confirmed`;
-  }
-  const clause = stripped.replace(/[^\w\s.,]/g, "").split(/[.,]/)[0].trim();
-  if (clause.length >= 10) return `${ucFirst(wordTrunc(clause, 68))} requirements are established`;
-  return null;
-}
-
-// Evidence basis → what must stay tracked: strips research preamble, wraps the subject.
-// Skip internal key references (e.g. [input_key:comp-alt]) — not user-facing.
-function condFromBasis(basis: string): string | null {
-  if (/^\[input_key:/i.test(basis.trim())) return null;
-  if (/^no\s+direct\s+evidence/i.test(basis.trim())) {
-    const subject = basis
-      .replace(/^no\s+direct\s+evidence\s+(?:on|for|about|of)\s+/i, "")
-      .replace(/\.?\s*$/, "")
-      .trim();
-    if (subject.length > 4) return `Evidence for ${subject.toLowerCase()} is captured before decisions are made`;
-    return null;
-  }
-  const cleaned = basis
-    .replace(/^(?:interviews?|surveys?|customer research|research|data|field data)(?:\s+data)?\s+(?:shows?|indicates?|suggests?|reveals?|found)\s+(?:gap in|lack of|limited|that)?\s*/i, "")
-    .replace(/^(?:based on|from|per|according to)\s+/i, "")
-    .replace(/^(?:gap in|lack of|limited|that)\s+/i, "")
-    .replace(/\s+(?:is missing|are missing|is absent|not found|is unclear)\.?\s*$/i, "")
-    .trim();
-  if (cleaned.length < 6) return null;
-  return `${ucFirst(trunc(cleaned, 68))} is tracked and current`;
-}
-
-// Ownership: uses the core noun from gap_note when available, else the step label.
-function condOwnership(step_label: string, gap_note?: string | null): string {
-  const noun = gap_note ? coreOf(gap_note) : "";
-  const subject = noun.length > 4 ? trunc(noun, 45).toLowerCase() : step_label.toLowerCase();
-  return `Ownership of ${subject} is named and documented`;
-}
-
-// ODI phase fallback — only used when all descriptive fields are empty.
-const ODI_PHASE_COND: Record<string, (l: string) => string> = {
-  DEFINE:   (l) => `The team can state what a successful ${l} looks like before starting`,
-  LOCATE:   (l) => `Where to find what's needed for ${l} is documented, not held by one person`,
-  PREPARE:  (l) => `What must be confirmed before ${l} starts is written down, not assumed`,
-  EXECUTE:  (l) => `The person doing ${l} has the authority to act without escalating`,
-  MONITOR:  (l) => `A named signal — not a gut check — indicates when ${l} is off track`,
-  MODIFY:   (l) => `Changes made during ${l} go through an identified reviewer before taking effect`,
-  CONCLUDE: (l) => `The output of ${l} is handed off in a form the next step can use without explanation`,
-  EVALUATE: (l) => `After ${l}, someone updates the approach based on what happened`,
-};
-
-function deriveInternalConditions(step: JobStepRow, odiLabel: string, limit: number): string[] {
-  const conditions: string[] = [];
-  const l = displayStepLabel(step) || "this step";
-
-  if (step.has_gap && step.gap_note)
-    conditions.push(condFromGap(step.gap_note, l));
-
-  if (step.description && conditions.length < limit) {
-    const c = condFromDescription(step.description, l);
-    if (c) conditions.push(c);
-  }
-
-  // Honesty rule (operator-signed): a declared step's evidence_basis NEVER becomes
-  // a "what must be true" condition — condFromBasis would truncate the signed
-  // disclaimer and append "is tracked and current", inverting its meaning.
-  // Declared steps derive conditions from gap_note/description/ownership only.
-  if (step.evidence_basis && step.evidence_status !== "declared" && conditions.length < limit) {
-    const c = condFromBasis(step.evidence_basis);
-    if (c) conditions.push(c);
-  }
-
-  if (conditions.length < limit)
-    conditions.push(condOwnership(l, step.gap_note));
-
-  if (conditions.length < limit) {
-    const pc = ODI_PHASE_COND[odiLabel];
-    if (pc) conditions.push(pc(l.toLowerCase()));
-  }
-
-  return conditions.slice(0, limit);
+  return canned;
 }
 
 const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
@@ -299,12 +257,19 @@ function EvidenceStatus({ step }: { step: JobStepRow }) {
   );
 }
 
-function InternalConditions({ conditions }: { conditions: string[] }) {
-  if (conditions.length === 0) return null;
+// Sole sanctioned path for rendering step conditions — the standing gate. Every
+// string is filtered through assertNoCannedConditionString; canned/templated
+// assertions and run-tag leaks are dropped (and throw in dev). b-i passes no
+// conditions here (the real gap content surfaces via the gap badge + tileSignal),
+// so this currently renders nothing; b-ii must render through THIS component so
+// the gate runs on whatever the generator produces.
+function InternalConditions({ conditions, label }: { conditions: string[]; label?: string }) {
+  const safe = conditions.filter((c) => !assertNoCannedConditionString(c));
+  if (safe.length === 0) return null;
   return (
     <div className="crpv-ws-jobmap-tile-cap">
-      <p className="cap crpv-ws-jobmap-tile-cap-lbl">What must be true (internally)</p>
-      {conditions.map((cond, i) => (
+      {label && <p className="cap crpv-ws-jobmap-tile-cap-lbl">{label}</p>}
+      {safe.map((cond, i) => (
         <p key={i} className="crpv-ws-jobmap-tile-cap-item">
           <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">•</span>
           <span>{cond}</span>
@@ -379,7 +344,6 @@ function SuggestedTile({
   routes: RouteRow[];
   routesReady?: boolean;
 }) {
-  const conditions = deriveInternalConditions(step, odi, 1);
   const posture = stepPosture(step);
   const shortDesc = (() => {
     if (!step.description) return null;
@@ -408,9 +372,8 @@ function SuggestedTile({
       </div>
       {contextLine && <p className="crpv-ws-jobmap-tile-ctx">{contextLine}</p>}
       <div className="crpv-ws-jobmap-tile-lower">
-        <InternalConditions conditions={conditions} />
         {routesReady && routes.length > 0 && (
-          <SuggestedRoutes routes={routes} step={step} conditions={conditions} />
+          <SuggestedRoutes routes={routes} step={step} />
         )}
       </div>
       <p className="crpv-ws-jobmap-tile-focus cap">↑ Highest risk</p>
@@ -492,16 +455,18 @@ type MatchedRoute = { route: RouteRow; reason: string | null };
 function matchRoutesToStep(
   routes: RouteRow[],
   step: JobStepRow,
-  conditions: string[],
   limit = 3,
 ): MatchedRoute[] {
   if (routes.length === 0) return [];
 
+  // Corpus keys off REAL step fields only (b-i honesty pass): no template-derived
+  // "conditions" enter matching. evidence_basis is included raw — it is not
+  // rendered here (no leak) and any internal run-tag tokens match no route.
   const stepCorpus = [
     displayStepLabel(step),
     step.gap_note ?? "",
     step.description ?? "",
-    ...conditions,
+    step.evidence_basis ?? "",
   ].join(" ");
   const stepTokens = tokenSet(stepCorpus);
 
@@ -546,13 +511,11 @@ const CATEGORY_SHORT: Record<string, string> = { fix: "pressure", improve: "vali
 function SuggestedRoutes({
   routes,
   step,
-  conditions,
 }: {
   routes: RouteRow[];
   step: JobStepRow;
-  conditions: string[];
 }) {
-  const matched = matchRoutesToStep(routes, step, conditions, 3);
+  const matched = matchRoutesToStep(routes, step, 3);
   if (matched.length === 0) return null;
   return (
     <div className="crpv-ws-jobmap-tile-routes">
@@ -616,7 +579,7 @@ function JourneySection({
     const linked = new Set<string>();
     for (const step of jSteps) {
       if (step._synthetic) continue;
-      const matched = matchRoutesToStep([activeRoute], step, [], 1);
+      const matched = matchRoutesToStep([activeRoute], step, 1);
       if ((matched[0]?.score ?? 0) > 0) linked.add(step.id);
     }
     return linked;
@@ -1111,7 +1074,6 @@ export default function JobMapOrgPanel({
       if (!step) return null;
       const odi = odiLabel(idx);
       const posture = step._synthetic ? { label: "Emerging", color: "#6d28d9", bg: "#f5f3ff" } : stepPosture(step);
-      const conditions = step._synthetic ? [] : deriveInternalConditions(step, odi, 3);
       const stepLabel = displayStepLabel(step);
       const linkedOpps = allNeeds.filter(
         (n) => n.journey_key === step.journey_key && n.step_number === (step.step_number ?? idx + 1),
@@ -1145,23 +1107,6 @@ export default function JobMapOrgPanel({
               </span>
             )}
           </div>
-
-          {/* What must be true */}
-          {conditions.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 12px" }}>
-                What must be true
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {conditions.map((cond, i) => (
-                  <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                    <span style={{ color: D.signal, flexShrink: 0, fontSize: 13, lineHeight: 1.5, marginTop: 1 }}>•</span>
-                    <span style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, lineHeight: 1.6 }}>{cond}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Linked opportunities */}
           {linkedOpps.length > 0 && (
