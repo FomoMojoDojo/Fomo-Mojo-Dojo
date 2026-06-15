@@ -135,3 +135,69 @@ export async function judgeStepPerspectives(args: {
   }
   return verdicts;
 }
+
+// b-ii: judge per-step CONDITIONS (preconditions) with the SAME executor lens,
+// model, and verdict store as job steps — reuses judgeOne (no fork). A condition
+// must describe the BUYER's job, never the seller's solution; uncertain → seller
+// (dropped by the caller). Content-identity keys off the condition text alone (a
+// condition is a standalone statement), so the same condition phrasing resolves
+// once across steps/companies. First-verdict-wins; dry runs read but never persist.
+export type ConditionVerdict = {
+  condition: string;
+  content_hash: string;
+  verdict: "buyer" | "seller";
+  from_store: boolean;
+};
+
+export async function judgeConditionPerspectives(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  stepLabel: string; // judge context only — NOT part of the content identity
+  conditions: string[];
+  executorBrief: string;
+  ollamaUrl: string;
+  judgeModel?: string;
+  persist: boolean;
+}): Promise<ConditionVerdict[]> {
+  const judgeModel = args.judgeModel ?? "llama3:70b";
+  const out: ConditionVerdict[] = [];
+  for (const condition of args.conditions) {
+    const contentHash = await sha256Hex(normalizeForHash(condition));
+    let verdict: "buyer" | "seller" | null = null;
+    let fromStore = false;
+    const { data: stored } = await args.supabase
+      .from("step_perspective_verdicts")
+      .select("verdict")
+      .eq("company_id", args.companyId)
+      .eq("content_hash", contentHash)
+      .maybeSingle();
+    if (stored && (stored.verdict === "buyer" || stored.verdict === "seller")) {
+      verdict = stored.verdict;
+      fromStore = true;
+    }
+    if (!verdict) {
+      verdict = await judgeOne({
+        ollamaUrl: args.ollamaUrl,
+        judgeModel,
+        stepLabel: args.stepLabel,
+        description: condition, // the condition is the statement under judgement
+        executorBrief: args.executorBrief,
+      });
+      if (args.persist) {
+        const { error } = await args.supabase.from("step_perspective_verdicts").insert({
+          company_id: args.companyId,
+          content_hash: contentHash,
+          verdict,
+          judge_model: judgeModel,
+          step_label_excerpt: condition.slice(0, 120),
+        });
+        if (error && !String(error.message || "").toLowerCase().includes("duplicate")) {
+          console.warn("[condition-judge] verdict persist failed (non-fatal)", String(error.message).slice(0, 120));
+        }
+      }
+    }
+    console.log(`[condition-judge] "${condition.slice(0, 50)}" → ${verdict}${fromStore ? " (store)" : ""}`);
+    out.push({ condition, content_hash: contentHash, verdict, from_store: fromStore });
+  }
+  return out;
+}
