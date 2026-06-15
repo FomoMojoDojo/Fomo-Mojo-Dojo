@@ -1037,9 +1037,11 @@ export default function JobMapOrgPanel({
   hasHierarchy?: boolean;
   needs?: OdiNeedRow[];
   signalBasis?: SignalBasis;
-  // MH-2: the VIEWED set's market_def (scoped by journey_key upstream). The header
-  // names its job_executor clause verbatim when honestly named; null → emptiness.
-  marketDef?: { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null } | null;
+  // MH-2/5a: the VIEWED set's market_def (scoped by journey_key upstream). The
+  // header names its job_executor clause verbatim when honestly named; provenance
+  // drives the tier — 'manual' = operator-validated (plain), else = labeled
+  // hypothesis; null/boilerplate → emptiness.
+  marketDef?: { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null } | null;
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
   const [activeHierarchyIdx, setActiveHierarchyIdx] = useState<number>(0);
@@ -1266,6 +1268,9 @@ export default function JobMapOrgPanel({
       viewedMarketDef && !isBoilerplateJtbd(viewedMarketDef.jtbd) && String(viewedMarketDef.job_executor ?? "").trim()
         ? String(viewedMarketDef.job_executor).trim()
         : null;
+    // MH-5a tier: operator-authored (manual) market_def renders plain (validated);
+    // any other provenance (generated/system) renders as a labeled hypothesis.
+    const marketIsValidated = String(viewedMarketDef?.provenance_type ?? "") === "manual";
 
     return (
       <div style={{ margin: -36, display: "flex", flexDirection: "column", background: D.canvas }}>
@@ -1277,9 +1282,16 @@ export default function JobMapOrgPanel({
             {"The market this map is for"}
           </p>
           {marketName ? (
-            <h1 style={{ fontFamily: D.sans, fontSize: 28, fontWeight: 700, color: D.ink, margin: "0 0 20px", lineHeight: 1.18, letterSpacing: "-0.02em", maxWidth: 760 }}>
-              {marketName}
-            </h1>
+            <>
+              <h1 style={{ fontFamily: D.sans, fontSize: 28, fontWeight: 700, color: D.ink, margin: marketIsValidated ? "0 0 20px" : "0 0 8px", lineHeight: 1.18, letterSpacing: "-0.02em", maxWidth: 760 }}>
+                {marketName}
+              </h1>
+              {!marketIsValidated && (
+                <span style={{ display: "inline-block", fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: "#b45309", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 3, padding: "3px 9px", margin: "0 0 20px" }}>
+                  Hypothesis — not yet validated
+                </span>
+              )}
+            </>
           ) : (
             <p style={{ fontFamily: D.sans, fontSize: 18, fontWeight: 500, color: D.inkSoft, margin: "0 0 20px", lineHeight: 1.45, maxWidth: 640 }}>
               This map's market isn't named yet — who is it for, and what are they getting done?
