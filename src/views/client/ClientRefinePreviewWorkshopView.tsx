@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
@@ -363,6 +364,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const [activeRouteId,     setActiveRouteId]     = useState<string | null>(null);
   const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
+  const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
   // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
@@ -1272,6 +1274,59 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId, focusedJourneyKey, queryClient, refetchCompany, refetchJobSteps]);
 
+  // b-ii: deliberate per-set conditions generation. Invokes the edge function
+  // (LOCAL 14b + 70b judge via the committed module; field-merge keeps operator
+  // edits). Generation can exceed the Kong 150s gateway — on timeout the writes
+  // still land server-side, so we confirm completion by polling conditions_json
+  // for a change against a pre-run snapshot.
+  const runConditionsGeneration = useCallback(async () => {
+    if (!companyId || !focusedJourneyKey) return;
+    if (isFrozenCompany(companyId)) {
+      toast.error("This is a frozen reference company — conditions are not generated for it.");
+      return;
+    }
+    const setHadConditions = filteredJobSteps.some(
+      (s) => Array.isArray(s.conditions_json) && s.conditions_json.length > 0,
+    );
+    const successMsg = setHadConditions ? "Conditions refreshed — your edits kept" : "Conditions generated";
+    const beforeSig = JSON.stringify(filteredJobSteps.map((s) => [s.id, s.conditions_json ?? null]));
+
+    setRegeneratingConditions(true);
+    toast.loading(setHadConditions ? "Regenerating conditions… (~1–2 min)" : "Generating conditions… (~1–2 min)", { id: "gen-conditions" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-step-conditions", {
+        body: { company_id: companyId, journey_key: focusedJourneyKey },
+      });
+      if (!error && (data as { ok?: boolean } | null)?.ok === true) {
+        await refetchJobSteps();
+        toast.success(successMsg, { id: "gen-conditions" });
+        return;
+      }
+      // Invoke errored (often a Kong 150s timeout while generation continues
+      // server-side). Poll the set's conditions_json until it changes.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, 6000));
+        const { data: rows } = await supabase
+          .from("job_steps")
+          .select("id, conditions_json")
+          .eq("company_id", companyId)
+          .eq("journey_key", focusedJourneyKey)
+          .order("step_number", { ascending: true });
+        const sig = JSON.stringify(((rows as Array<{ id: string; conditions_json: unknown }> | null) ?? []).map((r) => [r.id, r.conditions_json ?? null]));
+        if (sig !== beforeSig) {
+          await refetchJobSteps();
+          toast.success(successMsg, { id: "gen-conditions" });
+          return;
+        }
+      }
+      throw new Error("Conditions are taking longer than expected — refresh the page in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate conditions.", { id: "gen-conditions" });
+    } finally {
+      setRegeneratingConditions(false);
+    }
+  }, [companyId, focusedJourneyKey, filteredJobSteps, refetchJobSteps]);
+
   const openAffectedArtifact = useCallback((artifact: {
     object_type: "odi_need" | "route" | "desired_outcome";
     object_id: string;
@@ -2019,6 +2074,20 @@ export default function ClientRefinePreviewWorkshopView() {
                   journeyOptions={journeyOptions}
                   focusedJourneyKey={showAllJourneys ? null : focusedJourneyKey}
                 />
+                {focusedJourneyKey && !showAllJourneys && !isFrozenCompany(companyId) && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => void runConditionsGeneration()}
+                    disabled={regeneratingConditions || jobStepsLoading}
+                  >
+                    {regeneratingConditions
+                      ? "Working…"
+                      : filteredJobSteps.some((s) => Array.isArray(s.conditions_json) && s.conditions_json.length > 0)
+                      ? "Regenerate conditions"
+                      : "Generate conditions"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn ghost"
