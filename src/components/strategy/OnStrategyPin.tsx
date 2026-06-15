@@ -32,28 +32,27 @@ export function OnStrategyPin({
     queryKey,
     enabled: Boolean(companyId) && journeyOptions.length > 1,
     staleTime: 30_000,
-    queryFn: async (): Promise<{ pinnedKey: string | null; resolvedKey: string | null }> => {
-      if (!companyId) return { pinnedKey: null, resolvedKey: null };
-      const [pinRes, resolvedRes] = await Promise.all([
-        db.from("operator_primary_selection")
-          .select("item_key").eq("company_id", companyId).eq("domain", "job_step_set").maybeSingle(),
-        db.rpc("resolve_primary_job_step_set", { p_company_id: companyId }),
-      ]);
+    queryFn: async (): Promise<{ pinnedKey: string | null }> => {
+      if (!companyId) return { pinnedKey: null };
+      // The real operator choice ONLY — never resolve_primary_job_step_set's
+      // heuristic. An un-chosen set must not claim to be on strategy.
+      const pinRes = await db.from("operator_primary_selection")
+        .select("item_key").eq("company_id", companyId).eq("domain", "job_step_set").maybeSingle();
       const pinned = (pinRes as { data?: { item_key?: unknown } | null }).data?.item_key;
-      const resolved = (resolvedRes as { data?: unknown }).data;
-      return {
-        pinnedKey: typeof pinned === "string" ? pinned : null,
-        resolvedKey: typeof resolved === "string" ? resolved : null,
-      };
+      return { pinnedKey: typeof pinned === "string" ? pinned : null };
     },
   });
 
   // Single-set companies: nothing to choose — same hide rule as the journey toggle.
   if (!companyId || journeyOptions.length <= 1) return null;
 
-  const resolvedKey = data?.resolvedKey ?? null;
+  const pinnedKey = data?.pinnedKey ?? null;
+  // The chosen set drives the chip only if it still exists among the current
+  // sets ("choice wins only if its set still exists"); otherwise no set is on
+  // strategy yet.
+  const chosenKey = pinnedKey && journeyOptions.some((j) => j.key === pinnedKey) ? pinnedKey : null;
   const titleOf = (k: string | null) => journeyOptions.find((j) => j.key === k)?.title ?? k ?? "—";
-  const focusIsOnStrategy = focusedJourneyKey != null && resolvedKey === focusedJourneyKey;
+  const focusIsOnStrategy = focusedJourneyKey != null && chosenKey === focusedJourneyKey;
 
   async function pinFocused() {
     if (!companyId || !focusedJourneyKey) return;
@@ -73,7 +72,7 @@ export function OnStrategyPin({
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#8a7560", whiteSpace: "nowrap" }}>
-        On strategy: <strong style={{ color: "#233c4b" }}>{titleOf(resolvedKey)}</strong>
+        On strategy: <strong style={{ color: "#233c4b" }}>{chosenKey ? titleOf(chosenKey) : "not yet chosen"}</strong>
       </span>
       {focusedJourneyKey && !focusIsOnStrategy && (
         <button
@@ -81,7 +80,7 @@ export function OnStrategyPin({
           onClick={pinFocused}
           style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.07em", color: "#c47a1c", background: "none", border: "1px solid #e3d3b8", borderRadius: 4, padding: "3px 8px", cursor: "pointer", whiteSpace: "nowrap" }}
         >
-          Pin this set on-strategy
+          Choose this as the on-strategy set
         </button>
       )}
       {focusedJourneyKey && focusIsOnStrategy && (
