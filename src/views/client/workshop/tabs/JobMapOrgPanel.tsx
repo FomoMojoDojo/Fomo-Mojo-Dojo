@@ -235,6 +235,19 @@ function assertNoCannedConditionString(s: string): boolean {
   return canned;
 }
 
+// MH-2 boilerplate-jtbd guard (b-i render-boundary pattern). The generic fallback
+// job statement (research-company:3269 stem) is NOT an honestly-named market — the
+// header routes it to the emptiness invitation rather than rendering a borrowed
+// executor against a template job. Keep in sync with that template.
+const BOILERPLATE_JTBD_MARKERS: RegExp[] = [
+  /when\s+trying\s+to\s+complete\s+this\s+job/i,
+  /move\s+from\s+defining\s+outcomes\s+to\s+executing\s+and\s+monitoring\s+progress/i,
+];
+function isBoilerplateJtbd(jtbd: string | null | undefined): boolean {
+  const s = String(jtbd ?? "");
+  return BOILERPLATE_JTBD_MARKERS.some((re) => re.test(s));
+}
+
 const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
   evidenced: { label: "Evidenced", color: "#16a34a" },
   implied:   { label: "Implied",   color: "#E8A317" },
@@ -1010,6 +1023,7 @@ export default function JobMapOrgPanel({
   hasHierarchy,
   needs,
   signalBasis,
+  marketDef,
 }: {
   steps: JobStepRow[];
   loading: boolean;
@@ -1023,6 +1037,9 @@ export default function JobMapOrgPanel({
   hasHierarchy?: boolean;
   needs?: OdiNeedRow[];
   signalBasis?: SignalBasis;
+  // MH-2: the VIEWED set's market_def (scoped by journey_key upstream). The header
+  // names its job_executor clause verbatim when honestly named; null → emptiness.
+  marketDef?: { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null } | null;
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
   const [activeHierarchyIdx, setActiveHierarchyIdx] = useState<number>(0);
@@ -1238,27 +1255,36 @@ export default function JobMapOrgPanel({
       );
     }
 
-    // Derive title and subtitle from the first step of the active journey
-    const activeJourneyFirstStep = allPrimarySteps[0] ?? null;
-    const activeJourneyTitle = displayJourneyTitle(activeJourneyFirstStep?.journey_title, activeJK);
-    const journeyHeadingWord = activeJK === "partner" || activeJK === "b2b" || activeJK === "b2b_cafe"
-      ? "Partner"
-      : activeJK === "customer" || activeJK === "primary"
-      ? "Customer"
-      : activeJourneyTitle || activeJK.charAt(0).toUpperCase() + activeJK.slice(1);
+    // MH-2: the header NAMES the viewed set's market — its market_def job_executor
+    // clause, VERBATIM — and only when honestly named: a market_def for the viewed
+    // set's EXACT journey_key, a non-boilerplate jtbd, and a non-empty executor.
+    // No cross-set borrow; otherwise the signed emptiness invitation.
+    const normKey = (v: string | null | undefined) => String(v ?? "").trim().toLowerCase();
+    const viewedMarketDef =
+      marketDef && normKey(marketDef.journey_key) === normKey(activeJK) ? marketDef : null;
+    const marketName =
+      viewedMarketDef && !isBoilerplateJtbd(viewedMarketDef.jtbd) && String(viewedMarketDef.job_executor ?? "").trim()
+        ? String(viewedMarketDef.job_executor).trim()
+        : null;
 
     return (
       <div style={{ margin: -36, display: "flex", flexDirection: "column", background: D.canvas }}>
         {/* Page header (above the tab bar) */}
         <div style={{ padding: "40px 48px 0", background: "#ffffff", borderBottom: `1px solid ${D.hairline}` }}>
-          {/* Eyebrow — matches HierarchyPageShell / Eyebrow component */}
+          {/* Eyebrow */}
           <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(17,17,17,0.4)", margin: "0 0 16px", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 5, height: 5, borderRadius: "50%", background: D.signal, display: "inline-block", flexShrink: 0 }} />
-            {"Strategy · Job Map"}
+            {"The market this map is for"}
           </p>
-          <h1 style={{ fontFamily: D.sans, fontSize: 30, fontWeight: 700, color: D.ink, margin: "0 0 20px", lineHeight: 1.05, letterSpacing: "-0.022em", maxWidth: 720 }}>
-            The {journeyHeadingWord} <span style={{ color: D.signal }}>Job</span>
-          </h1>
+          {marketName ? (
+            <h1 style={{ fontFamily: D.sans, fontSize: 28, fontWeight: 700, color: D.ink, margin: "0 0 20px", lineHeight: 1.18, letterSpacing: "-0.02em", maxWidth: 760 }}>
+              {marketName}
+            </h1>
+          ) : (
+            <p style={{ fontFamily: D.sans, fontSize: 18, fontWeight: 500, color: D.inkSoft, margin: "0 0 20px", lineHeight: 1.45, maxWidth: 640 }}>
+              This map's market isn't named yet — who is it for, and what are they getting done?
+            </p>
+          )}
           {/* Vocabulary gate: the subtitle line is not rendered (operator ruling —
               the step tabs show the count; "journey" never renders client-facing). */}
           {signalBasis && <div style={{ marginBottom: 16 }}><SignalBasisChip {...signalBasis} /></div>}

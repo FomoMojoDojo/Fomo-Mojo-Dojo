@@ -1564,6 +1564,7 @@ export default function ClientRefinePreviewWorkshopView() {
         hasHierarchy={workshopHasHierarchy}
         needs={filteredNeeds}
         signalBasis={workshopSignalBasis}
+        marketDef={marketDefinition}
       />
     );
     if (activeTab === "strategy") {
@@ -2042,6 +2043,7 @@ export default function ClientRefinePreviewWorkshopView() {
             routesReady={!nextBestMove || nextBestMove.type === "start_route"}
             hasHierarchy={workshopHasHierarchy}
             needs={filteredNeeds}
+            marketDef={marketDefinition}
             headerControls={
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {journeyOptions.length > 1 && (
