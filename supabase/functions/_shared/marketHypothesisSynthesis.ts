@@ -61,7 +61,7 @@ const GEN_SYSTEM =
   "Hard rules: " +
   "(1) Describe the BUYER/executor's own job, NEVER a seller or acquisition goal — never 'increase the percentage who choose/buy X', never the selling company's growth or sales. " +
   "(2) NEVER name a company, brand, or vendor. " +
-  "(3) job_executor = a concrete noun phrase for who the executor is; jtbd = ONE sentence for the progress they are trying to make in their own world; chooser = who makes the choice. " +
+  "(3) job_executor = a SINGLE clause naming WHO the executor is AND the job they are getting done — the 'who + what' market sentence, NOT a bare audience. Form exemplar (match the SHAPE, not the facts): 'Independent cafe operators sourcing a specialty coffee offering for their venue.' jtbd = ONE sentence with the deeper detail of the progress they are trying to make. chooser = who makes the choice. " +
   "(4) Specific to THIS set's steps, in the executor's domain vocabulary. No canned filler ('move from defining outcomes to executing and monitoring progress'). " +
   "JSON only: {\"job_executor\":\"...\",\"jtbd\":\"...\",\"chooser\":\"...\"}.";
 
@@ -83,6 +83,9 @@ export async function generateMarketHypothesisForSet(args: {
   genModel?: string;
   judgeModel?: string;
   runId?: string;
+  // Deliberate regenerate: overwrite an existing internal_hypothesis. Manual
+  // (operator-authored) market_defs stay protected regardless.
+  force?: boolean;
 }): Promise<MarketHypothesisResult> {
   const genModel = args.genModel ?? DEFAULT_GEN_MODEL;
 
@@ -95,7 +98,7 @@ export async function generateMarketHypothesisForSet(args: {
     .maybeSingle();
   const existingRow = existing as { id?: string; user_id?: string; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null } | null;
   if (existingRow && String(existingRow.provenance_type ?? "") === "manual") return { ok: false, skipped: "protected_manual" };
-  if (existingRow && existingRow.jtbd && !isBoilerplateMarketJtbd(existingRow.jtbd)) return { ok: false, skipped: "already_hypothesis" };
+  if (!args.force && existingRow && existingRow.jtbd && !isBoilerplateMarketJtbd(existingRow.jtbd)) return { ok: false, skipped: "already_hypothesis" };
 
   // The set's steps (the executor's world).
   const { data: stepRows } = await args.supabase
