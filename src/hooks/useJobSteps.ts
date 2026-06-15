@@ -35,6 +35,9 @@ export type JobStepRow = {
   evidence_confidence: number | null;
   gap_note: string | null;
   created_at?: string;
+  // b-ii per-step conditions ("what must be true"). Rendered via the b-i canned
+  // guard; writer-side shape in _shared/stepConditionsSynthesis.ts.
+  conditions_json?: Array<{ condition: string; status?: string; origin?: string }> | null;
 };
 
 export function useJobSteps(companyId?: string) {
@@ -62,7 +65,7 @@ export function useJobSteps(companyId?: string) {
       let { data, error } = await supabase
         .from("job_steps")
         .select(
-          "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence, gap_note, created_at"
+          "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, evidence_status, evidence_basis, evidence_confidence, gap_note, created_at, conditions_json"
         )
         .eq("company_id", companyId)
         .order("journey_key", { ascending: true })
@@ -73,7 +76,7 @@ export function useJobSteps(companyId?: string) {
         const fallback = await supabase
           .from("job_steps")
           .select(
-            "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, gap_note, created_at"
+            "id, company_id, user_id, journey_key, journey_title, journey_subtitle, step_number, step_label, description, designed, has_gap, gap_note, created_at, conditions_json"
           )
           .eq("company_id", companyId)
           .order("journey_key", { ascending: true })

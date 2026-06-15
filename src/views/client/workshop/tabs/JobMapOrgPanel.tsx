@@ -257,24 +257,69 @@ function EvidenceStatus({ step }: { step: JobStepRow }) {
   );
 }
 
-// Sole sanctioned path for rendering step conditions — the standing gate. Every
-// string is filtered through assertNoCannedConditionString; canned/templated
-// assertions and run-tag leaks are dropped (and throw in dev). b-i passes no
-// conditions here (the real gap content surfaces via the gap badge + tileSignal),
-// so this currently renders nothing; b-ii must render through THIS component so
-// the gate runs on whatever the generator produces.
-function InternalConditions({ conditions, label }: { conditions: string[]; label?: string }) {
-  const safe = conditions.filter((c) => !assertNoCannedConditionString(c));
-  if (safe.length === 0) return null;
+// b-ii per-step condition entry (job_steps.conditions_json). status drives the copy
+// tier; only "best_guess" is produced today, "real_source" reserved.
+type StepCondition = { condition: string; status?: string; origin?: string };
+
+// Signed copy (B-II-3 operator signature).
+const COND_COPY = {
+  best_guess: {
+    heading: "What must be true — a starting hypothesis",
+    marker: "Hypothesis — not yet validated",
+    subline: "A starting read from this step. Test it against evidence before relying on it.",
+  },
+  real_source: { heading: "What must be true" },
+};
+
+function ConditionsList({ items }: { items: string[] }) {
   return (
-    <div className="crpv-ws-jobmap-tile-cap">
-      {label && <p className="cap crpv-ws-jobmap-tile-cap-lbl">{label}</p>}
-      {safe.map((cond, i) => (
-        <p key={i} className="crpv-ws-jobmap-tile-cap-item">
-          <span className="crpv-ws-jobmap-tile-sw-dash" aria-hidden="true">•</span>
-          <span>{cond}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+      {items.map((c, i) => (
+        <p key={i} style={{ fontFamily: D.sans, fontSize: 13, color: D.ink, margin: 0, lineHeight: 1.55, display: "flex", gap: 8 }}>
+          <span aria-hidden="true" style={{ color: D.inkFaint, flexShrink: 0 }}>•</span>
+          <span>{c}</span>
         </p>
       ))}
+    </div>
+  );
+}
+
+// Sole sanctioned path for rendering step conditions — the b-i standing gate. Every
+// string is filtered through assertNoCannedConditionString (canned/run-tag dropped,
+// throws in dev). Branches on status tier; renders NOTHING when no admissible
+// condition remains (hide tier — no empty heading). Mounted in the live
+// renderStepDetail (the hierarchy detail), tile-independent styling.
+function InternalConditions({ entries }: { entries: StepCondition[] }) {
+  const admissible = (entries ?? []).filter(
+    (e) => e && typeof e.condition === "string" && e.condition.trim() && !assertNoCannedConditionString(e.condition),
+  );
+  if (admissible.length === 0) return null;
+  const realSource = admissible.filter((e) => e.status === "real_source").map((e) => e.condition);
+  const bestGuess = admissible.filter((e) => e.status !== "real_source").map((e) => e.condition);
+  const headingStyle = { fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: D.inkFaint, margin: 0 };
+
+  return (
+    <div style={{ marginTop: 28, paddingTop: 20, borderTop: `1px solid ${D.hairlineFaint}` }}>
+      {realSource.length > 0 && (
+        <div style={{ marginBottom: bestGuess.length > 0 ? 24 : 0 }}>
+          <p style={headingStyle}>{COND_COPY.real_source.heading}</p>
+          <ConditionsList items={realSource} />
+        </div>
+      )}
+      {bestGuess.length > 0 && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <p style={headingStyle}>{COND_COPY.best_guess.heading}</p>
+            <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: "#b45309", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 3, padding: "2px 7px" }}>
+              {COND_COPY.best_guess.marker}
+            </span>
+          </div>
+          <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkFaint, margin: "6px 0 0", lineHeight: 1.5, fontStyle: "italic" }}>
+            {COND_COPY.best_guess.subline}
+          </p>
+          <ConditionsList items={bestGuess} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1171,6 +1216,11 @@ export default function JobMapOrgPanel({
                 })}
               </div>
             </div>
+          )}
+
+          {/* What must be true (b-ii) — every string routes through the b-i canned guard */}
+          {!step._synthetic && (
+            <InternalConditions entries={Array.isArray(step.conditions_json) ? step.conditions_json : []} />
           )}
 
           {/* Evidence basis */}
