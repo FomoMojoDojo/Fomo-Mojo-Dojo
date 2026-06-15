@@ -323,3 +323,89 @@ export async function synthesizeStepConditions(args: {
 
   return { perStep, totals };
 }
+
+// ── Set-level invocation (B-II-4a/4b shared core) ────────────────────────────
+// The single entry point both the generate-step-conditions edge function and the
+// bootstrap-gen hook call — loads a set's steps + market_def, enforces the frozen
+// and writable-provenance guards, and runs synthesizeStepConditions (write+persist).
+
+// Frozen reference fixtures — SELECT-only, never written. Mirror of the frontend
+// guard (src/lib/frozenCompanies.ts). Remove when CB1/CB2 are retired.
+export const FROZEN_COMPANY_IDS = new Set<string>([
+  "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc", // Cafe Barra (CB1)
+  "fd3f7f63-968b-4698-b946-3d6b6450d79d", // Cafe Barra 2 (CB2)
+]);
+
+// Conditions are an internal-layer artifact — generated only for system-authored/
+// derived sets (mirrors PROTECTED_PROVENANCE_TYPES in journeyProtection.ts).
+const WRITABLE_PROVENANCE = new Set(["internal_derived", "internal_declared", "operator_authored"]);
+
+export type SetConditionsResult =
+  | { ok: true; totals: SynthesisResult["totals"] }
+  | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance"; provenances?: string[] }
+  | { ok: false; error: string };
+
+// True if any step in the set already carries a condition — the bootstrap-gen
+// creation gate (existing conditions are preserved; only NEW/empty sets auto-fill).
+export async function setHasConditions(
+  supabase: { from: (t: string) => any },
+  companyId: string,
+  journeyKey: string,
+): Promise<boolean> {
+  const { data } = await supabase.from("job_steps").select("conditions_json").eq("company_id", companyId).eq("journey_key", journeyKey);
+  return ((data ?? []) as Array<{ conditions_json?: unknown }>).some((r) => Array.isArray(r.conditions_json) && r.conditions_json.length > 0);
+}
+
+export async function generateConditionsForSet(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  journeyKey: string;
+  ollamaUrl: string;
+  nowIso: string;
+  genModel?: string;
+  judgeModel?: string;
+  runId?: string;
+}): Promise<SetConditionsResult> {
+  if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
+
+  const { data: rows, error } = await args.supabase
+    .from("job_steps")
+    .select("id, step_number, step_label, description, evidence_basis, provenance_type")
+    .eq("company_id", args.companyId)
+    .eq("journey_key", args.journeyKey)
+    .order("step_number", { ascending: true });
+  if (error) return { ok: false, error: String(error.message || error) };
+  const list = (rows ?? []) as Array<StepInput & { provenance_type?: string | null }>;
+  if (list.length === 0) return { ok: false, skipped: "no_steps" };
+
+  const provenances = [...new Set(list.map((r) => String(r.provenance_type ?? "")))];
+  if (!provenances.every((p) => WRITABLE_PROVENANCE.has(p))) {
+    return { ok: false, skipped: "non_writable_provenance", provenances };
+  }
+
+  let { data: md } = await args.supabase
+    .from("odi_market_definitions").select("job_executor, jtbd")
+    .eq("company_id", args.companyId).eq("journey_key", args.journeyKey).maybeSingle();
+  if (!md) {
+    const { data: anyMd } = await args.supabase
+      .from("odi_market_definitions").select("job_executor, jtbd")
+      .eq("company_id", args.companyId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    md = anyMd ?? null;
+  }
+
+  const steps: StepInput[] = list.map((r) => ({ id: r.id, step_number: r.step_number, step_label: r.step_label, description: r.description, evidence_basis: r.evidence_basis }));
+  const result = await synthesizeStepConditions({
+    supabase: args.supabase,
+    companyId: args.companyId,
+    steps,
+    marketDef: md as { job_executor?: string | null; jtbd?: string | null } | null,
+    ollamaUrl: args.ollamaUrl,
+    nowIso: args.nowIso,
+    genModel: args.genModel,
+    judgeModel: args.judgeModel,
+    runId: args.runId,
+    write: true,
+    persistVerdicts: true,
+  });
+  return { ok: true, totals: result.totals };
+}

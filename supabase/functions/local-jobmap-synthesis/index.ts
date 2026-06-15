@@ -5,6 +5,7 @@ import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
+import { generateConditionsForSet, setHasConditions } from "../_shared/stepConditionsSynthesis.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -87,6 +88,15 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+// Keep a background promise alive after the response returns (Supabase edge
+// runtime). Used by the b-ii bootstrap-gen hook so set creation is non-blocking.
+function waitUntil(promise: Promise<unknown>) {
+  const edgeRuntime = (globalThis as unknown as {
+    EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
+  }).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(promise);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1450,6 +1460,37 @@ Deno.serve(async (req) => {
       companyId: String(companyId),
       source: "definition_change",
     });
+
+    // b-ii bootstrap-gen (B-II-4b): NEW sets auto-populate their "what must be
+    // true" conditions in the BACKGROUND — creation-time only. A set that already
+    // has conditions is preserved (re-derivation never auto-regenerates; the
+    // deliberate Regenerate button is the only refresh). Non-blocking via
+    // waitUntil so set creation returns immediately. Frozen + writable-provenance
+    // guards live in the shared generateConditionsForSet core (no fork).
+    if (!dryRun) {
+      const bootstrapNowIso = new Date().toISOString();
+      const bootstrapDb = supabase as unknown as { from: (t: string) => any };
+      for (const journey of journeysToWrite) {
+        const jk = journey.journey_key;
+        waitUntil((async () => {
+          try {
+            if (await setHasConditions(bootstrapDb, String(companyId), jk)) return; // preserve — not creation
+            const res = await generateConditionsForSet({
+              supabase: bootstrapDb,
+              companyId: String(companyId),
+              journeyKey: jk,
+              ollamaUrl,
+              nowIso: bootstrapNowIso,
+              genModel: ollamaModel,
+              runId: `bootstrap-gen:${jk}`,
+            });
+            console.log(`[local-jobmap-synthesis] bootstrap conditions "${jk}":`, JSON.stringify(res));
+          } catch (e) {
+            console.error(`[local-jobmap-synthesis] bootstrap conditions failed "${jk}"`, String((e as Error)?.message ?? e));
+          }
+        })());
+      }
+    }
 
     return json({
       status: "ok",
