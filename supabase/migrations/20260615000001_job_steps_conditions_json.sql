@@ -1,0 +1,17 @@
+-- b-ii Step 1 (design gate signed): per-step "what must be true" conditions.
+-- Additive JSONB column, NULL default, NO backfill — existing sets untouched
+-- (PCT-1 additive style). Nothing reads or writes it yet (b-ii steps 2-3).
+--
+-- Shape is a WRITER-SIDE contract, intentionally NOT CHECK-enforced in DDL
+-- (mirrors routes.what_would_have_to_be_true, which is a bare Json column):
+--   Array<{
+--     condition: string;
+--     status: "real_source" | "best_guess";   -- only "best_guess" emitted for now
+--     origin: "generated" | "operator";        -- regen replaces only origin='generated'
+--     satisfied_flag?: boolean;
+--     basis?: string;
+--     evidence_refs?: string[];
+--     gen?: { model: string; run_id?: string; perspective?: "buyer" | "seller"; at: string };
+--   }>
+-- Rendered only through the b-i honesty gate (assertNoCannedConditionString).
+alter table public.job_steps add column if not exists conditions_json jsonb null default null;
