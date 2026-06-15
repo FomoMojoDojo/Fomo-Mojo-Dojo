@@ -81,51 +81,6 @@ function sanitizeWebsite(url?: string) {
   return `https://${trimmed}`;
 }
 
-function sentenceCase(value: string) {
-  const text = cleanText(value).replace(/\.$/, "");
-  if (!text) return "";
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function lowerFirst(value: string) {
-  const text = cleanText(value);
-  if (!text) return "";
-  return text.charAt(0).toLowerCase() + text.slice(1);
-}
-
-function extractCoreJobClause(value: string) {
-  const text = cleanText(value).replace(/\.$/, "");
-  if (!text) return "";
-  const patterns = [
-    /\bneed(?:s)? to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
-    /\bwant(?:s)? to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
-    /\btrying to\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
-    /\bhelp\s+.+?\s+(.+?)(?:,\s*so\b|\s+so\b|$)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) return sentenceCase(match[1]);
-  }
-  return sentenceCase(text);
-}
-
-function MarketFoundationSection({
-  marketDefinition,
-}: {
-  marketDefinition: string;
-}) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <p className="cap" style={{ margin: 0, color: "#6e847f" }}>Market definition</p>
-      <p style={{ margin: "6px 0 0", color: "#233c4b", fontSize: 15, lineHeight: 1.55, maxWidth: 980 }}>
-        {marketDefinition}
-      </p>
-    </div>
-  );
-}
-
-
-
 function StrategicDebugSummary(_props: {
   latestEventId: string | null;
   latestEventAt: string | null;
@@ -1165,23 +1120,6 @@ export default function ClientRefinePreviewWorkshopView() {
     return null;
   }, [strategicChangeSummary]);
 
-  const marketFoundation = useMemo(() => {
-    const primaryJobStatement = cleanText(marketDefinition?.jtbd);
-    const primaryJob = extractCoreJobClause(primaryJobStatement) || "Accomplish the core job with less uncertainty and rework.";
-    const jobExecutor = sentenceCase(
-      cleanText(marketDefinition?.job_executor) || cleanText(positioning?.best_fit_customers) || "Primary job performer",
-    );
-    const marketDefinitionText = sentenceCase(
-      cleanText(primaryJobStatement)
-        ? `Market defined by ${lowerFirst(jobExecutor)} trying to ${lowerFirst(primaryJob)}.`
-        : `Market defined by the job performer trying to ${lowerFirst(primaryJob)}.`
-    ) || "Market defined by the stable job the actor is trying to accomplish.";
-
-    return {
-      marketDefinition: marketDefinitionText,
-    };
-  }, [marketDefinition?.jtbd, marketDefinition?.job_executor, positioning]);
-
   const rerunLocalJobMapSynthesis = useCallback(async () => {
     if (!companyId) {
       toast.error("Select a company before generating the job map.");
@@ -2020,9 +1958,6 @@ export default function ClientRefinePreviewWorkshopView() {
         </div>
       ) : activeTab === "jobmap" ? (
         <div className="crpv-ws-content">
-          <MarketFoundationSection
-            marketDefinition={marketFoundation.marketDefinition}
-          />
           {isAdmin ? (
             <StrategicDebugSummary
               latestEventId={strategicChangeSummary?.debug.latestEventId ?? null}
