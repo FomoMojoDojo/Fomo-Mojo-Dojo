@@ -364,6 +364,9 @@ export default function ClientRefinePreviewWorkshopView() {
   const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
   const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
+  // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
+  // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
+  const [chosenJobStepKey, setChosenJobStepKey] = useState<string | null | undefined>(undefined);
   const [showAllJourneys, setShowAllJourneys] = useState(false);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [creatingClient, setCreatingClient] = useState(false);
@@ -969,12 +972,49 @@ export default function ClientRefinePreviewWorkshopView() {
     return Array.from(grouped.values());
   }, [jobSteps]);
 
+  // Load the operator's chosen on-strategy set for the default seed. Reset the
+  // ephemeral view on company change so a selection never bleeds across companies
+  // (companyId changes in place — the workbench doesn't remount). The RPC isn't
+  // used directly: its no-choice path applies the +3 heuristic, but the default
+  // must fall back to the EXISTING heuristic below when nothing is chosen.
+  useEffect(() => {
+    setFocusedJourneyKey(null);
+    if (!companyId) { setChosenJobStepKey(null); return; }
+    let cancelled = false;
+    setChosenJobStepKey(undefined);
+    (async () => {
+      const sb = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
+      const { data } = await sb
+        .from("operator_primary_selection")
+        .select("item_key")
+        .eq("company_id", companyId)
+        .eq("domain", "job_step_set")
+        .maybeSingle();
+      if (cancelled) return;
+      const key = String((data as { item_key?: unknown } | null)?.item_key ?? "").trim().toLowerCase();
+      setChosenJobStepKey(key || null);
+    })();
+    return () => { cancelled = true; };
+  }, [companyId]);
+
   useEffect(() => {
     if (journeyOptions.length === 0) {
       setFocusedJourneyKey(null);
       return;
     }
+    // Wait for the chosen set to load so the first seed honors the operator's
+    // choice instead of the heuristic cementing under the keep-current guard.
+    if (chosenJobStepKey === undefined) return;
+    // Default seed = the operator's CHOSEN on-strategy set when its set still
+    // exists (mirrors resolve_primary_job_step_set's authority); otherwise the
+    // existing heuristic (first non-customer). View-switching stays ephemeral —
+    // the keep-current guard preserves a live manual selection.
+    const chosen =
+      chosenJobStepKey && journeyOptions.some((journey) => journey.key === chosenJobStepKey)
+        ? chosenJobStepKey
+        : null;
     const preferred =
+      chosen ??
       journeyOptions.find((journey) => journey.key !== "customer")?.key ??
       journeyOptions[0]?.key ??
       null;
@@ -985,7 +1025,7 @@ export default function ClientRefinePreviewWorkshopView() {
     if (journeyOptions.some((journey) => journey.key !== "customer")) {
       setShowAllJourneys(false);
     }
-  }, [journeyOptions]);
+  }, [journeyOptions, chosenJobStepKey]);
 
   const filteredJobSteps = useMemo(() => {
     if (showAllJourneys || !focusedJourneyKey) return jobSteps;
