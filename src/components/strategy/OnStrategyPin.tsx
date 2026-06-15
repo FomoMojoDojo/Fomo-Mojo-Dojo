@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveChosenSet } from "@/lib/chosenJobStepSet";
 
 // On-strategy pin: a DISTINCT strategic assertion (which job-step set drives strategy),
 // NOT the journey view-toggle next to it (that just switches what you're looking at). You
@@ -47,10 +48,9 @@ export function OnStrategyPin({
   if (!companyId || journeyOptions.length <= 1) return null;
 
   const pinnedKey = data?.pinnedKey ?? null;
-  // The chosen set drives the chip only if it still exists among the current
-  // sets ("choice wins only if its set still exists"); otherwise no set is on
-  // strategy yet.
-  const chosenKey = pinnedKey && journeyOptions.some((j) => j.key === pinnedKey) ? pinnedKey : null;
+  // The chosen set drives the chip via the shared rule (choice wins only if its
+  // set still exists); otherwise no set is on strategy yet.
+  const chosenKey = resolveChosenSet(pinnedKey, journeyOptions.map((j) => j.key)).chosenKey;
   const titleOf = (k: string | null) => journeyOptions.find((j) => j.key === k)?.title ?? k ?? "—";
   const focusIsOnStrategy = focusedJourneyKey != null && chosenKey === focusedJourneyKey;
 

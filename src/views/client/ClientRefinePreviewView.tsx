@@ -63,6 +63,7 @@ import { deriveAssumptionEvolution, buildAssumptionMovementLine } from "@/lib/as
 import { displayConfidenceLabel } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
+import { useChosenJourneyKey } from "@/lib/chosenJobStepSet";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
@@ -511,26 +512,16 @@ export default function ClientRefinePreviewView() {
       .then(({ data }) => { setAllMarketDefs((data as OdiMarketDefinitionRow[]) ?? []); });
   }, [activeCompany?.id, hasHierarchy]);
 
-  // Which journey_key has the most aligned needs → the strategic priority job
-  const priorityJourneyKey = useMemo((): string | null => {
-    if (needs.length === 0) return null;
-    const counts = new Map<string, number>();
-    for (const n of needs) {
-      if (n.strategy_alignment === "aligned" && n.journey_key) {
-        counts.set(n.journey_key, (counts.get(n.journey_key) ?? 0) + 1);
-      }
-    }
-    if (counts.size === 0) return null;
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-  }, [needs]);
+  // MH-1: the strategic-priority audience reads the REAL operator choice (not a
+  // needs-alignment heuristic). No choice → null → no guessed audience ("not yet
+  // chosen"): the audience copy simply does not render.
+  const { chosenKey: priorityJourneyKey } = useChosenJourneyKey(activeCompany?.id);
 
-  // Direct column lookup — no regex heuristic
+  // The chosen set's market_def — strictly by its journey_key. No choice (or no
+  // matching market_def) → null; never the allMarketDefs[0] guess.
   const strategicMarketDef = useMemo((): OdiMarketDefinitionRow | null => {
-    if (allMarketDefs.length === 0) return null;
-    return (
-      allMarketDefs.find((d) => d.journey_key === priorityJourneyKey) ??
-      allMarketDefs[0]
-    );
+    if (!priorityJourneyKey || allMarketDefs.length === 0) return null;
+    return allMarketDefs.find((d) => d.journey_key === priorityJourneyKey) ?? null;
   }, [allMarketDefs, priorityJourneyKey]);
 
   // ── Audience short-form — company's own job_executor noun phrase ─────────

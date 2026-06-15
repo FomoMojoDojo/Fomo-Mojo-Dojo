@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
+import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
@@ -974,6 +975,16 @@ export default function ClientRefinePreviewWorkshopView() {
     return Array.from(grouped.values());
   }, [jobSteps]);
 
+  // Designed-step count per set — the view-seed signal (prefer the most complete
+  // non-internal set when no choice exists).
+  const designedByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const step of jobSteps) {
+      if (step.designed) m.set(step.journey_key, (m.get(step.journey_key) ?? 0) + 1);
+    }
+    return m;
+  }, [jobSteps]);
+
   // Load the operator's chosen on-strategy set for the default seed. Reset the
   // ephemeral view on company change so a selection never bleeds across companies
   // (companyId changes in place — the workbench doesn't remount). The RPC isn't
@@ -1007,18 +1018,14 @@ export default function ClientRefinePreviewWorkshopView() {
     // Wait for the chosen set to load so the first seed honors the operator's
     // choice instead of the heuristic cementing under the keep-current guard.
     if (chosenJobStepKey === undefined) return;
-    // Default seed = the operator's CHOSEN on-strategy set when its set still
-    // exists (mirrors resolve_primary_job_step_set's authority); otherwise the
-    // existing heuristic (first non-customer). View-switching stays ephemeral —
-    // the keep-current guard preserves a live manual selection.
-    const chosen =
-      chosenJobStepKey && journeyOptions.some((journey) => journey.key === chosenJobStepKey)
-        ? chosenJobStepKey
-        : null;
+    // Default seed = the operator's CHOSEN on-strategy set (shared rule). When
+    // nothing is chosen, seed the VIEW only (never an assertion) to a real,
+    // complete NON-internal set — never the undesigned internal-ops set. View-
+    // switching stays ephemeral; the keep-current guard preserves a live selection.
+    const chosen = resolveChosenSet(chosenJobStepKey ?? null, journeyOptions.map((j) => j.key)).chosenKey;
     const preferred =
       chosen ??
-      journeyOptions.find((journey) => journey.key !== "customer")?.key ??
-      journeyOptions[0]?.key ??
+      heuristicDefaultViewSeed(journeyOptions.map((j) => j.key), designedByKey) ??
       null;
     setFocusedJourneyKey((current) => {
       if (current && journeyOptions.some((journey) => journey.key === current)) return current;
@@ -1027,7 +1034,7 @@ export default function ClientRefinePreviewWorkshopView() {
     if (journeyOptions.some((journey) => journey.key !== "customer")) {
       setShowAllJourneys(false);
     }
-  }, [journeyOptions, chosenJobStepKey]);
+  }, [journeyOptions, chosenJobStepKey, designedByKey]);
 
   const filteredJobSteps = useMemo(() => {
     if (showAllJourneys || !focusedJourneyKey) return jobSteps;

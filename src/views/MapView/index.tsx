@@ -31,6 +31,7 @@ import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { deriveInitiativeContext } from "@/lib/initiativeFocus";
+import { useChosenJourneyKey } from "@/lib/chosenJobStepSet";
 import { supabase } from "@/integrations/supabase/client";
 
 /* ── Palette ── */
@@ -294,16 +295,12 @@ export default function MapView() {
   const { items: oppItems } = useOpportunities(activeCompany?.id);
   const { items: routeItems } = useRoutes(activeCompany?.id);
 
-  // On-strategy set resolved at the data layer (operator pin → else SQL heuristic).
-  const [primaryJourneyKey, setPrimaryJourneyKey] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    if (!activeCompany?.id) { setPrimaryJourneyKey(undefined); return; }
-    let cancelled = false;
-    (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown }> })
-      .rpc("resolve_primary_job_step_set", { p_company_id: activeCompany.id })
-      .then(({ data }) => { if (!cancelled) setPrimaryJourneyKey(typeof data === "string" ? data : undefined); });
-    return () => { cancelled = true; };
-  }, [activeCompany?.id]);
+  // MH-1: the score's on-strategy basis reads the REAL operator choice (never the
+  // resolve_primary_job_step_set heuristic). No choice → chosenJourneyKey is null:
+  // the score does NOT assert a guessed set (it falls to its internal "customer"
+  // default for the number only). `chosenJourneyKey === null` is the no-chosen-set
+  // signal MH-4 renders as refuse-with-invitation.
+  const { chosenKey: chosenJourneyKey } = useChosenJourneyKey(activeCompany?.id);
 
   const fallbackScores = useMemo(
     () =>
@@ -315,9 +312,9 @@ export default function MapView() {
         routes: Array.isArray(routeItems) ? routeItems : [],
         strategicProblems,
         baselineRunResultJson: null,
-        primaryJourneyKey,
+        primaryJourneyKey: chosenJourneyKey ?? undefined,
       }),
-    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, primaryJourneyKey],
+    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, chosenJourneyKey],
   );
 
   const displayMojo =
