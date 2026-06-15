@@ -116,12 +116,13 @@ export function dedupeConditionsAcrossSteps(
 // Verbatim generation prompt from B-II-2c (accepted) — company-agnostic; the
 // deterministic org-name guard closes naming the model misses.
 const GEN_SYSTEM =
-  "You generate the PRECONDITIONS for one step in a job map - the things that must already be true about the JOB EXECUTOR (the buyer) themselves for them to carry out THIS step in their own world. " +
-  "Each condition describes the executor's OWN readiness, knowledge, or state, in their own terms. " +
+  "You generate the PRECONDITIONS for one step in a job map - what must already be true for the people doing this job to carry out THIS step in their own world. " +
+  "VOICE (this is client-facing): write each condition in plain, human language, the way a real person would say it - NOT a consultant, analyst, or clinician. Refer to the people plainly by who they are (e.g. 'the family', 'the owner', 'the team'), taken from the people described below. NEVER use the word 'executor' or any ODI, business, or clinical jargon. Example of the target register: 'The family can clearly name what they - or their child - are actually dealing with.' " +
+  "Each condition describes the people's OWN readiness, knowledge, or state. " +
   "Hard rules: " +
-  "(1) NEVER name the company, its brand, or any specific vendor/supplier/provider. Describe the executor's own experience even when it involves a supplier's offering - e.g. 'the buyer has tasted sample options and knows which fits their need', NOT 'the buyer received <Company>'s samples'. " +
+  "(1) NEVER name the company, its brand, or any specific vendor/supplier/provider. Describe their own experience even when it involves a supplier's offering - e.g. 'the family has compared a few options and knows which one fits', NOT 'the family received <Company>'s samples'. " +
   "(2) Each condition must be SPECIFIC to THIS step - not a generic precondition that would apply to many steps. Do not reuse a broad statement across steps; say what THIS step uniquely requires. " +
-  "(3) Solution-agnostic; the executor's domain vocabulary (concrete nouns); no abstract business filler. " +
+  "(3) Solution-agnostic; concrete everyday nouns; no abstract business filler. " +
   "(4) Each condition is a specific, testable statement of something that must hold - NOT a restatement of the step label. " +
   "(5) No canned filler ('X is established', 'is named and documented', 'is tracked and current', 'is written down, not assumed'). " +
   "Return ONLY the conditions that genuinely must be true for THIS step - a step may have 1, 2, or 3; some steps may legitimately have none. Do NOT pad to a count. Quality over count. " +
@@ -129,11 +130,11 @@ const GEN_SYSTEM =
 
 function buildGenUser(step: StepInput, executorBrief: string): string {
   return (
-    `Job executor (the buying side): ${executorBrief}\n` +
+    `The people doing this job (refer to them plainly, e.g. "the family"/"the owner"): ${executorBrief}\n` +
     `Step label: ${step.step_label}\n` +
     `Step description: ${step.description}\n` +
     `Evidence basis: ${step.evidence_basis || "(none)"}\n` +
-    `List only the preconditions that genuinely must be true for this executor to carry out this step.`
+    `List only the preconditions that genuinely must be true for these people to carry out this step.`
   );
 }
 
