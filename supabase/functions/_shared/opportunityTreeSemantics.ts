@@ -137,7 +137,7 @@ function stemToken(token: string) {
   return value;
 }
 
-function jaccardSimilarity(a: string, b: string) {
+export function jaccardSimilarity(a: string, b: string) {
   const aSet = new Set(tokenize(a));
   const bSet = new Set(tokenize(b));
   if (aSet.size === 0 || bSet.size === 0) return 0;
