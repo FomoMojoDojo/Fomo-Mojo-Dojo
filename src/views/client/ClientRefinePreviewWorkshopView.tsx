@@ -321,6 +321,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
   const [regeneratingConditions, setRegeneratingConditions] = useState(false);
+  const [regeneratingMarket, setRegeneratingMarket] = useState(false);
   const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
   // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
@@ -1272,6 +1273,51 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId, focusedJourneyKey, filteredJobSteps, refetchJobSteps]);
 
+  // MH-5b: deliberate Regenerate-market (force) for the viewed declared set. Re-rolls
+  // the labeled hypothesis; manual market_defs stay protected in the generator.
+  const runMarketRegeneration = useCallback(async () => {
+    if (!companyId || !focusedJourneyKey) return;
+    if (isFrozenCompany(companyId)) {
+      toast.error("This is a frozen reference company — the market is not generated for it.");
+      return;
+    }
+    const beforeJtbd = String(marketDefinition?.jtbd ?? "");
+    setRegeneratingMarket(true);
+    toast.loading("Regenerating market hypothesis… (~1 min)", { id: "gen-market" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-market-hypothesis", {
+        body: { company_id: companyId, journey_key: focusedJourneyKey, force: true },
+      });
+      if (!error && (data as { ok?: boolean } | null)?.ok === true) {
+        setNeedsRefreshKey((k) => k + 1);
+        toast.success("Market hypothesis refreshed", { id: "gen-market" });
+        return;
+      }
+      // Kong-timeout fallback: poll the market_def jtbd until it changes.
+      const sb = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
+      for (let attempt = 0; attempt < 30; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, 6000));
+        const { data: row } = await sb
+          .from("odi_market_definitions")
+          .select("jtbd")
+          .eq("company_id", companyId)
+          .eq("journey_key", focusedJourneyKey)
+          .maybeSingle();
+        const jtbd = String((row as { jtbd?: unknown } | null)?.jtbd ?? "");
+        if (jtbd && jtbd !== beforeJtbd) {
+          setNeedsRefreshKey((k) => k + 1);
+          toast.success("Market hypothesis refreshed", { id: "gen-market" });
+          return;
+        }
+      }
+      throw new Error("Market is taking longer than expected — refresh the page in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to regenerate the market.", { id: "gen-market" });
+    } finally {
+      setRegeneratingMarket(false);
+    }
+  }, [companyId, focusedJourneyKey, marketDefinition]);
+
   const openAffectedArtifact = useCallback((artifact: {
     object_type: "odi_need" | "route" | "desired_outcome";
     object_id: string;
@@ -2030,6 +2076,16 @@ export default function ClientRefinePreviewWorkshopView() {
                       : filteredJobSteps.some((s) => Array.isArray(s.conditions_json) && s.conditions_json.length > 0)
                       ? "Regenerate conditions"
                       : "Generate conditions"}
+                  </button>
+                )}
+                {focusedJourneyKey && !showAllJourneys && !isFrozenCompany(companyId) && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => void runMarketRegeneration()}
+                    disabled={regeneratingMarket || jobStepsLoading}
+                  >
+                    {regeneratingMarket ? "Working…" : "Regenerate market"}
                   </button>
                 )}
                 <button

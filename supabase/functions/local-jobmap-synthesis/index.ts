@@ -6,6 +6,7 @@ import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateConditionsForSet, setHasConditions } from "../_shared/stepConditionsSynthesis.ts";
+import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -1485,8 +1486,20 @@ Deno.serve(async (req) => {
               runId: `bootstrap-gen:${jk}`,
             });
             console.log(`[local-jobmap-synthesis] bootstrap conditions "${jk}":`, JSON.stringify(res));
+            // MH-5b: a new declared set also auto-populates its market hypothesis
+            // (self-gated by the generator's absent/boilerplate protection).
+            const mres = await generateMarketHypothesisForSet({
+              supabase: bootstrapDb,
+              companyId: String(companyId),
+              journeyKey: jk,
+              ollamaUrl,
+              nowIso: bootstrapNowIso,
+              genModel: ollamaModel,
+              runId: `bootstrap-market:${jk}`,
+            });
+            console.log(`[local-jobmap-synthesis] bootstrap market "${jk}":`, JSON.stringify(mres));
           } catch (e) {
-            console.error(`[local-jobmap-synthesis] bootstrap conditions failed "${jk}"`, String((e as Error)?.message ?? e));
+            console.error(`[local-jobmap-synthesis] bootstrap gen failed "${jk}"`, String((e as Error)?.message ?? e));
           }
         })());
       }

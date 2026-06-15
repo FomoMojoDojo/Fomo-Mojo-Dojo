@@ -10,6 +10,7 @@
 // non-boilerplate hypothesis is left as-is.
 
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
+import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
 const GEN_TIMEOUT_MS = 180_000;
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
@@ -30,7 +31,7 @@ export type MarketHypothesis = { job_executor: string; jtbd: string; chooser: st
 
 export type MarketHypothesisResult =
   | { ok: true; written: MarketHypothesis }
-  | { ok: false; skipped: "protected_manual" | "already_hypothesis" | "no_steps" }
+  | { ok: false; skipped: "frozen_company" | "protected_manual" | "already_hypothesis" | "no_steps" }
   | { ok: false; rejected: "seller"; candidate: MarketHypothesis }
   | { ok: false; error: string };
 
@@ -88,6 +89,8 @@ export async function generateMarketHypothesisForSet(args: {
   force?: boolean;
 }): Promise<MarketHypothesisResult> {
   const genModel = args.genModel ?? DEFAULT_GEN_MODEL;
+
+  if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
   // Existing market_def for this set + protection.
   const { data: existing } = await args.supabase
