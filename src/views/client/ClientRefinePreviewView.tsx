@@ -63,7 +63,7 @@ import { deriveAssumptionEvolution, buildAssumptionMovementLine } from "@/lib/as
 import { displayConfidenceLabel } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
-import { useChosenJourneyKey } from "@/lib/chosenJobStepSet";
+import { useChosenSetKey } from "@/lib/chosenJobStepSet";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
@@ -515,14 +515,14 @@ export default function ClientRefinePreviewView() {
   // MH-1: the strategic-priority audience reads the REAL operator choice (not a
   // needs-alignment heuristic). No choice → null → no guessed audience ("not yet
   // chosen"): the audience copy simply does not render.
-  const { chosenKey: priorityJourneyKey } = useChosenJourneyKey(activeCompany?.id);
+  const { chosenKey: chosenSetKey } = useChosenSetKey(activeCompany?.id);
 
   // The chosen set's market_def — strictly by its journey_key. No choice (or no
   // matching market_def) → null; never the allMarketDefs[0] guess.
   const strategicMarketDef = useMemo((): OdiMarketDefinitionRow | null => {
-    if (!priorityJourneyKey || allMarketDefs.length === 0) return null;
-    return allMarketDefs.find((d) => d.journey_key === priorityJourneyKey) ?? null;
-  }, [allMarketDefs, priorityJourneyKey]);
+    if (!chosenSetKey || allMarketDefs.length === 0) return null;
+    return allMarketDefs.find((d) => d.journey_key === chosenSetKey) ?? null;
+  }, [allMarketDefs, chosenSetKey]);
 
   // ── Audience short-form — company's own job_executor noun phrase ─────────
   const audienceShort = useMemo(

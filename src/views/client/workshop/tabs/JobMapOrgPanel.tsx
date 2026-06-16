@@ -30,7 +30,7 @@ const TERMINAL_LABELS: Record<number, string> = {
 // Pads journeys with fewer than 8 steps by synthesizing the missing terminal checkpoints
 // from the existing journey context. Synthetic steps are marked _synthetic=true and carry
 // no evidence — they render as "Emerging" with no gap or basis.
-function normalizeJourneySteps(steps: JobStepRowExt[]): JobStepRowExt[] {
+function normalizeSetSteps(steps: JobStepRowExt[]): JobStepRowExt[] {
   if (steps.length >= 8) return steps;
   const last = steps[steps.length - 1];
   if (!last) return steps;
@@ -69,7 +69,7 @@ function displayStepLabel(step: JobStepRow): string {
   return containsSolutionPrescriptiveLanguage(raw) || containsNonOdiProcessLanguage(raw) ? fallback : raw;
 }
 
-function displayJourneyTitle(value: string | null | undefined, fallbackKey = "") {
+function displayMarketTitle(value: string | null | undefined, fallbackKey = "") {
   const raw = String(value || "").trim()
     .replace(/^(checkpoint map|job map)\s*:\s*/i, "")
     .trim();
@@ -706,7 +706,7 @@ function JourneySection({
   activeRoute?: RouteRow | null;
   headerControls?: ReactNode;
 }) {
-  const jSteps = useMemo(() => normalizeJourneySteps(rawSteps), [rawSteps]);
+  const jSteps = useMemo(() => normalizeSetSteps(rawSteps), [rawSteps]);
 
   // Compute which steps are linked to the active route by text-token overlap.
   const routeLinkedStepIds = useMemo<Set<string>>(() => {
@@ -1130,7 +1130,7 @@ export default function JobMapOrgPanel({
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
   const [activeHierarchyIdx, setActiveHierarchyIdx] = useState<number>(0);
-  const [activeJourneyKey, setActiveJourneyKey] = useState<string>("");
+  const [activeSetKey, setActiveSetKey] = useState<string>("");
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(new Set());
 
   async function handleMarkNeedReviewed(needId: string) {
@@ -1186,20 +1186,20 @@ export default function JobMapOrgPanel({
   // Gate 2b: DISPLAY TAXONOMY ONLY — this name test decides which section of the
   // panel a journey renders in, never protection. All write-protection keys off
   // provenance_type in the edge functions (_shared/journeyProtection.ts).
-  function isInternallyNamedKey(key: string): boolean {
+  function isInternalSetKey(key: string): boolean {
     const k = key.toLowerCase().trim();
     return k === "internal" || k === "operations" || k.startsWith("internal-") || k.startsWith("internal_");
   }
 
-  const primaryKeys  = journeyOrder.filter((k) => !isInternallyNamedKey(k));
-  const internalKeys = journeyOrder.filter((k) =>  isInternallyNamedKey(k));
+  const primaryKeys  = journeyOrder.filter((k) => !isInternalSetKey(k));
+  const internalKeys = journeyOrder.filter((k) =>  isInternalSetKey(k));
 
   // ── Hierarchy layout — horizontal tab bar ────────────────────────────────
   if (hasHierarchy) {
     // When multiple primary journeys exist, show one at a time via journey selector.
     // Fall back to the first primary key if the stored selection is no longer valid.
-    const activeJK = primaryKeys.includes(activeJourneyKey) ? activeJourneyKey : (primaryKeys[0] ?? "");
-    const allPrimarySteps: JobStepRowExt[] = normalizeJourneySteps(
+    const activeJK = primaryKeys.includes(activeSetKey) ? activeSetKey : (primaryKeys[0] ?? "");
+    const allPrimarySteps: JobStepRowExt[] = normalizeSetSteps(
       (grouped.get(activeJK) ?? []) as JobStepRowExt[],
     );
     const allNeeds = needs ?? [];
@@ -1402,7 +1402,7 @@ export default function JobMapOrgPanel({
             <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
               {primaryKeys.map((jk) => {
                 const jkFirstStep = (grouped.get(jk) ?? [])[0];
-                const jkTitle = displayJourneyTitle(jkFirstStep?.journey_title, jk);
+                const jkTitle = displayMarketTitle(jkFirstStep?.journey_title, jk);
                 const jkLabel = jk === "partner" || jk === "b2b" || jk === "b2b_cafe"
                   ? "Partner"
                   : jk === "customer" || jk === "primary"
@@ -1414,7 +1414,7 @@ export default function JobMapOrgPanel({
                     key={jk}
                     type="button"
                     onClick={() => {
-                      setActiveJourneyKey(jk);
+                      setActiveSetKey(jk);
                       setActiveHierarchyIdx(0);
                     }}
                     style={{
@@ -1485,7 +1485,7 @@ export default function JobMapOrgPanel({
             <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "20px 0 16px" }}>
               Internal Operations
             </p>
-            {internalKeys.flatMap((jk) => normalizeJourneySteps(grouped.get(jk)! as JobStepRowExt[])).map((step, idx) => {
+            {internalKeys.flatMap((jk) => normalizeSetSteps(grouped.get(jk)! as JobStepRowExt[])).map((step, idx) => {
               const odi = odiLabel(idx);
               const posture = step._synthetic ? { label: "Emerging", color: "#6d28d9", bg: "#f5f3ff" } : stepPosture(step);
               const stepLabel = displayStepLabel(step);
@@ -1511,7 +1511,7 @@ export default function JobMapOrgPanel({
   function renderJourneySection(jk: string, isFirst: boolean) {
     const jSteps = grouped.get(jk)!;
     const first = jSteps[0];
-    const title = displayJourneyTitle(first?.journey_title, first?.journey_key ?? "");
+    const title = displayMarketTitle(first?.journey_title, first?.journey_key ?? "");
     const subtitle = first?.journey_subtitle ?? null;
 
     const gapCount = jSteps.filter((s) => s.has_gap).length;

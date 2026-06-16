@@ -24,7 +24,7 @@ const db = supabase as unknown as { from: (t: string) => ReturnType<typeof supab
 
 // Self-contained hook for consumers that don't already hold the pin + set list.
 // Returns the validated chosen key (or null). loading is true until resolved.
-export function useChosenJourneyKey(companyId?: string): { chosenKey: string | null; source: "operator" | null; loading: boolean } {
+export function useChosenSetKey(companyId?: string): { chosenKey: string | null; source: "operator" | null; loading: boolean } {
   const [state, setState] = useState<{ chosenKey: string | null; source: "operator" | null; loading: boolean }>(
     { chosenKey: null, source: null, loading: Boolean(companyId) },
   );

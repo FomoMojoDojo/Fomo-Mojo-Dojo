@@ -31,7 +31,7 @@ import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { deriveInitiativeContext } from "@/lib/initiativeFocus";
-import { useChosenJourneyKey } from "@/lib/chosenJobStepSet";
+import { useChosenSetKey } from "@/lib/chosenJobStepSet";
 import { supabase } from "@/integrations/supabase/client";
 
 /* ── Palette ── */
@@ -296,11 +296,11 @@ export default function MapView() {
   const { items: routeItems } = useRoutes(activeCompany?.id);
 
   // MH-1: the score's on-strategy basis reads the REAL operator choice (never the
-  // resolve_primary_job_step_set heuristic). No choice → chosenJourneyKey is null:
+  // resolve_primary_job_step_set heuristic). No choice → chosenSetKey is null:
   // the score does NOT assert a guessed set (it falls to its internal "customer"
-  // default for the number only). `chosenJourneyKey === null` is the no-chosen-set
+  // default for the number only). `chosenSetKey === null` is the no-chosen-set
   // signal MH-4 renders as refuse-with-invitation.
-  const { chosenKey: chosenJourneyKey } = useChosenJourneyKey(activeCompany?.id);
+  const { chosenKey: chosenSetKey } = useChosenSetKey(activeCompany?.id);
 
   const fallbackScores = useMemo(
     () =>
@@ -312,9 +312,9 @@ export default function MapView() {
         routes: Array.isArray(routeItems) ? routeItems : [],
         strategicProblems,
         baselineRunResultJson: null,
-        primaryJourneyKey: chosenJourneyKey ?? undefined,
+        primaryJourneyKey: chosenSetKey ?? undefined,
       }),
-    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, chosenJourneyKey],
+    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, chosenSetKey],
   );
 
   const displayMojo =

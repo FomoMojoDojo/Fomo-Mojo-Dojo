@@ -19,19 +19,19 @@ const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 export function OnStrategyPin({
   companyId,
-  journeyOptions,
-  focusedJourneyKey,
+  setOptions,
+  viewedSetKey,
 }: {
   companyId?: string;
-  journeyOptions: { key: string; title: string }[];
-  focusedJourneyKey: string | null;
+  setOptions: { key: string; title: string }[];
+  viewedSetKey: string | null;
 }) {
   const queryClient = useQueryClient();
   const queryKey = ["on-strategy-pin", companyId];
 
   const { data } = useQuery({
     queryKey,
-    enabled: Boolean(companyId) && journeyOptions.length > 1,
+    enabled: Boolean(companyId) && setOptions.length > 1,
     staleTime: 30_000,
     queryFn: async (): Promise<{ pinnedKey: string | null }> => {
       if (!companyId) return { pinnedKey: null };
@@ -45,22 +45,22 @@ export function OnStrategyPin({
   });
 
   // Single-set companies: nothing to choose — same hide rule as the journey toggle.
-  if (!companyId || journeyOptions.length <= 1) return null;
+  if (!companyId || setOptions.length <= 1) return null;
 
   const pinnedKey = data?.pinnedKey ?? null;
   // The chosen set drives the chip via the shared rule (choice wins only if its
   // set still exists); otherwise no set is on strategy yet.
-  const chosenKey = resolveChosenSet(pinnedKey, journeyOptions.map((j) => j.key)).chosenKey;
-  const titleOf = (k: string | null) => journeyOptions.find((j) => j.key === k)?.title ?? k ?? "—";
-  const focusIsOnStrategy = focusedJourneyKey != null && chosenKey === focusedJourneyKey;
+  const chosenKey = resolveChosenSet(pinnedKey, setOptions.map((j) => j.key)).chosenKey;
+  const titleOf = (k: string | null) => setOptions.find((j) => j.key === k)?.title ?? k ?? "—";
+  const focusIsOnStrategy = viewedSetKey != null && chosenKey === viewedSetKey;
 
   async function pinFocused() {
-    if (!companyId || !focusedJourneyKey) return;
+    if (!companyId || !viewedSetKey) return;
     await db.from("operator_primary_selection").upsert(
       {
         company_id: companyId,
         domain: "job_step_set",
-        item_key: focusedJourneyKey,
+        item_key: viewedSetKey,
         item_id: null,
         chosen_at: new Date().toISOString(),
       },
@@ -74,7 +74,7 @@ export function OnStrategyPin({
       <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#8a7560", whiteSpace: "nowrap" }}>
         On strategy: <strong style={{ color: "#233c4b" }}>{chosenKey ? titleOf(chosenKey) : "not yet chosen"}</strong>
       </span>
-      {focusedJourneyKey && !focusIsOnStrategy && (
+      {viewedSetKey && !focusIsOnStrategy && (
         <button
           type="button"
           onClick={pinFocused}
@@ -83,7 +83,7 @@ export function OnStrategyPin({
           Choose this as the on-strategy set
         </button>
       )}
-      {focusedJourneyKey && focusIsOnStrategy && (
+      {viewedSetKey && focusIsOnStrategy && (
         <span style={{ fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.07em", color: "#4a8f7f", whiteSpace: "nowrap" }}>
           ✓ On strategy
         </span>

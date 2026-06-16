@@ -322,10 +322,10 @@ export default function ClientRefinePreviewWorkshopView() {
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
   const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   const [regeneratingMarket, setRegeneratingMarket] = useState(false);
-  const [focusedJourneyKey, setFocusedJourneyKey] = useState<string | null>(null);
+  const [viewedSetKey, setViewedSetKey] = useState<string | null>(null);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
   // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
-  const [chosenJobStepKey, setChosenJobStepKey] = useState<string | null | undefined>(undefined);
+  const [chosenSetKey, setChosenSetKey] = useState<string | null | undefined>(undefined);
   const [showAllJourneys, setShowAllJourneys] = useState(false);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [creatingClient, setCreatingClient] = useState(false);
@@ -565,7 +565,7 @@ export default function ClientRefinePreviewWorkshopView() {
     needs,
     error: odiError,
     updateNeedScores,
-  } = useOdiNeeds(companyId, needsRefreshKey, focusedJourneyKey ?? undefined);
+  } = useOdiNeeds(companyId, needsRefreshKey, viewedSetKey ?? undefined);
 
   const { claims: workshopClaimsMap } = useCompanyClaims(companyId);
   const [pendingInspectRouteId, setPendingInspectRouteId] = useState<string | null>(null);
@@ -918,7 +918,7 @@ export default function ClientRefinePreviewWorkshopView() {
     hasPrimaryEvidence: sourceSignals.hasPrimaryEvidence,
   });
 
-  const journeyOptions = useMemo(() => {
+  const setOptions = useMemo(() => {
     const grouped = new Map<string, { key: string; title: string }>();
     for (const step of jobSteps) {
       if (!grouped.has(step.journey_key)) {
@@ -951,8 +951,8 @@ export default function ClientRefinePreviewWorkshopView() {
   }, [companyId, needsRefreshKey]);
 
   const marketSwitcherOptions = useMemo(
-    () => journeyOptions.map((o) => ({ key: o.key, title: o.title, marketDef: marketDefsByKey[o.key] ?? null })),
-    [journeyOptions, marketDefsByKey],
+    () => setOptions.map((o) => ({ key: o.key, title: o.title, marketDef: marketDefsByKey[o.key] ?? null })),
+    [setOptions, marketDefsByKey],
   );
 
   // Designed-step count per set — the view-seed signal (prefer the most complete
@@ -971,10 +971,10 @@ export default function ClientRefinePreviewWorkshopView() {
   // used directly: its no-choice path applies the +3 heuristic, but the default
   // must fall back to the EXISTING heuristic below when nothing is chosen.
   useEffect(() => {
-    setFocusedJourneyKey(null);
-    if (!companyId) { setChosenJobStepKey(null); return; }
+    setViewedSetKey(null);
+    if (!companyId) { setChosenSetKey(null); return; }
     let cancelled = false;
-    setChosenJobStepKey(undefined);
+    setChosenSetKey(undefined);
     (async () => {
       const sb = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
       const { data } = await sb
@@ -985,56 +985,56 @@ export default function ClientRefinePreviewWorkshopView() {
         .maybeSingle();
       if (cancelled) return;
       const key = String((data as { item_key?: unknown } | null)?.item_key ?? "").trim().toLowerCase();
-      setChosenJobStepKey(key || null);
+      setChosenSetKey(key || null);
     })();
     return () => { cancelled = true; };
   }, [companyId]);
 
   useEffect(() => {
-    if (journeyOptions.length === 0) {
-      setFocusedJourneyKey(null);
+    if (setOptions.length === 0) {
+      setViewedSetKey(null);
       return;
     }
     // Wait for the chosen set to load so the first seed honors the operator's
     // choice instead of the heuristic cementing under the keep-current guard.
-    if (chosenJobStepKey === undefined) return;
+    if (chosenSetKey === undefined) return;
     // Default seed = the operator's CHOSEN on-strategy set (shared rule). When
     // nothing is chosen, seed the VIEW only (never an assertion) to a real,
     // complete NON-internal set — never the undesigned internal-ops set. View-
     // switching stays ephemeral; the keep-current guard preserves a live selection.
-    const chosen = resolveChosenSet(chosenJobStepKey ?? null, journeyOptions.map((j) => j.key)).chosenKey;
+    const chosen = resolveChosenSet(chosenSetKey ?? null, setOptions.map((j) => j.key)).chosenKey;
     const preferred =
       chosen ??
-      heuristicDefaultViewSeed(journeyOptions.map((j) => j.key), designedByKey) ??
+      heuristicDefaultViewSeed(setOptions.map((j) => j.key), designedByKey) ??
       null;
-    setFocusedJourneyKey((current) => {
-      if (current && journeyOptions.some((journey) => journey.key === current)) return current;
+    setViewedSetKey((current) => {
+      if (current && setOptions.some((journey) => journey.key === current)) return current;
       return preferred;
     });
-    if (journeyOptions.some((journey) => journey.key !== "customer")) {
+    if (setOptions.some((journey) => journey.key !== "customer")) {
       setShowAllJourneys(false);
     }
-  }, [journeyOptions, chosenJobStepKey, designedByKey]);
+  }, [setOptions, chosenSetKey, designedByKey]);
 
   const filteredJobSteps = useMemo(() => {
-    if (showAllJourneys || !focusedJourneyKey) return jobSteps;
-    return jobSteps.filter((step) => step.journey_key === focusedJourneyKey);
-  }, [jobSteps, focusedJourneyKey, showAllJourneys]);
+    if (showAllJourneys || !viewedSetKey) return jobSteps;
+    return jobSteps.filter((step) => step.journey_key === viewedSetKey);
+  }, [jobSteps, viewedSetKey, showAllJourneys]);
 
   const filteredNeeds = useMemo(() => {
-    if (showAllJourneys || !focusedJourneyKey) return needs;
-    const matching = needs.filter((need) => String(need.journey_key || "").toLowerCase() === focusedJourneyKey.toLowerCase());
+    if (showAllJourneys || !viewedSetKey) return needs;
+    const matching = needs.filter((need) => String(need.journey_key || "").toLowerCase() === viewedSetKey.toLowerCase());
     return matching.length > 0 ? matching : needs;
-  }, [needs, focusedJourneyKey, showAllJourneys]);
+  }, [needs, viewedSetKey, showAllJourneys]);
 
   const filteredRoutes = useMemo(() => {
-    if (showAllJourneys || !focusedJourneyKey) return routes;
+    if (showAllJourneys || !viewedSetKey) return routes;
     return routes.filter((route) => {
       if (!String(route.id || "").startsWith("derived-")) return true;
       const description = cleanText(route.short_description);
-      return description.toLowerCase().startsWith(`${focusedJourneyKey.toLowerCase()} journey`);
+      return description.toLowerCase().startsWith(`${viewedSetKey.toLowerCase()} journey`);
     });
-  }, [routes, focusedJourneyKey, showAllJourneys]);
+  }, [routes, viewedSetKey, showAllJourneys]);
 
   const activeRoute = useMemo(
     () => routes.find((r) => r.id === activeRouteId) ?? null,
@@ -1151,7 +1151,7 @@ export default function ClientRefinePreviewWorkshopView() {
       return;
     }
 
-    const journeyKey = focusedJourneyKey || "customer";
+    const journeyKey = viewedSetKey || "customer";
 
     setRegeneratingJobMap(true);
     toast.loading("Starting job map analysis… (~1 min)", { id: "rerun-jobmap" });
@@ -1242,7 +1242,7 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setRegeneratingJobMap(false);
     }
-  }, [companyId, focusedJourneyKey, queryClient, refetchCompany, refetchJobSteps]);
+  }, [companyId, viewedSetKey, queryClient, refetchCompany, refetchJobSteps]);
 
   // b-ii: deliberate per-set conditions generation. Invokes the edge function
   // (LOCAL 14b + 70b judge via the committed module; field-merge keeps operator
@@ -1250,7 +1250,7 @@ export default function ClientRefinePreviewWorkshopView() {
   // still land server-side, so we confirm completion by polling conditions_json
   // for a change against a pre-run snapshot.
   const runConditionsGeneration = useCallback(async () => {
-    if (!companyId || !focusedJourneyKey) return;
+    if (!companyId || !viewedSetKey) return;
     if (isFrozenCompany(companyId)) {
       toast.error("This is a frozen reference company — conditions are not generated for it.");
       return;
@@ -1265,7 +1265,7 @@ export default function ClientRefinePreviewWorkshopView() {
     toast.loading(setHadConditions ? "Regenerating conditions… (~1–2 min)" : "Generating conditions… (~1–2 min)", { id: "gen-conditions" });
     try {
       const { data, error } = await supabase.functions.invoke("generate-step-conditions", {
-        body: { company_id: companyId, journey_key: focusedJourneyKey },
+        body: { company_id: companyId, journey_key: viewedSetKey },
       });
       if (!error && (data as { ok?: boolean } | null)?.ok === true) {
         await refetchJobSteps();
@@ -1280,7 +1280,7 @@ export default function ClientRefinePreviewWorkshopView() {
           .from("job_steps")
           .select("id, conditions_json")
           .eq("company_id", companyId)
-          .eq("journey_key", focusedJourneyKey)
+          .eq("journey_key", viewedSetKey)
           .order("step_number", { ascending: true });
         const sig = JSON.stringify(((rows as Array<{ id: string; conditions_json: unknown }> | null) ?? []).map((r) => [r.id, r.conditions_json ?? null]));
         if (sig !== beforeSig) {
@@ -1295,12 +1295,12 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setRegeneratingConditions(false);
     }
-  }, [companyId, focusedJourneyKey, filteredJobSteps, refetchJobSteps]);
+  }, [companyId, viewedSetKey, filteredJobSteps, refetchJobSteps]);
 
   // MH-5b: deliberate Regenerate-market (force) for the viewed declared set. Re-rolls
   // the labeled hypothesis; manual market_defs stay protected in the generator.
   const runMarketRegeneration = useCallback(async () => {
-    if (!companyId || !focusedJourneyKey) return;
+    if (!companyId || !viewedSetKey) return;
     if (isFrozenCompany(companyId)) {
       toast.error("This is a frozen reference company — the market is not generated for it.");
       return;
@@ -1310,7 +1310,7 @@ export default function ClientRefinePreviewWorkshopView() {
     toast.loading("Regenerating market hypothesis… (~1 min)", { id: "gen-market" });
     try {
       const { data, error } = await supabase.functions.invoke("generate-market-hypothesis", {
-        body: { company_id: companyId, journey_key: focusedJourneyKey, force: true },
+        body: { company_id: companyId, journey_key: viewedSetKey, force: true },
       });
       if (!error && (data as { ok?: boolean } | null)?.ok === true) {
         setNeedsRefreshKey((k) => k + 1);
@@ -1325,7 +1325,7 @@ export default function ClientRefinePreviewWorkshopView() {
           .from("odi_market_definitions")
           .select("jtbd")
           .eq("company_id", companyId)
-          .eq("journey_key", focusedJourneyKey)
+          .eq("journey_key", viewedSetKey)
           .maybeSingle();
         const jtbd = String((row as { jtbd?: unknown } | null)?.jtbd ?? "");
         if (jtbd && jtbd !== beforeJtbd) {
@@ -1340,7 +1340,7 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setRegeneratingMarket(false);
     }
-  }, [companyId, focusedJourneyKey, marketDefinition]);
+  }, [companyId, viewedSetKey, marketDefinition]);
 
   const openAffectedArtifact = useCallback((artifact: {
     object_type: "odi_need" | "route" | "desired_outcome";
@@ -2052,17 +2052,17 @@ export default function ClientRefinePreviewWorkshopView() {
             marketSwitcher={{
               options: marketSwitcherOptions,
               showingAll: showAllJourneys,
-              onSelect: (k) => { setShowAllJourneys(false); setFocusedJourneyKey(k || null); setActiveStepId(null); },
+              onSelect: (k) => { setShowAllJourneys(false); setViewedSetKey(k || null); setActiveStepId(null); },
               onShowAll: () => { setShowAllJourneys(true); setActiveStepId(null); },
             }}
             headerControls={
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <OnStrategyPin
                   companyId={companyId}
-                  journeyOptions={journeyOptions}
-                  focusedJourneyKey={showAllJourneys ? null : focusedJourneyKey}
+                  setOptions={setOptions}
+                  viewedSetKey={showAllJourneys ? null : viewedSetKey}
                 />
-                {focusedJourneyKey && !showAllJourneys && !isFrozenCompany(companyId) && (
+                {viewedSetKey && !showAllJourneys && !isFrozenCompany(companyId) && (
                   <button
                     type="button"
                     className="btn ghost"
@@ -2076,7 +2076,7 @@ export default function ClientRefinePreviewWorkshopView() {
                       : "Generate conditions"}
                   </button>
                 )}
-                {focusedJourneyKey && !showAllJourneys && !isFrozenCompany(companyId) && (
+                {viewedSetKey && !showAllJourneys && !isFrozenCompany(companyId) && (
                   <button
                     type="button"
                     className="btn ghost"
