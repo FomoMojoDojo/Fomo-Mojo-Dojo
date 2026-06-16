@@ -590,16 +590,30 @@ export default function MapView() {
             userId={user?.id}
           />
 
-          {/* ── Journey Map ── */}
-          <div style={cardStyle} className="p-4">
-            <StrategyJourneyMapAlt
-              areas={areas}
-              summary={summary}
-              onAreaClick={openDeepDive}
-              currentScore={score}
-              routesData={mapRoutes}
-            />
-          </div>
+          {/* ── Journey Map (or, with no on-strategy market chosen, the score
+                 refuses-with-invitation — no honest subject for a number) ── */}
+          {chosenJourneyKey === null ? (
+            <div style={cardStyle} className="p-4">
+              <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>Mojo Score</p>
+              <p className="font-sans text-[20px] font-bold mt-2" style={{ color: c.charcoal }}>No on-strategy market chosen yet</p>
+              <p className="font-sans text-[13px] leading-[1.6] mt-2" style={{ color: c.secondary }}>
+                Choose which market this map is for, and your Mojo Score will measure it.
+              </p>
+              <p className="font-sans text-[12px] leading-[1.5] mt-2" style={{ color: c.muted }}>
+                Use “Choose this as the on-strategy set” in the workshop.
+              </p>
+            </div>
+          ) : (
+            <div style={cardStyle} className="p-4">
+              <StrategyJourneyMapAlt
+                areas={areas}
+                summary={summary}
+                onAreaClick={openDeepDive}
+                currentScore={score}
+                routesData={mapRoutes}
+              />
+            </div>
+          )}
 
           {/* ── Key Insight + Your Next Move ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
