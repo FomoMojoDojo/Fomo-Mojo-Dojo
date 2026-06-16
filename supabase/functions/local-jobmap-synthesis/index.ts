@@ -7,6 +7,7 @@ import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateConditionsForSet, setHasConditions } from "../_shared/stepConditionsSynthesis.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
+import { generateOpportunitiesForSet, setHasOpportunities } from "../_shared/opportunitySynthesis.ts";
 import {
   JTBD_CHECKPOINT_COUNT,
   JTBD_ODI_CHECKPOINTS,
@@ -1498,6 +1499,25 @@ Deno.serve(async (req) => {
               runId: `bootstrap-market:${jk}`,
             });
             console.log(`[local-jobmap-synthesis] bootstrap market "${jk}":`, JSON.stringify(mres));
+            // DECL-OPP-A2-4a: a new declared set also auto-populates its declared
+            // opportunities (odi_needs internal_declared). Creation-time only —
+            // setHasOpportunities preserves a set that already has them (the
+            // deliberate Regenerate button, A2-4b, is the only refresh).
+            if (await setHasOpportunities(bootstrapDb, String(companyId), jk)) {
+              console.log(`[local-jobmap-synthesis] bootstrap opportunities "${jk}": skipped (already populated)`);
+            } else {
+              const ores = await generateOpportunitiesForSet({
+                supabase: bootstrapDb,
+                companyId: String(companyId),
+                journeyKey: jk,
+                ollamaUrl,
+                genModel: ollamaModel,
+                write: true,
+                runId: `bootstrap-opps:${jk}`,
+                nowIso: bootstrapNowIso,
+              });
+              console.log(`[local-jobmap-synthesis] bootstrap opportunities "${jk}":`, JSON.stringify(ores.ok ? (ores as { write?: unknown }).write ?? ores : ores));
+            }
           } catch (e) {
             console.error(`[local-jobmap-synthesis] bootstrap gen failed "${jk}"`, String((e as Error)?.message ?? e));
           }

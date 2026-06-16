@@ -278,11 +278,15 @@ export async function writeDeclaredOpportunities(args: {
     }
   }
 
-  // Existing DECLARED rows only (scoped) — never read/touch public_research or manual.
+  // Existing DECLARED rows for THIS SET only — scoped by journey_key as well as
+  // provenance, so a write to one declared set never reads/reconciles/touches another
+  // declared set's rows (each set is independent), and never touches public_research
+  // or manual.
   const { data: existingRows } = await args.supabase
     .from("odi_needs")
     .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
     .eq("company_id", args.companyId)
+    .eq("journey_key", journeyKey)
     .eq("provenance_type", "internal_declared")
     .eq("status", "active");
 
@@ -373,12 +377,12 @@ export async function generateOpportunitiesForSet(args: {
 
   const { data: rows, error } = await args.supabase
     .from("job_steps")
-    .select("id, step_number, step_label, description, evidence_basis, provenance_type")
+    .select("id, step_number, step_label, description, evidence_basis, provenance_type, user_id")
     .eq("company_id", args.companyId)
     .eq("journey_key", args.journeyKey)
     .order("step_number", { ascending: true });
   if (error) return { ok: false, error: String(error.message || error) };
-  const list = (rows ?? []) as Array<OppStepInput & { provenance_type?: string | null }>;
+  const list = (rows ?? []) as Array<OppStepInput & { provenance_type?: string | null; user_id?: string | null }>;
   if (list.length === 0) return { ok: false, skipped: "no_steps" };
 
   const provenances = [...new Set(list.map((r) => String(r.provenance_type ?? "")))];
@@ -396,7 +400,14 @@ export async function generateOpportunitiesForSet(args: {
     md = anyMd ?? null;
   }
 
-  const { data: companyRow } = await args.supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle();
+  const { data: companyRow } = await args.supabase.from("companies").select("name, created_by").eq("id", args.companyId).maybeSingle();
+
+  // Declared opps need a user_id (NOT NULL). Resolve from the set's own steps, then
+  // the company owner — so bootstrap/edge callers don't have to thread it through.
+  const resolvedUserId = args.userId
+    ?? list.map((r) => r.user_id).find((u) => !!u)
+    ?? ((companyRow as { created_by?: unknown } | null)?.created_by as string | undefined)
+    ?? null;
 
   const steps: OppStepInput[] = list.map((r) => ({
     id: r.id, step_number: r.step_number, step_label: r.step_label, description: r.description, evidence_basis: r.evidence_basis,
@@ -412,13 +423,16 @@ export async function generateOpportunitiesForSet(args: {
   });
 
   if (args.write) {
-    if (!args.userId || !args.runId || !args.nowIso) {
-      return { ok: false, error: "write requested but userId/runId/nowIso missing" };
+    if (!args.runId || !args.nowIso) {
+      return { ok: false, error: "write requested but runId/nowIso missing" };
+    }
+    if (!resolvedUserId) {
+      return { ok: false, error: "write requested but no user_id resolvable (set steps + company.created_by both empty)" };
     }
     const write = await writeDeclaredOpportunities({
       supabase: args.supabase,
       companyId: args.companyId,
-      userId: args.userId,
+      userId: resolvedUserId,
       journeyKey: args.journeyKey,
       perStep: result.perStep,
       runId: args.runId,
@@ -429,4 +443,22 @@ export async function generateOpportunitiesForSet(args: {
   }
 
   return { ok: true, result };
+}
+
+// True if the set already has any declared (internal_declared) opportunity — the
+// bootstrap creation gate (existing declared opps are preserved; only NEW/empty sets
+// auto-populate). Mirror of setHasConditions.
+export async function setHasOpportunities(
+  supabase: { from: (t: string) => any },
+  companyId: string,
+  journeyKey: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("odi_needs")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("journey_key", journeyKey)
+    .eq("provenance_type", "internal_declared")
+    .limit(1);
+  return ((data ?? []) as unknown[]).length > 0;
 }
