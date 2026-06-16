@@ -11,7 +11,7 @@ import {
   containsSolutionPrescriptiveLanguage,
 } from "@/lib/jtbdProcess";
 import { isInternalMetadataString } from "@/lib/clientFacingVoice";
-import { isSurveyValidated, bestGuessBand, bestGuessBandLabel, serviceVerdictWord } from "@/lib/surveyVerdict";
+import { isSurveyValidated, needBestGuessBand, needBestGuessBandLabel, serviceVerdictWord } from "@/lib/surveyVerdict";
 import { D } from "@/components/design-system/tokens";
 import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
 
@@ -1279,9 +1279,9 @@ export default function JobMapOrgPanel({
                   if (o > 0) parts.push(`${o} overserved`);
                   rollupColor = u > 0 ? D.signal : o > 0 ? D.inkFaint : D.inkSoft;
                 } else {
-                  const high = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "High").length;
-                  const med = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "Medium").length;
-                  const low = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "Low").length;
+                  const high = linkedOpps.filter((n) => needBestGuessBand(n) === "High").length;
+                  const med = linkedOpps.filter((n) => needBestGuessBand(n) === "Medium").length;
+                  const low = linkedOpps.filter((n) => needBestGuessBand(n) === "Low").length;
                   if (high > 0) parts.push(`${high} high`);
                   if (med > 0) parts.push(`${med} medium`);
                   if (low > 0) parts.push(`${low} low`);
@@ -1333,7 +1333,7 @@ export default function JobMapOrgPanel({
                         )}
                       </div>
                       <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor, paddingTop: 4, whiteSpace: "nowrap" }}>
-                        {serviceVerdictWord(opp) ?? bestGuessBandLabel(opp.opportunity_score)}
+                        {serviceVerdictWord(opp) ?? needBestGuessBandLabel(opp)}
                       </span>
                     </div>
                   );

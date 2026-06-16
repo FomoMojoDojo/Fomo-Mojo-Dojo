@@ -11,7 +11,9 @@ import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import {
   isSurveyValidated,
   serviceVerdictWord,
-  bestGuessBandLabel,
+  needBestGuessBand,
+  needBestGuessBandLabel,
+  compareNeedsByValue,
   certaintyRung,
   certaintyLabel,
 } from "@/lib/surveyVerdict";
@@ -526,7 +528,7 @@ function NeedRow({
             }
             return (
               <span style={{ ...MONO, fontSize: 9, color: "#7a8a72", border: "1px solid #d8e0d2", borderRadius: 4, padding: "2px 7px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                {bestGuessBandLabel(need.opportunity_score)}
+                {needBestGuessBandLabel(need)}
               </span>
             );
           })()}
@@ -849,11 +851,13 @@ export default function NeedsOrgPanel({
            need.journey_key === activeStep.journey_key;
   }
 
-  // Stable global rank by score — used for need numbers (#001, #002…)
+  // Stable global rank by displayed value band — used for need numbers (#001, #002…).
+  // Mixed declared + public_research: band tier is the common axis (declared reads
+  // confidence, not opportunity_score, so it ranks by its real band not bottom).
   const needNumberById = useMemo(() => {
     const sorted = [...initialNeeds].sort((a, b) => {
-      const scoreDiff = (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0);
-      if (scoreDiff !== 0) return scoreDiff;
+      const byValue = compareNeedsByValue(a, b);
+      if (byValue !== 0) return byValue;
       const impDiff = (b.importance ?? 0) - (a.importance ?? 0);
       if (impDiff !== 0) return impDiff;
       return String(a.id).localeCompare(String(b.id));
@@ -861,7 +865,7 @@ export default function NeedsOrgPanel({
     return new Map<string, string>(sorted.map((n, i) => [n.id, String(i + 1).padStart(3, "0")]));
   }, [initialNeeds]);
 
-  // Group by journey_key, sort groups by top opportunity score desc
+  // Group by journey_key, sort groups by top displayed value band desc
   const outcomeGroups = useMemo((): OutcomeGroup[] => {
     const map = new Map<string, OdiNeedRow[]>();
     for (const n of localNeeds) {
@@ -873,12 +877,13 @@ export default function NeedsOrgPanel({
       .map(([key, groupNeeds]) => ({
         key,
         label: labelForJourneyKey(key),
-        needs: [...groupNeeds].sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0)),
+        needs: [...groupNeeds].sort(compareNeedsByValue),
       }))
       .sort((a, b) => {
-        const aTop = a.needs[0]?.opportunity_score ?? 0;
-        const bTop = b.needs[0]?.opportunity_score ?? 0;
-        return bTop - aTop;
+        const aTop = a.needs[0];
+        const bTop = b.needs[0];
+        if (!aTop || !bTop) return (bTop ? 1 : 0) - (aTop ? 1 : 0);
+        return compareNeedsByValue(aTop, bTop);
       });
   }, [localNeeds]);
 
@@ -950,12 +955,15 @@ export default function NeedsOrgPanel({
 
   // ── Hierarchy layout ───────────────────────────────────────────────────────
   if (hasHierarchy) {
-    const sorted = [...localNeeds].sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
+    const sorted = [...localNeeds].sort(compareNeedsByValue);
     const subhead = `${localNeeds.length} ${localNeeds.length === 1 ? "opportunity" : "opportunities"} mapped across your customer job.`;
 
     const topOpp = sorted[0] ?? null;
     const topScore = topOpp?.opportunity_score ?? 0;
-    const tiedCount = sorted.filter((n) => n.opportunity_score === topScore).length;
+    // "Tied" on the displayed value band (the common axis), not raw opportunity_score
+    // (declared rows share opportunity_score=0 but differ by confidence band).
+    const topBand = topOpp ? needBestGuessBand(topOpp) : null;
+    const tiedCount = topBand ? sorted.filter((n) => needBestGuessBand(n) === topBand).length : 0;
     const topText = topOpp
       ? (titleMode === "canonical" ? (topOpp.odi_canonical_statement ?? topOpp.desired_outcome) : topOpp.desired_outcome)
       : null;
@@ -1005,7 +1013,7 @@ export default function NeedsOrgPanel({
                 }
                 return (
                   <span style={{ fontFamily: D.mono, fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: D.signal }}>
-                    {bestGuessBandLabel(topOpp.opportunity_score)}
+                    {needBestGuessBandLabel(topOpp)}
                   </span>
                 );
               })()}
@@ -1119,7 +1127,7 @@ export default function NeedsOrgPanel({
                       }
                       return (
                         <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkSoft }}>
-                          {bestGuessBandLabel(need.opportunity_score)}
+                          {needBestGuessBandLabel(need)}
                         </span>
                       );
                     })()}

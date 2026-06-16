@@ -17,7 +17,7 @@ import {
   deriveValidationStatus,
   type ValidationStatus,
 } from "@/lib/customerRealityNarrative";
-import { isSurveyValidated, bestGuessBandLabel } from "@/lib/surveyVerdict";
+import { isSurveyValidated, needBestGuessBandLabel, needCertaintyLabel } from "@/lib/surveyVerdict";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────────
 
@@ -245,7 +245,7 @@ function OverviewLens({
   const stateColor = surveyValidated ? serviceStateColor(need.service_state ?? "") : c.teal;
   const stateLabel = surveyValidated
     ? serviceStateLabelText(need.service_state ?? "")
-    : bestGuessBandLabel(need.opportunity_score);
+    : needBestGuessBandLabel(need);
   const observation = surveyValidated
     ? serviceStateObservation(need.service_state ?? "")
     : "A best guess of where the value likely is, from the information on hand — not yet validated by a customer survey.";
@@ -427,7 +427,7 @@ function CustomerRealityLens({
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <span style={validationBadgeStyle(card.validationStatus)}>
-            {validationStatusLabel(card.validationStatus)}
+            {needCertaintyLabel(need) ?? validationStatusLabel(card.validationStatus)}
           </span>
         </div>
         <p style={{ margin: "0 0 6px", fontFamily: "Inter, sans-serif", fontSize: 13, lineHeight: 1.6, color: c.secondary }}>
@@ -940,7 +940,7 @@ export default function NeedInspectPanel({
   const stateColor = headerSurveyValidated ? serviceStateColor(need?.service_state ?? "") : c.teal;
   const stateLabelText = headerSurveyValidated
     ? serviceStateLabelText(need?.service_state ?? "")
-    : bestGuessBandLabel(need?.opportunity_score);
+    : needBestGuessBandLabel(need);
 
   // onInspectRoute takes priority over legacy onRouteSelect
   const handleInspectRoute = onInspectRoute ?? onRouteSelect;

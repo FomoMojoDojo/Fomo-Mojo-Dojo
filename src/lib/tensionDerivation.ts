@@ -17,7 +17,7 @@ import type {
   TensionDerivationInput,
   TensionStatus,
 } from "@/lib/tensionTypes";
-import { bestGuessBandLabel } from "@/lib/surveyVerdict";
+import { needBestGuessBandLabel } from "@/lib/surveyVerdict";
 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ function deriveNeedRouteGapTension(
     id: makeId("need_route_gap", `${uncoveredNeeds.length}_uncovered`),
     statement: `${uncoveredNeeds.length} high-priority ${uncoveredNeeds.length === 1 ? "opportunity" : "opportunities"} with no corresponding execution route.`,
     detail: truncate(
-      `Top unaddressed: "${String(topNeed.desired_outcome)}" — ${bestGuessBandLabel(topNeed.opportunity_score).toLowerCase()}`,
+      `Top unaddressed: "${String(topNeed.desired_outcome)}" — ${needBestGuessBandLabel(topNeed).toLowerCase()}`,
       160,
     ),
     status: "unresolved",
