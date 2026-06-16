@@ -17,6 +17,12 @@
 
 import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
+import { planReconcile } from "./reconcilePublicSynthesis.ts";
+
+// Per-opportunity value band → odi_needs.confidence (the band's storage). A2-3 reads
+// confidence back into A1's Potential-Value display via a 0-1 ladder (>=0.8 High /
+// >=0.5 Medium / else Low), so 0.95/0.66/0.33 round-trip cleanly to High/Med/Low.
+const BAND_CONFIDENCE: Record<LikelihoodBand, number> = { High: 0.95, Medium: 0.66, Low: 0.33 };
 
 export type OppStepInput = {
   id: string;
@@ -234,13 +240,118 @@ export async function synthesizeOpportunities(args: {
   return { perStep, totals };
 }
 
+// ── A2-2: reconcile/insert writer to odi_needs under internal_declared ───────────
+// SCOPED so a declared write only ever reads/touches provenance_type='internal_declared'
+// rows — never public_research or manual (mirrors the public writer's public_research
+// scoping at researchSynthesisWrite.ts:280). Content-identity keep/add via the shared
+// planReconcile (the one PCT hash authority), so a re-run keeps (zero duplicates).
+// Per row: the A2-INV contract; confidence = band→0.95/0.66/0.33; opportunity_score
+// left EMPTY (0 — declared ordering is confidence-aware, wired in A2-3); no score math.
+
+export type DeclaredWriteResult = { added: number; kept: number; preserved: number };
+
+export async function writeDeclaredOpportunities(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  userId: string;
+  journeyKey: string;
+  perStep: StepOpportunitiesOutcome[];
+  runId: string;
+  nowIso: string;
+  frameworksUsed?: string[];
+}): Promise<DeclaredWriteResult> {
+  const journeyKey = args.journeyKey.toLowerCase();
+
+  // Flatten kept opportunities (with their source step) into incoming rows.
+  type Incoming = { ref: string; band: LikelihoodBand; outcome: string; canonical: string | null; statement: string; stepNumber: number; stepLabel: string; sortOrder: number };
+  const incoming: Incoming[] = [];
+  let order = 0;
+  for (const s of args.perStep) {
+    for (const o of s.kept) {
+      const canonical = o.odi_canonical_statement && o.odi_canonical_statement.trim() ? o.odi_canonical_statement.trim() : null;
+      const statement = canonical ?? o.outcome;
+      incoming.push({
+        ref: `d:${order}`, band: o.band, outcome: o.outcome, canonical, statement,
+        stepNumber: s.step_number, stepLabel: s.step_label, sortOrder: order + 1,
+      });
+      order++;
+    }
+  }
+
+  // Existing DECLARED rows only (scoped) — never read/touch public_research or manual.
+  const { data: existingRows } = await args.supabase
+    .from("odi_needs")
+    .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
+    .eq("company_id", args.companyId)
+    .eq("provenance_type", "internal_declared")
+    .eq("status", "active");
+
+  const plan = await planReconcile(
+    ((existingRows ?? []) as Array<Record<string, unknown>>).map((r) => {
+      const canon = (r.odi_canonical_statement as string | null) || "";
+      return {
+        id: String(r.id),
+        statement: (canon && String(canon).trim()) ? String(canon) : String(r.desired_outcome || ""),
+        content_identity: (r.content_identity as string | null) ?? null,
+        journey_key: String(r.journey_key || ""),
+        step_number: Number(r.step_number) || 0,
+      };
+    }),
+    incoming.map((p) => ({ ref: p.ref, statement: p.statement, journey_key: journeyKey, step_number: p.stepNumber })),
+  );
+
+  // Lazy content_identity backfill — only on the declared rows we just read (scoped).
+  for (const b of plan.identityBackfill) {
+    await args.supabase.from("odi_needs").update({ content_identity: b.identity }).eq("id", b.id);
+  }
+
+  const entryByRef = new Map(plan.entries.map((e) => [e.ref, e]));
+  let added = 0;
+  for (const p of incoming) {
+    const entry = entryByRef.get(p.ref);
+    if (entry && entry.action === "keep") continue; // re-run safe: existing declared row stays
+    const { error } = await args.supabase.from("odi_needs").insert({
+      company_id: args.companyId,
+      user_id: args.userId,
+      provenance_type: "internal_declared",
+      tier: "need",
+      desired_outcome: p.outcome,
+      odi_canonical_statement: p.canonical,
+      journey_key: journeyKey,
+      step_number: p.stepNumber,
+      step_label: p.stepLabel,
+      importance: 0, // declared has no survey scores (DB NOT NULL DEFAULT 0)
+      satisfaction: 0,
+      opportunity_score: 0, // EMPTY — not synthesized; declared ordering is confidence-aware (A2-3)
+      confidence: BAND_CONFIDENCE[p.band],
+      sort_order: p.sortOrder,
+      service_state: "served", // suppressed for declared (isSurveyValidated=false); default value
+      source_path: "internal_declared",
+      frameworks_used: args.frameworksUsed ?? [],
+      content_identity: entry?.identity ?? null,
+      status: "active",
+      source_run_id: args.runId,
+      last_confirmed_run_id: args.runId,
+    });
+    if (error) throw new Error(`declared opp insert failed (step ${p.stepNumber}): ${error.message}`);
+    added++;
+  }
+
+  if (plan.keptExistingIds.length > 0) {
+    await args.supabase.from("odi_needs").update({ last_confirmed_run_id: args.runId }).in("id", plan.keptExistingIds);
+  }
+
+  return { added, kept: plan.keptExistingIds.length, preserved: plan.preservedExistingIds.length };
+}
+
 // ── Set-level invocation (mirrors generateConditionsForSet) ──────────────────────
 // Loads a chosen set's steps + market_def + company name, enforces frozen and
-// writable-provenance guards, and runs synthesizeOpportunities. A2-1: dry-run only
-// (the result carries the candidates; NO write path exists yet — that is A2-2).
+// writable-provenance guards, runs synthesizeOpportunities, and (when write=true)
+// persists the kept opportunities as odi_needs internal_declared rows via the scoped
+// reconcile writer. Dry-run (write=false) is the default — A2-1's no-write mode.
 
 export type SetOpportunitiesResult =
-  | { ok: true; result: OppSynthesisResult }
+  | { ok: true; result: OppSynthesisResult; write?: DeclaredWriteResult }
   | { ok: false; skipped: "frozen_company" | "no_steps" | "non_writable_provenance"; provenances?: string[] }
   | { ok: false; error: string };
 
@@ -251,6 +362,12 @@ export async function generateOpportunitiesForSet(args: {
   ollamaUrl: string;
   genModel?: string;
   judgeModel?: string;
+  // A2-2 write path (default dry-run). Persisting requires userId + runId + nowIso.
+  write?: boolean;
+  userId?: string;
+  runId?: string;
+  nowIso?: string;
+  frameworksUsed?: string[];
 }): Promise<SetOpportunitiesResult> {
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
@@ -293,5 +410,23 @@ export async function generateOpportunitiesForSet(args: {
     genModel: args.genModel,
     judgeModel: args.judgeModel,
   });
+
+  if (args.write) {
+    if (!args.userId || !args.runId || !args.nowIso) {
+      return { ok: false, error: "write requested but userId/runId/nowIso missing" };
+    }
+    const write = await writeDeclaredOpportunities({
+      supabase: args.supabase,
+      companyId: args.companyId,
+      userId: args.userId,
+      journeyKey: args.journeyKey,
+      perStep: result.perStep,
+      runId: args.runId,
+      nowIso: args.nowIso,
+      frameworksUsed: args.frameworksUsed,
+    });
+    return { ok: true, result, write };
+  }
+
   return { ok: true, result };
 }
