@@ -17,6 +17,7 @@ import type {
   TensionDerivationInput,
   TensionStatus,
 } from "@/lib/tensionTypes";
+import { bestGuessBandLabel } from "@/lib/surveyVerdict";
 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ function deriveNeedRouteGapTension(
     id: makeId("need_route_gap", `${uncoveredNeeds.length}_uncovered`),
     statement: `${uncoveredNeeds.length} high-priority ${uncoveredNeeds.length === 1 ? "opportunity" : "opportunities"} with no corresponding execution route.`,
     detail: truncate(
-      `Top unaddressed: "${String(topNeed.desired_outcome)}" (score ${topNeed.opportunity_score})`,
+      `Top unaddressed: "${String(topNeed.desired_outcome)}" — ${bestGuessBandLabel(topNeed.opportunity_score).toLowerCase()}`,
       160,
     ),
     status: "unresolved",
@@ -345,8 +346,8 @@ function deriveCustomerPositioningMismatchTension(
 
   return {
     id: makeId("customer_positioning_mismatch", `${highUnderserved.length}_underserved`),
-    statement: "Customer research identifies underserved outcomes in areas positioning presents as strengths.",
-    detail: `${highUnderserved.length} high-score underserved ${highUnderserved.length === 1 ? "need" : "needs"}. Positioning claims ${uniqueAttributes.length} unique attribute${uniqueAttributes.length === 1 ? "" : "s"} — overlap requires scrutiny.`,
+    statement: "Customer research identifies high-potential needs in areas positioning presents as strengths.",
+    detail: `${highUnderserved.length} high-potential ${highUnderserved.length === 1 ? "need" : "needs"}. Positioning claims ${uniqueAttributes.length} unique attribute${uniqueAttributes.length === 1 ? "" : "s"} — overlap requires scrutiny.`,
     status: "unresolved",
     confidence: 0.65,
     source: "customer_positioning_mismatch",
@@ -361,7 +362,7 @@ function deriveCustomerPositioningMismatchTension(
       "Positioning is narrowed to areas with strong customer validation",
     ],
     validation_requirements: [
-      "Direct customer research on whether claimed attributes resolve the underserved outcomes",
+      "Direct customer research on whether claimed attributes resolve these high-potential needs",
     ],
     is_commitment_blocker: false,
     created_from: "derived",
