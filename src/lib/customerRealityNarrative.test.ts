@@ -28,6 +28,7 @@ function makeNeed(overrides: Partial<OdiNeedRow> = {}): OdiNeedRow {
     opportunity_score:       21,
     sort_order:              1,
     service_state:           "underserved",
+    provenance_type:         "manual",
     source_path:             "customer_interviews",
     source_url:              null,
     notes:                   null,
@@ -87,33 +88,39 @@ function makeCascade(overrides: Partial<StrategyCascade> = {}): StrategyCascade 
 // ─── 1. Inferred customer reality ─────────────────────────────────────────────
 
 describe("inferred customer reality", () => {
-  it("returns 'inferred' posture when all needs come from outside baselines", () => {
+  it("returns 'inferred' posture when all needs come from outside research", () => {
     const needs = [
-      makeNeed({ id: "n1", source_path: "public_baseline", frameworks_used: [], desired_outcome: "Reduce order errors", opportunity_score: 12 }),
-      makeNeed({ id: "n2", source_path: "benchmark_report", frameworks_used: [], desired_outcome: "Improve shipping speed", opportunity_score: 15 }),
+      makeNeed({ id: "n1", provenance_type: "public_research", source_path: "public_baseline", frameworks_used: [], desired_outcome: "Reduce order errors", opportunity_score: 12 }),
+      makeNeed({ id: "n2", provenance_type: "public_research", source_path: "benchmark_report", frameworks_used: [], desired_outcome: "Improve shipping speed", opportunity_score: 15 }),
     ];
     const result = buildCustomerRealityNarrative(needs, [], makeCascade());
     expect(result.posture).toBe("inferred");
     expect(result.postureHeadline).toContain("inferred");
   });
 
-  it("classifies outside-source need as 'inferred' validation status", () => {
-    const need = makeNeed({ source_path: "public_baseline", frameworks_used: [] });
+  // Validation status is now driven by provenance_type, not source_path/frameworks sniffing.
+  it("classifies public_research provenance as 'inferred'", () => {
+    const need = makeNeed({ provenance_type: "public_research", source_path: "public_baseline", frameworks_used: [] });
     expect(deriveValidationStatus(need)).toBe("inferred");
   });
 
-  it("classifies odi-framework need as 'validated' validation status", () => {
-    const need = makeNeed({ source_path: "internal", frameworks_used: ["odi"] });
+  it("classifies manual provenance as 'validated' (the company's own research)", () => {
+    const need = makeNeed({ provenance_type: "manual", source_path: "internal", frameworks_used: ["odi"] });
     expect(deriveValidationStatus(need)).toBe("validated");
   });
 
-  it("classifies customer_interviews source as 'validated'", () => {
-    const need = makeNeed({ source_path: "customer_interviews", frameworks_used: [] });
+  it("classifies odi_survey provenance as 'validated'", () => {
+    const need = makeNeed({ provenance_type: "odi_survey", source_path: "", frameworks_used: [] });
     expect(deriveValidationStatus(need)).toBe("validated");
   });
 
-  it("classifies unknown source as 'directional'", () => {
-    const need = makeNeed({ source_path: "internal_doc", frameworks_used: [] });
+  it("classifies internal_declared provenance as 'directional'", () => {
+    const need = makeNeed({ provenance_type: "internal_declared", source_path: "internal_doc", frameworks_used: [] });
+    expect(deriveValidationStatus(need)).toBe("directional");
+  });
+
+  it("classifies unknown provenance as 'directional'", () => {
+    const need = makeNeed({ provenance_type: null, source_path: "internal_doc", frameworks_used: [] });
     expect(deriveValidationStatus(need)).toBe("directional");
   });
 });
@@ -242,7 +249,7 @@ describe("route solving internal friction", () => {
 describe("strategic direction outrunning customer proof", () => {
   it("returns a direction-grounding conflict when cascade defined but all needs are inferred", () => {
     const needs = [
-      makeNeed({ id: "n1", source_path: "public_baseline", frameworks_used: [], desired_outcome: "Reduce errors" }),
+      makeNeed({ id: "n1", provenance_type: "public_research", source_path: "public_baseline", frameworks_used: [], desired_outcome: "Reduce errors" }),
     ];
     const result = buildCustomerRealityNarrative(needs, [], makeCascade());
     const hasProofConflict = result.conflicts.some((c) =>
@@ -293,8 +300,8 @@ describe("converging customer validation", () => {
 
 describe("deriveNeedRealityCard", () => {
   it("returns the correct validationStatus", () => {
-    const validated = makeNeed({ source_path: "customer_interviews", frameworks_used: ["odi"] });
-    const inferred  = makeNeed({ source_path: "public_baseline",     frameworks_used: [] });
+    const validated = makeNeed({ provenance_type: "manual", source_path: "customer_interviews", frameworks_used: ["odi"] });
+    const inferred  = makeNeed({ provenance_type: "public_research", source_path: "public_baseline", frameworks_used: [] });
     expect(deriveNeedRealityCard(validated, []).validationStatus).toBe("validated");
     expect(deriveNeedRealityCard(inferred,  []).validationStatus).toBe("inferred");
   });

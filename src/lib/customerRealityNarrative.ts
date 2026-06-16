@@ -18,6 +18,7 @@
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { RouteRow } from "@/views/Routes/useRoutes";
 import type { StrategyCascade } from "@/lib/types";
+import { certaintyRung, isSurveyValidated } from "@/lib/surveyVerdict";
 
 
 // ─── Public types ───────────────────────────────────────────────────────────────
@@ -158,31 +159,29 @@ const CUSTOMER_FRAMEWORKS = new Set([
   "customer", "interviews", "user_research",
 ]);
 
-const OUTSIDE_SOURCES = ["baseline", "public", "benchmark", "report", "external", "outside"];
-
 /**
- * Classifies how directly a need is grounded in customer research.
+ * Classifies how directly a need is grounded in customer research — now driven by
+ * provenance_type (the single source in surveyVerdict.ts), not source_path/frameworks
+ * string sniffing. The old sniffing credited EVERY need "validated" because they all
+ * carry "odi" in frameworks_used, so even pure outside-signal needs read customer-
+ * confirmed. Provenance fixes that lie.
  *
- * "validated" — direct customer research (ODI sessions, interviews, etc.)
- * "inferred"  — derived from outside signals only (baselines, public reports)
- * "directional" — in between; some signal, not primary research
+ * "validated" — survey-confirmed or the company's own research (odi_survey / manual)
+ * "inferred"  — outside signals only (public_research / framework_adjudicated)
+ * "directional" — declared hypothesis or unclassified (internal_declared / unknown)
  */
 export function deriveValidationStatus(need: OdiNeedRow): ValidationStatus {
-  const src = (need.source_path ?? "").toLowerCase();
-  const frameworks = (need.frameworks_used ?? []).map((f) => f.toLowerCase());
-
-  const isCustomerSource =
-    frameworks.some((f) => CUSTOMER_FRAMEWORKS.has(f)) ||
-    src.includes("customer") ||
-    src.includes("interview") ||
-    src.includes("primary");
-
-  if (isCustomerSource) return "validated";
-
-  const isOutsideOnly = OUTSIDE_SOURCES.some((kw) => src.includes(kw));
-  if (isOutsideOnly) return "inferred";
-
-  return "directional";
+  switch (certaintyRung(need)) {
+    case "survey_validated":
+    case "research_backed":
+      return "validated";
+    case "outside_signals":
+      return "inferred";
+    case "declared":
+    case "unknown":
+    default:
+      return "directional";
+  }
 }
 
 // ─── Need-level narrative ────────────────────────────────────────────────────────
@@ -213,7 +212,7 @@ function deriveUncertaintyNote(need: OdiNeedRow, status: ValidationStatus): stri
   if (status === "inferred") {
     return "This need has not been validated with direct customer research — it comes from outside signals.";
   }
-  if (state === "overserved" && imp >= 6) {
+  if (isSurveyValidated(need) && state === "overserved" && imp >= 6) {
     return "It's unclear whether over-served reflects genuine customer satisfaction or insufficient measurement.";
   }
   if (imp >= 7 && sat >= 7) {
@@ -240,7 +239,7 @@ function deriveNeedWouldStrengthen(need: OdiNeedRow, status: ValidationStatus): 
   if (imp >= 7 && sat <= 4 && out.length < 2) {
     out.push("Revisiting this need with more customer interviews would confirm the gap size.");
   }
-  if (state === "overserved" && out.length < 2) {
+  if (isSurveyValidated(need) && state === "overserved" && out.length < 2) {
     out.push("Checking whether over-serving reflects a real customer feeling or a measurement artifact.");
   }
   if (out.length === 0) {
@@ -504,7 +503,7 @@ function deriveFrictionPatterns(needs: OdiNeedRow[], validatedCount: number): st
   }
 
   const overServed = needs.filter(
-    (n) => (n.service_state ?? "").toLowerCase() === "overserved",
+    (n) => isSurveyValidated(n) && (n.service_state ?? "").toLowerCase() === "overserved",
   );
   if (overServed.length > 0) {
     patterns.push(
@@ -549,7 +548,7 @@ function deriveConflicts(
 
   // 3. Over-served needs with significant routes targeting them
   const overServedNeeds = needs.filter(
-    (n) => (n.service_state ?? "").toLowerCase() === "overserved" && (n.importance ?? 0) >= 6,
+    (n) => isSurveyValidated(n) && (n.service_state ?? "").toLowerCase() === "overserved" && (n.importance ?? 0) >= 6,
   );
   if (overServedNeeds.length > 0) {
     const overServedTokenSets = overServedNeeds.map((n) =>
@@ -587,7 +586,7 @@ function deriveUnresolved(
   }
 
   const overServedHighImp = needs.some(
-    (n) => (n.service_state ?? "").toLowerCase() === "overserved" && (n.importance ?? 0) >= 6,
+    (n) => isSurveyValidated(n) && (n.service_state ?? "").toLowerCase() === "overserved" && (n.importance ?? 0) >= 6,
   );
   if (overServedHighImp) {
     items.push("It's unclear whether over-served areas reflect genuine customer satisfaction or measurement gaps.");

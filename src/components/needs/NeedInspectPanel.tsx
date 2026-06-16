@@ -17,6 +17,7 @@ import {
   deriveValidationStatus,
   type ValidationStatus,
 } from "@/lib/customerRealityNarrative";
+import { isSurveyValidated, bestGuessBandLabel } from "@/lib/surveyVerdict";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────────
 
@@ -238,9 +239,16 @@ function OverviewLens({
   linkedRouteIds?: string[];
 }) {
   const tiers      = needSignalTiers(need.source_path);
-  const stateColor = serviceStateColor(need.service_state ?? "");
-  const stateLabel = serviceStateLabelText(need.service_state ?? "");
-  const observation = serviceStateObservation(need.service_state ?? "");
+  // Verdict (served/underserved/overserved) only when a survey backs it; otherwise a
+  // best-guess of value. Gated on provenance, never on parsing service_state.
+  const surveyValidated = isSurveyValidated(need);
+  const stateColor = surveyValidated ? serviceStateColor(need.service_state ?? "") : c.teal;
+  const stateLabel = surveyValidated
+    ? serviceStateLabelText(need.service_state ?? "")
+    : bestGuessBandLabel(need.opportunity_score);
+  const observation = surveyValidated
+    ? serviceStateObservation(need.service_state ?? "")
+    : "A best guess of where the value likely is, from the information on hand — not yet validated by a customer survey.";
   const srcLabel   = humanSourceLabel(need.source_path);
   const presentTiers = tiers.filter((t) => t.present);
   // Stack-confirmed routes (caller guarantees the relationship is real)
@@ -278,9 +286,9 @@ function OverviewLens({
   return (
     <div style={{ padding: "14px 20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
 
-      {/* Service state claim */}
+      {/* Service state claim — survey verdict, or best-guess value until a survey backs it */}
       <div>
-        <SectionLabel>What this tension means</SectionLabel>
+        <SectionLabel>{surveyValidated ? "What this tension means" : "Best-guess value"}</SectionLabel>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <span style={{
             fontFamily: MONO, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.10em",
@@ -385,7 +393,7 @@ function validationBadgeStyle(status: ValidationStatus): React.CSSProperties {
 }
 
 function validationStatusLabel(status: ValidationStatus): string {
-  if (status === "validated")   return "Customer confirmed";
+  if (status === "validated")   return "Backed by your research";
   if (status === "inferred")    return "From outside signals";
   return "Signal building";
 }
@@ -927,8 +935,12 @@ export default function NeedInspectPanel({
   ].filter(Boolean);
   const contextLine = contextParts.join(" · ");
 
-  const stateColor = serviceStateColor(need?.service_state ?? "");
-  const stateLabelText = serviceStateLabelText(need?.service_state ?? "");
+  // Verdict word only when survey-backed; otherwise the best-guess value band.
+  const headerSurveyValidated = isSurveyValidated(need ?? undefined);
+  const stateColor = headerSurveyValidated ? serviceStateColor(need?.service_state ?? "") : c.teal;
+  const stateLabelText = headerSurveyValidated
+    ? serviceStateLabelText(need?.service_state ?? "")
+    : bestGuessBandLabel(need?.opportunity_score);
 
   // onInspectRoute takes priority over legacy onRouteSelect
   const handleInspectRoute = onInspectRoute ?? onRouteSelect;

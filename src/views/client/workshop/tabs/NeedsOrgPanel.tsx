@@ -8,7 +8,13 @@ import { isArtifactStale } from "@/lib/evidenceImpact";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
 import DriftBadge from "@/components/drift/DriftBadge";
 import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
-import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
+import {
+  isSurveyValidated,
+  serviceVerdictWord,
+  bestGuessBandLabel,
+  certaintyRung,
+  certaintyLabel,
+} from "@/lib/surveyVerdict";
 import NeedInspectPanel from "@/components/needs/NeedInspectPanel";
 import RouteInspectPanel, { type RouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import InspectionShell from "@/components/inspection/InspectionShell";
@@ -24,11 +30,6 @@ import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATE_LABEL: Record<string, string> = {
-  underserved: "Underserved",
-  served:      "Served",
-  overserved:  "Overserved",
-};
 
 const MONO: React.CSSProperties = {
   fontFamily: "monospace",
@@ -90,10 +91,16 @@ function isMeaningfullyScored(n: OdiNeedRow): boolean {
 function deriveUnknowns(needs: OdiNeedRow[]): string[] {
   if (needs.length === 0) return [];
 
-  const primaryNeeds = needs.filter((n) => isPrimaryNeedsSourcePath(n.source_path));
+  // "Customer signal" = the company's own research (or a real survey), from provenance —
+  // not source_path string sniffing (which missed CB1's curated needs).
+  const isResearchBacked = (n: OdiNeedRow) => {
+    const rung = certaintyRung(n);
+    return rung === "research_backed" || rung === "survey_validated";
+  };
+  const primaryNeeds = needs.filter(isResearchBacked);
   const hasCustomerSignals = primaryNeeds.length > 0;
   const hasMeaningfulScoring = primaryNeeds.filter(isMeaningfullyScored).length >= 3;
-  const unvalidatedCount = needs.filter((n) => !isPrimaryNeedsSourcePath(n.source_path)).length;
+  const unvalidatedCount = needs.filter((n) => !isResearchBacked(n)).length;
 
   const unknowns: string[] = [];
 
@@ -113,6 +120,10 @@ function deriveUnknowns(needs: OdiNeedRow[]): string[] {
 }
 
 function deriveNeedRoleLabel(need: OdiNeedRow): string | null {
+  // Role labels are verdict-derived (read service_state) — suppress until a survey
+  // earns the verdict. Returns null for every current need; restored via the same
+  // predicate when survey provenance exists (DECL-OPP-A2).
+  if (!isSurveyValidated(need)) return null;
   if (need.service_state === "underserved" && need.importance >= 8) return "Active tension";
   if (need.service_state === "underserved" && need.importance >= 5) return "Emerging gap";
   if (need.service_state === "served" && need.importance >= 7 && need.satisfaction <= 6) return "Proof gap";
@@ -504,14 +515,29 @@ function NeedRow({
                 onBlur={() => onScoreChange(need.id, imp, sat)}
               />
             </label>
-            <div className="crpv-ws-need-score-wrap">
-              <span className="crpv-ws-need-score-lbl cap">Opp</span>
-              <span className="crpv-ws-score-display">{need.opportunity_score}</span>
-            </div>
           </div>
-          <span className={`crpv-ws-state-badge crpv-ws-state-${need.service_state}`}>
-            {STATE_LABEL[need.service_state] ?? need.service_state}
-          </span>
+          {/* Verdict word only when survey-backed; otherwise the best-guess value band */}
+          {(() => {
+            const verdict = serviceVerdictWord(need);
+            if (verdict) {
+              return (
+                <span className={`crpv-ws-state-badge crpv-ws-state-${need.service_state}`}>{verdict}</span>
+              );
+            }
+            return (
+              <span style={{ ...MONO, fontSize: 9, color: "#7a8a72", border: "1px solid #d8e0d2", borderRadius: 4, padding: "2px 7px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                {bestGuessBandLabel(need.opportunity_score)}
+              </span>
+            );
+          })()}
+          {/* Honest certainty rung, from provenance */}
+          {(() => {
+            const rung = certaintyRung(need);
+            const cl = certaintyLabel(rung);
+            if (!cl) return null;
+            const col = rung === "research_backed" || rung === "survey_validated" ? "#5f9b8c" : "#9a8c6a";
+            return <span style={{ ...MONO, color: col, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em" }}>{cl}</span>;
+          })()}
           {roleLabel && (() => {
             const roleColor =
               roleLabel === "Active tension" ? "#b06a3c"
@@ -901,7 +927,11 @@ export default function NeedsOrgPanel({
   const proofGapCount       = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Proof gap").length;
   const overInvestedCount   = localNeeds.filter((n) => deriveNeedRoleLabel(n) === "Over-invested").length;
 
+  // The role-derived state narrative is a verdict claim — hold it until a survey backs
+  // a verdict. (All role counts are 0 today; this also suppresses the "stable" fallback.)
+  const anySurveyValidated = localNeeds.some(isSurveyValidated);
   const needsStateLead = (() => {
+    if (!anySurveyValidated) return null;
     if (activeTensionCount >= 2) return `${activeTensionCount} active tensions shaping the top priorities.`;
     if (activeTensionCount === 1) return "One active tension leading the priority stack.";
     if (emergingGapCount >= 3) return `${emergingGapCount} emerging gaps — customer strategy not yet converged.`;
@@ -912,6 +942,7 @@ export default function NeedsOrgPanel({
   })();
 
   const needsStateSecondary = (() => {
+    if (!anySurveyValidated) return null;
     if (activeTensionCount >= 1 && overInvestedCount >= 1) return `${overInvestedCount} area${overInvestedCount === 1 ? "" : "s"} over-invested alongside active tensions — priority misalignment possible.`;
     if (proofGapCount >= 1 && activeTensionCount === 0) return `${proofGapCount} proof gap${proofGapCount === 1 ? "" : "s"} — important needs served but not yet validated.`;
     return null;
@@ -958,12 +989,26 @@ export default function NeedsOrgPanel({
               {topText}
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <span style={{ fontFamily: D.mono, fontSize: 22, fontWeight: 700, color: D.ink, letterSpacing: "-0.02em" }}>
-                {topScore.toFixed(1)}
-              </span>
-              <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: topStateColor }}>
-                {STATE_LABEL[topOpp.service_state] ?? topOpp.service_state}
-              </span>
+              {(() => {
+                const verdict = serviceVerdictWord(topOpp);
+                if (verdict) {
+                  return (
+                    <>
+                      <span style={{ fontFamily: D.mono, fontSize: 22, fontWeight: 700, color: D.ink, letterSpacing: "-0.02em" }}>
+                        {topScore.toFixed(1)}
+                      </span>
+                      <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: topStateColor }}>
+                        {verdict}
+                      </span>
+                    </>
+                  );
+                }
+                return (
+                  <span style={{ fontFamily: D.mono, fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: D.signal }}>
+                    {bestGuessBandLabel(topOpp.opportunity_score)}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -992,8 +1037,10 @@ export default function NeedsOrgPanel({
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {sorted.map((need, idx) => {
             const text = titleMode === "canonical" ? (need.odi_canonical_statement ?? need.desired_outcome) : need.desired_outcome;
-            const stateColor = need.service_state === "underserved" ? D.signal
-              : need.service_state === "overserved" ? D.inkFaint
+            const stateColor = isSurveyValidated(need)
+              ? (need.service_state === "underserved" ? D.signal
+                : need.service_state === "overserved" ? D.inkFaint
+                : D.inkSoft)
               : D.inkSoft;
             const hierarchyOffStrategy = need.strategy_alignment === "off_strategy";
             const pendingProposal = proposalsMap?.get(need.id) ?? null;
@@ -1054,14 +1101,39 @@ export default function NeedsOrgPanel({
                     )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, paddingTop: 4 }}>
-                    <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor }}>
-                      {STATE_LABEL[need.service_state] ?? need.service_state}
-                    </span>
-                    {typeof need.opportunity_score === "number" && need.opportunity_score > 0 && (
-                      <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(17,17,17,0.3)", letterSpacing: "0.06em" }}>
-                        {need.opportunity_score.toFixed(1)}
-                      </span>
-                    )}
+                    {(() => {
+                      const verdict = serviceVerdictWord(need);
+                      if (verdict) {
+                        return (
+                          <>
+                            <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor }}>
+                              {verdict}
+                            </span>
+                            {typeof need.opportunity_score === "number" && need.opportunity_score > 0 && (
+                              <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(17,17,17,0.3)", letterSpacing: "0.06em" }}>
+                                {need.opportunity_score.toFixed(1)}
+                              </span>
+                            )}
+                          </>
+                        );
+                      }
+                      return (
+                        <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkSoft }}>
+                          {bestGuessBandLabel(need.opportunity_score)}
+                        </span>
+                      );
+                    })()}
+                    {(() => {
+                      const rung = certaintyRung(need);
+                      const cl = certaintyLabel(rung);
+                      if (!cl) return null;
+                      const col = rung === "research_backed" || rung === "survey_validated" ? "#5f9b8c" : "#9a8c6a";
+                      return (
+                        <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: col }}>
+                          {cl}
+                        </span>
+                      );
+                    })()}
                     {onDriftClick && (
                       <DriftBadge
                         surfaceType="opportunity"

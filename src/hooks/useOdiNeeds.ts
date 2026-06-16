@@ -28,6 +28,7 @@ export type OdiNeedRow = {
   opportunity_score: number;
   sort_order?: number | null;
   service_state: "underserved" | "served" | "overserved" | string;
+  provenance_type?: "manual" | "public_research" | "framework_adjudicated" | "odi_survey" | "internal_declared" | string | null;
   source_path: string;
   source_url?: string | null;
   notes?: string | null;

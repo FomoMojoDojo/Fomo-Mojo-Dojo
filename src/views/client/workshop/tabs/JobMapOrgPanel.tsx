@@ -11,6 +11,7 @@ import {
   containsSolutionPrescriptiveLanguage,
 } from "@/lib/jtbdProcess";
 import { isInternalMetadataString } from "@/lib/clientFacingVoice";
+import { isSurveyValidated, bestGuessBand, bestGuessBandLabel, serviceVerdictWord } from "@/lib/surveyVerdict";
 import { D } from "@/components/design-system/tokens";
 import { SignalBasisChip, type SignalBasis } from "@/components/design-system/SignalBasisChip";
 
@@ -1209,9 +1210,12 @@ export default function JobMapOrgPanel({
       const linked = allNeeds.filter(
         (n) => n.journey_key === step.journey_key && n.step_number === (step.step_number ?? idx + 1),
       );
-      const underserved = linked.filter((n) => n.service_state === "underserved").length;
-      const overserved  = linked.filter((n) => n.service_state === "overserved").length;
-      const served      = linked.filter((n) => n.service_state === "served").length;
+      // Verdict counts only over survey-validated needs (0 today) — so the verdict-derived
+      // step-tab tint stays off until a survey backs it.
+      const surveyLinked = linked.filter(isSurveyValidated);
+      const underserved = surveyLinked.filter((n) => n.service_state === "underserved").length;
+      const overserved  = surveyLinked.filter((n) => n.service_state === "overserved").length;
+      const served      = surveyLinked.filter((n) => n.service_state === "served").length;
       return { underserved, overserved, served, total: linked.length };
     });
 
@@ -1261,18 +1265,31 @@ export default function JobMapOrgPanel({
           {linkedOpps.length > 0 && (
             <div>
               {(() => {
-                const u = linkedOpps.filter((n) => n.service_state === "underserved").length;
-                const o = linkedOpps.filter((n) => n.service_state === "overserved").length;
-                const s = linkedOpps.filter((n) => n.service_state === "served").length;
+                // Verdict counts only over survey-validated opps (empty until a survey
+                // exists); otherwise a best-guess value distribution — no verdict.
+                const surveyOpps = linkedOpps.filter(isSurveyValidated);
                 const parts: string[] = [];
-                if (u > 0) parts.push(`${u} underserved`);
-                if (s > 0) parts.push(`${s} served`);
-                if (o > 0) parts.push(`${o} overserved`);
-                const rollupColor = u > 0 ? D.signal : o > 0 ? D.inkFaint : D.inkSoft;
+                let rollupColor = D.inkFaint;
+                if (surveyOpps.length > 0) {
+                  const u = surveyOpps.filter((n) => n.service_state === "underserved").length;
+                  const o = surveyOpps.filter((n) => n.service_state === "overserved").length;
+                  const s = surveyOpps.filter((n) => n.service_state === "served").length;
+                  if (u > 0) parts.push(`${u} underserved`);
+                  if (s > 0) parts.push(`${s} served`);
+                  if (o > 0) parts.push(`${o} overserved`);
+                  rollupColor = u > 0 ? D.signal : o > 0 ? D.inkFaint : D.inkSoft;
+                } else {
+                  const high = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "High").length;
+                  const med = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "Medium").length;
+                  const low = linkedOpps.filter((n) => bestGuessBand(n.opportunity_score) === "Low").length;
+                  if (high > 0) parts.push(`${high} high`);
+                  if (med > 0) parts.push(`${med} medium`);
+                  if (low > 0) parts.push(`${low} low`);
+                }
                 return (
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 0 8px" }}>
                     <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: 0 }}>
-                      Mapped opportunities
+                      {surveyOpps.length > 0 ? "Mapped opportunities" : "Mapped opportunities · potential value"}
                     </p>
                     {parts.length > 0 && (
                       <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: rollupColor, margin: 0 }}>
@@ -1284,8 +1301,11 @@ export default function JobMapOrgPanel({
               })()}
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {linkedOpps.map((opp, i) => {
-                  const stateColor = opp.service_state === "underserved" ? D.signal
-                    : opp.service_state === "overserved" ? D.inkFaint
+                  // Verdict color only when survey-backed; otherwise neutral (no visual verdict).
+                  const stateColor = isSurveyValidated(opp)
+                    ? (opp.service_state === "underserved" ? D.signal
+                      : opp.service_state === "overserved" ? D.inkFaint
+                      : D.inkSoft)
                     : D.inkSoft;
                   const needsPendingReview = NEEDS_REVIEW_STATES.has(opp.dependency_state ?? "") && !reviewedIds.has(opp.id);
                   return (
@@ -1313,7 +1333,7 @@ export default function JobMapOrgPanel({
                         )}
                       </div>
                       <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: stateColor, paddingTop: 4, whiteSpace: "nowrap" }}>
-                        {opp.service_state}
+                        {serviceVerdictWord(opp) ?? bestGuessBandLabel(opp.opportunity_score)}
                       </span>
                     </div>
                   );
