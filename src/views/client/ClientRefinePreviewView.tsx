@@ -687,7 +687,7 @@ export default function ClientRefinePreviewView() {
       toast.error("No company selected.");
       return;
     }
-    toast.loading("Regenerating ODI job map…", { id: "rerun-jobmap-scope" });
+    toast.loading("Regenerating job map…", { id: "rerun-jobmap-scope" });
     const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
       body: {
         company_id: activeCompany.id,
@@ -702,7 +702,7 @@ export default function ClientRefinePreviewView() {
       },
     });
     if (error) {
-      toast.error(error.message || "ODI job map rerun failed.", { id: "rerun-jobmap-scope" });
+      toast.error(error.message || "Job map rerun failed.", { id: "rerun-jobmap-scope" });
       return;
     }
     if (data && typeof data === "object" && "error" in data && data.error) {
@@ -710,7 +710,7 @@ export default function ClientRefinePreviewView() {
       return;
     }
     await refetchClientViewData();
-    toast.success("ODI job map regenerated.", { id: "rerun-jobmap-scope" });
+    toast.success("Job map regenerated.", { id: "rerun-jobmap-scope" });
   }, [activeCompany?.id, refetchClientViewData]);
   const diagnostic = useMemo((): MojoMapDiagnostic | null => {
     const best = selectBestProposal(fileProposals);
@@ -4728,7 +4728,7 @@ export default function ClientRefinePreviewView() {
                         Rebuild foundation + routes
                       </button>
                       <button type="button" className="btn" onClick={() => void rerunOdiJobMapScope()}>
-                        Regenerate ODI job map
+                        Regenerate job map
                       </button>
                       <button type="button" className="btn" onClick={() => void runAnalysis()} disabled={analysisRunning}>
                         {analysisRunning ? "Full analysis running…" : "Run full analysis"}

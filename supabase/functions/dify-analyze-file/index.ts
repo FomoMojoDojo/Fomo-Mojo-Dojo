@@ -1102,7 +1102,7 @@ serve(async (req) => {
         file_id:            fileId,
         file_name:          fileName ?? "",
         source_type:        sourceType ?? "",
-        summary:            "Dify analysis queued. Results will appear when processing finishes.",
+        summary:            "Analysis queued. Results will appear when processing finishes.",
         evidence:           [],
         signal_type:        "document",
         framework_results:  [],

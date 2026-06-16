@@ -6016,7 +6016,7 @@ Deno.serve(async (req) => {
     const jobStepGroundingRules = thinEvidenceColdStart
       ? `Evidence is thin for this company (no uploaded internal evidence). For CUSTOMER journeys, anchor each of the ${JTBD_CHECKPOINT_COUNT} checkpoints to the ${anchorSourceNote} hypotheses below — adapt the wording to this company's job executor and category, but keep the job-progression intent of each checkpoint:\n` +
         `${anchorBlock}\n` +
-        `- Customer journey steps: set designed=true, has_gap=false, gap_note="", evidence_status=implied, evidence_confidence at most 50, and evidence_basis="${anchorSourceNote}; to validate with customer evidence"\n` +
+        `- Customer journey steps: set designed=true, has_gap=false, gap_note="", evidence_status=implied, evidence_confidence at most 50, and evidence_basis="A generic starting map — not yet validated against your customers." (do NOT name any framework or methodology in evidence_basis)\n` +
         `- These customer steps are industry-standard hypotheses TO VALIDATE — realistic for the category, not asserted as company-proven facts\n` +
         `- For non-customer journeys, keep honest evidence marking: designed=false and has_gap=true when evidence is unclear\n`
       : `- designed=true only when the step appears intentionally supported and evidence_status is evidenced or implied\n` +
