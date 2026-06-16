@@ -249,6 +249,83 @@ function isBoilerplateJtbd(jtbd: string | null | undefined): boolean {
   return BOILERPLATE_JTBD_MARKERS.some((re) => re.test(s));
 }
 
+// MH-4a: each switcher option's market headline (its market_def executor clause),
+// using the same MH-2 honesty gate; null → fall back to the set title in the menu.
+type SwitcherMarketDef = { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null } | null;
+function optionMarketName(md: SwitcherMarketDef, key: string): string | null {
+  if (!md) return null;
+  if (String(md.journey_key ?? "").trim().toLowerCase() !== String(key ?? "").trim().toLowerCase()) return null;
+  if (isBoilerplateJtbd(md.jtbd)) return null;
+  const exec = String(md.job_executor ?? "").trim();
+  return exec || null;
+}
+
+// MH-4a: the MH-2 headline as a switcher. Options are each candidate set's market
+// headline; selecting switches the VIEWED set only (never the chosen on-strategy
+// set — that stays with the ON STRATEGY chip). Rendered only when >1 candidate set.
+function MarketSwitcher({ options, activeKey, activeName, activeIsValidated, showingAll, onSelect, onShowAll }: {
+  options: Array<{ key: string; title: string; marketDef: SwitcherMarketDef }>;
+  activeKey: string;
+  activeName: string | null;
+  activeIsValidated: boolean;
+  showingAll?: boolean;
+  onSelect: (key: string) => void;
+  onShowAll?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const nk = (v: string | null | undefined) => String(v ?? "").trim().toLowerCase();
+  const triggerLabel = showingAll ? "All markets" : (activeName ?? "This map's market isn't named yet — who is it for, and what are they getting done?");
+  const named = showingAll || !!activeName;
+  return (
+    <div style={{ position: "relative", marginBottom: 20 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={{ background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "flex-start", gap: 10, maxWidth: 780 }}
+      >
+        <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+          <span style={{ fontFamily: D.sans, fontSize: named && !showingAll ? 28 : showingAll ? 28 : 18, fontWeight: named ? 700 : 500, color: named ? D.ink : D.inkSoft, lineHeight: 1.18, letterSpacing: "-0.02em" }}>
+            {triggerLabel}
+          </span>
+          {!showingAll && activeName && !activeIsValidated && (
+            <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: "#b45309", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 3, padding: "3px 9px" }}>
+              Hypothesis — not yet validated
+            </span>
+          )}
+        </span>
+        <span aria-hidden="true" style={{ fontSize: 16, color: D.inkFaint, marginTop: 8, flexShrink: 0 }}>▾</span>
+      </button>
+      {open && (
+        <div role="listbox" style={{ position: "absolute", top: "100%", left: 0, zIndex: 30, marginTop: 6, background: "#fff", border: `1px solid ${D.hairline}`, borderRadius: 8, boxShadow: "0 8px 28px rgba(17,17,17,0.12)", minWidth: 340, maxWidth: 560, padding: 6 }}>
+          <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "4px 10px 6px" }}>Switch market — viewing only</p>
+          {options.map((o) => {
+            const name = optionMarketName(o.marketDef, o.key);
+            const isHyp = !!name && String(o.marketDef?.provenance_type ?? "") !== "manual";
+            const isActive = !showingAll && nk(o.key) === nk(activeKey);
+            return (
+              <button key={o.key} type="button" role="option" aria-selected={isActive}
+                onClick={() => { onSelect(o.key); setOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: isActive ? "rgba(17,17,17,0.05)" : "none", border: "none", borderRadius: 5, padding: "8px 10px", cursor: "pointer", fontFamily: D.sans, fontSize: 13.5, color: D.ink, lineHeight: 1.4 }}>
+                <span style={{ flex: 1 }}>{name ?? o.title}{!name && <span style={{ color: D.inkFaint }}> — market not named yet</span>}</span>
+                {isHyp && <span style={{ fontFamily: D.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.06em", color: "#b45309", background: "#fef9ec", border: "1px solid #f5d96b", borderRadius: 3, padding: "2px 6px", flexShrink: 0 }}>hyp</span>}
+              </button>
+            );
+          })}
+          {onShowAll && (
+            <button type="button" role="option" aria-selected={!!showingAll}
+              onClick={() => { onShowAll(); setOpen(false); }}
+              style={{ display: "block", width: "100%", textAlign: "left", background: showingAll ? "rgba(17,17,17,0.05)" : "none", border: "none", borderTop: `1px solid ${D.hairlineFaint}`, marginTop: 4, padding: "8px 10px", cursor: "pointer", fontFamily: D.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", color: D.inkSoft }}>
+              Show all markets
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EVIDENCE_DOT: Record<string, { label: string; color: string }> = {
   evidenced: { label: "Evidenced", color: "#16a34a" },
   implied:   { label: "Implied",   color: "#E8A317" },
@@ -1024,6 +1101,7 @@ export default function JobMapOrgPanel({
   needs,
   signalBasis,
   marketDef,
+  marketSwitcher,
 }: {
   steps: JobStepRow[];
   loading: boolean;
@@ -1042,6 +1120,13 @@ export default function JobMapOrgPanel({
   // drives the tier — 'manual' = operator-validated (plain), else = labeled
   // hypothesis; null/boilerplate → emptiness.
   marketDef?: { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null } | null;
+  // MH-4a: when >1 candidate set, the headline becomes a market switcher (VIEW only).
+  marketSwitcher?: {
+    options: Array<{ key: string; title: string; marketDef: SwitcherMarketDef }>;
+    showingAll?: boolean;
+    onSelect: (key: string) => void;
+    onShowAll?: () => void;
+  };
 }) {
   const suggestedId = useMemo(() => deriveSuggestedId(steps), [steps]);
   const [activeHierarchyIdx, setActiveHierarchyIdx] = useState<number>(0);
@@ -1282,7 +1367,17 @@ export default function JobMapOrgPanel({
             <span style={{ width: 5, height: 5, borderRadius: "50%", background: D.signal, display: "inline-block", flexShrink: 0 }} />
             {"The market this map is for"}
           </p>
-          {marketName ? (
+          {marketSwitcher && marketSwitcher.options.length > 1 ? (
+            <MarketSwitcher
+              options={marketSwitcher.options}
+              activeKey={activeJK}
+              activeName={marketName}
+              activeIsValidated={marketIsValidated}
+              showingAll={marketSwitcher.showingAll}
+              onSelect={marketSwitcher.onSelect}
+              onShowAll={marketSwitcher.onShowAll}
+            />
+          ) : marketName ? (
             <>
               <h1 style={{ fontFamily: D.sans, fontSize: 28, fontWeight: 700, color: D.ink, margin: marketIsValidated ? "0 0 20px" : "0 0 8px", lineHeight: 1.18, letterSpacing: "-0.02em", maxWidth: 760 }}>
                 {marketName}

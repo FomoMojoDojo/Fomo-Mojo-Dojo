@@ -931,6 +931,30 @@ export default function ClientRefinePreviewWorkshopView() {
     return Array.from(grouped.values());
   }, [jobSteps]);
 
+  // MH-4a: all sets' market_defs (journey_key → row) so the title-switcher can label
+  // each option by its MH-2 market headline. Refetched on company / market regen.
+  const [marketDefsByKey, setMarketDefsByKey] = useState<Record<string, { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null }>>({});
+  useEffect(() => {
+    if (!companyId) { setMarketDefsByKey({}); return; }
+    let cancelled = false;
+    (async () => {
+      const sb = supabase as unknown as { from: (t: string) => ReturnType<typeof supabase.from> };
+      const { data } = await sb.from("odi_market_definitions").select("journey_key, job_executor, jtbd, provenance_type").eq("company_id", companyId);
+      if (cancelled) return;
+      const map: Record<string, { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null }> = {};
+      for (const r of ((data as Array<{ journey_key?: string | null }>) ?? [])) {
+        if (r.journey_key) map[String(r.journey_key)] = r as { journey_key?: string | null; job_executor?: string | null; jtbd?: string | null; provenance_type?: string | null };
+      }
+      setMarketDefsByKey(map);
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, needsRefreshKey]);
+
+  const marketSwitcherOptions = useMemo(
+    () => journeyOptions.map((o) => ({ key: o.key, title: o.title, marketDef: marketDefsByKey[o.key] ?? null })),
+    [journeyOptions, marketDefsByKey],
+  );
+
   // Designed-step count per set — the view-seed signal (prefer the most complete
   // non-internal set when no choice exists).
   const designedByKey = useMemo(() => {
@@ -2025,40 +2049,14 @@ export default function ClientRefinePreviewWorkshopView() {
             hasHierarchy={workshopHasHierarchy}
             needs={filteredNeeds}
             marketDef={marketDefinition}
+            marketSwitcher={{
+              options: marketSwitcherOptions,
+              showingAll: showAllJourneys,
+              onSelect: (k) => { setShowAllJourneys(false); setFocusedJourneyKey(k || null); setActiveStepId(null); },
+              onShowAll: () => { setShowAllJourneys(true); setActiveStepId(null); },
+            }}
             headerControls={
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {journeyOptions.length > 1 && (
-                  <select
-                    value={showAllJourneys ? "__all__" : focusedJourneyKey ?? ""}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === "__all__") {
-                        setShowAllJourneys(true);
-                        return;
-                      }
-                      setShowAllJourneys(false);
-                      setFocusedJourneyKey(value || null);
-                    }}
-                    style={{
-                      minWidth: 280,
-                      border: "1px solid #dde6d1",
-                      borderRadius: 4,
-                      background: "#fff",
-                      color: "#233c4b",
-                      fontSize: 13,
-                      padding: "5px 10px",
-                      appearance: "auto",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {journeyOptions.map((journey) => (
-                      <option key={journey.key} value={journey.key}>
-                        {journey.title}
-                      </option>
-                    ))}
-                    <option value="__all__">Show all maps</option>
-                  </select>
-                )}
                 <OnStrategyPin
                   companyId={companyId}
                   journeyOptions={journeyOptions}
