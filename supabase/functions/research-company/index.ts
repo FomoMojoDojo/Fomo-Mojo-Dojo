@@ -32,6 +32,7 @@ import { DELETABLE_PROVENANCE_OR_FILTER, isProtectedJourneyKey, protectedJourney
 import { planReconcile } from "../_shared/reconcilePublicSynthesis.ts";
 import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/researchSynthesisWrite.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
+import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
 // B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
@@ -8038,6 +8039,33 @@ Deno.serve(async (req) => {
         strategy: freshCascadeRow ?? null,
       },
     });
+
+    // Cold-start MH-5: name the market as a buyer-framed STARTING HYPOTHESIS so no
+    // cold-start map lands unnamed. The cold start above wrote a boilerplate/seller-
+    // framed market_def (jtbdFromJourneyTitle) that the header honesty gate blanks;
+    // MH-5 self-gates to absent/boilerplate market_defs and overwrites it with a
+    // buyer-framed internal_hypothesis (executor + the job), llama3:70b buyer/seller-
+    // judged. Direct function call — the generate-market-hypothesis edge fn isn't
+    // served on every stack. BEST-EFFORT / graceful: any failure (Ollama down/slow,
+    // judge reject, timeout) is logged and swallowed — it must NEVER fail or roll back
+    // the cold start; the map simply degrades to today's behavior (boilerplate
+    // market_def, gate blanks it). Awaited so the market is named before the first view.
+    if (!dry_run) {
+      try {
+        const mh5OllamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+        const mh5 = await generateMarketHypothesisForSet({
+          supabase,
+          companyId: String(company_id),
+          journeyKey: "customer",
+          ollamaUrl: mh5OllamaUrl,
+          nowIso: new Date().toISOString(),
+          runId: `cold-start-market:${runtimeContract.run_id ?? "research-company"}`,
+        });
+        console.log("[research-company] cold-start MH-5 market hypothesis:", JSON.stringify(mh5));
+      } catch (e) {
+        console.error("[research-company] cold-start MH-5 failed (non-fatal; map keeps boilerplate market_def):", String((e as Error)?.message ?? e));
+      }
+    }
 
     return jsonResponse({
       message: "Research complete",
