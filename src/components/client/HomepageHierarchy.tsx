@@ -5,6 +5,7 @@ import type { DirectionEvidence } from "@/hooks/useDirectionEvidence";
 import type { FoundationStatus } from "@/hooks/useFoundationStatus";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { InsightNextTurn } from "@/hooks/useInsightNextTurn";
+import { certaintyRung } from "@/lib/surveyVerdict";
 
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -264,15 +265,37 @@ function NextTurnBlock({
 
 // ── § 02 SIGNAL ───────────────────────────────────────────────────────────────
 
+// Provenance-aware §02 attribution clause — keyed off certaintyRung(topNeed), the
+// same authority the chips + value bands use (one taxonomy, no parallel). Honest about
+// who actually mapped: only manual/team content reads "WHAT YOU/YOUR TEAM MAPPED".
+// Returns null for unknown → the clause is dropped entirely.
+function topOpportunityAttribution(topNeed: OdiNeedRow | null, isSolo: boolean): string | null {
+  switch (certaintyRung(topNeed)) {
+    case "research_backed":
+      return isSolo ? "WHAT YOU MAPPED" : "WHAT YOUR TEAM MAPPED";
+    case "outside_signals":
+      return "OUR READ OF YOUR PUBLIC PRESENCE";
+    case "declared":
+      return "A STARTING HYPOTHESIS";
+    case "survey_validated":
+      return "CONFIRMED WITH CUSTOMERS";
+    case "unknown":
+    default:
+      return null;
+  }
+}
+
 function SignalSection({
   topNeed,
   needCount,
   signalLandscape,
+  isSolo,
   onGoToOpportunities,
 }: {
   topNeed: OdiNeedRow | null;
   needCount: number;
   signalLandscape: SignalLandscape | null;
+  isSolo: boolean;
   onGoToOpportunities: () => void;
 }) {
   const outsideCount  = signalLandscape?.byBand.outside.count ?? 0;
@@ -280,6 +303,7 @@ function SignalSection({
   const customerCount = signalLandscape?.byBand.customer.count ?? 0;
   const maxCount = Math.max(outsideCount, orgCount, customerCount, 1);
   const humanized = topNeed ? topNeed.desired_outcome : null;
+  const attribution = topOpportunityAttribution(topNeed, isSolo);
 
   return (
     <div style={{ borderTop: `1px solid ${T.hairline}`, paddingTop: 22 }}>
@@ -293,7 +317,7 @@ function SignalSection({
             "{humanized}"
           </p>
           <p style={{ fontFamily: T.mono, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", color: T.inkFaint, margin: "0 0 28px" }}>
-            — TOP OPPORTUNITY · WHAT YOUR TEAM MAPPED · 1 OF {needCount}
+            — TOP OPPORTUNITY{attribution ? ` · ${attribution}` : ""} · 1 OF {needCount}
           </p>
         </>
       ) : (
@@ -538,6 +562,7 @@ export function HomepageHierarchy({
           topNeed={topNeed}
           needCount={needCount}
           signalLandscape={signalLandscape}
+          isSolo={isSolo}
           onGoToOpportunities={onGoToOpportunities}
         />
 
