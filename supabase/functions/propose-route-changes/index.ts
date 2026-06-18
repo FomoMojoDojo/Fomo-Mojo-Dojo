@@ -13,6 +13,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -150,7 +151,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch route ---
   const { data: routeData, error: routeError } = await db
     .from("routes")
-    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, source")
+    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, source, provenance_type")
     .eq("id", route_id)
     .eq("company_id", company_id)
     .eq("relevance_state", "active")
@@ -161,6 +162,22 @@ Deno.serve(async (req: Request) => {
   }
   const route = routeData as RouteRow;
   const currentState = buildCurrentSnapshot(route);
+
+  // DECL-OPP 1a.1 — Option-B subject gate (load-bearing; direct UI "Generate" path
+  // is not drift-gated): an internal (declared/NULL-provenance) route must never
+  // have its text sent to OpenAI. Inadmissible → skip (no OpenAI, no proposal
+  // insert), recording an excluded-by-rule integrity row.
+  const subjectGate = await gateSubjectForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    surfaceType: "route",
+    surfaceId: String(route_id),
+    provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+    consumer: "propose-route-changes",
+  });
+  if (!subjectGate.admissible) {
+    return jsonResponse({ skipped: true, reason: "internal subject — not sent for external proposal" });
+  }
 
   // --- Fetch strategy cascade ---
   const { data: cascadeData, error: cascadeError } = await db

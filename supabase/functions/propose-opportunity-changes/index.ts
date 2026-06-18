@@ -13,6 +13,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -106,7 +107,7 @@ Deno.serve(async (req: Request) => {
   // --- Fetch opportunity ---
   const { data: oppData, error: oppError } = await db
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment")
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, service_state, importance, satisfaction, opportunity_score, strategy_alignment, provenance_type")
     .eq("id", opportunity_id)
     .eq("company_id", company_id)
     .maybeSingle();
@@ -116,6 +117,23 @@ Deno.serve(async (req: Request) => {
   }
   const opp = oppData as OpportunityRow;
   const currentState = buildCurrentSnapshot(opp);
+
+  // DECL-OPP 1a.1 — Option-B subject gate. propose-* is NOT drift-gated at the
+  // backend (the direct workshop "Generate" button reaches here unrestricted), so
+  // this gate is load-bearing: an internal (declared/manual/NULL) opportunity must
+  // never have its text sent to OpenAI. Inadmissible → skip (no OpenAI, no proposal
+  // insert), recording an excluded-by-rule integrity row.
+  const subjectGate = await gateSubjectForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    surfaceType: "opportunity",
+    surfaceId: String(opportunity_id),
+    provenance: (oppData as { provenance_type?: string | null }).provenance_type,
+    consumer: "propose-opportunity-changes",
+  });
+  if (!subjectGate.admissible) {
+    return jsonResponse({ skipped: true, reason: "internal subject — not sent for external proposal" });
+  }
 
   // --- Fetch strategy cascade ---
   const { data: cascadeData, error: cascadeError } = await db

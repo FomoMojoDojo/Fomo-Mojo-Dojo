@@ -28,6 +28,44 @@ export function isDriftSurfaceExternallyAdmissible(
   return provenance != null && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
 }
 
+// Single-row form: the one skip+record path for consumers that send ONE internal
+// subject surface to an external model (the verdict/propose lanes). Inadmissible
+// (internal/NULL-provenance) subject → record an excluded-by-rule integrity row
+// and return admissible:false so the caller skips the external call entirely.
+// Admissible (public-derived) → admissible:true, no record, caller proceeds.
+export async function gateSubjectForExternal(opts: {
+  supabase: { from: (t: string) => any } | undefined | null;
+  companyId: string;
+  surfaceType: string;
+  surfaceId: string;
+  provenance: string | null | undefined;
+  consumer: string;
+}): Promise<{ admissible: boolean }> {
+  const prov = opts.provenance == null ? null : String(opts.provenance);
+  if (isDriftSurfaceExternallyAdmissible(prov)) {
+    return { admissible: true };
+  }
+  console.log("[drift-external-gate] subject excluded", {
+    consumer: opts.consumer,
+    company_id: opts.companyId,
+    surface_type: opts.surfaceType,
+    surface_id: opts.surfaceId,
+    provenance: prov,
+  });
+  await recordIntegrityRun(opts.supabase ?? null, {
+    company_id: opts.companyId,
+    component: "drift_external_gate",
+    surface_type: opts.surfaceType,
+    surface_id: opts.surfaceId,
+    status: "completed",
+    examined: 1,
+    admitted: 0,
+    excluded_by_rule: { non_public_provenance: true, provenance: prov },
+    run_ref: opts.consumer,
+  });
+  return { admissible: false };
+}
+
 // Array form: filter a fetched surface set to the externally-admissible rows,
 // recording one per-surface excluded-by-rule integrity record for each row the
 // rule drops. Inadmissible rows never reach assessSurface, so zero external calls

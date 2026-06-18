@@ -11,6 +11,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -65,13 +66,28 @@ Deno.serve(async (req: Request) => {
   // Fetch route
   const { data: routeData, error: routeError } = await db
     .from("routes")
-    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true")
+    .select("id, title, short_description, category, rejected_alternatives, what_would_have_to_be_true, provenance_type")
     .eq("id", route_id)
     .eq("company_id", company_id)
     .maybeSingle();
 
   if (routeError || !routeData) {
     return jsonResponse({ error: routeError?.message ?? "Route not found" }, 404);
+  }
+
+  // DECL-OPP 1a.1 — Option-B subject gate: an internal (declared/NULL-provenance)
+  // route must never have its text sent to an external model. Inadmissible → skip
+  // (no OpenAI, no strategy_alignment write), recording an excluded-by-rule row.
+  const subjectGate = await gateSubjectForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    surfaceType: "route",
+    surfaceId: String(route_id),
+    provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+    consumer: "evaluate-route-alignment",
+  });
+  if (!subjectGate.admissible) {
+    return jsonResponse({ skipped: true, reason: "internal subject — not externally evaluated", route_id });
   }
 
   // Fetch most recent strategy cascade

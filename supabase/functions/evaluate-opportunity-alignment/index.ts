@@ -11,6 +11,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
+import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -65,13 +66,29 @@ Deno.serve(async (req: Request) => {
   // Fetch need/opportunity
   const { data: needData, error: needError } = await db
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key")
+    .select("id, desired_outcome, odi_canonical_statement, tier, step_label, journey_key, provenance_type")
     .eq("id", need_id)
     .eq("company_id", company_id)
     .maybeSingle();
 
   if (needError || !needData) {
     return jsonResponse({ error: needError?.message ?? "Need not found" }, 404);
+  }
+
+  // DECL-OPP 1a.1 — Option-B subject gate: an internal (declared/manual/NULL-
+  // provenance) opportunity must never have its text sent to an external model.
+  // Inadmissible → skip the evaluation entirely (no OpenAI, no strategy_alignment
+  // write), recording an excluded-by-rule integrity row.
+  const subjectGate = await gateSubjectForExternal({
+    supabase: db as unknown as { from: (t: string) => any },
+    companyId: String(company_id),
+    surfaceType: "opportunity",
+    surfaceId: String(need_id),
+    provenance: (needData as { provenance_type?: string | null }).provenance_type,
+    consumer: "evaluate-opportunity-alignment",
+  });
+  if (!subjectGate.admissible) {
+    return jsonResponse({ skipped: true, reason: "internal subject — not externally evaluated", need_id });
   }
 
   // Fetch most recent strategy cascade
