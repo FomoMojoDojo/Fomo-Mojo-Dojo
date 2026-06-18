@@ -289,7 +289,7 @@ export async function writeDeclaredOpportunities(args: {
   // or manual.
   const { data: existingRows } = await args.supabase
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number")
+    .select("id, desired_outcome, odi_canonical_statement, content_identity, journey_key, step_number, source_path")
     .eq("company_id", args.companyId)
     .eq("journey_key", journeyKey)
     .eq("provenance_type", "internal_declared")
@@ -352,15 +352,22 @@ export async function writeDeclaredOpportunities(args: {
   }
 
   // ── Deliberate Regenerate (force): replace generated rows the fresh roll didn't
-  // re-confirm. Operator-EDITED rows are ALWAYS kept. "edited" is detected from the
-  // ORIGINAL stored content_identity (as read, before any backfill above): a row is
-  // GENERATED iff its stored content_identity is present AND equals the recomputed
-  // hash of its current statement; an edited row's stored hash is stale (≠), and a
-  // null/absent hash fails safe to PRESERVE. Only generated rows the fresh roll did
-  // NOT keep are deleted. This is the only delete in the declared pipeline — it is
-  // scoped (company + journey + internal_declared) AND restricted to a computed id
-  // list, and is reached only after generateOpportunitiesForSet's frozen/writable/
-  // no-steps gates have passed.
+  // re-confirm. Operator-EDITED rows are ALWAYS kept, via EITHER of two independent
+  // markers (preserve = stale-content_identity OR manual source_path):
+  //  (1) content_identity staleness — a row is GENERATED iff its ORIGINAL stored hash
+  //      (as read, before backfill) is present AND equals the recomputed hash of its
+  //      current statement; an edited row's stored hash is stale (≠), null/absent
+  //      fails safe to PRESERVE. Catches edits to the identity-driving field.
+  //  (2) source_path LIKE 'manual_%' — stamped by the apply-write
+  //      (useOpportunityProposalHandlers) on every human-applied edit. Catches edits
+  //      that DON'T move content_identity (e.g. a desired_outcome-only edit while the
+  //      canonical, which drives identity, is unchanged). Generated rows carry
+  //      source_path='internal_declared', never 'manual_%', so this never
+  //      over-preserves a generated row.
+  // Only generated rows the fresh roll did NOT keep are deleted. This is the only
+  // delete in the declared pipeline — scoped (company + journey + internal_declared)
+  // AND restricted to a computed id list, reached only after generateOpportunitiesForSet's
+  // frozen/writable/no-steps gates have passed.
   let deleted = 0;
   let editedPreserved = 0;
   if (args.replaceGenerated) {
@@ -373,9 +380,10 @@ export async function writeDeclaredOpportunities(args: {
       const statement = (canon && canon.trim()) ? canon : String(r.desired_outcome || "");
       const recomputed = await contentIdentity(statement);
       const isGenerated = !!stored && stored === recomputed;
-      if (!isGenerated) { editedPreserved++; continue; } // edited or null → always preserve
-      if (keptSet.has(id)) continue;                     // generated + re-confirmed → keep
-      deleteIds.push(id);                                // generated + not re-confirmed → replace
+      const manualEdited = String(r.source_path ?? "").startsWith("manual_");
+      if (manualEdited || !isGenerated) { editedPreserved++; continue; } // manual edit OR stale/null → always preserve
+      if (keptSet.has(id)) continue;                                     // generated + re-confirmed → keep
+      deleteIds.push(id);                                                // generated + not re-confirmed → replace
     }
     if (deleteIds.length > 0) {
       const { error } = await args.supabase
