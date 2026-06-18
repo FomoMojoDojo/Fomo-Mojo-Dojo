@@ -789,6 +789,7 @@ export default function ClientRefinePreviewWorkshopView() {
     rejectLoadingOpportunityProposalId,
     handleSaveNeedField,
     handleGenerateOpportunityProposal,
+    handleAuthorOpportunityProposal,
     handleAcceptOpportunityProposal,
     handleRejectOpportunityProposal,
   } = useOpportunityProposalHandlers(companyId, () => setNeedsRefreshKey((k) => k + 1));
@@ -1759,6 +1760,7 @@ export default function ClientRefinePreviewWorkshopView() {
               acceptLoadingProposalId={acceptLoadingOpportunityProposalId}
               rejectLoadingProposalId={rejectLoadingOpportunityProposalId}
               onSaveNeedField={handleSaveNeedField}
+              onAuthorProposal={handleAuthorOpportunityProposal}
               onDriftClick={handleDriftClick}
               driftRefreshKey={driftBadgeRefreshKey}
               onCheckSurfaceDrift={handleCheckSurfaceDrift}

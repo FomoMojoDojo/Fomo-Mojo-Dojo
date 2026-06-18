@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import { toast } from "sonner";
 import type { OpportunityProposalRow } from "@/hooks/useOpportunityProposals";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
@@ -639,6 +640,7 @@ export default function NeedsOrgPanel({
   acceptLoadingProposalId,
   rejectLoadingProposalId,
   onSaveNeedField,
+  onAuthorProposal,
   onDriftClick,
   driftRefreshKey,
   onCheckSurfaceDrift,
@@ -668,6 +670,7 @@ export default function NeedsOrgPanel({
   acceptLoadingProposalId?: string | null;
   rejectLoadingProposalId?: string | null;
   onSaveNeedField?: (needId: string, field: "odi_canonical_statement", value: string) => Promise<void>;
+  onAuthorProposal?: (needId: string, authoredText: string) => Promise<void>;
   onDriftClick?: (surfaceType: string, surfaceId: string) => void;
   driftRefreshKey?: number;
   onCheckSurfaceDrift?: (surfaceType: string, surfaceId: string) => void;
@@ -682,6 +685,10 @@ export default function NeedsOrgPanel({
   const { stack, top, open: openFrame, push: pushFrame, pop: popFrame, clear: clearFrame, updateTopLens } = useInspectionStack();
   const [focusedOutcome, setFocusedOutcomeRaw] = useState<string | null>(null);
   const [focusedOpportunityId, setFocusedOpportunityIdRaw] = useState<string | null>(null);
+  // Human edit lane: which declared need is being authored + the draft + submit state.
+  const [authoringNeedId, setAuthoringNeedId] = useState<string | null>(null);
+  const [authorDraft, setAuthorDraft] = useState("");
+  const [authorSubmitting, setAuthorSubmitting] = useState(false);
 
   // ── localStorage sync ───────────────────────────────────────────────────────
 
@@ -1084,7 +1091,9 @@ export default function NeedsOrgPanel({
                         )}
                       </div>
                     )}
-                    {onGenerateProposal && (
+                    {/* Agent "Generate proposal" is hidden for declared — that lane is
+                        subject-gated to not-applicable; declared uses the human edit lane below. */}
+                    {onGenerateProposal && need.provenance_type !== "internal_declared" && (
                       <div style={{ marginTop: 6 }}>
                         <ProposeChangesButton
                           surfaceType="opportunity"
@@ -1095,6 +1104,58 @@ export default function NeedsOrgPanel({
                           variant="link"
                           refreshKey={driftRefreshKey}
                         />
+                      </div>
+                    )}
+                    {/* Human edit lane: operator-authored proposal for declared opps (no LLM). */}
+                    {onAuthorProposal && need.provenance_type === "internal_declared" && !pendingProposal && (
+                      <div style={{ marginTop: 6 }}>
+                        {authoringNeedId === need.id ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 520 }}>
+                            <textarea
+                              value={authorDraft}
+                              onChange={(e) => setAuthorDraft(e.target.value)}
+                              placeholder="Rewrite the outcome statement…"
+                              rows={3}
+                              style={{ fontFamily: D.sans, fontSize: 13, lineHeight: 1.5, padding: "8px 10px", border: `1px solid ${D.hairlineFaint}`, borderRadius: 6, resize: "vertical", color: D.ink }}
+                            />
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                type="button"
+                                disabled={authorSubmitting || !authorDraft.trim()}
+                                onClick={async () => {
+                                  setAuthorSubmitting(true);
+                                  try {
+                                    await onAuthorProposal(need.id, authorDraft.trim());
+                                    toast.success("Edit staged for review");
+                                    setAuthoringNeedId(null);
+                                    setAuthorDraft("");
+                                  } finally {
+                                    setAuthorSubmitting(false);
+                                  }
+                                }}
+                                style={{ fontSize: 10, fontFamily: D.mono, letterSpacing: "0.05em", background: (authorSubmitting || !authorDraft.trim()) ? "none" : "#1e3340", color: (authorSubmitting || !authorDraft.trim()) ? "#9aaba5" : "#fff", border: `1px solid ${(authorSubmitting || !authorDraft.trim()) ? "#d0d5da" : "#1e3340"}`, borderRadius: 4, padding: "4px 10px", cursor: (authorSubmitting || !authorDraft.trim()) ? "default" : "pointer" }}
+                              >
+                                {authorSubmitting ? "Submitting…" : "Submit edit"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={authorSubmitting}
+                                onClick={() => { setAuthoringNeedId(null); setAuthorDraft(""); }}
+                                style={{ fontSize: 10, fontFamily: D.mono, letterSpacing: "0.05em", background: "none", color: "#9aaba5", border: "1px solid #d0d5da", borderRadius: 4, padding: "4px 10px", cursor: "pointer" }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setAuthoringNeedId(need.id); setAuthorDraft(need.odi_canonical_statement ?? need.desired_outcome ?? ""); }}
+                            style={{ fontSize: 10, color: "#7a8c85", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                          >
+                            Suggest an edit
+                          </button>
+                        )}
                       </div>
                     )}
                     {onCheckSurfaceDrift && (

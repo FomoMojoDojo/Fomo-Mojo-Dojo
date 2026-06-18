@@ -3,11 +3,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import { useOpportunityProposals } from "@/hooks/useOpportunityProposals";
+import { useAuth } from "@/hooks/useAuth";
 
 export function useOpportunityProposalHandlers(
   companyId: string | null | undefined,
   onNeedsRefresh: () => void,
 ) {
+  const { user } = useAuth();
   const [opportunityProposalRefreshKey, setOpportunityProposalRefreshKey] = useState(0);
   const { proposals: opportunityProposalsMap } = useOpportunityProposals(companyId ?? undefined, opportunityProposalRefreshKey);
   const [generateLoadingOpportunityId, setGenerateLoadingOpportunityId] = useState<string | null>(null);
@@ -56,9 +58,16 @@ export function useOpportunityProposalHandlers(
       raw_payload: { accepted_fields: acceptedFields, skipped_fields: skippedFields },
     }).eq("id", proposalId);
 
-    await supabase.functions.invoke("evaluate-opportunity-alignment", {
-      body: { need_id: needId, company_id: companyId },
-    });
+    // Re-evaluate alignment only for externally-admissible (public) subjects. Declared
+    // subjects short-circuit at the 1a.1-A subject gate (not-applicable, zero OpenAI),
+    // so the round-trip is wasted — skip it.
+    const { data: provRow } = await supabase
+      .from("odi_needs").select("provenance_type").eq("id", needId).maybeSingle();
+    if ((provRow as { provenance_type?: string | null } | null)?.provenance_type !== "internal_declared") {
+      await supabase.functions.invoke("evaluate-opportunity-alignment", {
+        body: { need_id: needId, company_id: companyId },
+      });
+    }
 
     setAcceptLoadingOpportunityProposalId(null);
     onNeedsRefresh();
@@ -75,6 +84,46 @@ export function useOpportunityProposalHandlers(
     setOpportunityProposalRefreshKey((k) => k + 1);
   }, []);
 
+  // Human edit lane (EDIT-MODEL Commit 2): stage an operator-authored proposal — NO
+  // LLM. Reads the live row for current_state, writes a pending surface_proposals row
+  // in the same shape the agent path uses, so useOpportunityProposals + the comparison
+  // UI surface it identically. The author edits the displayed canonical statement;
+  // desired_outcome is carried through unchanged so accept doesn't wipe it.
+  const handleAuthorOpportunityProposal = useCallback(async (needId: string, authoredCanonical: string) => {
+    if (!companyId) return;
+    const { data: row } = await supabase
+      .from("odi_needs")
+      .select("desired_outcome, odi_canonical_statement")
+      .eq("id", needId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (!row) return;
+    const cur = row as { desired_outcome?: string | null; odi_canonical_statement?: string | null };
+
+    // Supersede any existing pending proposal for THIS opportunity (mirror agent path).
+    await supabase.from("surface_proposals").update({
+      status: "superseded", reviewed_at: new Date().toISOString(),
+    }).eq("surface_type", "opportunity").eq("surface_id", needId).eq("status", "pending");
+
+    await supabase.from("surface_proposals").insert({
+      company_id: companyId,
+      surface_type: "opportunity",
+      surface_id: needId,
+      status: "pending",
+      current_state: {
+        desired_outcome: cur.desired_outcome ?? "",
+        odi_canonical_statement: cur.odi_canonical_statement ?? "",
+      },
+      proposed_state: {
+        desired_outcome: cur.desired_outcome ?? "",
+        odi_canonical_statement: authoredCanonical,
+      },
+      reason: "Manual edit",
+      created_by: user?.id ?? null,
+    });
+    setOpportunityProposalRefreshKey((k) => k + 1);
+  }, [companyId, user]);
+
   const handleSaveNeedField = useCallback(async (needId: string, field: "odi_canonical_statement", value: string) => {
     if (!companyId) return;
     await saveManualEdit("opportunity", needId, companyId, field, value);
@@ -90,6 +139,7 @@ export function useOpportunityProposalHandlers(
     rejectLoadingOpportunityProposalId,
     handleSaveNeedField,
     handleGenerateOpportunityProposal,
+    handleAuthorOpportunityProposal,
     handleAcceptOpportunityProposal,
     handleRejectOpportunityProposal,
   };
