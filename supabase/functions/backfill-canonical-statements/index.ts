@@ -6,6 +6,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
+import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -82,7 +83,7 @@ Deno.serve(async (req: Request) => {
       // Fetch the need row
       const { data: needRow, error: needErr } = await db
         .from("odi_needs")
-        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key")
+        .select("id, company_id, desired_outcome, odi_canonical_statement, journey_key, provenance_type")
         .eq("id", needId)
         .maybeSingle();
 
@@ -97,11 +98,31 @@ Deno.serve(async (req: Request) => {
         desired_outcome: string;
         odi_canonical_statement: string | null;
         journey_key: string;
+        provenance_type: string | null;
       };
 
       // Skip if already populated
       if (row.odi_canonical_statement && row.odi_canonical_statement.trim()) {
         results.skipped.push({ id: needId, reason: "already populated" });
+        continue;
+      }
+
+      // DECL-OPP 1a.1 — Option-B subject gate: canonical generation ships
+      // desired_outcome to an external model. An internal (declared/manual/NULL-
+      // provenance) need must never cross that boundary. Inadmissible → skip
+      // (no OpenAI, canonical stays NULL → consumers fall back to desired_outcome),
+      // recording an excluded-by-rule integrity row. Internal canonical generation
+      // moves to the local lane later.
+      const subjectGate = await gateSubjectForExternal({
+        supabase: db as unknown as { from: (t: string) => any },
+        companyId: row.company_id,
+        surfaceType: "opportunity",
+        surfaceId: row.id,
+        provenance: row.provenance_type,
+        consumer: "backfill-canonical-statements",
+      });
+      if (!subjectGate.admissible) {
+        results.skipped.push({ id: needId, reason: "non_public_provenance" });
         continue;
       }
 
