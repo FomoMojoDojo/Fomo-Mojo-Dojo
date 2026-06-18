@@ -20,16 +20,12 @@
 // not-applicable outcome is persisted truth, not silence (the integrity laws).
 
 import { recordIntegrityRun } from "./integrity.ts";
-
-const DRIFT_EXTERNAL_ADMISSIBLE_PROVENANCE = new Set([
-  "public_research",
-  "public_baseline",
-]);
+import { EXTERNAL_ADMISSIBLE_PROVENANCE } from "./externalProvenance.ts";
 
 export function isDriftSurfaceExternallyAdmissible(
   provenance: string | null | undefined,
 ): boolean {
-  return provenance != null && DRIFT_EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
+  return provenance != null && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
 }
 
 // Array form: filter a fetched surface set to the externally-admissible rows,

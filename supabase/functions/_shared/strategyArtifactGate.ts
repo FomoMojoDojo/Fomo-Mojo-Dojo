@@ -4,21 +4,22 @@
 //
 // EVERY external-bound read of positioning_canvases / strategy_cascades content
 // passes through here before prompt assembly. Admission: artifact_role =
-// 'market_read' AND provenance_type is a stamped non-internal class. NULL
-// provenance is inadmissible (Gate 1 law, applied uniformly — CB1's legacy
-// artifacts excluded by operator ruling, no restamp). declared_direction
+// 'market_read' AND provenance_type is a public-derived class (see
+// externalProvenance.ts). NULL provenance is inadmissible (Gate 1 law, applied
+// uniformly — CB1's legacy artifacts excluded by operator ruling, no restamp).
+// declared_direction
 // artifacts are internal framing and NEVER reach an external model.
 // local-alignment is deliberately NOT gated (public→local and internal→local
 // are legal) — it is role-scoped at the read instead.
 
 import { recordIntegrityRun } from "./integrity.ts";
+import { EXTERNAL_ADMISSIBLE_PROVENANCE } from "./externalProvenance.ts";
 
-const EXTERNAL_ADMISSIBLE_PROVENANCE = new Set([
-  "public_research",
-  "framework_adjudicated",
-  "odi_survey",
-  "manual",
-]);
+// Admit set single-sourced in externalProvenance.ts (operator ruling 2026-06-18):
+// only public-derived provenance crosses an external boundary. framework_adjudicated
+// / odi_survey / manual are internal and were dropped here — zero live delta (no
+// cascade/positioning row of those classes exists). The market_read requirement and
+// NULL-inadmissible behavior below are unchanged.
 
 export type StrategyArtifactKind = "positioning_canvas" | "strategy_cascade";
 
