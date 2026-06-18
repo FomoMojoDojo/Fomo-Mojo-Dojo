@@ -12,6 +12,7 @@ import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement }
 import { buildClientCorpus } from "../_shared/syndication.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
+import { isDriftSurfaceExternallyAdmissible } from "../_shared/driftExternalGate.ts";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildCompetitorMarketBrief,
@@ -279,13 +280,38 @@ Deno.serve(async (req) => {
       .order("opportunity_score", { ascending: false })
       .limit(30);
 
-    // --- Fetch routes (non-manual) ---
-    const { data: routeRows } = await supabase
+    // --- Fetch routes (non-manual, public-provenance only) ---
+    // DECL-OPP 1a.1 — refresh-cascade fires on the public research run, so only
+    // public-derived routes may enter the external cascade prompt. provenance is the
+    // load-bearing filter (catches internal/NULL routes the manual_% source filter
+    // misses); the manual_% filter is kept fail-closed (operator-curated = internal).
+    // Filtered in JS because public_baseline isn't a valid routes-enum value, so a
+    // SQL .in() would error — membership via the shared admissibility check instead.
+    // Reduced/empty set rebuilds fine — routes are input context, not cascade output.
+    const { data: routeRowsRaw } = await supabase
       .from("routes")
-      .select("category, title, short_description, pts_value, effort")
+      .select("category, title, short_description, pts_value, effort, provenance_type")
       .eq("company_id", company_id)
       .not("source", "like", "manual_%")
-      .limit(20);
+      .limit(100);
+    const allRoutes = Array.isArray(routeRowsRaw) ? routeRowsRaw : [];
+    const admittedRoutes = allRoutes.filter((r) =>
+      isDriftSurfaceExternallyAdmissible((r as { provenance_type?: string | null }).provenance_type)
+    );
+    const routeExcludedCount = allRoutes.length - admittedRoutes.length;
+    if (routeExcludedCount > 0) {
+      await recordIntegrityRun(supabase as unknown as { from: (t: string) => any }, {
+        company_id,
+        component: "drift_external_gate",
+        surface_type: "route",
+        status: "completed",
+        examined: allRoutes.length,
+        admitted: admittedRoutes.length,
+        excluded_by_rule: { non_public_provenance: routeExcludedCount },
+        run_ref: "refresh-cascade",
+      });
+    }
+    const routeRows = admittedRoutes.slice(0, 20);
 
     // --- Build context briefs ---
     // B2.1: latest competitor-discovery snapshot grounds where-to-play context.
