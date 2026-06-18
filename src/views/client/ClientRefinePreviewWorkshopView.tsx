@@ -322,6 +322,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
   const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   const [regeneratingMarket, setRegeneratingMarket] = useState(false);
+  const [regeneratingOpportunities, setRegeneratingOpportunities] = useState(false);
   const [viewedSetKey, setViewedSetKey] = useState<string | null>(null);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
   // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
@@ -1342,6 +1343,60 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId, viewedSetKey, marketDefinition]);
 
+  // DECL-OPP-A2-4b: deliberate Regenerate for declared opportunities (force). Invokes
+  // the edge function (LOCAL 14b gen + 70b value judge; the writer replaces generated
+  // rows but keeps operator edits via content_identity staleness). Generation can
+  // exceed the Kong 150s gateway — on timeout the writes still land server-side, so we
+  // confirm by polling the set's internal_declared rows against a pre-run snapshot.
+  const runOpportunitiesGeneration = useCallback(async () => {
+    if (!companyId || !viewedSetKey) return;
+    if (isFrozenCompany(companyId)) {
+      toast.error("This is a frozen reference company — opportunities are not generated for it.");
+      return;
+    }
+    const setHadOpps = filteredNeeds.some((n) => String(n.provenance_type ?? "") === "internal_declared");
+    const successMsg = setHadOpps ? "Opportunities refreshed — your edits kept" : "Opportunities generated";
+    const snapshot = async () => {
+      const { data: rows } = await supabase
+        .from("odi_needs")
+        .select("id, desired_outcome, odi_canonical_statement, confidence")
+        .eq("company_id", companyId)
+        .eq("journey_key", viewedSetKey)
+        .eq("provenance_type", "internal_declared")
+        .order("id", { ascending: true });
+      return JSON.stringify(((rows as Array<Record<string, unknown>> | null) ?? []).map((r) => [r.id, r.desired_outcome, r.odi_canonical_statement, r.confidence]));
+    };
+    const beforeSig = await snapshot();
+
+    setRegeneratingOpportunities(true);
+    toast.loading(setHadOpps ? "Regenerating opportunities… (~1–2 min)" : "Generating opportunities… (~1–2 min)", { id: "gen-opps" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-step-opportunities", {
+        body: { company_id: companyId, journey_key: viewedSetKey },
+      });
+      if (!error && (data as { ok?: boolean } | null)?.ok === true) {
+        setNeedsRefreshKey((k) => k + 1);
+        toast.success(successMsg, { id: "gen-opps" });
+        return;
+      }
+      // Invoke errored (often a Kong 150s timeout while generation continues
+      // server-side). Poll the set's declared opps until they change.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, 6000));
+        if ((await snapshot()) !== beforeSig) {
+          setNeedsRefreshKey((k) => k + 1);
+          toast.success(successMsg, { id: "gen-opps" });
+          return;
+        }
+      }
+      throw new Error("Opportunities are taking longer than expected — refresh the page in a moment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate opportunities.", { id: "gen-opps" });
+    } finally {
+      setRegeneratingOpportunities(false);
+    }
+  }, [companyId, viewedSetKey, filteredNeeds]);
+
   const openAffectedArtifact = useCallback((artifact: {
     object_type: "odi_need" | "route" | "desired_outcome";
     object_id: string;
@@ -1663,6 +1718,22 @@ export default function ClientRefinePreviewWorkshopView() {
         )}
         {!odiError && (
           <>
+            {viewedSetKey && !showAllJourneys && !isFrozenCompany(companyId) && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => void runOpportunitiesGeneration()}
+                  disabled={regeneratingOpportunities || odiLoading}
+                >
+                  {regeneratingOpportunities
+                    ? "Working…"
+                    : filteredNeeds.some((n) => String(n.provenance_type ?? "") === "internal_declared")
+                    ? "Regenerate opportunities"
+                    : "Generate opportunities"}
+                </button>
+              </div>
+            )}
             <NeedsOrgPanel
               needs={filteredNeeds}
               loading={odiLoading}

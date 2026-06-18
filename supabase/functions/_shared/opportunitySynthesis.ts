@@ -18,6 +18,7 @@
 import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
+import { contentIdentity } from "./contentIdentity.ts";
 
 // Per-opportunity value band → odi_needs.confidence (the band's storage). A2-3 reads
 // confidence back into A1's Potential-Value display via a 0-1 ladder (>=0.8 High /
@@ -248,7 +249,7 @@ export async function synthesizeOpportunities(args: {
 // Per row: the A2-INV contract; confidence = band→0.95/0.66/0.33; opportunity_score
 // left EMPTY (0 — declared ordering is confidence-aware, wired in A2-3); no score math.
 
-export type DeclaredWriteResult = { added: number; kept: number; preserved: number };
+export type DeclaredWriteResult = { added: number; kept: number; preserved: number; deleted: number; editedPreserved: number };
 
 export async function writeDeclaredOpportunities(args: {
   supabase: { from: (t: string) => any };
@@ -259,6 +260,10 @@ export async function writeDeclaredOpportunities(args: {
   runId: string;
   nowIso: string;
   frameworksUsed?: string[];
+  // Deliberate Regenerate (A2-4b): replace generated rows the fresh roll doesn't
+  // re-confirm. Operator-edited rows (content_identity staleness) are NEVER deleted.
+  // Default false (bootstrap / re-run-safe keep-add, no delete).
+  replaceGenerated?: boolean;
 }): Promise<DeclaredWriteResult> {
   const journeyKey = args.journeyKey.toLowerCase();
 
@@ -341,11 +346,51 @@ export async function writeDeclaredOpportunities(args: {
     added++;
   }
 
+  // Advance last_confirmed_run_id ONLY on rows the fresh roll actually re-confirmed.
   if (plan.keptExistingIds.length > 0) {
     await args.supabase.from("odi_needs").update({ last_confirmed_run_id: args.runId }).in("id", plan.keptExistingIds);
   }
 
-  return { added, kept: plan.keptExistingIds.length, preserved: plan.preservedExistingIds.length };
+  // ── Deliberate Regenerate (force): replace generated rows the fresh roll didn't
+  // re-confirm. Operator-EDITED rows are ALWAYS kept. "edited" is detected from the
+  // ORIGINAL stored content_identity (as read, before any backfill above): a row is
+  // GENERATED iff its stored content_identity is present AND equals the recomputed
+  // hash of its current statement; an edited row's stored hash is stale (≠), and a
+  // null/absent hash fails safe to PRESERVE. Only generated rows the fresh roll did
+  // NOT keep are deleted. This is the only delete in the declared pipeline — it is
+  // scoped (company + journey + internal_declared) AND restricted to a computed id
+  // list, and is reached only after generateOpportunitiesForSet's frozen/writable/
+  // no-steps gates have passed.
+  let deleted = 0;
+  let editedPreserved = 0;
+  if (args.replaceGenerated) {
+    const keptSet = new Set(plan.keptExistingIds.map(String));
+    const deleteIds: string[] = [];
+    for (const r of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+      const id = String(r.id);
+      const stored = (r.content_identity as string | null) ?? null;
+      const canon = (r.odi_canonical_statement as string | null) || "";
+      const statement = (canon && canon.trim()) ? canon : String(r.desired_outcome || "");
+      const recomputed = await contentIdentity(statement);
+      const isGenerated = !!stored && stored === recomputed;
+      if (!isGenerated) { editedPreserved++; continue; } // edited or null → always preserve
+      if (keptSet.has(id)) continue;                     // generated + re-confirmed → keep
+      deleteIds.push(id);                                // generated + not re-confirmed → replace
+    }
+    if (deleteIds.length > 0) {
+      const { error } = await args.supabase
+        .from("odi_needs")
+        .delete()
+        .eq("company_id", args.companyId)
+        .eq("journey_key", journeyKey)
+        .eq("provenance_type", "internal_declared")
+        .in("id", deleteIds);
+      if (error) throw new Error(`declared opp force-replace delete failed: ${error.message}`);
+      deleted = deleteIds.length;
+    }
+  }
+
+  return { added, kept: plan.keptExistingIds.length, preserved: plan.preservedExistingIds.length, deleted, editedPreserved };
 }
 
 // ── Set-level invocation (mirrors generateConditionsForSet) ──────────────────────
@@ -372,7 +417,11 @@ export async function generateOpportunitiesForSet(args: {
   runId?: string;
   nowIso?: string;
   frameworksUsed?: string[];
+  // Deliberate Regenerate (A2-4b): replace generated rows, always keep operator edits.
+  force?: boolean;
 }): Promise<SetOpportunitiesResult> {
+  // GATE BEFORE ANY DELETE: frozen-company / no-steps / non-writable-provenance all
+  // return below, before writeDeclaredOpportunities (which holds the force delete) runs.
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
   const { data: rows, error } = await args.supabase
@@ -438,6 +487,7 @@ export async function generateOpportunitiesForSet(args: {
       runId: args.runId,
       nowIso: args.nowIso,
       frameworksUsed: args.frameworksUsed,
+      replaceGenerated: args.force,
     });
     return { ok: true, result, write };
   }
