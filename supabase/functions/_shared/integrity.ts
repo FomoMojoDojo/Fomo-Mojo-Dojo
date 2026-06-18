@@ -25,6 +25,7 @@ export type IntegrityRecord = {
     | "drift_scan"
     | "job_framing_gate"
     | "strategy_artifact_gate"
+    | "drift_external_gate"
     | "local_synthesis";
   surface_type?: string | null;
   surface_id?: string | null;

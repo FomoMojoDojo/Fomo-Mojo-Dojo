@@ -18,6 +18,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateStrategyArtifactsForExternal } from "../_shared/strategyArtifactGate.ts";
+import { gateDriftSurfacesForExternal } from "../_shared/driftExternalGate.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -67,6 +68,7 @@ type RouteRow = {
   what_would_have_to_be_true: string | null;
   evidence_baseline_signal_ids: string[] | null;
   evidence_baseline_captured_at: string | null;
+  provenance_type: string | null;
 };
 
 type OpportunityRow = {
@@ -75,6 +77,7 @@ type OpportunityRow = {
   odi_canonical_statement: string | null;
   evidence_baseline_signal_ids: string[] | null;
   evidence_baseline_captured_at: string | null;
+  provenance_type: string | null;
 };
 
 function extractJsonNames(arr: unknown): string {
@@ -449,7 +452,7 @@ async function assessRoutes(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("routes")
-    .select("id, title, short_description, rejected_alternatives, what_would_have_to_be_true, evidence_baseline_signal_ids, evidence_baseline_captured_at")
+    .select("id, title, short_description, rejected_alternatives, what_would_have_to_be_true, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type")
     .eq("company_id", companyId)
     .eq("relevance_state", "active");
 
@@ -458,8 +461,19 @@ async function assessRoutes(
   const { data, error } = await query;
   if (error) { console.error("[assess-surface-drift] routes fetch:", error.message); return { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 }; }
 
+  // DECL-OPP 1a — Option-B privacy gate: only public-derived routes may cross the
+  // external boundary; declared/internal/NULL-provenance routes are skipped here,
+  // before any surface text is assembled (fail-closed).
+  const routeGate = await gateDriftSurfacesForExternal({
+    supabase: supabase as unknown as { from: (t: string) => any },
+    companyId,
+    surfaceType: "route",
+    rows: (data ?? []) as RouteRow[],
+    consumer: "assess-surface-drift",
+  });
+
   const counts = { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 };
-  for (const row of (data ?? []) as RouteRow[]) {
+  for (const row of routeGate.admissible) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] route/${row.id}: no baseline — skipping`);
       // Integrity: a surface skipped for lack of an evidence baseline is a recorded
@@ -493,7 +507,7 @@ async function assessOpportunities(
 ): Promise<{ aligned: number; slight_drift: number; material_drift: number; assessed: number }> {
   const query = supabase
     .from("odi_needs")
-    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at")
+    .select("id, desired_outcome, odi_canonical_statement, evidence_baseline_signal_ids, evidence_baseline_captured_at, provenance_type")
     .eq("company_id", companyId);
 
   if (filterSurfaceId) query.eq("id", filterSurfaceId);
@@ -501,8 +515,20 @@ async function assessOpportunities(
   const { data, error } = await query;
   if (error) { console.error("[assess-surface-drift] odi_needs fetch:", error.message); return { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 }; }
 
+  // DECL-OPP 1a — Option-B privacy gate: only public-derived opportunities may cross
+  // the external boundary; declared (internal_declared) / manual-curated / NULL-
+  // provenance opportunities are skipped here, before any surface text is assembled.
+  // This is the live leak fix — declared opportunity text never reaches OpenAI.
+  const oppGate = await gateDriftSurfacesForExternal({
+    supabase: supabase as unknown as { from: (t: string) => any },
+    companyId,
+    surfaceType: "opportunity",
+    rows: (data ?? []) as OpportunityRow[],
+    consumer: "assess-surface-drift",
+  });
+
   const counts = { aligned: 0, slight_drift: 0, material_drift: 0, assessed: 0 };
-  for (const row of (data ?? []) as OpportunityRow[]) {
+  for (const row of oppGate.admissible) {
     if (!row.evidence_baseline_signal_ids || !row.evidence_baseline_captured_at) {
       console.log(`[assess-surface-drift] opportunity/${row.id}: no baseline — skipping`);
       // Integrity: a surface skipped for lack of an evidence baseline is a recorded
