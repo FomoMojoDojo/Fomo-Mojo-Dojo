@@ -28,6 +28,7 @@ export type IntegrityRecord = {
     | "drift_external_gate"
     | "local_lane_gate"
     | "local_alignment_judge"
+    | "local_canonical_gen"
     | "local_synthesis";
   surface_type?: string | null;
   surface_id?: string | null;

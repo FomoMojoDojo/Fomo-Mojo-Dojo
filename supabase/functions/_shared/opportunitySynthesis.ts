@@ -19,6 +19,8 @@ import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./ste
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
 import { contentIdentity, needIdentityStatement } from "./contentIdentity.ts";
+import { gateSubjectForLocal } from "./driftExternalGate.ts";
+import { generateCanonicalLocal } from "./localCanonicalGenerator.ts";
 
 // Per-opportunity value band → odi_needs.confidence (the band's storage). A2-3 reads
 // confidence back into A1's Potential-Value display via a 0-1 ladder (>=0.8 High /
@@ -249,7 +251,7 @@ export async function synthesizeOpportunities(args: {
 // Per row: the A2-INV contract; confidence = band→0.95/0.66/0.33; opportunity_score
 // left EMPTY (0 — declared ordering is confidence-aware, wired in A2-3); no score math.
 
-export type DeclaredWriteResult = { added: number; kept: number; preserved: number; deleted: number; editedPreserved: number };
+export type DeclaredWriteResult = { added: number; kept: number; preserved: number; deleted: number; editedPreserved: number; canonicalBackfilled: number };
 
 export async function writeDeclaredOpportunities(args: {
   supabase: { from: (t: string) => any };
@@ -264,6 +266,9 @@ export async function writeDeclaredOpportunities(args: {
   // re-confirm. Operator-edited rows (content_identity staleness) are NEVER deleted.
   // Default false (bootstrap / re-run-safe keep-add, no delete).
   replaceGenerated?: boolean;
+  // LOCAL LANE Phase 2: when provided, empty/NULL-canonical internal rows are
+  // backfilled locally (qwen) in the same reconcile pass. Omit to skip the fold.
+  ollamaUrl?: string;
 }): Promise<DeclaredWriteResult> {
   const journeyKey = args.journeyKey.toLowerCase();
 
@@ -374,6 +379,7 @@ export async function writeDeclaredOpportunities(args: {
   // frozen/writable/no-steps gates have passed.
   let deleted = 0;
   let editedPreserved = 0;
+  const deletedIdSet = new Set<string>();
   if (args.replaceGenerated) {
     const keptSet = new Set(plan.keptExistingIds.map(String));
     const deleteIds: string[] = [];
@@ -398,10 +404,56 @@ export async function writeDeclaredOpportunities(args: {
         .in("id", deleteIds);
       if (error) throw new Error(`declared opp force-replace delete failed: ${error.message}`);
       deleted = deleteIds.length;
+      deleteIds.forEach((id) => deletedIdSet.add(id));
     }
   }
 
-  return { added, kept: plan.keptExistingIds.length, preserved: plan.preservedExistingIds.length, deleted, editedPreserved };
+  // ── LOCAL LANE Phase 2: backfill empty/NULL-canonical internal rows in the same
+  // reconcile pass (qwen, local). Each row is partition-checked (gateSubjectForLocal
+  // admits internal/NULL; public_research would be declined and left for the external
+  // backfill). The canonical write does NOT touch content_identity — identity =
+  // hash(desired_outcome) ALWAYS (needs-identity hardening), so a backfill can never
+  // shift identity. Fail-closed per row: the generator records + skips, never aborts
+  // the pass, never reaches OpenAI; a skipped row stays NULL and display falls back
+  // to desired_outcome. Skips rows just deleted by the force-replace above.
+  let canonicalBackfilled = 0;
+  if (args.ollamaUrl) {
+    for (const r of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+      const id = String(r.id);
+      if (deletedIdSet.has(id)) continue; // row was force-replaced; don't regen for it
+      const canon = String((r.odi_canonical_statement as string | null) ?? "").trim();
+      if (canon) continue; // already has a canonical
+      const desired = String(r.desired_outcome ?? "").trim();
+      if (!desired) continue;
+      const gate = await gateSubjectForLocal({
+        supabase: args.supabase,
+        companyId: args.companyId,
+        surfaceType: "opportunity",
+        surfaceId: id,
+        provenance: "internal_declared", // existingRows are all internal_declared by the select
+        consumer: "declared-canonical-backfill",
+      });
+      if (!gate.admissible) continue; // public → external backfill keeps it
+      const { canonical } = await generateCanonicalLocal({
+        supabase: args.supabase,
+        companyId: args.companyId,
+        journeyKey,
+        needId: id,
+        desiredOutcome: desired,
+        ollamaUrl: args.ollamaUrl,
+      });
+      if (!canonical) continue; // fail-closed: integrity recorded, leave NULL
+      // Canonical-only write — content_identity is NOT touched (hardening invariant).
+      const { error } = await args.supabase
+        .from("odi_needs")
+        .update({ odi_canonical_statement: canonical })
+        .eq("id", id);
+      if (error) throw new Error(`local canonical backfill write failed (${id}): ${error.message}`);
+      canonicalBackfilled++;
+    }
+  }
+
+  return { added, kept: plan.keptExistingIds.length, preserved: plan.preservedExistingIds.length, deleted, editedPreserved, canonicalBackfilled };
 }
 
 // ── Set-level invocation (mirrors generateConditionsForSet) ──────────────────────
@@ -499,6 +551,7 @@ export async function generateOpportunitiesForSet(args: {
       nowIso: args.nowIso,
       frameworksUsed: args.frameworksUsed,
       replaceGenerated: args.force,
+      ollamaUrl: args.ollamaUrl,
     });
     return { ok: true, result, write };
   }
