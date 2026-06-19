@@ -26,6 +26,8 @@ export type IntegrityRecord = {
     | "job_framing_gate"
     | "strategy_artifact_gate"
     | "drift_external_gate"
+    | "local_lane_gate"
+    | "local_alignment_judge"
     | "local_synthesis";
   surface_type?: string | null;
   surface_id?: string | null;

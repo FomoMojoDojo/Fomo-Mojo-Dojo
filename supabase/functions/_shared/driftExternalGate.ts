@@ -20,7 +20,7 @@
 // not-applicable outcome is persisted truth, not silence (the integrity laws).
 
 import { recordIntegrityRun } from "./integrity.ts";
-import { EXTERNAL_ADMISSIBLE_PROVENANCE } from "./externalProvenance.ts";
+import { EXTERNAL_ADMISSIBLE_PROVENANCE, isSubjectLocalAdmissible } from "./externalProvenance.ts";
 
 export function isDriftSurfaceExternallyAdmissible(
   provenance: string | null | undefined,
@@ -61,6 +61,46 @@ export async function gateSubjectForExternal(opts: {
     examined: 1,
     admitted: 0,
     excluded_by_rule: { non_public_provenance: true, provenance: prov },
+    run_ref: opts.consumer,
+  });
+  return { admissible: false };
+}
+
+// LOCAL-LANE mirror of gateSubjectForExternal — the one skip+record path for
+// consumers that judge an internal subject with a LOCAL model (text never leaves).
+// Admits internal/NULL provenance (the exact complement of the external gate); on
+// an external-admissible (public-derived) row it DECLINES — that subject belongs to
+// the external lane — recording a 'local_lane_gate' integrity row. Together with
+// gateSubjectForExternal this is a partition: for every provenance exactly one gate
+// admits (XOR), enforced by isSubjectLocalAdmissible = !external-admissible.
+export async function gateSubjectForLocal(opts: {
+  supabase: { from: (t: string) => any } | undefined | null;
+  companyId: string;
+  surfaceType: string;
+  surfaceId: string;
+  provenance: string | null | undefined;
+  consumer: string;
+}): Promise<{ admissible: boolean }> {
+  const prov = opts.provenance == null ? null : String(opts.provenance);
+  if (isSubjectLocalAdmissible(prov)) {
+    return { admissible: true };
+  }
+  console.log("[local-lane-gate] subject declined (external lane)", {
+    consumer: opts.consumer,
+    company_id: opts.companyId,
+    surface_type: opts.surfaceType,
+    surface_id: opts.surfaceId,
+    provenance: prov,
+  });
+  await recordIntegrityRun(opts.supabase ?? null, {
+    company_id: opts.companyId,
+    component: "local_lane_gate",
+    surface_type: opts.surfaceType,
+    surface_id: opts.surfaceId,
+    status: "completed",
+    examined: 1,
+    admitted: 0,
+    excluded_by_rule: { public_provenance: true, provenance: prov },
     run_ref: opts.consumer,
   });
   return { admissible: false };

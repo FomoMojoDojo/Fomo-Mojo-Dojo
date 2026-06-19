@@ -11,7 +11,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
-import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
+import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
+import { judgeOpportunityAlignmentLocal } from "../_shared/localAlignmentJudge.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -42,8 +43,9 @@ const alignmentSchema = {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  // Read but DON'T require yet — the local (declared) lane needs no OpenAI key.
+  // The external path guards on it just before its callOpenAIJSON.
   const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -88,8 +90,55 @@ Deno.serve(async (req: Request) => {
     consumer: "evaluate-opportunity-alignment",
   });
   if (!subjectGate.admissible) {
-    return jsonResponse({ skipped: true, reason: "internal subject — not externally evaluated", need_id });
+    // LOCAL LANE (Phase 1) — declared/internal opportunities are judged LOCALLY
+    // (llama3:70b, direct Ollama); text never reaches OpenAI. The partition gate
+    // confirms this subject belongs to the local lane (XOR with the external gate).
+    const localGate = await gateSubjectForLocal({
+      supabase: db as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      surfaceType: "opportunity",
+      surfaceId: String(need_id),
+      provenance: (needData as { provenance_type?: string | null }).provenance_type,
+      consumer: "evaluate-opportunity-alignment",
+    });
+    if (!localGate.admissible) {
+      // Partition violation (should be impossible): neither lane admitted. Fail loud.
+      return jsonResponse({ error: "subject admitted by neither lane (partition violation)", need_id }, 500);
+    }
+    const need = needData as {
+      journey_key?: string | null; desired_outcome?: string | null; odi_canonical_statement?: string | null;
+    };
+    const outcome = (need.odi_canonical_statement?.trim() || need.desired_outcome?.trim() || "");
+    const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    try {
+      const verdict = await judgeOpportunityAlignmentLocal({
+        supabase: db as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        journeyKey: String(need.journey_key ?? ""),
+        needId: String(need_id),
+        outcome,
+        ollamaUrl,
+      });
+      const { error: updErr } = await db
+        .from("odi_needs")
+        .update({
+          strategy_alignment: verdict.classification,
+          strategy_alignment_reason: verdict.reason,
+          strategy_alignment_evaluated_at: new Date().toISOString(),
+        })
+        .eq("id", need_id)
+        .eq("company_id", company_id);
+      if (updErr) return jsonResponse({ error: `DB update failed: ${updErr.message}`, need_id }, 500);
+      return jsonResponse({ classification: verdict.classification, reason: verdict.reason, need_id, lane: "local" });
+    } catch (err) {
+      // Fail-closed: the judge already recorded the failure integrity row. Surface it.
+      // NO OpenAI fallback, NO fabricated verdict, NO write.
+      const message = err instanceof Error ? err.message : String(err);
+      return jsonResponse({ error: `local alignment failed: ${message}`, need_id, lane: "local" }, 502);
+    }
   }
+
+  if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);
 
   // Fetch most recent strategy cascade
   const { data: cascadeData, error: cascadeError } = await db
