@@ -8,6 +8,7 @@
 // and the seeding loop themselves are the real code under test.
 
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
+import { needIdentityStatement } from "./contentIdentity.ts";
 
 type SupabaseLike = { from: (t: string) => any };
 
@@ -269,7 +270,8 @@ export async function writeReconciledNeeds(args: {
       const opportunity_score = clamp(Number(opp?.opportunity_score) || (importance + (10 - satisfaction)), 0, 20);
       const desiredOutcome = normalizeOutcomeLanguage(String(opp?.outcome || ""));
       const canonical = (opp?.odi_canonical_statement as string | null) || null;
-      const statement = (canonical && String(canonical).trim()) ? String(canonical) : desiredOutcome;
+      // Identity = desired_outcome ALWAYS (canonical is a derived display field).
+      const statement = needIdentityStatement({ desired_outcome: desiredOutcome });
       return { needIndex, stepNumber, stepLabel, importance, satisfaction, opportunity_score, desiredOutcome, canonical, statement };
     });
 
@@ -282,10 +284,9 @@ export async function writeReconciledNeeds(args: {
     const needPlan = await planReconcile(
       (existingNeedRows ?? []).map((r: Record<string, unknown>) => {
         const rr = r as Record<string, unknown>;
-        const canon = (rr.odi_canonical_statement as string | null) || "";
         return {
           id: String(rr.id),
-          statement: (canon && String(canon).trim()) ? String(canon) : String(rr.desired_outcome || ""),
+          statement: needIdentityStatement({ desired_outcome: rr.desired_outcome as string | null }),
           content_identity: (rr.content_identity as string | null) ?? null,
           journey_key: String(rr.journey_key || ""),
           step_number: Number(rr.step_number) || 0,

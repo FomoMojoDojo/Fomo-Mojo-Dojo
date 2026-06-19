@@ -26,6 +26,15 @@ export async function saveManualEdit(
   if (HAS_SOURCE_FIELD.has(surfaceType)) {
     payload.source = "manual_inline";
   }
+  // odi_needs (opportunity) has no `source` column; its operator-edit marker is
+  // `source_path` (the A2-4b force-regen predicate preserves source_path LIKE
+  // 'manual_%'). Since odi_needs identity = hash(desired_outcome) ALWAYS (canonical
+  // is derived), a canonical-only pencil edit no longer goes stale, so this stamp is
+  // what keeps it from being re-rolled. Mirrors the human author lane's
+  // source_path='manual_<proposalId>'.
+  if (surfaceType === "opportunity") {
+    payload.source_path = "manual_inline";
+  }
 
   const { error } = await supabase
     .from(table)

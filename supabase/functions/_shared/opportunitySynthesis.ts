@@ -18,7 +18,7 @@
 import { buildExecutorBrief, buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeOpportunityLikelihood, type LikelihoodBand } from "./opportunityLikelihoodJudge.ts";
 import { planReconcile } from "./reconcilePublicSynthesis.ts";
-import { contentIdentity } from "./contentIdentity.ts";
+import { contentIdentity, needIdentityStatement } from "./contentIdentity.ts";
 
 // Per-opportunity value band → odi_needs.confidence (the band's storage). A2-3 reads
 // confidence back into A1's Potential-Value display via a 0-1 ladder (>=0.8 High /
@@ -274,7 +274,9 @@ export async function writeDeclaredOpportunities(args: {
   for (const s of args.perStep) {
     for (const o of s.kept) {
       const canonical = o.odi_canonical_statement && o.odi_canonical_statement.trim() ? o.odi_canonical_statement.trim() : null;
-      const statement = canonical ?? o.outcome;
+      // Identity = desired_outcome ALWAYS (canonical is derived). `outcome` becomes
+      // desired_outcome on write.
+      const statement = needIdentityStatement({ outcome: o.outcome });
       incoming.push({
         ref: `d:${order}`, band: o.band, outcome: o.outcome, canonical, statement,
         stepNumber: s.step_number, stepLabel: s.step_label, sortOrder: order + 1,
@@ -297,10 +299,9 @@ export async function writeDeclaredOpportunities(args: {
 
   const plan = await planReconcile(
     ((existingRows ?? []) as Array<Record<string, unknown>>).map((r) => {
-      const canon = (r.odi_canonical_statement as string | null) || "";
       return {
         id: String(r.id),
-        statement: (canon && String(canon).trim()) ? String(canon) : String(r.desired_outcome || ""),
+        statement: needIdentityStatement({ desired_outcome: r.desired_outcome as string | null }),
         content_identity: (r.content_identity as string | null) ?? null,
         journey_key: String(r.journey_key || ""),
         step_number: Number(r.step_number) || 0,
@@ -356,12 +357,15 @@ export async function writeDeclaredOpportunities(args: {
   // markers (preserve = stale-content_identity OR manual source_path):
   //  (1) content_identity staleness — a row is GENERATED iff its ORIGINAL stored hash
   //      (as read, before backfill) is present AND equals the recomputed hash of its
-  //      current statement; an edited row's stored hash is stale (≠), null/absent
-  //      fails safe to PRESERVE. Catches edits to the identity-driving field.
+  //      identity statement; an edited row's stored hash is stale (≠), null/absent
+  //      fails safe to PRESERVE. Identity = hash(desired_outcome) ALWAYS (needs-
+  //      identity-source hardening), so this catches edits to desired_outcome.
   //  (2) source_path LIKE 'manual_%' — stamped by the apply-write
-  //      (useOpportunityProposalHandlers) on every human-applied edit. Catches edits
-  //      that DON'T move content_identity (e.g. a desired_outcome-only edit while the
-  //      canonical, which drives identity, is unchanged). Generated rows carry
+  //      (useOpportunityProposalHandlers) AND the inline pencil (handleSaveNeedField
+  //      → saveManualEdit, source_path='manual_inline'). This is now the PRIMARY
+  //      operator-edit marker: since canonical is a pure derived field and no longer
+  //      drives identity, a canonical-only edit does NOT move content_identity, so
+  //      source_path is what preserves it. Generated rows carry
   //      source_path='internal_declared', never 'manual_%', so this never
   //      over-preserves a generated row.
   // Only generated rows the fresh roll did NOT keep are deleted. This is the only
@@ -376,8 +380,7 @@ export async function writeDeclaredOpportunities(args: {
     for (const r of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
       const id = String(r.id);
       const stored = (r.content_identity as string | null) ?? null;
-      const canon = (r.odi_canonical_statement as string | null) || "";
-      const statement = (canon && canon.trim()) ? canon : String(r.desired_outcome || "");
+      const statement = needIdentityStatement({ desired_outcome: r.desired_outcome as string | null });
       const recomputed = await contentIdentity(statement);
       const isGenerated = !!stored && stored === recomputed;
       const manualEdited = String(r.source_path ?? "").startsWith("manual_");
