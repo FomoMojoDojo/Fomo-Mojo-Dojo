@@ -11,7 +11,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
-import { gateSubjectForExternal } from "../_shared/driftExternalGate.ts";
+import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
+import { judgeRouteAlignmentLocal } from "../_shared/localRouteAlignmentJudge.ts";
+import { FROZEN_COMPANY_IDS } from "../_shared/stepConditionsSynthesis.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -42,8 +44,9 @@ const alignmentSchema = {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  // Read but DON'T require yet — the local (internal-route) lane needs no OpenAI key.
+  // The external path guards on it just before its callOpenAIJSON.
   const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -87,8 +90,51 @@ Deno.serve(async (req: Request) => {
     consumer: "evaluate-route-alignment",
   });
   if (!subjectGate.admissible) {
-    return jsonResponse({ skipped: true, reason: "internal subject — not externally evaluated", route_id });
+    // LOCAL LANE 3b — internal/NULL-provenance routes are judged LOCALLY (llama3:70b,
+    // direct Ollama); route text never reaches OpenAI. Frozen reference fixtures
+    // (CB1/CB2) are excluded BEFORE any write — their internal routes stay NULL.
+    if (FROZEN_COMPANY_IDS.has(String(company_id))) {
+      return jsonResponse({ skipped: true, reason: "frozen reference fixture — not evaluated", route_id });
+    }
+    const localGate = await gateSubjectForLocal({
+      supabase: db as unknown as { from: (t: string) => any },
+      companyId: String(company_id),
+      surfaceType: "route",
+      surfaceId: String(route_id),
+      provenance: (routeData as { provenance_type?: string | null }).provenance_type,
+      consumer: "evaluate-route-alignment",
+    });
+    if (!localGate.admissible) {
+      return jsonResponse({ error: "subject admitted by neither lane (partition violation)", route_id }, 500);
+    }
+    const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
+    try {
+      const verdict = await judgeRouteAlignmentLocal({
+        supabase: db as unknown as { from: (t: string) => any },
+        companyId: String(company_id),
+        routeId: String(route_id),
+        route: routeData as Record<string, unknown>,
+        ollamaUrl,
+      });
+      const { error: updErr } = await db
+        .from("routes")
+        .update({
+          strategy_alignment: verdict.classification,
+          strategy_alignment_reason: verdict.reason,
+          strategy_alignment_evaluated_at: new Date().toISOString(),
+        })
+        .eq("id", route_id)
+        .eq("company_id", company_id);
+      if (updErr) return jsonResponse({ error: `DB update failed: ${updErr.message}`, route_id }, 500);
+      return jsonResponse({ classification: verdict.classification, reason: verdict.reason, route_id, lane: "local" });
+    } catch (err) {
+      // Fail-closed: the judge already recorded the failure integrity row. Surface it.
+      const message = err instanceof Error ? err.message : String(err);
+      return jsonResponse({ error: `local route alignment failed: ${message}`, route_id, lane: "local" }, 502);
+    }
   }
+
+  if (!apiKey) return jsonResponse({ error: "OPENAI_API_KEY not configured" }, 500);
 
   // Fetch most recent strategy cascade
   const { data: cascadeData, error: cascadeError } = await db

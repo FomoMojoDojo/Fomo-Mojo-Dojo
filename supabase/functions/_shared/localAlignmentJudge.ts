@@ -20,12 +20,15 @@
 //    NEVER write a row on failure.
 
 import { recordIntegrityRun } from "./integrity.ts";
+import {
+  ALIGNMENT_VERDICTS,
+  type AlignmentVerdict,
+  DEFAULT_JUDGE_MODEL,
+  runVerdictJudge,
+  type SupabaseLike,
+} from "./localVerdictJudge.ts";
 
-const JUDGE_TIMEOUT_MS = 120_000;
-const DEFAULT_JUDGE_MODEL = "llama3:70b";
-
-export const ALIGNMENT_VERDICTS = ["aligned", "off_strategy", "unknown"] as const;
-export type AlignmentVerdict = (typeof ALIGNMENT_VERDICTS)[number];
+export { ALIGNMENT_VERDICTS, type AlignmentVerdict };
 
 // Framework-grounded rubric (Playing-to-Win + ODI). Single source of truth.
 const ALIGNMENT_SYSTEM =
@@ -66,8 +69,6 @@ export function buildStrategyContextUser(ctx: StrategyContext, outcome: string):
   );
 }
 
-type SupabaseLike = { from: (t: string) => any };
-
 // Fetch the chosen strategy context for a (company, journey): the market_read
 // cascade + the journey's market definition. Read-only; internal content stays local.
 async function fetchStrategyContext(
@@ -103,58 +104,6 @@ async function fetchStrategyContext(
   };
 }
 
-// The fail-closed 70b call. Mirrors opportunityLikelihoodJudge's HTTP skeleton
-// (native /api/chat, format:json, num_ctx:4096, abort timeout) — but where that
-// judge FAIL-SAFEs to Medium, this one FAILS CLOSED: any failure throws.
-async function judgeOnce(
-  ollamaUrl: string,
-  judgeModel: string,
-  userText: string,
-): Promise<{ classification: AlignmentVerdict; reason: string }> {
-  const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), JUDGE_TIMEOUT_MS);
-  try {
-    const resp = await fetch(`${nativeBase}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer ollama" },
-      body: JSON.stringify({
-        model: judgeModel,
-        format: "json",
-        stream: false,
-        options: { num_ctx: 4096 },
-        messages: [
-          { role: "system", content: ALIGNMENT_SYSTEM },
-          { role: "user", content: userText },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!resp.ok) {
-      throw new Error(`ollama HTTP ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
-    }
-    const data = await resp.json().catch(() => null);
-    const content = String(data?.message?.content ?? "");
-    let parsed: { classification?: string; reason?: string };
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      throw new Error(`unparseable judge output: ${content.slice(0, 200)}`);
-    }
-    const classification = String(parsed.classification ?? "").toLowerCase().trim();
-    const reason = String(parsed.reason ?? "").trim();
-    if (!(ALIGNMENT_VERDICTS as readonly string[]).includes(classification)) {
-      throw new Error(`invalid verdict from judge: ${JSON.stringify(parsed.classification)}`);
-    }
-    if (!reason) {
-      throw new Error("judge returned empty reason (a cited reason is required)");
-    }
-    return { classification: classification as AlignmentVerdict, reason };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 // Judge one declared opportunity's strategy alignment LOCALLY. Records exactly one
 // integrity_runs row (completed with the verdict, or failed with the error) and,
 // on failure, THROWS so the caller surfaces it without writing or falling back.
@@ -172,7 +121,7 @@ export async function judgeOpportunityAlignmentLocal(args: {
     const ctx = await fetchStrategyContext(args.supabase, args.companyId, args.journeyKey);
     if (!ctx) throw new Error("no market_read strategy cascade for company");
     const userText = buildStrategyContextUser(ctx, args.outcome);
-    const verdict = await judgeOnce(args.ollamaUrl, judgeModel, userText);
+    const verdict = await runVerdictJudge({ ollamaUrl: args.ollamaUrl, judgeModel, system: ALIGNMENT_SYSTEM, userText });
     console.log(`[local-alignment-judge] ${args.needId} → ${verdict.classification}`);
     await recordIntegrityRun(args.supabase, {
       company_id: args.companyId,
