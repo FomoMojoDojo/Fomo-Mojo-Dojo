@@ -30,6 +30,7 @@ export type IntegrityRecord = {
     | "local_alignment_judge"
     | "local_route_alignment"
     | "local_canonical_gen"
+    | "cascade_reconcile"
     | "local_synthesis";
   surface_type?: string | null;
   surface_id?: string | null;

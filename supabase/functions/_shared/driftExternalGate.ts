@@ -20,7 +20,7 @@
 // not-applicable outcome is persisted truth, not silence (the integrity laws).
 
 import { recordIntegrityRun } from "./integrity.ts";
-import { EXTERNAL_ADMISSIBLE_PROVENANCE, isSubjectLocalAdmissible } from "./externalProvenance.ts";
+import { EXTERNAL_ADMISSIBLE_PROVENANCE, isSubjectLocalAdmissible, isCascadeLocalAdmissible } from "./externalProvenance.ts";
 
 export function isDriftSurfaceExternallyAdmissible(
   provenance: string | null | undefined,
@@ -101,6 +101,46 @@ export async function gateSubjectForLocal(opts: {
     examined: 1,
     admitted: 0,
     excluded_by_rule: { public_provenance: true, provenance: prov },
+    run_ref: opts.consumer,
+  });
+  return { admissible: false };
+}
+
+// CASCADE local gate (Phase 3a) — artifact_role-aware mirror of gateSubjectForLocal.
+// Admits the LITERAL complement of the cascade external gate (isCascadeLocalAdmissible
+// = !isCascadeExternallyAdmissible), so the cascade XOR partition holds by
+// construction. SEPARATE from gateSubjectForLocal so the route/opportunity
+// provenance-only gate stays byte-unchanged. Declines (records) a cascade the
+// external lane owns (market_read + public).
+export async function gateCascadeSubjectForLocal(opts: {
+  supabase: { from: (t: string) => any } | undefined | null;
+  companyId: string;
+  surfaceId: string;
+  artifactRole: string | null | undefined;
+  provenance: string | null | undefined;
+  consumer: string;
+}): Promise<{ admissible: boolean }> {
+  const role = opts.artifactRole == null ? null : String(opts.artifactRole);
+  const prov = opts.provenance == null ? null : String(opts.provenance);
+  if (isCascadeLocalAdmissible(role, prov)) {
+    return { admissible: true };
+  }
+  console.log("[local-lane-gate] cascade declined (external lane)", {
+    consumer: opts.consumer,
+    company_id: opts.companyId,
+    surface_id: opts.surfaceId,
+    artifact_role: role,
+    provenance: prov,
+  });
+  await recordIntegrityRun(opts.supabase ?? null, {
+    company_id: opts.companyId,
+    component: "local_lane_gate",
+    surface_type: "cascade",
+    surface_id: opts.surfaceId,
+    status: "completed",
+    examined: 1,
+    admitted: 0,
+    excluded_by_rule: { external_cascade: true, artifact_role: role, provenance: prov },
     run_ref: opts.consumer,
   });
   return { admissible: false };

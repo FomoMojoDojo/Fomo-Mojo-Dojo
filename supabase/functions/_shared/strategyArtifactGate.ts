@@ -13,7 +13,7 @@
 // are legal) — it is role-scoped at the read instead.
 
 import { recordIntegrityRun } from "./integrity.ts";
-import { EXTERNAL_ADMISSIBLE_PROVENANCE } from "./externalProvenance.ts";
+import { EXTERNAL_ADMISSIBLE_PROVENANCE, isCascadeExternallyAdmissible } from "./externalProvenance.ts";
 
 // Admit set single-sourced in externalProvenance.ts (operator ruling 2026-06-18):
 // only public-derived provenance crosses an external boundary. framework_adjudicated
@@ -35,11 +35,14 @@ export async function gateStrategyArtifactForExternal<
   const artifact = opts.artifact ?? null;
   const role = String(artifact?.artifact_role ?? "");
   const provenance = artifact?.provenance_type == null ? null : String(artifact.provenance_type);
+  // excluded_by_rule flags kept for the integrity record; the ADMIT decision is the
+  // single-sourced cascade predicate (admitted === !nonMarketRead && !nullProvenance
+  // && !internalProvenance, behaviour-identical).
   const nonMarketRead = artifact !== null && role !== "market_read";
   const nullProvenance = artifact !== null && provenance === null;
   const internalProvenance =
     artifact !== null && provenance !== null && !EXTERNAL_ADMISSIBLE_PROVENANCE.has(provenance);
-  const admitted = artifact !== null && !nonMarketRead && !nullProvenance && !internalProvenance;
+  const admitted = artifact !== null && isCascadeExternallyAdmissible(role, provenance);
   const fallback = !admitted;
 
   if (artifact !== null && !admitted) {
@@ -82,9 +85,7 @@ export async function gateStrategyArtifactsForExternal<
 }): Promise<{ admissible: T[]; fallback: boolean }> {
   const rows = Array.isArray(opts.artifacts) ? opts.artifacts : [];
   const admissible = rows.filter((row) =>
-    String(row?.artifact_role ?? "") === "market_read" &&
-    row?.provenance_type != null &&
-    EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(row.provenance_type))
+    isCascadeExternallyAdmissible(row?.artifact_role, row?.provenance_type)
   );
   const excluded = rows.length - admissible.length;
   const fallback = admissible.length === 0;

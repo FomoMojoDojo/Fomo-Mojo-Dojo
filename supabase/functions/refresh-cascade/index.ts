@@ -13,6 +13,7 @@ import { buildClientCorpus } from "../_shared/syndication.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/jobFramingGate.ts";
 import { isDriftSurfaceExternallyAdmissible } from "../_shared/driftExternalGate.ts";
+import { fireCascadeReconcile } from "../_shared/cascadeReconcileTrigger.ts";
 import { callOpenAIJSON, STANDARD_MARKET_CATEGORY_GUIDANCE } from "../_shared/openaiClient.ts";
 import {
   buildCompetitorMarketBrief,
@@ -510,6 +511,10 @@ Deno.serve(async (req) => {
     }
 
     console.log("[refresh-cascade] cascade inserted", { company_id, cascade_id: inserted?.id });
+    // Phase 3a: the public market_read cascade changed → fire the local cascade
+    // compare (isolation-law: never breaks this run; self-records on failure). The
+    // compare is local — NOT wedged into this function's OpenAI generation above.
+    await fireCascadeReconcile({ supabase: supabase as unknown as { from: (t: string) => any }, companyId: company_id, source: "market_read_change" });
     return jsonResponse({ status: "ok", company_id, cascade_id: inserted?.id });
   } catch (err) {
     console.error("[refresh-cascade] unhandled error:", err);

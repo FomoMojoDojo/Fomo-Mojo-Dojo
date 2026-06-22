@@ -21,12 +21,17 @@ export type SupabaseLike = { from: (t: string) => any };
 // The fail-closed 70b verdict call (system prompt supplied by the caller). Native
 // /api/chat, format:json, num_ctx:4096 (measured to fit both subjects whole). Any
 // failure THROWS — never returns a default/fabricated verdict.
-export async function runVerdictJudge(opts: {
+export async function runVerdictJudge<V extends string = AlignmentVerdict>(opts: {
   ollamaUrl: string;
   judgeModel: string;
   system: string;
   userText: string;
-}): Promise<{ classification: AlignmentVerdict; reason: string }> {
+  // Closed verdict set the model must answer within. DEFAULT = ALIGNMENT_VERDICTS,
+  // so the opportunity + route judges (no `verdicts` arg) are behaviour + type
+  // identical. The cascade compare passes its own set (e.g. aligned/diverged/unknown).
+  verdicts?: readonly V[];
+}): Promise<{ classification: V; reason: string }> {
+  const allowed = (opts.verdicts ?? (ALIGNMENT_VERDICTS as readonly unknown[] as readonly V[]));
   const nativeBase = opts.ollamaUrl.replace(/\/v1\/?$/, "");
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), JUDGE_TIMEOUT_MS);
@@ -59,13 +64,13 @@ export async function runVerdictJudge(opts: {
     }
     const classification = String(parsed.classification ?? "").toLowerCase().trim();
     const reason = String(parsed.reason ?? "").trim();
-    if (!(ALIGNMENT_VERDICTS as readonly string[]).includes(classification)) {
+    if (!(allowed as readonly string[]).includes(classification)) {
       throw new Error(`invalid verdict from judge: ${JSON.stringify(parsed.classification)}`);
     }
     if (!reason) {
       throw new Error("judge returned empty reason (a cited reason is required)");
     }
-    return { classification: classification as AlignmentVerdict, reason };
+    return { classification: classification as V, reason };
   } finally {
     clearTimeout(timeoutId);
   }

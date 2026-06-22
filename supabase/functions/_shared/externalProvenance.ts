@@ -52,3 +52,28 @@ export function isSubjectLocalAdmissible(
   if (provenance == null) return true;
   return !EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
 }
+
+// ── Cascade partition (Phase 3a) ──────────────────────────────────────────────
+// The cascade SUBJECT external gate keys on BOTH artifact_role AND provenance (a
+// cascade goes external only as the public market_read read). This is the ONE
+// authority for that test — consumed by strategyArtifactGate (external) and NEGATED
+// by gateCascadeSubjectForLocal (local), so the cascade XOR partition holds by
+// construction (one predicate, never a re-typed boolean that can drift — the same
+// one-authority law as the single identity hash).
+export function isCascadeExternallyAdmissible(
+  artifactRole: string | null | undefined,
+  provenance: string | null | undefined,
+): boolean {
+  return String(artifactRole ?? "") === "market_read"
+    && provenance != null
+    && EXTERNAL_ADMISSIBLE_PROVENANCE.has(String(provenance));
+}
+
+// Local-admit is the LITERAL negation — every cascade row is admitted by exactly one
+// lane (externalAdmit XOR cascadeLocalAdmit), never neither, never both.
+export function isCascadeLocalAdmissible(
+  artifactRole: string | null | undefined,
+  provenance: string | null | undefined,
+): boolean {
+  return !isCascadeExternallyAdmissible(artifactRole, provenance);
+}

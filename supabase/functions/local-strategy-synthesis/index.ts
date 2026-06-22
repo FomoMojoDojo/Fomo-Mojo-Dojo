@@ -25,6 +25,7 @@ import { classifyVoice } from "../_shared/claimProvenance.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildCompetitorMarketBrief } from "../_shared/contextBuilders.ts";
+import { fireCascadeReconcile } from "../_shared/cascadeReconcileTrigger.ts";
 import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
 
 const corsHeaders = {
@@ -454,6 +455,10 @@ Deno.serve(async (req) => {
         error: `Declared canvas insert failed AFTER the cascade row was written — partial state, operator attention required: ${canvasInsertErr.message}`,
       }, 500);
     }
+
+    // Phase 3a: the declared_direction cascade changed → fire the local cascade
+    // compare (isolation-law: never breaks this run; self-records on failure).
+    await fireCascadeReconcile({ supabase, companyId, source: "declared_direction_change" });
 
     return json({
       status: "ok",
