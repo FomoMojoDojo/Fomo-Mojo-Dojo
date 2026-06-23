@@ -6,6 +6,7 @@ import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
+import MemberRolePanel from "@/components/admin/MemberRolePanel";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
@@ -1941,6 +1942,9 @@ export default function ClientRefinePreviewWorkshopView() {
           </label>
         </section>
       )}
+
+      {/* Checkpoint 6: minimal admin-only set-role control (self-gates via capability). */}
+      <MemberRolePanel companyId={activeCompany?.id} />
 
       {!routes.some((r) => r.level === "route") && (
         <ScoreContextBar

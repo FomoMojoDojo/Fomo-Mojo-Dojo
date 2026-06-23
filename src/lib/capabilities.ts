@@ -49,8 +49,9 @@ export const CAPABILITIES = {
     summary: "Invite a user to a company workspace.",
   },
   "workspace.member.assignRole": {
-    status: "register",
-    summary: "Assign / change a member's company role.",
+    status: "enforce",
+    summary: "Assign / change an existing member's company role.",
+    surface: "MemberRolePanel — set-role dropdown (admin-only); RLS-backed company_members UPDATE",
   },
   "workspace.billing.manage": {
     status: "register",

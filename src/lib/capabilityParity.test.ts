@@ -11,10 +11,13 @@ import { hasCapability, type Capability } from "./capabilities";
 // persists, no real data touched. If no local stack is reachable, the test SKIPS
 // (so CI without a DB does not fail) and says so loudly.
 
+// Caps adjudicated server-side by has_capability (the three governance caps + the
+// privileged workspace.member.assignRole promoted enforce-now in checkpoint 6).
 const GOV_CAPS: Capability[] = [
   "governance.proposal.apply",
   "governance.proposal.reject",
   "participation.suggest",
+  "workspace.member.assignRole",
 ];
 
 // Fixed synthetic UUIDs (company_members.user_id has no FK, so any uuid works).
