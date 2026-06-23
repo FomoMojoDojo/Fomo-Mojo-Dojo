@@ -391,8 +391,8 @@ async function createClaimsFromPositioningCanvas(
   const { data: rows, error } = await db
     .from("positioning_canvases")
     .select("value_for_customer,market_category,best_fit_customers")
-    .eq("company_id", companyId);
-    .eq("artifact_role", "market_read")
+    .eq("company_id", companyId)
+    .eq("artifact_role", "market_read");
 
   if (error || !rows?.length) {
     if (error) errors.push({ source: "positioning_canvases", sourceId: "*", error: error.message });
@@ -487,8 +487,8 @@ async function createClaimsFromStrategyCascade(
   const { data: rows, error } = await db
     .from("strategy_cascades")
     .select("winning_aspiration,where_to_play,how_to_win,assumptions_json")
-    .eq("company_id", companyId);
-    .eq("artifact_role", "market_read")
+    .eq("company_id", companyId)
+    .eq("artifact_role", "market_read");
 
   if (error || !rows?.length) {
     if (error) errors.push({ source: "strategy_cascades", sourceId: "*", error: error.message });
