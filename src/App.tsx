@@ -42,6 +42,7 @@ import ClientRefinePreviewRoutesView from "./views/client/ClientRefinePreviewRou
 import ClientRefinePreviewWorkshopView from "./views/client/ClientRefinePreviewWorkshopView";
 import ClientRefinePreviewPathView from "./views/client/ClientRefinePreviewPathView";
 import ClientRefinePreviewMembersView from "./views/client/ClientRefinePreviewMembersView";
+import ClientRefinePreviewExtractsView from "./views/client/ClientRefinePreviewExtractsView";
 import ClientRefinePreviewCompanyView from "./views/client/ClientRefinePreviewCompanyView";
 import DriftInboxView from "./views/client/DriftInboxView";
 import type { ClientSystemPhase } from "./hooks/useClientMapInteractionState";
@@ -55,6 +56,7 @@ import {
   CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
+  CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
 import {
@@ -184,6 +186,16 @@ function ClientRefinePreviewMembersRoute() {
   );
 }
 
+function ClientRefinePreviewExtractsRoute() {
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <ClientRefinePreviewExtractsView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
 function ClientRefinePreviewCompanyRoute() {
   return (
     <AdminModeRoute>
@@ -230,6 +242,7 @@ const App = () => (
                 <Route path={CLIENT_REFINE_PREVIEW_COMPANY_ROUTE} element={<ClientRefinePreviewCompanyRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_INBOX_ROUTE} element={<ClientRefinePreviewInboxRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE} element={<ClientRefinePreviewMembersRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE} element={<ClientRefinePreviewExtractsRoute />} />
                 {/* Surface B — Legacy prototype (frozen, not maintained) */}
                 <Route path="/legacy/map" element={<InternalViewOnlyRoute><MapView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/strategy" element={<ModeAwareStrategyRoute />} />

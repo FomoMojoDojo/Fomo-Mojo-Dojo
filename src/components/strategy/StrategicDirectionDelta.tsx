@@ -234,7 +234,7 @@ function AlignmentTrend({
   );
 }
 
-// The public read, rendered either as the primary 1fr column or the 260px sidebar.
+// The public read ("Presented Publicly"), rendered full width (variant "primary").
 // PVT-2: what moved in public voice between the baseline run and the current run.
 // Source-level + honest (counts are sources, never inflated to signals). Client voice,
 // second person. Dropped sources are shown struck/quiet — both runs' rows still exist;
@@ -426,11 +426,9 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
   const primaryLabel   = hasBet ? "Strategic Bet · Internal" : "Recommendations & Gaps · Internal";
   const showRecsSecondary = hasBet && hasRecs;
 
-  // PVT-2: when there's no internal data, the PUBLIC read is the story — promote
-  // it to the primary 1fr column. Once internal data exists it demotes to the
-  // 260px sidebar beside the internal spine.
+  // The public read ("Presented Publicly") always renders full width below the
+  // internal spine — the former narrow 260px sidebar layout was removed.
   const hasInternal = hasBet || hasRecs;
-  const publicPrimary = !hasInternal && hasPublic;
 
   return (
     <div style={{
@@ -448,64 +446,37 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
         Strategic Foundation
       </p>
 
-      {publicPrimary ? (
-        /* ── PUBLIC PRIMARY (no internal data yet) ── */
-        <div>
-          <PublicPanel
-            variant="primary"
-            currentRunId={currentRunId}
-            currentAlignment={currentAlignment}
-            alignmentTrend={alignmentTrend}
-            themes={publicThemes}
-            delta={publicVoiceDelta}
-          />
+      {/* ── Internal spine — full width, stacked (two-column grid removed) ── */}
+      {hasInternal ? (
+        <div style={{ marginBottom: 24 }}>
           <p style={{
             fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
-            letterSpacing: "0.1em", color: D.inkFaint, marginTop: 20,
+            letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px",
           }}>
-            Internal strategy — build it in Diagnose to compare against this public read.
+            {primaryLabel}
           </p>
-        </div>
-      ) : (
-        /* ── INTERNAL PRIMARY + public sidebar ── */
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 24, alignItems: "start" }}>
-
-          {/* LEFT — primary internal spine */}
-          <div>
-            <p style={{
-              fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
-              letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px",
-            }}>
-              {primaryLabel}
+          {primarySignals.length === 0 ? (
+            <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.5 }}>
+              No internal signals yet.
             </p>
-            {primarySignals.length === 0 ? (
-              <p style={{ fontFamily: D.sans, fontSize: 12, color: D.inkFaint, lineHeight: 1.5 }}>
-                No internal signals yet.
-              </p>
-            ) : (
-              primarySignals.map(sig => (
-                <InternalRow
-                  key={sig.id}
-                  sig={sig}
-                  disposition={dispositions.get(sig.id)}
-                  onSet={setDisposition}
-                />
-              ))
-            )}
-          </div>
-
-          {/* RIGHT — public baseline, visually secondary */}
-          {hasPublic && (
-            <PublicPanel
-              variant="sidebar"
-              currentRunId={currentRunId}
-              currentAlignment={currentAlignment}
-              alignmentTrend={alignmentTrend}
-              themes={publicThemes}
-              delta={publicVoiceDelta}
-            />
+          ) : (
+            primarySignals.map(sig => (
+              <InternalRow
+                key={sig.id}
+                sig={sig}
+                disposition={dispositions.get(sig.id)}
+                onSet={setDisposition}
+              />
+            ))
           )}
         </div>
+      ) : (
+        <p style={{
+          fontFamily: D.mono, fontSize: 9, textTransform: "uppercase",
+          letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 20px",
+        }}>
+          Internal strategy — build it in Diagnose to compare against this public read.
+        </p>
       )}
 
       {/* Recommendations & Gaps — secondary block (only if cascade signals exist) */}
@@ -539,6 +510,20 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
             </div>
           ))}
         </Disclosure>
+      )}
+
+      {/* ── Presented Publicly — full width, below the internal spine ── */}
+      {hasPublic && (
+        <div style={{ marginTop: 24 }}>
+          <PublicPanel
+            variant="primary"
+            currentRunId={currentRunId}
+            currentAlignment={currentAlignment}
+            alignmentTrend={alignmentTrend}
+            themes={publicThemes}
+            delta={publicVoiceDelta}
+          />
+        </div>
       )}
     </div>
   );

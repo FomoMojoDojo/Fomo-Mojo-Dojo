@@ -14,6 +14,7 @@ import {
   CLIENT_REFINE_PREVIEW_ROUTE,
   CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
+  CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
 } from "@/lib/clientRefinePreview";
 
 // ─── Design tokens (mirrors CRPV palette) ────────────────────────────────────
@@ -401,6 +402,7 @@ export default function DriftInboxView() {
         onTabClick={(tab) => navigate(`/preview/client-refine/workshop?tab=${tab}`)}
         onHome={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
         onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
+        onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
         inboxCount={navCount}
         inboxHasNew={navNew > 0}

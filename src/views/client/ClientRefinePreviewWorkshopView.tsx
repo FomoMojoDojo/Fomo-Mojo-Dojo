@@ -27,7 +27,7 @@ import { stageLabel } from "@/lib/phaseDisplay";
 import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -2017,6 +2017,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
         onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
         onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
+        onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
         inboxCount={inboxCount}
         inboxHasNew={inboxNewCount > 0}

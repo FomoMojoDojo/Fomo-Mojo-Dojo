@@ -5,20 +5,16 @@ import type { BaselineResult } from "../types";
 import { useSaveFlash } from "../hooks";
 import { alignmentOf } from "../helpers";
 import { SectionHeader, StatementField, KanbanBoard } from "../primitives";
-import StrategyInspectPanel from "@/views/Strategy/StrategyInspectPanel";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
 import { HierarchyPageShell } from "@/components/design-system/HierarchyPageShell";
 import { HierarchySectionHeader } from "@/components/design-system/HierarchySectionHeader";
 import { D } from "@/components/design-system/tokens";
-import DriftBadge from "@/components/drift/DriftBadge";
 import ProposeChangesButton from "@/components/drift/ProposeChangesButton";
 import type { EngagementPhase } from "@/lib/engagementPhase";
 import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 import type { ClaimRow } from "@/lib/claims/useCompanyClaims";
 import type { CascadeProposalRow } from "@/hooks/useCascadeProposal";
 import { useCapability } from "@/hooks/useCapability";
-import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
-import { StandingFindings } from "@/components/strategy/StandingFindings";
 
 // ── Design tokens (mirrors PositioningOrgPanel hierarchy tokens) ───────────────
 const P = {
@@ -308,7 +304,6 @@ export default function StrategyOrgPanel({
   companyName?: string;
   companyId?: string;
 }) {
-  const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
   // Governance split (checkpoint 3a): cascade apply/reject controls gated by capability.
   const canApply = useCapability("governance.proposal.apply", companyId);
@@ -318,12 +313,9 @@ export default function StrategyOrgPanel({
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (!strategy) {
-    // Still render the foundation delta even when no cascade is defined yet.
     if (companyId) {
       return (
         <div className="crpv-ws-section crpv-ws-section-wide">
-          <StrategicDirectionDelta companyId={companyId} />
-          <StandingFindings companyId={companyId} />
           <p style={{ fontFamily: D.mono, fontSize: 10, color: D.inkFaint, marginTop: 12 }}>
             No strategic cascade yet — add winning aspiration, where to play, and how to win above.
           </p>
@@ -345,46 +337,21 @@ export default function StrategyOrgPanel({
           signalBasis={signalBasis}
           compactHero
         >
-          {/* Drift badge */}
-          {cascadeId && onDriftClick && (
-            <div style={{ marginBottom: 16 }}>
-              <DriftBadge
-                surfaceType="cascade"
-                surfaceId={cascadeId}
-                phase={phase}
-                refreshKey={driftRefreshKey}
-                onClick={(a) => onDriftClick("cascade", a.surface_id)}
-              />
-            </div>
-          )}
-
-          {/* Propose changes + check for drift */}
-          {(onGenerateProposal || (cascadeId && onCheckSurfaceDrift)) && (
+          {/* Propose changes (drift controls moved to the operator-only Extracts page) */}
+          {onGenerateProposal && (
             <div style={{ marginBottom: 32, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-              {onGenerateProposal && (
-                <div>
-                  <ProposeChangesButton
-                    surfaceType="cascade"
-                    surfaceId={cascadeId}
-                    onGenerate={onGenerateProposal}
-                    canGenerate={canGenerate}
-                    generateLoading={generateLoading}
-                    generateMessage={generateMessage}
-                    variant="panel"
-                    refreshKey={driftRefreshKey}
-                  />
-                </div>
-              )}
-              {cascadeId && onCheckSurfaceDrift && (
-                <button
-                  type="button"
-                  onClick={() => onCheckSurfaceDrift("cascade", cascadeId)}
-                  disabled={checkingSurfaceId === cascadeId}
-                  style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: "0.06em", color: checkingSurfaceId === cascadeId ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: checkingSurfaceId === cascadeId ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2, flexShrink: 0, marginTop: 2 }}
-                >
-                  {checkingSurfaceId === cascadeId ? "Checking…" : "Check for drift"}
-                </button>
-              )}
+              <div>
+                <ProposeChangesButton
+                  surfaceType="cascade"
+                  surfaceId={cascadeId}
+                  onGenerate={onGenerateProposal}
+                  canGenerate={canGenerate}
+                  generateLoading={generateLoading}
+                  generateMessage={generateMessage}
+                  variant="panel"
+                  refreshKey={driftRefreshKey}
+                />
+              </div>
             </div>
           )}
 
@@ -402,9 +369,6 @@ export default function StrategyOrgPanel({
               reEvalProgress={reEvalProgress}
             />
           )}
-
-          {companyId && <StrategicDirectionDelta companyId={companyId} />}
-          {companyId && <StandingFindings companyId={companyId} />}
 
           {/* § 01 WINNING ASPIRATION */}
           <div style={{ marginBottom: 48 }}>
@@ -554,32 +518,20 @@ export default function StrategyOrgPanel({
         <p style={{ fontSize: 15, fontWeight: 400, color: "#1e3340", lineHeight: 1.5, margin: "0 0 4px", letterSpacing: "-0.005em", maxWidth: 640 }}>
           {directionContextNote ?? "Where the organization is placing its weight, and what that commitment implies."}
         </p>
-        {(onGenerateProposal || (cascadeId && onCheckSurfaceDrift)) && (
+        {onGenerateProposal && (
           <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-            {onGenerateProposal && (
-              <div>
-                <ProposeChangesButton
-                  surfaceType="cascade"
-                  surfaceId={cascadeId}
-                  onGenerate={onGenerateProposal}
-                  canGenerate={canGenerate}
-                  generateLoading={generateLoading}
-                  generateMessage={generateMessage}
-                  variant="panel"
-                  refreshKey={driftRefreshKey}
-                />
-              </div>
-            )}
-            {cascadeId && onCheckSurfaceDrift && (
-              <button
-                type="button"
-                onClick={() => onCheckSurfaceDrift("cascade", cascadeId)}
-                disabled={checkingSurfaceId === cascadeId}
-                style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: checkingSurfaceId === cascadeId ? "#ccc" : "#aaa", background: "none", border: "1px solid #ddd", cursor: checkingSurfaceId === cascadeId ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2, flexShrink: 0, marginTop: 2 }}
-              >
-                {checkingSurfaceId === cascadeId ? "Checking…" : "Check for drift"}
-              </button>
-            )}
+            <div>
+              <ProposeChangesButton
+                surfaceType="cascade"
+                surfaceId={cascadeId}
+                onGenerate={onGenerateProposal}
+                canGenerate={canGenerate}
+                generateLoading={generateLoading}
+                generateMessage={generateMessage}
+                variant="panel"
+                refreshKey={driftRefreshKey}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -598,9 +550,6 @@ export default function StrategyOrgPanel({
           reEvalProgress={reEvalProgress}
         />
       )}
-
-      {companyId && <StrategicDirectionDelta companyId={companyId} />}
-      {companyId && <StandingFindings companyId={companyId} />}
 
       <StatementField
         label="Where you're headed"
@@ -658,25 +607,7 @@ export default function StrategyOrgPanel({
         />
       )}
 
-      <div style={{ paddingTop: 8, display: "flex", justifyContent: "flex-start" }}>
-        <button
-          type="button"
-          className="crpv-ws-need-inspect-btn"
-          onClick={() => setInspectOpen(true)}
-        >
-          Inspect strategy →
-        </button>
-      </div>
     </div>
-
-    <StrategyInspectPanel
-      open={inspectOpen}
-      onClose={() => setInspectOpen(false)}
-      cascade={strategy}
-      frameworksUsed={[]}
-      signals={signals}
-      hasBaseline={baseline !== null}
-    />
     </>
   );
 }

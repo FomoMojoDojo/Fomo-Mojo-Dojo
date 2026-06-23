@@ -9,6 +9,7 @@ export const CLIENT_REFINE_PREVIEW_PATH_ROUTE = "/preview/client-refine/path";
 export const CLIENT_REFINE_PREVIEW_COMPANY_ROUTE = "/preview/client-refine/company";
 export const CLIENT_REFINE_PREVIEW_INBOX_ROUTE = "/preview/client-refine/inbox";
 export const CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE = "/preview/client-refine/members";
+export const CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE = "/preview/client-refine/extracts";
 
 export function isClientRefinePreviewPath(pathname: string) {
   return (
@@ -18,7 +19,8 @@ export function isClientRefinePreviewPath(pathname: string) {
     pathname === CLIENT_REFINE_PREVIEW_PATH_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_COMPANY_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_INBOX_ROUTE ||
-    pathname === CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE
+    pathname === CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE ||
+    pathname === CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE
   );
 }
 
