@@ -245,6 +245,7 @@ export function StatementField({
   warning,
   flaggedPhrases,
   highlightTooltip,
+  readOnly = false,
 }: {
   label: string;
   value: string;
@@ -257,6 +258,8 @@ export function StatementField({
   warning?: { explanation: string; suggestion: string };
   flaggedPhrases?: string[];
   highlightTooltip?: string;
+  /** Inline-edit capability gate (checkpoint 3b). true → click-to-edit disabled. */
+  readOnly?: boolean;
 }) {
   const [local, setLocal] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -339,7 +342,7 @@ export function StatementField({
         // Display mode for singleLine — div wraps full text, no clipping
         <div
           className={`crpv-ws-stmt-body${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
-          onClick={() => setIsEditing(true)}
+          onClick={() => { if (!readOnly) setIsEditing(true); }}
           style={{ cursor: "text" }}
         >
           {local.trim() ? local : label}
@@ -348,7 +351,7 @@ export function StatementField({
         // Display mode — renders highlighted text; clicking non-phrase area enters edit mode
         <div
           className={`crpv-ws-stmt-body${!local.trim() ? " crpv-ws-stmt-empty" : ""}`}
-          onClick={() => setIsEditing(true)}
+          onClick={() => { if (!readOnly) setIsEditing(true); }}
           style={{ cursor: "text" }}
         >
           {local.trim()
@@ -384,7 +387,7 @@ export function StatementField({
           type="button"
           className="crpv-ws-stmt-edit-btn cap"
           tabIndex={-1}
-          onClick={() => setIsEditing(true)}
+          onClick={() => { if (!readOnly) setIsEditing(true); }}
         >
           Edit ⌃
         </button>

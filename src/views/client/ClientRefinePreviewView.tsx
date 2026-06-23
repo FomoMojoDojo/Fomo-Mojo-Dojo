@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
 import { useFileProposals } from "@/hooks/useFileProposals";
@@ -320,7 +321,9 @@ export default function ClientRefinePreviewView() {
   const [homeScanAllError, setHomeScanAllError] = useState<string | null>(null);
   const [showHeaderSwitcher, setShowHeaderSwitcher] = useState(false);
   const headerSwitcherRef = useRef<HTMLDivElement>(null);
+  const canScan = useCapability("governance.drift.scan", activeCompany?.id); // 3b
   const handleHomeScanAllSurfaces = useCallback(() => {
+    if (!canScan) return; // governance.drift.scan
     setHomeScanAllError(null);
     homeScanAllSurfaces(
       (result) => {
@@ -336,7 +339,7 @@ export default function ClientRefinePreviewView() {
         toast.error(`Scan failed — ${err}`, { duration: 5000 });
       },
     );
-  }, [homeScanAllSurfaces]);
+  }, [canScan, homeScanAllSurfaces]);
 
   // ── Strategic state analysis ────────────────────────────────────────────────
   const queryClient = useQueryClient();
@@ -3635,8 +3638,9 @@ export default function ClientRefinePreviewView() {
                         <button
                           type="button"
                           onClick={handleHomeScanAllSurfaces}
-                          disabled={homeScanningAll}
-                          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: homeScanningAll ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: homeScanningAll ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2 }}
+                          disabled={homeScanningAll || !canScan}
+                          title={!canScan ? "Drift scan requires the drift-scan capability" : undefined}
+                          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: homeScanningAll || !canScan ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: homeScanningAll ? "wait" : !canScan ? "default" : "pointer", padding: "4px 10px", borderRadius: 2 }}
                         >
                           {homeScanningAll ? "Scanning…" : "Scan all surfaces"}
                         </button>

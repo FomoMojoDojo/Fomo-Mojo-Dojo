@@ -340,6 +340,13 @@ export default function ClientRefinePreviewWorkshopView() {
   // capability. Single authority — never re-query roles/caps inline.
   const canApply = useCapability("governance.proposal.apply", companyId);
   const canReject = useCapability("governance.proposal.reject", companyId);
+  // Operational caps (checkpoint 3b).
+  const canCreateClient = useCapability("workspace.client.create", companyId);
+  const canScan = useCapability("governance.drift.scan", companyId);
+  const canGenPositioning = useCapability("structure.positioning.generate", companyId);
+  const canGenCascade = useCapability("structure.cascade.generate", companyId);
+  const canInlineCascade = useCapability("structure.cascade.inlineEdit", companyId);
+  const canInlinePositioning = useCapability("structure.positioning.inlineEdit", companyId);
 
   const { signals: sourceSignals } = useSourceConfidence({
     companyId,
@@ -404,6 +411,7 @@ export default function ClientRefinePreviewWorkshopView() {
   const [scanAllError, setScanAllError] = useState<string | null>(null);
 
   const handleScanAllSurfaces = useCallback(() => {
+    if (!canScan) return; // governance.drift.scan
     setScanAllError(null);
     scanAllSurfaces(
       (result) => {
@@ -420,9 +428,10 @@ export default function ClientRefinePreviewWorkshopView() {
         toast.error(`Scan failed — ${err}`, { duration: 5000 });
       },
     );
-  }, [scanAllSurfaces]);
+  }, [canScan, scanAllSurfaces]);
 
   const handleCheckSurfaceDrift = useCallback((surfaceType: string, surfaceId: string) => {
+    if (!canScan) return; // governance.drift.scan
     checkSurfaceDrift(
       surfaceType,
       surfaceId,
@@ -435,7 +444,7 @@ export default function ClientRefinePreviewWorkshopView() {
         toast.error(`Check failed — ${err}`, { duration: 5000 });
       },
     );
-  }, [checkSurfaceDrift]);
+  }, [canScan, checkSurfaceDrift]);
 
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(companyId);
 
@@ -448,6 +457,12 @@ export default function ClientRefinePreviewWorkshopView() {
     updateItemsField: updatePosItemsField,
     canvasId,
   } = usePositioningCanvas(companyId, posRefreshKey);
+  // 3b: positioning inline-edit save gated by structure.positioning.inlineEdit.
+  const updatePosTextFieldGated = useCallback(
+    (field: Parameters<typeof updatePosTextField>[0], value: string, opts?: { isManualInline?: boolean }) =>
+      canInlinePositioning ? updatePosTextField(field, value, opts) : Promise.resolve(),
+    [canInlinePositioning, updatePosTextField],
+  );
 
   const {
     loading: stratLoading,
@@ -608,6 +623,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const handleGenerateProposal = useCallback(async () => {
     if (!companyId) return;
+    if (!canGenPositioning) return; // structure.positioning.generate
     setGenerateLoading(true);
     setGenerateMessage(null);
     const { data, error } = await supabase.functions.invoke("propose-positioning-changes", {
@@ -622,7 +638,7 @@ export default function ClientRefinePreviewWorkshopView() {
       setGenerateMessage(null);
       setProposalRefreshKey((k) => k + 1);
     }
-  }, [companyId]);
+  }, [companyId, canGenPositioning]);
 
   const handleAcceptProposal = useCallback(async (proposalId: string, acceptedFields: string[], skippedFields: string[]) => {
     if (!companyId || !proposal) return;
@@ -675,6 +691,7 @@ export default function ClientRefinePreviewWorkshopView() {
   // ── Cascade proposal handlers ─────────────────────────────────────────────
   const handleGenerateCascadeProposal = useCallback(async () => {
     if (!companyId) return;
+    if (!canGenCascade) return; // structure.cascade.generate
     setCascadeGenerateLoading(true);
     setCascadeGenerateMessage(null);
     const { data, error } = await supabase.functions.invoke("propose-cascade-changes", {
@@ -689,7 +706,7 @@ export default function ClientRefinePreviewWorkshopView() {
       setCascadeGenerateMessage(null);
     }
     setCascadeProposalRefreshKey((k) => k + 1);
-  }, [companyId]);
+  }, [companyId, canGenCascade]);
 
   const handleAcceptCascadeProposal = useCallback(async (
     proposalId: string,
@@ -775,6 +792,7 @@ export default function ClientRefinePreviewWorkshopView() {
     value: string,
     opts?: { isManualInline?: boolean },
   ) => {
+    if (!canInlineCascade) return; // structure.cascade.inlineEdit
     await updateNarrativeField(field, value, opts);
     if (!companyId) return;
     const routeIds = routes.filter((r) => r.level === "route" || !r.level).map((r) => r.id);
@@ -788,7 +806,7 @@ export default function ClientRefinePreviewWorkshopView() {
     });
     setPosRefreshKey((k) => k + 1);
     setNeedsRefreshKey((k) => k + 1);
-  }, [companyId, updateNarrativeField, routes, needs]);
+  }, [companyId, canInlineCascade, updateNarrativeField, routes, needs]);
 
   // ── Opportunity proposal handlers (extracted to avoid TDZ ordering fragility) ─
   const {
@@ -1443,6 +1461,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const handleCreateClient = useCallback(async () => {
     if (!isAdmin || !user?.id) return;
+    if (!canCreateClient) return; // workspace.client.create
     const name = cleanText(newClientName);
     if (!name) {
       toast.error("Client name is required.");
@@ -1492,6 +1511,7 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [
     isAdmin,
+    canCreateClient,
     user?.id,
     newClientName,
     newClientWebsite,
@@ -1600,7 +1620,7 @@ export default function ClientRefinePreviewWorkshopView() {
           loading={posLoading}
           baseline={baseline}
           signals={sourceSignals}
-          updateTextField={updatePosTextField}
+          updateTextField={updatePosTextFieldGated}
           updateItemsField={updatePosItemsField}
           hasHierarchy={workshopHasHierarchy}
           unroutedCount={unroutedCount}
@@ -1802,7 +1822,7 @@ export default function ClientRefinePreviewWorkshopView() {
         baseline={baseline}
         canvas={positioning}
         loading={posLoading}
-        updateTextField={updatePosTextField}
+        updateTextField={updatePosTextFieldGated}
         updateItemsField={updatePosItemsField}
       />
     );
@@ -1904,7 +1924,8 @@ export default function ClientRefinePreviewWorkshopView() {
             <button
               type="button"
               className="btn ghost"
-              disabled={creatingClient}
+              disabled={creatingClient || !canCreateClient}
+              title={!canCreateClient ? "Creating a client requires the client-create capability" : undefined}
               onClick={() => void handleCreateClient()}
             >
               {creatingClient ? "Creating…" : (newClientRunBaseline && newClientWebsite.trim()) ? "Create + baseline" : "Create client"}
@@ -2005,8 +2026,9 @@ export default function ClientRefinePreviewWorkshopView() {
         <button
           type="button"
           onClick={handleScanAllSurfaces}
-          disabled={scanningAll}
-          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: scanningAll ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: scanningAll ? "wait" : "pointer", padding: "4px 10px", borderRadius: 2 }}
+          disabled={scanningAll || !canScan}
+          title={!canScan ? "Drift scan requires the drift-scan capability" : undefined}
+          style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em", color: scanningAll || !canScan ? "rgba(17,17,17,0.25)" : "rgba(17,17,17,0.45)", background: "none", border: "1px solid rgba(17,17,17,0.15)", cursor: scanningAll ? "wait" : !canScan ? "default" : "pointer", padding: "4px 10px", borderRadius: 2 }}
         >
           {scanningAll ? "Scanning…" : "Scan all surfaces"}
         </button>

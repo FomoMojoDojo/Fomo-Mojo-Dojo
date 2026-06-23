@@ -583,6 +583,7 @@ function NeedRow({
               surfaceType="opportunity"
               surfaceId={need.id}
               onGenerate={onGenerateProposal}
+              canGenerate={canGenerate}
               generateLoading={generateLoading}
               hasPendingProposal={hasPendingProposal}
               variant="link"
@@ -695,6 +696,7 @@ export default function NeedsOrgPanel({
   const canApply = useCapability("governance.proposal.apply", companyId);
   const canReject = useCapability("governance.proposal.reject", companyId);
   const canSuggest = useCapability("participation.suggest", companyId);
+  const canGenerate = useCapability("structure.opportunity.generate", companyId); // 3b
   // Human edit lane: which declared need is being authored + the draft + submit state.
   const [authoringNeedId, setAuthoringNeedId] = useState<string | null>(null);
   const [authorDraft, setAuthorDraft] = useState("");
@@ -1109,6 +1111,7 @@ export default function NeedsOrgPanel({
                           surfaceType="opportunity"
                           surfaceId={need.id}
                           onGenerate={() => onGenerateProposal(need.id)}
+                          canGenerate={canGenerate}
                           generateLoading={generateLoadingId === need.id}
                           hasPendingProposal={!!pendingProposal}
                           variant="link"

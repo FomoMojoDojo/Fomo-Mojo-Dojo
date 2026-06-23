@@ -20,6 +20,8 @@ type Props = {
   variant?: Variant;
   stopPropagation?: boolean;
   refreshKey?: number;
+  /** structure.<surface>.generate capability (checkpoint 3b). false → control disabled. */
+  canGenerate?: boolean;
 };
 
 export default function ProposeChangesButton({
@@ -32,6 +34,7 @@ export default function ProposeChangesButton({
   variant = "panel",
   stopPropagation = false,
   refreshKey = 0,
+  canGenerate = true,
 }: Props) {
   const { assessment, error: assessmentError } = useDriftAssessment(
     surfaceId ? surfaceType : null,
@@ -51,7 +54,8 @@ export default function ProposeChangesButton({
           : ("none" as const);
 
   const hasDrift = driftState !== "none";
-  const isDisabled = generateLoading || !hasDrift;
+  const isDisabled = generateLoading || !hasDrift || !canGenerate;
+  const capReason = !canGenerate ? "Generating proposals requires the generate capability" : undefined;
 
   const handleClick = (e: React.MouseEvent) => {
     if (stopPropagation) e.stopPropagation();
@@ -102,6 +106,7 @@ export default function ProposeChangesButton({
       <button
         type="button"
         disabled={isDisabled}
+        title={capReason}
         onClick={handleClick}
         style={{
           fontSize: 10,
@@ -156,6 +161,7 @@ export default function ProposeChangesButton({
       <button
         type="button"
         disabled={isDisabled}
+        title={capReason}
         onClick={handleClick}
         style={{
           fontFamily: '"IBM Plex Mono", ui-monospace, monospace',

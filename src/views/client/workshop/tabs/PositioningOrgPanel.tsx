@@ -387,6 +387,8 @@ export default function PositioningOrgPanel({
   // Governance split (checkpoint 3a): positioning apply/reject controls gated by capability.
   const canApply = useCapability("governance.proposal.apply", companyId);
   const canReject = useCapability("governance.proposal.reject", companyId);
+  const canGenerate = useCapability("structure.positioning.generate", companyId); // 3b
+  const canInlineEdit = useCapability("structure.positioning.inlineEdit", companyId); // 3b
 
   const categoryHighlights = useMemo(
     () => (canvas ? getCategoryHighlightWords(canvas.market_category) : []),
@@ -524,6 +526,7 @@ export default function PositioningOrgPanel({
                       surfaceType="positioning"
                       surfaceId={canvasId}
                       onGenerate={onGenerateProposal}
+                      canGenerate={canGenerate}
                       generateLoading={generateLoading}
                       generateMessage={generateMessage}
                       variant="panel"
@@ -822,6 +825,7 @@ export default function PositioningOrgPanel({
                   surfaceType="positioning"
                   surfaceId={canvasId}
                   onGenerate={onGenerateProposal}
+                  canGenerate={canGenerate}
                   generateLoading={generateLoading}
                   generateMessage={generateMessage}
                   variant="panel"
@@ -889,6 +893,7 @@ export default function PositioningOrgPanel({
         label="The real value you deliver"
         value={canvas.value_for_customer}
         onSave={async (v) => { await updateTextField("value_for_customer", v); flash("value"); }}
+        readOnly={!canInlineEdit}
         hint="What changes for the customer? Not what your product does — what they actually gain."
         rows={3}
         isSaved={savedField === "value"}
@@ -908,6 +913,7 @@ export default function PositioningOrgPanel({
         label="Who this is built for"
         value={canvas.best_fit_customers}
         onSave={async (v) => { await updateTextField("best_fit_customers", v); flash("customers"); }}
+        readOnly={!canInlineEdit}
         hint="Be specific. Who gets the most out of what you do?"
         rows={2}
         isSaved={savedField === "customers"}
@@ -927,6 +933,7 @@ export default function PositioningOrgPanel({
         label="The category you're in"
         value={canvas.market_category}
         onSave={async (v) => { await updateTextField("market_category", v); flash("category"); }}
+        readOnly={!canInlineEdit}
         rows={2}
         isSaved={savedField === "category"}
         gap={baseline ? {
@@ -945,6 +952,7 @@ export default function PositioningOrgPanel({
         label="Why you belong there"
         value={canvas.category_rationale}
         onSave={async (v) => { await updateTextField("category_rationale", v); flash("rationale"); }}
+        readOnly={!canInlineEdit}
         hint="What earns your place in this category?"
         rows={2}
         isSaved={savedField === "rationale"}
@@ -954,6 +962,7 @@ export default function PositioningOrgPanel({
         label="Current tagline"
         value={canvas.current_tagline}
         onSave={async (v) => { await updateTextField("current_tagline", v); flash("tagline_current"); }}
+        readOnly={!canInlineEdit}
         singleLine
         isSaved={savedField === "tagline_current"}
       />
@@ -962,6 +971,7 @@ export default function PositioningOrgPanel({
         label="Proposed tagline"
         value={canvas.proposed_tagline}
         onSave={async (v) => { await updateTextField("proposed_tagline", v); flash("tagline_proposed"); }}
+        readOnly={!canInlineEdit}
         singleLine
         isSaved={savedField === "tagline_proposed"}
       />

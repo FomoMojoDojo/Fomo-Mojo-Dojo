@@ -3,6 +3,7 @@ import mammoth from "mammoth";
 import { useQuery } from "@tanstack/react-query";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import { useCompanyFiles } from "@/hooks/useCompanyFiles";
+import { useCapability } from "@/hooks/useCapability";
 import { useUpdateFileTags, useArchiveInputFile, useRestoreInputFile, useArchivedInputFiles, getFileSignedUrl } from "@/hooks/useInputs";
 import {
   useFileProposals,
@@ -385,12 +386,13 @@ const TD: React.CSSProperties = { padding: "9px 14px 9px 0", verticalAlign: "mid
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function PrimaryAddBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function PrimaryAddBtn({ label, active, onClick, disabled = false, disabledReason }: { label: string; active: boolean; onClick: () => void; disabled?: boolean; disabledReason?: string }) {
   return (
-    <button type="button" onClick={onClick} style={{
+    <button type="button" onClick={onClick} disabled={disabled} title={disabled ? disabledReason : undefined} style={{
       ...MONO, fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: 600,
       color: active ? "#fff" : "#333", background: active ? "#2d2d2d" : "#fff",
-      border: `1px solid ${active ? "#2d2d2d" : "#c8c2ba"}`, borderRadius: 4, padding: "8px 18px", cursor: "pointer",
+      border: `1px solid ${active ? "#2d2d2d" : "#c8c2ba"}`, borderRadius: 4, padding: "8px 18px",
+      cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
     }}>
       {active ? "↑ Cancel" : `+ ${label}`}
     </button>
@@ -1130,6 +1132,9 @@ export default function InputsTab({
   const [foundationFilter, setFoundationFilter] = useState<FoundationFilter>("all");
   const [openUpload,       setOpenUpload]       = useState(false);
   const [useThisId,        setUseThisId]        = useState<string | null>(null);
+  // Operational caps (checkpoint 3b): evidence management + baseline refresh.
+  const canEvidence = useCapability("evidence.manage", companyId);
+  const canRefresh = useCapability("evidence.refreshBaseline", companyId);
 
   const { data: companyFiles = [], refetch: refetchFiles } = useCompanyFiles(companyId);
   const updateFileTags = useUpdateFileTags();
@@ -1205,6 +1210,7 @@ export default function InputsTab({
 
   const handleRefreshBaseline = useCallback(async () => {
     if (!companyId || !companyName) return;
+    if (!canRefresh) return; // evidence.refreshBaseline
     if (!companyWebsite?.trim()) {
       toast.error("Add a website for this company before refreshing outside signals.");
       return;
@@ -1219,7 +1225,7 @@ export default function InputsTab({
       toast.success("Outside signals updated.", { id: "refresh-baseline" });
       void refetchBaseline();
     }
-  }, [companyId, companyName, companyWebsite, refetchBaseline]);
+  }, [companyId, companyName, companyWebsite, canRefresh, refetchBaseline]);
 
   const archiveFileMutation = useArchiveInputFile();
   const restoreFileMutation = useRestoreInputFile();
@@ -1229,6 +1235,7 @@ export default function InputsTab({
   const [deletingFileId,   setDeletingFileId]   = useState<string | null>(null);
 
   async function handleDeleteFile(row: SourceRow, mode: "file-only" | "file-and-unlink") {
+    if (!canEvidence) return; // evidence.manage
     setDeleteConfirmId(null);
     setDeletingFileId(row.id);
     try {
@@ -1245,6 +1252,7 @@ export default function InputsTab({
   }
 
   async function handleRestoreFile(id: string) {
+    if (!canEvidence) return; // evidence.manage
     await restoreFileMutation.mutateAsync({ id });
     await refetchFiles();
   }
@@ -1287,6 +1295,7 @@ export default function InputsTab({
   const lastProposalSyncAtRef = useRef<Record<string, number>>({});
 
   async function handleDifyAnalyze(row: SourceRow) {
+    if (!canEvidence) return; // evidence.manage
     if (!row.filePath || !companyId) return;
     setDifyAnalyzingFileId(row.id);
     setDifyFailedIds((prev) => { const next = new Set(prev); next.delete(row.id); return next; });
@@ -1388,6 +1397,7 @@ export default function InputsTab({
   }
 
   async function handleSyncProposal(proposal: FileProposalRow) {
+    if (!canEvidence) return; // evidence.manage
     setSyncingProposalId(proposal.id);
     try {
       await supabase.functions.invoke("dify-analyze-file", {
@@ -1430,6 +1440,7 @@ export default function InputsTab({
   }, [fileProposals, refetchProposals]);
 
   async function handleAcceptProposal(row: SourceRow, proposal: FileProposalRow, payload: ProposalAcceptPayload) {
+    if (!canEvidence) return; // evidence.manage
     setProposalPanelId(null);
 
     // Apply area tags to the source file. Structured proposal items remain
@@ -1449,6 +1460,7 @@ export default function InputsTab({
   }
 
   async function handleRejectProposal(proposal: FileProposalRow) {
+    if (!canEvidence) return; // evidence.manage
     if (proposal.processing_state === "queued" || proposal.processing_state === "running" || proposal.processing_state === "failed") {
       await handleDismissProposal(proposal);
       return;
@@ -1463,6 +1475,7 @@ export default function InputsTab({
   }
 
   async function handleDismissProposal(proposal: FileProposalRow) {
+    if (!canEvidence) return; // evidence.manage
     setProposalPanelId(null);
     if (proposal.processing_state === "queued" || proposal.processing_state === "running") {
       await supabase.from("file_proposals").update({
@@ -1482,6 +1495,7 @@ export default function InputsTab({
   }
 
   async function handleAnalyze(row: SourceRow) {
+    if (!canEvidence) return; // evidence.manage
     if (!row.filePath) return;
     setAnalyzingFileId(row.id);
     setAnalyzeFailedIds((prev) => { const next = new Set(prev); next.delete(row.id); return next; });
@@ -1551,6 +1565,7 @@ export default function InputsTab({
   }
 
   async function handleUseThis(row: SourceRow, { areas, journeyKey }: { areas?: FoundationArea[]; journeyKey?: string }) {
+    if (!canEvidence) return; // evidence.manage
     setUseThisId(null);
     if (row.type === "file" && areas && areas.length > 0) {
       // Write __area:* tags so areasFromFileTags picks them up on next render
@@ -1657,12 +1672,13 @@ export default function InputsTab({
               )}
               <button
                 type="button"
-                disabled={baselineRunning}
+                disabled={baselineRunning || !canRefresh}
+                title={!canRefresh ? "Refreshing outside signals requires the refresh-baseline capability" : undefined}
                 onClick={() => void handleRefreshBaseline()}
                 style={{
-                  fontFamily: D.mono, fontSize: 9, color: baselineRunning ? "rgba(246,246,244,0.25)" : "#7a9e90",
+                  fontFamily: D.mono, fontSize: 9, color: baselineRunning || !canRefresh ? "rgba(246,246,244,0.25)" : "#7a9e90",
                   background: "none", border: "none", padding: 0,
-                  cursor: baselineRunning ? "default" : "pointer",
+                  cursor: baselineRunning || !canRefresh ? "default" : "pointer",
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
                 }}
               >
@@ -1793,7 +1809,7 @@ export default function InputsTab({
 
         {/* Primary: file upload */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start", marginBottom: 20 }}>
-          <PrimaryAddBtn label="Upload file" active={false} onClick={() => setOpenUpload(true)} />
+          <PrimaryAddBtn label="Upload file" active={false} onClick={() => setOpenUpload(true)} disabled={!canEvidence} disabledReason="Adding evidence requires the evidence-manage capability" />
           <p style={{ ...MONO, fontSize: 10, color: "#aaa", margin: 0 }}>
             Upload documents, decks, notes, transcripts, or research files.
           </p>
@@ -1804,10 +1820,12 @@ export default function InputsTab({
           <button
             type="button"
             onClick={() => setShowSocial((v) => !v)}
+            disabled={!canEvidence}
+            title={!canEvidence ? "Adding evidence requires the evidence-manage capability" : undefined}
             style={{
               ...MONO, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase",
               color: showSocial ? "#555" : "#aaa", background: "none", border: "none",
-              padding: 0, cursor: "pointer",
+              padding: 0, cursor: canEvidence ? "pointer" : "default", opacity: canEvidence ? 1 : 0.5,
               textDecoration: showSocial ? "underline" : "none",
             }}
           >

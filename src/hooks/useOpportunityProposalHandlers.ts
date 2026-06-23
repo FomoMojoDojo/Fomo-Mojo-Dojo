@@ -16,6 +16,7 @@ export function useOpportunityProposalHandlers(
   const canApply = useCapability("governance.proposal.apply", companyId);
   const canReject = useCapability("governance.proposal.reject", companyId);
   const canSuggest = useCapability("participation.suggest", companyId);
+  const canGenerate = useCapability("structure.opportunity.generate", companyId); // 3b
   const [opportunityProposalRefreshKey, setOpportunityProposalRefreshKey] = useState(0);
   const { proposals: opportunityProposalsMap } = useOpportunityProposals(companyId ?? undefined, opportunityProposalRefreshKey);
   const [generateLoadingOpportunityId, setGenerateLoadingOpportunityId] = useState<string | null>(null);
@@ -26,13 +27,14 @@ export function useOpportunityProposalHandlers(
 
   const handleGenerateOpportunityProposal = useCallback(async (needId: string) => {
     if (!companyId) return;
+    if (!canGenerate) return; // structure.opportunity.generate
     setGenerateLoadingOpportunityId(needId);
     await supabase.functions.invoke("propose-opportunity-changes", {
       body: { opportunity_id: needId, company_id: companyId },
     });
     setGenerateLoadingOpportunityId(null);
     setOpportunityProposalRefreshKey((k) => k + 1);
-  }, [companyId]);
+  }, [companyId, canGenerate]);
 
   const handleAcceptOpportunityProposal = useCallback(async (
     proposalId: string,

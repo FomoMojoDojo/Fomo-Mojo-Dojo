@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { useCompany } from "@/hooks/useCompany";
+import { useCapability } from "@/hooks/useCapability";
 import { renderMarketDriftSummary } from "@/lib/marketDriftVoice";
 import { useIntegrityRecord } from "@/hooks/useIntegrityRecord";
 import { useDriftInbox, type DriftInboxItem, type InboxFilter } from "@/hooks/useDriftInbox";
@@ -87,6 +88,7 @@ function DriftInboxRow({
   onViewSurface,
   onAcceptRow,
   acceptingId,
+  canReview = true,
 }: {
   item: DriftInboxItem;
   isSelected: boolean;
@@ -95,6 +97,7 @@ function DriftInboxRow({
   onViewSurface: () => void;
   onAcceptRow: () => void;
   acceptingId: string | null;
+  canReview?: boolean;
 }) {
   const isNew = !item.operator_seen_at;
   const isAccepting = acceptingId === item.id;
@@ -180,8 +183,9 @@ function DriftInboxRow({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onAcceptRow(); }}
-            disabled={isAccepting}
-            style={{ fontFamily: MONO, fontSize: 9, color: INK_FAINT, background: "none", border: "none", cursor: isAccepting ? "wait" : "pointer", padding: 0, textDecoration: "underline", letterSpacing: "0.04em", opacity: isAccepting ? 0.4 : 1 }}
+            disabled={isAccepting || !canReview}
+            title={!canReview ? "Reviewing drift requires the drift-review capability" : undefined}
+            style={{ fontFamily: MONO, fontSize: 9, color: INK_FAINT, background: "none", border: "none", cursor: isAccepting ? "wait" : !canReview ? "default" : "pointer", padding: 0, textDecoration: "underline", letterSpacing: "0.04em", opacity: isAccepting || !canReview ? 0.4 : 1 }}
           >
             {isAccepting ? "Accepting…" : "Accept as aligned"}
           </button>
@@ -292,6 +296,7 @@ export default function DriftInboxView() {
   // B2.2b: the context provides no `companyId` member — destructuring it yielded
   // undefined, so the inbox never queried for ANY company (pre-existing defect).
   const companyId = activeCompany?.id ?? null;
+  const canReview = useCapability("governance.drift.review", companyId); // 3b
 
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -341,6 +346,7 @@ export default function DriftInboxView() {
   }, []);
 
   const handleAcceptRow = useCallback(async (item: DriftInboxItem) => {
+    if (!canReview) return; // governance.drift.review
     setAcceptingId(item.id);
     try {
       await acceptBulkAsAligned([item.id]);
@@ -350,9 +356,10 @@ export default function DriftInboxView() {
     } finally {
       setAcceptingId(null);
     }
-  }, [acceptBulkAsAligned]);
+  }, [canReview, acceptBulkAsAligned]);
 
   const handleBulkAccept = useCallback(async () => {
+    if (!canReview) return; // governance.drift.review
     const ids = Array.from(selected);
     setConfirmAction(null);
     try {
@@ -362,10 +369,11 @@ export default function DriftInboxView() {
     } catch (err) {
       toast.error(`Bulk accept failed — ${err instanceof Error ? err.message : String(err)}`, { duration: 5000 });
     }
-  }, [selected, acceptBulkAsAligned, clearSelection]);
+  }, [canReview, selected, acceptBulkAsAligned, clearSelection]);
 
   const handleBulkPropose = useCallback(async () => {
     if (!companyId) return;
+    if (!canReview) return; // governance.drift.review
     const ids = Array.from(selected);
     setConfirmAction(null);
     const toastId = "bulk-propose";
@@ -381,7 +389,7 @@ export default function DriftInboxView() {
     } catch (err) {
       toast.error(`Proposal generation failed — ${err instanceof Error ? err.message : String(err)}`, { id: toastId, duration: 5000 });
     }
-  }, [companyId, selected, proposeChangesForBulk, clearSelection]);
+  }, [companyId, canReview, selected, proposeChangesForBulk, clearSelection]);
 
   const selectedCount = selected.size;
 
@@ -512,6 +520,7 @@ export default function DriftInboxView() {
               onViewSurface={() => navigate(item.surface_navigation_path)}
               onAcceptRow={() => handleAcceptRow(item)}
               acceptingId={acceptingId}
+              canReview={canReview}
             />
           ))}
         </div>

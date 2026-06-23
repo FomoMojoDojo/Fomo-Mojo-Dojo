@@ -313,6 +313,8 @@ export default function StrategyOrgPanel({
   // Governance split (checkpoint 3a): cascade apply/reject controls gated by capability.
   const canApply = useCapability("governance.proposal.apply", companyId);
   const canReject = useCapability("governance.proposal.reject", companyId);
+  const canGenerate = useCapability("structure.cascade.generate", companyId); // 3b
+  const canInlineEdit = useCapability("structure.cascade.inlineEdit", companyId); // 3b
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (!strategy) {
@@ -365,6 +367,7 @@ export default function StrategyOrgPanel({
                     surfaceType="cascade"
                     surfaceId={cascadeId}
                     onGenerate={onGenerateProposal}
+                    canGenerate={canGenerate}
                     generateLoading={generateLoading}
                     generateMessage={generateMessage}
                     variant="panel"
@@ -559,6 +562,7 @@ export default function StrategyOrgPanel({
                   surfaceType="cascade"
                   surfaceId={cascadeId}
                   onGenerate={onGenerateProposal}
+                  canGenerate={canGenerate}
                   generateLoading={generateLoading}
                   generateMessage={generateMessage}
                   variant="panel"
@@ -602,6 +606,7 @@ export default function StrategyOrgPanel({
         label="Where you're headed"
         value={strategy.winning_aspiration}
         onSave={async (v) => { await updateNarrativeField("winning_aspiration", v); flash("aspiration"); }}
+        readOnly={!canInlineEdit}
         hint="What does winning look like in the market you're in right now?"
         rows={4}
         isSaved={savedField === "aspiration"}
@@ -615,6 +620,7 @@ export default function StrategyOrgPanel({
         label="Where you'll compete"
         value={strategy.where_to_play}
         onSave={async (v) => { await updateNarrativeField("where_to_play", v); flash("where"); }}
+        readOnly={!canInlineEdit}
         hint="Which customers, geographies, and channels are you going after?"
         rows={3}
         isSaved={savedField === "where"}
@@ -628,6 +634,7 @@ export default function StrategyOrgPanel({
         label="How you'll win"
         value={strategy.how_to_win}
         onSave={async (v) => { await updateNarrativeField("how_to_win", v); flash("how"); }}
+        readOnly={!canInlineEdit}
         hint="What holds as your edge when challenged?"
         rows={3}
         isSaved={savedField === "how"}
