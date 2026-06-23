@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RouteRow, RouteAssumption } from "@/views/Routes/useRoutes";
+import type { RouteRow, RouteAssumption } from "@/hooks/useRoutes";
 import type { RouteRationale } from "@/lib/routeRationale";
 import type { StrategicCenter } from "@/lib/strategicCenter";
 import type { CustomerRealityNarrative } from "@/lib/customerRealityNarrative";

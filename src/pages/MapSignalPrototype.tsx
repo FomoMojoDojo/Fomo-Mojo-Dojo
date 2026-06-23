@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TopNav from "@/components/layout/TopNav";
 import { useCompany } from "@/hooks/useCompany";
-import { useRoutes, type RouteRow } from "@/views/Routes/useRoutes";
+import { useRoutes, type RouteRow } from "@/hooks/useRoutes";
 
 type SignalTone = "off-route" | "watch" | "on-route";
 type ZoomMode = "overview" | "turn";

@@ -2,7 +2,7 @@ import { useMemo, useState, useRef, useEffect, Fragment, type ReactNode } from "
 import { supabase } from "@/integrations/supabase/client";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import { useFoundationProvenance } from "@/hooks/useFoundationProvenance";
 import { FoundationClaimSupport } from "@/components/evidence/FoundationClaimSupport";
 import {

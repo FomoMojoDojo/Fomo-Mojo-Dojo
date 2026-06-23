@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { StrategyCascade } from "@/lib/types";
 import type { PositioningCanvas } from "@/lib/types";
 import {

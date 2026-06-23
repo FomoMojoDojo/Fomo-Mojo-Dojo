@@ -22,7 +22,7 @@
  * - Route sequencing is descriptive, not prescriptive
  */
 
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { RouteRationale } from "@/lib/routeRationale";
 import type { StrategicCenter } from "@/lib/strategicCenter";
 import type { CustomerRealityNarrative } from "@/lib/customerRealityNarrative";

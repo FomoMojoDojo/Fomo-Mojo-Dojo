@@ -18,7 +18,7 @@
 // isHypothesis: true signals the UI to frame it as a working hypothesis.
 
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import { isPrimaryNeedsSourcePath } from "@/lib/evidenceBands";
 

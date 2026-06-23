@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 
 export type DirectionSignals = {
   outside: number;

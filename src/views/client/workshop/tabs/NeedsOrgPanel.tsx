@@ -4,7 +4,7 @@ import type { OpportunityProposalRow } from "@/hooks/useOpportunityProposals";
 import { useCapability } from "@/hooks/useCapability";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import { supabase } from "@/integrations/supabase/client";
 import { isArtifactStale } from "@/lib/evidenceImpact";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";

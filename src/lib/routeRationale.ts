@@ -9,7 +9,7 @@ import {
   resolveSignalConflict,
 } from "@/lib/signalAuthority";
 import { inferStrategicCenter, type StrategicCenter, type StrategicCenterRouteSeed } from "@/lib/strategicCenter";
-import type { RouteAssumption, RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteAssumption, RouteRow } from "@/hooks/useRoutes";
 
 export type RouteRationaleEvidenceItem = {
   id: string;

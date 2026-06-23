@@ -1,5 +1,5 @@
 import type { RouteRationaleEvidenceItem } from "@/lib/routeRationale";
-import type { RouteAssumption, RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteAssumption, RouteRow } from "@/hooks/useRoutes";
 
 export function deriveClientEvidence(route: RouteRow): RouteRationaleEvidenceItem[] {
   const stored = (Array.isArray(route.evidence_json) ? route.evidence_json : []) as RouteRationaleEvidenceItem[];

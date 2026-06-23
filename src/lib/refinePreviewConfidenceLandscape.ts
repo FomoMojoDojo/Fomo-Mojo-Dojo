@@ -4,7 +4,7 @@ import { inferIdentityNarrative } from "@/lib/identityNarrative";
 import type { RouteRationale, RouteRationaleEvidenceItem } from "@/lib/routeRationale";
 import { authorityWeightedSupportShape, normalizeAuthorityPhase, resolveSignalConflict } from "@/lib/signalAuthority";
 import { inferStrategicCenter } from "@/lib/strategicCenter";
-import type { RouteAssumption, RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteAssumption, RouteRow } from "@/hooks/useRoutes";
 
 export type ConfidenceLandscapeState =
   | "Early signal"

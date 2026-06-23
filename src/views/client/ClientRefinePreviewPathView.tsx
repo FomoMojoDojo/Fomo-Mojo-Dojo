@@ -1,10 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { useClientViewData } from "@/hooks/useClientViewData";
 import { useCompany } from "@/hooks/useCompany";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import { getActivePath, clearActivePath } from "@/lib/activePath";
 import { CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
-import { routeRelativeTime } from "@/views/Routes/routeDecision";
+import { routeRelativeTime } from "@/lib/routeDecision";
 import "@/styles/client-refine-preview.css";
 
 const CATEGORY_LABEL: Record<string, string> = {

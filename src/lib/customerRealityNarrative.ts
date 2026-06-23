@@ -16,7 +16,7 @@
  */
 
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { StrategyCascade } from "@/lib/types";
 import { certaintyRung, isSurveyValidated } from "@/lib/surveyVerdict";
 

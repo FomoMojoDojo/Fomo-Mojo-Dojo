@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeDirectionEvidence } from "../useDirectionEvidence";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@
 
 import type { PositioningCanvas } from "@/lib/types";
 import type { StrategyCascade } from "@/lib/types";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import { getCategoryHighlightWords } from "@/lib/positioningStrength";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────

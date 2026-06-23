@@ -53,7 +53,7 @@ import { disciplinedPostureLabel } from "@/lib/strategicCenterSurface";
 import { useOdiNeeds, type OdiMarketDefinitionRow } from "@/hooks/useOdiNeeds";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import { deriveRouteValidationTitle } from "@/lib/nextBestMove";
 import { deriveStrategicTensions, tensionsForContext } from "@/lib/tensionDerivation";
 import type { StrategicTension } from "@/lib/tensionTypes";

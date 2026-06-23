@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCompany, type Company, type ExcludedSignal } from "@/hooks/useCompany";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useFoundationStatus, type FoundationStatus } from "@/hooks/useFoundationStatus";

@@ -12,7 +12,7 @@ import { stageLabel } from "@/lib/phaseDisplay";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
-import { useRoutes, type RouteAssumption } from "@/views/Routes/useRoutes";
+import { useRoutes, type RouteAssumption } from "@/hooks/useRoutes";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { setActivePath } from "@/lib/activePath";
@@ -20,7 +20,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import CanonicalRouteInspectPanel, { type RouteInspectDetail as CanonicalRouteInspectDetail } from "@/components/routes/RouteInspectPanel";
 import ScoreContextBar from "@/components/score/ScoreContextBar";
 import { buildReadinessFromCompanySignals } from "@/lib/mojoScoreFromAnatomy";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -36,7 +36,7 @@ import {
   persistSelectedRouteDecision,
   clearSelectedRouteDecision,
   insertRouteDecisionEvent,
-} from "@/views/Routes/routeDecision";
+} from "@/lib/routeDecision";
 import { computeLatestExclusionAt, isArtifactStale } from "@/lib/evidenceImpact";
 import { clientGateInsight } from "@/lib/routeInsights";
 import TierAlignmentGrid from "@/components/inspect/TierAlignmentGrid";

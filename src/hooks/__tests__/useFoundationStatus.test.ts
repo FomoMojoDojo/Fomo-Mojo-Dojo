@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { computeFoundationStatus } from "../useFoundationStatus";
 import type { PositioningCanvas, StrategyCascade } from "@/lib/types";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { DirectionEvidence } from "../useDirectionEvidence";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

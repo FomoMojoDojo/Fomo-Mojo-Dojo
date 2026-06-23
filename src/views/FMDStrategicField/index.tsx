@@ -19,7 +19,7 @@ import { Link } from "react-router-dom";
 import TopNav from "@/components/layout/TopNav";
 import { useStrategicDecisions } from "@/hooks/useStrategicDecisions";
 import { useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
 import { useDerivedTensions } from "@/hooks/useDerivedTensions";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";

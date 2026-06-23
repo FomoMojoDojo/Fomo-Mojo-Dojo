@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { PositioningCanvas, StrategyCascade } from "@/lib/types";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { DirectionEvidence } from "./useDirectionEvidence";
 
 export type FoundationStatus = {

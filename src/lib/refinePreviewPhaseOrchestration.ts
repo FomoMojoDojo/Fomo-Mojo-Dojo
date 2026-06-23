@@ -3,7 +3,7 @@ import type { ConfidenceLandscapeDomain } from "@/lib/refinePreviewConfidenceLan
 import type { RefinePreviewMovementItem } from "@/lib/refinePreviewMovement";
 import type { RouteRationale } from "@/lib/routeRationale";
 import { hypothesisAuthorityScore } from "@/lib/signalAuthority";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 
 export type RefineNarrativePhase = "pre_diagnosis" | "diagnose" | "focus" | "flow";
 export type HypothesisPriorityMode = "balanced" | "tension_first" | "assumption_pressure";

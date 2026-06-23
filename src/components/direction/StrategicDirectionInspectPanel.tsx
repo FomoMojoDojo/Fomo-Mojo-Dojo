@@ -19,7 +19,7 @@ import { useState, useMemo } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useStrategyCascade } from "@/hooks/useStrategyCascade";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { StrategyCascade, CascadeItem, CascadeAssumption } from "@/lib/types";
 import { LENS_TYPES, isLensCompatible, type LensType } from "@/lib/strategicObjects";
 import { deriveDirectionRealizesRoutes } from "@/lib/strategicObjectRelationships";

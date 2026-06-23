@@ -4,7 +4,7 @@ import { useCompany } from "@/hooks/useCompany";
 import { useStrategicDecisions } from "@/hooks/useStrategicDecisions";
 import { useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import { useOdiNeeds } from "@/hooks/useOdiNeeds";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import { useDerivedTensions } from "@/hooks/useDerivedTensions";
 import {
   buildStrategicMovementEvents,

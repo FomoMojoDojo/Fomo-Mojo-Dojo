@@ -65,7 +65,7 @@ export interface StrategicTension {
 
 /** Input required by the derivation engine — all fields optional */
 export interface TensionDerivationInput {
-  routes?: import("@/views/Routes/useRoutes").RouteRow[];
+  routes?: import("@/hooks/useRoutes").RouteRow[];
   needs?: import("@/hooks/useOdiNeeds").OdiNeedRow[];
   canvas?: import("@/lib/types").PositioningCanvas | null;
   cascade?: import("@/lib/types").StrategyCascade | null;

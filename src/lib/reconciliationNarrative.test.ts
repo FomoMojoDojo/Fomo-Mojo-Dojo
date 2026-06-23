@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { HypothesisProvenanceCard } from "@/hooks/useStrategicHypotheses";
 import type { RouteRationale } from "@/lib/routeRationale";
 import type { StrategicCenterRouteSeed } from "@/lib/strategicCenter";
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import { buildReconciliationNarrative } from "./reconciliationNarrative";
 
 function makeRow(overrides: Partial<HypothesisProvenanceCard> = {}): HypothesisProvenanceCard {

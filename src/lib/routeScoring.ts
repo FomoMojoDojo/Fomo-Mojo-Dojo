@@ -1,4 +1,4 @@
-import type { RouteRow } from "@/views/Routes/useRoutes";
+import type { RouteRow } from "@/hooks/useRoutes";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 
 export type RelevantCategory = "fix" | "improve" | "create" | null;

@@ -16,7 +16,7 @@
 import { useState } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
-import type { RouteRow, RouteAssumption } from "@/views/Routes/useRoutes";
+import type { RouteRow, RouteAssumption } from "@/hooks/useRoutes";
 import type { OpportunityRow } from "@/hooks/useOpportunities";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { RouteRationale } from "@/lib/routeRationale";

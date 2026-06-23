@@ -21,7 +21,7 @@ import WhatsChangedPanel from "@/components/changelog/WhatsChangedPanel";
 import ProgramGapPanel from "@/components/gaps/ProgramGapPanel";
 import AssumptionSnapshot from "@/components/assumptions/AssumptionSnapshot";
 import { useOpportunities, type OpportunityRow } from "@/hooks/useOpportunities";
-import { useRoutes } from "@/views/Routes/useRoutes";
+import { useRoutes } from "@/hooks/useRoutes";
 import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
