@@ -19,6 +19,7 @@ export function WorkshopSidebar({
   onHome,
   onAddClient,
   onCompany,
+  onMembers,
   onInbox,
   inboxCount = 0,
   inboxHasNew = false,
@@ -30,6 +31,7 @@ export function WorkshopSidebar({
   onHome: () => void;
   onAddClient?: () => void;
   onCompany?: () => void;
+  onMembers?: () => void;
   onInbox?: () => void;
   inboxCount?: number;
   inboxHasNew?: boolean;
@@ -135,6 +137,16 @@ export function WorkshopSidebar({
               onClick={onCompany}
             >
               Company
+            </button>
+          )}
+
+          {onMembers && (
+            <button
+              type="button"
+              className={`crpv-ws-tab${activeTab === "__members__" ? " active" : ""}`}
+              onClick={onMembers}
+            >
+              Member roles
             </button>
           )}
 

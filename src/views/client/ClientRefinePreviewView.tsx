@@ -21,7 +21,7 @@ import { getRefinePreviewActiveHypotheses } from "@/components/client/RefinePrev
 import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { stageLabel } from "@/lib/phaseDisplay";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
-import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { formatDistanceToNow } from "date-fns";
@@ -3628,6 +3628,7 @@ export default function ClientRefinePreviewView() {
                       onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
                       onHome={() => {}}
                       onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+                      onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
                       onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
                       inboxCount={inboxCount}
                       inboxHasNew={inboxNewCount > 0}

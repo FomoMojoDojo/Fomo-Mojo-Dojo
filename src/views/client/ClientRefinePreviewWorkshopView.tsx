@@ -6,7 +6,6 @@ import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
-import MemberRolePanel from "@/components/admin/MemberRolePanel";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
@@ -28,7 +27,7 @@ import { stageLabel } from "@/lib/phaseDisplay";
 import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/views/Routes/useRoutes";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -1943,9 +1942,6 @@ export default function ClientRefinePreviewWorkshopView() {
         </section>
       )}
 
-      {/* Checkpoint 6: minimal admin-only set-role control (self-gates via capability). */}
-      <MemberRolePanel companyId={activeCompany?.id} />
-
       {!routes.some((r) => r.level === "route") && (
         <ScoreContextBar
           currentScore={readiness.currentReadiness}
@@ -2020,6 +2016,7 @@ export default function ClientRefinePreviewWorkshopView() {
         onHome={goToRefineHome}
         onAddClient={isAdmin ? () => setShowCreateClient((v) => !v) : undefined}
         onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+        onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
         onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
         inboxCount={inboxCount}
         inboxHasNew={inboxNewCount > 0}

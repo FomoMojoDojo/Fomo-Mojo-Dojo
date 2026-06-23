@@ -15,6 +15,7 @@ import {
   CLIENT_REFINE_PREVIEW_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
   CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
+  CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
 } from "@/lib/clientRefinePreview";
 import "@/styles/client-refine-preview.css";
 
@@ -1273,6 +1274,7 @@ export default function ClientRefinePreviewCompanyView() {
           onTabClick={goTab}
           onHome={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
           onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
+          onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
         />
 
         <div className="crpv-ws-content-col" style={{ overflowY: "auto" }}>
