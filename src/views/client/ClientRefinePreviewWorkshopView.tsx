@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
@@ -335,6 +336,10 @@ export default function ClientRefinePreviewWorkshopView() {
   const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
 
   const companyId = activeCompany?.id;
+  // Governance split (checkpoint 3a): positioning + cascade apply/reject gated by
+  // capability. Single authority — never re-query roles/caps inline.
+  const canApply = useCapability("governance.proposal.apply", companyId);
+  const canReject = useCapability("governance.proposal.reject", companyId);
 
   const { signals: sourceSignals } = useSourceConfidence({
     companyId,
@@ -621,6 +626,7 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const handleAcceptProposal = useCallback(async (proposalId: string, acceptedFields: string[], skippedFields: string[]) => {
     if (!companyId || !proposal) return;
+    if (!canApply) return; // governance.proposal.apply (positioning)
     setAcceptLoading(true);
     try {
       const proposed = proposal.proposed_state as Record<string, unknown>;
@@ -653,9 +659,10 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setAcceptLoading(false);
     }
-  }, [companyId, proposal]);
+  }, [companyId, canApply, proposal]);
 
   const handleRejectProposal = useCallback(async (proposalId: string) => {
+    if (!canReject) return; // governance.proposal.reject (positioning)
     setRejectLoading(true);
     await supabase
       .from("surface_proposals")
@@ -663,7 +670,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .eq("id", proposalId);
     setRejectLoading(false);
     setProposalRefreshKey((k) => k + 1);
-  }, []);
+  }, [canReject]);
 
   // ── Cascade proposal handlers ─────────────────────────────────────────────
   const handleGenerateCascadeProposal = useCallback(async () => {
@@ -690,6 +697,7 @@ export default function ClientRefinePreviewWorkshopView() {
     skippedFields: string[],
   ) => {
     if (!companyId || !cascadeProposal) return;
+    if (!canApply) return; // governance.proposal.apply (cascade)
     setCascadeAcceptLoading(true);
     setCascadeReEvalProgress(null);
     try {
@@ -749,9 +757,10 @@ export default function ClientRefinePreviewWorkshopView() {
     } finally {
       setCascadeAcceptLoading(false);
     }
-  }, [companyId, cascadeProposal, routes, needs]);
+  }, [companyId, canApply, cascadeProposal, routes, needs]);
 
   const handleRejectCascadeProposal = useCallback(async (proposalId: string) => {
+    if (!canReject) return; // governance.proposal.reject (cascade)
     setCascadeRejectLoading(true);
     await supabase
       .from("surface_proposals")
@@ -759,7 +768,7 @@ export default function ClientRefinePreviewWorkshopView() {
       .eq("id", proposalId);
     setCascadeRejectLoading(false);
     setCascadeProposalRefreshKey((k) => k + 1);
-  }, []);
+  }, [canReject]);
 
   const handleCascadeNarrativeInlineEdit = useCallback(async (
     field: "winning_aspiration" | "where_to_play" | "how_to_win",

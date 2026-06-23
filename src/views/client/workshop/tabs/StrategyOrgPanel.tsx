@@ -16,6 +16,7 @@ import type { EngagementPhase } from "@/lib/engagementPhase";
 import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
 import type { ClaimRow } from "@/lib/claims/useCompanyClaims";
 import type { CascadeProposalRow } from "@/hooks/useCascadeProposal";
+import { useCapability } from "@/hooks/useCapability";
 import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
 import { StandingFindings } from "@/components/strategy/StandingFindings";
 
@@ -91,12 +92,16 @@ function CascadeProposalSection({
   rejectLoading,
   hierarchy,
   reEvalProgress,
+  canApply = true,
+  canReject = true,
 }: {
   proposal: CascadeProposalRow;
   onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
   onRejectProposal?: (proposalId: string) => void;
   acceptLoading?: boolean;
   rejectLoading?: boolean;
+  canApply?: boolean;
+  canReject?: boolean;
   hierarchy: boolean;
   reEvalProgress?: string | null;
 }) {
@@ -201,12 +206,13 @@ function CascadeProposalSection({
         <button
           type="button"
           onClick={handleAccept}
-          disabled={acceptLoading || rejectLoading || allUnchecked}
+          disabled={acceptLoading || rejectLoading || allUnchecked || !canApply}
+          title={!canApply ? "Approval requires the apply capability" : undefined}
           style={{
             fontFamily: monoFont, fontSize: 10, letterSpacing: "0.08em",
-            color: "#fff", background: allUnchecked ? "rgba(17,17,17,0.2)" : signalColor,
+            color: "#fff", background: allUnchecked || !canApply ? "rgba(17,17,17,0.2)" : signalColor,
             border: "none",
-            cursor: acceptLoading ? "wait" : allUnchecked ? "default" : "pointer",
+            cursor: acceptLoading ? "wait" : allUnchecked || !canApply ? "default" : "pointer",
             padding: hierarchy ? "6px 14px" : "5px 12px", borderRadius: 2,
             opacity: rejectLoading ? 0.5 : 1,
           }}
@@ -216,7 +222,8 @@ function CascadeProposalSection({
         <button
           type="button"
           onClick={() => onRejectProposal?.(proposal.id)}
-          disabled={acceptLoading || rejectLoading}
+          disabled={acceptLoading || rejectLoading || !canReject}
+          title={!canReject ? "Rejecting requires the reject capability" : undefined}
           style={{
             fontFamily: monoFont, fontSize: 10, letterSpacing: "0.08em",
             color: inkSoft, background: "none", border: `1px solid ${hairline}`,
@@ -303,6 +310,9 @@ export default function StrategyOrgPanel({
 }) {
   const [inspectOpen, setInspectOpen] = useState(false);
   const { savedField, flash } = useSaveFlash();
+  // Governance split (checkpoint 3a): cascade apply/reject controls gated by capability.
+  const canApply = useCapability("governance.proposal.apply", companyId);
+  const canReject = useCapability("governance.proposal.reject", companyId);
 
   if (loading) return <div className="crpv-ws-placeholder cap">Loading…</div>;
   if (!strategy) {
@@ -378,6 +388,8 @@ export default function StrategyOrgPanel({
           {/* Pending proposal section */}
           {proposal && (
             <CascadeProposalSection
+              canApply={canApply}
+              canReject={canReject}
               proposal={proposal}
               onAcceptProposal={onAcceptProposal}
               onRejectProposal={onRejectProposal}
@@ -571,6 +583,8 @@ export default function StrategyOrgPanel({
       {/* Pending proposal section */}
       {proposal && (
         <CascadeProposalSection
+          canApply={canApply}
+          canReject={canReject}
           proposal={proposal}
           onAcceptProposal={onAcceptProposal}
           onRejectProposal={onRejectProposal}

@@ -4,12 +4,18 @@ import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import { useOpportunityProposals } from "@/hooks/useOpportunityProposals";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 
 export function useOpportunityProposalHandlers(
   companyId: string | null | undefined,
   onNeedsRefresh: () => void,
 ) {
   const { user } = useAuth();
+  // Governance split (checkpoint 3a): apply/reject/suggest gated by capability.
+  // Single authority — never re-query roles/caps inline.
+  const canApply = useCapability("governance.proposal.apply", companyId);
+  const canReject = useCapability("governance.proposal.reject", companyId);
+  const canSuggest = useCapability("participation.suggest", companyId);
   const [opportunityProposalRefreshKey, setOpportunityProposalRefreshKey] = useState(0);
   const { proposals: opportunityProposalsMap } = useOpportunityProposals(companyId ?? undefined, opportunityProposalRefreshKey);
   const [generateLoadingOpportunityId, setGenerateLoadingOpportunityId] = useState<string | null>(null);
@@ -35,6 +41,7 @@ export function useOpportunityProposalHandlers(
     skippedFields: string[],
   ) => {
     if (!companyId) return;
+    if (!canApply) return; // governance.proposal.apply — the one apply-write
     setAcceptLoadingOpportunityProposalId(proposalId);
 
     const proposal = opportunityProposalsMap.get(needId);
@@ -72,9 +79,10 @@ export function useOpportunityProposalHandlers(
     setAcceptLoadingOpportunityProposalId(null);
     onNeedsRefresh();
     setOpportunityProposalRefreshKey((k) => k + 1);
-  }, [companyId, opportunityProposalsMap, onNeedsRefresh]);
+  }, [companyId, canApply, opportunityProposalsMap, onNeedsRefresh]);
 
   const handleRejectOpportunityProposal = useCallback(async (proposalId: string) => {
+    if (!canReject) return; // governance.proposal.reject
     setRejectLoadingOpportunityProposalId(proposalId);
     await supabase.from("surface_proposals").update({
       status: "rejected",
@@ -82,7 +90,7 @@ export function useOpportunityProposalHandlers(
     }).eq("id", proposalId);
     setRejectLoadingOpportunityProposalId(null);
     setOpportunityProposalRefreshKey((k) => k + 1);
-  }, []);
+  }, [canReject]);
 
   // Human edit lane (EDIT-MODEL Commit 2): stage an operator-authored proposal — NO
   // LLM. Reads the live row for current_state, writes a pending surface_proposals row
@@ -91,6 +99,7 @@ export function useOpportunityProposalHandlers(
   // desired_outcome is carried through unchanged so accept doesn't wipe it.
   const handleAuthorOpportunityProposal = useCallback(async (needId: string, authoredCanonical: string) => {
     if (!companyId) return;
+    if (!canSuggest) return; // participation.suggest — available to all tiers
     const { data: row } = await supabase
       .from("odi_needs")
       .select("desired_outcome, odi_canonical_statement")
@@ -122,7 +131,7 @@ export function useOpportunityProposalHandlers(
       created_by: user?.id ?? null,
     });
     setOpportunityProposalRefreshKey((k) => k + 1);
-  }, [companyId, user]);
+  }, [companyId, canSuggest, user]);
 
   const handleSaveNeedField = useCallback(async (needId: string, field: "odi_canonical_statement", value: string) => {
     if (!companyId) return;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { toast } from "sonner";
 import type { OpportunityProposalRow } from "@/hooks/useOpportunityProposals";
+import { useCapability } from "@/hooks/useCapability";
 import type { OdiNeedRow } from "@/hooks/useOdiNeeds";
 import type { JobStepRow } from "@/hooks/useJobSteps";
 import type { RouteRow } from "@/views/Routes/useRoutes";
@@ -160,12 +161,16 @@ function OpportunityProposalSection({
   onRejectProposal,
   acceptLoading,
   rejectLoading,
+  canApply = true,
+  canReject = true,
 }: {
   proposal: OpportunityProposalRow;
   onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
   onRejectProposal?: (proposalId: string) => void;
   acceptLoading?: boolean;
   rejectLoading?: boolean;
+  canApply?: boolean;
+  canReject?: boolean;
 }) {
   const hasDiff = opportunityDiffed(proposal);
   const [checked, setChecked] = useState(hasDiff);
@@ -248,18 +253,18 @@ function OpportunityProposalSection({
         <button
           type="button"
           onClick={handleAccept}
-          disabled={acceptLoading || allUnchecked}
-          title={allUnchecked ? "Select at least one field to apply" : undefined}
+          disabled={acceptLoading || allUnchecked || !canApply}
+          title={!canApply ? "Approval requires the apply capability" : allUnchecked ? "Select at least one field to apply" : undefined}
           style={{
             fontSize: 9,
             fontFamily: "monospace",
             letterSpacing: "0.05em",
-            background: allUnchecked ? "none" : "#1e3340",
-            color: allUnchecked ? "#9aaba5" : "#fff",
-            border: `1px solid ${allUnchecked ? "#d0d5da" : "#1e3340"}`,
+            background: allUnchecked || !canApply ? "none" : "#1e3340",
+            color: allUnchecked || !canApply ? "#9aaba5" : "#fff",
+            border: `1px solid ${allUnchecked || !canApply ? "#d0d5da" : "#1e3340"}`,
             borderRadius: 4,
             padding: "4px 10px",
-            cursor: acceptLoading || allUnchecked ? "default" : "pointer",
+            cursor: acceptLoading || allUnchecked || !canApply ? "default" : "pointer",
             opacity: acceptLoading ? 0.5 : 1,
           }}
         >
@@ -268,7 +273,8 @@ function OpportunityProposalSection({
         <button
           type="button"
           onClick={() => onRejectProposal?.(proposal.id)}
-          disabled={rejectLoading}
+          disabled={rejectLoading || !canReject}
+          title={!canReject ? "Rejecting requires the reject capability" : undefined}
           style={{
             fontSize: 9,
             fontFamily: "monospace",
@@ -685,6 +691,10 @@ export default function NeedsOrgPanel({
   const { stack, top, open: openFrame, push: pushFrame, pop: popFrame, clear: clearFrame, updateTopLens } = useInspectionStack();
   const [focusedOutcome, setFocusedOutcomeRaw] = useState<string | null>(null);
   const [focusedOpportunityId, setFocusedOpportunityIdRaw] = useState<string | null>(null);
+  // Governance split (checkpoint 3a): opportunity apply/reject/suggest gated by capability.
+  const canApply = useCapability("governance.proposal.apply", companyId);
+  const canReject = useCapability("governance.proposal.reject", companyId);
+  const canSuggest = useCapability("participation.suggest", companyId);
   // Human edit lane: which declared need is being authored + the draft + submit state.
   const [authoringNeedId, setAuthoringNeedId] = useState<string | null>(null);
   const [authorDraft, setAuthorDraft] = useState("");
@@ -1151,7 +1161,9 @@ export default function NeedsOrgPanel({
                           <button
                             type="button"
                             onClick={() => { setAuthoringNeedId(need.id); setAuthorDraft(need.odi_canonical_statement ?? need.desired_outcome ?? ""); }}
-                            style={{ fontSize: 10, color: "#7a8c85", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                            disabled={!canSuggest}
+                            title={!canSuggest ? "Suggesting requires the suggest capability" : undefined}
+                            style={{ fontSize: 10, color: "#7a8c85", background: "none", border: "none", cursor: canSuggest ? "pointer" : "default", padding: 0, textDecoration: "underline", opacity: canSuggest ? 1 : 0.5 }}
                           >
                             Suggest an edit
                           </button>
@@ -1217,6 +1229,8 @@ export default function NeedsOrgPanel({
                 {pendingProposal && (
                   <div style={{ borderBottom: `1px solid ${D.hairlineFaint}`, paddingBottom: 16 }}>
                     <OpportunityProposalSection
+                      canApply={canApply}
+                      canReject={canReject}
                       proposal={pendingProposal}
                       onAcceptProposal={onAcceptProposal ? (propId, accepted, skipped) => onAcceptProposal(propId, need.id, accepted, skipped) : undefined}
                       onRejectProposal={onRejectProposal}
@@ -1465,6 +1479,8 @@ export default function NeedsOrgPanel({
                   />
                   {pendingProposal && (
                     <OpportunityProposalSection
+                      canApply={canApply}
+                      canReject={canReject}
                       proposal={pendingProposal}
                       onAcceptProposal={onAcceptProposal ? (propId, accepted, skipped) => onAcceptProposal(propId, need.id, accepted, skipped) : undefined}
                       onRejectProposal={onRejectProposal}

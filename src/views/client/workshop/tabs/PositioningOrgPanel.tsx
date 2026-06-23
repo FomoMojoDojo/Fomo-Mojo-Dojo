@@ -6,6 +6,7 @@ import type { PositioningProposalRow } from "@/hooks/usePositioningProposal";
 import { useSaveFlash } from "../hooks";
 import { alignmentOf } from "../helpers";
 import { useAuth } from "@/hooks/useAuth";
+import { useCapability } from "@/hooks/useCapability";
 import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEducationTrigger";
 import { SectionHeader, ListEditor, StatementField } from "../primitives";
 import PositioningInspectPanel from "@/views/Positioning/PositioningInspectPanel";
@@ -94,10 +95,14 @@ function ProposalSection({
   acceptLoading,
   rejectLoading,
   hierarchy,
+  canApply = true,
+  canReject = true,
 }: {
   proposal: PositioningProposalRow;
   onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
   onRejectProposal?: (proposalId: string) => void;
+  canApply?: boolean;
+  canReject?: boolean;
   acceptLoading?: boolean;
   rejectLoading?: boolean;
   hierarchy: boolean;
@@ -174,15 +179,17 @@ function ProposalSection({
           <button
             type="button"
             onClick={handleAccept}
-            disabled={acceptLoading || rejectLoading || allUnchecked}
-            style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: "0.08em", color: "#fff", background: allUnchecked ? "rgba(17,17,17,0.2)" : P.signal, border: "none", cursor: acceptLoading ? "wait" : allUnchecked ? "default" : "pointer", padding: "6px 14px", borderRadius: 2, opacity: rejectLoading ? 0.5 : 1 }}
+            disabled={acceptLoading || rejectLoading || allUnchecked || !canApply}
+            title={!canApply ? "Approval requires the apply capability" : undefined}
+            style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: "0.08em", color: "#fff", background: allUnchecked || !canApply ? "rgba(17,17,17,0.2)" : P.signal, border: "none", cursor: acceptLoading ? "wait" : allUnchecked || !canApply ? "default" : "pointer", padding: "6px 14px", borderRadius: 2, opacity: rejectLoading ? 0.5 : 1 }}
           >
             {acceptLoading ? "Accepting…" : `Apply ${nSelected} of ${nTotal} change${nTotal !== 1 ? "s" : ""}`}
           </button>
           <button
             type="button"
             onClick={() => onRejectProposal?.(proposal.id)}
-            disabled={acceptLoading || rejectLoading}
+            disabled={acceptLoading || rejectLoading || !canReject}
+            title={!canReject ? "Rejecting requires the reject capability" : undefined}
             style={{ fontFamily: P.mono, fontSize: 10, letterSpacing: "0.08em", color: P.inkSoft, background: "none", border: `1px solid ${P.hairline}`, cursor: rejectLoading ? "wait" : "pointer", padding: "6px 14px", borderRadius: 2, opacity: (acceptLoading || rejectLoading) ? 0.5 : 1 }}
           >
             {rejectLoading ? "Rejecting…" : "Reject"}
@@ -377,6 +384,9 @@ export default function PositioningOrgPanel({
   // canvas is a per-company singleton, so company scope IS this surface's scope).
   const tensionsIntegrity = useIntegrityRecord(companyId ?? null, "evidence_review");
   const { isAdmin } = useAuth();
+  // Governance split (checkpoint 3a): positioning apply/reject controls gated by capability.
+  const canApply = useCapability("governance.proposal.apply", companyId);
+  const canReject = useCapability("governance.proposal.reject", companyId);
 
   const categoryHighlights = useMemo(
     () => (canvas ? getCategoryHighlightWords(canvas.market_category) : []),
@@ -538,6 +548,8 @@ export default function PositioningOrgPanel({
           {/* Pending proposal section */}
           {proposal && (
             <ProposalSection
+              canApply={canApply}
+              canReject={canReject}
               proposal={proposal}
               onAcceptProposal={onAcceptProposal}
               onRejectProposal={onRejectProposal}
@@ -834,6 +846,8 @@ export default function PositioningOrgPanel({
       {/* Pending proposal section */}
       {proposal && (
         <ProposalSection
+          canApply={canApply}
+          canReject={canReject}
           proposal={proposal}
           onAcceptProposal={onAcceptProposal}
           onRejectProposal={onRejectProposal}

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useCompany } from "@/hooks/useCompany";
 import type { Company, ExcludedSignal } from "@/hooks/useCompany";
 import { useClientViewData } from "@/hooks/useClientViewData";
+import { useCapability } from "@/hooks/useCapability";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import { supabase } from "@/integrations/supabase/client";
 import { captureBaseline } from "@/lib/baselineCapture";
@@ -765,12 +766,16 @@ function RouteProposalSection({
   onRejectProposal,
   acceptLoading,
   rejectLoading,
+  canApply = true,
+  canReject = true,
 }: {
   proposal: RouteProposalRow;
   onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
   onRejectProposal?: (proposalId: string) => void;
   acceptLoading?: boolean;
   rejectLoading?: boolean;
+  canApply?: boolean;
+  canReject?: boolean;
 }) {
   const diffFields = useMemo(() => routeDiffedFields(proposal), [proposal]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(diffFields));
@@ -859,18 +864,18 @@ function RouteProposalSection({
         <button
           type="button"
           onClick={handleAccept}
-          disabled={acceptLoading || allUnchecked}
-          title={allUnchecked ? "Select at least one field to apply" : undefined}
+          disabled={acceptLoading || allUnchecked || !canApply}
+          title={!canApply ? "Approval requires the apply capability" : allUnchecked ? "Select at least one field to apply" : undefined}
           style={{
             fontSize: 10,
             fontFamily: R.mono,
             letterSpacing: "0.05em",
-            background: allUnchecked ? "none" : "#111",
-            color: allUnchecked ? R.inkFaint : "#fff",
-            border: `1px solid ${allUnchecked ? R.hairline : "#111"}`,
+            background: allUnchecked || !canApply ? "none" : "#111",
+            color: allUnchecked || !canApply ? R.inkFaint : "#fff",
+            border: `1px solid ${allUnchecked || !canApply ? R.hairline : "#111"}`,
             borderRadius: 4,
             padding: "4px 10px",
-            cursor: acceptLoading || allUnchecked ? "default" : "pointer",
+            cursor: acceptLoading || allUnchecked || !canApply ? "default" : "pointer",
             opacity: acceptLoading ? 0.5 : 1,
           }}
         >
@@ -879,7 +884,8 @@ function RouteProposalSection({
         <button
           type="button"
           onClick={() => onRejectProposal?.(proposal.id)}
-          disabled={rejectLoading}
+          disabled={rejectLoading || !canReject}
+          title={!canReject ? "Rejecting requires the reject capability" : undefined}
           style={{
             fontSize: 10,
             fontFamily: R.mono,
@@ -928,6 +934,8 @@ function RouteCard({
   onRejectProposal,
   acceptLoading,
   rejectLoading,
+  canApply = true,
+  canReject = true,
   driftRefreshKey,
   onCheckDrift,
   checkingSurfaceId,
@@ -959,6 +967,8 @@ function RouteCard({
   onRejectProposal?: (proposalId: string) => void;
   acceptLoading?: boolean;
   rejectLoading?: boolean;
+  canApply?: boolean;
+  canReject?: boolean;
   driftRefreshKey?: number;
   onCheckDrift?: () => void;
   checkingSurfaceId?: string | null;
@@ -1233,6 +1243,8 @@ function RouteCard({
               onRejectProposal={onRejectProposal}
               acceptLoading={acceptLoading}
               rejectLoading={rejectLoading}
+              canApply={canApply}
+              canReject={canReject}
             />
           )}
         </div>
@@ -1273,6 +1285,8 @@ function RoutesColumn({
   generateLoadingId,
   onAcceptProposal,
   onRejectProposal,
+  canApply = true,
+  canReject = true,
   acceptLoadingProposalId,
   rejectLoadingProposalId,
   driftRefreshKey,
@@ -1308,6 +1322,8 @@ function RoutesColumn({
   generateLoadingId?: string | null;
   onAcceptProposal?: (proposalId: string, acceptedFields: string[], skippedFields: string[]) => void;
   onRejectProposal?: (proposalId: string) => void;
+  canApply?: boolean;
+  canReject?: boolean;
   acceptLoadingProposalId?: string | null;
   rejectLoadingProposalId?: string | null;
   driftRefreshKey?: number;
@@ -1405,6 +1421,8 @@ function RoutesColumn({
                 generateLoading={generateLoadingId === route.id}
                 onAcceptProposal={onAcceptProposal}
                 onRejectProposal={onRejectProposal}
+                canApply={canApply}
+                canReject={canReject}
                 acceptLoading={acceptLoadingProposalId === (proposalsMap?.get(route.id)?.id ?? "")}
                 rejectLoading={rejectLoadingProposalId === (proposalsMap?.get(route.id)?.id ?? "")}
                 driftRefreshKey={driftRefreshKey}
@@ -2305,6 +2323,9 @@ export default function ClientRefinePreviewRoutesView() {
   const { isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 5 });
+  // Governance split (checkpoint 3a): route apply/reject gated by capability.
+  const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
+  const canReject = useCapability("governance.proposal.reject", activeCompany?.id);
   const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id, routesRefreshKey);
   // ─── All data-fetching hooks before any callbacks ────────────────────────────
@@ -2632,6 +2653,7 @@ export function RoutesOrgPanel({
     skippedFields: string[],
   ) => {
     if (!activeCompany?.id) return;
+    if (!canApply) return; // governance.proposal.apply (route)
     const proposal = Array.from(routeProposalsMap.values()).find((p) => p.id === proposalId);
     if (!proposal?.surface_id) return;
     setAcceptLoadingProposalId(proposalId);
@@ -2661,10 +2683,11 @@ export function RoutesOrgPanel({
     } finally {
       setAcceptLoadingProposalId(null);
     }
-  }, [activeCompany?.id, routeProposalsMap]);
+  }, [activeCompany?.id, canApply, routeProposalsMap]);
 
   const handleRejectRouteProposal = useCallback(async (proposalId: string) => {
     if (!activeCompany?.id) return;
+    if (!canReject) return; // governance.proposal.reject (route)
     setRejectLoadingProposalId(proposalId);
     try {
       await supabase.from("surface_proposals").update({
@@ -2675,7 +2698,7 @@ export function RoutesOrgPanel({
     } finally {
       setRejectLoadingProposalId(null);
     }
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, canReject]);
 
   const phase = floorEngagementPhase({
     phase: activeCompany?.engagement_phase ?? "outside_signals",
@@ -3269,17 +3292,17 @@ export function RoutesOrgPanel({
               </div>
               {ungroupedRoutes.length > 0 && (
                 <div className="crpv-r-columns" style={{ marginTop: 24 }}>
-                  <RoutesColumn category="fix"     items={ungroupedFix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
-                  <RoutesColumn category="improve" items={ungroupedImprove} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
-                  <RoutesColumn category="create"  items={ungroupedCreate}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+                  <RoutesColumn category="fix"     items={ungroupedFix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+                  <RoutesColumn category="improve" items={ungroupedImprove} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+                  <RoutesColumn category="create"  items={ungroupedCreate}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
                 </div>
               )}
             </>
           ) : (
             <div className="crpv-r-columns">
-              <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
-              <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
-              <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+              <RoutesColumn category="fix"     items={fix}     rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "fix"}     isContextDim={relevantCategory !== null && relevantCategory !== "fix"}     recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+              <RoutesColumn category="improve" items={improve} rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "improve"} isContextDim={relevantCategory !== null && relevantCategory !== "improve"} recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
+              <RoutesColumn category="create"  items={create}  rationales={routeRationaleMap} onInspect={handleInspectRoute} selectedRouteId={selectedRoute?.id} onSelect={handleSelectRoute} hoveredRouteId={hoveredRouteId} onHover={setHoveredRouteId} isContextMatch={relevantCategory === "create"}  isContextDim={relevantCategory !== null && relevantCategory !== "create"}  recommendedRouteId={recommendedRouteId} recommendedReason={recommendedReason} onStartRoute={!hypothesisPh && isReady ? setConfirmRoute : undefined} isDeemphasized={!isReady} isReady={isReady} hypothesisPhase={hypothesisPh} phase={phase} subtitleOverride={hypothesisPh ? phasePriority.routes.hypothesisSubtitleOverride : undefined} recommendedLabel={phasePriority.routes.recommendedLabel} recommendedReasonPrefix={phasePriority.routes.recommendedReasonPrefix} editorialRoles={editorialRoles} claimsMap={claimsMap} onReEvaluate={handleReEvaluate} reEvalLoadingId={reEvalLoading} proposalsMap={routeProposalsMap} onGenerateProposal={handleGenerateRouteProposal} generateLoadingId={generateLoadingRouteId} onAcceptProposal={handleAcceptRouteProposal} onRejectProposal={handleRejectRouteProposal} canApply={canApply} canReject={canReject} acceptLoadingProposalId={acceptLoadingProposalId} rejectLoadingProposalId={rejectLoadingProposalId} driftRefreshKey={driftBadgeRefreshKey} onCheckDrift={handleCheckRouteDrift} checkingSurfaceId={checkingSurfaceId} />
             </div>
           )}
         </>
