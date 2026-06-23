@@ -2329,10 +2329,6 @@ export default function ClientRefinePreviewRoutesView() {
   const { isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 5 });
-  // Governance split (checkpoint 3a): route apply/reject gated by capability.
-  const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
-  const canReject = useCapability("governance.proposal.reject", activeCompany?.id);
-  const canGenRoute = useCapability("structure.route.generate", activeCompany?.id); // 3b
   const [routesRefreshKey, setRoutesRefreshKey] = useState(0);
   const { loading: routesLoading, items: routes } = useRoutes(activeCompany?.id, routesRefreshKey);
   // ─── All data-fetching hooks before any callbacks ────────────────────────────
@@ -2578,6 +2574,11 @@ export function RoutesOrgPanel({
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
   const [hoveredRouteId, setHoveredRouteId]   = useState<string | null>(null);
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
+  // Governance + route-generate caps (3a/3b): the handlers + RoutesColumn renders
+  // that consume these live in THIS component, so the hooks must resolve here.
+  const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
+  const canReject = useCapability("governance.proposal.reject", activeCompany?.id);
+  const canGenRoute = useCapability("structure.route.generate", activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
   const { data: routeHypothesisDependencies = [] } = useRouteHypothesisDependencies(activeCompany?.id);
   const [claimsRefreshKey, setClaimsRefreshKey] = useState(0);
