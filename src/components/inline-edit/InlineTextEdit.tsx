@@ -14,9 +14,15 @@ export default function InlineTextEdit({ value, onSave, placeholder, style, inpu
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [hover, setHover] = useState(false);
+  // Optimistic display: after a successful save, keep showing the submitted value
+  // until the parent re-flows the persisted value into `value`. Cleared whenever
+  // `value` changes, so the authoritative refetched value always wins on arrival.
+  const [optimistic, setOptimistic] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => { setDraft(value); setOptimistic(null); }, [value]);
+
+  const displayed = optimistic ?? value;
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
@@ -26,7 +32,7 @@ export default function InlineTextEdit({ value, onSave, placeholder, style, inpu
     const trimmed = draft.trim();
     if (trimmed === value) { setEditing(false); return; }
     setSaving(true);
-    try { await onSave(trimmed); } finally { setSaving(false); setEditing(false); }
+    try { await onSave(trimmed); setOptimistic(trimmed); } finally { setSaving(false); setEditing(false); }
   }
 
   function cancel() {
@@ -66,11 +72,11 @@ export default function InlineTextEdit({ value, onSave, placeholder, style, inpu
       onMouseEnter={() => !disabled && setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <span style={{ flex: 1 }}>{value || <span style={{ color: "rgba(17,17,17,0.35)", fontStyle: "italic" }}>{placeholder ?? "(empty)"}</span>}</span>
+      <span style={{ flex: 1 }}>{displayed || <span style={{ color: "rgba(17,17,17,0.35)", fontStyle: "italic" }}>{placeholder ?? "(empty)"}</span>}</span>
       {!disabled && (
         <button
           type="button"
-          onClick={() => { setDraft(value); setEditing(true); }}
+          onClick={() => { setDraft(displayed); setEditing(true); }}
           aria-label="Edit"
           style={{
             background: "none", border: "none", padding: "0 2px", cursor: "pointer",

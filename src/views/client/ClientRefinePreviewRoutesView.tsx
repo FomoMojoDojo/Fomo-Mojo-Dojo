@@ -653,9 +653,15 @@ export function RoutesOrgPanel({
 
   async function handleSaveRouteField(routeOrLegId: string, field: "title" | "short_description", value: string) {
     if (!activeCompany?.id) return;
-    await saveManualEdit("route", routeOrLegId, activeCompany.id, field, value);
+    try {
+      await saveManualEdit("route", routeOrLegId, activeCompany.id, field, value);
+    } catch (err) {
+      console.error("[route-save] write failed (saveManualEdit/captureBaseline):", err);
+      toast.error("Edit didn't save — please try again.", { duration: 5000 });
+      return;
+    }
     supabase.functions.invoke("evaluate-route-alignment", { body: { route_id: routeOrLegId, company_id: activeCompany.id } }).catch(() => {});
-    setRoutesRefreshKey((k) => k + 1);
+    onCommitSuccess?.();
   }
 
   function handleInspectRoute(route: RouteRow) {

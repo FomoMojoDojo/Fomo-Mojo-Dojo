@@ -310,6 +310,7 @@ function NeedRow({
   onReEvaluate,
   reEvalLoading,
   onGenerateProposal,
+  canGenerate,
   generateLoading,
   hasPendingProposal,
   isMuted,
@@ -337,6 +338,7 @@ function NeedRow({
   onReEvaluate?: () => void;
   reEvalLoading?: boolean;
   onGenerateProposal?: () => void;
+  canGenerate?: boolean;
   generateLoading?: boolean;
   hasPendingProposal?: boolean;
   isMuted: boolean;
@@ -1466,6 +1468,7 @@ export default function NeedsOrgPanel({
                     onReEvaluate={onReEvaluate ? () => onReEvaluate(need.id) : undefined}
                     reEvalLoading={reEvalLoadingId === need.id}
                     onGenerateProposal={onGenerateProposal ? () => onGenerateProposal(need.id) : undefined}
+                    canGenerate={canGenerate}
                     generateLoading={generateLoadingId === need.id}
                     hasPendingProposal={!!pendingProposal}
                     isMuted={isMuted}

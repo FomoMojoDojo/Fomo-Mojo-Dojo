@@ -15,9 +15,15 @@ export default function InlineTextareaEdit({ value, onSave, placeholder, rows = 
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [hover, setHover] = useState(false);
+  // Optimistic display: after a successful save, keep showing the submitted value
+  // until the parent re-flows the persisted value into `value`. Cleared whenever
+  // `value` changes, so the authoritative refetched value always wins on arrival.
+  const [optimistic, setOptimistic] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => { setDraft(value); setOptimistic(null); }, [value]);
+
+  const displayed = optimistic ?? value;
 
   useEffect(() => {
     if (editing && textareaRef.current) {
@@ -31,7 +37,7 @@ export default function InlineTextareaEdit({ value, onSave, placeholder, rows = 
     const trimmed = draft.trim();
     if (trimmed === value) { setEditing(false); return; }
     setSaving(true);
-    try { await onSave(trimmed); } finally { setSaving(false); setEditing(false); }
+    try { await onSave(trimmed); setOptimistic(trimmed); } finally { setSaving(false); setEditing(false); }
   }
 
   function cancel() {
@@ -77,12 +83,12 @@ export default function InlineTextareaEdit({ value, onSave, placeholder, rows = 
       onMouseLeave={() => setHover(false)}
     >
       <p style={{ margin: 0, whiteSpace: "pre-wrap", cursor: disabled ? "default" : "text" }}>
-        {value || <span style={{ color: "rgba(17,17,17,0.35)", fontStyle: "italic" }}>{placeholder ?? "(empty)"}</span>}
+        {displayed || <span style={{ color: "rgba(17,17,17,0.35)", fontStyle: "italic" }}>{placeholder ?? "(empty)"}</span>}
       </p>
       {!disabled && (
         <button
           type="button"
-          onClick={() => { setDraft(value); setEditing(true); }}
+          onClick={() => { setDraft(displayed); setEditing(true); }}
           aria-label="Edit"
           style={{
             position: "absolute", top: 0, right: 0,
