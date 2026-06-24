@@ -79,6 +79,8 @@ import { useFoundationStatus } from "@/hooks/useFoundationStatus";
 import { HomepageHierarchy } from "@/components/client/HomepageHierarchy";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import { type LayerState, type CommitState, type DrawerKey, type RouteCategory, type TweakTab, type AccessModes, type DrawerSection, MODE_STORAGE_KEY, DEFAULT_ACCESS_MODES, ROUTE_ORDER, ROUTE_DISPLAY_LABEL, ROUTE_FALLBACK_HEADLINE, MAP_ROUTE_CURVES, MAP_ROUTE_BADGES, clamp, toSentence, lowerFirst, stripTerminalPunctuation, formatHHmm, buildCenterHeroSupport, shorten, deriveAudienceShort, normalizeCompare, uniqueSentences, hypothesisSourceMixSummary, parseAccessModes, confidenceBase, statusLabel } from "./home/shared";
+import { SpecPanel } from "./home/SpecPanel";
+import { HeaderCompanySwitcher } from "./home/HeaderCompanySwitcher";
 
 
 export default function ClientRefinePreviewView() {
@@ -3353,41 +3355,17 @@ export default function ClientRefinePreviewView() {
               <div className="left">
                 <b>Mojo</b>
                 {companies.length > 1 ? (
-                  <div className="crpv-co-switcher" ref={headerSwitcherRef}>
-                    <button
-                      type="button"
-                      className="crpv-co-trigger cap"
-                      onClick={() => setShowHeaderSwitcher((v) => !v)}
-                      aria-haspopup="listbox"
-                      aria-expanded={showHeaderSwitcher}
-                    >
-                      [{toSentence(activeCompany?.name) || "COMPANY"}]
-                      <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
-                    </button>
-                    <span className="cap" style={{ marginLeft: 4 }}>· DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
-                    {showHeaderSwitcher && (
-                      <div className="crpv-co-dropdown" role="listbox">
-                        <ul className="crpv-co-list">
-                          {companies.map((c) => (
-                            <li key={c.id}>
-                              <button
-                                type="button"
-                                className={`crpv-co-option${c.id === activeCompany?.id ? " active" : ""}`}
-                                role="option"
-                                aria-selected={c.id === activeCompany?.id}
-                                onClick={() => { setActiveCompanyId(c.id); setShowHeaderSwitcher(false); }}
-                              >
-                                <span className="crpv-co-option-name">{c.name}</span>
-                                <span className="crpv-co-option-meta cap">
-                                  {[c.quarter, c.archetype, c.mojo_score != null ? `score ${Math.round(c.mojo_score)}` : null].filter(Boolean).join(" · ")}
-                                </span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
+                  <HeaderCompanySwitcher
+                    showHeaderSwitcher={showHeaderSwitcher}
+                    setShowHeaderSwitcher={setShowHeaderSwitcher}
+                    headerSwitcherRef={headerSwitcherRef}
+                    activeCompany={activeCompany}
+                    companies={companies}
+                    setActiveCompanyId={setActiveCompanyId}
+                    ENGAGEMENT_DAY={ENGAGEMENT_DAY}
+                    dominantClaimState={dominantClaimState}
+                    phase={phase}
+                  />
                 ) : (
                   <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
                 )}
@@ -4325,12 +4303,7 @@ export default function ClientRefinePreviewView() {
             <button type="button" className="crpv-spec-toggle" onClick={() => setSpecOpen((value) => !value)}>
               {specOpen ? "▾ HIDE SPEC" : "▸ INTERACTION SPEC"}
             </button>
-            <aside className={`crpv-spec-panel ${specOpen ? "open" : ""}`}>
-              <h4>Layer stack</h4>
-              <p>Command defaults. Map and Narrative are progressive disclosure layers. Drawers expose context on demand.</p>
-              <h4>Keyboard</h4>
-              <p>M map · N narrative · Esc command · 1-4 open context.</p>
-            </aside>
+            <SpecPanel specOpen={specOpen} />
 
             <div className="crpv-legend">
               <button type="button" className="crpv-main-link" onClick={goToMainSite}>
