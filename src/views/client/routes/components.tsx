@@ -1393,6 +1393,19 @@ export function LegRow({
   const conditions = (Array.isArray(leg.what_would_have_to_be_true) ? leg.what_would_have_to_be_true : []) as WrapCond[];
   const completedSteps = steps.filter((s) => s.status === "complete").length;
 
+  // Gate 2: a generated leg (provenance_type='internal_hypothesis') is a starting
+  // hypothesis derived from one route condition (carried in what_would_have_to_be_true).
+  // When that source condition is satisfied, the leg renders struck-and-preserved
+  // ("✓ Condition met") — the move text and its condition stay readable.
+  const isGeneratedLeg = leg.provenance_type === "internal_hypothesis";
+  const sourceCondition = isGeneratedLeg ? (conditions[0] ?? null) : null;
+  const isConditionMet = !!sourceCondition?.satisfied_flag;
+  // Test-class legs (the 70b judge classified them as evidence-gathering) carry a "Test"
+  // marker alongside "Starting hypothesis" — Gate 3 attaches the test content to these.
+  const isTestLeg = sourceCondition?.leg_class === "test";
+  // Strip a loose trailing em/en-dash a generator can leave behind — it reads as unfinished.
+  const legTitle = (leg.title || "").replace(/\s*[—–]+\s*$/, "").trimEnd();
+
   return (
     <div
       style={{
@@ -1420,13 +1433,29 @@ export function LegRow({
         {/* Status pill + title row */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
           {showLegStateTag && legClaimState && <RouteStateTag claimState={legClaimState} />}
+          {isConditionMet ? (
+            <span style={{ fontFamily: R.mono, fontSize: 8.5, letterSpacing: "0.1em", color: R.signal, border: `1px solid ${R.signal}`, borderRadius: 2, padding: "2px 6px", flexShrink: 0 }}>
+              ✓ Condition met
+            </span>
+          ) : isGeneratedLeg ? (
+            <>
+              <span style={{ fontFamily: R.mono, fontSize: 8.5, letterSpacing: "0.1em", color: R.inkSoft, border: `1px solid ${R.hairline}`, borderRadius: 2, padding: "2px 6px", flexShrink: 0 }}>
+                Starting hypothesis
+              </span>
+              {isTestLeg && (
+                <span style={{ fontFamily: R.mono, fontSize: 8.5, letterSpacing: "0.1em", color: R.signal, border: `1px solid ${R.signal}`, borderRadius: 2, padding: "2px 6px", flexShrink: 0 }}>
+                  Test
+                </span>
+              )}
+            </>
+          ) : null}
           <h3 style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, margin: 0, lineHeight: 1.2, letterSpacing: "-0.01em", flex: 1, minWidth: 0 }}>
             <InlineTextEdit
-              value={leg.title || ""}
+              value={legTitle}
               onSave={onSaveField ? (v) => onSaveField(leg.id, "title", v) : async () => {}}
               placeholder="Untitled leg"
               disabled={!onSaveField}
-              style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: R.ink, lineHeight: 1.2, letterSpacing: "-0.01em" }}
+              style={{ fontFamily: R.sans, fontSize: 18, fontWeight: 600, color: isConditionMet ? "rgba(17,17,17,0.45)" : R.ink, textDecoration: isConditionMet ? "line-through" : undefined, lineHeight: 1.2, letterSpacing: "-0.01em" }}
             />
           </h3>
           {onDriftClick && (
@@ -1458,6 +1487,13 @@ export function LegRow({
           rows={2}
           style={{ fontFamily: R.sans, fontSize: 14, color: "rgba(17,17,17,0.65)", marginBottom: 8, lineHeight: 1.55 }}
         />
+        {/* Derivation: the route condition this leg would establish (preserved when met) */}
+        {sourceCondition && (
+          <p style={{ fontSize: 12, color: "rgba(17,17,17,0.5)", margin: "0 0 8px", lineHeight: 1.5 }}>
+            <span style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(17,17,17,0.4)" }}>What this would establish: </span>
+            {sourceCondition.condition}
+          </p>
+        )}
         {/* Meta line */}
         {steps.length > 0 && (
           <span style={{ fontFamily: R.mono, fontSize: 9, color: "rgba(17,17,17,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>

@@ -70,6 +70,7 @@ export type RouteRow = {
   rejected_alternatives?: Array<{ alternative_title: string; rejection_reason: string; considered_at?: string }> | null;
   what_would_have_to_be_true?: Array<{ condition: string; satisfied_flag: boolean; evidence_refs?: string[] }> | null;
   primary_desired_outcome_id?: string | null;
+  provenance_type?: string | null;
   // A67 strategy-alignment evaluation
   strategy_alignment?: "aligned" | "off_strategy" | "unknown" | null;
   strategy_alignment_reason?: string | null;

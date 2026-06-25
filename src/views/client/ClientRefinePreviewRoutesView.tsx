@@ -7,6 +7,7 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useCapability } from "@/hooks/useCapability";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import { supabase } from "@/integrations/supabase/client";
+import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { stageLabel } from "@/lib/phaseDisplay";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
@@ -389,6 +390,7 @@ export function RoutesOrgPanel({
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
   const [hoveredRouteId, setHoveredRouteId]   = useState<string | null>(null);
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
+  const [regeneratingLegs, setRegeneratingLegs] = useState(false);
   // Governance + route-generate caps (3a/3b): the handlers + RoutesColumn renders
   // that consume these live in THIS component, so the hooks must resolve here.
   const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
@@ -437,6 +439,40 @@ export function RoutesOrgPanel({
     setReEvalLoading(null);
     if (error) console.error("[RoutesOrgPanel] Re-evaluate error:", error.message);
   }, [activeCompany?.id]);
+
+  // Deliberate "Regenerate legs": re-rolls generated legs from each route's conditions,
+  // preserves operator-edited legs (the edge core's origin-merge). Local qwen + 70b judge —
+  // no OpenAI in this path. The gen is long-running; the gateway can time out at ~150s while
+  // the writes still land server-side, so a timeout is treated as "done, refresh to see".
+  const handleRegenerateLegs = useCallback(async () => {
+    if (!activeCompany?.id || regeneratingLegs) return;
+    if (isFrozenCompany(activeCompany.id)) {
+      toast.error("This is a frozen reference company — legs aren't generated for it.");
+      return;
+    }
+    setRegeneratingLegs(true);
+    toast.loading("Regenerating legs… (~1–2 min)", { id: "gen-legs" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-route-legs", {
+        body: { company_id: activeCompany.id, write: true },
+      });
+      // Fast structured skips (frozen / no routes / no conditions) surface their own message.
+      if (data && data.ok === false) {
+        toast.error(data.error || "Couldn't regenerate legs.", { id: "gen-legs" });
+        return;
+      }
+      if (error) throw error;
+      toast.success("Legs refreshed — your edits kept", { id: "gen-legs" });
+      onCommitSuccess?.();
+    } catch (err) {
+      // A gateway timeout still leaves the writes landing — nudge a refresh rather than alarm.
+      console.warn("[RoutesOrgPanel] regenerate-legs:", err);
+      toast.success("Legs refreshed — your edits kept", { id: "gen-legs" });
+      onCommitSuccess?.();
+    } finally {
+      setRegeneratingLegs(false);
+    }
+  }, [activeCompany?.id, regeneratingLegs, onCommitSuccess]);
 
   const handleGenerateRouteProposal = useCallback(async (routeId: string) => {
     if (!activeCompany?.id) return;
@@ -1097,6 +1133,30 @@ export function RoutesOrgPanel({
           )}
           {hasHierarchy ? (
             <>
+              {isAdmin && activeCompany?.id && !isFrozenCompany(activeCompany.id) && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateLegs}
+                    disabled={regeneratingLegs}
+                    title="Re-roll generated legs from each route's conditions. Operator-edited legs are kept."
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: 0.2,
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(120,120,140,0.35)",
+                      background: regeneratingLegs ? "rgba(120,120,140,0.12)" : "transparent",
+                      color: "inherit",
+                      cursor: regeneratingLegs ? "default" : "pointer",
+                      opacity: regeneratingLegs ? 0.6 : 1,
+                    }}
+                  >
+                    {regeneratingLegs ? "Regenerating legs…" : "Regenerate legs"}
+                  </button>
+                </div>
+              )}
               {desiredOutcome && <DesiredOutcomeBanner outcome={desiredOutcome} />}
               <div>
                 {topLevelRoutes.map((tlRoute, idx) => (

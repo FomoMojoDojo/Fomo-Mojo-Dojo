@@ -298,7 +298,7 @@ export function routeTimeAgo(iso: string): string {
 
 export type WrapAlt  = { alternative_title: string; rejection_reason: string; considered_at?: string };
 
-export type WrapCond = { condition: string; satisfied_flag: boolean; evidence_refs?: string[] };
+export type WrapCond = { condition: string; satisfied_flag: boolean; evidence_refs?: string[]; leg_class?: "test" | "build" };
 
 export const HIERARCHY_STATE_ACCENT: Record<string, string> = {
   flow:         R.signal,
