@@ -1775,6 +1775,8 @@ export function HierarchyRouteSection({
   checkingSurfaceId,
   legTestRefreshKey,
   onLegTestGenerated,
+  onSelect,
+  onClear,
 }: {
   route: RouteRow;
   legs: RouteRow[];
@@ -1793,6 +1795,8 @@ export function HierarchyRouteSection({
   checkingSurfaceId?: string | null;
   legTestRefreshKey?: number;
   onLegTestGenerated?: () => void;
+  onSelect?: (route: RouteRow) => void;
+  onClear?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultExpanded);
   const [expandedLegId, setExpandedLegId] = useState<string | null>(null);
@@ -1807,6 +1811,15 @@ export function HierarchyRouteSection({
   const metConditions = conditions.filter((c: WrapCond) => c.satisfied_flag).length;
   const isCommitted   = legs.some((l) => l.id === selectedRouteId);
   const isMonitored   = claimState === "diagnose" || claimState === "focus" || claimState === "flow";
+
+  // Gate 4: route-choose mechanic. The chosen path is the route whose id IS the
+  // company's selected_route_id. The control is admin-only + non-frozen (same gate
+  // as gen-legs/gen-tests); on frozen CB1/CB2 it never renders, so it can never
+  // write. One chosen path at a time is enforced by the existing handler toggle.
+  const { isAdmin } = useAuth();
+  const isFrozen    = isFrozenCompany(route.company_id);
+  const isChosen    = !!selectedRouteId && route.id === selectedRouteId;
+  const showChoose  = isAdmin && !isFrozen && !!onSelect;
 
   function toggleLeg(legId: string) {
     setExpandedLegId((prev) => (prev === legId ? null : legId));
@@ -1857,6 +1870,30 @@ export function HierarchyRouteSection({
               >
                 {checkingSurfaceId === route.id ? "Checking…" : "Check for drift"}
               </button>
+            )}
+            {/* Gate 4: route-choose control + CHOSEN PATH marker (admin-only, non-frozen) */}
+            {showChoose && (
+              <>
+                {selectedRouteId && (
+                  <span style={{
+                    fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
+                    color: isChosen ? R.signal : R.inkFaint, fontWeight: isChosen ? 600 : 400, flexShrink: 0,
+                  }}>
+                    {isChosen ? "CHOSEN PATH" : "Working hypothesis"}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); if (isChosen) { onClear?.(); } else { onSelect?.(route); } }}
+                  style={{
+                    fontSize: 11, fontFamily: R.mono, color: isChosen ? R.inkFaint : R.ink,
+                    textDecoration: "underline", textUnderlineOffset: 2,
+                    background: "none", border: "none", cursor: "pointer", padding: 0, flexShrink: 0,
+                  }}
+                >
+                  {isChosen ? "Deselect" : "Choose this path →"}
+                </button>
+              </>
             )}
           </div>
           {/* H2 title */}

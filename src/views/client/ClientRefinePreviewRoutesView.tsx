@@ -1186,6 +1186,8 @@ export function RoutesOrgPanel({
                     checkingSurfaceId={checkingSurfaceId}
                     legTestRefreshKey={legTestRefreshKey}
                     onLegTestGenerated={handleLegTestGenerated}
+                    onSelect={handleSelectRoute}
+                    onClear={handleClearDecision}
                   />
                 ))}
               </div>
