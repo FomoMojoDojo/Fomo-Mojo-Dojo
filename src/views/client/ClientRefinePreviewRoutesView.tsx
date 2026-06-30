@@ -412,6 +412,13 @@ export function RoutesOrgPanel({
   const [rejectLoadingProposalId, setRejectLoadingProposalId] = useState<string | null>(null);
   const [driftPanel, setDriftPanel] = useState<{ surfaceType: string; surfaceId: string } | null>(null);
   const [driftBadgeRefreshKey, setDriftBadgeRefreshKey] = useState(0);
+  // Gate 3: bumping this refetches every leg's test panel after a company-wide
+  // generate-leg-tests run; also nudges the broader surface refresh.
+  const [legTestRefreshKey, setLegTestRefreshKey] = useState(0);
+  const handleLegTestGenerated = useCallback(() => {
+    setLegTestRefreshKey((k) => k + 1);
+    onCommitSuccess?.();
+  }, [onCommitSuccess]);
   const { checkingSurfaceId, checkSurface: checkRouteDrift } = useDriftScan(activeCompany?.id);
 
   useEffect(() => {
@@ -1177,6 +1184,8 @@ export function RoutesOrgPanel({
                     driftRefreshKey={driftBadgeRefreshKey}
                     onCheckDrift={handleCheckRouteDrift}
                     checkingSurfaceId={checkingSurfaceId}
+                    legTestRefreshKey={legTestRefreshKey}
+                    onLegTestGenerated={handleLegTestGenerated}
                   />
                 ))}
               </div>

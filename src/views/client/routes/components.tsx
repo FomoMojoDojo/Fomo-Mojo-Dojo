@@ -8,6 +8,7 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useCapability } from "@/hooks/useCapability";
 import { useRouteHypothesisDependencies, useStrategicHypotheses } from "@/hooks/useStrategicHypotheses";
 import { supabase } from "@/integrations/supabase/client";
+import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { stageLabel } from "@/lib/phaseDisplay";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
@@ -1353,6 +1354,149 @@ export function HierarchyPageHeader({
   );
 }
 
+// Gate 3: belief-only test surfaced read-only on a test-class leg. Reads the leg's
+// one primary `tests` row (action_id = leg.id) and renders the signed strings +
+// derived honesty states. The admin Generate/Regenerate control (non-frozen only)
+// invokes generate-leg-tests company-wide; per Gate-2 parity the ~150s gateway
+// timeout is treated as success (writes land server-side) then refresh. There is
+// NO result-entry control — a result is displayed verbatim if present, never set.
+type LegTestRow = {
+  id: string;
+  hypothesis: string;
+  expected_positive_signal: string;
+  expected_negative_signal: string;
+  result: string | null;
+  no_test_needed: boolean;
+  no_test_needed_reason: string | null;
+};
+
+function LegTestState({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div style={{ marginTop: 4 }}>
+      <p style={{ fontFamily: R.sans, fontSize: 13, fontWeight: 600, color: "rgba(17,17,17,0.7)", margin: 0, lineHeight: 1.4 }}>{title}</p>
+      {sub && <p style={{ fontFamily: R.sans, fontSize: 12, color: "rgba(17,17,17,0.5)", margin: "3px 0 0", lineHeight: 1.5 }}>{sub}</p>}
+    </div>
+  );
+}
+
+function LegTestField({ label, helper, children }: { label: string; helper?: string; children: string }) {
+  return (
+    <div>
+      <span style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(17,17,17,0.4)" }}>{label}</span>
+      {helper && <span style={{ fontFamily: R.sans, fontSize: 11, color: "rgba(17,17,17,0.4)", marginLeft: 8, fontStyle: "italic" }}>{helper}</span>}
+      <p style={{ fontFamily: R.sans, fontSize: 13, color: "rgba(17,17,17,0.8)", margin: "3px 0 0", lineHeight: 1.5 }}>{children}</p>
+    </div>
+  );
+}
+
+function LegTestPanel({
+  legId,
+  companyId,
+  refreshKey,
+  onGenerated,
+}: {
+  legId: string;
+  companyId: string;
+  refreshKey?: number;
+  onGenerated?: () => void;
+}) {
+  const { isAdmin } = useAuth();
+  const [test, setTest] = useState<LegTestRow | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const frozen = isFrozenCompany(companyId);
+
+  useEffect(() => {
+    let active = true;
+    setLoaded(false);
+    supabase
+      .from("tests")
+      .select("id, hypothesis, expected_positive_signal, expected_negative_signal, result, no_test_needed, no_test_needed_reason")
+      .eq("company_id", companyId)
+      .eq("action_id", legId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!active) return;
+        setTest((data as LegTestRow | null) ?? null);
+        setLoaded(true);
+      });
+    return () => { active = false; };
+  }, [companyId, legId, refreshKey, localRefresh]);
+
+  const handleGenerate = useCallback(async () => {
+    if (generating) return;
+    if (frozen) {
+      toast.error("This is a frozen reference company — tests aren't generated for it.");
+      return;
+    }
+    setGenerating(true);
+    toast.loading("Drafting tests for test-class legs… (~1-2 min)", { id: "gen-leg-tests" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-leg-tests", {
+        body: { company_id: companyId, write: true },
+      });
+      if (data && data.ok === false) {
+        toast.error(data.error || "Couldn't draft tests.", { id: "gen-leg-tests" });
+        return;
+      }
+      if (error) throw error;
+      toast.success("Tests drafted — hypotheses only, no results invented", { id: "gen-leg-tests" });
+      setLocalRefresh((k) => k + 1);
+      onGenerated?.();
+    } catch (err) {
+      // A gateway timeout still leaves the writes landing — nudge a refresh, don't alarm.
+      console.warn("[LegTestPanel] generate-leg-tests:", err);
+      toast.success("Tests drafted — hypotheses only, no results invented", { id: "gen-leg-tests" });
+      setLocalRefresh((k) => k + 1);
+      onGenerated?.();
+    } finally {
+      setGenerating(false);
+    }
+  }, [generating, frozen, companyId, onGenerated]);
+
+  return (
+    <div style={{ margin: "10px 0 8px", padding: "12px 14px", border: `1px solid ${R.hairline}`, borderRadius: 4, background: "rgba(17,17,17,0.015)" }}>
+      <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkSoft, margin: "0 0 10px" }}>
+        Test for this leg
+      </p>
+      {!loaded ? null : test === null ? (
+        <LegTestState title="Test not yet drafted" sub="This leg is marked as a test, but no hypothesis has been written yet." />
+      ) : test.no_test_needed ? (
+        <LegTestState title="No test needed" sub={test.no_test_needed_reason || ""} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <LegTestField label="Hypothesis" helper="What this leg is betting is true.">{test.hypothesis}</LegTestField>
+          <LegTestField label="If it's working, we'd see">{test.expected_positive_signal}</LegTestField>
+          <LegTestField label="If it's not, we'd see">{test.expected_negative_signal}</LegTestField>
+          {test.result ? (
+            <LegTestField label="Result">{test.result}</LegTestField>
+          ) : (
+            <LegTestState title="Test not yet run — hypothesis only" sub="This is a starting hypothesis. It earns belief once the test runs." />
+          )}
+        </div>
+      )}
+      {isAdmin && !frozen && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleGenerate(); }}
+          disabled={generating}
+          style={{
+            marginTop: 12, fontFamily: R.mono, fontSize: 10, letterSpacing: "0.06em",
+            padding: "5px 10px", borderRadius: 4, border: `1px solid ${R.hairline}`,
+            background: generating ? "rgba(120,120,140,0.12)" : "transparent",
+            color: R.inkSoft, cursor: generating ? "default" : "pointer", opacity: generating ? 0.6 : 1,
+          }}
+        >
+          {generating ? "Drafting test…" : test ? "Regenerate test" : "Generate test"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function LegRow({
   leg,
   index,
@@ -1368,6 +1512,8 @@ export function LegRow({
   driftRefreshKey,
   onCheckDrift,
   checkingSurfaceId,
+  legTestRefreshKey,
+  onLegTestGenerated,
 }: {
   leg: RouteRow;
   index: number;
@@ -1383,6 +1529,8 @@ export function LegRow({
   driftRefreshKey?: number;
   onCheckDrift?: (routeId: string) => void;
   checkingSurfaceId?: string | null;
+  legTestRefreshKey?: number;
+  onLegTestGenerated?: () => void;
 }) {
   const legClaimState = leg.claim_id
     ? ((claimsMap?.get(leg.claim_id)?.state ?? null) as ClaimState | null)
@@ -1493,6 +1641,15 @@ export function LegRow({
             <span style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(17,17,17,0.4)" }}>What this would establish: </span>
             {sourceCondition.condition}
           </p>
+        )}
+        {/* Gate 3: belief-only test on test-class legs (read-only surface) */}
+        {isTestLeg && (
+          <LegTestPanel
+            legId={leg.id}
+            companyId={leg.company_id}
+            refreshKey={legTestRefreshKey}
+            onGenerated={onLegTestGenerated}
+          />
         )}
         {/* Meta line */}
         {steps.length > 0 && (
@@ -1616,6 +1773,8 @@ export function HierarchyRouteSection({
   driftRefreshKey,
   onCheckDrift,
   checkingSurfaceId,
+  legTestRefreshKey,
+  onLegTestGenerated,
 }: {
   route: RouteRow;
   legs: RouteRow[];
@@ -1632,6 +1791,8 @@ export function HierarchyRouteSection({
   driftRefreshKey?: number;
   onCheckDrift?: (routeId: string) => void;
   checkingSurfaceId?: string | null;
+  legTestRefreshKey?: number;
+  onLegTestGenerated?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultExpanded);
   const [expandedLegId, setExpandedLegId] = useState<string | null>(null);
@@ -1758,6 +1919,8 @@ export function HierarchyRouteSection({
               driftRefreshKey={driftRefreshKey}
               onCheckDrift={onCheckDrift}
               checkingSurfaceId={checkingSurfaceId}
+              legTestRefreshKey={legTestRefreshKey}
+              onLegTestGenerated={onLegTestGenerated}
             />
           ))}
         </div>
