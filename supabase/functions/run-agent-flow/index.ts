@@ -6,6 +6,7 @@ import {
   type ContextMode,
   type FlowMode,
 } from "../_shared/adjudication.ts";
+import { companyHasSpine } from "../_shared/spinePredicate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -728,6 +729,15 @@ Deno.serve(async (req) => {
         runtime_contract: runtimeContract,
       },
       task: async () => {
+        // COLD-START SKIP (graceful, before the guard). research-company is birth-only.
+        // If the resolved company already has a spine, skip the cold-start invoke
+        // entirely and return a benign result — do NOT rely on catching the guard's
+        // 409. Same shared predicate as the guard, so the two can't drift; the guard
+        // in research-company remains the absolute backstop this path never trips.
+        if (await companyHasSpine(supabase, String(companyId))) {
+          return { status: "skipped_existing", reason: "company_has_spine" };
+        }
+
         if (runtimeContract?.strict && runtimeContract.orchestrator_mode === "off" && runtimeContract.framework_modes.length !== 1) {
           throw new FlowError(
             "Strict runtime contract requires exactly one framework mode.",

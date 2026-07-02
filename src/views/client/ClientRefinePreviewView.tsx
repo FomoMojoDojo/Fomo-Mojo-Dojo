@@ -451,29 +451,8 @@ export default function ClientRefinePreviewView() {
     queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
   }, [activeCompany?.id, activeCompany?.name, activeCompany?.website, queryClient]);
 
-  const rerunFoundationScope = useCallback(async () => {
-    if (!activeCompany?.id || !activeCompany?.name) {
-      toast.error("No company selected.");
-      return;
-    }
-    toast.loading("Rebuilding foundation and routes…", { id: "rerun-foundation-scope" });
-    const { error } = await supabase.functions.invoke("research-company", {
-      body: {
-        company_id: activeCompany.id,
-        company_name: activeCompany.name,
-        website: activeCompany.website ?? "",
-        journey_key: "customer",
-        review_mode: "advisory",
-      },
-    });
-    if (error) {
-      toast.error(error.message || "Foundation rerun failed.", { id: "rerun-foundation-scope" });
-      return;
-    }
-    await refetchClientViewData();
-    toast.success("Foundation and routes refreshed.", { id: "rerun-foundation-scope" });
-    queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
-  }, [activeCompany?.id, activeCompany?.name, activeCompany?.website, queryClient, refetchClientViewData]);
+  // Deprecated cold-start re-run handler removed (was "Rebuild foundation + routes"):
+  // it invoked research-company on a populated company = re-birth, now guard-blocked.
 
   const rerunOdiJobMapScope = useCallback(async () => {
     if (!activeCompany?.id) {
@@ -4491,9 +4470,11 @@ export default function ClientRefinePreviewView() {
                       <button type="button" className="btn" onClick={() => void runOutsideSignals()}>
                         Refresh outside evidence
                       </button>
-                      <button type="button" className="btn" onClick={() => void rerunFoundationScope()}>
-                        Rebuild foundation + routes
-                      </button>
+                      {/* Deprecated: "Rebuild foundation + routes" re-ran research-company (cold-start)
+                          on a populated company = re-birth, now blocked by the cold-start guard.
+                          Removed so no on-screen control triggers a guaranteed 409. To start fresh,
+                          create a new company via + Add Client. (run-mojo-analysis / job-map / outside
+                          refresh below are re-score/refresh, NOT birth — kept.) */}
                       <button type="button" className="btn" onClick={() => void rerunOdiJobMapScope()}>
                         Regenerate job map
                       </button>

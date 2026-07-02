@@ -31,6 +31,7 @@ import { gateJobStepsForExternal, JOB_FRAMING_FALLBACK_LINE } from "../_shared/j
 import { DELETABLE_PROVENANCE_OR_FILTER, isProtectedJourneyKey, protectedJourneyKeys } from "../_shared/journeyProtection.ts";
 import { planReconcile } from "../_shared/reconcilePublicSynthesis.ts";
 import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/researchSynthesisWrite.ts";
+import { companyHasSpine } from "../_shared/spinePredicate.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
@@ -5191,6 +5192,16 @@ Deno.serve(async (req) => {
 
     if (!company_id || !company_name) {
       return jsonResponse({ error: "company_id and company_name required" }, 400);
+    }
+
+    // COLD-START GUARD (absolute backstop). Cold-start is BIRTH-ONLY: research-company
+    // may build the spine of an EMPTY company, but must REFUSE a company that already
+    // has one — re-running it re-births a living company. This sits before the lock,
+    // the crawl, and every destructive clear, so a refused run does NOTHING. To start
+    // fresh on an existing entity, the operator creates a NEW company and cold-starts
+    // that. Plain machine 409 (no operator prose — the friendly dialog is a later gate).
+    if (await companyHasSpine(supabase, String(company_id))) {
+      return jsonResponse({ error: "company_has_spine" }, 409);
     }
 
     const { data: companyRow, error: companySourceFilterErr } = await supabase

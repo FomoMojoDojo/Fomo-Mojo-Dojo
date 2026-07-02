@@ -2341,18 +2341,21 @@ export default function JobStepsView() {
           : null;
       const jobMapsPayload = customerSupportMap ? [customerSupportMap, jobMap] : [jobMap];
 
+      // DEPRECATED: this re-ran research-company (cold-start) on an existing company
+      // to add/rebuild a journey map = re-birth, now blocked by the cold-start guard.
+      // Invoke neutralized — it resolves a benign deprecation result and makes NO
+      // research-company call. To start fresh, create a NEW company (+ Add Client).
       const runResearchMap = async () =>
         invokeFunctionWithTimeout(
           () =>
-            supabase.functions.invoke("research-company", {
-              body: {
-                company_id: activeCompany.id,
-                company_name: activeCompany.name,
-                website: activeCompany.website ?? "",
-                journeys_to_generate: [key],
-                job_maps: jobMapsPayload,
-                review_mode: "advisory",
+            Promise.resolve({
+              data: {
+                error: "research_rerun_deprecated",
+                message: "Adding maps via re-research is disabled. To start fresh, create a new company (+ Add Client).",
+                journeys: [key],
+                maps: jobMapsPayload.length,
               },
+              error: null,
             }),
           90_000,
         );

@@ -1107,26 +1107,14 @@ function RerunResearchSection({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
 
+  // DEPRECATED + UNREACHABLE. This component is no longer instantiated (the control
+  // was removed — see the render site). Re-running research-company on a populated
+  // company is re-birth, now blocked by the cold-start guard. The invoke is
+  // neutralized so no research-company re-birth call remains even in dead code; the
+  // sanctioned path to a fresh spine is creating a NEW company via + Add Client.
   async function handleConfirm() {
-    setRunPhase("running");
-    setErrorMsg(null);
-    setStartedAt(new Date().toISOString());
-    const { error } = await supabase.functions.invoke("research-company", {
-      body: {
-        company_id: companyId,
-        company_name: companyName,
-        website: companyWebsite ?? "",
-        journey_key: "customer",
-        review_mode: "advisory",
-      },
-    });
-    if (error) {
-      setRunPhase("error");
-      setErrorMsg(error.message || "Research re-run failed.");
-      return;
-    }
-    setRunPhase("idle");
-    setStartedAt(null);
+    setRunPhase("error");
+    setErrorMsg("Re-run is disabled. To start fresh, create a new company (+ Add Client).");
     onSuccess();
   }
 
@@ -1344,19 +1332,11 @@ export default function ClientRefinePreviewCompanyView() {
               />
             )}
 
-            {/* ── Re-run research ── */}
-            {companyId && (
-              <RerunResearchSection
-                companyId={companyId}
-                companyName={activeCompany.name}
-                companyWebsite={activeCompany.website ?? null}
-                lastRunAt={provenance?.lastRunAt ?? null}
-                onSuccess={() => {
-                  void refetch();
-                  setProvenanceRefreshKey(k => k + 1);
-                }}
-              />
-            )}
+            {/* ── Re-run research: DEPRECATED ──
+                RerunResearchSection re-ran research-company (cold-start) on this
+                already-populated company = re-birth, now blocked by the cold-start
+                guard. Control removed so no on-screen action triggers a guaranteed
+                409. To start fresh, create a NEW company via + Add Client. */}
 
             {/* ── Artifact provenance ── */}
             <section>
