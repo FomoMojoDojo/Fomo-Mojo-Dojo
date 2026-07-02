@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
 
 const SIDEBAR_TABS = [
+  { key: "diagnose",    label: "Diagnose" },
   { key: "routes",      label: "Routes" },
   { key: "council",     label: "Council" },
   { key: "needs",       label: "Opportunities" },

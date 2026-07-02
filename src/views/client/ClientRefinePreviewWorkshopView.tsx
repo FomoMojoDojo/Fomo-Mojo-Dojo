@@ -40,6 +40,7 @@ import StrategyOrgPanel from "./workshop/tabs/StrategyOrgPanel";
 import NeedsOrgPanel from "./workshop/tabs/NeedsOrgPanel";
 import InputsTab from "./workshop/tabs/InputsTab";
 import { RoutesOrgPanel } from "./ClientRefinePreviewRoutesView";
+import DiagnosePanel from "./workshop/tabs/DiagnosePanel";
 import WorkshopCouncilTab from "./workshop/tabs/CouncilPanel";
 import { WorkshopSidebar } from "@/components/client/WorkshopSidebar";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
@@ -1557,6 +1558,7 @@ export default function ClientRefinePreviewWorkshopView() {
   }
 
   const TABS: { key: WorkshopTab; label: string }[] = [
+    { key: "diagnose",    label: "Diagnose" },
     { key: "routes",      label: "Routes" },
     { key: "council",     label: "Council" },
     { key: "needs",       label: "Opportunities" },
@@ -1572,6 +1574,7 @@ export default function ClientRefinePreviewWorkshopView() {
     if (activeTab === "strategy")   return <StrategyOutside baseline={baseline} companyId={companyId} integrity={baselineIntegrity} />;
     if (activeTab === "jobmap")     return null;
     if (activeTab === "routes")     return null;
+    if (activeTab === "diagnose")   return null;
     return <NeedsOutside baseline={baseline} exclusion={exclusionControls} integrity={baselineIntegrity} />;
   }
 
@@ -2203,6 +2206,10 @@ export default function ClientRefinePreviewWorkshopView() {
               </div>
             }
           />
+        </div>
+      ) : activeTab === "diagnose" ? (
+        <div className="crpv-ws-content">
+          <DiagnosePanel routes={routes} companyId={companyId ?? undefined} />
         </div>
       ) : activeTab === "routes" ? (
         <div className="crpv-ws-content">

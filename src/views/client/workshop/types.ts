@@ -1,4 +1,4 @@
-export type WorkshopTab = "inputs" | "positioning" | "jobmap" | "strategy" | "jtbd" | "needs" | "routes" | "council";
+export type WorkshopTab = "inputs" | "positioning" | "jobmap" | "strategy" | "jtbd" | "needs" | "routes" | "council" | "diagnose";
 
 export type ActiveCheckpoint = {
   journeyKey: string;
