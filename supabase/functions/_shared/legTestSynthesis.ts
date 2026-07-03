@@ -113,9 +113,9 @@ const GEN_SYSTEM =
   "State the HYPOTHESIS the leg is betting is true, and the two SIGNALS the team would expect to observe — one if the bet is right, one if it is wrong. " +
   "VOICE (client-facing): plain, human language an owner or team would actually use — not consultant phrasing. " +
   "Hard rules: " +
-  "(1) hypothesis = ONE falsifiable belief this leg is testing, grounded in the condition and route. It must be a genuine bet that could turn out FALSE — never a foregone conclusion, never seller-framed ('customers will love it'). " +
-  "(2) expected_positive_signal = the concrete, observable thing you would actually SEE if the hypothesis is TRUE. " +
-  "(3) expected_negative_signal = the concrete, observable thing you would actually SEE if the hypothesis is FALSE. " +
+  "(1) hypothesis = the POSITIVE / TARGET condition the route needs to be TRUE to succeed — the forward win, stated affirmatively. NEVER frame the bet as a problem, pain, confusion, gap, or deficiency being present. If the source condition is pain-framed ('customers are confused by the hours'), restate the target it implies ('customers clearly understand the hours, so they can plan their visit'). It must still be a GENUINE bet that could turn out FALSE — betting that the forward condition holds is NOT seller-framing; a foregone conclusion ('customers will love it') is. " +
+  "(2) POLARITY CONTRACT — expected_positive_signal = the concrete, observable thing you would actually SEE if that target condition HOLDS and the route is progressing (the hypothesis TRUE). " +
+  "(3) expected_negative_signal = the concrete, observable thing you would actually SEE if that target condition FAILS (the hypothesis FALSE). " +
   "(4) NEVER name the company, its brand, or any specific vendor/supplier. " +
   "(5) Do NOT invent facts, numbers, or specifics not grounded in the leg, condition, or route. " +
   "(6) Solution-agnostic; concrete everyday nouns; no abstract business filler. " +
@@ -126,9 +126,9 @@ function buildGenUser(leg: LegInput): string {
   return (
     `Route (the win this supports): ${leg.route_title}\n` +
     `Route detail: ${leg.route_description || "(none)"}\n` +
-    `Condition this leg tests: ${leg.condition}\n` +
+    `Target condition this leg tests FOR (the forward win the route needs true — restate affirmatively if it reads as a problem): ${leg.condition}\n` +
     `The move (what the team will actually do to find out): ${leg.move}\n` +
-    `State the hypothesis this leg is betting is true, and the positive and negative signals you'd expect.`
+    `State the hypothesis as that positive/target condition holding, and the signals you'd see if it holds (positive) vs. fails (negative).`
   );
 }
 
@@ -153,8 +153,10 @@ const JUDGE_SYSTEM =
   "(a) fabricated — the hypothesis invents facts, numbers, or specifics not grounded in the route, condition, or move; " +
   "(b) seller-framed or a foregone conclusion — the hypothesis assumes the win instead of being a genuine bet that could be false; " +
   "(c) ungrounded — the hypothesis is not genuinely tied to THIS condition and move; " +
-  "(d) either signal is not a concrete observable — it merely restates the hypothesis or is vague. " +
-  "Accept (keep=true) ONLY a grounded, falsifiable, honestly-framed hypothesis with two concrete observable signals. Judge honesty and fit, not style. " +
+  "(d) either signal is not a concrete observable — it merely restates the hypothesis or is vague; " +
+  "(e) deficiency-as-the-bet — the proposition the hypothesis bets is TRUE is the PRESENCE of a problem, pain, confusion, gap, or deficiency, rather than the positive/target condition the route needs to hold. Judge the PROPOSITION being bet, not vocabulary: do NOT reject merely because a problem is named as context — reject only when the bet ITSELF is that the deficiency exists. A discovery leg framed as the positive precondition the route depends on is acceptable; " +
+  "(f) polarity — 'if it's working, we'd see' must describe the route SUCCEEDING (the target condition holding) and 'if it's not' its failing. REJECT if the positive signal points at OBSERVING THE PROBLEM rather than the route working. " +
+  "Accept (keep=true) ONLY a grounded, falsifiable, forward/target-framed hypothesis with two concrete observable signals in the correct polarity. Judge honesty and fit, not style. " +
   "JSON only: {\"keep\":true|false,\"reason\":\"<one short clause>\"}.";
 
 function buildJudgeUser(leg: LegInput, test: { hypothesis: string; expected_positive_signal: string; expected_negative_signal: string }): string {
@@ -165,7 +167,7 @@ function buildJudgeUser(leg: LegInput, test: { hypothesis: string; expected_posi
     `Hypothesis: ${test.hypothesis}\n` +
     `If it's working, we'd see: ${test.expected_positive_signal}\n` +
     `If it's not, we'd see: ${test.expected_negative_signal}\n` +
-    `Is the hypothesis grounded, falsifiable, and honestly framed, with two concrete observable signals?`
+    `Is the hypothesis grounded, falsifiable, and forward/target-framed (betting the positive condition the route needs holds — NOT that a problem exists), with two concrete observable signals in the correct polarity ('working' = route succeeding)?`
   );
 }
 
