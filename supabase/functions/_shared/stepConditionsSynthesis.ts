@@ -334,7 +334,7 @@ export async function synthesizeStepConditions(args: {
 // guard (src/lib/frozenCompanies.ts). Remove when CB1/CB2 are retired.
 export const FROZEN_COMPANY_IDS = new Set<string>([
   "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc", // Cafe Barra (CB1)
-  "fd3f7f63-968b-4698-b946-3d6b6450d79d", // Cafe Barra 2 (CB2)
+  // CB2 (Cafe Barra 2, fd3f7f63…) UNFROZEN — now a normal writable, regenerable fixture.
 ]);
 
 // Conditions are an internal-layer artifact — generated only for system-authored/
