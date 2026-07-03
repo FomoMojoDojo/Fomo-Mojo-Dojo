@@ -391,6 +391,7 @@ export function RoutesOrgPanel({
   const [hoveredRouteId, setHoveredRouteId]   = useState<string | null>(null);
   const [confirmRoute, setConfirmRoute]       = useState<RouteRow | null>(null);
   const [regeneratingLegs, setRegeneratingLegs] = useState(false);
+  const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   // Governance + route-generate caps (3a/3b): the handlers + RoutesColumn renders
   // that consume these live in THIS component, so the hooks must resolve here.
   const canApply = useCapability("governance.proposal.apply", activeCompany?.id);
@@ -480,6 +481,41 @@ export function RoutesOrgPanel({
       setRegeneratingLegs(false);
     }
   }, [activeCompany?.id, regeneratingLegs, onCommitSuccess]);
+
+  // Deliberate "Regenerate conditions" (Stage-0): re-rolls generated WWHTBT conditions
+  // on each route, preserving operator-authored conditions verbatim (the edge core's
+  // condition-level origin-merge). Additive — the route's provenance_type is never
+  // changed and legs/tests are untouched. Local qwen + 70b judge, no OpenAI. Long-running;
+  // a gateway timeout still leaves per-route writes landing, so it's treated as "done".
+  const handleRegenerateConditions = useCallback(async () => {
+    if (!activeCompany?.id || regeneratingConditions) return;
+    if (isFrozenCompany(activeCompany.id)) {
+      toast.error("This is a frozen reference company — conditions aren't generated for it.");
+      return;
+    }
+    setRegeneratingConditions(true);
+    toast.loading("Regenerating conditions… (~1–2 min)", { id: "gen-route-conditions" });
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-route-conditions", {
+        body: { company_id: activeCompany.id, write: true },
+      });
+      // Fast structured skips (frozen / no routes) surface their own message.
+      if (data && data.ok === false) {
+        toast.error(data.error || "Couldn't regenerate conditions.", { id: "gen-route-conditions" });
+        return;
+      }
+      if (error) throw error;
+      toast.success("Conditions refreshed — your edits kept", { id: "gen-route-conditions" });
+      onCommitSuccess?.();
+    } catch (err) {
+      // A gateway timeout still leaves the writes landing — nudge a refresh rather than alarm.
+      console.warn("[RoutesOrgPanel] regenerate-conditions:", err);
+      toast.success("Conditions refreshed — your edits kept", { id: "gen-route-conditions" });
+      onCommitSuccess?.();
+    } finally {
+      setRegeneratingConditions(false);
+    }
+  }, [activeCompany?.id, regeneratingConditions, onCommitSuccess]);
 
   const handleGenerateRouteProposal = useCallback(async (routeId: string) => {
     if (!activeCompany?.id) return;
@@ -1141,7 +1177,27 @@ export function RoutesOrgPanel({
           {hasHierarchy ? (
             <>
               {isAdmin && activeCompany?.id && !isFrozenCompany(activeCompany.id) && (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateConditions}
+                    disabled={regeneratingConditions}
+                    title="Generate falsifiable WWHTBT conditions on each route. Operator-authored conditions are kept."
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: 0.2,
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(120,120,140,0.35)",
+                      background: regeneratingConditions ? "rgba(120,120,140,0.12)" : "transparent",
+                      color: "inherit",
+                      cursor: regeneratingConditions ? "default" : "pointer",
+                      opacity: regeneratingConditions ? 0.6 : 1,
+                    }}
+                  >
+                    {regeneratingConditions ? "Regenerating conditions…" : "Regenerate conditions"}
+                  </button>
                   <button
                     type="button"
                     onClick={handleRegenerateLegs}
