@@ -71,16 +71,17 @@ import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import type { ClaimState } from "@/lib/claimState";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import type { SignalBasis } from "@/components/design-system/SignalBasisChip";
+import {
+  sanitizeWebsite,
+  findCompanyCollision,
+  suggestInstanceName,
+  countUploadedFiles,
+  createCompanyInstance,
+  type CompanyCollision,
+} from "@/lib/companyCollision";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function sanitizeWebsite(url?: string) {
-  const trimmed = String(url || "").trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
 }
 
 function StrategicDebugSummary(_props: {
@@ -335,6 +336,18 @@ export default function ClientRefinePreviewWorkshopView() {
   const [newClientName, setNewClientName] = useState("");
   const [newClientWebsite, setNewClientWebsite] = useState("");
   const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
+  // Gate 2 — create-new-instance: collision dialog state. stage 'confirm' shows the
+  // "already exists — create a new instance? OK/Cancel" prompt; stage 'name' is the
+  // validate-loop new-name prompt (re-checks on every OK, stays open on collision).
+  const [instancePrompt, setInstancePrompt] = useState<null | {
+    stage: "confirm" | "name";
+    original: CompanyCollision;
+    fileCount: number;
+  }>(null);
+  const [instanceName, setInstanceName] = useState("");
+  const [instanceNameError, setInstanceNameError] = useState<string | null>(null);
+  const [instanceCopyFiles, setInstanceCopyFiles] = useState(false);
+  const [creatingInstance, setCreatingInstance] = useState(false);
 
   const companyId = activeCompany?.id;
   // Governance split (checkpoint 3a): positioning + cascade apply/reject gated by
@@ -1472,6 +1485,18 @@ export default function ClientRefinePreviewWorkshopView() {
     setCreatingClient(true);
     const sanitizedWebsite = sanitizeWebsite(newClientWebsite);
 
+    // Gate 2 — create-new-instance front door: if the name or normalized URL already
+    // exists, offer a fresh instance instead of silently duplicating. Soft check only.
+    const collision = await findCompanyCollision(name, sanitizedWebsite);
+    if (collision) {
+      const fileCount = await countUploadedFiles(collision.id);
+      setInstancePrompt({ stage: "confirm", original: collision, fileCount });
+      setInstanceCopyFiles(false);
+      setInstanceNameError(null);
+      setCreatingClient(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from("companies")
@@ -1521,6 +1546,107 @@ export default function ClientRefinePreviewWorkshopView() {
     runPublicBaseline,
     setActiveCompanyId,
   ]);
+
+  // Instance dialog OK (confirm stage) → move to the new-name prompt, pre-filled with
+  // an auto-suggested free name so the default OK always succeeds.
+  const handleConfirmInstance = useCallback(async () => {
+    if (!instancePrompt) return;
+    const suggested = await suggestInstanceName(instancePrompt.original.name);
+    setInstanceName(suggested);
+    setInstanceNameError(null);
+    setInstancePrompt({ ...instancePrompt, stage: "name" });
+  }, [instancePrompt]);
+
+  // Name-stage OK: validate-loop (re-check collision on EVERY OK; stay open on
+  // collision) → clone per Q2 (website + curation columns; files opt-in, copied
+  // BEFORE cold start) → cold-start the NEW company via the existing run-agent-flow
+  // invoke shape. The original is only ever read.
+  const handleCreateInstance = useCallback(async () => {
+    if (!instancePrompt || !user?.id || creatingInstance) return;
+    const chosen = cleanText(instanceName);
+    if (!chosen) {
+      setInstanceNameError("A name is required.");
+      return;
+    }
+    const nameTaken = await findCompanyCollision(chosen, undefined);
+    if (nameTaken) {
+      setInstanceNameError("That name is also taken.");
+      return; // validate-loop: stay open
+    }
+
+    setCreatingInstance(true);
+    try {
+      toast.loading(`Creating instance "${chosen}"…`, { id: "create-instance" });
+      const clone = await createCompanyInstance({
+        originalId: instancePrompt.original.id,
+        newName: chosen,
+        userId: user.id,
+        copyFiles: instanceCopyFiles && instancePrompt.fileCount > 0,
+      });
+      for (const failure of clone.fileFailures) {
+        toast.error(`Couldn't copy ${failure} — continuing without it.`);
+      }
+
+      setActiveCompanyId(clone.companyId);
+      await refetchCompany();
+
+      // Cold start the NEW company (birth-only law: only an empty company is ever
+      // cold-started; the original keeps its spine and is untouched). Long-running —
+      // a gateway timeout means it is still running server-side, not a failure.
+      toast.loading(`Researching ${clone.companyName}… (~3–7 min)`, { id: "create-instance" });
+      const { error: flowError } = await supabase.functions.invoke("run-agent-flow", {
+        body: {
+          company_id: clone.companyId,
+          company_name: clone.companyName,
+          website: clone.website,
+          mode: "hybrid",
+          include_public_collection: false,
+          include_local_alignment: true,
+          apply_score_update: true,
+          trigger: "workshop_create_instance",
+          review_mode: "advisory",
+          allow_review_block_save: true,
+        },
+      });
+      if (flowError) {
+        console.warn("[Workshop] create-instance cold start:", flowError);
+        toast.success(
+          `Instance "${clone.companyName}" created — research is still running; refresh in a few minutes.`,
+          { id: "create-instance" },
+        );
+      } else {
+        toast.success(`Instance "${clone.companyName}" created and researched.`, { id: "create-instance" });
+      }
+      await refetchCompany();
+
+      setInstancePrompt(null);
+      setInstanceName("");
+      setInstanceNameError(null);
+      setInstanceCopyFiles(false);
+      setNewClientName("");
+      setNewClientWebsite("");
+      setShowCreateClient(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create the instance.", { id: "create-instance" });
+    } finally {
+      setCreatingInstance(false);
+    }
+  }, [
+    instancePrompt,
+    instanceName,
+    instanceCopyFiles,
+    creatingInstance,
+    user?.id,
+    refetchCompany,
+    setActiveCompanyId,
+  ]);
+
+  const handleCancelInstance = useCallback(() => {
+    setInstancePrompt(null);
+    setInstanceName("");
+    setInstanceNameError(null);
+    setInstanceCopyFiles(false);
+  }, []);
 
   if (!hasCompany) {
     return (
@@ -1942,6 +2068,84 @@ export default function ClientRefinePreviewWorkshopView() {
             />
             Run outside-signals baseline immediately after create
           </label>
+        </section>
+      )}
+
+      {/* Gate 2 — create-new-instance dialog. confirm stage: OK/Cancel. name stage:
+          validate-loop new-name prompt (+ opt-in evidence copy when files exist). */}
+      {isAdmin && instancePrompt && (
+        <section
+          style={{
+            margin: "12px 24px 0",
+            padding: 16,
+            border: "1px solid #d9a441",
+            borderRadius: 12,
+            background: "#fffaf0",
+          }}
+        >
+          {instancePrompt.stage === "confirm" ? (
+            <>
+              <p style={{ margin: 0, color: "#5a4a1f", fontSize: 14 }}>
+                This company/URL already exists (matches <strong>{instancePrompt.original.name}</strong>
+                {instancePrompt.original.website ? ` · ${instancePrompt.original.website}` : ""}). Create a new instance?
+              </p>
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button type="button" className="btn" onClick={() => void handleConfirmInstance()}>
+                  OK
+                </button>
+                <button type="button" className="btn ghost" onClick={handleCancelInstance}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="cap" style={{ margin: 0, color: "#8a6d2f" }}>
+                New instance of {instancePrompt.original.name}
+              </p>
+              <p style={{ margin: "6px 0 0", color: "#5a4a1f", fontSize: 13 }}>
+                Name the new instance. It starts empty, clones the original's website and source
+                settings, and is then researched fresh. The original is not touched.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "end", marginTop: 10 }}>
+                <div>
+                  <input
+                    value={instanceName}
+                    onChange={(event) => {
+                      setInstanceName(event.target.value);
+                      setInstanceNameError(null);
+                    }}
+                    placeholder="Instance name"
+                    style={{ width: "100%", border: "1px solid #d9a441", borderRadius: 6, padding: "9px 10px" }}
+                  />
+                  {instanceNameError && (
+                    <p style={{ margin: "6px 0 0", color: "#b3261e", fontSize: 12 }}>{instanceNameError}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={creatingInstance}
+                  onClick={() => void handleCreateInstance()}
+                >
+                  {creatingInstance ? "Creating…" : "OK"}
+                </button>
+                <button type="button" className="btn ghost" disabled={creatingInstance} onClick={handleCancelInstance}>
+                  Cancel
+                </button>
+              </div>
+              {instancePrompt.fileCount > 0 && (
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, color: "#5a4a1f", fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={instanceCopyFiles}
+                    onChange={(event) => setInstanceCopyFiles(event.target.checked)}
+                  />
+                  Also copy uploaded evidence ({instancePrompt.fileCount} files)
+                </label>
+              )}
+            </>
+          )}
         </section>
       )}
 

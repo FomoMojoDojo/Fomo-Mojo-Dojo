@@ -15,6 +15,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
+import { sanitizeWebsite, findCompanyCollision } from "@/lib/companyCollision";
 import {
   Building2,
   Plus,
@@ -132,10 +133,6 @@ function normalizeUrl(url?: string) {
   if (!u) return "";
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
   return `https://${u}`;
-}
-
-function sanitizeWebsite(url?: string) {
-  return (url ?? "").trim();
 }
 
 function looksLikeUuid(value: string) {
@@ -656,6 +653,19 @@ export default function AdminCompanies() {
 
     setCreating(true);
     const sanitizedWebsite = sanitizeWebsite(website);
+
+    // Gate 2 — create-new-instance detection (shared soft check). The full
+    // instance dialog lives on the workshop "+ Add Client" front door; here we
+    // block the silent duplicate and point at it.
+    const collision = await findCompanyCollision(name.trim(), sanitizedWebsite);
+    if (collision) {
+      showPersistentError(
+        "Company Already Exists",
+        `"${name.trim()}" matches ${collision.name}${collision.website ? ` (${collision.website})` : ""}. To start fresh on the same company, use + Add Client in the workshop — it offers "Create a new instance".`,
+      );
+      setCreating(false);
+      return;
+    }
 
     const { data, error } = await supabase
       .from("companies")

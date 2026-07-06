@@ -404,6 +404,7 @@ export type Database = {
           excluded_signals_json: Json
           human_decision: string | null
           id: string
+          instance_of: string | null
           last_scored_at: string | null
           last_updated: string
           manual_industry_vocab: string[]
@@ -433,6 +434,7 @@ export type Database = {
           excluded_signals_json?: Json
           human_decision?: string | null
           id?: string
+          instance_of?: string | null
           last_scored_at?: string | null
           last_updated?: string
           manual_industry_vocab?: string[]
@@ -462,6 +464,7 @@ export type Database = {
           excluded_signals_json?: Json
           human_decision?: string | null
           id?: string
+          instance_of?: string | null
           last_scored_at?: string | null
           last_updated?: string
           manual_industry_vocab?: string[]
