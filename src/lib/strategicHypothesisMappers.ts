@@ -120,79 +120,7 @@ function hypothesisStatementFromClaim(claim: Claim, kind: StrategicHypothesisKin
     return null;
   }
 
-  if (/public positioning emphasizes artisanal quality more than operational proof/.test(normalized)) {
-    return "Public positioning may need stronger operational proof to win trust.";
-  }
-  if (/competitors appear to win trust through hands on operational support/.test(normalized)) {
-    return "Hands-on operational support may be shaping trust expectations in the category.";
-  }
-  if (/public market signals suggest customer switching costs remain low/.test(normalized)) {
-    return "Switching risk may stay high unless supplier value is easy to perceive.";
-  }
-  if (/partnership support currently depends on hands on service and documentation/.test(normalized)) {
-    return "Operational support may be a core expectation of a credible coffee partner.";
-  }
-  if (/partner fit is defined by owner led ambition training willingness and sustainable volume/.test(normalized)) {
-    return "Selective partner fit may matter more than broad wholesale reach.";
-  }
-  if (/cafe barra frames b2b relationships as partnerships rather than vendor transactions/.test(normalized)) {
-    return "Partnership positioning may be stronger internally than in customer proof.";
-  }
-  if (/reliability concerns appear tied to repeat purchasing confidence/.test(normalized)) {
-    return "Reliability may be influencing repeat purchasing confidence more than current proof shows.";
-  }
-  if (/batch variability is creating recipe adjustment burden inside coffee operations/.test(normalized)) {
-    return "Operational adaptation burden may be part of how buyers judge supplier quality.";
-  }
-  if (/reliability concerns appear tied to repeat purchasing confidence/.test(normalized)) {
-    return "Repeat purchasing may depend more on reliability than on novelty.";
-  }
-  if (/internal strategy favors depth with selected partners over broad wholesale volume/.test(normalized)) {
-    return "Cafe Barra may need to prioritize partner fit over wholesale reach.";
-  }
-  if (/position consulting as system installation rather than deliverables/.test(normalized)) {
-    return "The offer may depend on buyers valuing system installation over static deliverables.";
-  }
-  if (/replace static strategy .* living strategic decision system/.test(normalized)) {
-    return "The offer may depend on buyers seeing static strategy deliverables as insufficient.";
-  }
-  if (/productize decision making through mojomap/.test(normalized)) {
-    return "The model may depend on buyers treating decision systems as a buyable product, not just consulting support.";
-  }
-  if (/achieve consistent high value engagements/.test(normalized)) {
-    return "The model may depend on proving enough value to support premium engagement sizes.";
-  }
-  if (/validate .* through flagship engagements/.test(normalized)) {
-    return "The model may depend on flagship engagements producing credible proof.";
-  }
-  if (/value proposition relies on delivering ideas and execution plans that defy standard business norms/.test(normalized)) {
-    return "The offer may depend on buyers valuing counterintuitive strategic guidance over conventional best practice.";
-  }
-  if (/volunteer engagement and transparent governance enhance community trust and donor willingness/.test(normalized)) {
-    return "Donor willingness may depend on visible governance and community participation.";
-  }
-  if (/strong partnerships with first responder chiefs enable efficient and targeted use of funds/.test(normalized)) {
-    return "One805's responsiveness may depend on close first-responder leadership involvement.";
-  }
-  if (/annual star studded fundraiser|celebrity involvement|successful fundraisers/.test(normalized)) {
-    return "Fundraising momentum may depend on sustaining celebrity-backed community visibility.";
-  }
-  if (/mental wellness endowment fund .* sustained impact|continue growing its endowment/.test(normalized)) {
-    return "Long-term responder support may depend on continued endowment growth.";
-  }
-  if (/supporting all three primary first responder agencies|supporting all first responder agencies/.test(normalized)) {
-    return "One805's positioning may depend on proving county-wide responder coverage is uniquely valuable.";
-  }
-  if (/counterintuitive strategies/.test(normalized)) {
-    return "The offer may depend on buyers valuing counterintuitive strategic guidance over conventional best practice.";
-  }
-  if (/partnership support currently depends on hands on service and documentation/.test(normalized)) {
-    return "Cafe Barra's partnership positioning may only work if hands-on support can scale.";
-  }
-
   if (kind === "candidate_assumption") {
-    if (/partner fit/.test(normalized)) return "Cafe Barra may need to prioritize partner fit over wholesale reach.";
-    if (/support/.test(normalized) && /scale|documentation|hands on/.test(normalized)) return "The model may depend on support expectations being operationally scalable.";
     if (/(assume|depends|requires|relies)/.test(normalized)) {
       if (hasUncertaintyLanguage(statement)) return statement;
       return statement.replace(/\.$/, "").replace(/^their\b/i, "The model").replace(/^the company\b/i, "The model") + ".";
