@@ -79,6 +79,7 @@ import {
   createCompanyInstance,
   type CompanyCollision,
 } from "@/lib/companyCollision";
+import { useCompanyLenses, fetchLensRouteRefs } from "@/lib/lensResolution";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -309,8 +310,32 @@ export default function ClientRefinePreviewWorkshopView() {
   const { user, isAdmin } = useAuth();
   const { companies, setActiveCompanyId, loading: companiesLoading, refetch: refetchCompany , fetchError: companiesFetchError } = useCompany();
   const { activeCompany, hasCompany, confidence } = useClientViewData({ actionLimit: 0 });
+  // Lens focus state must precede useRoutes (the hook takes the focused key).
+  // viewing (viewedSetKey) stays ephemeral — never persisted; choosing is OnStrategyPin's.
+  const [viewedSetKey, setViewedSetKey] = useState<string | null>(null);
+  const [showAllJourneys, setShowAllJourneys] = useState(false);
+  // Lens layer (reads gate): the company's market_lens rows, lead-first. Empty for
+  // frozen fixtures / pre-lens companies ⇒ every consumer falls back to legacy.
+  const { lenses: companyLenses } = useCompanyLenses(activeCompany?.id);
+  // The COMPANY POOL stays unscoped here — hierarchy/unrouted are company-level
+  // properties. Lens scoping applies downstream in filteredRoutes (via
+  // route_lens_refs), so a focused-but-unreferenced lens can render its honest
+  // empty state without flipping company-level layout decisions.
   const { items: routes, loading: routesLoading } = useRoutes(activeCompany?.id);
   const { data: strategicHypothesisRows = [] } = useStrategicHypotheses(activeCompany?.id);
+
+  // Focused lens's referenced route ids: null = no lens layer for the focused key
+  // (legacy filtering applies); a Set (possibly empty) = lens-scoped.
+  const [focusedLensRouteIds, setFocusedLensRouteIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const cid = activeCompany?.id;
+    if (!cid || !viewedSetKey || showAllJourneys) { setFocusedLensRouteIds(null); return; }
+    fetchLensRouteRefs(cid, viewedSetKey).then((res) => {
+      if (!cancelled) setFocusedLensRouteIds(res.lens ? res.referencedRouteIds : null);
+    });
+    return () => { cancelled = true; };
+  }, [activeCompany?.id, viewedSetKey, showAllJourneys]);
 
   const workshopHasHierarchy = routes.some((r) => r.level === "route");
   const unroutedCount = routes.filter((r) => r.parent_id == null && r.level !== "route").length;
@@ -326,11 +351,9 @@ export default function ClientRefinePreviewWorkshopView() {
   const [regeneratingConditions, setRegeneratingConditions] = useState(false);
   const [regeneratingMarket, setRegeneratingMarket] = useState(false);
   const [regeneratingOpportunities, setRegeneratingOpportunities] = useState(false);
-  const [viewedSetKey, setViewedSetKey] = useState<string | null>(null);
   // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
   // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
   const [chosenSetKey, setChosenSetKey] = useState<string | null | undefined>(undefined);
-  const [showAllJourneys, setShowAllJourneys] = useState(false);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [creatingClient, setCreatingClient] = useState(false);
   const [newClientName, setNewClientName] = useState("");
@@ -497,9 +520,19 @@ export default function ClientRefinePreviewWorkshopView() {
     (async () => {
       if (!companyId) { setDeclaredCanvasRow(null); setDeclaredCascadeRow(null); setDirectionView("market"); return; }
       const sb = supabase as unknown as { from: (t: string) => any };
+      // Lens-reads law: with a focused lens, declared artifacts resolve by that
+      // lens's source_direction_key — never first-row. No focus ⇒ legacy limit(1)
+      // (single-declared companies; the M3 coalesced unique index guarantees at
+      // most one row per (company, role, direction)).
+      const declaredCanvasQ = viewedSetKey && !showAllJourneys
+        ? sb.from("positioning_canvases").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").eq("source_direction_key", viewedSetKey).maybeSingle()
+        : sb.from("positioning_canvases").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle();
+      const declaredCascadeQ = viewedSetKey && !showAllJourneys
+        ? sb.from("strategy_cascades").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").eq("source_direction_key", viewedSetKey).maybeSingle()
+        : sb.from("strategy_cascades").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle();
       const [c, k, p] = await Promise.all([
-        sb.from("positioning_canvases").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle(),
-        sb.from("strategy_cascades").select("*").eq("company_id", companyId).eq("artifact_role", "declared_direction").limit(1).maybeSingle(),
+        declaredCanvasQ,
+        declaredCascadeQ,
         sb.from("operator_primary_selection").select("item_key").eq("company_id", companyId).eq("domain", "job_step_set").maybeSingle(),
       ]);
       if (cancelled) return;
@@ -515,7 +548,7 @@ export default function ClientRefinePreviewWorkshopView() {
       setDirectionView((canvasRow || cascadeRow) && pinnedKey && pinnedKey === dirKey ? "declared" : "market");
     })();
     return () => { cancelled = true; };
-  }, [companyId, posRefreshKey, cascadeRefreshKey]);
+  }, [companyId, posRefreshKey, cascadeRefreshKey, viewedSetKey, showAllJourneys]);
 
   const declaredCanvas = useMemo(
     () => (declaredCanvasRow ? mapPositioningCanvasRow(declaredCanvasRow as Parameters<typeof mapPositioningCanvasRow>[0]) : null),
@@ -993,10 +1026,22 @@ export default function ClientRefinePreviewWorkshopView() {
     return () => { cancelled = true; };
   }, [companyId, needsRefreshKey]);
 
-  const marketSwitcherOptions = useMemo(
-    () => setOptions.map((o) => ({ key: o.key, title: o.title, marketDef: marketDefsByKey[o.key] ?? null })),
-    [setOptions, marketDefsByKey],
-  );
+  // Lens layer active ⇒ the switcher lists the company's LENSES (lead first, per
+  // fetchCompanyLenses order); market_def lookup keeps the hypothesis-tier tag.
+  // No lens rows (frozen fixtures / pre-lens) ⇒ legacy distinct-set options.
+  const marketSwitcherOptions = useMemo(() => {
+    if (companyLenses.length > 0) {
+      return companyLenses.map((lens) => {
+        const opt = setOptions.find((o) => o.key === lens.journey_key);
+        return {
+          key: lens.journey_key,
+          title: lens.title || opt?.title || lens.journey_key,
+          marketDef: marketDefsByKey[lens.journey_key] ?? null,
+        };
+      });
+    }
+    return setOptions.map((o) => ({ key: o.key, title: o.title, marketDef: marketDefsByKey[o.key] ?? null }));
+  }, [companyLenses, setOptions, marketDefsByKey]);
 
   // Designed-step count per set — the view-seed signal (prefer the most complete
   // non-internal set when no choice exists).
@@ -1045,8 +1090,12 @@ export default function ClientRefinePreviewWorkshopView() {
     // nothing is chosen, seed the VIEW only (never an assertion) to a real,
     // complete NON-internal set — never the undesigned internal-ops set. View-
     // switching stays ephemeral; the keep-current guard preserves a live selection.
+    // Lens layer: the LEAD lens is the default focus (reads gate). Falls back to
+    // the chosen set, then the heuristic, for pre-lens/frozen companies.
+    const leadLensKey = companyLenses.find((l) => l.portfolio_role === "lead")?.journey_key ?? null;
     const chosen = resolveChosenSet(chosenSetKey ?? null, setOptions.map((j) => j.key)).chosenKey;
     const preferred =
+      (leadLensKey && setOptions.some((j) => j.key === leadLensKey) ? leadLensKey : null) ??
       chosen ??
       heuristicDefaultViewSeed(setOptions.map((j) => j.key), designedByKey) ??
       null;
@@ -1057,7 +1106,7 @@ export default function ClientRefinePreviewWorkshopView() {
     if (setOptions.some((journey) => journey.key !== "customer")) {
       setShowAllJourneys(false);
     }
-  }, [setOptions, chosenSetKey, designedByKey]);
+  }, [setOptions, chosenSetKey, designedByKey, companyLenses]);
 
   const filteredJobSteps = useMemo(() => {
     if (showAllJourneys || !viewedSetKey) return jobSteps;
@@ -1072,12 +1121,26 @@ export default function ClientRefinePreviewWorkshopView() {
 
   const filteredRoutes = useMemo(() => {
     if (showAllJourneys || !viewedSetKey) return routes;
+    // Lens layer active for the focused key: routes resolve via route_lens_refs
+    // (legs ride with their referenced parent). An empty set is the honest
+    // "unassessed" state — NEVER the company pool (the .limit(1)-era description
+    // hack below applies only to pre-lens/frozen companies).
+    if (focusedLensRouteIds) {
+      return routes.filter(
+        (r) => focusedLensRouteIds.has(String(r.id)) || (r.parent_id && focusedLensRouteIds.has(String(r.parent_id))),
+      );
+    }
     return routes.filter((route) => {
       if (!String(route.id || "").startsWith("derived-")) return true;
       const description = cleanText(route.short_description);
       return description.toLowerCase().startsWith(`${viewedSetKey.toLowerCase()} journey`);
     });
-  }, [routes, viewedSetKey, showAllJourneys]);
+  }, [routes, viewedSetKey, showAllJourneys, focusedLensRouteIds]);
+
+  // Honest empty state for a focused-but-unreferenced lens (Edgewood's lenses have
+  // zero route_lens_refs by design until first assessment).
+  const lensRoutesUnassessed =
+    !showAllJourneys && !!viewedSetKey && focusedLensRouteIds !== null && focusedLensRouteIds.size === 0;
 
   const activeRoute = useMemo(
     () => routes.find((r) => r.id === activeRouteId) ?? null,
@@ -2356,6 +2419,7 @@ export default function ClientRefinePreviewWorkshopView() {
             activeStepId={activeStepId}
             onSelectStep={(id) => setActiveStepId((prev) => (prev === id ? null : id))}
             routes={filteredRoutes}
+            routesUnassessedNote={lensRoutesUnassessed ? "No routes assessed for this market yet." : null}
             activeStep={activeStep}
             activeRoute={activeRoute}
             routesReady={!nextBestMove || nextBestMove.type === "start_route"}

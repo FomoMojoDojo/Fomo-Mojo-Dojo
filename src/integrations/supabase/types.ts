@@ -399,6 +399,7 @@ export type Database = {
           area_scores_json: Json | null
           created_at: string
           created_by: string
+          engagement_started_at: string | null
           evidence_note: string | null
           evidence_status: string | null
           excluded_signals_json: Json
@@ -429,6 +430,7 @@ export type Database = {
           area_scores_json?: Json | null
           created_at?: string
           created_by: string
+          engagement_started_at?: string | null
           evidence_note?: string | null
           evidence_status?: string | null
           excluded_signals_json?: Json
@@ -459,6 +461,7 @@ export type Database = {
           area_scores_json?: Json | null
           created_at?: string
           created_by?: string
+          engagement_started_at?: string | null
           evidence_note?: string | null
           evidence_status?: string | null
           excluded_signals_json?: Json
@@ -484,7 +487,15 @@ export type Database = {
           tier?: number
           website?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "companies_instance_of_fkey"
+            columns: ["instance_of"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       company_members: {
         Row: {
@@ -545,6 +556,38 @@ export type Database = {
             foreignKeyName: "company_run_locks_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      competitor_discovery_runs: {
+        Row: {
+          baseline_run_id: number | null
+          company_id: string
+          created_at: string
+          id: number
+          result_json: Json
+        }
+        Insert: {
+          baseline_run_id?: number | null
+          company_id: string
+          created_at?: string
+          id?: never
+          result_json: Json
+        }
+        Update: {
+          baseline_run_id?: number | null
+          company_id?: string
+          created_at?: string
+          id?: never
+          result_json?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "competitor_discovery_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -780,6 +823,48 @@ export type Database = {
           },
         ]
       }
+      delta_dispositions: {
+        Row: {
+          company_id: string
+          created_at: string
+          disposition: string
+          id: string
+          phase: string | null
+          signal_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          disposition: string
+          id?: string
+          phase?: string | null
+          signal_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          disposition?: string
+          id?: string
+          phase?: string | null
+          signal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "delta_dispositions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "delta_dispositions_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: true
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       desired_outcomes: {
         Row: {
           company_id: string
@@ -930,6 +1015,70 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      findings: {
+        Row: {
+          beats: Json | null
+          body: string
+          company_id: string
+          created_at: string
+          id: string
+          kind: string
+          origin_run_id: number | null
+          origin_signal_id: string | null
+          resolved_at: string | null
+          status: string
+          tone: string | null
+        }
+        Insert: {
+          beats?: Json | null
+          body: string
+          company_id: string
+          created_at?: string
+          id?: string
+          kind?: string
+          origin_run_id?: number | null
+          origin_signal_id?: string | null
+          resolved_at?: string | null
+          status?: string
+          tone?: string | null
+        }
+        Update: {
+          beats?: Json | null
+          body?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          origin_run_id?: number | null
+          origin_signal_id?: string | null
+          resolved_at?: string | null
+          status?: string
+          tone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "findings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "findings_origin_run_id_fkey"
+            columns: ["origin_run_id"]
+            isOneToOne: false
+            referencedRelation: "public_baseline_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "findings_origin_signal_id_fkey"
+            columns: ["origin_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
             referencedColumns: ["id"]
           },
         ]
@@ -1090,9 +1239,63 @@ export type Database = {
           },
         ]
       }
+      integrity_runs: {
+        Row: {
+          admitted: number | null
+          company_id: string
+          component: string
+          error: string | null
+          examined: number | null
+          excluded_by_rule: Json | null
+          id: number
+          ran_at: string
+          run_ref: string | null
+          status: string
+          surface_id: string | null
+          surface_type: string | null
+        }
+        Insert: {
+          admitted?: number | null
+          company_id: string
+          component: string
+          error?: string | null
+          examined?: number | null
+          excluded_by_rule?: Json | null
+          id?: never
+          ran_at?: string
+          run_ref?: string | null
+          status: string
+          surface_id?: string | null
+          surface_type?: string | null
+        }
+        Update: {
+          admitted?: number | null
+          company_id?: string
+          component?: string
+          error?: string | null
+          examined?: number | null
+          excluded_by_rule?: Json | null
+          id?: never
+          ran_at?: string
+          run_ref?: string | null
+          status?: string
+          surface_id?: string | null
+          surface_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integrity_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       job_steps: {
         Row: {
           company_id: string
+          conditions_json: Json | null
           created_at: string
           dependency_state: string
           description: string
@@ -1109,6 +1312,7 @@ export type Database = {
           journey_subtitle: string
           journey_title: string
           last_reviewed_at: string | null
+          provenance_type: string | null
           source_run_id: string | null
           stale_reason: string | null
           stale_since_event_id: string | null
@@ -1120,6 +1324,7 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          conditions_json?: Json | null
           created_at?: string
           dependency_state?: string
           description?: string
@@ -1136,6 +1341,7 @@ export type Database = {
           journey_subtitle?: string
           journey_title?: string
           last_reviewed_at?: string | null
+          provenance_type?: string | null
           source_run_id?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
@@ -1147,6 +1353,7 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          conditions_json?: Json | null
           created_at?: string
           dependency_state?: string
           description?: string
@@ -1163,6 +1370,7 @@ export type Database = {
           journey_subtitle?: string
           journey_title?: string
           last_reviewed_at?: string | null
+          provenance_type?: string | null
           source_run_id?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
@@ -1317,6 +1525,115 @@ export type Database = {
             columns: ["stale_since_event_id"]
             isOneToOne: false
             referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_lens: {
+        Row: {
+          anchor_outcome_id: string | null
+          coherence_note: string | null
+          coherence_status: string
+          company_id: string
+          created_at: string
+          id: string
+          journey_key: string
+          portfolio_role: string
+          portfolio_state: string
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          anchor_outcome_id?: string | null
+          coherence_note?: string | null
+          coherence_status?: string
+          company_id: string
+          created_at?: string
+          id?: string
+          journey_key: string
+          portfolio_role?: string
+          portfolio_state?: string
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          anchor_outcome_id?: string | null
+          coherence_note?: string | null
+          coherence_status?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          journey_key?: string
+          portfolio_role?: string
+          portfolio_state?: string
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_lens_anchor_outcome_id_fkey"
+            columns: ["anchor_outcome_id"]
+            isOneToOne: false
+            referencedRelation: "managed_outcomes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_lens_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_lens_links: {
+        Row: {
+          company_id: string
+          created_at: string
+          from_lens_id: string
+          id: string
+          link_type: string
+          note: string | null
+          to_lens_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          from_lens_id: string
+          id?: string
+          link_type: string
+          note?: string | null
+          to_lens_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          from_lens_id?: string
+          id?: string
+          link_type?: string
+          note?: string | null
+          to_lens_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_lens_links_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_lens_links_from_lens_id_fkey"
+            columns: ["from_lens_id"]
+            isOneToOne: false
+            referencedRelation: "market_lens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_lens_links_to_lens_id_fkey"
+            columns: ["to_lens_id"]
+            isOneToOne: false
+            referencedRelation: "market_lens"
             referencedColumns: ["id"]
           },
         ]
@@ -1577,6 +1894,7 @@ export type Database = {
         Row: {
           company_id: string
           confidence: number | null
+          content_identity: string | null
           created_at: string
           dependency_state: string
           desired_outcome: string
@@ -1587,6 +1905,7 @@ export type Database = {
           id: string
           importance: number
           journey_key: string
+          last_confirmed_run_id: string | null
           last_reviewed_at: string | null
           notes: string | null
           odi_canonical_statement: string | null
@@ -1601,11 +1920,14 @@ export type Database = {
           source_url: string | null
           stale_reason: string | null
           stale_since_event_id: string | null
+          status: string
           step_label: string
           step_number: number
           strategy_alignment: string | null
           strategy_alignment_evaluated_at: string | null
           strategy_alignment_reason: string | null
+          superseded_by_id: string | null
+          superseded_reason: string | null
           tier: string
           updated_at: string
           user_id: string
@@ -1614,6 +1936,7 @@ export type Database = {
         Insert: {
           company_id: string
           confidence?: number | null
+          content_identity?: string | null
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
@@ -1624,6 +1947,7 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
           notes?: string | null
           odi_canonical_statement?: string | null
@@ -1638,11 +1962,14 @@ export type Database = {
           source_url?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
+          status?: string
           step_label?: string
           step_number?: number
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
+          superseded_by_id?: string | null
+          superseded_reason?: string | null
           tier?: string
           updated_at?: string
           user_id: string
@@ -1651,6 +1978,7 @@ export type Database = {
         Update: {
           company_id?: string
           confidence?: number | null
+          content_identity?: string | null
           created_at?: string
           dependency_state?: string
           desired_outcome?: string
@@ -1661,6 +1989,7 @@ export type Database = {
           id?: string
           importance?: number
           journey_key?: string
+          last_confirmed_run_id?: string | null
           last_reviewed_at?: string | null
           notes?: string | null
           odi_canonical_statement?: string | null
@@ -1675,11 +2004,14 @@ export type Database = {
           source_url?: string | null
           stale_reason?: string | null
           stale_since_event_id?: string | null
+          status?: string
           step_label?: string
           step_number?: number
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
+          superseded_by_id?: string | null
+          superseded_reason?: string | null
           tier?: string
           updated_at?: string
           user_id?: string
@@ -1702,15 +2034,52 @@ export type Database = {
           },
         ]
       }
+      operator_primary_selection: {
+        Row: {
+          chosen_at: string
+          chosen_by: string | null
+          company_id: string
+          domain: string
+          item_id: string | null
+          item_key: string | null
+        }
+        Insert: {
+          chosen_at?: string
+          chosen_by?: string | null
+          company_id: string
+          domain: string
+          item_id?: string | null
+          item_key?: string | null
+        }
+        Update: {
+          chosen_at?: string
+          chosen_by?: string | null
+          company_id?: string
+          domain?: string
+          item_id?: string | null
+          item_key?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operator_primary_selection_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       opportunities: {
         Row: {
           company_id: string
           confidence: number | null
+          content_identity: string | null
           created_at: string
           frameworks_used: string[]
           id: string
           importance: number
           journey_key: string
+          last_confirmed_run_id: string | null
           managed_outcome_id: string | null
           opportunity_score: number
           outcome: string
@@ -1718,8 +2087,12 @@ export type Database = {
           priority_tier: string
           provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction: number
+          source_run_id: string | null
+          status: string
           step_label: string
           step_number: number
+          superseded_by_id: string | null
+          superseded_reason: string | null
           updated_at: string
           user_id: string
           workflow_status: string
@@ -1727,11 +2100,13 @@ export type Database = {
         Insert: {
           company_id: string
           confidence?: number | null
+          content_identity?: string | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
           importance?: number
           journey_key?: string
+          last_confirmed_run_id?: string | null
           managed_outcome_id?: string | null
           opportunity_score?: number
           outcome?: string
@@ -1739,8 +2114,12 @@ export type Database = {
           priority_tier?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
+          source_run_id?: string | null
+          status?: string
           step_label?: string
           step_number?: number
+          superseded_by_id?: string | null
+          superseded_reason?: string | null
           updated_at?: string
           user_id: string
           workflow_status?: string
@@ -1748,11 +2127,13 @@ export type Database = {
         Update: {
           company_id?: string
           confidence?: number | null
+          content_identity?: string | null
           created_at?: string
           frameworks_used?: string[]
           id?: string
           importance?: number
           journey_key?: string
+          last_confirmed_run_id?: string | null
           managed_outcome_id?: string | null
           opportunity_score?: number
           outcome?: string
@@ -1760,8 +2141,12 @@ export type Database = {
           priority_tier?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
           satisfaction?: number
+          source_run_id?: string | null
+          status?: string
           step_label?: string
           step_number?: number
+          superseded_by_id?: string | null
+          superseded_reason?: string | null
           updated_at?: string
           user_id?: string
           workflow_status?: string
@@ -1792,6 +2177,7 @@ export type Database = {
       }
       positioning_canvases: {
         Row: {
+          artifact_role: string
           best_fit_customers: string
           category_rationale: string
           company_id: string
@@ -1803,10 +2189,14 @@ export type Database = {
           evidence_baseline_signal_ids: Json | null
           frameworks_used: string[]
           id: string
+          known_tensions_json: Json
           market_category: string
           proposed_tagline: string
-          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source: string
+          source_direction_key: string
           strategy_alignment: string | null
           strategy_alignment_evaluated_at: string | null
           strategy_alignment_reason: string | null
@@ -1816,6 +2206,7 @@ export type Database = {
           value_for_customer: string
         }
         Insert: {
+          artifact_role: string
           best_fit_customers?: string
           category_rationale?: string
           company_id: string
@@ -1827,10 +2218,14 @@ export type Database = {
           evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           id?: string
+          known_tensions_json?: Json
           market_category?: string
           proposed_tagline?: string
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source?: string
+          source_direction_key: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
@@ -1840,6 +2235,7 @@ export type Database = {
           value_for_customer?: string
         }
         Update: {
+          artifact_role?: string
           best_fit_customers?: string
           category_rationale?: string
           company_id?: string
@@ -1851,10 +2247,14 @@ export type Database = {
           evidence_baseline_signal_ids?: Json | null
           frameworks_used?: string[]
           id?: string
+          known_tensions_json?: Json
           market_category?: string
           proposed_tagline?: string
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source?: string
+          source_direction_key?: string
           strategy_alignment?: string | null
           strategy_alignment_evaluated_at?: string | null
           strategy_alignment_reason?: string | null
@@ -1867,7 +2267,7 @@ export type Database = {
           {
             foreignKeyName: "positioning_canvases_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -2075,6 +2475,55 @@ export type Database = {
           },
         ]
       }
+      route_lens_refs: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          lens_id: string
+          ref_state: string
+          route_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          lens_id: string
+          ref_state?: string
+          route_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          lens_id?: string
+          ref_state?: string
+          route_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "route_lens_refs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "route_lens_refs_lens_id_fkey"
+            columns: ["lens_id"]
+            isOneToOne: false
+            referencedRelation: "market_lens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "route_lens_refs_route_id_fkey"
+            columns: ["route_id"]
+            isOneToOne: false
+            referencedRelation: "routes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       routes: {
         Row: {
           category: string
@@ -2096,7 +2545,9 @@ export type Database = {
           linked_tension_ids: string[] | null
           parent_id: string | null
           primary_desired_outcome_id: string | null
-          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           pts_value: number
           rejected_alternatives: Json
           relevance_state: string
@@ -2141,7 +2592,9 @@ export type Database = {
           linked_tension_ids?: string[] | null
           parent_id?: string | null
           primary_desired_outcome_id?: string | null
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           pts_value?: number
           rejected_alternatives?: Json
           relevance_state?: string
@@ -2186,7 +2639,9 @@ export type Database = {
           linked_tension_ids?: string[] | null
           parent_id?: string | null
           primary_desired_outcome_id?: string | null
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           pts_value?: number
           rejected_alternatives?: Json
           relevance_state?: string
@@ -2270,9 +2725,12 @@ export type Database = {
           source_type: string
           source_url: string | null
           structure_level: string
+          syndicated_from_client: boolean | null
+          syndication_score: number | null
           topic: string | null
           updated_at: string
           validation_status: string
+          voice_class: string | null
         }
         Insert: {
           claim_text: string
@@ -2294,9 +2752,12 @@ export type Database = {
           source_type: string
           source_url?: string | null
           structure_level?: string
+          syndicated_from_client?: boolean | null
+          syndication_score?: number | null
           topic?: string | null
           updated_at?: string
           validation_status?: string
+          voice_class?: string | null
         }
         Update: {
           claim_text?: string
@@ -2318,9 +2779,12 @@ export type Database = {
           source_type?: string
           source_url?: string | null
           structure_level?: string
+          syndicated_from_client?: boolean | null
+          syndication_score?: number | null
           topic?: string | null
           updated_at?: string
           validation_status?: string
+          voice_class?: string | null
         }
         Relationships: [
           {
@@ -2464,6 +2928,44 @@ export type Database = {
             columns: ["solution_idea_id"]
             isOneToOne: false
             referencedRelation: "solution_ideas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      step_perspective_verdicts: {
+        Row: {
+          company_id: string
+          content_hash: string
+          id: string
+          judge_model: string
+          judged_at: string
+          step_label_excerpt: string
+          verdict: string
+        }
+        Insert: {
+          company_id: string
+          content_hash: string
+          id?: string
+          judge_model: string
+          judged_at?: string
+          step_label_excerpt?: string
+          verdict: string
+        }
+        Update: {
+          company_id?: string
+          content_hash?: string
+          id?: string
+          judge_model?: string
+          judged_at?: string
+          step_label_excerpt?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "step_perspective_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]
@@ -2794,56 +3296,35 @@ export type Database = {
       }
       strategy_assumptions: {
         Row: {
-          affected_route_ids: string[]
           assumption: string
           company_id: string
-          contradicting_evidence: Json
           created_at: string
           id: string
-          invalidated_reason: string | null
           note: string | null
-          prior_statement: string | null
-          reframed_from_id: string | null
-          related_tension_ids: string[]
           source: string
           status: string
-          supporting_evidence: Json
           updated_at: string
           user_id: string
         }
         Insert: {
-          affected_route_ids?: string[]
           assumption: string
           company_id: string
-          contradicting_evidence?: Json
           created_at?: string
           id?: string
-          invalidated_reason?: string | null
           note?: string | null
-          prior_statement?: string | null
-          reframed_from_id?: string | null
-          related_tension_ids?: string[]
           source?: string
           status?: string
-          supporting_evidence?: Json
           updated_at?: string
           user_id: string
         }
         Update: {
-          affected_route_ids?: string[]
           assumption?: string
           company_id?: string
-          contradicting_evidence?: Json
           created_at?: string
           id?: string
-          invalidated_reason?: string | null
           note?: string | null
-          prior_statement?: string | null
-          reframed_from_id?: string | null
-          related_tension_ids?: string[]
           source?: string
           status?: string
-          supporting_evidence?: Json
           updated_at?: string
           user_id?: string
         }
@@ -2855,17 +3336,11 @@ export type Database = {
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "strategy_assumptions_reframed_from_id_fkey"
-            columns: ["reframed_from_id"]
-            isOneToOne: false
-            referencedRelation: "strategy_assumptions"
-            referencedColumns: ["id"]
-          },
         ]
       }
       strategy_cascades: {
         Row: {
+          artifact_role: string
           assumptions_json: Json
           capabilities_json: Json
           company_id: string
@@ -2877,14 +3352,18 @@ export type Database = {
           how_to_win: string
           id: string
           management_systems_json: Json
-          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source: string
+          source_direction_key: string
           updated_at: string
           user_id: string
           where_to_play: string
           winning_aspiration: string
         }
         Insert: {
+          artifact_role: string
           assumptions_json?: Json
           capabilities_json?: Json
           company_id: string
@@ -2896,14 +3375,18 @@ export type Database = {
           how_to_win?: string
           id?: string
           management_systems_json?: Json
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source?: string
+          source_direction_key: string
           updated_at?: string
           user_id: string
           where_to_play?: string
           winning_aspiration?: string
         }
         Update: {
+          artifact_role?: string
           assumptions_json?: Json
           capabilities_json?: Json
           company_id?: string
@@ -2915,8 +3398,11 @@ export type Database = {
           how_to_win?: string
           id?: string
           management_systems_json?: Json
-          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          provenance_type?:
+            | Database["public"]["Enums"]["provenance_type_enum"]
+            | null
           source?: string
+          source_direction_key?: string
           updated_at?: string
           user_id?: string
           where_to_play?: string
@@ -2926,7 +3412,7 @@ export type Database = {
           {
             foreignKeyName: "strategy_cascades_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -3029,6 +3515,42 @@ export type Database = {
           },
         ]
       }
+      surface_educational_content: {
+        Row: {
+          audience: string
+          created_at: string
+          id: string
+          is_published: boolean
+          section_a_template: string | null
+          section_b_content: string | null
+          sort_order: number
+          surface_key: string
+          updated_at: string
+        }
+        Insert: {
+          audience?: string
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          section_a_template?: string | null
+          section_b_content?: string | null
+          sort_order?: number
+          surface_key: string
+          updated_at?: string
+        }
+        Update: {
+          audience?: string
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          section_a_template?: string | null
+          section_b_content?: string | null
+          sort_order?: number
+          surface_key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       surface_proposals: {
         Row: {
           company_id: string
@@ -3085,6 +3607,47 @@ export type Database = {
           },
         ]
       }
+      syndication_verdicts: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: number
+          method: string
+          source_url: string
+          syndicated: boolean
+          syndication_score: number
+          text_hash: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: never
+          method: string
+          source_url: string
+          syndicated: boolean
+          syndication_score: number
+          text_hash: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: never
+          method?: string
+          source_url?: string
+          syndicated?: boolean
+          syndication_score?: number
+          text_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "syndication_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tests: {
         Row: {
           action_id: string
@@ -3098,6 +3661,7 @@ export type Database = {
           no_test_needed: boolean
           no_test_needed_reason: string | null
           result: string | null
+          source: string
           updated_at: string
         }
         Insert: {
@@ -3112,6 +3676,7 @@ export type Database = {
           no_test_needed?: boolean
           no_test_needed_reason?: string | null
           result?: string | null
+          source?: string
           updated_at?: string
         }
         Update: {
@@ -3126,6 +3691,7 @@ export type Database = {
           no_test_needed?: boolean
           no_test_needed_reason?: string | null
           result?: string | null
+          source?: string
           updated_at?: string
         }
         Relationships: [
@@ -3181,12 +3747,42 @@ export type Database = {
       }
     }
     Functions: {
+      find_primary_finding: {
+        Args: { p_company_id: string }
+        Returns: {
+          beats: Json | null
+          body: string
+          company_id: string
+          created_at: string
+          id: string
+          kind: string
+          origin_run_id: number | null
+          origin_signal_id: string | null
+          resolved_at: string | null
+          status: string
+          tone: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "findings"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      has_capability: {
+        Args: { _cap: string; _company_id: string; _user_id: string }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      resolve_primary_job_step_set: {
+        Args: { p_company_id: string }
+        Returns: string
       }
       trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
@@ -3202,6 +3798,7 @@ export type Database = {
         | "odi_survey"
         | "manual"
         | "internal_declared"
+        | "internal_hypothesis"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3339,7 +3936,9 @@ export const Constants = {
         "odi_survey",
         "manual",
         "internal_declared",
+        "internal_hypothesis",
       ],
     },
   },
 } as const
+

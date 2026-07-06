@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchLensRouteRefs } from "@/lib/lensResolution";
 
 type StoredDetailItem = {
   id: string;
@@ -77,16 +78,27 @@ export type RouteRow = {
   strategy_alignment_evaluated_at?: string | null;
 };
 
-export function useRoutes(companyId?: string, refreshKey = 0) {
+// focusJourneyKey (lens reads gate): when a lens focus is passed AND the company
+// has a lens row for it, items are scoped to that lens's route_lens_refs (legs ride
+// with their referenced parent route). lensRouteState tells the consumer which
+// regime it got:
+//   "no-lens"    — no focus, or no lens row for the key ⇒ legacy company pool
+//   "scoped"     — lens focus active, items = the lens's referenced routes
+//   "unassessed" — lens exists but has ZERO refs ⇒ items=[] and the surface must
+//                  render an honest "no routes assessed for this market yet",
+//                  NEVER the company pool.
+export function useRoutes(companyId?: string, refreshKey = 0, focusJourneyKey?: string) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<RouteRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [lensRouteState, setLensRouteState] = useState<"no-lens" | "scoped" | "unassessed">("no-lens");
 
   useEffect(() => {
     if (!companyId) {
       setItems([]);
       setError(null);
       setLoading(false);
+      setLensRouteState("no-lens");
       return;
     }
 
@@ -96,6 +108,12 @@ export function useRoutes(companyId?: string, refreshKey = 0) {
     (async () => {
       setLoading(true);
       setError(null);
+
+      // Resolve the focused lens's referenced route ids up front (read-only).
+      const lensRefs = focusJourneyKey
+        ? await fetchLensRouteRefs(companyId, focusJourneyKey)
+        : null;
+      if (cancelled) return;
 
       let { data, error } = await supabase
         .from("routes")
@@ -111,6 +129,9 @@ export function useRoutes(companyId?: string, refreshKey = 0) {
       if (controller.signal.aborted) return;
 
       if (error) {
+        // DB-error fallback path is NOT lens-scoped — report no-lens so consumers
+        // render it as the legacy pool, not as a lens's routes.
+        setLensRouteState("no-lens");
         const { data: opps, error: oppError } = await supabase
           .from("opportunities")
           .select(
@@ -174,7 +195,7 @@ export function useRoutes(companyId?: string, refreshKey = 0) {
           setError(null);
         }
       } else {
-        const routeRows = ((data as RouteRow[]) ?? []).map((route) => ({
+        let routeRows = ((data as RouteRow[]) ?? []).map((route) => ({
           ...route,
           assumptions_json: route.assumptions_json ?? null,
           dependency_state: route.dependency_state ?? null,
@@ -183,6 +204,23 @@ export function useRoutes(companyId?: string, refreshKey = 0) {
           stale_reason: route.stale_reason ?? null,
           updated_at: route.updated_at ?? null,
         }));
+
+        // Lens scoping: keep routes referenced into the focused lens, plus their
+        // legs (parent_id riding along — R2: one route row, one leg tree). A lens
+        // with zero refs yields the honest empty state, never the company pool
+        // and never the opportunities fallback (those are unassessed too).
+        if (lensRefs?.lens && lensRefs.referencedRouteIds) {
+          const refIds = lensRefs.referencedRouteIds;
+          routeRows = routeRows.filter(
+            (r) => refIds.has(String(r.id)) || (r.parent_id && refIds.has(String(r.parent_id))),
+          );
+          setLensRouteState(refIds.size === 0 ? "unassessed" : "scoped");
+          setItems(routeRows);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        setLensRouteState("no-lens");
 
         if (routeRows.length > 0) {
           setItems(routeRows);
@@ -258,7 +296,7 @@ export function useRoutes(companyId?: string, refreshKey = 0) {
       controller.abort();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, refreshKey]);
+  }, [companyId, refreshKey, focusJourneyKey]);
 
-  return { loading, items, error };
+  return { loading, items, error, lensRouteState };
 }

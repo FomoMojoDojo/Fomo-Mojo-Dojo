@@ -74,6 +74,10 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
       setLoading(true);
       setError(null);
 
+      // With a focus key: exact (company_id, journey_key) market_def. Without one:
+      // LEGACY first-row fallback — acceptable only for single-market consumers;
+      // any surface with a lens/market switcher MUST pass the focused key
+      // (INVESTIGATE assumption #8 — the .limit(1) trap).
       const marketQuery = journeyKey
         ? supabase
             .from("odi_market_definitions")
@@ -90,15 +94,19 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .limit(1)
             .maybeSingle();
 
+      // Lens-reads law: when a focus key is passed, needs are scoped server-side to
+      // that journey — a focused lens must never receive another market's needs.
+      // No key ⇒ legacy company-wide list (pre-lens consumers filter client-side).
+      const needsQuery = supabase
+        .from("odi_needs")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("tier", { ascending: true })
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("opportunity_score", { ascending: false });
       const [marketRes, needsRes] = await Promise.all([
         marketQuery,
-        supabase
-          .from("odi_needs")
-          .select("*")
-          .eq("company_id", companyId)
-          .order("tier", { ascending: true })
-          .order("sort_order", { ascending: true, nullsFirst: false })
-          .order("opportunity_score", { ascending: false }),
+        journeyKey ? needsQuery.eq("journey_key", journeyKey) : needsQuery,
       ]);
 
       if (cancelled) return;

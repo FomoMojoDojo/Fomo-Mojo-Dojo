@@ -1094,6 +1094,7 @@ export default function JobMapOrgPanel({
   activeStepId,
   onSelectStep,
   routes,
+  routesUnassessedNote,
   activeStep,
   activeRoute,
   routesReady,
@@ -1109,6 +1110,10 @@ export default function JobMapOrgPanel({
   activeStepId: string | null;
   onSelectStep: (id: string) => void;
   routes?: RouteRow[];
+  // Lens reads gate: non-null when the focused lens exists but has ZERO
+  // route_lens_refs — the honest "not assessed yet" state. Rendered as a visible
+  // note (never a silent blank, never the company pool).
+  routesUnassessedNote?: string | null;
   activeStep?: JobStepRow | null;
   activeRoute?: RouteRow | null;
   routesReady?: boolean;
@@ -1411,6 +1416,13 @@ export default function JobMapOrgPanel({
           ) : (
             <p style={{ fontFamily: D.sans, fontSize: 18, fontWeight: 500, color: D.inkSoft, margin: "0 0 20px", lineHeight: 1.45, maxWidth: 640 }}>
               This map's market isn't named yet — who is it for, and what are they getting done?
+            </p>
+          )}
+          {/* Lens reads gate: focused lens with zero route_lens_refs — honest state,
+              rendered visibly instead of silently suggesting nothing. */}
+          {routesUnassessedNote && (
+            <p style={{ fontFamily: D.mono, fontSize: 11, color: "#8a6d2f", background: "#fffaf0", border: "1px solid #f0dfae", borderRadius: 4, padding: "7px 11px", margin: "0 0 16px", maxWidth: 640 }}>
+              {routesUnassessedNote}
             </p>
           )}
           {/* Vocabulary gate: the subtitle line is not rendered (operator ruling —
