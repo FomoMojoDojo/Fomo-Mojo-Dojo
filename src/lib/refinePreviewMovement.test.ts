@@ -10,7 +10,7 @@ function makeRow(overrides: Partial<HypothesisProvenanceCard>): HypothesisProven
       id: "hyp-1",
       company_id: "company-1",
       hypothesis_key: "hyp-1",
-      statement: "Public positioning may need stronger operational proof to win trust.",
+      statement: "Category positioning may need stronger operational proof to hold buyer trust.",
       hypothesis_kind: "directional_hypothesis",
       hypothesis_state: "inferred",
       topic: "positioning",
@@ -212,7 +212,7 @@ describe("refine preview movement", () => {
       hypothesis: {
         ...makeRow({}).hypothesis,
         id: "hyp-4",
-        statement: "Switching risk may stay high unless supplier value is easy to perceive.",
+        statement: "Switching risk may persist while supplier benefits are not easy to see.",
       },
     });
     const retiredRow = makeRow({

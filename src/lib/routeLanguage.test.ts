@@ -54,7 +54,7 @@ describe("route language", () => {
       ],
       linkedHypotheses: [
         {
-          statement: "Donor willingness may depend on visible governance and community participation.",
+          statement: "Donor willingness may depend on transparent governance and volunteer participation.",
         },
       ],
     });
@@ -75,7 +75,7 @@ describe("route language", () => {
       ],
       linkedHypotheses: [
         {
-          statement: "Switching risk may stay high unless supplier value is easy to perceive.",
+          statement: "Switching risk may persist while supplier benefits are not easy to see.",
           whatMustBeTrue: ["Supplier switching must remain easy enough that proof gaps change behavior."],
           dependencyType: "supports",
         },

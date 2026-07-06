@@ -22,7 +22,7 @@ function makeHypothesis(overrides: Partial<HypothesisProvenanceCard> = {}): Hypo
       id: "hyp-1",
       company_id: "company-1",
       hypothesis_key: "hyp-1",
-      statement: "Public positioning may need stronger operational proof to win trust.",
+      statement: "Category positioning may need stronger operational proof to hold buyer trust.",
       hypothesis_kind: "directional_hypothesis",
       hypothesis_state: "inferred",
       topic: "positioning",

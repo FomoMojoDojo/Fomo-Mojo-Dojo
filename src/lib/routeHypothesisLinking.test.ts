@@ -22,7 +22,7 @@ function makeRoute(overrides: Partial<RouteHypothesisRouteLike> = {}): RouteHypo
 function makeHypothesis(overrides: Partial<RouteHypothesisLike> = {}): RouteHypothesisLike {
   return {
     id: "hyp-1",
-    statement: "Public positioning may need stronger operational proof to win trust.",
+    statement: "Category positioning may need stronger operational proof to hold buyer trust.",
     hypothesis_kind: "directional_hypothesis",
     hypothesis_state: "inferred",
     topic: "positioning",
@@ -63,7 +63,7 @@ describe("route hypothesis linking", () => {
       hypotheses: [
         {
           hypothesis: makeHypothesis({
-            statement: "Public positioning may need stronger operational proof to win trust.",
+            statement: "Category positioning may need stronger operational proof to hold buyer trust.",
             topic: "positioning",
           }),
           supportShape: { outside: 1, organization: 0, customer: 0 },
@@ -98,7 +98,7 @@ describe("route hypothesis linking", () => {
           hypothesis: makeHypothesis({
             id: "hyp-contradicted",
             hypothesis_state: "contradicted",
-            statement: "Public positioning may need stronger operational proof to win trust.",
+            statement: "Category positioning may need stronger operational proof to hold buyer trust.",
           }),
           supportShape: { outside: 1, organization: 1, customer: 0 },
           hasContradiction: true,
@@ -118,7 +118,7 @@ describe("route hypothesis linking", () => {
           hypothesis: makeHypothesis({
             id: "hyp-unstable",
             hypothesis_state: "unstable",
-            statement: "Public positioning may need stronger operational proof to win trust.",
+            statement: "Category positioning may need stronger operational proof to hold buyer trust.",
           }),
           supportShape: { outside: 1, organization: 1, customer: 0 },
         },
@@ -138,7 +138,7 @@ describe("route hypothesis linking", () => {
             id: "hyp-strong",
             hypothesis_state: "strengthened",
             confidence: "high",
-            statement: "Public positioning may need stronger operational proof to win trust.",
+            statement: "Category positioning may need stronger operational proof to hold buyer trust.",
           }),
           supportShape: { outside: 2, organization: 1, customer: 1 },
         },
