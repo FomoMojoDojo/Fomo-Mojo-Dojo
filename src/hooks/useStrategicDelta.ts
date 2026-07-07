@@ -56,6 +56,21 @@ export type PublicVoiceDelta = {
   shiftedSources: DeltaSourceEntry[];  // persisting source whose claim set moved (APPROXIMATE)
 };
 
+// INT-3: one rendered delta between an internal_declared and a public_observed
+// claim (or a silence). Tri-state honesty: pairing_basis='judge_confirmed'
+// renders plain, 'inferred' renders visibly labeled, 'operator' overrides both.
+// operator_disposition='rejected_pairing' = tombstone (never re-proposed; the
+// row stops rendering as a pair).
+export type ClaimDeltaRow = {
+  id: string;
+  delta_type: "echoed" | "divergent" | "publicly_silent" | "internally_silent";
+  pairing_basis: "judge_confirmed" | "inferred" | "operator";
+  judge_reason: string | null;
+  operator_disposition: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null;
+  declared_statement: string | null;
+  public_statement: string | null;
+};
+
 export type StrategicDeltaData = {
   internal: InternalGroups;
   publicThemes: PublicTheme[];
@@ -65,6 +80,8 @@ export type StrategicDeltaData = {
   alignmentTrend: AlignmentPoint[];
   // PVT-2: source-level public-voice delta between baseline and current run.
   publicVoiceDelta: PublicVoiceDelta;
+  // INT-3: persisted declared-vs-observed claim deltas (the founding signal).
+  claimDeltas: ClaimDeltaRow[];
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -165,9 +182,10 @@ export function useStrategicDelta(companyId?: string) {
         currentRunId: null,
         alignmentTrend: [],
         publicVoiceDelta: { baselineRunId: null, currentRunId: null, newSources: [], droppedSources: [], shiftedSources: [] },
+        claimDeltas: [],
       };
 
-      const [internalRes, publicRes, dispRes, runsRes] = await Promise.all([
+      const [internalRes, publicRes, dispRes, runsRes, deltaRes, claimRes] = await Promise.all([
         supabase
           .from("signals")
           .select("id, framework, claim_text, topic, raw_payload")
@@ -193,7 +211,38 @@ export function useStrategicDelta(companyId?: string) {
           .select("id, created_at, result_json")
           .eq("company_id", companyId)
           .order("id", { ascending: true }),
+        // INT-3: persisted claim deltas + the claims they reference.
+        supabase
+          .from("claim_deltas")
+          .select("id, delta_type, pairing_basis, judge_reason, operator_disposition, declared_claim_id, public_claim_id")
+          .eq("company_id", companyId)
+          .order("delta_type", { ascending: true }),
+        supabase
+          .from("claims")
+          .select("id, statement")
+          .eq("company_id", companyId),
       ]);
+
+      const claimStatementById = new Map<string, string>(
+        ((claimRes.data ?? []) as Array<{ id: string; statement: string }>).map((c) => [c.id, c.statement]),
+      );
+      const claimDeltas: ClaimDeltaRow[] = ((deltaRes.data ?? []) as Array<{
+        id: string;
+        delta_type: ClaimDeltaRow["delta_type"];
+        pairing_basis: ClaimDeltaRow["pairing_basis"];
+        judge_reason: string | null;
+        operator_disposition: ClaimDeltaRow["operator_disposition"];
+        declared_claim_id: string | null;
+        public_claim_id: string | null;
+      }>).map((r) => ({
+        id: r.id,
+        delta_type: r.delta_type,
+        pairing_basis: r.pairing_basis,
+        judge_reason: r.judge_reason,
+        operator_disposition: r.operator_disposition,
+        declared_statement: r.declared_claim_id ? claimStatementById.get(r.declared_claim_id) ?? null : null,
+        public_statement: r.public_claim_id ? claimStatementById.get(r.public_claim_id) ?? null : null,
+      }));
 
       const toDeltaSignal = (r: {
         id: string;
@@ -315,7 +364,7 @@ export function useStrategicDelta(companyId?: string) {
         };
       });
 
-      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta };
+      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas };
     },
   });
 
@@ -335,5 +384,22 @@ export function useStrategicDelta(companyId?: string) {
     queryClient.invalidateQueries({ queryKey });
   }
 
-  return { ...query, setDisposition };
+  // INT-3: operator disposition on a claim delta. 'rejected_pairing' is the
+  // "not a pair" tombstone — persisted here, respected forever by recompute
+  // (the synthesis core never re-proposes a tombstoned content_identity).
+  // Every set stamps operator_seen_at (the acknowledge-by-seeing law).
+  async function setClaimDeltaDisposition(
+    deltaId: string,
+    value: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null,
+  ) {
+    if (!companyId) return;
+    await supabase
+      .from("claim_deltas")
+      .update({ operator_disposition: value, operator_seen_at: new Date().toISOString() })
+      .eq("id", deltaId)
+      .eq("company_id", companyId);
+    queryClient.invalidateQueries({ queryKey });
+  }
+
+  return { ...query, setDisposition, setClaimDeltaDisposition };
 }

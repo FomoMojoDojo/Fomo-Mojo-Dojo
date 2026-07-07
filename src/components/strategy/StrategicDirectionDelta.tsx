@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useStrategicDelta, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta } from "@/hooks/useStrategicDelta";
+import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta } from "@/hooks/useStrategicDelta";
 import { D } from "@/components/design-system/tokens";
 
 // Local accent constants — not in D.* yet
@@ -387,10 +387,160 @@ function Disclosure({
   );
 }
 
+
+// ─── INT-3: Declared vs Observed — the founding signal ────────────────────────
+//
+// Renders persisted claim deltas: judged pairs (echoed / divergent) with the
+// tri-state honesty law (inferred pairings visibly labeled), and the two
+// silence rails (publicly_silent = OPEN QUESTIONS — absence ≠ contradiction;
+// internally_silent = the market speaks, nothing declared). Divergence shows a
+// PASSIVE banner — the strong off-strategy alert arms only once a choosing act
+// exists (pre-choosing, nothing can be "off-strategy").
+
+const DELTA_CHIP: Record<string, { label: string; color: string; bg: string }> = {
+  echoed:    { label: "Echoed",    color: "#2f6b3a", bg: "#eef7ef" },
+  divergent: { label: "Divergent", color: "#8a3b1f", bg: "#fdf1e9" },
+};
+
+function DeltaDispositionActions({ row, onSet }: {
+  row: ClaimDeltaRow;
+  onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
+}) {
+  const opts: Array<{ v: "acknowledged" | "intentional" | "queued" | "rejected_pairing"; label: string; title: string }> = [
+    { v: "acknowledged", label: "Acknowledge", title: "Seen — no action needed now" },
+    { v: "intentional", label: "Intentional", title: "This difference is deliberate" },
+    { v: "queued", label: "Queue", title: "Queue this for strategy work" },
+    { v: "rejected_pairing", label: "Not a pair", title: "These statements are not about the same thing — dismissed pairings never re-propose" },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          title={o.title}
+          onClick={() => onSet(row.id, row.operator_disposition === o.v ? null : o.v)}
+          style={{
+            fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.08em",
+            padding: "3px 8px", borderRadius: 3, cursor: "pointer",
+            border: `1px solid ${row.operator_disposition === o.v ? D.signal : D.hairline}`,
+            background: row.operator_disposition === o.v ? "#f2f6f4" : "transparent",
+            color: row.operator_disposition === o.v ? D.ink : D.inkFaint,
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ClaimDeltaBlock({ deltas, onSet }: {
+  deltas: ClaimDeltaRow[];
+  onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
+}) {
+  if (deltas.length === 0) return null;
+
+  // Tombstoned pairings never render as pairs (their claims re-enter the
+  // silence rails on the next recompute).
+  const pairs = deltas.filter(
+    (d) => (d.delta_type === "echoed" || d.delta_type === "divergent") && d.operator_disposition !== "rejected_pairing",
+  );
+  const openQuestions = deltas.filter((d) => d.delta_type === "publicly_silent");
+  const undeclared = deltas.filter((d) => d.delta_type === "internally_silent");
+  const divergentConfirmed = pairs.filter((d) => d.delta_type === "divergent" && d.pairing_basis === "judge_confirmed");
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px" }}>
+        Declared vs Observed
+      </p>
+
+      {/* Passive divergence banner — prominent, never interrupting. */}
+      {divergentConfirmed.length > 0 && (
+        <div style={{ border: "1px solid #e8c9a8", background: "#fdf6ee", borderRadius: 4, padding: "10px 12px", margin: "0 0 14px" }}>
+          <p style={{ fontFamily: D.sans, fontSize: 12, color: "#8a3b1f", margin: 0, lineHeight: 1.5 }}>
+            The public voice diverges from your declared direction in {divergentConfirmed.length === 1 ? "one place" : `${divergentConfirmed.length} places`} — details below. Nothing is chosen yet, so this is a reading, not an alarm.
+          </p>
+        </div>
+      )}
+
+      {/* Judged pairs */}
+      {pairs.map((d) => {
+        const chip = DELTA_CHIP[d.delta_type];
+        return (
+          <div key={d.id} style={{ border: `1px solid ${D.hairline}`, borderRadius: 4, padding: "10px 12px", marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.08em", color: chip.color, background: chip.bg, border: `1px solid ${chip.color}33`, borderRadius: 3, padding: "2px 7px" }}>
+                {chip.label}
+              </span>
+              {d.pairing_basis === "inferred" && (
+                <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", letterSpacing: "0.08em", color: "#7a6a2f", background: "#fbf6e3", border: "1px solid #e3d9a8", borderRadius: 3, padding: "2px 7px" }}
+                  title="Best-guess pairing — the judge was not confident these are the same subject">
+                  Inferred pairing
+                </span>
+              )}
+            </div>
+            <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
+              <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>You declare · </span>
+              {d.declared_statement}
+            </p>
+            <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
+              <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>Public says · </span>
+              {d.public_statement}
+            </p>
+            {d.judge_reason && (
+              <p style={{ fontFamily: D.sans, fontSize: 11, color: D.inkFaint, margin: "4px 0 0", lineHeight: 1.5 }}>
+                {d.judge_reason}
+              </p>
+            )}
+            <DeltaDispositionActions row={d} onSet={onSet} />
+          </div>
+        );
+      })}
+
+      {/* Silence rail 1 — OPEN QUESTIONS (absence ≠ contradiction, by law) */}
+      {openQuestions.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 8px" }}>
+            Not yet heard publicly — open questions
+          </p>
+          {openQuestions.map((d) => (
+            <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
+              <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
+                {d.declared_statement}
+              </p>
+              <p style={{ fontFamily: D.sans, fontSize: 10.5, color: D.inkFaint, margin: "2px 0 0" }}>
+                The market hasn't heard this yet — an open question, not a conflict.
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Silence rail 2 — the market speaks, nothing declared */}
+      {undeclared.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: "0 0 8px" }}>
+            The market says — undeclared
+          </p>
+          {undeclared.map((d) => (
+            <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
+              <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
+                {d.public_statement}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
-  const { data, isLoading, setDisposition } = useStrategicDelta(companyId);
+  const { data, isLoading, setDisposition, setClaimDeltaDisposition } = useStrategicDelta(companyId);
 
   if (isLoading) {
     return (
@@ -403,7 +553,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
   if (!data) return null;
 
-  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta } = data;
+  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas } = data;
   const { strategicBet, recommendations, sourceReads } = internal;
 
   // PVT-1: current snapshot's public-vs-internal alignment (minimal surface; rich
@@ -413,7 +563,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
     (alignmentTrend.length > 0 ? alignmentTrend[alignmentTrend.length - 1] : null);
 
   // Nothing at all — skip the section entirely
-  if (strategicBet.length + recommendations.length + sourceReads.length + publicThemes.length === 0) {
+  if (strategicBet.length + recommendations.length + sourceReads.length + publicThemes.length + claimDeltas.length === 0) {
     return null;
   }
 
@@ -445,6 +595,9 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
       }}>
         Strategic Foundation
       </p>
+
+      {/* ── INT-3: Declared vs Observed — the founding signal, first position ── */}
+      <ClaimDeltaBlock deltas={claimDeltas} onSet={setClaimDeltaDisposition} />
 
       {/* ── Internal spine — full width, stacked (two-column grid removed) ── */}
       {hasInternal ? (

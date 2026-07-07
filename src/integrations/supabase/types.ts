@@ -182,6 +182,70 @@ export type Database = {
           },
         ]
       }
+      claim_deltas: {
+        Row: {
+          company_id: string
+          computed_at: string
+          content_identity: string
+          declared_claim_id: string | null
+          delta_type: string
+          id: string
+          judge_reason: string | null
+          operator_disposition: string | null
+          operator_seen_at: string | null
+          pairing_basis: string
+          public_claim_id: string | null
+        }
+        Insert: {
+          company_id: string
+          computed_at?: string
+          content_identity: string
+          declared_claim_id?: string | null
+          delta_type: string
+          id?: string
+          judge_reason?: string | null
+          operator_disposition?: string | null
+          operator_seen_at?: string | null
+          pairing_basis?: string
+          public_claim_id?: string | null
+        }
+        Update: {
+          company_id?: string
+          computed_at?: string
+          content_identity?: string
+          declared_claim_id?: string | null
+          delta_type?: string
+          id?: string
+          judge_reason?: string | null
+          operator_disposition?: string | null
+          operator_seen_at?: string | null
+          pairing_basis?: string
+          public_claim_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_deltas_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_deltas_declared_claim_id_fkey"
+            columns: ["declared_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_deltas_public_claim_id_fkey"
+            columns: ["public_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_events: {
         Row: {
           claim_id: string
