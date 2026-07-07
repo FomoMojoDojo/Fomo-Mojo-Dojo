@@ -1038,7 +1038,7 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
           const previous = alignmentResult.applied_score_update?.previous_mojo;
           const updated = alignmentResult.applied_score_update?.updated_mojo;
           if (applied && Number.isFinite(Number(previous)) && Number.isFinite(Number(updated))) {
-            alignmentSummary = ` Mojo score ${Number(previous)}→${Number(updated)} (${areasToRun.join(", ")}).`;
+            alignmentSummary = ` Calibration read ${Number(previous)}→${Number(updated)} (${areasToRun.join(", ")}).`;
           } else {
             alignmentSummary = ` Local comparison completed (${areasToRun.join(", ")}).`;
           }

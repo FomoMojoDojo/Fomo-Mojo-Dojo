@@ -34,6 +34,8 @@ import { writeReconciledOpportunities, writeReconciledNeeds } from "../_shared/r
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
 import { generateMarketHypothesisForSet } from "../_shared/marketHypothesisSynthesis.ts";
+import { snapshotMojoScore } from "../_shared/snapshotMojoScore.ts";
+import { stripScoreColumns } from "../../../src/lib/scoring/scoreWritePolicy.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildClientCorpus } from "../_shared/syndication.ts";
 // B2.0: the floor no longer computes syndication (negatives are exempt by council decision);
@@ -7939,20 +7941,25 @@ Deno.serve(async (req) => {
       needsSourcePaths: odiNeedsInserted > 0 ? Array(odiNeedsInserted).fill(artifactSourcePath) : [],
     });
 
+    // SCORE-1 law: snapshotMojoScore (v1.1.0) is the SOLE writer of the
+    // companies score columns. The gate-based result is a market calibration
+    // read — recorded in area_scores_json + research_artifact_runs, never
+    // written as the Mojo Score.
+    const calibrationRecord = stripScoreColumns(scored);
     const { error: updErr } = await supabase
       .from("companies")
       .update({
-        ...scored,
+        ...calibrationRecord,
         last_scored_at: new Date().toISOString(),
       })
       .eq("id", company_id);
 
     if (updErr) {
-      console.log("[research-company] company score update failed:", updErr.message);
+      console.log("[research-company] company calibration update failed:", updErr.message);
     } else {
-      console.log("[research-company] scored company", {
+      console.log("[research-company] market calibration read recorded", {
         company_id,
-        mojo_score: scored.mojo_score,
+        calibration_mojo: scored.mojo_score,
         evidence_status: scored.evidence_status,
         baseline_run_id: run?.id ?? null,
       });
@@ -8076,6 +8083,16 @@ Deno.serve(async (req) => {
       } catch (e) {
         console.error("[research-company] cold-start MH-5 failed (non-fatal; map keeps boilerplate market_def):", String((e as Error)?.message ?? e));
       }
+    }
+
+    // SCORE-1: post-spine snapshot — the LAST write of the birth. Runs after all
+    // artifacts (spine, MH-5) have landed so the v1.1.0 row and the companies
+    // write-back reflect the full spine, unlike any mid-birth snapshots fired by
+    // evidence-ingest triggers earlier in the run (those stay as history rows;
+    // this one wins on companies — last-wins dedupe). snapshotMojoScore is
+    // internally non-fatal, so this can never fail or roll back the birth.
+    if (!dry_run) {
+      await snapshotMojoScore(supabase, String(company_id));
     }
 
     return jsonResponse({

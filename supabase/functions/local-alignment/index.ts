@@ -221,24 +221,6 @@ function signatureForComparison(args: {
   return `${COMPARISON_SIGNATURE_VERSION}:${stableHash(raw)}`;
 }
 
-function computePotentialProjected(mojoScore: number) {
-  const current = clamp(mojoScore, 0, 100);
-  const headroom = Math.max(0, 100 - current);
-
-  const potentialScore = Math.round(
-    clamp(current + Math.max(10, Math.min(30, headroom * 0.45)), 0, 100),
-  );
-  const projectedScore = Math.round(
-    clamp(
-      Math.max(potentialScore + 10, current + Math.min(42, headroom * 0.62)),
-      0,
-      100,
-    ),
-  );
-
-  return { potential_score: potentialScore, projected_score: projectedScore };
-}
-
 function isLocalOllamaUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
@@ -1239,7 +1221,6 @@ Deno.serve(async (req) => {
           ? -Math.abs(aggregateScoreImpact.points)
           : Math.abs(aggregateScoreImpact.points);
         const updatedMojo = clampInt(currentMojo + signedDelta, 0, 100);
-        const projected = computePotentialProjected(updatedMojo);
         const appliedAt = new Date().toISOString();
 
         const existingEvidenceNote = String((companyRow as { evidence_note?: unknown })?.evidence_note || "").trim();
@@ -1266,12 +1247,13 @@ Deno.serve(async (req) => {
           },
         };
 
+        // SCORE-1 law: snapshotMojoScore (v1.1.0) is the SOLE writer of the
+        // companies score columns. The alignment delta is a calibration read —
+        // its full trail persists in area_scores_json.local_alignment +
+        // evidence_note, and updatedMojo flows to research_artifact_runs only.
         const { error: updateScoreErr } = await supabase
           .from("companies")
           .update({
-            mojo_score: updatedMojo,
-            potential_score: projected.potential_score,
-            projected_score: projected.projected_score,
             last_scored_at: appliedAt,
             evidence_note: nextEvidenceNote,
             area_scores_json: nextAreaScores,

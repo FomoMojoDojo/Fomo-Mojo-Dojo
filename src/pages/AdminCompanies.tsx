@@ -1729,7 +1729,7 @@ export default function AdminCompanies() {
                                 </span>
                                 {typeof run.mojo_score === "number" ? (
                                   <p className="mt-1 font-mono text-[10px] uppercase tracking-wide" style={{ color: c.charcoal }}>
-                                    Mojo {run.mojo_score}
+                                    Calibration {run.mojo_score}
                                   </p>
                                 ) : null}
                               </div>
@@ -1760,7 +1760,7 @@ export default function AdminCompanies() {
                                 className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
                                 style={{ color: c.charcoal, borderColor: c.line, background: "rgba(255,255,255,0.04)" }}
                               >
-                                Mojo {selectedArtifactRun.mojo_score}
+                                Calibration {selectedArtifactRun.mojo_score}
                               </span>
                             ) : null}
                           </div>
