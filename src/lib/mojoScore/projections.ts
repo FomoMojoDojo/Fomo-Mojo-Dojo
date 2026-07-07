@@ -17,7 +17,7 @@
 //   Customer-research contributors (UNLOCKABLE): customer_band_evidence,
 //     state_distribution_health
 
-import type { MojoScoreResult } from "./types";
+import type { MojoScoreResult } from "./types.ts";
 
 // Projection ceilings — the max score each contributor can reach through
 // foundation work alone (no customer research).

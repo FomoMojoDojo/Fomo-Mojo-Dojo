@@ -26,7 +26,6 @@ import type { ClientSummary, InputItem, ScoreArea } from "@/lib/types";
 import { MetaBadge, ScoreChip } from "@/components/ui/semantic-badges";
 import PageContextStatus from "@/components/layout/PageContextStatus";
 import GenericAuditTraceNote from "@/components/diagnostics/GenericAuditTraceNote";
-import { scoreCompanyMojo } from "@/lib/scoring/mojoScore";
 import { computeWorkflowGuidance } from "@/lib/workflowPhase";
 import { mapInputToAreaKey } from "@/lib/areaMapping";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
@@ -295,41 +294,25 @@ export default function MapView() {
   const { items: oppItems } = useOpportunities(activeCompany?.id);
   const { items: routeItems } = useRoutes(activeCompany?.id);
 
-  // MH-1: the score's on-strategy basis reads the REAL operator choice (never the
-  // resolve_primary_job_step_set heuristic). No choice → chosenSetKey is null:
-  // the score does NOT assert a guessed set (it falls to its internal "customer"
-  // default for the number only). `chosenSetKey === null` is the no-chosen-set
-  // signal MH-4 renders as refuse-with-invitation.
+  // MH-1: the no-chosen-set signal MH-4 renders as refuse-with-invitation.
   const { chosenKey: chosenSetKey } = useChosenSetKey(activeCompany?.id);
 
-  const fallbackScores = useMemo(
-    () =>
-      scoreCompanyMojo({
-        inputs,
-        jobSteps,
-        opportunities: Array.isArray(oppItems) ? oppItems : [],
-        managedOutcomes,
-        routes: Array.isArray(routeItems) ? routeItems : [],
-        strategicProblems,
-        baselineRunResultJson: null,
-        primaryJourneyKey: chosenSetKey ?? undefined,
-      }),
-    [inputs, jobSteps, oppItems, managedOutcomes, routeItems, strategicProblems, chosenSetKey],
-  );
-
+  // SCORE-2: the client-side scoreCompanyMojo fallback is retired. MapView reads
+  // the snapshot-cached companies columns like every other surface —
+  // snapshotMojoScore (the sole writer) keeps them live after every mutation.
+  // A company with no stored score shows 0 + the "Estimated" framing rather
+  // than a locally-computed number from a different methodology.
   const displayMojo =
-    (typeof activeCompany?.mojo_score === "number" ? activeCompany.mojo_score : null) ??
-    fallbackScores.mojo_score ??
-    0;
+    typeof activeCompany?.mojo_score === "number" ? activeCompany.mojo_score : 0;
   const usingStoredScores = hasStoredCompanyScores(activeCompany);
   const score = Math.round(safeNumber(displayMojo, 0));
 
-  const evidenceLabel = formatEvidenceLabel(activeCompany?.evidence_status ?? fallbackScores.evidence_status);
-  const evidencePct = evidencePercent(activeCompany?.area_scores_json) ?? Math.round(fallbackScores.evidenceBreakdown.baseline_strength);
+  const evidenceLabel = formatEvidenceLabel(activeCompany?.evidence_status ?? null);
+  const evidencePct = evidencePercent(activeCompany?.area_scores_json) ?? 0;
   const displayAreaScoresJson =
     typeof activeCompany?.area_scores_json === "object" && activeCompany?.area_scores_json !== null
       ? activeCompany.area_scores_json
-      : fallbackScores.area_scores_json;
+      : null;
 
   const initiativeContext = useMemo(
     () =>

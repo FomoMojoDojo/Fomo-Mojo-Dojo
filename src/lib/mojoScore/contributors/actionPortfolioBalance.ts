@@ -1,16 +1,15 @@
-// ── Contributor: Action Portfolio Balance (weight 0% — informational) ────────
+// ── Contributor: Action Portfolio Balance (weight 10%) ───────────────────────
 //
 // Rewards a balanced distribution of Fix / Improve / Create route legs.
-// Weight reduced to 0: portfolio balance is now informational only.
-// The score is still computed and recorded in component_scores for visibility,
-// but it does not contribute to the total mojo score.
 //
-// Weight redistributed to structural_completeness (+5%) and
-// state_distribution_health (+5%) in methodology v1.1.0.
+// SCORE-2 note: a later drift zeroed this weight and redistributed +5% each to
+// structural_completeness and state_distribution_health while (incorrectly)
+// labeling the redistribution "methodology v1.1.0". The v1.1.0 spec — documented
+// by the contributor tests — weights this at 0.10; restored here.
 
 import type { MojoScoreInput, ContributorScore } from "../types.ts";
 
-export const WEIGHT = 0.00;
+export const WEIGHT = 0.10;
 
 export function scoreActionPortfolioBalance(
   input: MojoScoreInput,

@@ -43,7 +43,7 @@ export function scoreEvidenceFreshness(
     ? input.routes.filter((r) => r.level === "leg" || r.level === "action")
     : input.routes;
 
-  const items: Array<{ updated_at: string | null | undefined }> = [
+  const items: Array<{ updated_at?: string | null | undefined }> = [
     ...input.claims,
     ...legs,
   ];

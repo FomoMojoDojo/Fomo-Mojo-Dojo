@@ -322,6 +322,22 @@ describe("scoreStructuralCompleteness", () => {
   it("weight is 0.10", () => {
     expect(scoreStructuralCompleteness(input()).weight).toBe(0.10);
   });
+
+  // SCORE-2 regression guard: a drift ("2C") once gated this contributor on routes
+  // linked to FLOW-state claims — which zeroed it for EVERY company (freshly birthed
+  // spines have no flow claims and no route→claim links), the defect the score-delta
+  // showed live on all six fixtures. Execution progress on legs must score
+  // regardless of claim state.
+  it("scores legs even when no claims are in flow (2C gating regression)", () => {
+    const l = leg("fix", {
+      steps_json: [{ id: "s1", title: "Step", status: "complete" }],
+      evidence_json: [{ id: "e1", title: "Ev", status: "complete" }],
+    });
+    const result = scoreStructuralCompleteness(
+      input({ routes: [topRoute(), l], claims: [claim("outside_view")] }),
+    );
+    expect(result.score).toBe(100);
+  });
 });
 
 // ── evidenceFreshness ─────────────────────────────────────────────────────────

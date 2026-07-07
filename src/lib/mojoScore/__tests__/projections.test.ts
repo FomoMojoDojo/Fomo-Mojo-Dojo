@@ -329,3 +329,61 @@ describe("contributorTier", () => {
   it("returns null for unknown key", () =>
     expect(contributorTier("nonexistent_key")).toBeNull());
 });
+
+// ── SCORE-2: companies write-back unification ─────────────────────────────────
+//
+// snapshotMojoScore (the sole companies-score writer) persists
+//   potential_score = computeReachableScore(result)      — REACHABLE
+//   projected_score = computeUnlockableScore(reachable)  — DESTINATION
+// replacing the old evidence-band-cap formula, so the columns mean exactly what
+// the surfaces (MojoScoreStrip, HomepageHierarchy) render and explain. These
+// tests document that contract against a full-spine-shaped result.
+
+describe("SCORE-2 write-back semantics (potential=REACHABLE, projected=DESTINATION)", () => {
+  const fullSpine: MojoScoreInput = {
+    companyId: "co-spine",
+    claims: Array.from({ length: 10 }, (_, i) => ({
+      id: `c-${i}`,
+      state: "diagnose" as const,
+      claim_type: null,
+      topic: null,
+      outside_support_count: 1,
+      organization_support_count: 0,
+      customer_support_count: 0,
+      updated_at: FRESH,
+    })),
+    routes: [
+      { id: "r1", category: "fix", level: "route", parent_id: null },
+      {
+        id: "l1", category: "fix", level: "leg", parent_id: "r1",
+        steps_json: [{ id: "s1", title: "Step", status: "complete" }],
+        evidence_json: [{ id: "e1", title: "Ev", status: "complete" }],
+      },
+    ],
+    needs: [],
+    computedAt: NOW,
+  };
+
+  const result = computeMojoScore(fullSpine);
+  const reachable = computeReachableScore(result);
+  const destination = computeUnlockableScore(reachable, result);
+
+  it("reachable (→ potential_score) is >= current", () =>
+    expect(reachable).toBeGreaterThanOrEqual(result.total_score));
+
+  it("destination (→ projected_score) is >= reachable", () =>
+    expect(destination).toBeGreaterThanOrEqual(reachable));
+
+  it("both are integers in [0,100]", () => {
+    for (const v of [reachable, destination]) {
+      expect(Number.isInteger(v)).toBe(true);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("structural completeness contributes on a full spine (2C defect stays fixed)", () => {
+    const sc = result.contributors.find((c) => c.key === "structural_completeness");
+    expect(sc?.score).toBe(100);
+  });
+});

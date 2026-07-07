@@ -1,4 +1,4 @@
-// ── Contributor: State Distribution Health (weight 35%) ──────────────────────
+// ── Contributor: State Distribution Health (weight 30%) ──────────────────────
 //
 // Measures how far the claim portfolio has progressed through the state machine.
 // Higher states (focus, flow) earn more points than hypothesis-level claims.
@@ -14,7 +14,7 @@
 
 import type { MojoScoreInput, ContributorScore, EngagementState } from "../types.ts";
 
-export const WEIGHT = 0.35;
+export const WEIGHT = 0.30;
 
 const STATE_POINTS: Record<string, number> = {
   outside_view: 0,

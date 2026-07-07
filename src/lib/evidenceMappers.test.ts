@@ -89,7 +89,11 @@ describe("evidence mappers", () => {
     expect(candidates[0].claim.customer_support_count).toBe(1);
   });
 
-  it("collapses duplicate named-program evidence into one canonical claim", () => {
+  // Verbatim-or-nothing law (ecc4bd5/6180695): the canned canonical-rewrite branch
+  // was deleted — a claim statement is either honestly verbatim or not produced at
+  // all. Named-program marketing prose has no honest claim shape, so it maps to
+  // NOTHING (previously it was synthesized into an invented "canonical" sentence).
+  it("produces no claim for named-program marketing prose (verbatim-or-nothing)", () => {
     const candidates = mapSignalsToClaimCandidates("company-1", [
       makeSignal({
         claim_text: "The company also offers educational sessions called Curiosity Labs.",
@@ -103,15 +107,10 @@ describe("evidence mappers", () => {
       }),
     ]);
 
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0].claim.statement).toBe(
-      "Cafe Barra uses education sessions to reinforce customer experience and partner support.",
-    );
-    expect(candidates[0].sourceSignals).toHaveLength(2);
-    expect(candidates[0].claim.organization_support_count).toBe(2);
+    expect(candidates).toHaveLength(0);
   });
 
-  it("rewrites feature dumps into one concise differentiation claim instead of preserving the raw list", () => {
+  it("produces no claim for feature dumps instead of inventing a differentiation sentence (verbatim-or-nothing)", () => {
     const candidates = mapSignalsToClaimCandidates("company-1", [
       makeSignal({
         claim_text: "Proprietary Barra Roast Method, Selective partner network through a hard-edged Partner Fit Profile, Last Mile Excellence standard for coffee preparation",
@@ -120,10 +119,7 @@ describe("evidence mappers", () => {
       }),
     ]);
 
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0].claim.statement).toBe(
-      "Cafe Barra's differentiation rests on roast method, partner selectivity, and preparation standards.",
-    );
+    expect(candidates).toHaveLength(0);
   });
 
   it("keeps only real contradictions and filters meta contradiction artifacts", () => {
@@ -280,13 +276,14 @@ describe("claim statement stability — key pinning", () => {
     expect(candidates).toHaveLength(2);
 
     // Pin the exact statement string for the first signal's candidate.
-    // synthesizeEvidenceStatement rewrites org-band signals via
-    // summarizeOrganizationEvidence — so the stable key is NOT the raw claim_text.
-    // If this assertion fails after a code change, the stable claim key would
-    // drift — triggering UUID churn for existing claims on the next rebuild.
+    // Verbatim-or-nothing law (ecc4bd5/6180695): org-band statements are the
+    // VERBATIM claim_text — the summarizeOrganizationEvidence canned rewrite was
+    // deleted, and the one-time claim-key churn that implies was operator-accepted
+    // in that gate (CB1 residual row). This pin now guards the POST-law stable
+    // key: if it fails after a code change, claim UUIDs churn on the next rebuild.
     const firstStatement = candidates[0].claim.statement;
     expect(firstStatement).toBe(
-      "Batch variability is creating recipe-adjustment burden inside coffee operations.",
+      "We struggle to track batch quality consistently across production runs",
     );
 
     // The statement must be stable across a second call with identical inputs.

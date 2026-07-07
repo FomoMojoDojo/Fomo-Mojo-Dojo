@@ -28,7 +28,15 @@ const makeRoute = (overrides: Partial<RouteRow> & { id: string }): RouteRow => (
 
 const routeA = makeRoute({ id: "r-a", level: "route" });
 const routeB = makeRoute({ id: "r-b", level: "route" });
-const routeC = makeRoute({ id: "r-c", level: "route", rejected_alternatives: ["Alt C"] as unknown as RouteRow["rejected_alternatives"], what_would_have_to_be_true: ["Condition 1"] as unknown as RouteRow["what_would_have_to_be_true"] });
+const routeC = makeRoute({ id: "r-c", level: "route" });
+// The ruled WRAP shape: an insight-bearing leg under routeC carrying conditions.
+const legC = makeRoute({
+  id: "l-c",
+  level: "leg",
+  parent_id: "r-c",
+  route_insights_json: { pressure: "Real signal" } as unknown as RouteRow["route_insights_json"],
+  what_would_have_to_be_true: [{ condition: "Condition 1", satisfied_flag: false }] as unknown as RouteRow["what_would_have_to_be_true"],
+});
 
 const makeDirectionEvidence = (overrides: Partial<DirectionEvidence> = {}): DirectionEvidence => ({
   directions: [],
@@ -93,13 +101,23 @@ describe("computeFoundationStatus — positioning set, partial cascade", () => {
 });
 
 // ── Fully grounded — all three pillars + directions + wrap ───────────────────
+//
+// WRAP-honesty ruling (computeFoundationStatus): wrapPresent grounds on
+// insight-bearing LEGS carrying what_would_have_to_be_true — top-level routes are
+// the direction count, their legs are the wrapped bets. rejected_alternatives is
+// intentionally NOT required (no honest source for it). Fixtures model that shape.
 
 describe("computeFoundationStatus — fully grounded", () => {
   const routeWithWrap = makeRoute({
     id: "r-wrap",
     level: "route",
-    rejected_alternatives: ["Alt A", "Alt B"] as unknown as RouteRow["rejected_alternatives"],
-    what_would_have_to_be_true: ["Condition A", "Condition B"] as unknown as RouteRow["what_would_have_to_be_true"],
+  });
+  const wrappedLeg = makeRoute({
+    id: "l-wrap",
+    level: "leg",
+    parent_id: "r-wrap",
+    route_insights_json: { pressure: "Real signal" } as unknown as RouteRow["route_insights_json"],
+    what_would_have_to_be_true: [{ condition: "Condition A", satisfied_flag: false }] as unknown as RouteRow["what_would_have_to_be_true"],
   });
 
   const evidence = makeDirectionEvidence({
@@ -111,7 +129,7 @@ describe("computeFoundationStatus — fully grounded", () => {
   const result = computeFoundationStatus(
     fullPositioning as PositioningCanvas,
     fullCascade as StrategyCascade,
-    [routeWithWrap],
+    [routeWithWrap, wrappedLeg],
     evidence,
   );
 
@@ -163,10 +181,11 @@ describe("computeFoundationStatus — only legs (no top-level routes)", () => {
   it("wrapPresent is false (legs not checked)", () => expect(result.wrapPresent).toBe(false));
 });
 
-// ── wrapPresent requires both fields populated ─────────────────────────────────
+// ── wrapPresent: insight-bearing legs must carry win-conditions ────────────────
+// (WRAP-honesty ruling: conditions on insight legs, alternatives NOT required.)
 
-describe("computeFoundationStatus — wrapPresent when both WRAP fields populated", () => {
-  const result = computeFoundationStatus(null, null, [routeC], null);
+describe("computeFoundationStatus — wrapPresent when insight legs carry conditions", () => {
+  const result = computeFoundationStatus(null, null, [routeC, legC], null);
 
   it("directionCount is 1", () => expect(result.directionCount).toBe(1));
   it("wrapPresent is true", () => expect(result.wrapPresent).toBe(true));
