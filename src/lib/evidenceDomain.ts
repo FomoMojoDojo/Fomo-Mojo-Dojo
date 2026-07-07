@@ -117,6 +117,13 @@ export type Signal = {
 
 export type SignalDraft = Omit<Signal, "id" | "created_at" | "updated_at">;
 
+// INT-2 Law 7: provenance (where a claim came from) is ORTHOGONAL to proof
+// (the state/confidence ladder). internal_declared = born from the operator's
+// own uploaded/declared material; public_observed = inferred from public
+// signals. Set ONCE at birth by deriveClaimProvenance (sole authority) and
+// immutable thereafter (DB trigger).
+export type ClaimProvenance = "public_observed" | "internal_declared";
+
 export type Claim = {
   id: string;
   company_id: string;
@@ -124,6 +131,7 @@ export type Claim = {
   topic: string | null;
   claim_type: ClaimType;
   state: ClaimState;
+  provenance: ClaimProvenance;
   outside_support_count: number;
   organization_support_count: number;
   customer_support_count: number;

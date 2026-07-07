@@ -1,6 +1,7 @@
 import {
   type ClaimCandidate,
   type ClaimDraft,
+  type ClaimProvenance,
   type ClaimSignalRefRelationship,
   type ConfidenceLevel,
   type Directness,
@@ -890,8 +891,25 @@ export function mapDifyFileOutputToSignals(args: {
   return signals;
 }
 
+// ── INT-2: sole claim-provenance derivation authority ─────────────────────────
+// A claim is internal_declared ONLY when every backing signal is the operator's
+// own uploaded material (source_type='uploaded_file') in the organization band.
+// Any public/customer signal in the mix keeps it public_observed — a mixed group
+// is observation-corroborated, not purely declared. Empty input ⇒ public_observed
+// (fail-safe: nothing is ever accidentally born declared).
+// This function is the ONLY place provenance is assigned (conflation guard layer 2);
+// the DB trigger makes it immutable after birth (layer 1).
+export function deriveClaimProvenance(
+  backing: Array<{ sourceType: string; band: SignalBand }>,
+): ClaimProvenance {
+  if (backing.length === 0) return "public_observed";
+  return backing.every((b) => b.sourceType === "uploaded_file" && b.band === "organization")
+    ? "internal_declared"
+    : "public_observed";
+}
+
 export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>): ClaimCandidate[] {
-  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus }> }>();
+  const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string }> }>();
 
   signals.forEach((signal, index) => {
     if (!isSignalProvenanceWorthy(signal)) return;
@@ -925,6 +943,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
           customer_support_count: 0,
           triangulation_state: "untested",
           confidence: "low",
+          provenance: "public_observed", // finalized below from the FULL group
           revalidation_flag: signal.framing_fit === "weak" || signal.framing_fit === "unknown",
           raw_payload: { sample_signal: signal.raw_payload },
         },
@@ -953,10 +972,15 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
       directness: signal.directness,
       confidence: signal.confidence_to_use,
       validation: signal.validation_status,
+      sourceType: signal.source_type,
     });
   });
 
   return [...grouped.values()].map((entry) => {
+    // INT-2: provenance from the FULL backing group (sole authority).
+    entry.claim.provenance = deriveClaimProvenance(
+      entry.qualities.map((q) => ({ sourceType: q.sourceType, band: q.band })),
+    );
     const bands = new Set<SignalBand>();
     let hasContradiction = false;
     let hasStrongSupport = false;

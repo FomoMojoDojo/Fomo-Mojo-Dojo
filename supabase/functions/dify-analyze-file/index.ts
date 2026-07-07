@@ -941,7 +941,18 @@ serve(async (req) => {
 
     const envDifyBaseUrl = Deno.env.get("DIFY_API_BASE_URL");
     const fileDifyBaseUrl = envDifyBaseUrl ? undefined : await readLocalEnvValue("DIFY_API_BASE_URL");
-    const DIFY_API_BASE_URL = (envDifyBaseUrl ?? fileDifyBaseUrl ?? "https://api.dify.ai").replace(/\/$/, "");
+    // INT-2 hardening: NO cloud fallback. Internal-doc content is Option B
+    // local-only; a missing DIFY_API_BASE_URL must fail LOUDLY, never silently
+    // route the operator's internal material to api.dify.ai.
+    const rawDifyBaseUrl = envDifyBaseUrl ?? fileDifyBaseUrl;
+    if (!rawDifyBaseUrl) {
+      console.error("[dify-analyze-file] DIFY_API_BASE_URL is not configured — refusing to run (no cloud fallback).");
+      return new Response(
+        JSON.stringify({ ok: false, error: "DIFY_API_BASE_URL not configured — internal analysis is local-only and has no cloud fallback." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const DIFY_API_BASE_URL = rawDifyBaseUrl.replace(/\/$/, "");
     const LOCAL_PARSER_URL =
       Deno.env.get("LOCAL_PARSER_URL") ??
       await readLocalEnvValue("LOCAL_PARSER_URL") ??

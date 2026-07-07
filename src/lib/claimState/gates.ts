@@ -76,7 +76,7 @@ export function checkNoSkip(
 //   • raw-structure signals (not yet extracted/interpreted)
 
 export function checkOutsideViewToDiagnose(
-  claim: Pick<ClaimForGate, "state" | "id">,
+  claim: Pick<ClaimForGate, "state" | "id"> & { provenance?: ClaimForGate["provenance"] },
   refs: ClaimSignalRefForGate[],
 ): GateCheckResult {
   if (claim.state !== "outside_view") {
@@ -100,7 +100,14 @@ export function checkOutsideViewToDiagnose(
     );
   }
 
-  if (supportingRefs.length < 2) {
+  // INT-2 Law 7: the two-source rule is a PROOF rule and does not apply across
+  // the provenance axis. An internal_declared claim is the operator's own
+  // declared material — the operator IS the source of their own intent, so ONE
+  // qualifying org signal suffices. Public claims keep the ≥2 triangulation
+  // rule untouched. Declared claims still never skip past diagnose here —
+  // focus/flow stay customer-earned.
+  const isDeclared = claim.provenance === "internal_declared";
+  if (!isDeclared && supportingRefs.length < 2) {
     blockers.push(
       `Only ${supportingRefs.length} supporting signal(s) — need at least 2 ` +
         "for multi_source triangulation",

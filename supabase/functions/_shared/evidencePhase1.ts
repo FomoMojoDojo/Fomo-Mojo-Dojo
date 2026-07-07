@@ -91,6 +91,11 @@ function normalizeClaimInsert(claim: ClaimDraft & { id?: string }) {
     customer_support_count: claim.customer_support_count,
     triangulation_state: claim.triangulation_state,
     confidence: claim.confidence,
+    // INT-2: provenance persisted at birth (derived by deriveClaimProvenance,
+    // the sole authority, inside mapSignalsToClaimCandidates). The DB trigger
+    // rejects any later change. Existing rows keep theirs via the upsert's
+    // preserved payload ordering (state-preservation comment above applies).
+    provenance: claim.provenance ?? "public_observed",
     revalidation_flag: claim.revalidation_flag,
     raw_payload: claim.raw_payload ?? {},
   };
@@ -240,6 +245,7 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
     const inferred = inferClaimState({
       claimType: candidate.claim.claim_type,
+      provenance: candidate.claim.provenance,
       signalRefs,
       linkedRoute: null,
       linkedOdiNeed: null,

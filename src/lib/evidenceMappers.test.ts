@@ -6,6 +6,7 @@ import {
   mapSignalsToClaimCandidates,
   scoreClaimToJobStepMatch,
   scoreClaimToNeedMatch,
+  deriveClaimProvenance,
 } from "./evidenceMappers";
 
 function makeSignal(overrides: Partial<SignalDraft>): SignalDraft {
@@ -244,6 +245,51 @@ describe("evidence mappers", () => {
 //
 // Do NOT update these expected strings without also running a migration to
 // update deterministicSignalClaimId keys for affected companies.
+
+// ── INT-2: sole provenance-derivation authority ────────────────────────────────
+
+describe("deriveClaimProvenance", () => {
+  it("all uploaded_file org signals ⇒ internal_declared", () => {
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "uploaded_file", band: "organization" },
+        { sourceType: "uploaded_file", band: "organization" },
+      ]),
+    ).toBe("internal_declared");
+  });
+
+  it("any public signal in the mix keeps it public_observed (no laundering)", () => {
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "uploaded_file", band: "organization" },
+        { sourceType: "public_baseline", band: "outside" },
+      ]),
+    ).toBe("public_observed");
+  });
+
+  it("uploaded file in a non-organization band stays public_observed", () => {
+    expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "customer" }])).toBe("public_observed");
+  });
+
+  it("empty backing fails safe to public_observed", () => {
+    expect(deriveClaimProvenance([])).toBe("public_observed");
+  });
+
+  it("mapper births uploaded-doc claims internal_declared end to end", () => {
+    const candidates = mapSignalsToClaimCandidates("company-1", [
+      makeSignal({
+        source_type: "uploaded_file",
+        signal_band: "organization",
+        claim_text: "We will become the system of record for strategy decisions",
+        evidence_excerpt: "We will become the system of record for strategy decisions",
+        directness: "direct",
+        structure_level: "interpreted",
+      }),
+    ]);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].claim.provenance).toBe("internal_declared");
+  });
+});
 
 describe("claim statement stability — key pinning", () => {
   it("org-band uploaded_file signal produces a stable statement (R1 guard)", () => {

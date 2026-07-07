@@ -84,6 +84,36 @@ describe("checkOutsideViewToDiagnose", () => {
     expect(checkOutsideViewToDiagnose(claim, refs).allowed).toBe(false);
   });
 
+  // ── INT-2: provenance-aware single-source clause ──────────────────────────
+  it("internal_declared advances with ONE qualifying org signal (Law 7: two-source is a proof rule, not a provenance rule)", () => {
+    const declared = { id: "c1", state: "outside_view" as const, provenance: "internal_declared" as const };
+    const refs = [
+      ref("supports", { signal_band: "organization", directness: "direct", structure_level: "interpreted" }),
+    ];
+    expect(checkOutsideViewToDiagnose(declared, refs).allowed).toBe(true);
+  });
+
+  it("internal_declared still blocks without a QUALIFYING org signal (raw structure)", () => {
+    const declared = { id: "c1", state: "outside_view" as const, provenance: "internal_declared" as const };
+    const refs = [
+      ref("supports", { signal_band: "organization", directness: "direct", structure_level: "raw" }),
+    ];
+    expect(checkOutsideViewToDiagnose(declared, refs).allowed).toBe(false);
+  });
+
+  it("public regression: public_observed (and provenance-absent) claims keep the >=2 rule", () => {
+    const oneRef = [
+      ref("supports", { signal_band: "organization", directness: "direct", structure_level: "extracted" }),
+    ];
+    expect(checkOutsideViewToDiagnose({ id: "c1", state: "outside_view" as const }, oneRef).allowed).toBe(false);
+    expect(
+      checkOutsideViewToDiagnose(
+        { id: "c1", state: "outside_view" as const, provenance: "public_observed" as const },
+        oneRef,
+      ).allowed,
+    ).toBe(false);
+  });
+
   it("blocks if org signal is raw structure", () => {
     const refs = [
       ref("supports", { signal_band: "organization", directness: "direct", structure_level: "raw" }),

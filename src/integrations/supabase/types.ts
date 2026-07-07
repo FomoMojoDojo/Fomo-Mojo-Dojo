@@ -337,6 +337,7 @@ export type Database = {
           need_statement: string | null
           organization_support_count: number
           outside_support_count: number
+          provenance: string
           raw_payload: Json
           revalidation_flag: boolean
           state: string
@@ -356,6 +357,7 @@ export type Database = {
           need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
+          provenance?: string
           raw_payload?: Json
           revalidation_flag?: boolean
           state?: string
@@ -375,6 +377,7 @@ export type Database = {
           need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
+          provenance?: string
           raw_payload?: Json
           revalidation_flag?: boolean
           state?: string
