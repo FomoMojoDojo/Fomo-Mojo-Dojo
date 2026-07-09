@@ -225,26 +225,39 @@ export async function synthesizeRouteLegs(args: {
     );
 
     const proposed: ProposedLeg[] = [];
+    // SWAP-BATCHING (isolate-timeout fix, option d): run ALL 14b generations for
+    // this route first, THEN all 70b judgments — the interleaved gen→judge→gen…
+    // order forced an Ollama VRAM model swap on nearly every call (only one of
+    // the two models stays resident), which dominated the measured ≥28.6s per
+    // condition-pair. Judge inputs are UNCHANGED: each generation depends only
+    // on (route, condition) and each judgment only on (route, condition, move),
+    // so phase order cannot alter what any call sees. Guards, prompts, and
+    // origin-merge semantics are untouched.
+    type GennedMove = { condition: string; satisfied_flag: boolean; move: string; effort: "low" | "medium" | "high" };
+    const genned: GennedMove[] = [];
     for (const c of route.conditions) {
       const condition = String(c.condition || "").trim();
       if (!condition) continue;
       if (operatorConditions.has(condition)) continue; // an operator leg already covers this condition — keep it, don't double-generate
       const { move, effort } = await generateLegMove({ ollamaUrl: args.ollamaUrl, genModel, route, condition });
+      genned.push({ condition, satisfied_flag: !!c.satisfied_flag, move, effort });
+    }
+    for (const g of genned) {
       // Deterministic org-name guard + empty/restatement rejection, then the 70b honesty judge.
-      let keep = !!move && !orgGuard(move);
-      let reason = !move ? "empty move" : orgGuard(move) ? "names the company" : "";
+      let keep = !!g.move && !orgGuard(g.move);
+      let reason = !g.move ? "empty move" : orgGuard(g.move) ? "names the company" : "";
       let leg_class: LegClass = "build";
       if (keep) {
-        const v = await judgeLegMove({ ollamaUrl: args.ollamaUrl, judgeModel, route, condition, move });
+        const v = await judgeLegMove({ ollamaUrl: args.ollamaUrl, judgeModel, route, condition: g.condition, move: g.move });
         keep = v.keep; reason = v.reason || (v.keep ? "ok" : "rejected"); leg_class = v.leg_class;
       }
       proposed.push({
         parent_route_id: route.id,
         route_title: route.title,
-        condition,
-        satisfied_flag: !!c.satisfied_flag,
-        move,
-        effort,
+        condition: g.condition,
+        satisfied_flag: g.satisfied_flag,
+        move: g.move,
+        effort: g.effort,
         leg_class,
         kept: keep,
         judge_reason: reason,
@@ -305,18 +318,27 @@ export async function generateLegsForCompany(args: {
   judgeModel?: string;
   runId?: string;
   write: boolean;
+  // CHUNKED INVOCATION (isolate-timeout fix, option a): when provided, scope the
+  // run to these route ids so one request stays well under the 400s isolate
+  // wall-clock. Absent ⇒ full-company behavior (harness/back-compat). Write
+  // semantics are IDENTICAL either way — origin-merge is already per-route.
+  routeIds?: string[];
 }): Promise<RouteLegResult> {
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
   const { data: companyRow } = await args.supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle();
   const companyName = String((companyRow as { name?: unknown } | null)?.name ?? "");
 
-  const { data: routeRows, error } = await args.supabase
+  let routeQuery = args.supabase
     .from("routes")
     .select("id, user_id, title, short_description, category, type, what_would_have_to_be_true")
     .eq("company_id", args.companyId)
     .eq("level", "route")
-    .eq("relevance_state", "active")
+    .eq("relevance_state", "active");
+  if (args.routeIds && args.routeIds.length > 0) {
+    routeQuery = routeQuery.in("id", args.routeIds);
+  }
+  const { data: routeRows, error } = await routeQuery
     .order("sort_order", { ascending: true });
   if (error) return { ok: false, error: String(error.message || error) };
 

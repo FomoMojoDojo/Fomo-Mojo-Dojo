@@ -448,39 +448,121 @@ export function RoutesOrgPanel({
     if (error) console.error("[RoutesOrgPanel] Re-evaluate error:", error.message);
   }, [activeCompany?.id]);
 
-  // Deliberate "Regenerate legs": re-rolls generated legs from each route's conditions,
-  // preserves operator-edited legs (the edge core's origin-merge). Local qwen + 70b judge —
-  // no OpenAI in this path. The gen is long-running; the gateway can time out at ~150s while
-  // the writes still land server-side, so a timeout is treated as "done, refresh to see".
+  // Deliberate "Regenerate legs" — CHUNKED (isolate-timeout fix, option a):
+  // one edge request per ROUTE keeps every request far under the 400s isolate
+  // wall-clock that killed full-company runs. Per-chunk completion is detected
+  // from the response when the gateway returns it, and by polling the route's
+  // legs when the gateway cuts the response early (~60s) while the chunk keeps
+  // running server-side. Origin-merge is per-route and idempotent, so a re-click
+  // resumes safely: completed routes keep their legs; operator legs are always
+  // preserved. Failure honesty: a failed route renders with its reason — never
+  // silently skipped. All progress/failure strings are DRAFTS pending signature.
+  type LegGenRouteResult = { title: string; ok: boolean; reason?: string; seconds?: number };
+  const [legGenProgress, setLegGenProgress] = useState<null | {
+    running: boolean;
+    current: number;
+    total: number;
+    title: string;
+    results: LegGenRouteResult[];
+  }>(null);
+
+  // Poll fallback: the chunk is done when the route's legs changed (fresh
+  // created_at or a different leg count — covers the judge-stripped-all case,
+  // where old generated legs are removed and none inserted).
+  const waitForChunk = useCallback(async (routeId: string, preCount: number, startedAtIso: string) => {
+    const capMs = 420_000;
+    const t0 = Date.now();
+    while (Date.now() - t0 < capMs) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const { data, count } = await supabase
+        .from("routes")
+        .select("id, created_at", { count: "exact" })
+        .eq("parent_id", routeId)
+        .eq("level", "leg");
+      const rows = (data ?? []) as Array<{ created_at?: string }>;
+      const fresh = rows.some((l) => String(l.created_at ?? "") > startedAtIso);
+      if (fresh || (count ?? rows.length) !== preCount) return true;
+    }
+    return false;
+  }, []);
+
   const handleRegenerateLegs = useCallback(async () => {
     if (!activeCompany?.id || regeneratingLegs) return;
     if (isFrozenCompany(activeCompany.id)) {
       toast.error("This is a frozen reference company — legs aren't generated for it.");
       return;
     }
+    const parentRoutes = routes
+      .filter((r) => r.level === "route" && (r.relevance_state ?? "active") === "active")
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    if (parentRoutes.length === 0) {
+      toast.error("No active routes to generate legs for.");
+      return;
+    }
+
     setRegeneratingLegs(true);
-    toast.loading("Regenerating legs… (~1–2 min)", { id: "gen-legs" });
+    const results: LegGenRouteResult[] = [];
     try {
-      const { data, error } = await supabase.functions.invoke("generate-route-legs", {
-        body: { company_id: activeCompany.id, write: true },
-      });
-      // Fast structured skips (frozen / no routes / no conditions) surface their own message.
-      if (data && data.ok === false) {
-        toast.error(data.error || "Couldn't regenerate legs.", { id: "gen-legs" });
-        return;
+      for (let i = 0; i < parentRoutes.length; i++) {
+        const route = parentRoutes[i];
+        setLegGenProgress({
+          running: true,
+          current: i + 1,
+          total: parentRoutes.length,
+          title: route.title,
+          results: [...results],
+        });
+
+        const startedAtIso = new Date().toISOString();
+        const chunkT0 = Date.now();
+        const { count: preCount } = await supabase
+          .from("routes")
+          .select("id", { count: "exact", head: true })
+          .eq("parent_id", route.id)
+          .eq("level", "leg");
+
+        let outcome: LegGenRouteResult;
+        try {
+          const { data, error } = await supabase.functions.invoke("generate-route-legs", {
+            body: { company_id: activeCompany.id, write: true, route_ids: [route.id] },
+          });
+          if (data && data.ok === false) {
+            outcome = { title: route.title, ok: false, reason: String(data.error || "generation failed") };
+          } else if (error) {
+            throw error;
+          } else {
+            outcome = { title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) };
+          }
+        } catch {
+          // Gateway cut the response — the chunk usually keeps running server-side.
+          // Poll for its writes; only a silent 7 minutes is an honest timeout.
+          const landed = await waitForChunk(route.id, preCount ?? 0, startedAtIso);
+          outcome = landed
+            ? { title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) }
+            : { title: route.title, ok: false, reason: "timeout — no legs appeared within 7 minutes" };
+        }
+        results.push(outcome);
+        setLegGenProgress({
+          running: i + 1 < parentRoutes.length,
+          current: i + 1,
+          total: parentRoutes.length,
+          title: route.title,
+          results: [...results],
+        });
       }
-      if (error) throw error;
-      toast.success("Legs refreshed — your edits kept", { id: "gen-legs" });
-      onCommitSuccess?.();
-    } catch (err) {
-      // A gateway timeout still leaves the writes landing — nudge a refresh rather than alarm.
-      console.warn("[RoutesOrgPanel] regenerate-legs:", err);
-      toast.success("Legs refreshed — your edits kept", { id: "gen-legs" });
+
+      const okCount = results.filter((r) => r.ok).length;
+      if (okCount === results.length) {
+        toast.success(`Legs refreshed for all ${results.length} routes — your edits kept`, { id: "gen-legs" });
+      } else {
+        toast.error(`${okCount} of ${results.length} routes completed — re-click to resume the rest (finished routes keep their legs).`, { id: "gen-legs" });
+      }
       onCommitSuccess?.();
     } finally {
       setRegeneratingLegs(false);
+      setLegGenProgress((p) => (p ? { ...p, running: false } : p));
     }
-  }, [activeCompany?.id, regeneratingLegs, onCommitSuccess]);
+  }, [activeCompany?.id, regeneratingLegs, routes, waitForChunk, onCommitSuccess]);
 
   // Deliberate "Regenerate conditions" (Stage-0): re-rolls generated WWHTBT conditions
   // on each route, preserving operator-authored conditions verbatim (the edge core's
@@ -1216,8 +1298,42 @@ export function RoutesOrgPanel({
                       opacity: regeneratingLegs ? 0.6 : 1,
                     }}
                   >
-                    {regeneratingLegs ? "Regenerating legs…" : "Regenerate legs"}
+                    {regeneratingLegs
+                      ? "Regenerating legs…"
+                      : legGenProgress && legGenProgress.results.some((r) => !r.ok)
+                        ? "Resume leg generation"
+                        : "Regenerate legs"}
                   </button>
+                </div>
+              )}
+              {/* Chunked-run progress (DRAFT strings pending operator signature):
+                  live per-route line, per-route marks with failure reasons, and
+                  an honest completion/resume summary. */}
+              {legGenProgress && (
+                <div style={{ margin: "0 0 12px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12 }}>
+                  {legGenProgress.running ? (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      Generating legs — route {legGenProgress.current} of {legGenProgress.total}: {legGenProgress.title}
+                    </p>
+                  ) : (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      {legGenProgress.results.filter((r) => r.ok).length} of {legGenProgress.total} routes completed
+                      {legGenProgress.results.some((r) => !r.ok)
+                        ? " — re-click to resume; finished routes keep their legs (your edits are always kept)."
+                        : "."}
+                    </p>
+                  )}
+                  {legGenProgress.results.length > 0 && (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                      {legGenProgress.results.map((r, i) => (
+                        <li key={i} style={{ color: r.ok ? "#2f6b3a" : "#b3261e" }}>
+                          {r.ok ? "✓" : "✗"} {r.title}
+                          {r.ok && typeof r.seconds === "number" ? ` (${r.seconds}s)` : ""}
+                          {!r.ok && r.reason ? ` — ${r.reason}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
               {desiredOutcome && <DesiredOutcomeBanner outcome={desiredOutcome} />}

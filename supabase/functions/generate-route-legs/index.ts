@@ -46,8 +46,11 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write } = await req.json();
+    const { company_id, write, route_ids } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
+    // Chunked invocation (option a): optional route scoping keeps each request
+    // under the isolate wall-clock; absent = full-company (harness back-compat).
+    const routeIds = Array.isArray(route_ids) ? route_ids.filter((r: unknown) => typeof r === "string") : undefined;
     const doWrite = write !== false; // default true; write:false ⇒ dry-run
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
@@ -71,6 +74,7 @@ serve(async (req) => {
       write: doWrite,
       runId: `generate-route-legs:${new Date().toISOString().slice(0, 10)}`,
       nowIso: new Date().toISOString(),
+      routeIds,
     });
 
     if (result.ok) {
