@@ -20,6 +20,7 @@ import { useStrategicChangeSummary } from "@/hooks/useStrategicChangeSummary";
 import { getRefinePreviewActiveHypotheses } from "@/components/client/RefinePreviewHypothesesSection";
 import { selectBestProposal, normalizeToDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { stageLabel } from "@/lib/phaseDisplay";
+import { useDiagnoseReadiness } from "@/lib/phaseReadiness";
 import type { MojoMapDiagnostic } from "@/lib/mojoMapDiagnostic";
 import { CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -103,6 +104,12 @@ export default function ClientRefinePreviewView() {
   } = useClientViewData({ actionLimit: 5 });
 
   const rawPhase = activeCompany?.engagement_phase ?? "outside_signals";
+  // INT-4 tri-state chip: operator-set → plain; NOT set + diagnose-ready →
+  // DIAGNOSE labeled as auto-read; NOT set + not ready → outside_signals floor.
+  // Read-only derivation (single authority: src/lib/phaseReadiness.ts).
+  const phaseIsSet = activeCompany?.engagement_phase_set === true;
+  const { ready: diagnoseReady } = useDiagnoseReadiness(activeCompany?.id, !phaseIsSet);
+  const autoReadDiagnose = !phaseIsSet && diagnoseReady;
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
   // ── Homepage drift scan (mirrors workshop-page A78 pattern) ───────────────
@@ -3346,7 +3353,7 @@ export default function ClientRefinePreviewView() {
                     phase={phase}
                   />
                 ) : (
-                  <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+                  <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {ENGAGEMENT_DAY ?? "—"} · {dominantClaimState ? dominantClaimState.replace(/_/g, " ").toUpperCase() : autoReadDiagnose ? "DIAGNOSE · AUTO-READ — NOT YET CONFIRMED" : stageLabel(phase).toUpperCase()}</span>
                 )}
               </div>
             </header>

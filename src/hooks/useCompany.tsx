@@ -31,6 +31,12 @@ export interface Company {
   area_scores_json: AreaScoresJson;
   public_source_filters_json?: Record<string, unknown> | null;
   program_phase?: string | null;
+  // INT-4 tri-state honesty: TRUE only when the operator actually SET a phase
+  // (program_phase non-NULL in the DB). The normalized engagement_phase below
+  // defaults NULL to "outside_signals", which masked set-vs-derived and
+  // dead-coded MapView's adminPhase ?? autoPhase hybrid — no consumer may
+  // silently treat a derived phase as a set one.
+  engagement_phase_set?: boolean;
   // Normalised, always-valid engagement phase derived from program_phase on read.
   // Use this instead of casting program_phase directly.
   engagement_phase: EngagementPhase;
@@ -70,6 +76,7 @@ const PUBLIC_CAFE_BARRA_FALLBACK: Company = {
   area_scores_json: null,
   public_source_filters_json: null,
   program_phase: "outside_signals",
+  engagement_phase_set: true, // mock company behaves as operator-set
   engagement_phase: "outside_signals",
   excluded_signals_json: [],
   selected_route_id: null,
@@ -205,6 +212,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     const companies = ((data as Company[]) || []).map((row) => ({
       ...row,
       engagement_phase: normalizeEngagementPhase(row.program_phase),
+      engagement_phase_set: row.program_phase != null,
     }));
     setCompanies(companies);
     setLoading(false);

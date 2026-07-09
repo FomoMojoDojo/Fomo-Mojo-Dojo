@@ -80,6 +80,7 @@ import {
   type CompanyCollision,
 } from "@/lib/companyCollision";
 import { useCompanyLenses, fetchLensRouteRefs } from "@/lib/lensResolution";
+import { useDiagnoseReadiness } from "@/lib/phaseReadiness";
 
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -317,6 +318,12 @@ export default function ClientRefinePreviewWorkshopView() {
   // Lens layer (reads gate): the company's market_lens rows, lead-first. Empty for
   // frozen fixtures / pre-lens companies ⇒ every consumer falls back to legacy.
   const { lenses: companyLenses } = useCompanyLenses(activeCompany?.id);
+  // INT-4 passive advancement offer: shown only when the phase is NOT operator-set
+  // AND internal evidence exists (single readiness authority). Dismissable for the
+  // session; reappears naturally on revisit while still unset+ready. Never writes.
+  const phaseIsSet = activeCompany?.engagement_phase_set === true;
+  const { ready: diagnoseReady } = useDiagnoseReadiness(activeCompany?.id, !phaseIsSet && isAdmin);
+  const [advanceOfferDismissed, setAdvanceOfferDismissed] = useState(false);
   // The COMPANY POOL stays unscoped here — hierarchy/unrouted are company-level
   // properties. Lens scoping applies downstream in filteredRoutes (via
   // route_lens_refs), so a focused-but-unreferenced lens can render its honest
@@ -2070,7 +2077,7 @@ export default function ClientRefinePreviewWorkshopView() {
           <b>Mojo</b>
           {workshopHasHierarchy ? (
             <span className="cap">
-              [{activeCompany?.name?.toUpperCase() || "COMPANY"}] · DAY {workshopEngagementDay ?? "—"} · {workshopDominantClaimState ? workshopDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(activeCompany?.engagement_phase ?? "diagnose").toUpperCase()}
+              [{activeCompany?.name?.toUpperCase() || "COMPANY"}] · DAY {workshopEngagementDay ?? "—"} · {workshopDominantClaimState ? workshopDominantClaimState.replace(/_/g, " ").toUpperCase() : !phaseIsSet && diagnoseReady ? "DIAGNOSE · AUTO-READ — NOT YET CONFIRMED" : stageLabel(activeCompany?.engagement_phase ?? "diagnose").toUpperCase()}
             </span>
           ) : (
             <CompanySwitcher
@@ -2083,6 +2090,31 @@ export default function ClientRefinePreviewWorkshopView() {
           )}
         </div>
       </header>
+
+      {/* INT-4: passive diagnose-advancement offer (DRAFT copy pending operator
+          signature). Passive means passive: no modal, no auto-write, dismissable. */}
+      {isAdmin && !phaseIsSet && diagnoseReady && !advanceOfferDismissed && (
+        <section
+          style={{
+            margin: "12px 24px 0", padding: "10px 14px", border: "1px solid #cfdcd4",
+            background: "#f4f9f6", borderRadius: 10, display: "flex", alignItems: "center", gap: 12,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 13, color: "#31514a", flex: 1 }}>
+            Internal evidence has arrived — advance to Diagnose?
+          </p>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => navigate(`${CLIENT_REFINE_PREVIEW_COMPANY_ROUTE}?advance=diagnose`)}
+          >
+            Review &amp; confirm
+          </button>
+          <button type="button" className="btn ghost" onClick={() => setAdvanceOfferDismissed(true)}>
+            Dismiss
+          </button>
+        </section>
+      )}
 
       {isAdmin && showCreateClient && (
         <section

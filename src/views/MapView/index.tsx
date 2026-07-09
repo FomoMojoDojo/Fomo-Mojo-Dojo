@@ -31,6 +31,7 @@ import { mapInputToAreaKey } from "@/lib/areaMapping";
 import { isGenericAuditCompany } from "@/lib/genericAudit";
 import { deriveInitiativeContext } from "@/lib/initiativeFocus";
 import { useChosenSetKey } from "@/lib/chosenJobStepSet";
+import { useDiagnoseReadiness } from "@/lib/phaseReadiness";
 import { supabase } from "@/integrations/supabase/client";
 
 /* ── Palette ── */
@@ -136,17 +137,11 @@ function MiniBar({ value }: { value: number }) {
   );
 }
 
-/** Derive the engagement phase from available signals. Admin-set phase takes precedence. */
-function deriveAutoPhase(args: {
-  hasPublicEvidence: boolean;
-  hasCompanyEvidence: boolean;
-  workflowPhase: "diagnose" | "focus" | "flow";
-}): EngagementPhase {
-  if (!args.hasPublicEvidence && !args.hasCompanyEvidence) return "outside_signals";
-  if (args.workflowPhase === "diagnose") return "diagnose";
-  if (args.workflowPhase === "focus") return "focus";
-  return "flow";
-}
+// INT-4: the old local deriveAutoPhase (public/company-evidence + workflow
+// guesses) was deleted — it was (a) DEAD, because adminPhase read the
+// normalized engagement_phase whose NULL→"outside_signals" default is truthy,
+// so `adminPhase ?? autoPhase` never reached it, and (b) a second readiness
+// authority. Readiness now has exactly ONE source: src/lib/phaseReadiness.ts.
 
 /** Compact Routes summary strip: Fix / Improve / Create columns */
 function RoutesStrip({ routes, companyId }: { routes: ReturnType<typeof useRoutes>["items"]; companyId?: string }) {
@@ -349,8 +344,12 @@ export default function MapView() {
     [routeItems],
   );
 
-  // Admin-set phase (already normalised by useCompany)
-  const adminPhase: EngagementPhase | null = activeCompany?.engagement_phase ?? null;
+  // INT-4 tri-state: operator-SET phase (engagement_phase_set) renders plain;
+  // NOT set + diagnose-ready renders DIAGNOSE as an auto-read; else the
+  // outside_signals floor. Read-only derivation — nothing here writes.
+  const phaseIsSet = activeCompany?.engagement_phase_set === true;
+  const adminPhase: EngagementPhase | null = phaseIsSet ? (activeCompany?.engagement_phase ?? null) : null;
+  const { ready: diagnoseReady } = useDiagnoseReadiness(activeCompany?.id, !phaseIsSet);
 
   const workflow = useMemo(
     () =>
@@ -370,19 +369,9 @@ export default function MapView() {
     [inputs, sourceSignals, activeCompany?.evidence_status, oppItems, mapRoutes.length, strategicProblems, adminPhase],
   );
 
-  // Program phase: prefer admin-set value, fallback to auto-derived from signals
-  const autoPhase = useMemo(
-    () =>
-      deriveAutoPhase({
-        hasPublicEvidence: sourceSignals.hasPublicEvidence,
-        hasCompanyEvidence: sourceSignals.hasCompanyEvidence,
-        workflowPhase: (workflow.phase === "diagnose" || workflow.phase === "focus" || workflow.phase === "flow")
-          ? workflow.phase
-          : "diagnose",
-      }),
-    [sourceSignals.hasPublicEvidence, sourceSignals.hasCompanyEvidence, workflow.phase],
-  );
-  const currentPhase: EngagementPhase = adminPhase ?? autoPhase;
+  // Program phase tri-state: set → plain; derived → labeled auto-read; else floor.
+  const autoReadDiagnose = !phaseIsSet && diagnoseReady;
+  const currentPhase: EngagementPhase = adminPhase ?? (autoReadDiagnose ? "diagnose" : "outside_signals");
 
   const handlePhaseChange = async (phase: EngagementPhase) => {
     if (!activeCompany?.id) return;
@@ -561,6 +550,12 @@ export default function MapView() {
             isAdmin={!!user}
             onPhaseChange={handlePhaseChange}
           />
+          {/* INT-4 tri-state honesty: a derived phase never masquerades as set. */}
+          {autoReadDiagnose && (
+            <p className="mb-3 font-mono text-[10px] uppercase tracking-wider" style={{ color: "#b45309" }}>
+              AUTO-READ — not yet confirmed{/* DRAFT copy pending operator signature */}
+            </p>
+          )}
           {savingPhase && (
             <p className="mb-3 font-mono text-[10px] uppercase tracking-wider" style={{ color: c.muted }}>
               Saving phase…

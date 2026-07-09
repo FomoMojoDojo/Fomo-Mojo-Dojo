@@ -943,19 +943,45 @@ const PHASE_OPTIONS: Array<{ key: SelectablePhase; label: string; tagline: strin
 
 const SELECTABLE_KEYS = new Set<string>(["diagnose", "focus", "flow"]);
 
+// INT-4: human labels for the phaseAllows capabilities named in the confirm
+// dialog (operator actions must show their consequence).
+const CAPABILITY_LABELS: Record<string, string> = {
+  prioritization_advice: "Prioritization advice",
+  route_recommendations: "Route recommendations",
+  execution_guidance: "Execution guidance",
+  assumptions_section: "Assumptions sections",
+  evidence_section: "Evidence sections",
+  strengthen_section: "Strengthen sections",
+  gate_scores_section: "Gate-score breakdowns",
+};
+
 function EngagementPhaseSection({
   companyId,
   currentPhase,
+  phaseIsSet,
   onSaved,
 }: {
   companyId: string;
   currentPhase: EngagementPhase;
+  // INT-4 tri-state: false ⇒ program_phase is NULL (chip is derived, not set);
+  // the confirm dialog then also names that scheduled drift scanning begins.
+  phaseIsSet?: boolean;
   onSaved: () => void;
 }) {
   const activeKey: SelectablePhase | null = SELECTABLE_KEYS.has(currentPhase) ? (currentPhase as SelectablePhase) : null;
   const [pending, setPending] = useState<SelectablePhase | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // INT-4 banner handoff: /preview/client-refine/company?advance=diagnose
+  // pre-opens the EXISTING pending→confirm flow (no second writer, no auto-write).
+  useEffect(() => {
+    const advance = new URLSearchParams(window.location.search).get("advance");
+    if (advance && SELECTABLE_KEYS.has(advance) && advance !== activeKey) {
+      setPending(advance as SelectablePhase);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentDef = getPhaseDefinition(currentPhase);
   const pendingDef = pending ? PHASE_OPTIONS.find(p => p.key === pending) : null;
@@ -1045,6 +1071,22 @@ function EngagementPhaseSection({
           <p style={{ fontFamily: C.inter, fontSize: 13, color: C.ink, margin: 0 }}>
             Change engagement phase from <strong>{currentDef.label}</strong> to <strong>{pendingDef?.label}</strong>?
           </p>
+          {/* INT-4 consequence render (DRAFT copy pending operator signature): name
+              what this confirm actually changes — unlocked capability sections and
+              (first set only) scheduled drift scanning. */}
+          {pending && (() => {
+            const cur = getPhaseDefinition(currentPhase).capabilities;
+            const next = getPhaseDefinition(pending).capabilities;
+            const unlocks = [...next].filter((c) => !cur.has(c)).map((c) => CAPABILITY_LABELS[c] ?? c);
+            const relocks = [...cur].filter((c) => !next.has(c)).map((c) => CAPABILITY_LABELS[c] ?? c);
+            return (
+              <div style={{ fontFamily: C.inter, fontSize: 12, color: C.inkSoft, margin: 0, lineHeight: 1.55 }}>
+                {unlocks.length > 0 && <p style={{ margin: 0 }}>Unlocks: {unlocks.join(", ")}.</p>}
+                {relocks.length > 0 && <p style={{ margin: 0 }}>Hides (moving back): {relocks.join(", ")}.</p>}
+                {phaseIsSet === false && <p style={{ margin: 0 }}>Scheduled drift scanning begins for this company.</p>}
+              </div>
+            );
+          })()}
           {error && <p style={{ fontFamily: C.mono, fontSize: 10, color: C.warm, margin: 0 }}>{error}</p>}
           <div style={{ display: "flex", gap: 8 }}>
             <button
@@ -1326,6 +1368,7 @@ export default function ClientRefinePreviewCompanyView() {
             {/* ── Engagement phase ── */}
             {companyId && (
               <EngagementPhaseSection
+                phaseIsSet={activeCompany.engagement_phase_set === true}
                 companyId={companyId}
                 currentPhase={activeCompany.engagement_phase}
                 onSaved={refetch}
