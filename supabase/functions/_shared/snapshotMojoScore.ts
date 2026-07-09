@@ -43,7 +43,10 @@ export async function snapshotMojoScore(
       supabase
         .from("claims")
         .select("id, state, claim_type, topic, outside_support_count, organization_support_count, customer_support_count, updated_at")
-        .eq("company_id", companyId),
+        .eq("company_id", companyId)
+        // Strike law (Gate A): struck claims stop counting in the score;
+        // minimized claims keep counting (display-only de-emphasis).
+        .neq("status", "struck"),
       supabase
         .from("routes")
         .select("id, category, level, parent_id, claim_id, steps_json, evidence_json, why_this_matters_json, rejected_alternatives, what_would_have_to_be_true, linked_need_ids, updated_at")

@@ -41,7 +41,9 @@ export async function fetchDiagnoseReadiness(companyId: string): Promise<{
 }> {
   const [claims, proposals, routesManual, posManual, cascadeManual] = await Promise.all([
     supabase.from("claims").select("id", { count: "exact", head: true })
-      .eq("company_id", companyId).eq("provenance", "internal_declared"),
+      .eq("company_id", companyId).eq("provenance", "internal_declared")
+      // Strike law (Gate A): struck declared claims do not confer readiness.
+      .neq("status", "struck"),
     supabase.from("file_proposals").select("id", { count: "exact", head: true })
       .eq("company_id", companyId).eq("status", "accepted"),
     supabase.from("routes").select("id", { count: "exact", head: true })

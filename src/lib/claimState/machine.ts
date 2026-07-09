@@ -66,9 +66,19 @@ async function loadClaimWithRefs(
 }> {
   const { data: claimRow, error: claimErr } = await db
     .from("claims")
-    .select("id, company_id, claim_type, state, need_statement, action_category, triangulation_state")
+    .select("id, company_id, claim_type, state, need_statement, action_category, triangulation_state, status")
     .eq("id", claimId)
     .maybeSingle();
+
+  // Strike law (Gate A): struck claims are frozen — transitions refuse them
+  // until an explicit unstrike (set_claim_status is the only status authority).
+  if (claimRow && (claimRow as { status?: string }).status === "struck") {
+    return {
+      claim: null,
+      refs: [],
+      error: "Claim is struck — unstrike it before lifecycle changes",
+    };
+  }
 
   if (claimErr || !claimRow) {
     return {
@@ -281,12 +291,17 @@ export async function retireClaim(
 ): Promise<{ success: boolean; error?: string }> {
   const { data: row, error: fetchErr } = await db
     .from("claims")
-    .select("id, company_id, state")
+    .select("id, company_id, state, status")
     .eq("id", claimId)
     .maybeSingle();
 
   if (fetchErr || !row) {
     return { success: false, error: fetchErr?.message ?? "Claim not found" };
+  }
+  // Strike law (Gate A): struck claims are frozen — no lifecycle acts apply
+  // until an explicit unstrike.
+  if ((row as { status?: string }).status === "struck") {
+    return { success: false, error: "Claim is struck — unstrike it before lifecycle changes" };
   }
 
   const { error: updateErr } = await db
@@ -330,7 +345,10 @@ export async function regressionSweep(
     .from("claims")
     .select("id, company_id, claim_type, state, need_statement, action_category, triangulation_state")
     .eq("company_id", companyId)
-    .in("state", ["diagnose", "focus", "flow"]);
+    .in("state", ["diagnose", "focus", "flow"])
+    // Strike law (Gate A): struck claims are frozen in place — the sweep never
+    // touches them, and NOTHING here may ever SET struck (DB trigger enforces).
+    .neq("status", "struck");
 
   if (claimsErr || !claims) {
     return { regressions: [], errors: [{ claimId: "*", error: claimsErr?.message ?? "Load failed" }] };

@@ -214,11 +214,17 @@ export async function computeDeltasForCompany(args: {
 
   const { data: claimRows, error: claimsErr } = await args.supabase
     .from("claims")
-    .select("id, statement, topic, provenance")
+    .select("id, statement, topic, provenance, status")
     .eq("company_id", args.companyId);
   if (claimsErr) return { ok: false, error: String(claimsErr.message ?? claimsErr) };
 
-  const claims = (claimRows ?? []) as DeltaClaim[];
+  // Strike law (Gate A): struck claims are excluded from pairing entirely —
+  // their existing pair/silence rows go stale and the write phase deletes them
+  // (rejected_pairing tombstones persist by design). Minimized claims keep
+  // participating. JS-side filter so the fake-db unit tests can exercise it.
+  const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string }>).filter(
+    (c) => c.status !== "struck",
+  );
   const declared = claims.filter((c) => c.provenance === "internal_declared");
   const publics = claims.filter((c) => c.provenance === "public_observed");
   if (declared.length === 0) return { ok: false, skipped: "no_declared_claims" };

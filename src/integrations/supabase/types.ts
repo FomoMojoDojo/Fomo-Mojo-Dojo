@@ -340,6 +340,39 @@ export type Database = {
           },
         ]
       }
+      claim_removals: {
+        Row: {
+          actor: string | null
+          claim_statement: string
+          company_id: string
+          id: string
+          provenance: string | null
+          reason_category: string
+          removed_at: string
+          statement_identity: string
+        }
+        Insert: {
+          actor?: string | null
+          claim_statement: string
+          company_id: string
+          id?: string
+          provenance?: string | null
+          reason_category: string
+          removed_at?: string
+          statement_identity: string
+        }
+        Update: {
+          actor?: string | null
+          claim_statement?: string
+          company_id?: string
+          id?: string
+          provenance?: string | null
+          reason_category?: string
+          removed_at?: string
+          statement_identity?: string
+        }
+        Relationships: []
+      }
       claim_signal_refs: {
         Row: {
           claim_id: string
@@ -406,6 +439,10 @@ export type Database = {
           revalidation_flag: boolean
           state: string
           statement: string
+          status: string
+          struck_at: string | null
+          struck_by: string | null
+          struck_reason: string | null
           topic: string | null
           triangulation_state: string
           updated_at: string
@@ -426,6 +463,10 @@ export type Database = {
           revalidation_flag?: boolean
           state?: string
           statement: string
+          status?: string
+          struck_at?: string | null
+          struck_by?: string | null
+          struck_reason?: string | null
           topic?: string | null
           triangulation_state?: string
           updated_at?: string
@@ -446,6 +487,10 @@ export type Database = {
           revalidation_flag?: boolean
           state?: string
           statement?: string
+          status?: string
+          struck_at?: string | null
+          struck_by?: string | null
+          struck_reason?: string | null
           topic?: string | null
           triangulation_state?: string
           updated_at?: string
@@ -3847,9 +3892,26 @@ export type Database = {
         }
         Returns: boolean
       }
+      remove_claim: {
+        Args: {
+          p_actor?: string
+          p_claim_id: string
+          p_reason_category: string
+        }
+        Returns: undefined
+      }
       resolve_primary_job_step_set: {
         Args: { p_company_id: string }
         Returns: string
+      }
+      set_claim_status: {
+        Args: {
+          p_actor?: string
+          p_claim_id: string
+          p_reason?: string
+          p_status: string
+        }
+        Returns: undefined
       }
       trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }

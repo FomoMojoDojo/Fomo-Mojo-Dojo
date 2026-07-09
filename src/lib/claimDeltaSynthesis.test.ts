@@ -195,6 +195,51 @@ describe("computeDeltasForCompany", () => {
     expect(db.tables.claim_deltas.some((row) => row.id === "old-1")).toBe(true);
   });
 
+  it("struck claims are excluded from pairing; their stale rows are deleted (Gate A)", async () => {
+    const calls = stubOllama(() => ({ same_subject: true, relation: "echo", confident: true, reason: "x" }));
+    const d1 = { ...declared("d1", "evidence score visible always"), status: "struck" };
+    const p1 = publicClaim("p1", "score visible on the site");
+    const staleId = await pairIdentity("evidence score visible always", "score visible on the site");
+    const db = fakeDb({
+      // d2 keeps the run alive (a company whose ONLY declared claim is struck
+      // honestly short-circuits as no_declared_claims — separate assertion below).
+      claims: [d1, { ...declared("d2", "unrelated retention topic entirely") }, p1],
+      claim_deltas: [{ id: "old-pair", company_id: CO, content_identity: staleId, delta_type: "echoed", operator_disposition: null }],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    // struck declared claim never reaches the models (d2 shares no tokens with p1,
+    // so zero candidates ⇒ zero calls)…
+    expect(calls.length).toBe(0);
+    // …its counterpart falls to the silence rail…
+    expect(r.deltas.some((d) => d.delta_type === "internally_silent" && d.public_claim_id === "p1")).toBe(true);
+    // …no publicly_silent row is minted for the struck claim itself…
+    expect(r.deltas.some((d) => d.declared_claim_id === "d1")).toBe(false);
+    // …and its stale pair row is deleted by the existing recompute.
+    expect(db.tables.claim_deltas.some((row) => row.id === "old-pair")).toBe(false);
+  });
+
+  it("a company whose only declared claim is struck short-circuits as no_declared_claims", async () => {
+    stubOllama(() => ({ same_subject: false }));
+    const db = fakeDb({ claims: [{ ...declared("d1", "x y z"), status: "struck" }, publicClaim("p1", "a b c")] });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    expect(r).toEqual({ ok: false, skipped: "no_declared_claims" });
+  });
+
+  it("minimized claims keep participating in pairing (compute-neutral de-emphasis)", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "both describe score visibility" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({
+      claims: [{ ...declared("d1", "evidence score visible always"), status: "minimized" }, publicClaim("p1", "score visible on the site")],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d1")).toBe(true);
+  });
+
   it("recompute is idempotent: second run inserts nothing and preserves dispositions", async () => {
     stubOllama((model) =>
       model === "llama3:70b"

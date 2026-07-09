@@ -21,7 +21,9 @@ export async function computeClaimStateDistribution(
     .from("claims")
     .select("state")
     .eq("company_id", companyId)
-    .neq("revalidation_flag", true); // exclude retired/soft-deleted
+    .neq("revalidation_flag", true) // exclude retired/soft-deleted
+    // Strike law (Gate A): struck claims leave the band distribution too.
+    .neq("status", "struck");
 
   if (error || !data) {
     console.error("[claimState/distribution] Failed to load claims:", error?.message);
