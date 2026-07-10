@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
+import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
 import {
   matchStrengthFromScore,
   mapDifyFileOutputToSignals,
@@ -149,13 +150,14 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   const { data: allExistingRows, error: loadExistingErr } = await supabase
     .from("claims")
-    .select("id, state")
+    .select("id, state, status")
     .eq("company_id", companyId);
   if (loadExistingErr) throw new Error(`Failed loading existing claims for reconcile: ${loadExistingErr.message}`);
 
   // Build id→state map for non-manual claims only.
+  const existingRows = (allExistingRows ?? []) as Array<{ id: string; state: string; status?: string | null }>;
   const existingStateById = new Map<string, string>();
-  for (const row of (allExistingRows ?? []) as Array<{ id: string; state: string }>) {
+  for (const row of existingRows) {
     if (!manualClaimIds.has(row.id)) existingStateById.set(row.id, row.state);
   }
 
@@ -181,7 +183,10 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // PRUNE (R2): delete non-manual claims whose backing signals are gone.
   // ON DELETE CASCADE on claim_events fires here — correct, those claims are
   // genuinely gone. Log pruned IDs for observability.
-  const prunedIds = [...existingStateById.keys()].filter((id) => !allCandidateIdSet.has(id));
+  // Struck-preservation law: struck claims are recorded decisions — EXEMPT from
+  // the signals-gone prune, frozen in place regardless of signal state. Victim
+  // selection lives in the single policy authority (src/lib/claimState/prunePolicy).
+  const prunedIds = selectPruneVictims(existingRows, allCandidateIdSet, manualClaimIds);
   if (prunedIds.length > 0) {
     console.log(
       `[evidence/reconcile] Pruning ${prunedIds.length} stale signal-derived claim(s) for company=${companyId}: ${prunedIds.join(", ")}`,
