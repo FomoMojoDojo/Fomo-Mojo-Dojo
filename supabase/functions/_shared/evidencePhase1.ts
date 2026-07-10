@@ -186,29 +186,16 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     console.log(
       `[evidence/reconcile] Pruning ${prunedIds.length} stale signal-derived claim(s) for company=${companyId}: ${prunedIds.join(", ")}`,
     );
-    // Strike Gate A: every DELETE records WHY in claim_removals — a table that
-    // survives the claim_events cascade. The automatic R2 prune is relevance by
-    // definition (backing signals are gone), category 'signals_gone'.
-    const { data: pruneRows } = await supabase
-      .from("claims")
-      .select("id, company_id, statement, provenance")
-      .in("id", prunedIds);
-    const removalPayloads = ((pruneRows ?? []) as Array<{ company_id: string; statement: string; provenance?: string | null }>).map((r) => ({
-      company_id: r.company_id,
-      claim_statement: r.statement,
-      statement_identity: r.statement.toLowerCase().replace(/\s+/g, " ").trim(),
-      provenance: r.provenance ?? null,
-      reason_category: "signals_gone",
-      actor: "evidencePhase1:R2",
-    }));
-    if (removalPayloads.length > 0) {
-      const { error: auditError } = await supabase.from("claim_removals").insert(removalPayloads as never);
-      if (auditError) throw new Error(`Failed writing claim_removals audit: ${auditError.message}`);
-    }
-    const { error: pruneError } = await supabase
-      .from("claims")
-      .delete()
-      .in("id", prunedIds);
+    // Strike Gate B: every DELETE is audited by the claims_delete_audit trigger;
+    // sanctioned paths declare their category through remove_claims_bulk. The
+    // automatic R2 prune is relevance by definition (backing signals are gone),
+    // category 'signals_gone'. The Gate A manual audit insert is gone — the
+    // trigger writing a second row would double-audit.
+    const { error: pruneError } = await supabase.rpc("remove_claims_bulk", {
+      p_claim_ids: prunedIds,
+      p_reason_category: "signals_gone",
+      p_actor: "evidencePhase1:R2",
+    } as never);
     if (pruneError) throw new Error(`Failed pruning stale claims: ${pruneError.message}`);
   }
 

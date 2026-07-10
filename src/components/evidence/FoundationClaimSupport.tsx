@@ -157,9 +157,25 @@ export function FoundationClaimSupport({
                       {signalLabel(entry.claim.confidence)}
                     </span>
                   </div>
-                  <p style={{ margin: 0, fontSize: 14, color: "#233c4b", lineHeight: 1.55 }}>
+                  {/* Strike Gate B honest render: struck = line-through + reason on
+                      hover and inline who/when; minimized = de-emphasis (distinct). */}
+                  <p
+                    style={{
+                      margin: 0, fontSize: 14, lineHeight: 1.55,
+                      color: entry.claim.status === "struck" ? "#9aa7a2" : "#233c4b",
+                      textDecoration: entry.claim.status === "struck" ? "line-through" : "none",
+                      opacity: entry.claim.status === "minimized" ? 0.55 : 1,
+                    }}
+                    title={entry.claim.status === "struck" ? entry.claim.struck_reason ?? undefined : undefined}
+                  >
                     {entry.claim.statement}
                   </p>
+                  {entry.claim.status === "struck" ? (
+                    <p style={{ margin: "4px 0 0", fontFamily: MONO, fontSize: 10, letterSpacing: "0.06em", color: "#9aa7a2" }}>
+                      Struck{entry.claim.struck_at ? ` ${new Date(entry.claim.struck_at).toLocaleDateString()}` : ""}{entry.claim.struck_by ? ` by ${entry.claim.struck_by}` : ""}
+                      {entry.claim.struck_reason ? ` — “${entry.claim.struck_reason}”` : ""}
+                    </p>
+                  ) : null}
                   {mode === "odi_need" && strongestExcerpt ? (
                     <p style={{ margin: "8px 0 0", fontSize: 12, color: "#54656a", lineHeight: 1.55 }}>
                       {strongestExcerpt}

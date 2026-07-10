@@ -3900,6 +3900,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      remove_claims_bulk: {
+        Args: {
+          p_actor?: string
+          p_claim_ids: string[]
+          p_reason_category: string
+        }
+        Returns: number
+      }
       resolve_primary_job_step_set: {
         Args: { p_company_id: string }
         Returns: string

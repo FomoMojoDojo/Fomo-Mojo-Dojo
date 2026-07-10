@@ -1,6 +1,8 @@
-import { useState } from "react";
-import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta } from "@/hooks/useStrategicDelta";
+import { useEffect, useState } from "react";
+import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
 import { D } from "@/components/design-system/tokens";
+import { supabase } from "@/integrations/supabase/client";
+import { previewStrikeScoreDelta, type StrikeScorePreview } from "@/lib/mojoScore/strikePreview";
 
 // Local accent constants — not in D.* yet
 const A = {
@@ -435,20 +437,235 @@ function DeltaDispositionActions({ row, onSet }: {
   );
 }
 
-function ClaimDeltaBlock({ deltas, onSet }: {
-  deltas: ClaimDeltaRow[];
-  onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
+// ─── Strike Gate B: per-claim status controls (admin-only surface) ────────────
+//
+// Strike = the claim stops counting everywhere (score, readiness, deltas) but
+// its history is preserved and it can be restored. Minimize = display-only
+// de-emphasis, still counts everywhere. ALL writes go through the Gate A
+// set_claim_status RPC (the hook's setClaimStatus) — the DB trigger blocks any
+// other path. Client-visible strings are DRAFTS pending operator signature.
+
+type ClaimStatus = "active" | "minimized" | "struck";
+type PendingStatusAction = {
+  slotId: string;          // unique render site — a claim can appear in several rows
+  claimId: string;
+  statement: string;
+  kind: "strike" | "minimize";
+};
+type SetClaimStatusFn = (claimId: string, status: ClaimStatus, reason?: string) => Promise<void>;
+
+// Honest render states: struck = line-through (never hidden mid-lifecycle),
+// minimized = de-emphasis (visually DISTINCT from struck), active = unchanged.
+function statementStatusStyle(status: ClaimStatus | null): React.CSSProperties {
+  if (status === "struck") return { textDecoration: "line-through", color: D.inkFaint };
+  if (status === "minimized") return { opacity: 0.55 };
+  return {};
+}
+
+function ClaimStatusControls({ slotId, claimId, statement, status, pending, onRequest, onRestore, busy }: {
+  slotId: string;
+  claimId: string;
+  statement: string;
+  status: ClaimStatus | null;
+  pending: PendingStatusAction | null;
+  onRequest: (a: PendingStatusAction) => void;
+  onRestore: (claimId: string) => void;
+  busy: boolean;
 }) {
-  if (deltas.length === 0) return null;
+  if (!status) return null;
+  const btn = (label: string, title: string, onClick: () => void): JSX.Element => (
+    <button
+      key={label}
+      type="button"
+      title={title}
+      disabled={busy}
+      onClick={onClick}
+      style={{
+        fontFamily: D.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.08em",
+        padding: "1px 6px", borderRadius: 3, cursor: busy ? "default" : "pointer",
+        border: `1px solid ${D.hairlineFaint}`, background: "transparent", color: D.inkFaint,
+      }}
+    >
+      {label}
+    </button>
+  );
+  const isPendingHere = pending?.slotId === slotId;
+  return (
+    <span style={{ display: "inline-flex", gap: 4, marginLeft: 8, verticalAlign: "middle" }}>
+      {status === "active" && !isPendingHere && btn("Strike", "Set this claim aside — it stops counting everywhere; restorable", () => onRequest({ slotId, claimId, statement, kind: "strike" }))}
+      {status === "active" && !isPendingHere && btn("Minimize", "De-emphasize on screen — still counts everywhere", () => onRequest({ slotId, claimId, statement, kind: "minimize" }))}
+      {status === "minimized" && !isPendingHere && btn("Strike", "Set this claim aside — it stops counting everywhere; restorable", () => onRequest({ slotId, claimId, statement, kind: "strike" }))}
+      {status !== "active" && btn("Restore", "Return this claim to active — counts and renders normally again", () => onRestore(claimId))}
+    </span>
+  );
+}
+
+// Consequence-render confirm (INT-4 pattern): name what the act changes before
+// the operator confirms. Strike requires a reason and shows the live score
+// effect (same selects + same compute as the snapshot, run read-only).
+function ClaimStatusConfirm({ pending, companyId, onConfirm, onCancel }: {
+  pending: PendingStatusAction;
+  companyId: string;
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [preview, setPreview] = useState<StrikeScorePreview | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  useEffect(() => {
+    if (pending.kind !== "strike") return;
+    let cancelled = false;
+    previewStrikeScoreDelta(supabase, companyId, pending.claimId)
+      .then((p) => { if (!cancelled) setPreview(p); })
+      .catch(() => { if (!cancelled) setPreviewFailed(true); });
+    return () => { cancelled = true; };
+  }, [pending.kind, pending.claimId, companyId]);
+
+  const isStrike = pending.kind === "strike";
+  const confirmDisabled = isStrike && reason.trim().length === 0;
+
+  return (
+    <div style={{ border: `1px solid ${D.hairline}`, background: "#faf9f6", borderRadius: 4, padding: "10px 12px", margin: "8px 0" }}>
+      <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 6px", lineHeight: 1.55 }}>
+        {isStrike
+          ? "Striking sets this claim aside — it stops counting in the Mojo Score, phase readiness, and the Declared-vs-Observed comparison. Its history is preserved and you can restore it any time."
+          : "Minimize de-emphasizes this claim on screen — it still counts everywhere."}
+      </p>
+      {isStrike && (
+        <p style={{ fontFamily: D.mono, fontSize: 9.5, color: D.inkSoft, margin: "0 0 8px" }}>
+          {preview
+            ? (preview.delta === 0
+              ? `Mojo Score unchanged (${preview.before})`
+              : `Mojo Score ${preview.before} → ${preview.after} (${preview.delta > 0 ? "+" : ""}${preview.delta})`)
+            : previewFailed
+              ? "Score effect unavailable — striking still removes this claim from the score."
+              : "Computing score effect…"}
+        </p>
+      )}
+      {isStrike && (
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Why is this claim being struck? (required)"
+          rows={2}
+          style={{ width: "100%", fontFamily: D.sans, fontSize: 12, color: D.ink, border: `1px solid ${D.hairline}`, borderRadius: 3, padding: "6px 8px", marginBottom: 8, resize: "vertical", background: "#fff" }}
+        />
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          disabled={confirmDisabled}
+          onClick={() => onConfirm(reason.trim())}
+          style={{
+            fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em",
+            padding: "4px 12px", borderRadius: 3, border: "none",
+            background: confirmDisabled ? D.hairline : D.ink, color: confirmDisabled ? D.inkFaint : "#fff",
+            cursor: confirmDisabled ? "default" : "pointer",
+          }}
+        >
+          {isStrike ? "Strike claim" : "Minimize claim"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 3, border: `1px solid ${D.hairline}`, background: "transparent", color: D.inkSoft, cursor: "pointer" }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Struck-claims disclosure: struck claims never vanish — they collapse here
+// (collapsed by default), rendered from the claims table directly, since their
+// delta rows die on the next recompute by design.
+function StruckClaimsDisclosure({ struckClaims, onRestore, busy }: {
+  struckClaims: StruckClaim[];
+  onRestore: (claimId: string) => void;
+  busy: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  if (struckClaims.length === 0) return null;
+  return (
+    <div style={{ marginTop: 16, borderTop: `1px solid ${D.hairlineFaint}`, paddingTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+      >
+        <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint }}>
+          Struck claims ({struckClaims.length})
+        </span>
+        <span style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && struckClaims.map((c) => (
+        <div key={c.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, margin: "10px 0" }}>
+          <p style={{ fontFamily: D.sans, fontSize: 11.5, margin: 0, lineHeight: 1.5, textDecoration: "line-through", color: D.inkFaint }}
+            title={c.struck_reason ?? undefined}>
+            {c.statement}
+          </p>
+          <p style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint, margin: "3px 0 0" }}>
+            Struck{c.struck_at ? ` ${new Date(c.struck_at).toLocaleDateString()}` : ""}{c.struck_by ? ` by ${c.struck_by}` : ""}
+            {c.struck_reason ? ` — “${c.struck_reason}”` : ""}
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRestore(c.id)}
+            style={{ fontFamily: D.mono, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.08em", padding: "1px 6px", borderRadius: 3, marginTop: 4, border: `1px solid ${D.hairlineFaint}`, background: "transparent", color: D.inkFaint, cursor: busy ? "default" : "pointer" }}
+          >
+            Restore
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }: {
+  deltas: ClaimDeltaRow[];
+  struckClaims: StruckClaim[];
+  companyId: string;
+  onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
+  onSetStatus: SetClaimStatusFn;
+}) {
+  const [pending, setPending] = useState<PendingStatusAction | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  async function applyStatus(claimId: string, status: ClaimStatus, reason?: string) {
+    setStatusBusy(true);
+    setStatusError(null);
+    try {
+      await onSetStatus(claimId, status, reason);
+      setPending(null);
+    } catch (e) {
+      setStatusError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+
+  if (deltas.length === 0 && struckClaims.length === 0) return null;
+
+  const struckIds = new Set(struckClaims.map((c) => c.id));
 
   // Tombstoned pairings never render as pairs (their claims re-enter the
   // silence rails on the next recompute).
   const pairs = deltas.filter(
     (d) => (d.delta_type === "echoed" || d.delta_type === "divergent") && d.operator_disposition !== "rejected_pairing",
   );
-  const openQuestions = deltas.filter((d) => d.delta_type === "publicly_silent");
-  const undeclared = deltas.filter((d) => d.delta_type === "internally_silent");
+  // Struck rail rows move under the disclosure (single-claim rows would
+  // double-render); struck PAIR members stay visible line-through — a pair is a
+  // relationship, hiding it would hide the partner statement too.
+  const openQuestions = deltas.filter((d) => d.delta_type === "publicly_silent" && !(d.declared_claim_id && struckIds.has(d.declared_claim_id)));
+  const undeclared = deltas.filter((d) => d.delta_type === "internally_silent" && !(d.public_claim_id && struckIds.has(d.public_claim_id)));
   const divergentConfirmed = pairs.filter((d) => d.delta_type === "divergent" && d.pairing_basis === "judge_confirmed");
+
+  const struckReasonById = new Map(struckClaims.map((c) => [c.id, c.struck_reason ?? undefined]));
+  const controlProps = { pending, busy: statusBusy, onRequest: setPending, onRestore: (id: string) => void applyStatus(id, "active") };
 
   return (
     <div style={{ marginBottom: 28 }}>
@@ -483,12 +700,36 @@ function ClaimDeltaBlock({ deltas, onSet }: {
             </div>
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>You declare · </span>
-              {d.declared_statement}
+              <span style={statementStatusStyle(d.declared_claim_status)}
+                title={d.declared_claim_id ? struckReasonById.get(d.declared_claim_id) : undefined}>
+                {d.declared_statement}
+              </span>
+              {d.declared_claim_id && (
+                <ClaimStatusControls slotId={`${d.id}:declared`} claimId={d.declared_claim_id}
+                  statement={d.declared_statement ?? ""} status={d.declared_claim_status} {...controlProps} />
+              )}
             </p>
+            {pending?.slotId === `${d.id}:declared` && (
+              <ClaimStatusConfirm pending={pending} companyId={companyId}
+                onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
+                onCancel={() => setPending(null)} />
+            )}
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>Public says · </span>
-              {d.public_statement}
+              <span style={statementStatusStyle(d.public_claim_status)}
+                title={d.public_claim_id ? struckReasonById.get(d.public_claim_id) : undefined}>
+                {d.public_statement}
+              </span>
+              {d.public_claim_id && (
+                <ClaimStatusControls slotId={`${d.id}:public`} claimId={d.public_claim_id}
+                  statement={d.public_statement ?? ""} status={d.public_claim_status} {...controlProps} />
+              )}
             </p>
+            {pending?.slotId === `${d.id}:public` && (
+              <ClaimStatusConfirm pending={pending} companyId={companyId}
+                onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
+                onCancel={() => setPending(null)} />
+            )}
             {d.judge_reason && (
               <p style={{ fontFamily: D.sans, fontSize: 11, color: D.inkFaint, margin: "4px 0 0", lineHeight: 1.5 }}>
                 {d.judge_reason}
@@ -508,8 +749,17 @@ function ClaimDeltaBlock({ deltas, onSet }: {
           {openQuestions.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
-                {d.declared_statement}
+                <span style={statementStatusStyle(d.declared_claim_status)}>{d.declared_statement}</span>
+                {d.declared_claim_id && (
+                  <ClaimStatusControls slotId={`${d.id}:declared`} claimId={d.declared_claim_id}
+                    statement={d.declared_statement ?? ""} status={d.declared_claim_status} {...controlProps} />
+                )}
               </p>
+              {pending?.slotId === `${d.id}:declared` && (
+                <ClaimStatusConfirm pending={pending} companyId={companyId}
+                  onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
+                  onCancel={() => setPending(null)} />
+              )}
               <p style={{ fontFamily: D.sans, fontSize: 10.5, color: D.inkFaint, margin: "2px 0 0" }}>
                 The market hasn't heard this yet — an open question, not a conflict.
               </p>
@@ -527,12 +777,30 @@ function ClaimDeltaBlock({ deltas, onSet }: {
           {undeclared.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
-                {d.public_statement}
+                <span style={statementStatusStyle(d.public_claim_status)}>{d.public_statement}</span>
+                {d.public_claim_id && (
+                  <ClaimStatusControls slotId={`${d.id}:public`} claimId={d.public_claim_id}
+                    statement={d.public_statement ?? ""} status={d.public_claim_status} {...controlProps} />
+                )}
               </p>
+              {pending?.slotId === `${d.id}:public` && (
+                <ClaimStatusConfirm pending={pending} companyId={companyId}
+                  onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
+                  onCancel={() => setPending(null)} />
+              )}
             </div>
           ))}
         </div>
       )}
+
+      {statusError && (
+        <p style={{ fontFamily: D.mono, fontSize: 9.5, color: "#8a3b1f", margin: "10px 0 0" }}>
+          Could not update claim: {statusError}
+        </p>
+      )}
+
+      <StruckClaimsDisclosure struckClaims={struckClaims}
+        onRestore={(id) => void applyStatus(id, "active")} busy={statusBusy} />
     </div>
   );
 }
@@ -540,7 +808,7 @@ function ClaimDeltaBlock({ deltas, onSet }: {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
-  const { data, isLoading, setDisposition, setClaimDeltaDisposition } = useStrategicDelta(companyId);
+  const { data, isLoading, setDisposition, setClaimDeltaDisposition, setClaimStatus } = useStrategicDelta(companyId);
 
   if (isLoading) {
     return (
@@ -553,7 +821,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
   if (!data) return null;
 
-  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas } = data;
+  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims } = data;
   const { strategicBet, recommendations, sourceReads } = internal;
 
   // PVT-1: current snapshot's public-vs-internal alignment (minimal surface; rich
@@ -563,7 +831,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
     (alignmentTrend.length > 0 ? alignmentTrend[alignmentTrend.length - 1] : null);
 
   // Nothing at all — skip the section entirely
-  if (strategicBet.length + recommendations.length + sourceReads.length + publicThemes.length + claimDeltas.length === 0) {
+  if (strategicBet.length + recommendations.length + sourceReads.length + publicThemes.length + claimDeltas.length + struckClaims.length === 0) {
     return null;
   }
 
@@ -597,7 +865,8 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
       </p>
 
       {/* ── INT-3: Declared vs Observed — the founding signal, first position ── */}
-      <ClaimDeltaBlock deltas={claimDeltas} onSet={setClaimDeltaDisposition} />
+      <ClaimDeltaBlock deltas={claimDeltas} struckClaims={struckClaims} companyId={companyId}
+        onSet={setClaimDeltaDisposition} onSetStatus={setClaimStatus} />
 
       {/* ── Internal spine — full width, stacked (two-column grid removed) ── */}
       {hasInternal ? (

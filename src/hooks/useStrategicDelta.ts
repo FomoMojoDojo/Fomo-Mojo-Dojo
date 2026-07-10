@@ -69,6 +69,25 @@ export type ClaimDeltaRow = {
   operator_disposition: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null;
   declared_statement: string | null;
   public_statement: string | null;
+  // Strike Gate B: claim ids + statuses so rows can carry per-claim controls and
+  // honest render states (struck = line-through until the next recompute removes
+  // the row; minimized = de-emphasis, still counting).
+  declared_claim_id: string | null;
+  public_claim_id: string | null;
+  declared_claim_status: "active" | "minimized" | "struck" | null;
+  public_claim_status: "active" | "minimized" | "struck" | null;
+};
+
+// Strike Gate B: struck claims never disappear — they collapse under the
+// "Struck claims (N)" disclosure, rendered from the claims table directly
+// (their delta rows die on the next recompute by design).
+export type StruckClaim = {
+  id: string;
+  statement: string;
+  provenance: "internal_declared" | "public_observed";
+  struck_reason: string | null;
+  struck_at: string | null;
+  struck_by: string | null;
 };
 
 export type StrategicDeltaData = {
@@ -82,6 +101,10 @@ export type StrategicDeltaData = {
   publicVoiceDelta: PublicVoiceDelta;
   // INT-3: persisted declared-vs-observed claim deltas (the founding signal).
   claimDeltas: ClaimDeltaRow[];
+  // Strike Gate B: all struck claims for the company (disclosure rail).
+  struckClaims: StruckClaim[];
+  // Claim id → status for per-row render/control decisions.
+  claimStatusById: Map<string, "active" | "minimized" | "struck">;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -183,6 +206,8 @@ export function useStrategicDelta(companyId?: string) {
         alignmentTrend: [],
         publicVoiceDelta: { baselineRunId: null, currentRunId: null, newSources: [], droppedSources: [], shiftedSources: [] },
         claimDeltas: [],
+        struckClaims: [],
+        claimStatusById: new Map(),
       };
 
       const [internalRes, publicRes, dispRes, runsRes, deltaRes, claimRes] = await Promise.all([
@@ -219,13 +244,21 @@ export function useStrategicDelta(companyId?: string) {
           .order("delta_type", { ascending: true }),
         supabase
           .from("claims")
-          .select("id, statement")
+          .select("id, statement, provenance, status, struck_reason, struck_at, struck_by")
           .eq("company_id", companyId),
       ]);
 
-      const claimStatementById = new Map<string, string>(
-        ((claimRes.data ?? []) as Array<{ id: string; statement: string }>).map((c) => [c.id, c.statement]),
-      );
+      type ClaimRow = {
+        id: string; statement: string; provenance: StruckClaim["provenance"];
+        status: "active" | "minimized" | "struck";
+        struck_reason: string | null; struck_at: string | null; struck_by: string | null;
+      };
+      const claimRows = (claimRes.data ?? []) as ClaimRow[];
+      const claimStatementById = new Map<string, string>(claimRows.map((c) => [c.id, c.statement]));
+      const claimStatusById = new Map<string, ClaimRow["status"]>(claimRows.map((c) => [c.id, c.status]));
+      const struckClaims: StruckClaim[] = claimRows
+        .filter((c) => c.status === "struck")
+        .map((c) => ({ id: c.id, statement: c.statement, provenance: c.provenance, struck_reason: c.struck_reason, struck_at: c.struck_at, struck_by: c.struck_by }));
       const claimDeltas: ClaimDeltaRow[] = ((deltaRes.data ?? []) as Array<{
         id: string;
         delta_type: ClaimDeltaRow["delta_type"];
@@ -242,6 +275,10 @@ export function useStrategicDelta(companyId?: string) {
         operator_disposition: r.operator_disposition,
         declared_statement: r.declared_claim_id ? claimStatementById.get(r.declared_claim_id) ?? null : null,
         public_statement: r.public_claim_id ? claimStatementById.get(r.public_claim_id) ?? null : null,
+        declared_claim_id: r.declared_claim_id,
+        public_claim_id: r.public_claim_id,
+        declared_claim_status: r.declared_claim_id ? claimStatusById.get(r.declared_claim_id) ?? null : null,
+        public_claim_status: r.public_claim_id ? claimStatusById.get(r.public_claim_id) ?? null : null,
       }));
 
       const toDeltaSignal = (r: {
@@ -364,7 +401,7 @@ export function useStrategicDelta(companyId?: string) {
         };
       });
 
-      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas };
+      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims, claimStatusById };
     },
   });
 
@@ -401,5 +438,24 @@ export function useStrategicDelta(companyId?: string) {
     queryClient.invalidateQueries({ queryKey });
   }
 
-  return { ...query, setDisposition, setClaimDeltaDisposition };
+  // Strike Gate B: the ONLY client write path for claim status — the Gate A
+  // set_claim_status RPC (the DB trigger blocks everything else). Strike
+  // requires a reason; restore/minimize don't.
+  async function setClaimStatus(
+    claimId: string,
+    status: "active" | "minimized" | "struck",
+    reason?: string,
+  ) {
+    if (!companyId) return;
+    const { error } = await supabase.rpc("set_claim_status", {
+      p_claim_id: claimId,
+      p_status: status,
+      p_reason: reason ?? null,
+      p_actor: "operator",
+    });
+    queryClient.invalidateQueries({ queryKey });
+    if (error) throw new Error(error.message);
+  }
+
+  return { ...query, setDisposition, setClaimDeltaDisposition, setClaimStatus };
 }

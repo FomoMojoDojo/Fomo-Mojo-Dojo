@@ -141,6 +141,13 @@ export type Claim = {
   raw_payload: unknown;
   created_at: string;
   updated_at: string;
+  // Strike Gate B: status render fields — OPTIONAL so ClaimDraft/insert paths
+  // stay untouched (the DB default + set_claim_status authority own all
+  // writes); hooks selecting * carry them for honest rendering.
+  status?: "active" | "minimized" | "struck";
+  struck_reason?: string | null;
+  struck_at?: string | null;
+  struck_by?: string | null;
 };
 
 export type ClaimDraft = Omit<Claim, "id" | "created_at" | "updated_at">;

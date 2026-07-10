@@ -234,7 +234,15 @@ export default function EvidenceInspectorPanel({ companyId }: Props) {
                 {claims.map((claim) => (
                   <div key={claim.id} className="rounded-lg border p-3" style={{ borderColor: c.line, background: "#fff" }}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="font-sans text-[13px] leading-5" style={{ color: c.ink }}>
+                      <div
+                        className="font-sans text-[13px] leading-5"
+                        style={{
+                          color: claim.status === "struck" ? c.muted : c.ink,
+                          textDecoration: claim.status === "struck" ? "line-through" : "none",
+                          opacity: claim.status === "minimized" ? 0.55 : 1,
+                        }}
+                        title={claim.status === "struck" ? claim.struck_reason ?? undefined : undefined}
+                      >
                         {claim.statement}
                       </div>
                       <ClaimStateBadge state={claim.state ?? "outside_view"} claimId={claim.id} size="sm" />
