@@ -95,6 +95,20 @@ function ClientModePathSync() {
   return null;
 }
 
+function CrpvBootClassSync() {
+  const location = useLocation();
+
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      "crpv-boot",
+      location.pathname === CLIENT_REFINE_PREVIEW_ROUTE ||
+        location.pathname.startsWith(`${CLIENT_REFINE_PREVIEW_ROUTE}/`),
+    );
+  }, [location.pathname]);
+
+  return null;
+}
+
 function ClientPhaseAliasRoute({
   phase,
   fallbackPath,
@@ -227,6 +241,7 @@ const App = () => (
             <PresentationModeProvider>
               <CompanyProvider>
                 <ClientModePathSync />
+                <CrpvBootClassSync />
                 <Routes>
                 <Route path="/" element={<ModeAwareMapRoute />} />
                 <Route path="/foundation" element={<ClientPhaseAliasRoute phase="outside" fallbackPath="/" />} />

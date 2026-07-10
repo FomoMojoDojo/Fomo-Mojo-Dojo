@@ -1,5 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* .crpv-boot is set on <html> before first paint (inline script in index.html)
+   and synced on SPA navigation (CrpvBootClassSync in App.tsx). Unlayered so it
+   beats the @layer base cream body rule in index.css; html background also
+   overrides body propagation to the overscroll canvas. */
+html.crpv-boot,
+html.crpv-boot body {
+  background: #ffffff;
+}
+
 .crpv-page {
   --crpv-ink: #111111;
   --crpv-ink-soft: #555555;

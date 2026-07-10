@@ -3,6 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Runs before any stylesheet applies so the legacy cream body never
+      // paints on the live /preview/client-refine surfaces. Kept in sync on
+      // SPA navigation by CrpvBootClassSync in App.tsx.
+      if (
+        location.pathname === "/preview/client-refine" ||
+        location.pathname.indexOf("/preview/client-refine/") === 0
+      ) {
+        document.documentElement.classList.add("crpv-boot");
+      }
+    </script>
     <title>MojoMap™ — Strategy Intelligence</title>
     <meta name="description" content="A living, scored map of your business strategy — showing where you stand, what's holding you back, and what to do next." />
     <meta name="author" content="MojoMap" />
