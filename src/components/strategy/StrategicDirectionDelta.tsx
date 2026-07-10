@@ -3,6 +3,7 @@ import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicThe
 import { D } from "@/components/design-system/tokens";
 import { supabase } from "@/integrations/supabase/client";
 import { previewStrikeScoreDelta, type StrikeScorePreview } from "@/lib/mojoScore/strikePreview";
+import { residualStruckClaims } from "@/lib/claimState/struckResidual";
 
 // Local accent constants — not in D.* yet
 const A = {
@@ -462,6 +463,18 @@ function statementStatusStyle(status: ClaimStatus | null): React.CSSProperties {
   return {};
 }
 
+// Inline who/when/reason for a struck claim — the same signed line the
+// residual section uses ("Struck {date} by {actor} — \u201c{reason}\u201d").
+function StruckMetaLine({ claim }: { claim: StruckClaim | undefined }) {
+  if (!claim) return null;
+  return (
+    <p style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint, margin: "2px 0 0" }}>
+      Struck{claim.struck_at ? ` ${new Date(claim.struck_at).toLocaleDateString()}` : ""}{claim.struck_by ? ` by ${claim.struck_by}` : ""}
+      {claim.struck_reason ? ` — \u201c${claim.struck_reason}\u201d` : ""}
+    </p>
+  );
+}
+
 function ClaimStatusControls({ slotId, claimId, statement, status, pending, onRequest, onRestore, busy }: {
   slotId: string;
   claimId: string;
@@ -578,29 +591,24 @@ function ClaimStatusConfirm({ pending, companyId, onConfirm, onCancel }: {
   );
 }
 
-// Struck-claims disclosure: struck claims never vanish — they collapse here
-// (collapsed by default), rendered from the claims table directly, since their
-// delta rows die on the next recompute by design.
-function StruckClaimsDisclosure({ struckClaims, onRestore, busy }: {
-  struckClaims: StruckClaim[];
+// Struck claims never fold away (operator ruling 07-09): rows render line-
+// through IN PLACE wherever their delta rows still show. This residual section
+// is the post-recompute honest surface — recompute DELETES a struck claim's
+// delta rows, so any struck claim with no surviving on-screen row renders here,
+// from the claims table, ALWAYS EXPANDED. Never count-only, never collapsed.
+
+function StruckResidualSection({ residual, onRestore, busy }: {
+  residual: StruckClaim[];
   onRestore: (claimId: string) => void;
   busy: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  if (struckClaims.length === 0) return null;
+  if (residual.length === 0) return null;
   return (
     <div style={{ marginTop: 16, borderTop: `1px solid ${D.hairlineFaint}`, paddingTop: 10 }}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer" }}
-      >
-        <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint }}>
-          Struck claims ({struckClaims.length})
-        </span>
-        <span style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint }}>{open ? "▴" : "▾"}</span>
-      </button>
-      {open && struckClaims.map((c) => (
+      <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: D.inkFaint, margin: 0 }}>
+        Struck claims ({residual.length})
+      </p>
+      {residual.map((c) => (
         <div key={c.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, margin: "10px 0" }}>
           <p style={{ fontFamily: D.sans, fontSize: 11.5, margin: 0, lineHeight: 1.5, textDecoration: "line-through", color: D.inkFaint }}
             title={c.struck_reason ?? undefined}>
@@ -650,21 +658,19 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
 
   if (deltas.length === 0 && struckClaims.length === 0) return null;
 
-  const struckIds = new Set(struckClaims.map((c) => c.id));
-
   // Tombstoned pairings never render as pairs (their claims re-enter the
   // silence rails on the next recompute).
   const pairs = deltas.filter(
     (d) => (d.delta_type === "echoed" || d.delta_type === "divergent") && d.operator_disposition !== "rejected_pairing",
   );
-  // Struck rail rows move under the disclosure (single-claim rows would
-  // double-render); struck PAIR members stay visible line-through — a pair is a
-  // relationship, hiding it would hide the partner statement too.
-  const openQuestions = deltas.filter((d) => d.delta_type === "publicly_silent" && !(d.declared_claim_id && struckIds.has(d.declared_claim_id)));
-  const undeclared = deltas.filter((d) => d.delta_type === "internally_silent" && !(d.public_claim_id && struckIds.has(d.public_claim_id)));
+  // Struck rows NEVER fold away (operator ruling): rail rows keep rendering in
+  // place, line-through, with reason/who/when + Restore — same as pair members.
+  const openQuestions = deltas.filter((d) => d.delta_type === "publicly_silent");
+  const undeclared = deltas.filter((d) => d.delta_type === "internally_silent");
   const divergentConfirmed = pairs.filter((d) => d.delta_type === "divergent" && d.pairing_basis === "judge_confirmed");
 
-  const struckReasonById = new Map(struckClaims.map((c) => [c.id, c.struck_reason ?? undefined]));
+  const struckById = new Map(struckClaims.map((c) => [c.id, c]));
+  const residual = residualStruckClaims(deltas, struckClaims);
   const controlProps = { pending, busy: statusBusy, onRequest: setPending, onRestore: (id: string) => void applyStatus(id, "active") };
 
   return (
@@ -701,7 +707,7 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>You declare · </span>
               <span style={statementStatusStyle(d.declared_claim_status)}
-                title={d.declared_claim_id ? struckReasonById.get(d.declared_claim_id) : undefined}>
+                title={d.declared_claim_id ? struckById.get(d.declared_claim_id)?.struck_reason ?? undefined : undefined}>
                 {d.declared_statement}
               </span>
               {d.declared_claim_id && (
@@ -709,6 +715,9 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
                   statement={d.declared_statement ?? ""} status={d.declared_claim_status} {...controlProps} />
               )}
             </p>
+            {d.declared_claim_status === "struck" && d.declared_claim_id && (
+              <StruckMetaLine claim={struckById.get(d.declared_claim_id)} />
+            )}
             {pending?.slotId === `${d.id}:declared` && (
               <ClaimStatusConfirm pending={pending} companyId={companyId}
                 onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
@@ -717,7 +726,7 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>Public says · </span>
               <span style={statementStatusStyle(d.public_claim_status)}
-                title={d.public_claim_id ? struckReasonById.get(d.public_claim_id) : undefined}>
+                title={d.public_claim_id ? struckById.get(d.public_claim_id)?.struck_reason ?? undefined : undefined}>
                 {d.public_statement}
               </span>
               {d.public_claim_id && (
@@ -725,6 +734,9 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
                   statement={d.public_statement ?? ""} status={d.public_claim_status} {...controlProps} />
               )}
             </p>
+            {d.public_claim_status === "struck" && d.public_claim_id && (
+              <StruckMetaLine claim={struckById.get(d.public_claim_id)} />
+            )}
             {pending?.slotId === `${d.id}:public` && (
               <ClaimStatusConfirm pending={pending} companyId={companyId}
                 onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
@@ -749,12 +761,18 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
           {openQuestions.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
-                <span style={statementStatusStyle(d.declared_claim_status)}>{d.declared_statement}</span>
+                <span style={statementStatusStyle(d.declared_claim_status)}
+                  title={d.declared_claim_id ? struckById.get(d.declared_claim_id)?.struck_reason ?? undefined : undefined}>
+                  {d.declared_statement}
+                </span>
                 {d.declared_claim_id && (
                   <ClaimStatusControls slotId={`${d.id}:declared`} claimId={d.declared_claim_id}
                     statement={d.declared_statement ?? ""} status={d.declared_claim_status} {...controlProps} />
                 )}
               </p>
+              {d.declared_claim_status === "struck" && d.declared_claim_id && (
+                <StruckMetaLine claim={struckById.get(d.declared_claim_id)} />
+              )}
               {pending?.slotId === `${d.id}:declared` && (
                 <ClaimStatusConfirm pending={pending} companyId={companyId}
                   onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
@@ -777,12 +795,18 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
           {undeclared.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
-                <span style={statementStatusStyle(d.public_claim_status)}>{d.public_statement}</span>
+                <span style={statementStatusStyle(d.public_claim_status)}
+                  title={d.public_claim_id ? struckById.get(d.public_claim_id)?.struck_reason ?? undefined : undefined}>
+                  {d.public_statement}
+                </span>
                 {d.public_claim_id && (
                   <ClaimStatusControls slotId={`${d.id}:public`} claimId={d.public_claim_id}
                     statement={d.public_statement ?? ""} status={d.public_claim_status} {...controlProps} />
                 )}
               </p>
+              {d.public_claim_status === "struck" && d.public_claim_id && (
+                <StruckMetaLine claim={struckById.get(d.public_claim_id)} />
+              )}
               {pending?.slotId === `${d.id}:public` && (
                 <ClaimStatusConfirm pending={pending} companyId={companyId}
                   onConfirm={(reason) => void applyStatus(pending.claimId, pending.kind === "strike" ? "struck" : "minimized", reason || undefined)}
@@ -799,7 +823,7 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
         </p>
       )}
 
-      <StruckClaimsDisclosure struckClaims={struckClaims}
+      <StruckResidualSection residual={residual}
         onRestore={(id) => void applyStatus(id, "active")} busy={statusBusy} />
     </div>
   );
