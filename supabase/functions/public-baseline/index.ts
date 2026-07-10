@@ -1573,7 +1573,11 @@ async function callClaudeWebSearch(opts: {
     },
     body: JSON.stringify({
       model: opts.model,
-      max_tokens: 8000,
+      // 32000: big-footprint companies (SIAA: 17-19 content blocks, 25-29KB of
+      // final text) blew the old 8000 cap MID-JSON — the truncated object then
+      // failed the defensive parse and misreported as a parse error. Sonnet-tier
+      // output ceiling is 128K; output tokens bill only what is produced.
+      max_tokens: 32000,
       tools: [webSearchTool],
       messages: [{ role: "user", content: prompt }],
     }),
@@ -1583,6 +1587,13 @@ async function callClaudeWebSearch(opts: {
     throw new Error(`Anthropic web-search call failed: HTTP ${res.status} ${errText.slice(0, 500)}`);
   }
   const data = await res.json();
+  // stop_reason honesty (require_model law): a max_tokens truncation cuts the
+  // final JSON mid-object — without this check it misreports downstream as
+  // "could not parse JSON". Name the real failure.
+  const stopReason = String((data as any)?.stop_reason ?? "");
+  if (stopReason === "max_tokens") {
+    throw new Error(`Anthropic web-search: output hit the max_tokens cap (stop_reason=max_tokens) — synthesis truncated mid-JSON; the footprint needs a higher cap`);
+  }
   const blocks = Array.isArray((data as any)?.content) ? (data as any).content : [];
   // Multiple content blocks (text / server_tool_use / web_search_tool_result). The JSON
   // answer is in the FINAL text block, after the tool calls — not block[0].
