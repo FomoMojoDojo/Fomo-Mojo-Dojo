@@ -65,7 +65,7 @@ describe("evidence mappers", () => {
     expect(mapSignalsToClaimCandidates("company-1", signals)).toHaveLength(0);
   });
 
-  it("rewrites first-person customer anecdotes into reusable evidence statements", () => {
+  it("passes first-person customer anecdotes through verbatim (no canned rewrite)", () => {
     const candidates = mapSignalsToClaimCandidates("company-1", [
       makeSignal({
         source_type: "transcript",
@@ -83,11 +83,34 @@ describe("evidence mappers", () => {
     ]);
 
     expect(candidates).toHaveLength(1);
+    // Fabrication-removal (07-09): the canned "Customer evidence describes…"
+    // rewrite is GONE — the anecdote's own lead clause passes through verbatim
+    // (whitespace-normalized only). Verbatim-or-nothing law.
     expect(candidates[0].claim.statement).toBe(
-      "Customer evidence describes disappointment with a previously trusted supplier.",
+      "I received a bag of coffee from a highly regarded supplier through a subscription service I've relied on for years.",
     );
     expect(candidates[0].claim.claim_type).toBe("unmet_need");
     expect(candidates[0].claim.customer_support_count).toBe(1);
+  });
+
+  // Substitution tripwire (07-09 fabrication-removal): claim derivation must
+  // NEVER rewrite subject vocabulary. "teams"/"operators"/"roasters" pass
+  // through untouched — if a substitution ever returns, this fails first.
+  it("never substitutes subject vocabulary into statements (teams/operators/roasters tripwire)", () => {
+    const candidates = mapSignalsToClaimCandidates("company-1", [
+      makeSignal({
+        claim_text: "The platform currently favors small teams and independent operators who rely on regional roasters.",
+        evidence_excerpt: "The platform currently favors small teams and independent operators who rely on regional roasters.",
+        topic: "problem",
+      }),
+    ]);
+    expect(candidates).toHaveLength(1);
+    const statement = candidates[0].claim.statement;
+    expect(statement).toContain("teams");
+    expect(statement).toContain("operators");
+    expect(statement).toContain("roasters");
+    expect(statement).not.toContain("Cafe operators");
+    expect(statement).not.toContain("suppliers");
   });
 
   // Verbatim-or-nothing law (ecc4bd5/6180695): the canned canonical-rewrite branch
@@ -174,9 +197,9 @@ describe("evidence mappers", () => {
       companyId: "company-1",
       sourceId: "baseline-1",
       resultJson: {
-        outside_voice_signals: [{ signal: "Competitors appear to win trust through hands-on operational support.", confidence: "high" }],
+        outside_voice_signals: [{ signal: "Competitors seem to win trust through hands-on operational support.", confidence: "high" }],
         evidence_ledger: [{ snippet: "Switching costs remain low in the category.", bucket: "market", url: "https://example.com" }],
-        top_hypotheses: ["Public positioning emphasizes artisanal quality more than operational proof."],
+        top_hypotheses: ["Public positioning emphasizes artisanal quality over operational proof."],
       },
     });
 
@@ -187,13 +210,13 @@ describe("evidence mappers", () => {
 
   it("matches job-step provenance conservatively", () => {
     const roastClaim = {
-      statement: "Cafe operators report inconsistent roast quality across batches.",
+      statement: "Cafe staff report inconsistent roast quality across batches.",
       topic: "problem",
       claim_type: "unmet_need" as const,
       triangulation_state: "customer_backed" as const,
     };
     const marketClaim = {
-      statement: "Public market signals suggest customer switching costs remain low.",
+      statement: "Public market signals indicate customer switching costs stay low.",
       topic: "market",
       claim_type: "inference" as const,
       triangulation_state: "single_source" as const,
@@ -216,7 +239,7 @@ describe("evidence mappers", () => {
 
   it("keeps direct claim-to-need matching conservative", () => {
     const roastClaim = {
-      statement: "Cafe operators report inconsistent roast quality across batches.",
+      statement: "Cafe staff report inconsistent roast quality across batches.",
       topic: "problem",
       claim_type: "unmet_need" as const,
       triangulation_state: "customer_backed" as const,

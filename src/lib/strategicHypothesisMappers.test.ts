@@ -37,7 +37,7 @@ describe("strategic hypothesis mappers", () => {
   it("yields zero candidates for declarative claims without uncertainty, assumption, or tension language", () => {
     const candidates = buildStrategicHypothesisCandidates("company-1", [
       makeClaim({
-        statement: "Public positioning emphasizes artisanal quality more than operational proof.",
+        statement: "Public positioning emphasizes artisanal quality over operational proof.",
       }),
     ]);
 
@@ -48,7 +48,7 @@ describe("strategic hypothesis mappers", () => {
     const candidates = buildStrategicHypothesisCandidates("company-1", [
       makeClaim({
         id: "claim-2",
-        statement: "Reliability concerns appear tied to repeat purchasing confidence.",
+        statement: "Reliability worries appear tied to repeat purchasing confidence.",
         topic: "problem",
         outside_support_count: 1,
         organization_support_count: 1,

@@ -98,7 +98,6 @@ const OUTSIDE_NOISE_PATTERNS = [
   /\bsquarespace\b/i,
 ];
 
-const IMPERATIVE_LEAD_PATTERNS = /^(build|create|decide|define|deliver|ensure|establish|identify|improve|increase|maximize|minimize|optimize|reduce|secure|select)\b/i;
 
 function asRecord(value: unknown): RecordLike | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as RecordLike) : null;
@@ -192,62 +191,23 @@ function takeLeadClause(text: string) {
     .filter(Boolean)[0] || normalizeStatement(text);
 }
 
+// Fabrication-removal (ecc4bd5 family, 07-09): the Cafe Barra-era vocabulary
+// substitutions ("teams"/"operators" → "Cafe operators", "roasters" →
+// "suppliers") are GONE — they rewrote every company's claim statements at
+// derivation (verbatim-or-nothing law). Statements pass through honestly;
+// only whitespace normalization remains.
 function compactStatement(text: string) {
   return normalizeStatement(text)
-    .replace(/\b(cafe owners?|operators?|teams?)\b/gi, "Cafe operators")
-    .replace(/\b(roasters?)\b/gi, "suppliers")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function summarizeCustomerEvidence(text: string) {
+  // Regex→literal canned sentences and the imperative rewrite chain are GONE
+  // (fabrication: invented sentences replaced the signal's own words). The
+  // signal's lead clause passes through, or nothing.
   const normalized = normalizeComparisonText(text);
   if (!normalized) return null;
-  if (/^\bi\b/.test(normalized) && /(bag|subscription service|trusted supplier|relied on|rely on|supplier|coffee)/.test(normalized)) {
-    return "Customer evidence describes disappointment with a previously trusted supplier.";
-  }
-  if (/(i received a bag|subscription service|i ve relied|ive relied)/.test(normalized) && /(under roasted|underroasted|not roasted enough|inconsistent|quality)/.test(normalized)) {
-    return "Customer evidence describes disappointment with roast quality from a previously trusted supplier.";
-  }
-  if (/^\bi\b/.test(normalized) && /(quality|trust|reliab|support|dial|consisten|batch)/.test(normalized)) {
-    return "Customer evidence describes operational frustration tied to coffee quality and supplier reliability.";
-  }
-  if (/(under roasted|underroasted|roast inconsisten|batch inconsisten|quality variance|crop years)/.test(normalized)) {
-    return "Cafe operators report inconsistent roast quality across batches.";
-  }
-  if (/(dial in|dialin|new coffee arrives|new batch)/.test(normalized)) {
-    return "New coffee arrivals create dial-in burden for cafe teams.";
-  }
-  if (/(support|responsiveness|response time|reach out)/.test(normalized) && /(reliab|trust|confiden)/.test(normalized)) {
-    return "Support responsiveness appears tied to perceived supplier reliability.";
-  }
-  if (/(staff dependence|individual knowledge|single person|tribal knowledge)/.test(normalized)) {
-    return "Cafe teams rely on individual staff knowledge to maintain quality consistency.";
-  }
-  if (/(partner|supplier|roaster)/.test(normalized) && /(reliab|consisten|risk)/.test(normalized)) {
-    return "Reliability concerns appear tied to repeat purchasing confidence.";
-  }
-  if (/(support|documentation|training)/.test(normalized)) {
-    return "Cafe operators report needing more hands-on support to maintain coffee quality.";
-  }
-  if (/(quality|consisten|variance|reliab|support|trust|dial)/.test(normalized)) {
-    const clause = compactStatement(takeLeadClause(text));
-    if (IMPERATIVE_LEAD_PATTERNS.test(clause)) {
-      return clause
-        .replace(/^increase speed to confident dial in/i, "Cafe operators need faster confidence when dialing in new coffee")
-        .replace(/^reduce dependence on individual staff knowledge/i, "Cafe teams rely too heavily on individual staff knowledge")
-        .replace(/^maximize customer perception of consistency/i, "Customer confidence depends on perceived coffee consistency")
-        .replace(/^improve the predictability and reliability of partnerships/i, "Partnership reliability is affecting perceived supplier trust")
-        .replace(/^cafe owners need to secure/i, "Cafe operators need to secure")
-        .replace(/^cafes must reduce/i, "Cafe teams need to reduce")
-        .replace(/^cafes should prioritize/i, "Cafe teams are pressured to prioritize")
-        .replace(/^cafes must improve their ability to quickly dial in/i, "Cafe teams struggle to dial in new coffee quickly")
-        .replace(/^secure a bean supply that performs consistently/i, "Bean supply consistency is affecting operating confidence")
-        .replace(/^build a roaster partnership that reduces operational risk/i, "Cafe operators want suppliers to reduce operational risk")
-        .replace(/^deliver a customer experience that justifies specialty pricing/i, "Coffee consistency affects whether specialty pricing feels justified")
-        .replace(/\.$/, "") + ".";
-    }
-  }
   return compactStatement(takeLeadClause(text));
 }
 
@@ -274,18 +234,6 @@ function summarizeOutsideEvidence(text: string) {
     !/(ambiguity|switching|support|trust|loyalty|proof|risk)/.test(normalized)
   ) {
     return null;
-  }
-  if (/(competitor|other roaster|winning trust)/.test(normalized) && /(support|hands on|documentation|training)/.test(normalized)) {
-    return "Competitors appear to win trust through hands-on operational support.";
-  }
-  if (/(small batch|hand roasted|carefully extract)/.test(normalized)) {
-    return "Public positioning emphasizes artisanal quality more than operational proof.";
-  }
-  if (/(switching costs|brand loyalty)/.test(normalized)) {
-    return "Public market signals suggest customer switching costs remain low.";
-  }
-  if (/(ambiguity|same corporate entity|different company|separate cafe barra entity)/.test(normalized)) {
-    return "Public sources create ambiguity about which Cafe Barra entity the brand represents.";
   }
   if (/(business to business relationships as partnerships|best roasted coffee to partner outlets)/.test(normalized)) {
     return null;

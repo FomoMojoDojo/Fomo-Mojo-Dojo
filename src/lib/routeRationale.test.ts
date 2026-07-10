@@ -59,7 +59,7 @@ function makeHypothesis(overrides: Partial<HypothesisProvenanceCard> = {}): Hypo
         claim: {
           id: "claim-1",
           company_id: "company-1",
-          statement: "Public positioning emphasizes artisanal quality more than operational proof.",
+          statement: "Public positioning emphasizes artisanal quality over operational proof.",
           topic: "positioning",
           claim_type: "inference",
           outside_support_count: 1,
