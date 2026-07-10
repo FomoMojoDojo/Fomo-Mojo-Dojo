@@ -239,13 +239,32 @@ export async function synthesizeLegTests(args: {
 
   const perLeg: LegTestOutcome[] = [];
 
+  // SWAP-BATCHING (CH-1, mirrors routeLegSynthesis option d): ALL 14b generations
+  // for this chunk run first, THEN guards + all 70b judgments (GGGJJJ) — the
+  // interleaved gen→judge order forced an Ollama VRAM model swap on nearly every
+  // call (only one of the two models stays resident; the swap dominated the
+  // measured ~26.8s judge calls). Judge inputs are UNCHANGED: generation depends
+  // only on the leg (+its route grounding), judgment only on (leg, generated
+  // test), so phase order cannot alter what any call sees — equivalence-tested
+  // at the fetch boundary (legTestBatching.test.ts). The per-leg origin-merge
+  // write STILL happens per leg right after its judgment, so a mid-chunk death
+  // loses nothing already written. Operator-covered legs are skipped up front,
+  // before any generation — guard order unchanged.
+  type GennedTest = {
+    leg: LegInput;
+    gen: { hypothesis: string; expected_positive_signal: string; expected_negative_signal: string };
+  };
+  const genned: GennedTest[] = [];
   for (const leg of args.legs) {
     if (operatorLegIds.has(leg.id)) {
       // An operator-edited test already covers this leg — keep it, don't regenerate.
       perLeg.push({ leg_id: leg.id, move: leg.move, proposed: null, written: false, preserved_operator: true });
       continue;
     }
-    const gen = await generateLegTest({ ollamaUrl: args.ollamaUrl, genModel, leg });
+    genned.push({ leg, gen: await generateLegTest({ ollamaUrl: args.ollamaUrl, genModel, leg }) });
+  }
+
+  for (const { leg, gen } of genned) {
     // Deterministic org-name guard + empty rejection, then the 70b honesty judge.
     const hasAll = !!gen.hypothesis && !!gen.expected_positive_signal && !!gen.expected_negative_signal;
     const namesOrg = orgGuard(gen.hypothesis) || orgGuard(gen.expected_positive_signal) || orgGuard(gen.expected_negative_signal);
@@ -318,6 +337,10 @@ export async function synthesizeLegTests(args: {
     perLeg.push({ leg_id: leg.id, move: leg.move, proposed, written, preserved_operator: false });
   }
 
+  // Two-pass assembly pushes operator-preserved outcomes before judged ones —
+  // restore the caller's leg order so the report reads route-by-route.
+  const orderIndex = new Map(args.legs.map((l, i) => [l.id, i]));
+  perLeg.sort((a, b) => (orderIndex.get(a.leg_id) ?? 0) - (orderIndex.get(b.leg_id) ?? 0));
   return perLeg;
 }
 
@@ -331,19 +354,29 @@ export async function generateLegTestsForCompany(args: {
   judgeModel?: string;
   runId?: string;
   write: boolean;
+  // CHUNKED INVOCATION (CH-1, 508145f pattern): when provided, scope the run to
+  // these leg ids so one request stays well under the 400s isolate wall-clock.
+  // Absent/empty ⇒ full-company behavior (harness back-compat). Write semantics
+  // are IDENTICAL either way — the origin-merge is already per-leg.
+  legIds?: string[];
 }): Promise<LegTestResult> {
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
   const { data: companyRow } = await args.supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle();
   const companyName = String((companyRow as { name?: unknown } | null)?.name ?? "");
 
-  // Load all legs for the company; keep only the test-class ones.
-  const { data: legRows, error } = await args.supabase
+  // Load all legs for the company (or the requested chunk); keep only the
+  // test-class ones.
+  let legQuery = args.supabase
     .from("routes")
     .select("id, user_id, parent_id, title, short_description, what_would_have_to_be_true")
     .eq("company_id", args.companyId)
     .eq("level", "leg")
     .eq("provenance_type", "internal_hypothesis");
+  if (args.legIds && args.legIds.length > 0) {
+    legQuery = legQuery.in("id", args.legIds);
+  }
+  const { data: legRows, error } = await legQuery;
   if (error) return { ok: false, error: String(error.message || error) };
 
   const firstWwhtbt = (r: Record<string, unknown>): Record<string, unknown> =>

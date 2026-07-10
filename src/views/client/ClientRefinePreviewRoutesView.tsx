@@ -531,7 +531,12 @@ export function RoutesOrgPanel({
           } else if (error) {
             throw error;
           } else {
-            outcome = { title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) };
+            // CH-1: a PRESERVED-CLASS test on a dying leg makes the core refuse
+            // this route (its legs and tests stand) — render the honest reason.
+            const refused = ((data?.perRoute ?? []) as Array<{ error?: string }>).find((r) => r.error);
+            outcome = refused
+              ? { title: route.title, ok: false, reason: String(refused.error) }
+              : { title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) };
           }
         } catch {
           // Gateway cut the response — the chunk usually keeps running server-side.
@@ -563,6 +568,159 @@ export function RoutesOrgPanel({
       setLegGenProgress((p) => (p ? { ...p, running: false } : p));
     }
   }, [activeCompany?.id, regeneratingLegs, routes, waitForChunk, onCommitSuccess]);
+
+  // Deliberate "Draft tests" — CHUNKED (CH-1, mirrors the legs loop above): one
+  // edge request per ROUTE, carrying that route's test-class LEG ids, keeps every
+  // request far under the 400s isolate wall-clock that killed full-company runs
+  // (FMD's 31 test-legs measured ~13× over budget unchunked). Per-chunk completion
+  // comes from the response, or from polling the chunk's TESTS (fresh created_at
+  // OR count change — covers the judge-dropped-all case) when the gateway cuts
+  // the response early. The write is a per-leg origin-merge through the declared
+  // re-roll RPC, so a re-click resumes safely — and resume re-runs ONLY routes
+  // that haven't completed; finished routes keep their fresh tests untouched. A
+  // PRESERVED-CLASS refusal on a leg surfaces as that route's honest ✗ with the
+  // law's reason. The per-leg "Generate test" buttons stay for single-leg work.
+  // All progress/failure strings are DRAFTS pending operator signature.
+  type TestGenRouteResult = { routeId: string; title: string; ok: boolean; reason?: string; seconds?: number };
+  const [generatingTests, setGeneratingTests] = useState(false);
+  const [testGenProgress, setTestGenProgress] = useState<null | {
+    running: boolean;
+    current: number;
+    total: number;
+    title: string;
+    results: TestGenRouteResult[];
+  }>(null);
+
+  // Poll fallback: the chunk is done when its legs' TESTS changed (fresh
+  // created_at or a different count — count-change covers judge-dropped-all).
+  const waitForTestChunk = useCallback(async (legIds: string[], preCount: number, startedAtIso: string) => {
+    const capMs = 420_000;
+    const t0 = Date.now();
+    while (Date.now() - t0 < capMs) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const { data, count } = await supabase
+        .from("tests")
+        .select("id, created_at", { count: "exact" })
+        .in("action_id", legIds);
+      const rows = (data ?? []) as Array<{ created_at?: string }>;
+      const fresh = rows.some((t) => String(t.created_at ?? "") > startedAtIso);
+      if (fresh || (count ?? rows.length) !== preCount) return true;
+    }
+    return false;
+  }, []);
+
+  // Progress (and its resume bookkeeping) is company-scoped: switching the
+  // active company must not leak another company's ✓ routes into doneIds or
+  // render its stale panel. Applies to both chunked loops.
+  useEffect(() => {
+    setLegGenProgress(null);
+    setTestGenProgress(null);
+  }, [activeCompany?.id]);
+
+  const handleGenerateAllTests = useCallback(async () => {
+    if (!activeCompany?.id || generatingTests) return;
+    if (isFrozenCompany(activeCompany.id)) {
+      toast.error("This is a frozen reference company — tests aren't generated for it.");
+      return;
+    }
+    // Group test-class legs by parent route; chunk = one route's leg ids.
+    const testLegsByRoute = new Map<string, string[]>();
+    for (const r of routes) {
+      if (r.level !== "leg") continue;
+      if ((r.provenance_type ?? "") !== "internal_hypothesis") continue;
+      const first = Array.isArray(r.what_would_have_to_be_true)
+        ? (r.what_would_have_to_be_true[0] as { leg_class?: string } | undefined)
+        : undefined;
+      if (String(first?.leg_class ?? "") !== "test") continue;
+      if (!r.parent_id) continue;
+      testLegsByRoute.set(r.parent_id, [...(testLegsByRoute.get(r.parent_id) ?? []), r.id]);
+    }
+    const chunkRoutes = routes
+      .filter((r) => r.level === "route" && (r.relevance_state ?? "active") === "active" && testLegsByRoute.has(r.id))
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    if (chunkRoutes.length === 0) {
+      toast.error("No test-class legs to draft tests for.");
+      return;
+    }
+
+    // RESUME: when the previous run left failures, re-run ONLY the routes that
+    // haven't completed — finished routes keep their fresh tests untouched
+    // (their chunk is simply not re-fired). A click after a fully-completed run
+    // is a fresh full re-roll (regenerate semantics), not a no-op.
+    const prior = testGenProgress?.results ?? [];
+    const resuming = prior.some((r) => !r.ok);
+    const doneIds = new Set(resuming ? prior.filter((r) => r.ok).map((r) => r.routeId) : []);
+    const results: TestGenRouteResult[] = resuming
+      ? prior.filter((r) => r.ok && chunkRoutes.some((c) => c.id === r.routeId))
+      : [];
+    const pending = chunkRoutes.filter((r) => !doneIds.has(r.id));
+
+    setGeneratingTests(true);
+    try {
+      for (let i = 0; i < pending.length; i++) {
+        const route = pending[i];
+        const legIds = testLegsByRoute.get(route.id) ?? [];
+        setTestGenProgress({
+          running: true,
+          current: results.length + 1,
+          total: chunkRoutes.length,
+          title: route.title,
+          results: [...results],
+        });
+
+        const startedAtIso = new Date().toISOString();
+        const chunkT0 = Date.now();
+        const { count: preCount } = await supabase
+          .from("tests")
+          .select("id", { count: "exact", head: true })
+          .in("action_id", legIds);
+
+        let outcome: TestGenRouteResult;
+        try {
+          const { data, error } = await supabase.functions.invoke("generate-leg-tests", {
+            body: { company_id: activeCompany.id, write: true, leg_ids: legIds },
+          });
+          if (data && data.ok === false) {
+            outcome = { routeId: route.id, title: route.title, ok: false, reason: String(data.error || "test drafting failed") };
+          } else if (error) {
+            throw error;
+          } else {
+            // A preserved-class refusal is an honest per-leg error in the response.
+            const failedLeg = ((data?.perLeg ?? []) as Array<{ error?: string }>).find((l) => l.error);
+            outcome = failedLeg
+              ? { routeId: route.id, title: route.title, ok: false, reason: String(failedLeg.error) }
+              : { routeId: route.id, title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) };
+          }
+        } catch {
+          // Gateway cut the response — the chunk usually keeps running server-side.
+          // Poll the chunk's tests; only a silent 7 minutes is an honest timeout.
+          const landed = await waitForTestChunk(legIds, preCount ?? 0, startedAtIso);
+          outcome = landed
+            ? { routeId: route.id, title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) }
+            : { routeId: route.id, title: route.title, ok: false, reason: "timeout — no tests appeared within 7 minutes" };
+        }
+        results.push(outcome);
+        setTestGenProgress({
+          running: i + 1 < pending.length,
+          current: results.length,
+          total: chunkRoutes.length,
+          title: route.title,
+          results: [...results],
+        });
+      }
+
+      const okCount = results.filter((r) => r.ok).length;
+      if (okCount === chunkRoutes.length) {
+        toast.success(`Tests drafted for all ${chunkRoutes.length} routes — hypotheses only, no results invented`, { id: "gen-all-tests" });
+      } else {
+        toast.error(`${okCount} of ${chunkRoutes.length} routes completed — re-click to resume the rest (finished routes keep their tests).`, { id: "gen-all-tests" });
+      }
+      handleLegTestGenerated();
+    } finally {
+      setGeneratingTests(false);
+      setTestGenProgress((p) => (p ? { ...p, running: false } : p));
+    }
+  }, [activeCompany?.id, generatingTests, routes, testGenProgress, waitForTestChunk, handleLegTestGenerated]);
 
   // Deliberate "Regenerate conditions" (Stage-0): re-rolls generated WWHTBT conditions
   // on each route, preserving operator-authored conditions verbatim (the edge core's
@@ -1304,6 +1462,30 @@ export function RoutesOrgPanel({
                         ? "Resume leg generation"
                         : "Regenerate legs"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateAllTests}
+                    disabled={generatingTests}
+                    title="Draft one belief-only test per test-class leg, route by route. Operator-edited tests are kept. (DRAFT copy pending signature.)"
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: 0.2,
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(120,120,140,0.35)",
+                      background: generatingTests ? "rgba(120,120,140,0.12)" : "transparent",
+                      color: "inherit",
+                      cursor: generatingTests ? "default" : "pointer",
+                      opacity: generatingTests ? 0.6 : 1,
+                    }}
+                  >
+                    {generatingTests
+                      ? "Drafting tests…"
+                      : testGenProgress && testGenProgress.results.some((r) => !r.ok)
+                        ? "Resume test drafting"
+                        : "Draft tests (all routes)"}
+                  </button>
                 </div>
               )}
               {/* Chunked-run progress (DRAFT strings pending operator signature):
@@ -1327,6 +1509,36 @@ export function RoutesOrgPanel({
                     <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
                       {legGenProgress.results.map((r, i) => (
                         <li key={i} style={{ color: r.ok ? "#2f6b3a" : "#b3261e" }}>
+                          {r.ok ? "✓" : "✗"} {r.title}
+                          {r.ok && typeof r.seconds === "number" ? ` (${r.seconds}s)` : ""}
+                          {!r.ok && r.reason ? ` — ${r.reason}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {/* Chunked test-drafting progress (CH-1; DRAFT strings pending operator
+                  signature): same vocabulary as the legs panel above — live per-route
+                  line, per-route ✓/✗ with reasons, honest completion/resume summary. */}
+              {testGenProgress && (
+                <div style={{ margin: "0 0 12px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12 }}>
+                  {testGenProgress.running ? (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      Drafting tests — route {testGenProgress.current} of {testGenProgress.total}: {testGenProgress.title}
+                    </p>
+                  ) : (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      {testGenProgress.results.filter((r) => r.ok).length} of {testGenProgress.total} routes completed
+                      {testGenProgress.results.some((r) => !r.ok)
+                        ? " — re-click to resume; finished routes keep their tests (operator-edited tests are always kept)."
+                        : "."}
+                    </p>
+                  )}
+                  {testGenProgress.results.length > 0 && (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                      {testGenProgress.results.map((r) => (
+                        <li key={r.routeId} style={{ color: r.ok ? "#2f6b3a" : "#b3261e" }}>
                           {r.ok ? "✓" : "✗"} {r.title}
                           {r.ok && typeof r.seconds === "number" ? ` (${r.seconds}s)` : ""}
                           {!r.ok && r.reason ? ` — ${r.reason}` : ""}

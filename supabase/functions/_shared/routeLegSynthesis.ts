@@ -69,6 +69,10 @@ export type RouteLegOutcome = {
   proposed: ProposedLeg[];      // every condition's candidate, with judge verdict
   written_count: number | null; // null on dry-run
   preserved_operator: number;   // operator legs kept on this route
+  // CH-1: set when the declared test re-roll RPC refused this route's leg delete
+  // (a PRESERVED-CLASS test rides a dying leg) — an HONEST per-route failure;
+  // the other routes continue.
+  error?: string;
 };
 
 export type RouteLegResult =
@@ -187,7 +191,7 @@ async function judgeLegMove(args: {
 
 // ── Synthesize: per route → per condition → gen → judge → (write+preserve | dry) ─
 export async function synthesizeRouteLegs(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   companyName: string;
   routes: RouteInput[];
@@ -271,6 +275,30 @@ export async function synthesizeRouteLegs(args: {
       // Origin-merge preserve: keep operator-edited legs, re-roll generated ones.
       const generatedLegIds = existingLegs.filter((l) => !isOperatorLeg(l)).map((l) => l.id);
       if (generatedLegIds.length > 0) {
+        // CH-1 (the held CH-0 wiring): the dying legs' generated tests are removed
+        // FIRST through the declared path — reason_category='leg_rerolled', actor
+        // 'generate-route-legs', each audit row capturing the leg's context while
+        // it is still alive — THEN the legs are deleted (the FK cascade finds no
+        // generated tests left). A PRESERVED-CLASS test on a dying leg (operator-
+        // authored, recorded result, or reasoned no-test-needed) makes the RPC
+        // pre-refuse: THIS route surfaces an honest error and the other routes
+        // continue (per-route isolation, same as the client loop). Operator legs
+        // are never in generatedLegIds (isOperatorLeg), so the RPC never sees them.
+        const { error: rerollErr } = await args.supabase.rpc("remove_tests_for_leg_reroll", {
+          p_leg_ids: generatedLegIds,
+          p_actor: "generate-route-legs",
+        });
+        if (rerollErr) {
+          perRoute.push({
+            route_id: route.id,
+            route_title: route.title,
+            proposed,
+            written_count: null,
+            preserved_operator,
+            error: `leg re-roll refused for route ${route.id}: ${String(rerollErr.message ?? rerollErr)}`,
+          });
+          continue;
+        }
         const { error: delErr } = await args.supabase.from("routes").delete().in("id", generatedLegIds);
         if (delErr) throw new Error(`leg preserve-delete failed for route ${route.id}: ${delErr.message}`);
       }
@@ -310,7 +338,7 @@ export async function synthesizeRouteLegs(args: {
 
 // ── Company-level entry point (frozen guard + load routes + synthesize) ─────────
 export async function generateLegsForCompany(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   ollamaUrl: string;
   nowIso: string;

@@ -48,8 +48,11 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write } = await req.json();
+    const { company_id, write, leg_ids } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
+    // Chunked invocation (CH-1, 508145f pattern): optional leg scoping keeps each
+    // request under the isolate wall-clock; absent = full-company (harness back-compat).
+    const legIds = Array.isArray(leg_ids) ? leg_ids.filter((l: unknown) => typeof l === "string") : undefined;
     const doWrite = write !== false; // default true; write:false ⇒ dry-run
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
@@ -73,6 +76,7 @@ serve(async (req) => {
       write: doWrite,
       runId: `generate-leg-tests:${new Date().toISOString().slice(0, 10)}`,
       nowIso: new Date().toISOString(),
+      legIds,
     });
 
     if (result.ok) {
