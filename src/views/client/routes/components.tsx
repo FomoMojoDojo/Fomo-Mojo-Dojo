@@ -1357,8 +1357,9 @@ export function HierarchyPageHeader({
 // Gate 3: belief-only test surfaced read-only on a test-class leg. Reads the leg's
 // one primary `tests` row (action_id = leg.id) and renders the signed strings +
 // derived honesty states. The admin Generate/Regenerate control (non-frozen only)
-// invokes generate-leg-tests company-wide; per Gate-2 parity the ~150s gateway
-// timeout is treated as success (writes land server-side) then refresh. There is
+// invokes generate-leg-tests company-wide; a failure (including a gateway cut or
+// isolate kill) reports HONESTLY as an error and refreshes to show whatever
+// landed server-side (CH-0b — the per-leg chunked progress UI is CH-1). There is
 // NO result-entry control — a result is displayed verbatim if present, never set.
 type LegTestRow = {
   id: string;
@@ -1447,9 +1448,13 @@ function LegTestPanel({
       setLocalRefresh((k) => k + 1);
       onGenerated?.();
     } catch (err) {
-      // A gateway timeout still leaves the writes landing — nudge a refresh, don't alarm.
+      // CH-0b: the failure path tells the truth. The old branch toasted SUCCESS on
+      // any error — an isolate kill read as "Tests drafted". Writes that landed
+      // server-side before a gateway cut still surface via the refresh below; the
+      // honest per-leg progress UI is the chunking gate (CH-1).
+      const message = err instanceof Error ? err.message : String(err);
       console.warn("[LegTestPanel] generate-leg-tests:", err);
-      toast.success("Tests drafted — hypotheses only, no results invented", { id: "gen-leg-tests" });
+      toast.error(`Test drafting failed or didn't confirm — ${message}. If the run was still working server-side, refresh in a minute to see what landed.`, { id: "gen-leg-tests" });
       setLocalRefresh((k) => k + 1);
       onGenerated?.();
     } finally {

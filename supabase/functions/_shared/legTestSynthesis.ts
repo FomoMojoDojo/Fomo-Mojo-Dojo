@@ -62,10 +62,13 @@ export type LegTestOutcome = {
   proposed: ProposedTest | null;   // null ⇒ operator-preserved (no generation ran for this leg)
   written: boolean;
   preserved_operator: boolean;
+  // CH-0b: set when the declared re-roll RPC refused this leg (preserved-class
+  // floor) — an HONEST per-leg failure, never a silent skip, never a success.
+  error?: string;
 };
 
 export type LegTestResult =
-  | { ok: true; perLeg: LegTestOutcome[]; totals: { legs: number; proposed: number; kept: number; dropped: number; written: number; preservedOperator: number } }
+  | { ok: true; perLeg: LegTestOutcome[]; totals: { legs: number; proposed: number; kept: number; dropped: number; written: number; preservedOperator: number; failed: number } }
   | { ok: false; skipped: "frozen_company" | "no_test_legs" }
   | { ok: false; error: string };
 
@@ -185,9 +188,13 @@ async function judgeLegTest(args: {
   return { keep, reason };
 }
 
+// The declared re-roll actor — greppable, matches the source prefix this
+// pipeline writes on its inserts.
+const RE_ROLL_ACTOR = "generate-leg-tests";
+
 // ── Synthesize: per test-leg → gen → judge → (write+preserve | dry) ─────────────
 export async function synthesizeLegTests(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   companyName: string;
   legs: LegInput[];
@@ -263,12 +270,34 @@ export async function synthesizeLegTests(args: {
     if (args.write) {
       // Origin-merge preserve, applied PER LEG (mirrors Gate-2's per-route write so
       // each completed test persists immediately and a gateway/worker timeout never
-      // loses the legs already processed): re-roll this leg's generated test rows,
-      // then insert the fresh one if the judge kept it. Operator rows are never here.
+      // loses the legs already processed): re-roll this leg's generated test rows
+      // THROUGH THE DECLARED PATH (CH-0b), then insert the fresh one if the judge
+      // kept it. remove_tests_for_leg_reroll deletes with a declared
+      // reason_category='leg_rerolled' (the CH-0a trigger writes the test_removals
+      // row, leg context captured while the leg is alive) and PRE-REFUSES if any
+      // PRESERVED-CLASS test rides the leg (operator-authored, recorded result, or
+      // reasoned no-test-needed). The reroll set is generated-only by construction
+      // (operator tests skip the leg upstream) and this pipeline never writes
+      // result/no_test_needed — so the refusal is a floor, not a normal path. A
+      // refusal surfaces as an HONEST per-leg error (never a silent skip, never a
+      // success); the OTHER legs continue — per-leg isolation, same as the write.
       const toReroll = generatedIdsByLeg.get(leg.id) ?? [];
       if (toReroll.length > 0) {
-        const { error: delErr } = await args.supabase.from("tests").delete().in("id", toReroll);
-        if (delErr) throw new Error(`leg-test preserve-delete failed for leg ${leg.id}: ${delErr.message}`);
+        const { error: rerollErr } = await args.supabase.rpc("remove_tests_for_leg_reroll", {
+          p_leg_ids: [leg.id],
+          p_actor: RE_ROLL_ACTOR,
+        });
+        if (rerollErr) {
+          perLeg.push({
+            leg_id: leg.id,
+            move: leg.move,
+            proposed,
+            written: false,
+            preserved_operator: false,
+            error: `leg-test re-roll refused for leg ${leg.id}: ${String(rerollErr.message ?? rerollErr)}`,
+          });
+          continue;
+        }
       }
       if (keep) {
         const { error: insErr } = await args.supabase.from("tests").insert({
@@ -294,7 +323,7 @@ export async function synthesizeLegTests(args: {
 
 // ── Company-level entry point (frozen guard + load test-legs + synthesize) ───────
 export async function generateLegTestsForCompany(args: {
-  supabase: { from: (t: string) => any };
+  supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
   companyId: string;
   ollamaUrl: string;
   nowIso: string;
@@ -372,8 +401,9 @@ export async function generateLegTestsForCompany(args: {
       dropped: acc.dropped + (l.proposed && !l.proposed.kept ? 1 : 0),
       written: acc.written + (l.written ? 1 : 0),
       preservedOperator: acc.preservedOperator + (l.preserved_operator ? 1 : 0),
+      failed: acc.failed + (l.error ? 1 : 0),
     }),
-    { legs: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0 },
+    { legs: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0, failed: 0 },
   );
 
   return { ok: true, perLeg, totals };
