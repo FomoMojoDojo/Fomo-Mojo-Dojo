@@ -2,7 +2,12 @@
 //
 // INT-3: thin HTTP wrapper over _shared/claimDeltaSynthesis.ts — computes the
 // internal-declared vs public-observed claim deltas for one company (the
-// founding signal). Accepts { company_id, write? }; write:false ⇒ dry-run.
+// founding signal). Accepts { company_id, write?, declared_ids?, plan? };
+// write:false ⇒ dry-run. CH-2b-1: declared_ids (non-empty array) ⇒ scoped
+// pairs-only chunk (no silences, no sweep — presence-gated in the core);
+// present-but-empty declared_ids is a caller error (422), never silently a
+// full run. plan:true ⇒ candidate manifest, zero model calls, zero writes.
+// Absent declared_ids + absent plan ⇒ the full run (the finalize pass).
 //
 // LOCAL-ONLY (Option B): this compares internal content; generation/judging go
 // to a localhost Ollama (qwen2.5:14b proposer + llama3:70b judge). ZERO OpenAI.
@@ -40,9 +45,24 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write } = await req.json();
+    const { company_id, write, declared_ids, plan } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
+    const doPlan = plan === true;
+
+    // CH-2b-1: presence-gated scoping. Present-but-empty (after dropping
+    // non-strings) is a CALLER ERROR — a scoped intent must never be silently
+    // promoted to a full (sweep-running) run.
+    let declaredIds: string[] | undefined;
+    if (declared_ids !== undefined && declared_ids !== null) {
+      const filtered = Array.isArray(declared_ids)
+        ? (declared_ids as unknown[]).filter((x): x is string => typeof x === "string" && x.length > 0)
+        : [];
+      if (filtered.length === 0) {
+        return json({ ok: false, error: "declared_ids must be a non-empty array of declared claim ids — omit it entirely for a full run" }, 422);
+      }
+      declaredIds = filtered;
+    }
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     if (!isLocalOllamaUrl(ollamaUrl)) {
@@ -54,7 +74,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     ) as unknown as { from: (t: string) => any };
 
-    const result = await computeDeltasForCompany({
+    const baseArgs = {
       supabase,
       companyId: company_id,
       ollamaUrl,
@@ -62,9 +82,16 @@ serve(async (req) => {
       genModel: Deno.env.get("OLLAMA_MODEL") ?? undefined,
       judgeModel: Deno.env.get("OLLAMA_JUDGE_MODEL") ?? undefined,
       write: doWrite,
-    });
+      declaredIds,
+    };
+    const result = doPlan
+      ? await computeDeltasForCompany({ ...baseArgs, plan: true })
+      : await computeDeltasForCompany(baseArgs);
 
-    if (result.ok) return json({ ok: true, dry_run: !doWrite, totals: result.totals, deltas: result.deltas });
+    if (result.ok) {
+      if ("plan" in result) return json(result);
+      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, deltas: result.deltas });
+    }
     if ("skipped" in result) {
       if (result.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — deltas aren't computed for it." }, 403);
       if (result.skipped === "no_declared_claims") return json({ ok: false, error: "no internal_declared claims for this company" }, 404);

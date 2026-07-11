@@ -323,6 +323,152 @@ describe("computeDeltasForCompany", () => {
     expect(db.tables.claim_deltas.length).toBe(0);
   });
 
+  it("CH-2b-1: scoped run writes ONLY its subset's pair rows — no silences, no sweep, self-marked scoped:true", async () => {
+    // d1×p1 and d2×p2 are both pairable; the scope covers only d1. A stale row
+    // that a sweep WOULD delete is seeded — it must survive the scoped run.
+    const stale = { id: "stale-1", company_id: CO, content_identity: "orphaned-identity", delta_type: "echoed", operator_disposition: null };
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+        declared("d2", "weekly release cadence shipping fast"),
+        publicClaim("p2", "shipping weekly release cadence observed"),
+      ],
+      claim_deltas: [stale],
+    });
+    const calls = stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "x" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const r = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d1"] });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.scoped).toBe(true); // self-marked (design-gate F4)
+    // Only d1×p1 reached the models (1 propose + 1 judge); d2 was never iterated.
+    expect(calls.length).toBe(2);
+    expect(calls.every((c) => c.user.includes("evidence score visible always"))).toBe(true);
+    // Exactly one pair row written; no silence rows; stale row survived (no sweep).
+    expect(db.tables.claim_deltas.filter((row) => row.delta_type === "echoed" && row.content_identity !== "orphaned-identity").length).toBe(1);
+    expect(db.tables.claim_deltas.some((row) => String(row.delta_type).includes("silent"))).toBe(false);
+    expect(db.tables.claim_deltas.some((row) => row.id === "stale-1")).toBe(true);
+    expect(r.totals.rows_deleted).toBe(0);
+    expect(r.totals.publicly_silent).toBe(0);
+    expect(r.totals.internally_silent).toBe(0);
+  });
+
+  it("CH-2b-1 STRUCTURAL GUARD: declared_ids covering 100% of declared claims STILL writes no silences and sweeps nothing (presence-based, not coverage-based)", async () => {
+    // ONE declared claim; the scope names it — full coverage. p2 would be
+    // internally_silent and stale-1 would be swept in a FULL run; a scoped run
+    // must do neither, purely because the param is PRESENT.
+    const stale = { id: "stale-1", company_id: CO, content_identity: "orphaned-identity", delta_type: "echoed", operator_disposition: null };
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+        publicClaim("p2", "consultants charge hourly rates for projects"),
+      ],
+      claim_deltas: [stale],
+    });
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "x" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const r = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d1"] });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.scoped).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.delta_type === "echoed" && row.content_identity !== "orphaned-identity")).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => String(row.delta_type).includes("silent"))).toBe(false); // p2 NOT marked internally_silent
+    expect(db.tables.claim_deltas.some((row) => row.id === "stale-1")).toBe(true); // sweep never ran
+    expect(r.totals.rows_deleted).toBe(0);
+  });
+
+  it("CH-2b-1: plan mode makes ZERO model calls, writes NOTHING, and returns the packing manifest", async () => {
+    const d1s = "evidence score visible always";
+    const p1s = "score visible on the site"; // cached pair
+    const p2s = "score evidence rechecked yearly"; // tombstoned
+    const p3s = "score dashboards shipping soon"; // fresh
+    const db = fakeDb({
+      claims: [
+        declared("d1", d1s),
+        declared("d2", "unrelated retention cohort work"), // zero candidates
+        publicClaim("p1", p1s),
+        publicClaim("p2", p2s),
+        publicClaim("p3", p3s),
+      ],
+      claim_deltas: [
+        { id: "cached-1", company_id: CO, content_identity: await pairIdentity(d1s, p1s), delta_type: "echoed", operator_disposition: null },
+        { id: "tomb-1", company_id: CO, content_identity: await pairIdentity(d1s, p2s), delta_type: "echoed", operator_disposition: "rejected_pairing" },
+      ],
+    });
+    const calls = stubOllama(() => {
+      throw new Error("no model call expected in plan mode");
+    });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), plan: true });
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(0);
+    expect(db.tables.claim_deltas.length).toBe(2); // zero writes
+    expect(r.declared_total).toBe(2);
+    expect(r.public_total).toBe(3);
+    const m1 = r.claims.find((c) => c.declared_claim_id === "d1");
+    expect(m1).toEqual({ declared_claim_id: "d1", candidates_total: 3, candidates_cached: 1, candidates_tombstoned: 1, candidates_fresh: 1 });
+    const m2 = r.claims.find((c) => c.declared_claim_id === "d2");
+    expect(m2?.candidates_total).toBe(0);
+    expect(m2?.candidates_fresh).toBe(0);
+    expect(r.fresh_total).toBe(1);
+    // No hash/identity leaves the core — counts and claim ids only (PCT-1).
+    expect(JSON.stringify(r)).not.toContain(await pairIdentity(d1s, p1s));
+  });
+
+  it("CH-2b-1: chunked scoped runs then ONE unscoped finalize == a full run (silences computed, only genuinely-stale swept, tombstones + chunk rows spared)", async () => {
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+        declared("d2", "weekly release cadence shipping fast"),
+        publicClaim("p2", "shipping weekly release cadence observed"),
+        declared("d3", "become the strategy system of record"), // publicly_silent
+        publicClaim("p3", "consultants charge hourly rates for projects"), // internally_silent
+      ],
+      claim_deltas: [
+        { id: "stale-1", company_id: CO, content_identity: "orphaned-identity", delta_type: "echoed", operator_disposition: null },
+        { id: "tomb-1", company_id: CO, content_identity: "orphaned-tombstone", delta_type: "echoed", operator_disposition: "rejected_pairing" },
+      ],
+    });
+    const echoScript = (model: string) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "x" }
+        : { same_subject: true, relation: "echo", reason: "same subject" };
+    // Chunk 1 (d1) and chunk 2 (d2): pairs land inline, nothing else happens.
+    stubOllama(echoScript);
+    const c1 = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d1"] });
+    if (!c1.ok) throw new Error("expected ok");
+    stubOllama(echoScript);
+    const c2 = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d2"] });
+    if (!c2.ok) throw new Error("expected ok");
+    const chunkRowIds = db.tables.claim_deltas.filter((row) => row.delta_type === "echoed" && String(row.id).startsWith("row-")).map((row) => row.id);
+    expect(chunkRowIds.length).toBe(2);
+    expect(db.tables.claim_deltas.some((row) => String(row.delta_type).includes("silent"))).toBe(false);
+
+    // Finalize: unscoped. Both pairs hit the kept path ⇒ ZERO model calls here
+    // (this fixture has no model-rejected candidates — F1's re-propose tax
+    // applies only to those). Silences computed; only stale-1 swept.
+    const finalizeCalls = stubOllama(() => {
+      throw new Error("no model call expected in the finalize (all pair identities cached)");
+    });
+    const fin = await computeDeltasForCompany(baseArgs(db));
+    if (!fin.ok) throw new Error("expected ok");
+    expect(fin.scoped).toBe(false);
+    expect(finalizeCalls.length).toBe(0);
+    // Chunk-written rows survive by IDENTITY (kept path) — same physical ids.
+    for (const id of chunkRowIds) expect(db.tables.claim_deltas.some((row) => row.id === id)).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.delta_type === "publicly_silent" && row.declared_claim_id === "d3")).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.delta_type === "internally_silent" && row.public_claim_id === "p3")).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.id === "stale-1")).toBe(false); // genuinely stale ⇒ swept
+    expect(db.tables.claim_deltas.some((row) => row.id === "tomb-1")).toBe(true); // tombstone spared
+    expect(fin.totals.rows_deleted).toBe(1);
+  });
+
   it("recompute is idempotent: second run inserts nothing and preserves dispositions", async () => {
     stubOllama((model) =>
       model === "llama3:70b"

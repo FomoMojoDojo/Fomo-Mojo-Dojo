@@ -27,6 +27,23 @@
 // completed-run convergence). SILENCE rows and the stale-sweep remain
 // end-of-run: both need full-company pairing knowledge.
 //
+// CH-2b-1 scoping + plan: `declaredIds` (presence-gated) narrows the DECLARED
+// side of the pairing loop — a scoped run writes PAIR ROWS ONLY and runs
+// neither the silence loops nor the stale-sweep, because both need
+// full-company pairing knowledge (a scoped sweep would delete every other
+// claim's rows). The guard is STRUCTURAL: the same parameter that narrows the
+// iteration disables the sweep, so they cannot disagree — and it is
+// presence-based, not coverage-based (ids covering 100% of declared claims
+// still write pairs only; a full run is requested by OMITTING the param).
+// `plan` returns the chunk-packing manifest (per-declared-claim candidate
+// counts) BEFORE the model stage: zero model calls, zero writes. The manifest
+// carries counts and claim ids only — never a hash (PCT-1: callers must never
+// need normalizeForHash). The unscoped run doubles as the FINALIZE pass after
+// chunked runs: every chunk-written pair identity hits the kept path, so the
+// sweep's producedIdentities is complete and nothing chunk-written is swept.
+// (F1, expected: model-REJECTED candidates leave no row and re-propose every
+// run — the finalize is cheap, not free; a negative cache is a future gate.)
+//
 // OPTION B (structural): this module compares INTERNAL content and can only
 // speak to a local Ollama endpoint passed in by its caller — there is no
 // external-API import in this file and never may be. require_model discipline:
@@ -70,6 +87,10 @@ export type ComputedDelta = {
 export type DeltaRunResult =
   | {
       ok: true;
+      // CH-2b-1 (design-gate F4): a scoped (pairs-only) result self-marks so a
+      // partial can never be misread as a full-run result. In scoped runs the
+      // silence totals are structurally 0 and rows_deleted is structurally 0.
+      scoped: boolean;
       deltas: ComputedDelta[];
       totals: {
         declared: number; public: number; candidates: number;
@@ -80,6 +101,47 @@ export type DeltaRunResult =
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
+
+// CH-2b-1 plan manifest: per-declared-claim candidate accounting the client
+// packs chunks from. candidates_fresh = total − cached − tombstoned = the
+// MODEL-WORK count. There is no negative cache (F1): model-rejected candidates
+// leave no row, stay "fresh" forever, and re-propose every run — that cost is
+// exactly what the packer must budget, so they belong in this number.
+export type DeltaPlanClaim = {
+  declared_claim_id: string;
+  candidates_total: number;
+  candidates_cached: number;
+  candidates_tombstoned: number;
+  candidates_fresh: number;
+};
+
+export type DeltaPlanResult =
+  | {
+      ok: true;
+      plan: true;
+      declared_total: number;
+      public_total: number;
+      claims: DeltaPlanClaim[];
+      fresh_total: number;
+    }
+  | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
+  | { ok: false; error: string };
+
+export type DeltaComputeArgs = {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  ollamaUrl: string;
+  nowIso: string;
+  genModel?: string;
+  judgeModel?: string;
+  write: boolean;
+  // CH-2b-1: presence-gated scoping. Non-empty ⇒ pair ONLY these declared
+  // claims (against ALL publics) and write pair rows only — no silences, no
+  // sweep. Absent/undefined ⇒ full run (the finalize pass). Never pass [].
+  declaredIds?: string[];
+  // CH-2b-1: plan mode — return the packing manifest before the model stage.
+  plan?: boolean;
+};
 
 // ── Identity keys (evidence law) ──────────────────────────────────────────────
 
@@ -203,15 +265,9 @@ function parseVerdict(raw: string, who: string): { same_subject: boolean; relati
 
 // ── Company-level compute ─────────────────────────────────────────────────────
 
-export async function computeDeltasForCompany(args: {
-  supabase: { from: (t: string) => any };
-  companyId: string;
-  ollamaUrl: string;
-  nowIso: string;
-  genModel?: string;
-  judgeModel?: string;
-  write: boolean;
-}): Promise<DeltaRunResult> {
+export async function computeDeltasForCompany(args: DeltaComputeArgs & { plan: true }): Promise<DeltaPlanResult>;
+export async function computeDeltasForCompany(args: DeltaComputeArgs & { plan?: false | undefined }): Promise<DeltaRunResult>;
+export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<DeltaRunResult | DeltaPlanResult> {
   // Frozen fixtures are never computed for, let alone written (CB1 stale by law).
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
@@ -249,8 +305,58 @@ export async function computeDeltasForCompany(args: {
     [...existing.values()].filter((r) => r.operator_disposition === "rejected_pairing").map((r) => r.content_identity),
   );
 
+  // CH-2b-1: mode is PRESENCE-GATED on declaredIds — the same parameter that
+  // narrows the iteration disables the silence loops and the sweep below, so
+  // they cannot disagree. Presence-based, NOT coverage-based: ids covering
+  // every declared claim still write pairs only. Scoping narrows the DECLARED
+  // side only — publics and existing rows stay company-wide (each chunk pairs
+  // against ALL publics and sees prior chunks' inline rows via the kept path).
+  // The struck filter ran above, before this subset is taken — a scoped run
+  // cannot select a struck claim.
+  const scoped = Array.isArray(args.declaredIds) && args.declaredIds.length > 0;
+  const declaredIdSet = scoped ? new Set(args.declaredIds) : null;
+  const declaredScope = declaredIdSet ? declared.filter((d) => declaredIdSet.has(d.id)) : declared;
+
+  // CH-2b-1 PLAN MODE: prefilter + identity classification only — the manifest
+  // the client packs chunks from. Returns HERE, before the model stage: zero
+  // model calls and zero writes by construction (args.write is never read on
+  // this path; the first callOllamaJson below is unreachable). Counts and
+  // claim ids only — no hash/identity ever leaves the core (PCT-1).
+  if (args.plan) {
+    const planClaims: DeltaPlanClaim[] = [];
+    let freshTotal = 0;
+    for (const d of declaredScope) {
+      let total = 0, cached = 0, tombstoned = 0;
+      for (const p of publics) {
+        if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
+        total++;
+        const identity = await pairIdentity(d.statement, p.statement);
+        if (tombstones.has(identity)) { tombstoned++; continue; }
+        const kept = existing.get(identity);
+        if (kept && (kept.delta_type === "echoed" || kept.delta_type === "divergent")) cached++;
+      }
+      const fresh = total - cached - tombstoned;
+      freshTotal += fresh;
+      planClaims.push({
+        declared_claim_id: d.id,
+        candidates_total: total,
+        candidates_cached: cached,
+        candidates_tombstoned: tombstoned,
+        candidates_fresh: fresh,
+      });
+    }
+    return {
+      ok: true,
+      plan: true,
+      declared_total: declared.length,
+      public_total: publics.length,
+      claims: planClaims,
+      fresh_total: freshTotal,
+    };
+  }
+
   const totals = {
-    declared: declared.length, public: publics.length, candidates: 0,
+    declared: declaredScope.length, public: publics.length, candidates: 0,
     pairs_confirmed: 0, pairs_inferred: 0, pairs_rejected: 0,
     publicly_silent: 0, internally_silent: 0,
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
@@ -268,7 +374,7 @@ export async function computeDeltasForCompany(args: {
   // statement text — identity hashes statements, not ids) must not double-insert.
   const insertedThisRun = new Set<string>();
 
-  for (const d of declared) {
+  for (const d of declaredScope) {
     for (const p of publics) {
       if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
       totals.candidates++;
@@ -344,36 +450,42 @@ export async function computeDeltasForCompany(args: {
     }
   }
 
-  // Silences — absence ≠ contradiction: publicly_silent renders as OPEN QUESTION.
-  for (const d of declared) {
-    if (pairedDeclared.has(d.id)) continue;
-    totals.publicly_silent++;
-    deltas.push({
-      delta_type: "publicly_silent",
-      declared_claim_id: d.id,
-      public_claim_id: null,
-      pairing_basis: "judge_confirmed", // deterministic finding, not an inference
-      judge_reason: null,
-      content_identity: await silenceIdentity("publicly_silent", d.statement),
-      declared_statement: d.statement,
-    });
-  }
-  for (const p of publics) {
-    if (pairedPublic.has(p.id)) continue;
-    totals.internally_silent++;
-    deltas.push({
-      delta_type: "internally_silent",
-      declared_claim_id: null,
-      public_claim_id: p.id,
-      pairing_basis: "judge_confirmed",
-      judge_reason: null,
-      content_identity: await silenceIdentity("internally_silent", p.statement),
-      declared_statement: undefined,
-      public_statement: p.statement,
-    });
+  // CH-2b-1 STRUCTURAL GUARD: silences AND the end-of-run write/sweep need
+  // FULL-COMPANY pairing knowledge — a scoped run computes neither. A scoped
+  // sweep would delete every other claim's rows (the design-gate danger case);
+  // gating the whole block on !scoped makes that state unrepresentable.
+  if (!scoped) {
+    // Silences — absence ≠ contradiction: publicly_silent renders as OPEN QUESTION.
+    for (const d of declared) {
+      if (pairedDeclared.has(d.id)) continue;
+      totals.publicly_silent++;
+      deltas.push({
+        delta_type: "publicly_silent",
+        declared_claim_id: d.id,
+        public_claim_id: null,
+        pairing_basis: "judge_confirmed", // deterministic finding, not an inference
+        judge_reason: null,
+        content_identity: await silenceIdentity("publicly_silent", d.statement),
+        declared_statement: d.statement,
+      });
+    }
+    for (const p of publics) {
+      if (pairedPublic.has(p.id)) continue;
+      totals.internally_silent++;
+      deltas.push({
+        delta_type: "internally_silent",
+        declared_claim_id: null,
+        public_claim_id: p.id,
+        pairing_basis: "judge_confirmed",
+        judge_reason: null,
+        content_identity: await silenceIdentity("internally_silent", p.statement),
+        declared_statement: undefined,
+        public_statement: p.statement,
+      });
+    }
   }
 
-  if (args.write) {
+  if (args.write && !scoped) {
     const producedIdentities = new Set([...deltas.map((x) => x.content_identity), ...keptPairIdentities]);
     // Insert only NEW identities — existing rows (and their dispositions) stand.
     // Pair rows were inserted INLINE at verdict time (CH-2a) and are skipped
@@ -410,5 +522,5 @@ export async function computeDeltasForCompany(args: {
     ).length;
   }
 
-  return { ok: true, deltas, totals };
+  return { ok: true, scoped, deltas, totals };
 }
