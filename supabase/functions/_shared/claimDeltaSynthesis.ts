@@ -21,6 +21,12 @@
 // only new/orphaned identities generate work. Stale non-tombstone rows are
 // deleted (their claims changed or were pruned).
 //
+// CH-2a persistence timing: PAIR rows (echoed/divergent) are written INLINE,
+// the moment their judge verdict lands — a killed run banks its verdicts and
+// the next run's identity cache skips them (true convergence, not just
+// completed-run convergence). SILENCE rows and the stale-sweep remain
+// end-of-run: both need full-company pairing knowledge.
+//
 // OPTION B (structural): this module compares INTERNAL content and can only
 // speak to a local Ollama endpoint passed in by its caller — there is no
 // external-API import in this file and never may be. require_model discipline:
@@ -256,6 +262,11 @@ export async function computeDeltasForCompany(args: {
   // Identities produced THIS run (fresh + kept-verbatim) — anything existing
   // outside this set (except tombstones) is stale and deleted on write.
   const keptPairIdentities = new Set<string>();
+  // CH-2a: identities whose pair row was inserted INLINE this run — the
+  // end-of-run write must not insert them again, and an intra-run re-encounter
+  // of the same identity (possible only when two claim pairs share identical
+  // statement text — identity hashes statements, not ids) must not double-insert.
+  const insertedThisRun = new Set<string>();
 
   for (const d of declared) {
     for (const p of publics) {
@@ -293,7 +304,7 @@ export async function computeDeltasForCompany(args: {
       if (basis === "judge_confirmed") totals.pairs_confirmed++; else totals.pairs_inferred++;
       pairedDeclared.add(d.id);
       pairedPublic.add(p.id);
-      deltas.push({
+      const pairRow: ComputedDelta = {
         delta_type: judged.relation === "echo" ? "echoed" : "divergent",
         declared_claim_id: d.id,
         public_claim_id: p.id,
@@ -302,7 +313,34 @@ export async function computeDeltasForCompany(args: {
         content_identity: identity,
         declared_statement: d.statement,
         public_statement: p.statement,
-      });
+      };
+      deltas.push(pairRow);
+
+      // CH-2a: INLINE PAIR PERSISTENCE — bank the verdict the moment it exists.
+      // The old end-of-run-only write meant an isolate kill persisted NOTHING,
+      // so a company whose full compute exceeds the wall-clock made zero
+      // progress per invocation, forever ("convergence" only held across
+      // COMPLETED runs). A pair row needs no full-company knowledge (its fields
+      // are the two claims + the verdict), so it is written here, identity-keyed
+      // and insert-only. SILENCES and the STALE-SWEEP stay end-of-run below —
+      // both require knowing every pairing. A run that dies mid-loop leaves a
+      // valid table: some pairs present, no silences yet, no sweep yet — the
+      // next run's identity cache skips the banked pairs and finishes the rest.
+      if (args.write && !existing.has(identity) && !insertedThisRun.has(identity)) {
+        const { error: insErr } = await args.supabase.from("claim_deltas").insert({
+          company_id: args.companyId,
+          declared_claim_id: pairRow.declared_claim_id,
+          public_claim_id: pairRow.public_claim_id,
+          delta_type: pairRow.delta_type,
+          pairing_basis: pairRow.pairing_basis,
+          judge_reason: pairRow.judge_reason,
+          content_identity: pairRow.content_identity,
+          computed_at: args.nowIso,
+        });
+        if (insErr) throw new Error(`claim-delta inline insert failed: ${insErr.message}`);
+        insertedThisRun.add(identity);
+        totals.rows_new++;
+      }
     }
   }
 
@@ -338,7 +376,9 @@ export async function computeDeltasForCompany(args: {
   if (args.write) {
     const producedIdentities = new Set([...deltas.map((x) => x.content_identity), ...keptPairIdentities]);
     // Insert only NEW identities — existing rows (and their dispositions) stand.
-    const fresh = deltas.filter((x) => !existing.has(x.content_identity));
+    // Pair rows were inserted INLINE at verdict time (CH-2a) and are skipped
+    // here; what remains fresh at end-of-run is the silence rows.
+    const fresh = deltas.filter((x) => !existing.has(x.content_identity) && !insertedThisRun.has(x.content_identity));
     for (const row of fresh) {
       const { error: insErr } = await args.supabase.from("claim_deltas").insert({
         company_id: args.companyId,

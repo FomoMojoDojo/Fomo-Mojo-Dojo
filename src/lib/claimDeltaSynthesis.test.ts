@@ -240,6 +240,89 @@ describe("computeDeltasForCompany", () => {
     expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d1")).toBe(true);
   });
 
+  it("CH-2a: a pair row is persisted INLINE at verdict time, before later candidates are even proposed", async () => {
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+        declared("d2", "weekly release cadence shipping fast"),
+        publicClaim("p2", "shipping weekly release cadence observed"),
+      ],
+    });
+    // Candidates: d1×p1 and d2×p2 (disjoint token sets). Capture how many pair
+    // rows are already IN THE TABLE when the SECOND pair's proposal arrives.
+    let pairsInTableAtSecondPropose = -1;
+    let proposeCount = 0;
+    stubOllama((model, user) => {
+      if (model !== "llama3:70b") {
+        proposeCount++;
+        if (proposeCount === 2) {
+          pairsInTableAtSecondPropose = db.tables.claim_deltas.filter((r) => r.delta_type === "echoed").length;
+        }
+        return { same_subject: true, relation: "echo", reason: "same subject" };
+      }
+      return { same_subject: true, relation: "echo", confident: true, reason: JSON.stringify(user).slice(0, 8) };
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    // The first pair's row was banked before the second pair was proposed.
+    expect(pairsInTableAtSecondPropose).toBe(1);
+    expect(db.tables.claim_deltas.filter((row) => row.delta_type === "echoed").length).toBe(2);
+  });
+
+  it("CH-2a: a mid-loop abort leaves banked pairs persisted, NO silences, NO sweep — and the re-run skips the banked pair and finishes the rest", async () => {
+    const d1 = declared("d1", "evidence score visible always");
+    const p1 = publicClaim("p1", "score visible on the site");
+    const d2 = declared("d2", "weekly release cadence shipping fast");
+    const p2 = publicClaim("p2", "shipping weekly release cadence observed");
+    // A stale row that only the end-of-run sweep would delete — it must SURVIVE
+    // the aborted run (sweep never ran) to prove the sweep stayed end-of-run.
+    const staleRow = { id: "stale-1", company_id: CO, content_identity: "orphaned-identity", delta_type: "echoed", operator_disposition: null };
+    const db = fakeDb({ claims: [d1, p1, d2, p2], claim_deltas: [staleRow] });
+
+    // Run 1: first pair succeeds; second pair's JUDGE dies (require_model throws).
+    let judgeCount = 0;
+    stubOllama((model) => {
+      if (model !== "llama3:70b") return { same_subject: true, relation: "echo", reason: "same subject" };
+      judgeCount++;
+      if (judgeCount === 2) return "HTTP_FAIL";
+      return { same_subject: true, relation: "echo", confident: true, reason: "x" };
+    });
+    await expect(computeDeltasForCompany(baseArgs(db))).rejects.toThrow(/model call failed/);
+    // Banked: pair 1 persisted despite the abort. Valid intermediate state:
+    expect(db.tables.claim_deltas.filter((row) => row.delta_type === "echoed" && row.content_identity !== "orphaned-identity").length).toBe(1);
+    expect(db.tables.claim_deltas.some((row) => String(row.delta_type).includes("silent"))).toBe(false); // no silences yet
+    expect(db.tables.claim_deltas.some((row) => row.id === "stale-1")).toBe(true); // sweep never ran
+
+    // Run 2: healthy models. The banked pair must cost ZERO model calls.
+    const calls2 = stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "x" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const r2 = await computeDeltasForCompany(baseArgs(db));
+    if (!r2.ok) throw new Error("expected ok");
+    // Only the second pair needed models: 1 propose + 1 judge.
+    expect(calls2.length).toBe(2);
+    expect(calls2.every((c) => c.user.includes("weekly release cadence"))).toBe(true);
+    // Table converged: both pairs, no duplicates, stale row swept at end-of-run.
+    expect(db.tables.claim_deltas.filter((row) => row.delta_type === "echoed").length).toBe(2);
+    expect(db.tables.claim_deltas.some((row) => row.id === "stale-1")).toBe(false);
+  });
+
+  it("CH-2a: write:false still writes nothing inline", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, reason: "x" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), write: false });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((d) => d.delta_type === "echoed")).toBe(true);
+    expect(db.tables.claim_deltas.length).toBe(0);
+  });
+
   it("recompute is idempotent: second run inserts nothing and preserves dispositions", async () => {
     stubOllama((model) =>
       model === "llama3:70b"
