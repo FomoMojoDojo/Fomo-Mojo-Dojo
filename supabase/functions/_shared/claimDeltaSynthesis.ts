@@ -41,8 +41,19 @@
 // need normalizeForHash). The unscoped run doubles as the FINALIZE pass after
 // chunked runs: every chunk-written pair identity hits the kept path, so the
 // sweep's producedIdentities is complete and nothing chunk-written is swept.
-// (F1, expected: model-REJECTED candidates leave no row and re-propose every
-// run — the finalize is cheap, not free; a negative cache is a future gate.)
+//
+// NEG-CACHE (operator-signed 2026-07-12, closes F1): model rejections now
+// persist to claim_delta_rejections, identity-keyed, FREEZE-ON-REJECT — the
+// first verdict binds, exactly like positive verdicts; no TTL, models stored
+// as provenance only. Cached rejections skip BOTH model calls and leave the
+// paired sets untouched (the claims stay on their silence rails, unchanged
+// semantics). Scoped runs write VERDICT rows (pairs + rejections — the signed
+// law amendment) but still never silences/sweep/prune. The finalize owns the
+// rejection ORPHAN-PRUNE: rows whose identity is no longer a candidate
+// (claims changed/removed/struck) are deleted with full-company knowledge.
+// Content change self-invalidates the cache (new statement ⇒ new identity ⇒
+// miss); operator rejected_pairing tombstones are a separate, permanent,
+// prune-exempt mechanism in claim_deltas and are checked FIRST.
 //
 // OPTION B (structural): this module compares INTERNAL content and can only
 // speak to a local Ollama endpoint passed in by its caller — there is no
@@ -97,21 +108,25 @@ export type DeltaRunResult =
         pairs_confirmed: number; pairs_inferred: number; pairs_rejected: number;
         publicly_silent: number; internally_silent: number;
         rows_new: number; rows_kept: number; rows_deleted: number; tombstones_respected: number;
+        // NEG-CACHE: candidates skipped via a banked rejection (no model call),
+        // and orphaned rejection rows deleted by this finalize (0 when scoped).
+        rejections_cached: number; rejections_pruned: number;
       };
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
 
 // CH-2b-1 plan manifest: per-declared-claim candidate accounting the client
-// packs chunks from. candidates_fresh = total − cached − tombstoned = the
-// MODEL-WORK count. There is no negative cache (F1): model-rejected candidates
-// leave no row, stay "fresh" forever, and re-propose every run — that cost is
-// exactly what the packer must budget, so they belong in this number.
+// packs chunks from. candidates_fresh = total − cached − tombstoned − rejected
+// = the MODEL-WORK count. NEG-CACHE: candidates_rejected counts banked model
+// rejections (single bucket — the proposer/judge split lives in the table,
+// not the manifest); they cost nothing and re-propose never (freeze-on-reject).
 export type DeltaPlanClaim = {
   declared_claim_id: string;
   candidates_total: number;
   candidates_cached: number;
   candidates_tombstoned: number;
+  candidates_rejected: number;
   candidates_fresh: number;
 };
 
@@ -123,6 +138,7 @@ export type DeltaPlanResult =
       public_total: number;
       claims: DeltaPlanClaim[];
       fresh_total: number;
+      rejected_total: number;
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
@@ -305,6 +321,19 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     [...existing.values()].filter((r) => r.operator_disposition === "rejected_pairing").map((r) => r.content_identity),
   );
 
+  // NEG-CACHE: banked model rejections, identity → row id (freeze-on-reject).
+  // Loaded company-wide like `existing` so scoped chunks see prior banks. The
+  // id is kept for the finalize's orphan-prune; rows banked THIS run enter the
+  // set with a placeholder id — their identities are candidates by
+  // construction, so they are never prune targets in the run that banked them.
+  const { data: rejRows } = await args.supabase
+    .from("claim_delta_rejections")
+    .select("id, content_identity")
+    .eq("company_id", args.companyId);
+  type RejRow = { id: string; content_identity: string };
+  const loadedRejections = (rejRows ?? []) as RejRow[];
+  const rejectionByIdentity = new Map<string, string>(loadedRejections.map((r) => [r.content_identity, r.id]));
+
   // CH-2b-1: mode is PRESENCE-GATED on declaredIds — the same parameter that
   // narrows the iteration disables the silence loops and the sweep below, so
   // they cannot disagree. Presence-based, NOT coverage-based: ids covering
@@ -324,24 +353,28 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // claim ids only — no hash/identity ever leaves the core (PCT-1).
   if (args.plan) {
     const planClaims: DeltaPlanClaim[] = [];
-    let freshTotal = 0;
+    let freshTotal = 0, rejectedTotal = 0;
     for (const d of declaredScope) {
-      let total = 0, cached = 0, tombstoned = 0;
+      let total = 0, cached = 0, tombstoned = 0, rejected = 0;
       for (const p of publics) {
         if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
         total++;
         const identity = await pairIdentity(d.statement, p.statement);
+        // Classification order (signed): tombstoned → cached → rejected → fresh.
         if (tombstones.has(identity)) { tombstoned++; continue; }
         const kept = existing.get(identity);
-        if (kept && (kept.delta_type === "echoed" || kept.delta_type === "divergent")) cached++;
+        if (kept && (kept.delta_type === "echoed" || kept.delta_type === "divergent")) { cached++; continue; }
+        if (rejectionByIdentity.has(identity)) rejected++;
       }
-      const fresh = total - cached - tombstoned;
+      const fresh = total - cached - tombstoned - rejected;
       freshTotal += fresh;
+      rejectedTotal += rejected;
       planClaims.push({
         declared_claim_id: d.id,
         candidates_total: total,
         candidates_cached: cached,
         candidates_tombstoned: tombstoned,
+        candidates_rejected: rejected,
         candidates_fresh: fresh,
       });
     }
@@ -352,6 +385,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       public_total: publics.length,
       claims: planClaims,
       fresh_total: freshTotal,
+      rejected_total: rejectedTotal,
     };
   }
 
@@ -360,6 +394,38 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     pairs_confirmed: 0, pairs_inferred: 0, pairs_rejected: 0,
     publicly_silent: 0, internally_silent: 0,
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
+    rejections_cached: 0, rejections_pruned: 0,
+  };
+
+  // NEG-CACHE: every identity that survives the prefilter THIS run — the
+  // finalize's orphan-prune keeps exactly these and deletes the rest. Only a
+  // full run populates the complete set, which is why the prune (like the
+  // sweep) is gated on !scoped below.
+  const candidateIdentities = new Set<string>();
+
+  // NEG-CACHE: bank a model rejection the moment it lands (CH-2a discipline —
+  // a killed run keeps its rejections). Insert-only, identity-keyed; the map
+  // add makes an intra-run identity re-encounter (two claim pairs sharing
+  // statement text) a no-op, and the table's UNIQUE(company_id,
+  // content_identity) is the loud backstop.
+  const bankRejection = async (
+    d: DeltaClaim, p: DeltaClaim, identity: string,
+    rejectedBy: "proposer" | "judge", judgeModelUsed: string | null, reason: string,
+  ) => {
+    if (!args.write || rejectionByIdentity.has(identity)) return;
+    const { error: rejErr } = await args.supabase.from("claim_delta_rejections").insert({
+      company_id: args.companyId,
+      declared_claim_id: d.id,
+      public_claim_id: p.id,
+      content_identity: identity,
+      rejected_by: rejectedBy,
+      gen_model: genModel,
+      judge_model: judgeModelUsed,
+      reject_reason: reason || null,
+      computed_at: args.nowIso,
+    });
+    if (rejErr) throw new Error(`claim-delta rejection insert failed: ${rejErr.message}`);
+    rejectionByIdentity.set(identity, "");
   };
 
   const deltas: ComputedDelta[] = [];
@@ -379,6 +445,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
       totals.candidates++;
       const identity = await pairIdentity(d.statement, p.statement);
+      candidateIdentities.add(identity);
 
       if (tombstones.has(identity)) {
         // Operator said "not a pair" — respected forever; both claims fall
@@ -396,15 +463,32 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         continue;
       }
 
+      // NEG-CACHE: a banked rejection is a frozen verdict — skip BOTH model
+      // calls. Deliberately does NOT touch pairedDeclared/pairedPublic: the
+      // claims stay on their silence rails, exactly as a live rejection would
+      // leave them.
+      if (rejectionByIdentity.has(identity)) {
+        totals.rejections_cached++;
+        continue;
+      }
+
       // Stage 2a: 14b proposes.
       const proposedRaw = await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d.statement, p.statement), GEN_TIMEOUT_MS);
       const proposed = parseVerdict(proposedRaw, "proposer");
-      if (!proposed.same_subject || !proposed.relation) { totals.pairs_rejected++; continue; }
+      if (!proposed.same_subject || !proposed.relation) {
+        totals.pairs_rejected++;
+        await bankRejection(d, p, identity, "proposer", null, proposed.reason);
+        continue;
+      }
 
       // Stage 2b: 70b judges.
       const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d.statement, p.statement), JUDGE_TIMEOUT_MS);
       const judged = parseVerdict(judgedRaw, "judge");
-      if (!judged.same_subject || !judged.relation) { totals.pairs_rejected++; continue; }
+      if (!judged.same_subject || !judged.relation) {
+        totals.pairs_rejected++;
+        await bankRejection(d, p, identity, "judge", judgeModel, judged.reason);
+        continue;
+      }
 
       const basis: ComputedDelta["pairing_basis"] = judged.confident === true ? "judge_confirmed" : "inferred";
       if (basis === "judge_confirmed") totals.pairs_confirmed++; else totals.pairs_inferred++;
@@ -520,6 +604,23 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     totals.rows_kept = [...existing.values()].filter(
       (r) => producedIdentities.has(r.content_identity) || r.operator_disposition === "rejected_pairing",
     ).length;
+
+    // NEG-CACHE ORPHAN-PRUNE (finalize-owned, mirrors the sweep): a loaded
+    // rejection whose identity is no longer a candidate means its claims
+    // changed, were removed, or were struck — the cache row is dead weight and
+    // is deleted. Rows banked THIS run carry candidate identities by
+    // construction and are untouched. Operator tombstones live in claim_deltas
+    // and are not in scope here at all. Content change needs no prune to
+    // invalidate (new identity ⇒ cache miss); this is purely hygiene.
+    const orphanRejections = loadedRejections.filter((r) => !candidateIdentities.has(r.content_identity));
+    if (orphanRejections.length > 0) {
+      const { error: pruneErr } = await args.supabase
+        .from("claim_delta_rejections")
+        .delete()
+        .in("id", orphanRejections.map((r) => r.id));
+      if (pruneErr) throw new Error(`claim-delta rejection prune failed: ${pruneErr.message}`);
+      totals.rejections_pruned = orphanRejections.length;
+    }
   }
 
   return { ok: true, scoped, deltas, totals };

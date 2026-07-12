@@ -16,11 +16,12 @@ const CO = "11111111-1111-1111-1111-111111111111";
 
 type Row = Record<string, unknown>;
 
-// ── In-memory supabase fake (claims + claim_deltas only) ──────────────────────
-function fakeDb(seed: { claims: Row[]; claim_deltas?: Row[] }) {
+// ── In-memory supabase fake (claims + claim_deltas + claim_delta_rejections) ──
+function fakeDb(seed: { claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[] }) {
   const tables: Record<string, Row[]> = {
     claims: [...seed.claims],
     claim_deltas: [...(seed.claim_deltas ?? [])],
+    claim_delta_rejections: [...(seed.claim_delta_rejections ?? [])],
   };
   let nextId = 1;
   const db = {
@@ -411,7 +412,7 @@ describe("computeDeltasForCompany", () => {
     expect(r.declared_total).toBe(2);
     expect(r.public_total).toBe(3);
     const m1 = r.claims.find((c) => c.declared_claim_id === "d1");
-    expect(m1).toEqual({ declared_claim_id: "d1", candidates_total: 3, candidates_cached: 1, candidates_tombstoned: 1, candidates_fresh: 1 });
+    expect(m1).toEqual({ declared_claim_id: "d1", candidates_total: 3, candidates_cached: 1, candidates_tombstoned: 1, candidates_rejected: 0, candidates_fresh: 1 });
     const m2 = r.claims.find((c) => c.declared_claim_id === "d2");
     expect(m2?.candidates_total).toBe(0);
     expect(m2?.candidates_fresh).toBe(0);
@@ -490,5 +491,175 @@ describe("computeDeltasForCompany", () => {
     expect(r2.totals.rows_deleted).toBe(0);
     expect(db.tables.claim_deltas.length).toBe(countAfterFirst);
     expect(db.tables.claim_deltas[0].operator_disposition).toBe("queued");
+  });
+});
+
+// ── NEG-CACHE: frozen model rejections (claim_delta_rejections) ───────────────
+describe("negative cache (freeze-on-reject)", () => {
+  const seededRejection = (identity: string, over: Row = {}): Row => ({
+    id: "rej-seed-1", company_id: CO, declared_claim_id: "d1", public_claim_id: "p1",
+    content_identity: identity, rejected_by: "proposer", gen_model: "qwen2.5:14b-instruct",
+    judge_model: null, reject_reason: "different subjects", ...over,
+  });
+
+  it("a banked rejection skips BOTH model calls and leaves both claims on their silence rails", async () => {
+    const d1 = declared("d1", "evidence score visible always");
+    const p1 = publicClaim("p1", "score visible on the site");
+    const rejId = await pairIdentity(String(d1.statement), String(p1.statement));
+    const calls = stubOllama(() => { throw new Error("no model call may happen for a cached rejection"); });
+    const db = fakeDb({ claims: [d1, p1], claim_delta_rejections: [seededRejection(rejId)] });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(0);
+    expect(r.totals.rejections_cached).toBe(1);
+    // silences unchanged: rejected pairing = unpaired claims, same as a live rejection
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+    expect(r.deltas.some((d) => d.delta_type === "internally_silent" && d.public_claim_id === "p1")).toBe(true);
+    // the frozen row survives the finalize untouched
+    expect(db.tables.claim_delta_rejections.some((row) => row.id === "rej-seed-1")).toBe(true);
+  });
+
+  it("proposer rejection banks inline with rejected_by='proposer', NULL judge_model, verbatim reason", async () => {
+    stubOllama(() => ({ same_subject: false, relation: null, reason: "coffee is not billing software" }));
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.pairs_rejected).toBe(1);
+    const row = db.tables.claim_delta_rejections[0];
+    expect(row.rejected_by).toBe("proposer");
+    expect(row.judge_model).toBeNull();
+    expect(row.reject_reason).toBe("coffee is not billing software");
+    expect(row.declared_claim_id).toBe("d1");
+    expect(row.public_claim_id).toBe("p1");
+  });
+
+  it("judge rejection banks inline with rejected_by='judge', the judge model named, the JUDGE's reason", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: false, relation: null, reason: "buzzword overlap only" }
+        : { same_subject: true, relation: "echo", reason: "proposer says same" },
+    );
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    const row = db.tables.claim_delta_rejections[0];
+    expect(row.rejected_by).toBe("judge");
+    expect(row.judge_model).toBe("llama3:70b");
+    expect(row.reject_reason).toBe("buzzword overlap only");
+  });
+
+  it("SCOPED run banks rejections (verdict rows law) but NEVER prunes orphans", async () => {
+    stubOllama(() => ({ same_subject: false, relation: null, reason: "no" }));
+    const orphan = seededRejection("orphaned-rejection-identity", { id: "rej-orphan" });
+    const db = fakeDb({
+      claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")],
+      claim_delta_rejections: [orphan],
+    });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), declaredIds: ["d1"] });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.scoped).toBe(true);
+    // the live rejection banked from the scoped chunk…
+    expect(db.tables.claim_delta_rejections.filter((row) => row.rejected_by === "proposer").length).toBe(2);
+    // …and the orphan SURVIVED (prune is finalize-only, structurally)
+    expect(db.tables.claim_delta_rejections.some((row) => row.id === "rej-orphan")).toBe(true);
+    expect(r.totals.rejections_pruned).toBe(0);
+  });
+
+  it("FINALIZE prunes exactly the orphans: dead identity deleted, live rejection kept, tombstone untouched", async () => {
+    const d1 = declared("d1", "evidence score visible always");
+    const p1 = publicClaim("p1", "score visible on the site");
+    const liveId = await pairIdentity(String(d1.statement), String(p1.statement));
+    const tomb = { id: "tomb-1", company_id: CO, content_identity: "tomb-identity", delta_type: "echoed", operator_disposition: "rejected_pairing" };
+    const calls = stubOllama(() => { throw new Error("cached rejection must not re-roll"); });
+    const db = fakeDb({
+      claims: [d1, p1],
+      claim_deltas: [tomb],
+      claim_delta_rejections: [
+        seededRejection(liveId, { id: "rej-live" }),
+        seededRejection("dead-identity-claims-gone", { id: "rej-dead" }),
+      ],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(0);
+    expect(r.totals.rejections_pruned).toBe(1);
+    expect(db.tables.claim_delta_rejections.some((row) => row.id === "rej-live")).toBe(true);
+    expect(db.tables.claim_delta_rejections.some((row) => row.id === "rej-dead")).toBe(false);
+    // operator tombstone (other table, other law) untouched by the prune
+    expect(db.tables.claim_deltas.some((row) => row.id === "tomb-1")).toBe(true);
+  });
+
+  it("STRUCK declared claim's rejection is pruned at the next finalize (identity no longer produced)", async () => {
+    const struckD = { ...declared("d1", "evidence score visible always"), status: "struck" };
+    const p1 = publicClaim("p1", "score visible on the site");
+    const struckPairId = await pairIdentity("evidence score visible always", "score visible on the site");
+    stubOllama(() => ({ same_subject: false, relation: null, reason: "no" }));
+    const db = fakeDb({
+      claims: [struckD, declared("d2", "unrelated retention topic entirely"), p1],
+      claim_delta_rejections: [seededRejection(struckPairId, { id: "rej-struck" })],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(db.tables.claim_delta_rejections.some((row) => row.id === "rej-struck")).toBe(false);
+    expect(r.totals.rejections_pruned).toBe(1);
+  });
+
+  it("intra-run identity collision (two declared claims, identical text) banks exactly ONE rejection row", async () => {
+    stubOllama(() => ({ same_subject: false, relation: null, reason: "no" }));
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        declared("d2", "evidence score visible always"), // identical text ⇒ same pair identity
+        publicClaim("p1", "score visible on the site"),
+      ],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(db.tables.claim_delta_rejections.length).toBe(1);
+    // the second encounter was a cache hit, not a re-roll
+    expect(r.totals.pairs_rejected).toBe(1);
+    expect(r.totals.rejections_cached).toBe(1);
+  });
+
+  it("write:false banks nothing", async () => {
+    stubOllama(() => ({ same_subject: false, relation: null, reason: "no" }));
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), write: false });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.pairs_rejected).toBe(1);
+    expect(db.tables.claim_delta_rejections.length).toBe(0);
+  });
+
+  it("plan classifies tombstoned → cached → rejected → fresh and reports candidates_rejected + rejected_total", async () => {
+    // Four publics, all sharing tokens with d1: one tombstoned, one cached pair,
+    // one banked rejection, one genuinely fresh.
+    const d1 = declared("d1", "evidence score visible always");
+    const pTomb = publicClaim("pT", "score evidence archived yearly");
+    const pCached = publicClaim("pC", "score visible on the site");
+    const pRej = publicClaim("pR", "evidence dashboards always shown");
+    const pFresh = publicClaim("pF", "visible score for every evidence review");
+    const tombId = await pairIdentity(String(d1.statement), String(pTomb.statement));
+    const cachedId = await pairIdentity(String(d1.statement), String(pCached.statement));
+    const rejId = await pairIdentity(String(d1.statement), String(pRej.statement));
+    const calls = stubOllama(() => { throw new Error("plan mode may not call models"); });
+    const db = fakeDb({
+      claims: [d1, pTomb, pCached, pRej, pFresh],
+      claim_deltas: [
+        { id: "t1", company_id: CO, content_identity: tombId, delta_type: "echoed", operator_disposition: "rejected_pairing" },
+        { id: "c1", company_id: CO, content_identity: cachedId, delta_type: "echoed", operator_disposition: null },
+      ],
+      claim_delta_rejections: [seededRejection(rejId, { public_claim_id: "pR" })],
+    });
+    const r = await computeDeltasForCompany({ ...baseArgs(db), plan: true });
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(0);
+    const c = r.claims[0];
+    expect(c.candidates_total).toBe(4);
+    expect(c.candidates_tombstoned).toBe(1);
+    expect(c.candidates_cached).toBe(1);
+    expect(c.candidates_rejected).toBe(1);
+    expect(c.candidates_fresh).toBe(1);
+    expect(r.fresh_total).toBe(1);
+    expect(r.rejected_total).toBe(1);
   });
 });
