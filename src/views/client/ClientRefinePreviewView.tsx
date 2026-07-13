@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
@@ -443,6 +444,7 @@ export default function ClientRefinePreviewView() {
       return;
     }
     toast.loading("Running outside signals…", { id: "run-outside-signals" });
+    const startedAt = new Date().toISOString();
     const { error } = await supabase.functions.invoke("public-baseline", {
       body: {
         company_id: activeCompany.id,
@@ -451,6 +453,18 @@ export default function ClientRefinePreviewView() {
       },
     });
     if (error) {
+      // The 150s wall may have cut the browser after the isolate already succeeded.
+      // Poll the durable run-status row instead of trusting the failed invoke.
+      const terminal = await pollPublicBaselineTerminal({ companyId: activeCompany.id, sinceIso: startedAt });
+      if (terminal === "completed") {
+        toast.success("Outside signals updated.", { id: "run-outside-signals" });
+        queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+        return;
+      }
+      if (terminal === "running") {
+        toast.message("Outside signals still running in the background — refresh shortly.", { id: "run-outside-signals" });
+        return;
+      }
       toast.error(error.message || "Outside signals failed.", { id: "run-outside-signals" });
       return;
     }

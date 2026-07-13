@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useCompany } from "@/hooks/useCompany";
@@ -795,6 +796,7 @@ export default function AdminCompanies() {
       description: `Collecting public signals for ${companyName}…`,
     });
 
+    const startedAt = new Date().toISOString();
     const { error } = await supabase.functions.invoke("public-baseline", {
       body: {
         company_id: companyId,
@@ -806,6 +808,24 @@ export default function AdminCompanies() {
     setBaselineId(null);
 
     if (error) {
+      // The 150s wall may have cut the browser after the isolate already succeeded.
+      // Poll the durable run-status row instead of trusting the failed invoke.
+      const terminal = await pollPublicBaselineTerminal({ companyId, sinceIso: startedAt });
+      if (terminal === "completed") {
+        toast({
+          title: "Web Baseline Complete",
+          description: `Public baseline saved for ${companyName}`,
+        });
+        await refetch();
+        return true;
+      }
+      if (terminal === "running") {
+        toast({
+          title: "Web Baseline Running",
+          description: `Still collecting public signals for ${companyName} in the background — refresh shortly.`,
+        });
+        return false;
+      }
       const details = await describeBaselineInvokeError(error);
       showPersistentError(details.title, details.description);
       return false;

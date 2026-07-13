@@ -25,6 +25,7 @@ import { useSignalExclusion } from "@/hooks/useSignalExclusion";
 import { computeExclusionImpact, computeLatestExclusionAt } from "@/lib/evidenceImpact";
 import { stageLabel } from "@/lib/phaseDisplay";
 import { supabase } from "@/integrations/supabase/client";
+import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
 import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
@@ -1530,6 +1531,7 @@ export default function ClientRefinePreviewWorkshopView() {
       throw new Error(`Add a website for ${companyName} before running the public baseline.`);
     }
 
+    const startedAt = new Date().toISOString();
     const { error } = await supabase.functions.invoke("public-baseline", {
       body: {
         company_id: targetCompanyId,
@@ -1539,6 +1541,13 @@ export default function ClientRefinePreviewWorkshopView() {
     });
 
     if (error) {
+      // The 150s wall may have cut the browser after the isolate already succeeded.
+      // Poll the durable run-status row before declaring failure.
+      const terminal = await pollPublicBaselineTerminal({ companyId: targetCompanyId, sinceIso: startedAt });
+      if (terminal === "completed") return;
+      if (terminal === "running") {
+        throw new Error("Public baseline is still running in the background — refresh shortly.");
+      }
       throw new Error(error.message || "Failed to run public baseline.");
     }
   }, []);

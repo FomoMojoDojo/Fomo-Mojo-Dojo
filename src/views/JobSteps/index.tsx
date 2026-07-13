@@ -6,6 +6,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import TopNav from "@/components/layout/TopNav";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { supabase } from "@/integrations/supabase/client";
+import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { useCompany } from "@/hooks/useCompany";
 import { useJobSteps, type JobStepRow } from "@/hooks/useJobSteps";
 import { useOdiNeeds, type OdiMarketDefinitionRow, type OdiNeedRow } from "@/hooks/useOdiNeeds";
@@ -2381,6 +2382,7 @@ export default function JobStepsView() {
 
       if (invokeError && shouldAttemptBaselineRetry(invokeMessage)) {
         toast.message("Refreshing public baseline, then retrying map generation once.");
+        const baselineStartedAt = new Date().toISOString();
         const { error: baselineErr } = await supabase.functions.invoke("public-baseline", {
           body: {
             company_id: activeCompany.id,
@@ -2388,7 +2390,14 @@ export default function JobStepsView() {
             website: activeCompany.website ?? "",
           },
         });
-        if (!baselineErr) {
+        // The 150s wall may cut the browser after the isolate landed its write — poll the
+        // durable run-status row before treating the baseline refresh as failed.
+        let baselineOk = !baselineErr;
+        if (baselineErr) {
+          const terminal = await pollPublicBaselineTerminal({ companyId: activeCompany.id, sinceIso: baselineStartedAt });
+          if (terminal === "completed") baselineOk = true;
+        }
+        if (baselineOk) {
           await refetchBaseline();
           try {
             const retry = await runResearchMap();
