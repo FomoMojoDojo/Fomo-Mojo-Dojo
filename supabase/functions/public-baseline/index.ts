@@ -2016,7 +2016,31 @@ Deno.serve(async (req) => {
       ttlMinutes: lockTtlMinutes,
     });
 
+    // Self-owned durable run-status row (long_runner_runs). Written AFTER the lock is
+    // acquired — the lock-conflict 409 above returns before this, so a re-click never
+    // orphans a second `running` row (the lock is the per-invocation dedup). Updated to
+    // completed/failed in the finally below on EVERY return path and on throw, so all
+    // callers (the 5 direct client callers and both wrappers) get a durable terminal
+    // state even when the 150s wall cut the browser and the isolate landed its write
+    // behind the cut. Non-fatal: a ledger write failure never breaks a paid baseline run.
+    let ledgerRowId: string | null = null;
+    {
+      const { data: ledgerRow, error: ledgerStartErr } = await supabase
+        .from("long_runner_runs")
+        .insert({ run_kind: "public_baseline", company_id, status: "running", target_count: 1 })
+        .select("id")
+        .single();
+      if (ledgerStartErr) {
+        console.log("[baseline] long_runner_runs start insert error", ledgerStartErr.message);
+      } else {
+        ledgerRowId = (ledgerRow as { id?: unknown } | null)?.id ? String((ledgerRow as { id: unknown }).id) : null;
+      }
+    }
+    let ledgerOutcome: "completed" | "failed" = "failed";
+    let ledgerErrText: string | null = null;
+
     try {
+      const resp: Response = await (async (): Promise<Response> => {
     const domain = getDomain(website);
     const stem = domainStem(domain);
     const variants = buildNameVariants(company_name, website);
@@ -2909,9 +2933,32 @@ Deno.serve(async (req) => {
       strong_matches: strong.length,
       medium_matches: medium.length,
     });
+      })();
+      // Terminal outcome derived from the actual HTTP status the body computed: 2xx =
+      // the run reached a durable determinate result (ok / insufficient / ambiguous — all
+      // legitimate completions); any other status = failed.
+      ledgerOutcome = resp.status >= 200 && resp.status < 300 ? "completed" : "failed";
+      return resp;
+    } catch (bodyErr) {
+      ledgerOutcome = "failed";
+      ledgerErrText = String((bodyErr as { message?: unknown })?.message ?? bodyErr);
+      throw bodyErr;
     } finally {
       stopLockHeartbeat();
       await releaseCompanyRunLock(supabase, company_id);
+      if (ledgerRowId) {
+        const { error: ledgerFinErr } = await supabase
+          .from("long_runner_runs")
+          .update({
+            status: ledgerOutcome,
+            done_count: ledgerOutcome === "completed" ? 1 : 0,
+            error_text: ledgerErrText,
+            finished_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", ledgerRowId);
+        if (ledgerFinErr) console.log("[baseline] long_runner_runs terminal update error", ledgerFinErr.message);
+      }
     }
   } catch (err) {
     console.error("[baseline] error:", err);
