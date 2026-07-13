@@ -38,6 +38,8 @@ type PlanResponse = {
   public_total: number;
   claims: DeltaPlanClaim[];
   fresh_total: number;
+  // NEG-CACHE: banked model rejections skipped by this plan (counts-only).
+  rejected_total: number;
 };
 
 export type DeltaChunkOutcome = {
@@ -53,6 +55,7 @@ export type DeltaRecomputeProgress = {
   totalChunks: number;
   currentChunk: number; // 1-based ordinal of the chunk in flight (or last completed)
   freshTotal: number;
+  rejectedTotal: number; // NEG-CACHE: frozen rejections the plan skipped
   results: DeltaChunkOutcome[];
   finalize: { ok: boolean; reason?: string; seconds?: number; polled?: boolean } | null;
   error: string | null; // run-level error (plan failed, frozen company, …)
@@ -127,14 +130,14 @@ export function useClaimDeltaRecompute(companyId: string) {
 
     if (isFrozenCompany(companyId)) {
       setProgress({
-        stage: "done", totalChunks: 0, currentChunk: 0, freshTotal: 0, results: [], finalize: null,
+        stage: "done", totalChunks: 0, currentChunk: 0, freshTotal: 0, rejectedTotal: 0, results: [], finalize: null,
         error: "This is a frozen reference company — deltas aren't recomputed for it.",
       });
       return;
     }
 
     setRunning(true);
-    setProgress({ stage: "plan", totalChunks: 0, currentChunk: 0, freshTotal: 0, results: [], finalize: null, error: null });
+    setProgress({ stage: "plan", totalChunks: 0, currentChunk: 0, freshTotal: 0, rejectedTotal: 0, results: [], finalize: null, error: null });
     try {
       // 1) PLAN — server truth for what's fresh (zero model calls, zero writes).
       const planRes = await invokeDeltas({ company_id: companyId, plan: true });
@@ -146,14 +149,15 @@ export function useClaimDeltaRecompute(companyId: string) {
       const plan = planRes.data as unknown as PlanResponse;
       const chunks = packDeltaChunks(Array.isArray(plan.claims) ? plan.claims : []);
       const freshTotal = Number(plan.fresh_total ?? 0);
+      const rejectedTotal = Number(plan.rejected_total ?? 0);
 
       // 2) CHUNKS — pair rows only; per-chunk failure isolation.
       const results: DeltaChunkOutcome[] = [];
-      setProgress({ stage: chunks.length > 0 ? "chunks" : "finalize", totalChunks: chunks.length, currentChunk: 0, freshTotal, results: [], finalize: null, error: null });
+      setProgress({ stage: chunks.length > 0 ? "chunks" : "finalize", totalChunks: chunks.length, currentChunk: 0, freshTotal, rejectedTotal, results: [], finalize: null, error: null });
       for (let i = 0; i < chunks.length; i++) {
         if (!live()) return;
         const chunk = chunks[i];
-        setProgress({ stage: "chunks", totalChunks: chunks.length, currentChunk: i + 1, freshTotal, results: [...results], finalize: null, error: null });
+        setProgress({ stage: "chunks", totalChunks: chunks.length, currentChunk: i + 1, freshTotal, rejectedTotal, results: [...results], finalize: null, error: null });
         const t0 = Date.now();
         const res = await invokeDeltas({
           company_id: companyId,
@@ -168,11 +172,11 @@ export function useClaimDeltaRecompute(companyId: string) {
           reason: res.ok ? undefined : res.reason,
           seconds: Math.round((Date.now() - t0) / 1000),
         });
-        setProgress({ stage: "chunks", totalChunks: chunks.length, currentChunk: i + 1, freshTotal, results: [...results], finalize: null, error: null });
+        setProgress({ stage: "chunks", totalChunks: chunks.length, currentChunk: i + 1, freshTotal, rejectedTotal, results: [...results], finalize: null, error: null });
       }
 
       // 3) FINALIZE — exactly one unscoped run: silences + stale-sweep.
-      setProgress({ stage: "finalize", totalChunks: chunks.length, currentChunk: chunks.length, freshTotal, results: [...results], finalize: null, error: null });
+      setProgress({ stage: "finalize", totalChunks: chunks.length, currentChunk: chunks.length, freshTotal, rejectedTotal, results: [...results], finalize: null, error: null });
       const { data: preRows, count: preCount } = await supabase
         .from("claim_deltas")
         .select("computed_at", { count: "exact" })
@@ -194,7 +198,7 @@ export function useClaimDeltaRecompute(companyId: string) {
           ? { ok: true, seconds: Math.round((Date.now() - finT0) / 1000), polled: true }
           : { ok: false, reason: finRes.reason };
       }
-      setProgress({ stage: "done", totalChunks: chunks.length, currentChunk: chunks.length, freshTotal, results: [...results], finalize, error: null });
+      setProgress({ stage: "done", totalChunks: chunks.length, currentChunk: chunks.length, freshTotal, rejectedTotal, results: [...results], finalize, error: null });
     } finally {
       if (live()) setRunning(false);
       // Banked pair rows should render even after a partial run.

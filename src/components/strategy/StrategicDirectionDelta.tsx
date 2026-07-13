@@ -872,6 +872,11 @@ function DeltaRecomputeControl({ companyId }: { companyId: string }) {
 
           {!progress.error && progress.stage === "plan" && <p style={line}>Sizing the work…</p>}
 
+          {/* NEG-CACHE: frozen rejections the plan skipped — hidden at zero. DRAFT copy, unsigned. */}
+          {!progress.error && progress.stage !== "plan" && progress.rejectedTotal > 0 && (
+            <p style={line}>{progress.rejectedTotal} previously rejected — skipped.</p>
+          )}
+
           {!progress.error && progress.stage !== "plan" && progress.totalChunks === 0 && (
             <p style={line}>Nothing new to compare — running the wrap-up only.</p>
           )}
