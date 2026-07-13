@@ -21,6 +21,7 @@
 // per-route persistence (survives the Kong gateway timeout).
 
 import { buildOrgNameGuard, FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
+import { contentIdentity } from "./contentIdentity.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -51,10 +52,15 @@ export type RouteConditionOutcome = {
   proposed: ProposedCondition[];   // every candidate, with judge verdict
   written_count: number | null;    // null on dry-run; final condition count on write
   preserved_operator: number;      // operator conditions kept verbatim on this route
+  // Hole-close reconcile (piece #2): what the re-roll superseded and how legs reconciled.
+  superseded_conditions?: number;  // generated conditions whose identity changed/vanished
+  orphaned_legs?: number;          // legs declared orphaned (source condition gone)
+  refused_preserved?: boolean;     // route write refused: a preserved-class leg would orphan
+  error?: string;                  // per-route honest error (e.g. the preserved refusal)
 };
 
 export type RouteConditionResult =
-  | { ok: true; perRoute: RouteConditionOutcome[]; totals: { routes: number; proposed: number; kept: number; dropped: number; written: number; preservedOperator: number } }
+  | { ok: true; perRoute: RouteConditionOutcome[]; totals: { routes: number; proposed: number; kept: number; dropped: number; written: number; preservedOperator: number; superseded: number; orphanedLegs: number; refusedPreserved: number } }
   | { ok: false; skipped: "frozen_company" | "no_routes" }
   | { ok: false; error: string };
 
@@ -176,6 +182,165 @@ async function judgeRouteCondition(args: {
 
 const isGeneratedCondition = (c: WrapCondition) => String(c?.source ?? "").startsWith(`${CONDITION_SOURCE_PREFIX}:`);
 
+// ── Leg (routes row level='leg') as loaded for reconcile ──────────────────────────
+type ReconcileLeg = { id: string; source?: string | null; provenance_type?: string | null; what_would_have_to_be_true?: unknown };
+// Preserved-class LEG — mirrors routeLegSynthesis.isOperatorLeg.
+const isOperatorLeg = (l: ReconcileLeg) =>
+  String(l.source ?? "").startsWith("manual_") || String(l.provenance_type ?? "") === "manual";
+const legConditionText = (l: ReconcileLeg): string =>
+  String((Array.isArray(l.what_would_have_to_be_true) ? (l.what_would_have_to_be_true as Array<Record<string, unknown>>)[0]?.condition : "") ?? "").trim();
+
+export type RouteConditionReconcile = {
+  refused: boolean;
+  refusalReason?: string;
+  supersededCount: number;
+  orphanedLegCount: number;
+  // Called AFTER the merged-array write lands — writes the condition_removals audit rows
+  // and stamps each non-preserved orphaned leg. Absent when refused.
+  apply?: () => Promise<void>;
+};
+
+// ── Hole-close reconcile (piece #2): a diff-and-audit LAYER over the merged write ──
+// Diffs the route's OLD generated conditions against the NEW conditions by contentIdentity
+// (the single authority — no new hash, no SQL hash). keep = identity survives → legs stay
+// bound, no audit. supersede = a generated identity is gone → its legs orphan. Operator
+// conditions are never in the diff (origin-merge keeps them verbatim). A PRESERVED-CLASS
+// leg (operator leg, or a leg carrying a recorded-result / reasoned / manual test) that
+// would orphan REFUSES this route's write (CH-0 per-route isolation); non-preserved orphans
+// are declared WITH a reason stamped on the leg for an honest render. The merged-array WRITE
+// itself is unchanged — this only decides refusal and records what happened.
+export async function reconcileRouteConditionsOnReroll(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  route: RouteInput;
+  merged: WrapCondition[];
+  oldGenerated: WrapCondition[];
+  nowIso: string;
+  actor: string;
+}): Promise<RouteConditionReconcile> {
+  // Identities of the conditions that WILL exist after the write (generated + operator).
+  const newAllIds = new Set<string>(await Promise.all(args.merged.map((c) => contentIdentity(String(c.condition ?? "")))));
+
+  // Superseded = an old GENERATED condition whose identity is no longer present.
+  const oldGenWithId = await Promise.all(
+    args.oldGenerated
+      .map((c) => String(c.condition ?? "").trim())
+      .filter(Boolean)
+      .map(async (text) => ({ text, id: await contentIdentity(text) })),
+  );
+  const superseded = oldGenWithId.filter((o) => !newAllIds.has(o.id));
+  const supersededIds = new Set(superseded.map((o) => o.id));
+
+  if (superseded.length === 0) {
+    // Nothing left an identity behind → no orphan risk, no audit. (keep / add only.)
+    return { refused: false, supersededCount: 0, orphanedLegCount: 0, apply: async () => {} };
+  }
+
+  // Load the route's legs and bucket the ones bound (by identity) to a superseded condition.
+  const { data: legRows } = await args.supabase
+    .from("routes").select("id, source, provenance_type, what_would_have_to_be_true")
+    .eq("parent_id", args.route.id).eq("level", "leg");
+  const legs = (legRows ?? []) as ReconcileLeg[];
+
+  const orphaned: Array<{ leg: ReconcileLeg; bindingId: string }> = [];
+  for (const leg of legs) {
+    const text = legConditionText(leg);
+    if (!text) continue;
+    const bindingId = await contentIdentity(text);
+    if (supersededIds.has(bindingId)) orphaned.push({ leg, bindingId });
+  }
+
+  if (orphaned.length === 0) {
+    // Conditions changed but no leg was bound to the gone ones → audit only, no leg work.
+    return {
+      refused: false, supersededCount: superseded.length, orphanedLegCount: 0,
+      apply: async () => { await writeRemovals(args, superseded, []); },
+    };
+  }
+
+  // Preserved-class detection: operator legs, or legs carrying a preserved-class test.
+  const operatorOrphanIds = new Set(orphaned.filter((o) => isOperatorLeg(o.leg)).map((o) => o.leg.id));
+  const nonOperatorIds = orphaned.filter((o) => !isOperatorLeg(o.leg)).map((o) => o.leg.id);
+  const preservedByTest = new Set<string>();
+  if (nonOperatorIds.length > 0) {
+    const { data: testRows } = await args.supabase
+      .from("tests")
+      .select("action_id, source, result, no_test_needed, no_test_needed_reason")
+      .in("action_id", nonOperatorIds);
+    for (const t of (testRows ?? []) as Array<Record<string, unknown>>) {
+      const preserved =
+        String(t.source ?? "").startsWith("manual_") ||
+        t.result != null ||
+        (t.no_test_needed === true && String(t.no_test_needed_reason ?? "").trim() !== "");
+      if (preserved) preservedByTest.add(String(t.action_id));
+    }
+  }
+  const preservedOrphans = orphaned.filter((o) => operatorOrphanIds.has(o.leg.id) || preservedByTest.has(o.leg.id));
+
+  if (preservedOrphans.length > 0) {
+    // CH-0-style refusal: this route's re-roll would strand a preserved-class leg. Refuse
+    // the write for THIS route (conditions stay intact, the leg stays bound); other routes
+    // in the batch continue. The operator resolves/re-points the leg first.
+    return {
+      refused: true,
+      refusalReason:
+        `route re-roll refused: would orphan ${preservedOrphans.length} preserved-class leg(s) ` +
+        `(operator-authored, or carrying a recorded/reasoned test) whose source condition is being ` +
+        `removed — resolve or re-point them first (test/leg-preservation law).`,
+      supersededCount: superseded.length,
+      orphanedLegCount: orphaned.length,
+    };
+  }
+
+  // All orphans are non-preserved → declare each with a reason for an honest render.
+  return {
+    refused: false,
+    supersededCount: superseded.length,
+    orphanedLegCount: orphaned.length,
+    apply: async () => {
+      await writeRemovals(args, superseded, orphaned.map((o) => ({ legId: o.leg.id, bindingId: o.bindingId })));
+      for (const o of orphaned) {
+        const existing = Array.isArray(o.leg.what_would_have_to_be_true)
+          ? (o.leg.what_would_have_to_be_true as Array<Record<string, unknown>>)
+          : [];
+        const head = existing[0] ?? {};
+        const stamped = [{
+          ...head,
+          orphaned: true,
+          orphaned_reason: `source condition re-rolled ${args.nowIso.slice(0, 10)} — this leg no longer maps to a live condition`,
+          orphaned_at: args.nowIso,
+          orphaned_from_identity: o.bindingId,
+        }, ...existing.slice(1)];
+        const { error: stampErr } = await args.supabase
+          .from("routes").update({ what_would_have_to_be_true: stamped }).eq("id", o.leg.id);
+        if (stampErr) throw new Error(`orphan-stamp failed for leg ${o.leg.id}: ${stampErr.message}`);
+      }
+    },
+  };
+}
+
+// Write one condition_removals audit row per superseded generated condition, tagging each
+// with the legs that orphaned from it. No CASCADE FK — the row outlives route/company teardown.
+async function writeRemovals(
+  args: { supabase: { from: (t: string) => any }; companyId: string; route: RouteInput; nowIso: string; actor: string },
+  superseded: Array<{ text: string; id: string }>,
+  orphanedLegs: Array<{ legId: string; bindingId: string }>,
+): Promise<void> {
+  if (superseded.length === 0) return;
+  const rows = superseded.map((s) => ({
+    company_id: args.companyId,
+    route_id: args.route.id,
+    condition_identity: s.id,
+    condition_text: s.text,
+    reason: "condition_rerolled",
+    actor: args.actor,
+    affected_leg_ids: orphanedLegs.filter((l) => l.bindingId === s.id).map((l) => l.legId),
+    removed_at: args.nowIso,
+  }));
+  const { error } = await args.supabase.from("condition_removals").insert(rows);
+  if (error) throw new Error(`condition_removals insert failed for route ${args.route.id}: ${error.message}`);
+}
+
 // ── Synthesize: per route → gen 2–3 → judge each → origin-merge → (write | dry) ──
 export async function synthesizeRouteConditions(args: {
   supabase: { from: (t: string) => any };
@@ -229,12 +394,44 @@ export async function synthesizeRouteConditions(args: {
     const merged: WrapCondition[] = [...operatorConditions, ...keptGenerated];
 
     let written_count: number | null = null;
+    let reconcileSummary = { superseded: 0, orphaned: 0 };
     if (args.write) {
+      // Hole-close reconcile (piece #2): plan the diff + preserved-class refusal BEFORE the
+      // write; the merged-array write itself is UNCHANGED; audit supersedes + declare
+      // non-preserved orphans AFTER it lands.
+      const reconcile = await reconcileRouteConditionsOnReroll({
+        supabase: args.supabase,
+        companyId: args.companyId,
+        route,
+        merged,
+        oldGenerated: route.existing.filter(isGeneratedCondition),
+        nowIso: args.nowIso,
+        actor: CONDITION_SOURCE_PREFIX,
+      });
+      if (reconcile.refused) {
+        // CH-0-style refusal: a preserved-class leg would orphan. Leave THIS route's
+        // conditions intact (the leg stays bound) and surface the honest reason; the batch
+        // continues with the other routes.
+        perRoute.push({
+          route_id: route.id,
+          route_title: route.title,
+          proposed,
+          written_count: null,
+          preserved_operator: operatorConditions.length,
+          superseded_conditions: reconcile.supersededCount,
+          orphaned_legs: reconcile.orphanedLegCount,
+          refused_preserved: true,
+          error: reconcile.refusalReason,
+        });
+        continue;
+      }
       // Per-route UPDATE so a gateway/worker timeout never loses processed routes.
       const { error: upErr } = await args.supabase
         .from("routes").update({ what_would_have_to_be_true: merged }).eq("id", route.id);
       if (upErr) throw new Error(`route-condition update failed for route ${route.id}: ${upErr.message}`);
       written_count = merged.length;
+      if (reconcile.apply) await reconcile.apply();
+      reconcileSummary = { superseded: reconcile.supersededCount, orphaned: reconcile.orphanedLegCount };
     }
 
     perRoute.push({
@@ -243,6 +440,8 @@ export async function synthesizeRouteConditions(args: {
       proposed,
       written_count,
       preserved_operator: operatorConditions.length,
+      superseded_conditions: reconcileSummary.superseded,
+      orphaned_legs: reconcileSummary.orphaned,
     });
   }
 
@@ -303,8 +502,11 @@ export async function generateRouteConditionsForCompany(args: {
       dropped: acc.dropped + r.proposed.filter((p) => !p.kept).length,
       written: acc.written + (r.written_count ?? 0),
       preservedOperator: acc.preservedOperator + r.preserved_operator,
+      superseded: acc.superseded + (r.superseded_conditions ?? 0),
+      orphanedLegs: acc.orphanedLegs + (r.orphaned_legs ?? 0),
+      refusedPreserved: acc.refusedPreserved + (r.refused_preserved ? 1 : 0),
     }),
-    { routes: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0 },
+    { routes: 0, proposed: 0, kept: 0, dropped: 0, written: 0, preservedOperator: 0, superseded: 0, orphanedLegs: 0, refusedPreserved: 0 },
   );
 
   return { ok: true, perRoute, totals };

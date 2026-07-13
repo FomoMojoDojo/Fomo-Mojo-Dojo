@@ -1556,6 +1556,12 @@ export function LegRow({
   // Test-class legs (the 70b judge classified them as evidence-gathering) carry a "Test"
   // marker alongside "Starting hypothesis" — Gate 3 attaches the test content to these.
   const isTestLeg = sourceCondition?.leg_class === "test";
+  // Hole-close (piece #2): a leg whose source condition was re-rolled away is stamped
+  // orphaned on its carried condition. It NEVER disappears — it keeps rendering here with
+  // an honest ⚠ badge and its reason, mirroring how struck claims kept a visible residual.
+  const legHead = conditions[0];
+  const isOrphaned = !!legHead?.orphaned;
+  const orphanReason = String(legHead?.orphaned_reason ?? "");
   // Strip a loose trailing em/en-dash a generator can leave behind — it reads as unfinished.
   const legTitle = (leg.title || "").replace(/\s*[—–]+\s*$/, "").trimEnd();
 
@@ -1586,6 +1592,11 @@ export function LegRow({
         {/* Status pill + title row */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
           {showLegStateTag && legClaimState && <RouteStateTag claimState={legClaimState} />}
+          {isOrphaned && (
+            <span style={{ fontFamily: R.mono, fontSize: 8.5, letterSpacing: "0.1em", color: "#b45309", border: "1px solid #b45309", background: "rgba(180,83,9,0.08)", borderRadius: 2, padding: "2px 6px", flexShrink: 0 }}>
+              ⚠ Orphaned
+            </span>
+          )}
           {isConditionMet ? (
             <span style={{ fontFamily: R.mono, fontSize: 8.5, letterSpacing: "0.1em", color: R.signal, border: `1px solid ${R.signal}`, borderRadius: 2, padding: "2px 6px", flexShrink: 0 }}>
               ✓ Condition met
@@ -1645,6 +1656,14 @@ export function LegRow({
           <p style={{ fontSize: 12, color: "rgba(17,17,17,0.5)", margin: "0 0 8px", lineHeight: 1.5 }}>
             <span style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(17,17,17,0.4)" }}>What this would establish: </span>
             {sourceCondition.condition}
+          </p>
+        )}
+        {/* Hole-close (piece #2): the honest home for a declared-orphan leg — rendered in
+            place with its reason, never silently dropped (never-disappear law). */}
+        {isOrphaned && (
+          <p style={{ fontSize: 12, color: "#b45309", margin: "0 0 8px", lineHeight: 1.5, background: "rgba(180,83,9,0.06)", borderLeft: "2px solid #b45309", padding: "6px 10px", borderRadius: 2 }}>
+            <span style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em" }}>Orphaned leg — </span>
+            {orphanReason || "its source condition was re-rolled away and no longer maps to a live condition."}
           </p>
         )}
         {/* Gate 3: belief-only test on test-class legs (read-only surface) */}

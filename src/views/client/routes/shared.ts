@@ -298,7 +298,18 @@ export function routeTimeAgo(iso: string): string {
 
 export type WrapAlt  = { alternative_title: string; rejection_reason: string; considered_at?: string };
 
-export type WrapCond = { condition: string; satisfied_flag: boolean; evidence_refs?: string[]; leg_class?: "test" | "build" };
+export type WrapCond = {
+  condition: string;
+  satisfied_flag: boolean;
+  evidence_refs?: string[];
+  leg_class?: "test" | "build";
+  // Hole-close reconcile (piece #2): stamped on a leg's carried condition when its source
+  // route condition is re-rolled away — the leg keeps rendering, honestly, with its reason.
+  orphaned?: boolean;
+  orphaned_reason?: string;
+  orphaned_at?: string;
+  orphaned_from_identity?: string;
+};
 
 export const HIERARCHY_STATE_ACCENT: Record<string, string> = {
   flow:         R.signal,
