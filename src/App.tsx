@@ -37,6 +37,7 @@ import ClientOnboardingMojoMap from "./pages/ClientOnboardingMojoMap";
 import ClientOnboardingMojoMapEditor from "./pages/ClientOnboardingMojoMapEditor";
 import ClientViewVisibilityAuditPage from "./pages/ClientViewVisibilityAudit";
 import ClientDecisionSystemView from "./views/client/ClientDecisionSystemView";
+import ClientStoryView from "./views/client/ClientStoryView";
 import ClientRefinePreviewView from "./views/client/ClientRefinePreviewView";
 import ClientRefinePreviewRoutesView from "./views/client/ClientRefinePreviewRoutesView";
 import ClientRefinePreviewWorkshopView from "./views/client/ClientRefinePreviewWorkshopView";
@@ -59,6 +60,7 @@ import {
   CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE,
 } from "./lib/clientRefinePreview";
 import { CLIENT_VIEW_VISIBILITY_AUDIT_ROUTE } from "./lib/clientViewVisibilityAudit";
+import { CLIENT_VIEW_ROUTE } from "./lib/clientStoryView";
 import {
   CLIENT_ONBOARDING_MOJOMAP_EDITOR_ROUTE,
   CLIENT_ONBOARDING_MOJOMAP_ROUTE,
@@ -87,6 +89,7 @@ function ClientModePathSync() {
     if (mode !== "client") return;
     if (location.pathname.startsWith("/admin")) return;
     if (location.pathname === "/login" || location.pathname === "/reset-password") return;
+    if (location.pathname === CLIENT_VIEW_ROUTE) return; // client story surface is standalone
     if (isClientPhasePath(location.pathname)) return;
     // Client mode is a single-page experience; always route to root.
     navigate("/", { replace: true });
@@ -303,6 +306,8 @@ const App = () => (
                     </AdminModeRoute>
                   }
                 />
+                {/* Client story mode (CV-0 chrome shell) — admin-gated during build */}
+                <Route path={CLIENT_VIEW_ROUTE} element={<AdminModeRoute><ClientStoryView /></AdminModeRoute>} />
                 <Route path="/map-signal-prototype" element={<InternalViewOnlyRoute><MapSignalPrototype /></InternalViewOnlyRoute>} />
                 <Route path="/landing-page" element={<LandingPage4 />} />
                 <Route path="/mojomap-landing" element={<MojoMapLanding />} />

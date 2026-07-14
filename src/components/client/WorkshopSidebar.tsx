@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
+import { CLIENT_VIEW_ROUTE } from "@/lib/clientStoryView";
 
 const SIDEBAR_TABS = [
   { key: "diagnose",    label: "Diagnose" },
@@ -43,6 +45,7 @@ export function WorkshopSidebar({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const { enabled: teachingMode, toggle: toggleTeaching } = useSurfaceTeachingMode();
+  const navigate = useNavigate();
 
   return (
     <nav
@@ -188,6 +191,20 @@ export function WorkshopSidebar({
               {teachingMode ? "Teaching ✓" : "Teaching"}
             </button>
           )}
+
+          {/* Client View — leaves the workshop for the full-bleed client story
+              room (/client-view). Accent + arrow keep it from reading as a
+              workshop tab. Admin-gated by the /preview/client-refine surface. */}
+          <div className="crpv-ws-tab-divider" />
+          <button
+            type="button"
+            className="crpv-ws-tab"
+            onClick={() => navigate(CLIENT_VIEW_ROUTE)}
+            title="Open the full-bleed client story surface"
+            style={{ color: "#9c6e15", fontWeight: 600 }}
+          >
+            Client View →
+          </button>
         </>
       )}
     </nav>
