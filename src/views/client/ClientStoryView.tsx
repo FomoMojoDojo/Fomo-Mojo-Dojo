@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import type { ClientSystemPhase } from "@/hooks/useClientMapInteractionState";
 import { CLIENT_PHASE_NAV_ITEMS } from "@/lib/clientPhaseRoutes";
-import {
-  CLIENT_STORY_PALETTE_KEY,
-  CLIENT_STORY_THEME_KEY,
-  type ClientStoryPalette,
-  type ClientStoryTheme,
-} from "@/lib/clientStoryView";
+import { CLIENT_STORY_THEME_KEY, type ClientStoryTheme } from "@/lib/clientStoryView";
 import OutsideHeroAct from "@/components/client-view/story/OutsideHeroAct";
+import OutsideFindingsAct from "@/components/client-view/story/OutsideFindingsAct";
+import OutsideQuestionAct from "@/components/client-view/story/OutsideQuestionAct";
+import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import "@/styles/client-story.css";
 
 /*
@@ -30,12 +28,8 @@ type ScaffoldAct = { eyebrow: string; role: string; awaiting: string };
 // Act 6) is intentionally omitted — held until a real two-futures generator
 // exists (operator ruling 3), with no placeholder.
 const SCAFFOLD_ACTS: Record<"outside" | "diagnosis", ScaffoldAct[]> = {
-  outside: [
-    { eyebrow: "Outside View · Before you told us anything", role: "Hero + Mojo Score", awaiting: "CV-1" },
-    { eyebrow: "What else stands out", role: "Sourced findings", awaiting: "CV-2" },
-    { eyebrow: "So what", role: "Consequence + one open question", awaiting: "CV-2" },
-    { eyebrow: "Next move", role: "Take this read inside", awaiting: "CV-2" },
-  ],
+  // Outside acts are all real as of CV-2 (rendered directly, not from this list).
+  outside: [],
   diagnosis: [
     { eyebrow: "Diagnose · Your side, rebuilt from your own documents", role: "Hero + Mojo Score (moves)", awaiting: "CV-3" },
     { eyebrow: "Gap 01 · Position", role: "Say vs. See", awaiting: "CV-3" },
@@ -67,9 +61,6 @@ export default function ClientStoryView() {
   const [theme, setTheme] = useState<ClientStoryTheme>(() =>
     readStored(CLIENT_STORY_THEME_KEY, ["dark", "light"] as const, "dark"),
   );
-  const [palette, setPalette] = useState<ClientStoryPalette>(() =>
-    readStored(CLIENT_STORY_PALETTE_KEY, ["neutral", "warm"] as const, "neutral"),
-  );
   const [phase, setPhase] = useState<"outside" | "diagnosis">("outside");
 
   useEffect(() => {
@@ -79,14 +70,6 @@ export default function ClientStoryView() {
       /* ignore */
     }
   }, [theme]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(CLIENT_STORY_PALETTE_KEY, palette);
-    } catch {
-      /* ignore */
-    }
-  }, [palette]);
 
   const selectPhase = (next: ClientSystemPhase) => {
     if (DISABLED_PHASES.has(next)) return;
@@ -99,7 +82,7 @@ export default function ClientStoryView() {
   const acts = SCAFFOLD_ACTS[phase];
 
   return (
-    <div className="cvs-story" data-mm-theme={theme} data-mm-palette={palette}>
+    <div className="cvs-story" data-mm-theme={theme}>
       <header className="cvs-rail">
         <div className="cvs-rail-inner">
           <div className="cvs-rail-left">
@@ -126,26 +109,9 @@ export default function ClientStoryView() {
           </div>
 
           <div className="cvs-rail-controls">
-            {/* Build-phase palette control (operator ruling: cheapest honest
-                mechanism). Removed once the palette is locked. */}
+            {/* Build-phase chip; palette control removed — warm is the only
+                palette (CV-2 amendment 3). */}
             <span className="cvs-buildchip">CV-0 shell</span>
-            <div className="cvs-toggle" role="group" aria-label="Palette">
-              <span className="cvs-toggle-label">Palette</span>
-              <button
-                type="button"
-                className={`cvs-toggle-btn ${palette === "neutral" ? "is-active" : ""}`}
-                onClick={() => setPalette("neutral")}
-              >
-                Neutral
-              </button>
-              <button
-                type="button"
-                className={`cvs-toggle-btn ${palette === "warm" ? "is-active" : ""}`}
-                onClick={() => setPalette("warm")}
-              >
-                Warm
-              </button>
-            </div>
             <div className="cvs-toggle" role="group" aria-label="Theme">
               <button
                 type="button"
@@ -169,11 +135,16 @@ export default function ClientStoryView() {
       <p className="cvs-meta">{META_LINE[phase]}</p>
 
       <main>
+        {/* Outside page: all four acts real (CV-1 + CV-2). Diagnose stays scaffolds. */}
+        {phase === "outside" ? (
+          <>
+            <OutsideHeroAct />
+            <OutsideFindingsAct />
+            <OutsideQuestionAct />
+            <OutsideNextMoveAct onStartDiagnose={() => selectPhase("diagnosis")} />
+          </>
+        ) : null}
         {acts.map((act, index) => {
-          // Outside · Act 1 is now wired to real data (CV-1); the rest stay scaffolds.
-          if (phase === "outside" && index === 0) {
-            return <OutsideHeroAct key={`${phase}-hero`} />;
-          }
           return (
             <section className="cvs-act" key={`${phase}-${index}`} aria-label={`Act ${index + 1} scaffold`}>
               <p className="cvs-act-eyebrow">{act.eyebrow}</p>

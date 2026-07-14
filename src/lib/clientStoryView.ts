@@ -10,9 +10,9 @@ export function isClientStoryPath(pathname: string) {
   return pathname === CLIENT_VIEW_ROUTE;
 }
 
-// Persistence keys for the story-mode chrome (per design reference).
+// Persistence key for the story-mode chrome (per design reference).
+// (The palette key was removed with the neutral palette — warm is the only
+// palette per the CV-2 amendment.)
 export const CLIENT_STORY_THEME_KEY = "mm-theme"; // 'dark' | 'light' (default dark)
-export const CLIENT_STORY_PALETTE_KEY = "mm-palette"; // 'neutral' | 'warm' (default neutral)
 
 export type ClientStoryTheme = "dark" | "light";
-export type ClientStoryPalette = "neutral" | "warm";

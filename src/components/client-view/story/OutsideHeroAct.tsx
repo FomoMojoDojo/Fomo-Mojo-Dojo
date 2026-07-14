@@ -12,9 +12,10 @@ import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
  * hooks use (useCompany().activeCompany.id). Never hardwired to a fixture.
  */
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (CV-1 acceptance) ──────────
+// ── Client-facing copy — SIGNED AS-IS at CV-1 acceptance (2026-07-14) ──────────
 // Kind labels: keep an observation from wearing frontier-level confidence.
-const KIND_LABEL: Record<Finding["kind"], string> = {
+// Exported: CV-2 Act 2 reuses the same signed vocabulary.
+export const KIND_LABEL: Record<Finding["kind"], string> = {
   frontier: "Your bet",
   observation: "What we noticed",
   watch_out: "A watch-out",
@@ -28,7 +29,7 @@ const SCORE_EMPTY = "No score has been computed yet.";
 const SCORE_EMPTY_SUB = "It appears once the first analysis runs.";
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Light formatting only: capitalise the first letter and ensure terminal
+// Light formatting only: capitalize the first letter and ensure terminal
 // punctuation. Never adds, strengthens, or reshapes the claim.
 function formatStatement(raw: string): string {
   const t = raw.trim();
