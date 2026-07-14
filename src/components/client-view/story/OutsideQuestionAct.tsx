@@ -1,12 +1,10 @@
-import { useCompany } from "@/hooks/useCompany";
-import { usePublicBaseline } from "@/hooks/usePublicBaseline";
-
 /*
  * Outside · Act 3 — the one open question (CV-2). Read-only.
  *
  * Renders EXACTLY ONE open question from the preferred public-baseline run
  * (usePublicBaseline's pickPreferredRun quality selection — the system's
- * existing mechanism), taking open_questions[0]: the generator-emitted array
+ * existing mechanism, fetched once in ClientStoryView and passed down),
+ * taking open_questions[0]: the generator-emitted array
  * order is the only ranking that exists; no ranking is invented.
  *
  * The reference's interpretive "caps everything downstream" headline has no
@@ -31,10 +29,13 @@ function firstOpenQuestion(run: unknown): string | null {
   return first ? String(first).trim() : null;
 }
 
-export default function OutsideQuestionAct() {
-  const { activeCompany } = useCompany();
-  const { preferredRun, loading } = usePublicBaseline(activeCompany?.id);
-
+export default function OutsideQuestionAct({
+  preferredRun,
+  loading,
+}: {
+  preferredRun?: unknown;
+  loading?: boolean;
+}) {
   const question = firstOpenQuestion(preferredRun);
 
   // Collapse: no question → no act (see header comment).

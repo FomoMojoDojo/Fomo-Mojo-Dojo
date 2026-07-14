@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ClientSystemPhase } from "@/hooks/useClientMapInteractionState";
+import { useCompany } from "@/hooks/useCompany";
+import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { CLIENT_PHASE_NAV_ITEMS } from "@/lib/clientPhaseRoutes";
 import { CLIENT_STORY_THEME_KEY, type ClientStoryTheme } from "@/lib/clientStoryView";
 import OutsideHeroAct from "@/components/client-view/story/OutsideHeroAct";
@@ -62,6 +64,11 @@ export default function ClientStoryView() {
     readStored(CLIENT_STORY_THEME_KEY, ["dark", "light"] as const, "dark"),
   );
   const [phase, setPhase] = useState<"outside" | "diagnosis">("outside");
+
+  // Fetched once here; the Outside acts share it (open question + the
+  // evidence_ledger date map for CV-2c badges).
+  const { activeCompany } = useCompany();
+  const { preferredRun, loading: baselineLoading } = usePublicBaseline(activeCompany?.id);
 
   useEffect(() => {
     try {
@@ -138,9 +145,9 @@ export default function ClientStoryView() {
         {/* Outside page: all four acts real (CV-1 + CV-2). Diagnose stays scaffolds. */}
         {phase === "outside" ? (
           <>
-            <OutsideHeroAct />
-            <OutsideFindingsAct />
-            <OutsideQuestionAct />
+            <OutsideHeroAct preferredRun={preferredRun} />
+            <OutsideFindingsAct preferredRun={preferredRun} />
+            <OutsideQuestionAct preferredRun={preferredRun} loading={baselineLoading} />
             <OutsideNextMoveAct onStartDiagnose={() => selectPhase("diagnosis")} />
           </>
         ) : null}

@@ -1,6 +1,7 @@
 import { useCompany } from "@/hooks/useCompany";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
+import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
 
 /*
  * Outside · Act 1 — Hero + Mojo Score card (CV-1). Read-only: renders the
@@ -38,7 +39,7 @@ function formatStatement(raw: string): string {
   return /[.!?…]$/.test(cased) ? cased : `${cased}.`;
 }
 
-export default function OutsideHeroAct() {
+export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknown }) {
   const { activeCompany } = useCompany();
   const companyId = activeCompany?.id;
 
@@ -56,6 +57,18 @@ export default function OutsideHeroAct() {
   // company's own domain (synthesis reads are stamped with the company website).
   const showHost = primary?.host && primary.host !== companyDomain ? primary.host : null;
 
+  // CV-2c date badge: source date where real (third-party only), else capture time.
+  const badge = primary
+    ? resolveDateBadge({
+        sourceUrl: primary.sourceUrl,
+        signalRawDate: primary.signalRawDate,
+        signalCapturedAt: primary.signalCapturedAt,
+        findingCreatedAt: primary.created_at,
+        companyDomain,
+        ledgerDates: buildLedgerDateMap(preferredRun),
+      })
+    : null;
+
   const scoreValue = score ? Math.round(score.total_score) : null;
 
   return (
@@ -70,7 +83,13 @@ export default function OutsideHeroAct() {
             <>
               <p className="cvs-kind">{KIND_LABEL[primary.kind]}</p>
               <h1 className="cvs-statement">{formatStatement(statement)}</h1>
-              {showHost ? <p className="cvs-source">Source · {showHost}</p> : null}
+              {showHost || badge ? (
+                <p className="cvs-source">
+                  {showHost ? <>Source · {showHost}</> : null}
+                  {showHost && badge ? " · " : null}
+                  {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
+                </p>
+              ) : null}
             </>
           ) : (
             <p className="cvs-hero-empty">{HERO_EMPTY}</p>

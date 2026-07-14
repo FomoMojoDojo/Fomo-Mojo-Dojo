@@ -16,7 +16,12 @@ export type Finding = {
   body: string;
   beats: FindingBeats | null; // second-person three-beat; display the Observe, fall back to body
   status: "open" | "resolved";
+  created_at: string;
   host: string | null; // provenance host, derived from the origin signal url when present
+  // Origin-signal provenance (CV-2c date badges) — read-only enrichment.
+  sourceUrl: string | null; // full origin-signal url
+  signalCapturedAt: string | null; // signals.created_at (capture time)
+  signalRawDate: string | null; // signals.raw_payload->>'date' (genuine source date when present)
 };
 
 export type StandingFindingsData = {
@@ -54,7 +59,7 @@ export function useStandingFindings(companyId?: string) {
 
       const [openRes, primaryRes, companyRes] = await Promise.all([
         db.from("findings")
-          .select("id, origin_run_id, origin_signal_id, kind, body, beats, status")
+          .select("id, origin_run_id, origin_signal_id, kind, body, beats, status, created_at")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: true }),
@@ -67,30 +72,47 @@ export function useStandingFindings(companyId?: string) {
         ? hostOf(companyWebsite)
         : null;
 
-      const rows = (openRes.data ?? []) as Array<Omit<Finding, "host">>;
+      const rows = (openRes.data ?? []) as Array<
+        Omit<Finding, "host" | "sourceUrl" | "signalCapturedAt" | "signalRawDate">
+      >;
 
-      // Enrich provenance host from each finding's origin signal url (when it has one).
+      // Enrich provenance (host, url, capture time, source date) from each
+      // finding's origin signal (when it has one).
       const signalIds = rows.map((r) => r.origin_signal_id).filter((x): x is string => Boolean(x));
-      const hostById = new Map<string, string>();
+      type SignalMeta = { host: string | null; url: string | null; capturedAt: string | null; rawDate: string | null };
+      const metaById = new Map<string, SignalMeta>();
       if (signalIds.length > 0) {
         const { data: sigs } = await db
           .from("signals")
-          .select("id, source_url, raw_payload")
+          .select("id, source_url, raw_payload, created_at")
           .in("id", signalIds);
-        for (const s of ((sigs ?? []) as Array<{ id: string; source_url: string | null; raw_payload: Record<string, unknown> | null }>)) {
+        for (const s of ((sigs ?? []) as Array<{ id: string; source_url: string | null; raw_payload: Record<string, unknown> | null; created_at: string | null }>)) {
           const rawUrl = s.raw_payload && typeof (s.raw_payload as { url?: unknown }).url === "string"
             ? String((s.raw_payload as { url?: unknown }).url)
             : "";
           const url = String(s.source_url || rawUrl || "");
-          const h = url ? hostOf(url) : null;
-          if (h) hostById.set(s.id, h);
+          const rawDate = s.raw_payload && typeof (s.raw_payload as { date?: unknown }).date === "string"
+            ? String((s.raw_payload as { date?: unknown }).date)
+            : null;
+          metaById.set(s.id, {
+            host: url ? hostOf(url) : null,
+            url: url || null,
+            capturedAt: s.created_at ?? null,
+            rawDate,
+          });
         }
       }
 
-      const findings: Finding[] = rows.map((r) => ({
-        ...r,
-        host: r.origin_signal_id ? (hostById.get(r.origin_signal_id) ?? null) : null,
-      }));
+      const findings: Finding[] = rows.map((r) => {
+        const meta = r.origin_signal_id ? metaById.get(r.origin_signal_id) : undefined;
+        return {
+          ...r,
+          host: meta?.host ?? null,
+          sourceUrl: meta?.url ?? null,
+          signalCapturedAt: meta?.capturedAt ?? null,
+          signalRawDate: meta?.rawDate ?? null,
+        };
+      });
 
       const primaryData = (primaryRes as { data?: unknown }).data;
       const primaryRow = Array.isArray(primaryData) ? primaryData[0] : primaryData;

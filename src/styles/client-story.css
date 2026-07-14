@@ -391,6 +391,20 @@
   margin: 34px 0 0;
 }
 
+/* CV-2c date badge — small mono, sits inside the source line. "As of" =
+   genuine source date; "Captured" = ingest time, never re-verification. */
+.cvs-datebadge {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mm-label);
+  border: 1px solid var(--mm-line-12);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
 /* Honest empty hero — no fabricated finding. */
 .cvs-hero-empty {
   font-weight: 300;

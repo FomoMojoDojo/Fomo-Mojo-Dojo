@@ -1,6 +1,7 @@
 import { useCompany } from "@/hooks/useCompany";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
+import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
 
 /*
  * Outside · Act 2 — "What else stands out" (CV-2). Read-only.
@@ -30,11 +31,12 @@ function formatStatement(raw: string): string {
   return /[.!?…]$/.test(cased) ? cased : `${cased}.`;
 }
 
-export default function OutsideFindingsAct() {
+export default function OutsideFindingsAct({ preferredRun }: { preferredRun?: unknown }) {
   const { activeCompany } = useCompany();
   const { data, isLoading } = useStandingFindings(activeCompany?.id);
 
   const companyDomain = data?.companyDomain ?? null;
+  const ledgerDates = buildLedgerDateMap(preferredRun);
   const candidates = (data?.findings ?? [])
     .filter((f) => f.id !== data?.primaryId) // Act 1 hero excluded
     .slice() // stable sort on a copy
@@ -53,13 +55,27 @@ export default function OutsideFindingsAct() {
         candidates.map((f, i) => {
           const statement = f.beats?.observe ?? f.body;
           const showHost = f.host && f.host !== companyDomain ? f.host : null;
+          const badge = resolveDateBadge({
+            sourceUrl: f.sourceUrl,
+            signalRawDate: f.signalRawDate,
+            signalCapturedAt: f.signalCapturedAt,
+            findingCreatedAt: f.created_at,
+            companyDomain,
+            ledgerDates,
+          });
           return (
             <div key={f.id}>
               {i > 0 ? <hr className="cvs-finding-rule" /> : null}
               <div className="cvs-finding">
                 <p className="cvs-kind">{KIND_LABEL[f.kind]}</p>
                 <h2 className="cvs-finding-statement">{formatStatement(statement)}</h2>
-                {showHost ? <p className="cvs-source">Source · {showHost}</p> : null}
+                {showHost || badge ? (
+                  <p className="cvs-source">
+                    {showHost ? <>Source · {showHost}</> : null}
+                    {showHost && badge ? " · " : null}
+                    {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
+                  </p>
+                ) : null}
               </div>
             </div>
           );
