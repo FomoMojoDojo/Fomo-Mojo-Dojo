@@ -1,6 +1,6 @@
 /*
  * Client "story mode" surface — CV-0 chrome + palette shell.
- * Everything is scoped under .mm-story so these tokens never leak into the
+ * Everything is scoped under .cvs-story so these tokens never leak into the
  * rest of the app. Two palettes (neutral = default, warm = reference option)
  * x two themes (dark = default, light) = four token blocks, selected by
  * data-mm-palette / data-mm-theme on the root wrapper.
@@ -12,7 +12,7 @@
 /* ------------------------------------------------------------------ */
 /* Palette: NEUTRAL (default) · Theme: DARK (default)                   */
 /* ------------------------------------------------------------------ */
-.mm-story {
+.cvs-story {
   --mm-bg: #0a0a0b;
   --mm-glow: none; /* neutral: glow off */
   --mm-text: #ededed;
@@ -55,7 +55,7 @@
 }
 
 /* Warm-glow overlay layer (only paints when --mm-glow is a gradient). */
-.mm-story::before {
+.cvs-story::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -67,7 +67,7 @@
 /* ------------------------------------------------------------------ */
 /* Palette: NEUTRAL · Theme: LIGHT                                      */
 /* ------------------------------------------------------------------ */
-.mm-story[data-mm-theme="light"] {
+.cvs-story[data-mm-theme="light"] {
   --mm-bg: #ffffff;
   --mm-glow: none;
   --mm-text: #161616;
@@ -105,7 +105,7 @@
 /* Palette: WARM (reference option) · Theme: DARK                      */
 /* Reference token block, verbatim from the design README.             */
 /* ------------------------------------------------------------------ */
-.mm-story[data-mm-palette="warm"] {
+.cvs-story[data-mm-palette="warm"] {
   --mm-bg: #0c0b09;
   --mm-glow: radial-gradient(
     115% 80% at 88% 4%,
@@ -142,7 +142,7 @@
 /* ------------------------------------------------------------------ */
 /* Palette: WARM · Theme: LIGHT (reference light block, verbatim)      */
 /* ------------------------------------------------------------------ */
-.mm-story[data-mm-palette="warm"][data-mm-theme="light"] {
+.cvs-story[data-mm-palette="warm"][data-mm-theme="light"] {
   --mm-bg: #ffffff;
   --mm-glow: radial-gradient(115% 80% at 88% 4%, rgba(201, 150, 70, 0.05), rgba(201, 150, 70, 0) 55%);
   --mm-text: #17140f;
@@ -177,7 +177,7 @@
 }
 
 /* keep content above the glow layer */
-.mm-story > * {
+.cvs-story > * {
   position: relative;
   z-index: 1;
 }
@@ -185,7 +185,7 @@
 /* ------------------------------------------------------------------ */
 /* Phase rail (sticky top chrome)                                      */
 /* ------------------------------------------------------------------ */
-.mm-rail {
+.cvs-rail {
   position: sticky;
   top: 0;
   z-index: 30;
@@ -195,7 +195,7 @@
   border-bottom: 1px solid var(--mm-line);
 }
 
-.mm-rail-inner {
+.cvs-rail-inner {
   max-width: 1240px;
   margin: 0 auto;
   padding: 18px 48px 16px;
@@ -206,13 +206,13 @@
   flex-wrap: wrap;
 }
 
-.mm-rail-left {
+.cvs-rail-left {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.mm-rail-kicker {
+.cvs-rail-kicker {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 10px;
   letter-spacing: 0.22em;
@@ -220,13 +220,13 @@
   color: var(--mm-label-dim);
 }
 
-.mm-rail-phases {
+.cvs-rail-phases {
   display: flex;
   align-items: baseline;
   gap: 30px;
 }
 
-.mm-phase {
+.cvs-phase {
   font-size: 17px;
   font-weight: 300;
   background: none;
@@ -237,34 +237,34 @@
   transition: color 0.25s ease;
 }
 
-.mm-phase:hover:not(:disabled) {
+.cvs-phase:hover:not(:disabled) {
   color: var(--mm-secondary);
 }
 
-.mm-phase.is-active {
+.cvs-phase.is-active {
   color: var(--mm-text);
 }
 
-.mm-phase:disabled {
+.cvs-phase:disabled {
   color: var(--mm-tab-disabled);
   cursor: not-allowed;
 }
 
-.mm-rail-controls {
+.cvs-rail-controls {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 /* Segmented pill toggle (DARK/LIGHT and the build-phase PALETTE control) */
-.mm-toggle {
+.cvs-toggle {
   display: inline-flex;
   border: 1px solid var(--mm-line-18);
   border-radius: 999px;
   overflow: hidden;
 }
 
-.mm-toggle-label {
+.cvs-toggle-label {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 9px;
   letter-spacing: 0.16em;
@@ -274,7 +274,7 @@
   margin-right: 2px;
 }
 
-.mm-toggle-btn {
+.cvs-toggle-btn {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 10px;
   letter-spacing: 0.16em;
@@ -287,14 +287,14 @@
   transition: color 0.2s ease, background 0.2s ease;
 }
 
-.mm-toggle-btn.is-active {
+.cvs-toggle-btn.is-active {
   background: var(--mm-invert-bg);
   color: var(--mm-invert-text);
   font-weight: 500;
 }
 
 /* A build-phase marker so the palette control is never mistaken for product UI */
-.mm-buildchip {
+.cvs-buildchip {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 9px;
   letter-spacing: 0.14em;
@@ -309,7 +309,7 @@
 /* ------------------------------------------------------------------ */
 /* Act pacing — one idea per full viewport                             */
 /* ------------------------------------------------------------------ */
-.mm-meta {
+.cvs-meta {
   max-width: 1240px;
   margin: 0 auto;
   padding: 26px 48px 0;
@@ -320,7 +320,7 @@
   color: var(--mm-meta);
 }
 
-.mm-act {
+.cvs-act {
   min-height: 100vh;
   max-width: 1240px;
   margin: 0 auto;
@@ -331,7 +331,7 @@
   box-sizing: border-box;
 }
 
-.mm-act-eyebrow {
+.cvs-act-eyebrow {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 11px;
   letter-spacing: 0.24em;
@@ -343,7 +343,7 @@
 /* ------------------------------------------------------------------ */
 /* CV-0 scaffold marker — MUST read as placeholder, never a finding    */
 /* ------------------------------------------------------------------ */
-.mm-scaffold {
+.cvs-scaffold {
   border: 1px dashed var(--mm-line-18);
   border-radius: 14px;
   padding: 48px 40px;
@@ -353,7 +353,7 @@
   background: var(--mm-card-bg);
 }
 
-.mm-scaffold-tag {
+.cvs-scaffold-tag {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 10px;
   letter-spacing: 0.2em;
@@ -365,7 +365,7 @@
   align-self: flex-start;
 }
 
-.mm-scaffold-title {
+.cvs-scaffold-title {
   font-weight: 300;
   font-size: clamp(30px, 4vw, 52px);
   line-height: 1.08;
@@ -374,7 +374,7 @@
   max-width: 22ch;
 }
 
-.mm-scaffold-note {
+.cvs-scaffold-note {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -387,23 +387,203 @@
 /* Responsive — preserve one-idea-per-screen rhythm on mobile          */
 /* ------------------------------------------------------------------ */
 @media (max-width: 820px) {
-  .mm-rail-inner {
+  .cvs-rail-inner {
     padding: 16px 22px 14px;
     align-items: flex-start;
   }
-  .mm-rail-phases {
+  .cvs-rail-phases {
     gap: 20px;
   }
-  .mm-phase {
+  .cvs-phase {
     font-size: 15px;
   }
-  .mm-meta {
+  .cvs-meta {
     padding: 22px 22px 0;
   }
-  .mm-act {
+  .cvs-act {
     padding: 80px 22px;
   }
-  .mm-scaffold {
+  .cvs-scaffold {
     padding: 34px 24px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Outside · Act 1 — Hero + Mojo Score card (CV-1)                     */
+/* ------------------------------------------------------------------ */
+.cvs-hero {
+  display: grid;
+  grid-template-columns: 1.55fr 0.95fr;
+  gap: 72px;
+  align-items: start;
+}
+
+.cvs-hero-copy {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Honest kind tag — distinguishes an observation from a bet so the hero
+   never wears frontier-level confidence when the finding is lower-tier. */
+.cvs-kind {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mm-label);
+  margin: 0 0 18px;
+}
+
+.cvs-statement {
+  font-weight: 200;
+  font-size: clamp(42px, 5.6vw, 80px);
+  line-height: 1.03;
+  letter-spacing: -0.022em;
+  max-width: 15ch;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-support {
+  font-weight: 300;
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+  max-width: 46ch;
+  margin: 40px 0 0;
+}
+
+.cvs-source {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--mm-label-dim);
+  margin: 34px 0 0;
+}
+
+/* Honest empty hero — no fabricated finding. */
+.cvs-hero-empty {
+  font-weight: 300;
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--mm-faint);
+  max-width: 26ch;
+  margin: 0;
+}
+
+/* Mojo Score card */
+.cvs-score-card {
+  position: sticky;
+  top: 132px;
+  border: 1px solid var(--mm-line-strong);
+  border-radius: 18px;
+  padding: 34px 34px 30px;
+  background: var(--mm-card-bg);
+}
+
+.cvs-score-label {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mm-label);
+  margin: 0;
+}
+
+.cvs-score-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.cvs-score-num {
+  font-weight: 200;
+  font-size: 88px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--mm-text);
+}
+
+.cvs-score-cap {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--mm-faint);
+  margin: 6px 0 0;
+}
+
+.cvs-score-sentences {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.cvs-score-line {
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  margin: 0;
+}
+
+.cvs-score-line.is-muted {
+  color: var(--mm-muted);
+}
+
+.cvs-score-divider {
+  height: 1px;
+  background: var(--mm-line);
+  margin: 24px 0 16px;
+}
+
+.cvs-score-current {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.cvs-score-current-label {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mm-label);
+}
+
+.cvs-score-current-val {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--mm-secondary);
+}
+
+/* Honest empty score — no number invented. */
+.cvs-score-empty {
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+  margin-top: 16px;
+}
+
+.cvs-score-empty-sub {
+  color: var(--mm-muted2);
+  margin: 6px 0 0;
+}
+
+@media (max-width: 820px) {
+  .cvs-hero {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .cvs-score-card {
+    position: static;
+    margin-top: 8px;
+  }
+  .cvs-statement {
+    font-size: clamp(32px, 8vw, 42px);
   }
 }

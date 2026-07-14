@@ -7,6 +7,7 @@ import {
   type ClientStoryPalette,
   type ClientStoryTheme,
 } from "@/lib/clientStoryView";
+import OutsideHeroAct from "@/components/client-view/story/OutsideHeroAct";
 import "@/styles/client-story.css";
 
 /*
@@ -98,12 +99,12 @@ export default function ClientStoryView() {
   const acts = SCAFFOLD_ACTS[phase];
 
   return (
-    <div className="mm-story" data-mm-theme={theme} data-mm-palette={palette}>
-      <header className="mm-rail">
-        <div className="mm-rail-inner">
-          <div className="mm-rail-left">
-            <p className="mm-rail-kicker">Decision Path</p>
-            <nav className="mm-rail-phases" aria-label="Decision Path phases">
+    <div className="cvs-story" data-mm-theme={theme} data-mm-palette={palette}>
+      <header className="cvs-rail">
+        <div className="cvs-rail-inner">
+          <div className="cvs-rail-left">
+            <p className="cvs-rail-kicker">Decision Path</p>
+            <nav className="cvs-rail-phases" aria-label="Decision Path phases">
               {CLIENT_PHASE_NAV_ITEMS.map((item) => {
                 const disabled = DISABLED_PHASES.has(item.phase);
                 const active = item.phase === phase;
@@ -111,7 +112,7 @@ export default function ClientStoryView() {
                   <button
                     key={item.phase}
                     type="button"
-                    className={`mm-phase ${active ? "is-active" : ""}`}
+                    className={`cvs-phase ${active ? "is-active" : ""}`}
                     disabled={disabled}
                     aria-current={active ? "page" : undefined}
                     aria-disabled={disabled || undefined}
@@ -124,38 +125,38 @@ export default function ClientStoryView() {
             </nav>
           </div>
 
-          <div className="mm-rail-controls">
+          <div className="cvs-rail-controls">
             {/* Build-phase palette control (operator ruling: cheapest honest
                 mechanism). Removed once the palette is locked. */}
-            <span className="mm-buildchip">CV-0 shell</span>
-            <div className="mm-toggle" role="group" aria-label="Palette">
-              <span className="mm-toggle-label">Palette</span>
+            <span className="cvs-buildchip">CV-0 shell</span>
+            <div className="cvs-toggle" role="group" aria-label="Palette">
+              <span className="cvs-toggle-label">Palette</span>
               <button
                 type="button"
-                className={`mm-toggle-btn ${palette === "neutral" ? "is-active" : ""}`}
+                className={`cvs-toggle-btn ${palette === "neutral" ? "is-active" : ""}`}
                 onClick={() => setPalette("neutral")}
               >
                 Neutral
               </button>
               <button
                 type="button"
-                className={`mm-toggle-btn ${palette === "warm" ? "is-active" : ""}`}
+                className={`cvs-toggle-btn ${palette === "warm" ? "is-active" : ""}`}
                 onClick={() => setPalette("warm")}
               >
                 Warm
               </button>
             </div>
-            <div className="mm-toggle" role="group" aria-label="Theme">
+            <div className="cvs-toggle" role="group" aria-label="Theme">
               <button
                 type="button"
-                className={`mm-toggle-btn ${theme === "dark" ? "is-active" : ""}`}
+                className={`cvs-toggle-btn ${theme === "dark" ? "is-active" : ""}`}
                 onClick={() => setTheme("dark")}
               >
                 Dark
               </button>
               <button
                 type="button"
-                className={`mm-toggle-btn ${theme === "light" ? "is-active" : ""}`}
+                className={`cvs-toggle-btn ${theme === "light" ? "is-active" : ""}`}
                 onClick={() => setTheme("light")}
               >
                 Light
@@ -165,22 +166,28 @@ export default function ClientStoryView() {
         </div>
       </header>
 
-      <p className="mm-meta">{META_LINE[phase]}</p>
+      <p className="cvs-meta">{META_LINE[phase]}</p>
 
       <main>
-        {acts.map((act, index) => (
-          <section className="mm-act" key={`${phase}-${index}`} aria-label={`Act ${index + 1} scaffold`}>
-            <p className="mm-act-eyebrow">{act.eyebrow}</p>
-            <div className="mm-scaffold">
-              <span className="mm-scaffold-tag">Scaffold · awaiting {act.awaiting}</span>
-              <p className="mm-scaffold-title">{act.role}</p>
-              <p className="mm-scaffold-note">
-                CV-0 shell — no data wired. This block marks where the “{act.role}” act will render once
-                {` ${act.awaiting}`} lands. It is a build-phase placeholder, not a finding.
-              </p>
-            </div>
-          </section>
-        ))}
+        {acts.map((act, index) => {
+          // Outside · Act 1 is now wired to real data (CV-1); the rest stay scaffolds.
+          if (phase === "outside" && index === 0) {
+            return <OutsideHeroAct key={`${phase}-hero`} />;
+          }
+          return (
+            <section className="cvs-act" key={`${phase}-${index}`} aria-label={`Act ${index + 1} scaffold`}>
+              <p className="cvs-act-eyebrow">{act.eyebrow}</p>
+              <div className="cvs-scaffold">
+                <span className="cvs-scaffold-tag">Scaffold · awaiting {act.awaiting}</span>
+                <p className="cvs-scaffold-title">{act.role}</p>
+                <p className="cvs-scaffold-note">
+                  CV-0 shell — no data wired. This block marks where the “{act.role}” act will render once
+                  {` ${act.awaiting}`} lands. It is a build-phase placeholder, not a finding.
+                </p>
+              </div>
+            </section>
+          );
+        })}
       </main>
     </div>
   );
