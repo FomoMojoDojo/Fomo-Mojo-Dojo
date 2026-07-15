@@ -158,6 +158,30 @@ function buildSameMarketUser(a: { executor: string; jtbd: string }, b: { executo
   return `MARKET A — executor: ${a.executor}\njob: ${a.jtbd}\nMARKET B — executor: ${b.executor}\njob: ${b.jtbd}\nAre A and B the same market?`;
 }
 
+// ── MPD-1e reframe round ──────────────────────────────────────────────────────
+// Rescues GENERATED candidates rejected for WORDING (seller-framed or
+// solution-bound jobs) — the executor is real; the generator stated their job
+// in the company's terms. ONE reframe attempt, executor FIXED, job restated in
+// the executor's own world; the reframed candidate re-enters the FULL
+// unchanged judge chain (new content identity ⇒ fresh verdicts, frozen as
+// always). ANTI-FABRICATION RAIL: a reframe that still fails perspective or
+// solution-agnostic is DROPPED — no second attempt, no relaxation; never
+// invent a job the evidence doesn't support. Dedup drops are NEVER reframed.
+// SCOPE: generator-authored candidates only — declared markets never enter
+// this pipeline (they appear solely as dedup targets, kept untouched).
+
+const REFRAME_SYSTEM =
+  "You restate a job-to-be-done in the JOB EXECUTOR'S OWN terms. The executor is FIXED — do not change who they are. " +
+  "If the problem is 'seller-framed': the job was stated as some provider's acquisition or growth goal — restate it as the progress the EXECUTOR is trying to make in their own world. " +
+  "If the problem is 'solution-bound': the job named or presupposed a specific provider's services — restate the underlying job free of ANY provider's product, service, or solution language. " +
+  "Hard rules: never name a company, brand, vendor, or specific service offering; the job existed before any provider and must read that way; " +
+  "do not invent facts beyond the substance already present in the original job. " +
+  'JSON only: {"jtbd":"<one sentence, the executor\'s own job>"}.';
+
+function buildReframeUser(executor: string, originalJtbd: string, problem: "seller-framed" | "solution-bound"): string {
+  return `EXECUTOR (fixed): ${executor}\nORIGINAL JOB (rejected as ${problem}): ${originalJtbd}\nRestate this executor's own job.`;
+}
+
 function parseBool(raw: string, field: string, who: string): { value: boolean; reason: string } {
   let parsed: unknown;
   try {
@@ -223,6 +247,10 @@ export type DiscoveryRunResult =
       deduped_same_market: number;
       defs_written: number;
       verdicts_pruned: number;
+      // MPD-1e reframe round
+      reframe_attempts: number;
+      reframe_rescued: number;
+      reframe_rail_dropped: number;
     };
     results: Array<{
       job_executor: string;
@@ -232,6 +260,8 @@ export type DiscoveryRunResult =
       outcome: "accepted" | "rejected_buyer" | "rejected_solution" | "deduped" | "cap_reached";
       journey_key?: string;
       judge_reasons: Record<string, string>;
+      reframed?: boolean;
+      original_jtbd?: string;
     }>;
   }
   | { ok: false; skipped: "frozen_company" }
@@ -346,11 +376,15 @@ export async function computeMarketDiscovery(
     deduped_same_market: 0,
     defs_written: 0,
     verdicts_pruned: 0,
+    reframe_attempts: 0,
+    reframe_rescued: 0,
+    reframe_rail_dropped: 0,
   };
   const results: Array<{
     job_executor: string; jtbd: string; relationship_kind: string; relationship_basis: string;
     outcome: "accepted" | "rejected_buyer" | "rejected_solution" | "deduped" | "cap_reached";
     journey_key?: string; judge_reasons: Record<string, string>;
+    reframed?: boolean; original_jtbd?: string;
   }> = [];
 
   // Banked verdicts for this company.
@@ -376,19 +410,20 @@ export async function computeMarketDiscovery(
 
   const scoped = Array.isArray(args.candidates) && args.candidates.length > 0;
 
-  // ── SCOPED JUDGE CHUNK: gates + inline def writes ──
+  // ── SCOPED JUDGE CHUNK: gates + reframe round + inline def writes ──
   if (scoped) {
     const liveUniverse = [...universe]; // grows as candidates are accepted
-    for (const cand of args.candidates!) {
-      totals.requested++;
-      const identity = await marketIdentity(cand.job_executor, cand.jtbd);
-      const reasons: Record<string, string> = {};
 
-      const discoveredCount = liveUniverse.filter((d) => d.journey_key.startsWith("mkt-")).length;
-      if (discoveredCount >= MAX_ACCEPTED) {
-        results.push({ ...cand, outcome: "cap_reached", judge_reasons: reasons });
-        continue;
-      }
+    // The FULL, UNCHANGED gate chain (buyer → solution-agnostic → dedup) for
+    // one attempt. Extracted (MPD-1e) so a reframed candidate re-enters it
+    // verbatim — judges are never relaxed for a reframe.
+    type GateOutcome = "accepted" | "rejected_buyer" | "rejected_solution" | "deduped";
+    const runGates = async (
+      cand: MarketCandidate,
+      reasons: Record<string, string>,
+      tag: string,
+    ): Promise<GateOutcome> => {
+      const identity = await marketIdentity(cand.job_executor, cand.jtbd);
 
       // Gate (a): buyer perspective — reuse the b-ii executor judge (its own
       // verdict-by-content-identity store makes re-runs free).
@@ -403,12 +438,8 @@ export async function computeMarketDiscovery(
         persist: args.write,
       });
       totals.judged_buyer++;
-      reasons.buyer = String(pv[0]?.verdict ?? "unknown");
-      if (pv[0]?.verdict !== "buyer") {
-        totals.rejected_buyer++;
-        results.push({ ...cand, outcome: "rejected_buyer", judge_reasons: reasons });
-        continue;
-      }
+      reasons[`buyer${tag}`] = String(pv[0]?.verdict ?? "unknown");
+      if (pv[0]?.verdict !== "buyer") return "rejected_buyer";
 
       // Gate (b): solution-agnostic — HARD gate, banked.
       const saKey = await solutionAgnosticKey(cand.job_executor, cand.jtbd);
@@ -417,13 +448,13 @@ export async function computeMarketDiscovery(
       if (saBanked) {
         totals.verdicts_cached++;
         solutionFree = saBanked.verdict === "accepted";
-        reasons.solution_agnostic = `${saBanked.verdict} (frozen): ${saBanked.judge_reason}`;
+        reasons[`solution_agnostic${tag}`] = `${saBanked.verdict} (frozen): ${saBanked.judge_reason}`;
       } else {
         const raw = await callOllamaJson(args.ollamaUrl, judgeModel, SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUser(companyName, cand.job_executor, cand.jtbd), JUDGE_TIMEOUT_MS);
         const v = parseBool(raw, "solution_free", "solution-agnostic judge");
         totals.judged_solution++;
         solutionFree = v.value;
-        reasons.solution_agnostic = `${v.value ? "accepted" : "rejected"}: ${v.reason}`;
+        reasons[`solution_agnostic${tag}`] = `${v.value ? "accepted" : "rejected"}: ${v.reason}`;
         await bankVerdict({
           pair_identity: saKey,
           verdict_kind: "solution_agnostic",
@@ -433,17 +464,13 @@ export async function computeMarketDiscovery(
           judge_reason: v.reason,
         });
       }
-      if (!solutionFree) {
-        totals.rejected_solution++;
-        results.push({ ...cand, outcome: "rejected_solution", judge_reasons: reasons });
-        continue;
-      }
+      if (!solutionFree) return "rejected_solution";
 
       // Gate (c): same-market dedup vs the live universe (customer + mkt-*).
       // Exact-identity fast path (signed design): a candidate whose identity
       // already IS a def folds in with zero judge calls.
       let duplicate = liveUniverse.some((d) => d.identity === identity);
-      if (duplicate) reasons.same_market_exact = "identical content identity — folded into the existing def";
+      if (duplicate) reasons[`same_market_exact${tag}`] = "identical content identity — folded into the existing def";
       for (const existing of duplicate ? [] : liveUniverse) {
         const key = await sameMarketKey(identity, existing.identity);
         const banked = verdictByKey.get(key);
@@ -468,15 +495,74 @@ export async function computeMarketDiscovery(
             judge_reason: v.reason,
           });
         }
-        reasons[`same_market_vs_${existing.journey_key}`] = reason;
+        reasons[`same_market_vs_${existing.journey_key}${tag}`] = reason;
         if (same) {
           duplicate = true;
           break;
         }
       }
-      if (duplicate) {
+      return duplicate ? "deduped" : "accepted";
+    };
+
+    for (const original of args.candidates!) {
+      totals.requested++;
+      const reasons: Record<string, string> = {};
+
+      const discoveredCount = liveUniverse.filter((d) => d.journey_key.startsWith("mkt-")).length;
+      if (discoveredCount >= MAX_ACCEPTED) {
+        results.push({ ...original, outcome: "cap_reached", judge_reasons: reasons });
+        continue;
+      }
+
+      let cand = original;
+      let reframed = false;
+      let outcome = await runGates(cand, reasons, "");
+
+      // MPD-1e reframe round: rescue GENERATED candidates rejected for WORDING
+      // — (a) seller-framed or (b) solution-bound ONLY; dedup drops are never
+      // reframed. Exactly ONE attempt; executor FIXED; job restated in the
+      // executor's own terms; relationship kind/basis carry over untouched
+      // (model-discovered at generation, never seeded here).
+      if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+        const problem = outcome === "rejected_buyer" ? "seller-framed" : "solution-bound";
+        totals.reframe_attempts++;
+        const raw = await callOllamaJson(args.ollamaUrl, genModel, REFRAME_SYSTEM, buildReframeUser(original.job_executor, original.jtbd, problem), GEN_TIMEOUT_MS);
+        let newJtbd = "";
+        try {
+          newJtbd = String((JSON.parse(raw) as { jtbd?: unknown })?.jtbd ?? "").trim();
+        } catch { /* unparseable reframe = failed attempt, rail below */ }
+        if (newJtbd && normalizeForHash(newJtbd) !== normalizeForHash(original.jtbd)) {
+          reframed = true;
+          reasons.reframe = `(${problem}) job restated in the executor's own terms`;
+          cand = { ...original, jtbd: newJtbd };
+          outcome = await runGates(cand, reasons, "_reframed");
+          // ANTI-FABRICATION RAIL (hard): still failing perspective or
+          // solution-agnostic ⇒ the executor is genuinely solution-defined —
+          // DROP. No second reframe, no relaxation.
+          if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+            totals.reframe_rail_dropped++;
+          } else if (outcome === "accepted") {
+            totals.reframe_rescued++;
+          }
+        } else {
+          reasons.reframe = `(${problem}) reframe produced no usable restatement — dropped (rail)`;
+          totals.reframe_rail_dropped++;
+        }
+      }
+
+      if (outcome === "rejected_buyer") {
+        totals.rejected_buyer++;
+        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+        continue;
+      }
+      if (outcome === "rejected_solution") {
+        totals.rejected_solution++;
+        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+        continue;
+      }
+      if (outcome === "deduped") {
         totals.deduped_same_market++;
-        results.push({ ...cand, outcome: "deduped", judge_reasons: reasons });
+        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
         continue;
       }
 
@@ -514,9 +600,12 @@ export async function computeMarketDiscovery(
         if (lensErr) return { ok: false, error: `market lens insert failed: ${lensErr.message}` };
         totals.defs_written++;
       }
-      liveUniverse.push({ id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd, user_id: ownerUserId, identity });
+      liveUniverse.push({
+        id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd,
+        user_id: ownerUserId, identity: await marketIdentity(cand.job_executor, cand.jtbd),
+      });
       totals.accepted++;
-      results.push({ ...cand, outcome: "accepted", journey_key: journeyKey, judge_reasons: reasons });
+      results.push({ ...cand, outcome: "accepted", journey_key: journeyKey, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
     }
     return { ok: true, scoped: true, totals, results };
   }
