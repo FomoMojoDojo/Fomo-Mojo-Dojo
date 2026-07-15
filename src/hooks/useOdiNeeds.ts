@@ -74,10 +74,29 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
       setLoading(true);
       setError(null);
 
-      // With a focus key: exact (company_id, journey_key) market_def. Without one:
-      // LEGACY first-row fallback — acceptable only for single-market consumers;
-      // any surface with a lens/market switcher MUST pass the focused key
-      // (INVESTIGATE assumption #8 — the .limit(1) trap).
+      // With a focus key: exact (company_id, journey_key) market_def. Without
+      // one (MPD-0): prefer the SPINE journey (journey_key='customer' — the
+      // de-facto primary) so a portfolio/discovered row can never hijack "the
+      // market" by being written last; fall back to the legacy latest-updated
+      // row only when no customer def exists. Surfaces with a lens/market
+      // switcher MUST still pass the focused key.
+      const resolveNoKeyMarket = async () => {
+        const customer = await supabase
+          .from("odi_market_definitions")
+          .select("*")
+          .eq("company_id", companyId)
+          .eq("journey_key", "customer")
+          .maybeSingle();
+        if (customer.error || customer.data) return customer;
+        return await supabase
+          .from("odi_market_definitions")
+          .select("*")
+          .eq("company_id", companyId)
+          .order("updated_at", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      };
       const marketQuery = journeyKey
         ? supabase
             .from("odi_market_definitions")
@@ -85,14 +104,7 @@ export function useOdiNeeds(companyId?: string, refreshKey = 0, journeyKey?: str
             .eq("company_id", companyId)
             .eq("journey_key", journeyKey)
             .maybeSingle()
-        : supabase
-            .from("odi_market_definitions")
-            .select("*")
-            .eq("company_id", companyId)
-            .order("updated_at", { ascending: false })
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        : resolveNoKeyMarket();
 
       // Lens-reads law: when a focus key is passed, needs are scoped server-side to
       // that journey — a focused lens must never receive another market's needs.

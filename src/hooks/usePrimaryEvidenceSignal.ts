@@ -82,10 +82,14 @@ export function usePrimaryEvidenceSignal(companyId?: string) {
           .from("odi_needs")
           .select("source_path")
           .eq("company_id", companyId),
+        // MPD-0: constrained to the spine journey — an unfiltered maybeSingle()
+        // throws PostgREST multiple-rows on any company with >1 market def
+        // (live bug on Edgewood's 2 rows before this guard).
         supabase
           .from("odi_market_definitions")
           .select("source_path")
           .eq("company_id", companyId)
+          .eq("journey_key", "customer")
           .maybeSingle(),
       ]);
 
