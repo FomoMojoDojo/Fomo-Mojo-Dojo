@@ -92,13 +92,25 @@ export async function recurrencePairIdentity(a: string, b: string): Promise<stri
 
 // ── 70b judge ─────────────────────────────────────────────────────────────────
 
-const JUDGE_SYSTEM =
-  "You compare TWO statements gathered from independent public sources about the same company. " +
-  "Decide whether they assert the SAME underlying fact about THIS company. " +
+// The single authority for the same-fact criterion (CV-2d-2a). Shared verbatim
+// by the signal↔signal judge and the finding↔cluster judge (R1) so the rule can
+// never drift between the two join paths. R2 (operator ruling 2026-07-14): the
+// negative examples target the two observed weak-accept failure modes on FMD
+// ("both mention <company> as a company" / "both mention <location>").
+export const SAME_FACT_CRITERION =
   "Criteria: (i) both must state substantially the same specific fact — a shared theme, industry pattern, or buzzword overlap is NOT the same fact; " +
   "(ii) generic industry commentary that is not specifically about this company is NEVER the same fact as a company-specific statement; " +
   "(iii) different facets of a broad theme (e.g. pay level vs turnover vs management style) are DIFFERENT facts. " +
-  "Never force a match. " +
+  "NEGATIVE EXAMPLES — none of these is the same fact on its own: " +
+  "merely sharing the company name is NOT the same fact; " +
+  "merely sharing a location (city, region, headquarters) is NOT the same fact; " +
+  "merely sharing an industry, sector, or theme is NOT the same fact. " +
+  "Never force a match.";
+
+const JUDGE_SYSTEM =
+  "You compare TWO statements gathered from independent public sources about the same company. " +
+  "Decide whether they assert the SAME underlying fact about THIS company. " +
+  SAME_FACT_CRITERION + " " +
   'JSON only: {"same_fact":true|false,"reason":"<one short clause citing words from BOTH statements>"}.';
 
 function buildJudgeUser(companyName: string, a: string, b: string): string {
