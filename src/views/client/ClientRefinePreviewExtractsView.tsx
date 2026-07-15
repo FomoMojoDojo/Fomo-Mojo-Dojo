@@ -95,8 +95,10 @@ export default function ClientRefinePreviewExtractsView() {
                 </section>
 
                 <section style={{ marginBottom: 36 }}>
-                  {/* CV-2d-2c — section header is a TODO(sig) placeholder */}
-                  <p style={SECTION_HEADER}>TODO(sig): Signal Recurrence</p>
+                  <p style={SECTION_HEADER}>Signal Recurrence</p>
+                  <p style={{ margin: "0 0 12px", fontSize: 12, color: "#6e847f" }}>
+                    Which public signals independently corroborate each other — and which findings they back.
+                  </p>
                   <SignalRecurrenceControl companyId={companyId} />
                 </section>
 

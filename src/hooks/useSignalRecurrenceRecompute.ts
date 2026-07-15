@@ -40,6 +40,10 @@ export type RecurrenceChunkOutcome = {
   ok: boolean;
   reason?: string;
   seconds?: number;
+  // From the chunk response totals — the signed progress line renders
+  // "{judged} judged · {skipped} already judged" (skipped = server 'cached').
+  judged?: number;
+  skipped?: number;
 };
 
 export type RecurrenceRecomputeProgress = {
@@ -118,7 +122,8 @@ export function useSignalRecurrenceRecompute(companyId: string) {
     if (isFrozenCompany(companyId)) {
       setProgress({
         stage: "done", totalChunks: 0, currentChunk: 0, freshTotal: 0, frozenTotal: 0, results: [], finalize: null,
-        error: "TODO(sig): frozen reference company — recurrence isn't recomputed for it.",
+        // Operator-signed 2026-07-15.
+        error: "Frozen reference company — recurrence isn't recomputed for it.",
       });
       return;
     }
@@ -130,7 +135,10 @@ export function useSignalRecurrenceRecompute(companyId: string) {
       const planRes = await invokeRecurrence({ company_id: companyId, plan: true });
       if (!live()) return;
       if (!planRes.ok) {
-        setProgress((p) => (p ? { ...p, stage: "done", error: planRes.reason } : p));
+        // Operator-signed 2026-07-15: run-level / plan failure.
+        setProgress((p) => (p
+          ? { ...p, stage: "done", error: `Couldn't start the recurrence run — ${planRes.reason}. Nothing was written; re-click to try again.` }
+          : p));
         return;
       }
       const plan = planRes.data as unknown as PlanResponse;
@@ -153,11 +161,14 @@ export function useSignalRecurrenceRecompute(companyId: string) {
           run_target: freshTotal,
         });
         if (!live()) return;
+        const chunkTotals = res.ok ? ((res.data.totals ?? {}) as Record<string, number>) : null;
         results.push({
           pairs: chunk.length,
           ok: res.ok,
           reason: res.ok ? undefined : res.reason,
           seconds: Math.round((Date.now() - t0) / 1000),
+          judged: chunkTotals ? Number(chunkTotals.judged ?? 0) : undefined,
+          skipped: chunkTotals ? Number(chunkTotals.cached ?? 0) : undefined,
         });
         setProgress({ stage: "chunks", totalChunks: chunks.length, currentChunk: i + 1, freshTotal, frozenTotal, results: [...results], finalize: null, error: null });
       }
