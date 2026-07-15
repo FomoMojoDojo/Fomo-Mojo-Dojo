@@ -137,10 +137,21 @@ function buildSolutionAgnosticUser(companyName: string, executor: string, jtbd: 
   return `COMPANY: ${companyName}\nCANDIDATE MARKET — executor: ${executor}\njob: ${jtbd}\nIs this job free of ${companyName}'s product/solution?`;
 }
 
+// The single authority for the same-market criterion (MPD-1d — mirrors the
+// SAME_FACT_CRITERION precedent). The negative examples target the observed
+// 1c failure: a funder/donor executor was merged with the families executor on
+// "both involve youth mental health services" — shared-theme reasoning across
+// DIFFERENT executors.
+export const SAME_MARKET_CRITERION =
+  "Same market = substantially the same job executor getting substantially the same job done, merely reworded. " +
+  "A different executor, or a genuinely different job, is a DIFFERENT market. " +
+  "NEGATIVE EXAMPLES — none of these makes two markets the same: " +
+  "a shared theme, service area, industry, or beneficiary population is NOT the same market; " +
+  "DIFFERENT job executor means DIFFERENT market, always — never merge two candidates with different executors even when their jobs touch the same domain.";
+
 const SAME_MARKET_SYSTEM =
   "You judge whether two market definitions are the SAME market. " +
-  "Same market = substantially the same job executor getting substantially the same job done, merely reworded. " +
-  "A different executor, or a genuinely different job, is a DIFFERENT market. Shared industry or theme alone is NOT the same market. " +
+  SAME_MARKET_CRITERION + " " +
   'JSON only: {"same_market":true|false,"reason":"<one short clause citing words from BOTH>"}.';
 
 function buildSameMarketUser(a: { executor: string; jtbd: string }, b: { executor: string; jtbd: string }): string {
@@ -429,8 +440,11 @@ export async function computeMarketDiscovery(
       }
 
       // Gate (c): same-market dedup vs the live universe (customer + mkt-*).
-      let duplicate = false;
-      for (const existing of liveUniverse) {
+      // Exact-identity fast path (signed design): a candidate whose identity
+      // already IS a def folds in with zero judge calls.
+      let duplicate = liveUniverse.some((d) => d.identity === identity);
+      if (duplicate) reasons.same_market_exact = "identical content identity — folded into the existing def";
+      for (const existing of duplicate ? [] : liveUniverse) {
         const key = await sameMarketKey(identity, existing.identity);
         const banked = verdictByKey.get(key);
         let same: boolean;
