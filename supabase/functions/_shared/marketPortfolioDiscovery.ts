@@ -45,7 +45,15 @@ const DEFAULT_JUDGE_MODEL = "llama3:70b";
 const GEN_TIMEOUT_MS = 180_000;
 const JUDGE_TIMEOUT_MS = 180_000;
 export const MAX_CANDIDATES = 6;
-const MAX_ACCEPTED = 5; // design cap 3–6 accepted incl. the folded-in customer
+// MPD-1g: capacity is NOT curation. Every candidate is judged (full chain)
+// regardless of capacity; a candidate that passes every judge but exceeds the
+// active-set capacity is written with lens portfolio_state='deferred' —
+// recorded, never silently dropped. MAX_ACTIVE bounds only the ACTIVE
+// client-facing set (Act A breadth sanity); 6 = above the organic per-round
+// yield (≤6 candidates) so deferral is the exception, and lets Edgewood's
+// real sixth market (the employee/workforce executor 1e's cap swallowed)
+// land active. Quality judges are unchanged and still binding.
+export const MAX_ACTIVE = 6;
 
 // ── identities ────────────────────────────────────────────────────────────────
 
@@ -242,6 +250,7 @@ export type DiscoveryRunResult =
       judged_same_market: number;
       verdicts_cached: number;
       accepted: number;
+      accepted_deferred: number;
       rejected_buyer: number;
       rejected_solution: number;
       deduped_same_market: number;
@@ -257,7 +266,7 @@ export type DiscoveryRunResult =
       jtbd: string;
       relationship_kind: string;
       relationship_basis: string;
-      outcome: "accepted" | "rejected_buyer" | "rejected_solution" | "deduped" | "cap_reached";
+      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped";
       journey_key?: string;
       judge_reasons: Record<string, string>;
       reframed?: boolean;
@@ -371,6 +380,7 @@ export async function computeMarketDiscovery(
     judged_same_market: 0,
     verdicts_cached: 0,
     accepted: 0,
+    accepted_deferred: 0,
     rejected_buyer: 0,
     rejected_solution: 0,
     deduped_same_market: 0,
@@ -382,7 +392,7 @@ export async function computeMarketDiscovery(
   };
   const results: Array<{
     job_executor: string; jtbd: string; relationship_kind: string; relationship_basis: string;
-    outcome: "accepted" | "rejected_buyer" | "rejected_solution" | "deduped" | "cap_reached";
+    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped";
     journey_key?: string; judge_reasons: Record<string, string>;
     reframed?: boolean; original_jtbd?: string;
   }> = [];
@@ -504,15 +514,21 @@ export async function computeMarketDiscovery(
       return duplicate ? "deduped" : "accepted";
     };
 
+    // MPD-1g: capacity check happens AFTER the full judge chain, never before —
+    // no candidate is dropped unjudged. Active count = lenses in the active
+    // state among discovered (mkt-*) keys, tracked live as this chunk writes.
+    const { data: lensRows, error: lensLoadErr } = await args.supabase
+      .from("market_lens")
+      .select("journey_key, portfolio_state")
+      .eq("company_id", args.companyId)
+      .like("journey_key", "mkt-%");
+    if (lensLoadErr) return { ok: false, error: `market_lens load failed: ${lensLoadErr.message}` };
+    let activeDiscovered = ((lensRows ?? []) as Array<{ portfolio_state: string }>)
+      .filter((l) => l.portfolio_state === "active").length;
+
     for (const original of args.candidates!) {
       totals.requested++;
       const reasons: Record<string, string> = {};
-
-      const discoveredCount = liveUniverse.filter((d) => d.journey_key.startsWith("mkt-")).length;
-      if (discoveredCount >= MAX_ACCEPTED) {
-        results.push({ ...original, outcome: "cap_reached", judge_reasons: reasons });
-        continue;
-      }
 
       let cand = original;
       let reframed = false;
@@ -566,7 +582,12 @@ export async function computeMarketDiscovery(
         continue;
       }
 
-      // All gates passed → inline write (def + lens). NONE chosen.
+      // All gates passed → inline write (def + lens). NONE chosen. MPD-1g:
+      // capacity decides ACTIVE vs DEFERRED membership only — the market is
+      // recorded either way (executor, job, kind, basis, verdicts all kept);
+      // a deferred market waits for the choose gate, it is never lost.
+      const overCapacity = activeDiscovered >= MAX_ACTIVE;
+      const lensState = overCapacity ? "deferred" : "active";
       let journeyKey = slugify(cand.job_executor);
       if (liveUniverse.some((d) => d.journey_key === journeyKey)) journeyKey = `${journeyKey}-2`;
       // Ownership inherits from the spine (customer) def — discovered rows
@@ -594,7 +615,7 @@ export async function computeMarketDiscovery(
           company_id: args.companyId,
           journey_key: journeyKey,
           title: cand.job_executor,
-          portfolio_state: "active",
+          portfolio_state: lensState,
           portfolio_role: "support", // choosing is promotion — never chosen here
         });
         if (lensErr) return { ok: false, error: `market lens insert failed: ${lensErr.message}` };
@@ -604,8 +625,20 @@ export async function computeMarketDiscovery(
         id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd,
         user_id: ownerUserId, identity: await marketIdentity(cand.job_executor, cand.jtbd),
       });
-      totals.accepted++;
-      results.push({ ...cand, outcome: "accepted", journey_key: journeyKey, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+      if (overCapacity) {
+        totals.accepted_deferred++;
+        reasons.capacity = `active set full (${MAX_ACTIVE}) — recorded deferred; the choose gate promotes`;
+      } else {
+        activeDiscovered++;
+        totals.accepted++;
+      }
+      results.push({
+        ...cand,
+        outcome: overCapacity ? "accepted_deferred" : "accepted",
+        journey_key: journeyKey,
+        judge_reasons: reasons,
+        ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
+      });
     }
     return { ok: true, scoped: true, totals, results };
   }
