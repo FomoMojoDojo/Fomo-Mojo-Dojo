@@ -113,6 +113,20 @@ const JUDGE_SYSTEM =
   SAME_FACT_CRITERION + " " +
   'JSON only: {"same_fact":true|false,"reason":"<one short clause citing words from BOTH statements>"}.';
 
+// R1 (CV-2d-2b): the finding↔cluster join judge. Same criterion authority,
+// adapted framing — a finding is a synthesized second-person statement, the
+// cluster member is source-gathered text.
+const FINDING_JOIN_SYSTEM =
+  "You compare a FINDING (a synthesized statement about a company, written in the second person) " +
+  "with ONE statement gathered from a public source about the same company. " +
+  "Decide whether they assert the SAME underlying fact about THIS company. " +
+  SAME_FACT_CRITERION + " " +
+  'JSON only: {"same_fact":true|false,"reason":"<one short clause citing words from BOTH statements>"}.';
+
+function buildFindingJoinUser(companyName: string, findingStatement: string, signalStatement: string): string {
+  return `COMPANY: ${companyName}\nFINDING: ${findingStatement}\nPUBLIC STATEMENT: ${signalStatement}\nDo the finding and the public statement assert the same underlying fact about ${companyName}?`;
+}
+
 function buildJudgeUser(companyName: string, a: string, b: string): string {
   return `COMPANY: ${companyName}\nSTATEMENT A: ${a}\nSTATEMENT B: ${b}\nDo A and B assert the same underlying fact about ${companyName}?`;
 }
@@ -219,6 +233,12 @@ export type RecurrenceRunResult =
       finding_rows_written: number;
       finding_rows_deleted: number;
       finding_rows_unchanged: number;
+      // R1 finding↔cluster join path (CV-2d-2b)
+      finding_joins_via_origin: number;
+      finding_joins_via_judge: number;
+      finding_judge_calls: number;
+      finding_pairs_cached: number;
+      fc_verdicts_pruned: number;
     };
     verdicts: Array<{ signal_a_id: string; signal_b_id: string; verdict: string; reason: string }>;
   }
@@ -345,6 +365,11 @@ export async function computeRecurrenceForCompany(
     finding_rows_written: 0,
     finding_rows_deleted: 0,
     finding_rows_unchanged: 0,
+    finding_joins_via_origin: 0,
+    finding_joins_via_judge: 0,
+    finding_judge_calls: 0,
+    finding_pairs_cached: 0,
+    fc_verdicts_pruned: 0,
   };
   const reported: Array<{ signal_a_id: string; signal_b_id: string; verdict: string; reason: string }> = [];
   const scoped = Array.isArray(args.pairs) && args.pairs.length > 0;
@@ -455,36 +480,153 @@ export async function computeRecurrenceForCompany(
   }
   totals.clusters = clusters.size;
 
-  // 4. Desired finding_recurrence rows: findings join via origin_signal_id
-  //    (signed design). Sorted members for deterministic rows.
+  // 4. Desired finding_recurrence rows — TWO join paths (R1, CV-2d-2b):
+  //    PRIMARY: origin_signal_id membership (signed 2d design, unchanged).
+  //    SECOND:  judge-assisted finding-statement ↔ cluster-member-statement
+  //             join, verdicts frozen in finding_cluster_verdicts (sibling
+  //             store — its prune invariant differs from the signal store's).
   const { data: findingRows, error: fErr } = await args.supabase
     .from("findings")
-    .select("id, origin_signal_id")
+    .select("id, origin_signal_id, body, beats")
     .eq("company_id", args.companyId)
     .eq("status", "open");
   if (fErr) throw new Error(`findings load failed: ${fErr.message}`);
+  type FindingRow = { id: string; origin_signal_id: string | null; body: string; beats: { observe?: string } | null };
+  const openFindings = ((findingRows ?? []) as FindingRow[])
+    .slice().sort((a, b) => a.id.localeCompare(b.id));
+  // Finding statement = the render convention since CV-1: beats.observe ?? body.
+  const findingStatement = (f: FindingRow) => String(f.beats?.observe ?? f.body ?? "").trim();
 
   const acceptedByPair = liveVerdicts.filter((v) => v.verdict === "accepted");
   type DesiredRow = { cluster_signal_ids: string[]; distinct_host_count: number; host_list: string[]; verdict_count: number };
   const desired = new Map<string, DesiredRow>(); // finding_id → row
-  for (const f of (findingRows ?? []) as Array<{ id: string; origin_signal_id: string | null }>) {
-    if (!f.origin_signal_id) continue;
-    const origin = byId.get(f.origin_signal_id);
-    if (!origin || !parent.has(origin.identity)) continue;
-    const root = find(origin.identity);
+
+  const desiredRowForRoot = (root: string): DesiredRow | null => {
     const members = (clusters.get(root) ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-    if (members.length < 2) continue;
+    if (members.length < 2) return null;
     const hosts = [...new Set(members.map((m) => m.domain))].sort();
     const memberIdentities = new Set(members.map((m) => m.identity));
     const verdictCount = acceptedByPair.filter((v) =>
       memberIdentities.has(v.statement_a_identity) && memberIdentities.has(v.statement_b_identity)
     ).length;
-    desired.set(f.id, {
+    return {
       cluster_signal_ids: members.map((m) => m.id),
       distinct_host_count: hosts.length,
       host_list: hosts,
       verdict_count: verdictCount,
-    });
+    };
+  };
+
+  // Pass 1 — PRIMARY join: origin_signal_id.
+  for (const f of openFindings) {
+    if (!f.origin_signal_id) continue;
+    const origin = byId.get(f.origin_signal_id);
+    if (!origin || !parent.has(origin.identity)) continue;
+    const row = desiredRowForRoot(find(origin.identity));
+    if (!row) continue;
+    desired.set(f.id, row);
+    totals.finding_joins_via_origin++;
+  }
+
+  // 4b. Load the sibling verdict store + prune with its OWN invariant:
+  //     finding-side identity must exist among OPEN findings' statements,
+  //     signal-side among eligible signals. (The signal store's prune would
+  //     wrongly orphan every row of this family — hence the sibling table.)
+  const { data: fcRows, error: fcErr } = await args.supabase
+    .from("finding_cluster_verdicts")
+    .select("id, pair_identity, finding_statement_identity, signal_statement_identity, verdict")
+    .eq("company_id", args.companyId);
+  if (fcErr) throw new Error(`finding_cluster_verdicts load failed: ${fcErr.message}`);
+  type FcVerdict = { id: string; pair_identity: string; finding_statement_identity: string; signal_statement_identity: string; verdict: string };
+  const findingIdentityById = new Map<string, string>();
+  for (const f of openFindings) {
+    const stmt = findingStatement(f);
+    if (stmt) findingIdentityById.set(f.id, await sha256Hex(normalizeForHash(stmt)));
+  }
+  const currentFindingIdentities = new Set(findingIdentityById.values());
+  const fcLive: FcVerdict[] = [];
+  for (const v of (fcRows ?? []) as FcVerdict[]) {
+    if (!currentFindingIdentities.has(v.finding_statement_identity) || !currentIdentities.has(v.signal_statement_identity)) {
+      if (args.write) {
+        const { error } = await args.supabase.from("finding_cluster_verdicts").delete().eq("id", v.id);
+        if (error) throw new Error(`finding_cluster_verdicts prune failed: ${error.message}`);
+      }
+      totals.fc_verdicts_pruned++;
+      continue;
+    }
+    fcLive.push(v);
+  }
+  const fcByIdentity = new Map(fcLive.map((v) => [v.pair_identity, v]));
+
+  // Pass 2 — SECOND join: judge-assisted, for findings not already clustered.
+  // Deterministic candidate order: clusters by root, members by id. Per member:
+  // frozen accept → join (no call); frozen reject → next; unbanked → judge,
+  // bank inline, join on accept. Stops at the first accepted member per
+  // finding (bounded calls; resume = frozen verdicts skip, zero re-judge).
+  const clusterRoots = [...clusters.keys()].sort();
+  for (const f of openFindings) {
+    if (desired.has(f.id)) continue;
+    const stmt = findingStatement(f);
+    if (!stmt) continue;
+    let joined = false;
+    for (const root of clusterRoots) {
+      if (joined) break;
+      const row = desiredRowForRoot(root);
+      if (!row) continue;
+      const members = (clusters.get(root) ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+      for (const m of members) {
+        // Same deterministic prefilter floor as the signal-pair stage.
+        const shared = sharedTokenCount(stmt, m.claim_text);
+        if (shared < RECURRENCE_MIN_SHARED_TOKENS) continue;
+        const identity = await recurrencePairIdentity(stmt, m.claim_text);
+        const banked = fcByIdentity.get(identity);
+        if (banked) {
+          totals.finding_pairs_cached++;
+          if (banked.verdict === "accepted") {
+            desired.set(f.id, row);
+            totals.finding_joins_via_judge++;
+            joined = true;
+            break;
+          }
+          continue;
+        }
+        const raw = await callOllamaJson(
+          args.ollamaUrl, judgeModel, FINDING_JOIN_SYSTEM,
+          buildFindingJoinUser(companyName, stmt, m.claim_text), JUDGE_TIMEOUT_MS,
+        );
+        const v = parseJudgeVerdict(raw);
+        totals.finding_judge_calls++;
+        const verdict = v.same_fact ? "accepted" : "rejected";
+        if (args.write) {
+          const { error } = await args.supabase.from("finding_cluster_verdicts").insert({
+            company_id: args.companyId,
+            pair_identity: identity,
+            finding_id: f.id,
+            signal_id: m.id,
+            finding_statement_identity: findingIdentityById.get(f.id),
+            signal_statement_identity: m.identity,
+            verdict,
+            judge_model: judgeModel,
+            judge_reason: v.reason,
+            candidate_basis: `shared_tokens:${shared}`,
+          });
+          if (error && !String(error.message ?? "").includes("duplicate")) {
+            throw new Error(`finding_cluster_verdicts insert failed: ${error.message}`);
+          }
+        }
+        fcByIdentity.set(identity, {
+          id: "", pair_identity: identity,
+          finding_statement_identity: findingIdentityById.get(f.id) ?? "",
+          signal_statement_identity: m.identity, verdict,
+        });
+        if (v.same_fact) {
+          desired.set(f.id, row);
+          totals.finding_joins_via_judge++;
+          joined = true;
+          break;
+        }
+      }
+    }
   }
 
   // 5. Reconcile in place (byte-identical on no-change rerun, incl computed_at).
