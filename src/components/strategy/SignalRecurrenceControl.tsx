@@ -9,7 +9,7 @@ import { useSignalRecurrenceRecompute } from "@/hooks/useSignalRecurrenceRecompu
 // flagged in the gate report.
 
 export function SignalRecurrenceControl({ companyId }: { companyId: string }) {
-  const { running, progress, start } = useSignalRecurrenceRecompute(companyId);
+  const { running, progress, atRest, start } = useSignalRecurrenceRecompute(companyId);
 
   const buttonLabel = running
     ? `Recomputing… ${progress?.currentChunk ?? 0}/${progress?.totalChunks ?? 0}`
@@ -62,6 +62,18 @@ export function SignalRecurrenceControl({ companyId }: { companyId: string }) {
             </p>
           )}
         </div>
+      )}
+
+      {/* Three-way at-rest state (operator-signed 2026-07-15): nothing extra
+          while a run is in progress; last-run summary when verdicts exist;
+          empty state when none. atRest is null for frozen companies (neither
+          line renders) and while the mount read is in flight. */}
+      {!running && atRest && (
+        <p style={{ ...line, marginTop: progress ? 8 : 6 }}>
+          {atRest.verdicts > 0
+            ? `Last run: ${atRest.clusters} cluster(s) backing findings, ${atRest.verdicts} verdicts. Recompute after new public signals.`
+            : "Not yet computed. Recompute to judge signal corroboration."}
+        </p>
       )}
     </div>
   );

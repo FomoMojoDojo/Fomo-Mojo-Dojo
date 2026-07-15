@@ -82,16 +82,51 @@ async function invokeRecurrence(body: Record<string, unknown>): Promise<{ ok: tr
   }
 }
 
+// At-rest recurrence state for the idle summary/empty-state lines (CV-2d-2
+// micro-commit, operator-ruled 2026-07-15).
+export type RecurrenceAtRest = { verdicts: number; clusters: number };
+
 export function useSignalRecurrenceRecompute(companyId: string) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<RecurrenceRecomputeProgress | null>(null);
+  const [atRest, setAtRest] = useState<RecurrenceAtRest | null>(null);
   const runSeq = useRef(0);
+
+  // The admin Extracts summary reads these recurrence counts directly
+  // (read-only; the ONE clustering authority stays the finalize — {clusters}
+  // is the finalize's banked clustering, never re-derived client-side).
+  const loadAtRest = useCallback(async () => {
+    if (!companyId || isFrozenCompany(companyId)) {
+      setAtRest(null); // frozen: render neither line (operator ruling)
+      return;
+    }
+    const mySeq = runSeq.current;
+    const [verdictRes, clusterRes] = await Promise.all([
+      supabase
+        .from("signal_recurrence_verdicts")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId),
+      supabase
+        .from("finding_recurrence")
+        .select("cluster_signal_ids")
+        .eq("company_id", companyId),
+    ]);
+    if (runSeq.current !== mySeq) return; // company switched mid-read
+    const verdicts = verdictRes.count ?? 0;
+    const clusters = new Set(
+      ((clusterRes.data ?? []) as Array<{ cluster_signal_ids: unknown }>)
+        .map((r) => JSON.stringify(r.cluster_signal_ids)),
+    ).size;
+    setAtRest({ verdicts, clusters });
+  }, [companyId]);
 
   useEffect(() => {
     runSeq.current += 1;
     setProgress(null);
     setRunning(false);
-  }, [companyId]);
+    setAtRest(null);
+    void loadAtRest();
+  }, [companyId, loadAtRest]);
 
   // Finalize poll supplement: the run's long_runner_runs row leaves 'running'
   // when the finalize isolate lands its terminal update behind a gateway cut.
@@ -197,9 +232,14 @@ export function useSignalRecurrenceRecompute(companyId: string) {
       }
       setProgress({ stage: "done", totalChunks: chunks.length, currentChunk: chunks.length, freshTotal, frozenTotal, results: [...results], finalize, error: null });
     } finally {
-      if (live()) setRunning(false);
+      if (live()) {
+        setRunning(false);
+        // Refresh the at-rest summary after a run completes (no polling —
+        // one read per run end).
+        void loadAtRest();
+      }
     }
-  }, [companyId, running, waitForFinalize]);
+  }, [companyId, running, waitForFinalize, loadAtRest]);
 
-  return { running, progress, start };
+  return { running, progress, atRest, start };
 }
