@@ -7,6 +7,7 @@ import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { WorkshopSidebar, type SidebarTabKey } from "@/components/client/WorkshopSidebar";
 import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
+import { SignalRecurrenceControl } from "@/components/strategy/SignalRecurrenceControl";
 import { StandingFindings } from "@/components/strategy/StandingFindings";
 import StrategyInspectPanel from "@/views/Strategy/StrategyInspectPanel";
 import DriftBadge from "@/components/drift/DriftBadge";
@@ -91,6 +92,12 @@ export default function ClientRefinePreviewExtractsView() {
                 <section style={{ marginBottom: 36 }}>
                   <p style={SECTION_HEADER}>Direction Delta</p>
                   <StrategicDirectionDelta companyId={companyId} />
+                </section>
+
+                <section style={{ marginBottom: 36 }}>
+                  {/* CV-2d-2c — section header is a TODO(sig) placeholder */}
+                  <p style={SECTION_HEADER}>TODO(sig): Signal Recurrence</p>
+                  <SignalRecurrenceControl companyId={companyId} />
                 </section>
 
                 <section style={{ marginBottom: 36 }}>

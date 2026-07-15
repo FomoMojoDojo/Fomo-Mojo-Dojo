@@ -44,7 +44,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write, pairs, plan } = await req.json();
+    const { company_id, write, pairs, plan, run_target } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
@@ -86,12 +86,90 @@ serve(async (req) => {
       write: doWrite,
       pairs: scopedPairs,
     };
-    const result = doPlan
-      ? await computeRecurrenceForCompany({ ...baseArgs, plan: true })
-      : await computeRecurrenceForCompany(baseArgs);
+
+    if (doPlan) {
+      const result = await computeRecurrenceForCompany({ ...baseArgs, plan: true });
+      if (result.ok) return json(result);
+      if ("skipped" in result && result.skipped === "frozen_company") {
+        return json({ ok: false, error: "This is a frozen reference company — recurrence isn't computed for it." }, 403);
+      }
+      return json({ ok: false, error: (result as { error: string }).error }, 500);
+    }
+
+    // ── START-of-run ledger (long_runner_runs, CV-2d-2c) ──────────────────────
+    // Self-owned, non-fatal, mirrors public-baseline's writer. A run's first
+    // writing CHUNK creates the row (plan is zero-writes by law; the client
+    // passes run_target = the plan's fresh count); later chunks advance
+    // done_count; the FINALIZE terminal-updates it. A ledger failure never
+    // breaks a run.
+    const RUN_KIND = "signal_recurrence";
+    let ledgerRowId: string | null = null;
+    if (doWrite) {
+      try {
+        const { data: runningRows } = await supabase
+          .from("long_runner_runs")
+          .select("id")
+          .eq("run_kind", RUN_KIND)
+          .eq("company_id", company_id)
+          .eq("status", "running")
+          .limit(1);
+        ledgerRowId = (runningRows as Array<{ id: string }> | null)?.[0]?.id ?? null;
+        if (!ledgerRowId) {
+          const target = typeof run_target === "number" && run_target >= 0
+            ? Math.floor(run_target)
+            : (scopedPairs?.length ?? 0);
+          const { data: ledgerRow } = await supabase
+            .from("long_runner_runs")
+            .insert({ run_kind: RUN_KIND, company_id, status: "running", target_count: target })
+            .select("id")
+            .single();
+          ledgerRowId = (ledgerRow as { id?: unknown } | null)?.id ? String((ledgerRow as { id: unknown }).id) : null;
+        }
+      } catch (e) {
+        console.log("[signal-recurrence] ledger start error", String((e as Error)?.message ?? e));
+      }
+    }
+
+    let result;
+    try {
+      result = await computeRecurrenceForCompany(baseArgs);
+    } catch (err) {
+      // Terminal-mark the ledger on a scoped-chunk crash too (finalize marks
+      // its own outcome below); banked verdicts survive, re-click resumes.
+      if (ledgerRowId && !scopedPairs) {
+        try {
+          await supabase.from("long_runner_runs").update({
+            status: "failed", error_text: String((err as Error)?.message ?? err),
+            finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          }).eq("id", ledgerRowId);
+        } catch { /* non-fatal */ }
+      }
+      throw err;
+    }
+
+    if (result.ok && ledgerRowId) {
+      try {
+        if (result.scoped) {
+          // Advance done_count by the pairs this chunk disposed of (judged or
+          // already-frozen). Single-writer per company in practice.
+          const processed = result.totals.judged + result.totals.cached;
+          const { data: row } = await supabase
+            .from("long_runner_runs").select("done_count").eq("id", ledgerRowId).single();
+          const done = Number((row as { done_count?: unknown } | null)?.done_count ?? 0) + processed;
+          await supabase.from("long_runner_runs")
+            .update({ done_count: done, updated_at: new Date().toISOString() })
+            .eq("id", ledgerRowId);
+        } else {
+          await supabase.from("long_runner_runs").update({
+            status: "completed", finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          }).eq("id", ledgerRowId);
+        }
+      } catch (e) {
+        console.log("[signal-recurrence] ledger update error", String((e as Error)?.message ?? e));
+      }
+    }
 
     if (result.ok) {
-      if ("plan" in result) return json(result);
       return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, verdicts: result.verdicts });
     }
     if ("skipped" in result && result.skipped === "frozen_company") {
