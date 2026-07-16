@@ -36,7 +36,7 @@ const SCAFFOLD_ACTS: Record<"outside" | "diagnosis", ScaffoldAct[]> = {
   // Outside acts are all real as of CV-2 (rendered directly, not from this list).
   outside: [],
   diagnosis: [
-    { eyebrow: "Diagnose · Your side, rebuilt from your own documents", role: "Hero + Mojo Score (moves)", awaiting: "CV-3" },
+    { eyebrow: "Diagnose · Said next to seen", role: "Hero + Mojo Score (moves)", awaiting: "CV-3" },
     { eyebrow: "Gap 01 · Position", role: "Say vs. See", awaiting: "CV-3" },
     { eyebrow: "Gap 02 · Audience", role: "Say vs. See", awaiting: "CV-3" },
     { eyebrow: "Match · The one that holds", role: "Say vs. See (the single green moment)", awaiting: "CV-3" },
@@ -48,7 +48,7 @@ const SCAFFOLD_ACTS: Record<"outside" | "diagnosis", ScaffoldAct[]> = {
 
 const META_LINE: Record<"outside" | "diagnosis", string> = {
   outside: "Read from public signals · Story mode",
-  diagnosis: "Rebuilt from your own documents · Public footprint",
+  diagnosis: "Your side · The outside's side",
 };
 
 function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {

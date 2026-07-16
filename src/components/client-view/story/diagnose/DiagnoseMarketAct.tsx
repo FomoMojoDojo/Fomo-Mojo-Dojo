@@ -21,38 +21,38 @@ import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfoli
  *   not-ready state, never a false "aligned/quiet" claim.
  */
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (MPD-D) ───────────────────
-const ACT_EYEBROW = "TODO(sig): Diagnose · Your markets, said next to seen";
+// ── Client-facing copy — SIGNED 2026-07-16 (MPD-D) ───────────────────────────
+const ACT_EYEBROW = "Diagnose · Your markets, said next to seen";
 
-const DECLARED_HEADING = "TODO(sig): You've told us";
-const DECLARED_SUB = "TODO(sig): drawn from what you've told us — your strategy material";
-const SAY_LABEL = "TODO(sig): What you've told us";
-const SEE_LABEL = "TODO(sig): What the outside shows";
-const INDEPENDENCE_LINE = "TODO(sig): The outside read never saw your documents — it reached the same market on its own.";
+const DECLARED_HEADING = "You've told us";
+const DECLARED_SUB = "drawn from what you've told us — your strategy material";
+const SAY_LABEL = "What you've told us";
+const SEE_LABEL = "What the outside shows";
+const INDEPENDENCE_LINE = "The outside read never saw your documents — it reached the same market on its own.";
 
-const INFERRED_HEADING = "TODO(sig): Our internal read, next to the outside";
+const INFERRED_HEADING = "Our internal read, next to the outside";
 const INFERRED_DISCLAIMER =
-  "TODO(sig): These pairs come from our reading of your material — not statements you've made. Each is worth confirming with you.";
+  "These pairs come from our reading of your material — not statements you've made. Each is worth confirming with you.";
 
-const GRANULARITY_HEADING = "TODO(sig): One market, cut two ways";
+const GRANULARITY_HEADING = "One market, cut two ways";
 const GRANULARITY_PUBLIC = (n: number) =>
-  `TODO(sig): The outside read sees one market where your internal read sees ${n}.`;
+  `The outside read sees one market where your internal read sees ${n}.`;
 const GRANULARITY_INTERNAL = (n: number) =>
-  `TODO(sig): Your internal read holds one market the outside read splits into ${n}.`;
-const GRANULARITY_CLOSE = "TODO(sig): Neither cut is wrong — which one should your strategy run on?";
+  `Your internal read holds one market the outside read splits into ${n}.`;
+const GRANULARITY_CLOSE = "Neither cut is wrong — which one should your strategy run on?";
 
-const SAID_NOT_SHOWN_HEADING = "TODO(sig): Said, not shown";
-const SAID_NOT_SHOWN_DECLARED = "TODO(sig): You've told us about this market — the outside read didn't surface it.";
-const SAID_NOT_SHOWN_INFERRED = "TODO(sig): Our internal read surfaces this market — the outside read didn't.";
-const SHOWN_NOT_SAID_HEADING = "TODO(sig): Shown, not said";
-const SHOWN_NOT_SAID_BODY = "TODO(sig): The outside read surfaces this market — you haven't spoken to it.";
+const SAID_NOT_SHOWN_HEADING = "Said, not shown";
+const SAID_NOT_SHOWN_DECLARED = "You've told us about this market — the outside read didn't surface it.";
+const SAID_NOT_SHOWN_INFERRED = "Our internal read surfaces this market — the outside read didn't.";
+const SHOWN_NOT_SAID_HEADING = "Shown, not said";
+const SHOWN_NOT_SAID_BODY = "The outside read surfaces this market — you haven't spoken to it.";
 
 const CLOSING_QUESTION =
-  "TODO(sig): Which of these gaps is a choice you've made, and which is drift?";
+  "Which of these gaps is a choice you've made, and which is drift?";
 
-const NOT_READY_HEADLINE = "TODO(sig): There's nothing to compare yet.";
+const NOT_READY_HEADLINE = "There's nothing to compare yet.";
 const NOT_READY_PROMPT =
-  "TODO(sig): This view sets what you've told us beside what the outside read shows. One side hasn't been read yet — ask your operator to run market discovery.";
+  "This view sets what you've told us beside what the outside read shows. One side hasn't been read yet — ask your operator to run market discovery.";
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Executor headline + job support line — never the concatenated display_statement.
