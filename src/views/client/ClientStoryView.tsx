@@ -8,6 +8,8 @@ import OutsideHeroAct from "@/components/client-view/story/OutsideHeroAct";
 import OutsideFindingsAct from "@/components/client-view/story/OutsideFindingsAct";
 import OutsideQuestionAct from "@/components/client-view/story/OutsideQuestionAct";
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
+import MovementShell from "@/components/client-view/story/movement/MovementShell";
+import MarketAct from "@/components/client-view/story/movement/MarketAct";
 import "@/styles/client-story.css";
 
 /*
@@ -149,6 +151,11 @@ export default function ClientStoryView() {
             <OutsideFindingsAct preferredRun={preferredRun} />
             <OutsideQuestionAct preferredRun={preferredRun} loading={baselineLoading} />
             <OutsideNextMoveAct onStartDiagnose={() => selectPhase("diagnosis")} />
+            {/* MPD-3: the inferred-strategy movement — a distinct register
+                from the evidence acts above. Act A only; Acts B/C later. */}
+            <MovementShell>
+              <MarketAct />
+            </MovementShell>
           </>
         ) : null}
         {acts.map((act, index) => {

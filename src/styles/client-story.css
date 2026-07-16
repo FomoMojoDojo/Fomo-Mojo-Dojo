@@ -644,3 +644,158 @@
     margin: 56px 0;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* MPD-3 · Inferred-strategy movement (.cvs-mv-*)                      */
+/* A distinct register from the evidence acts: heavier divider, the    */
+/* portfolio grid, quiet deferred strip. Public-register markets only. */
+/* ------------------------------------------------------------------ */
+.cvs-mv-divider {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 72px 48px 0;
+  border-top: 1px solid var(--mm-line-18);
+}
+
+.cvs-mv-divider-eyebrow {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--mm-amber);
+  margin: 26px 0 0;
+}
+
+.cvs-mv-divider-sub {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--mm-muted);
+  margin: 10px 0 0;
+}
+
+.cvs-mv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 40px 48px;
+  margin-top: 48px;
+}
+
+.cvs-mv-market {
+  border-top: 1px solid var(--mm-line);
+  padding-top: 18px;
+}
+
+.cvs-mv-kindrow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.cvs-mv-kindchip {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mm-badge-text);
+  background: var(--mm-badge-bg);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.cvs-mv-kindnew {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--mm-label-dim);
+}
+
+.cvs-mv-executor {
+  font-weight: 200;
+  font-size: clamp(19px, 1.9vw, 26px);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-mv-jtbd {
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+  margin: 10px 0 0;
+}
+
+.cvs-mv-basis {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+  color: var(--mm-label);
+  margin: 12px 0 0;
+}
+
+.cvs-mv-deferred {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  line-height: 1.7;
+  color: var(--mm-label-dim);
+  border-left: 2px solid var(--mm-line-12);
+  padding-left: 16px;
+  margin: 56px 0 0;
+  max-width: 72ch;
+}
+
+.cvs-mv-invite {
+  font-weight: 300;
+  font-style: italic;
+  font-size: clamp(17px, 1.8vw, 21px);
+  line-height: 1.45;
+  color: var(--mm-secondary);
+  max-width: 52ch;
+  margin: 64px 0 0;
+}
+
+.cvs-mv-handoff {
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-muted);
+  border-left: 2px solid var(--mm-amber-line);
+  padding-left: 16px;
+  max-width: 56ch;
+  margin: 28px 0 0;
+}
+
+.cvs-mv-empty {
+  margin-top: 24px;
+}
+
+.cvs-mv-empty-headline {
+  font-weight: 300;
+  font-size: clamp(20px, 2.2vw, 28px);
+  line-height: 1.25;
+  color: var(--mm-faint);
+  margin: 0;
+}
+
+.cvs-mv-empty-prompt {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--mm-label-dim);
+  margin: 16px 0 0;
+}
+
+@media (max-width: 820px) {
+  .cvs-mv-divider {
+    padding: 56px 22px 0;
+  }
+  .cvs-mv-grid {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+}
