@@ -50,10 +50,33 @@ export const MAX_CANDIDATES = 6;
 // active-set capacity is written with lens portfolio_state='deferred' —
 // recorded, never silently dropped. MAX_ACTIVE bounds only the ACTIVE
 // client-facing set (Act A breadth sanity); 6 = above the organic per-round
-// yield (≤6 candidates) so deferral is the exception, and lets Edgewood's
-// real sixth market (the employee/workforce executor 1e's cap swallowed)
-// land active. Quality judges are unchanged and still binding.
+// yield (≤6 candidates) so deferral is the exception. OOD-2: the cap is
+// PER-REGISTER — public actives (pmk-*) bound the public set; internal
+// actives are not counted against it. Quality judges unchanged and binding.
 export const MAX_ACTIVE = 6;
+
+// ── OOD-2: outside-only corpus (register purity by construction) ─────────────
+// REGISTER LAW: register is a property of the evidence CORPUS. This discovery
+// mode reads ONLY provably-public outside-band signals, so every def it
+// writes is market_register='public_inferred' BY CONSTRUCTION (stamped at
+// birth; OOD-1 trigger makes it immutable). Existing internal_* defs are
+// frozen — this mode ADDS public rows, never mutates or re-keys.
+//
+// The public predicate (signed design Q2): outside band, not syndicated
+// (public content that matches the client's own uploads carries origin
+// ambiguity), and source_type outside the upload/internal family. Negative
+// lists fail OPEN, so a TRIPWIRE closes them: a corpus signal whose
+// source_type is neither recognized-public nor known-excluded ABORTS the run
+// loudly — a new unclassified source must stop discovery, not slip onto a
+// client-facing public surface. (Reality check that motivated it: 20 historic
+// outside-band rows carry source_type='uploaded_file' — the band alone is not
+// a guarantee.)
+export const PUBLIC_OUTSIDE_SOURCE_TYPES = new Set(["public_baseline_run", "competitor_discovery_run"]);
+export const EXCLUDED_INTERNAL_SOURCE_TYPES = new Set(["file", "uploaded_file", "file_proposal", "manual_note", "mojo_analysis"]);
+const PUBLIC_CORPUS_CAP = 80;
+// Public-register defs live in their own key namespace — register visible in
+// the key, and a public twin of an internal market is always a NEW row.
+const PUBLIC_KEY_PREFIX = "pmk-";
 
 // ── identities ────────────────────────────────────────────────────────────────
 
@@ -126,12 +149,12 @@ const GEN_SYSTEM =
   "(6) Ground every market in the evidence given. No invented audiences. Fewer, well-grounded markets beat many speculative ones. " +
   'JSON only: {"markets":[{"job_executor":"...","jtbd":"...","chooser":"...","relationship_kind":"...","relationship_basis":"..."}]}.';
 
-function buildGenUser(companyName: string, outsideLines: string[], orgLines: string[]): string {
+// OOD-2: the gen sees PUBLIC evidence only — register purity by construction.
+function buildGenUser(companyName: string, outsideLines: string[]): string {
   return (
     `COMPANY UNDER ANALYSIS: ${companyName}\n\n` +
-    `PUBLIC EVIDENCE (outside voices):\n${outsideLines.map((l) => `- ${l}`).join("\n")}\n\n` +
-    `ORGANIZATION EVIDENCE (the company's own materials):\n${orgLines.map((l) => `- ${l}`).join("\n")}\n\n` +
-    `Identify up to ${MAX_CANDIDATES} distinct markets this company plausibly serves.`
+    `PUBLIC EVIDENCE (outside voices — the only evidence you have):\n${outsideLines.map((l) => `- ${l}`).join("\n")}\n\n` +
+    `Identify up to ${MAX_CANDIDATES} distinct markets this company plausibly serves, grounded ONLY in this public evidence.`
   );
 }
 
@@ -236,7 +259,9 @@ export type DiscoveryPlanResult =
     candidates_total: number;
     existing_defs: number;
     corpus_outside: number;
-    corpus_org: number;
+    corpus_by_source_type: Record<string, number>;
+    corpus_excluded_upload_family: number;
+    corpus_excluded_syndicated: number;
   }
   | { ok: false; skipped: "frozen_company" | "already_discovered" | "no_signals"; existing_discovered?: number }
   | { ok: false; error: string };
@@ -280,24 +305,28 @@ export type DiscoveryRunResult =
 
 // ── data loading ──────────────────────────────────────────────────────────────
 
-type ExistingDef = { id: string; journey_key: string; job_executor: string; jtbd: string; user_id: string; identity: string };
+type ExistingDef = { id: string; journey_key: string; job_executor: string; jtbd: string; user_id: string; market_register: string; identity: string };
 
-// The dedup universe: the spine (customer) + prior discovered (mkt-*) defs.
+// The dedup universe: the spine (customer) + prior discovered (mkt-*/pmk-*)
+// + declared (dmk-*) defs, register carried for cross-register dedup rules.
 // a2b / internal keys are test/ops artifacts — never read as markets.
 async function loadDedupUniverse(supabase: DiscoveryComputeArgs["supabase"], companyId: string): Promise<ExistingDef[]> {
   const { data, error } = await supabase
     .from("odi_market_definitions")
-    .select("id, journey_key, job_executor, jtbd, user_id")
+    .select("id, journey_key, job_executor, jtbd, user_id, market_register")
     .eq("company_id", companyId);
   if (error) throw new Error(`market defs load failed: ${error.message}`);
   const out: ExistingDef[] = [];
-  for (const row of (data ?? []) as Array<{ id: string; journey_key: string; job_executor: string; jtbd: string; user_id: string }>) {
+  for (const row of (data ?? []) as Array<{ id: string; journey_key: string; job_executor: string; jtbd: string; user_id: string; market_register: string }>) {
     const key = String(row.journey_key ?? "");
-    if (key !== "customer" && !key.startsWith("mkt-")) continue;
+    if (key !== "customer" && !key.startsWith("mkt-") && !key.startsWith("pmk-") && !key.startsWith("dmk-")) continue;
     out.push({ ...row, identity: await marketIdentity(row.job_executor ?? "", row.jtbd ?? "") });
   }
   return out.sort((a, b) => a.journey_key.localeCompare(b.journey_key));
 }
+
+// Public register = the two Act-A-legal values (stored fact, OOD-1).
+const isPublicRegister = (r: string) => r === "public_inferred" || r === "publicly_declared";
 
 async function loadCompanyName(supabase: DiscoveryComputeArgs["supabase"], companyId: string): Promise<string> {
   const { data } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
@@ -306,7 +335,8 @@ async function loadCompanyName(supabase: DiscoveryComputeArgs["supabase"], compa
 
 function slugify(executor: string): string {
   const slug = executor.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
-  return `mkt-${slug || "market"}`;
+  // OOD-2: discovery writes public-register defs in their own namespace.
+  return `${PUBLIC_KEY_PREFIX}${slug || "market"}`;
 }
 
 // ── compute ───────────────────────────────────────────────────────────────────
@@ -325,24 +355,52 @@ export async function computeMarketDiscovery(
 
   // ── PLAN: one gen call → candidate manifest (zero writes, zero judges) ──
   if (args.plan) {
-    const discovered = universe.filter((d) => d.journey_key.startsWith("mkt-"));
+    // OOD-2 skip-law keys on PUBLIC discovery output (pmk-*) — existing
+    // internal mkt-* defs must never block the first outside-only run.
+    const discovered = universe.filter((d) => d.journey_key.startsWith(PUBLIC_KEY_PREFIX));
     if (discovered.length > 0 && !args.force) {
       return { ok: false, skipped: "already_discovered", existing_discovered: discovered.length };
     }
 
+    // OOD-2 corpus: outside band ONLY, through the public predicate + tripwire.
     const { data: sigRows, error: sigErr } = await args.supabase
       .from("signals")
-      .select("signal_band, claim_text")
+      .select("signal_band, claim_text, source_type, syndicated_from_client")
       .eq("company_id", args.companyId)
-      .in("signal_band", ["outside", "organization"])
+      .eq("signal_band", "outside")
       .order("created_at", { ascending: true });
     if (sigErr) return { ok: false, error: `signals load failed: ${sigErr.message}` };
-    const rows = (sigRows ?? []) as Array<{ signal_band: string; claim_text: string }>;
-    const outside = rows.filter((r) => r.signal_band === "outside" && String(r.claim_text ?? "").trim()).map((r) => r.claim_text).slice(0, 40);
-    const org = rows.filter((r) => r.signal_band === "organization" && String(r.claim_text ?? "").trim()).map((r) => r.claim_text).slice(0, 40);
-    if (outside.length + org.length === 0) return { ok: false, skipped: "no_signals" };
+    const rows = (sigRows ?? []) as Array<{ signal_band: string; claim_text: string; source_type: string; syndicated_from_client: boolean | null }>;
+    const outside: string[] = [];
+    const corpusBySourceType: Record<string, number> = {};
+    let excludedUpload = 0;
+    let excludedSyndicated = 0;
+    for (const r of rows) {
+      if (!String(r.claim_text ?? "").trim()) continue;
+      const st = String(r.source_type ?? "");
+      if (EXCLUDED_INTERNAL_SOURCE_TYPES.has(st)) {
+        excludedUpload++;
+        continue;
+      }
+      if (!PUBLIC_OUTSIDE_SOURCE_TYPES.has(st)) {
+        // TRIPWIRE — fail LOUD, never fail open: an unclassified source_type
+        // must stop the run, not slip into a public-register corpus.
+        throw new Error(
+          `outside-only corpus tripwire: unrecognized outside-band source_type '${st}' — ` +
+            `classify it as public (PUBLIC_OUTSIDE_SOURCE_TYPES) or internal (EXCLUDED_INTERNAL_SOURCE_TYPES) before discovery may run`,
+        );
+      }
+      if (r.syndicated_from_client === true) {
+        excludedSyndicated++;
+        continue;
+      }
+      if (outside.length >= PUBLIC_CORPUS_CAP) continue;
+      outside.push(r.claim_text);
+      corpusBySourceType[st] = (corpusBySourceType[st] ?? 0) + 1;
+    }
+    if (outside.length === 0) return { ok: false, skipped: "no_signals" };
 
-    const raw = await callOllamaJson(args.ollamaUrl, genModel, GEN_SYSTEM, buildGenUser(companyName, outside, org), GEN_TIMEOUT_MS);
+    const raw = await callOllamaJson(args.ollamaUrl, genModel, GEN_SYSTEM, buildGenUser(companyName, outside), GEN_TIMEOUT_MS);
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -371,7 +429,9 @@ export async function computeMarketDiscovery(
       candidates_total: candidates.length,
       existing_defs: universe.length,
       corpus_outside: outside.length,
-      corpus_org: org.length,
+      corpus_by_source_type: corpusBySourceType,
+      corpus_excluded_upload_family: excludedUpload,
+      corpus_excluded_syndicated: excludedSyndicated,
     };
   }
 
@@ -478,12 +538,26 @@ export async function computeMarketDiscovery(
       }
       if (!solutionFree) return "rejected_solution";
 
-      // Gate (c): same-market dedup vs the live universe (customer + mkt-*).
-      // Exact-identity fast path (signed design): a candidate whose identity
-      // already IS a def folds in with zero judge calls.
-      let duplicate = liveUniverse.some((d) => d.identity === identity);
-      if (duplicate) reasons[`same_market_exact${tag}`] = "identical content identity — folded into the existing def";
+      // Gate (c): same-market dedup vs the live universe (customer + mkt-* +
+      // pmk-* + dmk-*). OOD-2 cross-register rule: dedup-DROP only WITHIN the
+      // same register. A public candidate that same-markets an INTERNAL def is
+      // PAIRED (verdict banked, both kept) and written anyway — silently
+      // dropping it would erase the only public-register copy and Act A loses
+      // the market. Candidates from this mode are public_inferred.
+      // Exact-identity fast path: identical to a PUBLIC def → fold (drop);
+      // identical to an INTERNAL def → pairing note, keep going.
+      let duplicate = false;
+      for (const d of liveUniverse) {
+        if (d.identity !== identity) continue;
+        if (isPublicRegister(d.market_register)) {
+          duplicate = true;
+          reasons[`same_market_exact${tag}`] = "identical content identity — folded into the existing public def";
+          break;
+        }
+        reasons[`cross_register_exact_vs_${d.journey_key}${tag}`] = "identical content identity — cross-register twin (internal def kept, public row written)";
+      }
       for (const existing of duplicate ? [] : liveUniverse) {
+        if (existing.identity === identity) continue; // exact cases handled above
         const key = await sameMarketKey(identity, existing.identity);
         const banked = verdictByKey.get(key);
         let same: boolean;
@@ -507,8 +581,11 @@ export async function computeMarketDiscovery(
             judge_reason: v.reason,
           });
         }
-        reasons[`same_market_vs_${existing.journey_key}${tag}`] = reason;
-        if (same) {
+        const crossRegister = !isPublicRegister(existing.market_register);
+        reasons[`same_market_vs_${existing.journey_key}${tag}`] = crossRegister && same
+          ? `${reason} (cross-register pairing — internal def kept, public row written)`
+          : reason;
+        if (same && !crossRegister) {
           duplicate = true;
           break;
         }
@@ -517,13 +594,14 @@ export async function computeMarketDiscovery(
     };
 
     // MPD-1g: capacity check happens AFTER the full judge chain, never before —
-    // no candidate is dropped unjudged. Active count = lenses in the active
-    // state among discovered (mkt-*) keys, tracked live as this chunk writes.
+    // no candidate is dropped unjudged. OOD-2: capacity is PER-REGISTER — this
+    // mode writes public defs (pmk-*), so only PUBLIC actives count against
+    // MAX_ACTIVE; internal actives (mkt-*) bound their own surface.
     const { data: lensRows, error: lensLoadErr } = await args.supabase
       .from("market_lens")
       .select("journey_key, portfolio_state")
       .eq("company_id", args.companyId)
-      .like("journey_key", "mkt-%");
+      .like("journey_key", `${PUBLIC_KEY_PREFIX}%`);
     if (lensLoadErr) return { ok: false, error: `market_lens load failed: ${lensLoadErr.message}` };
     let activeDiscovered = ((lensRows ?? []) as Array<{ portfolio_state: string }>)
       .filter((l) => l.portfolio_state === "active").length;
@@ -608,8 +686,12 @@ export async function computeMarketDiscovery(
           relationship_kind: cand.relationship_kind || null,
           relationship_basis: cand.relationship_basis || null,
           provenance_type: "internal_hypothesis",
-          source_path: "market_portfolio_discovery",
-          frameworks_used: ["JTBD", "ODI", "local_ollama", "market_portfolio_discovery"],
+          // OOD-2: register stamped at birth — public BY CONSTRUCTION (the
+          // corpus predicate + tripwire guarantee it); OOD-1 trigger makes it
+          // immutable.
+          market_register: "public_inferred",
+          source_path: "market_portfolio_discovery:outside_only",
+          frameworks_used: ["JTBD", "ODI", "local_ollama", "market_portfolio_discovery", "outside_only"],
           updated_at: args.nowIso,
         });
         if (defErr) return { ok: false, error: `market def insert failed: ${defErr.message}` };
@@ -625,7 +707,8 @@ export async function computeMarketDiscovery(
       }
       liveUniverse.push({
         id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd,
-        user_id: ownerUserId, identity: await marketIdentity(cand.job_executor, cand.jtbd),
+        user_id: ownerUserId, market_register: "public_inferred",
+        identity: await marketIdentity(cand.job_executor, cand.jtbd),
       });
       if (overCapacity) {
         totals.accepted_deferred++;
