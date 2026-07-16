@@ -2673,11 +2673,14 @@ export default function JobStepsView() {
           jtbd: jtbdValue,
           source_path: "manual_context_edit",
           frameworks_used: marketFrameworks,
-          // OOD-1 register birth-stamp: the operator TYPES the executor/chooser/
-          // JTBD here verbatim (manual_override); provenance defaults to 'manual',
-          // which the resolver already treats as declared, and display_statement
-          // renders these exact words → internal_declared ("you've told us").
-          market_register: "internal_declared",
+          // OOD-1 register birth-stamp → internal_inferred (operator ruling
+          // 2026-07-16). The operator types these fields, but a manual edit is a
+          // CHANNEL, not a client VOICE — declared register means the client's
+          // own words, and we can't attest that here. Fail toward inferred: a
+          // false "you've told us" on a client-facing surface is the worst
+          // failure. A future voice-attestation gate can add an explicit
+          // per-entry "client's words" marker that upgrades deliberately.
+          market_register: "internal_inferred",
         });
         if (insertMarketError) {
           throw new Error(insertMarketError.message || "Failed to insert Strategic Decision System market context.");
