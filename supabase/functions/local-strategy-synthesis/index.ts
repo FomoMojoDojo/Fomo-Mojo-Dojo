@@ -261,10 +261,16 @@ Deno.serve(async (req) => {
       return json({ error: `No declared (internal-provenance) job steps found for direction '${directionKey}'.` }, 422);
     }
 
+    // Definition slot is KEY-MATCHED to the run's direction — never latest-wins
+    // (a created_at pick can hijack the declared prompt with a public-register
+    // pmk-* def born later). Key-matching structurally excludes other journeys.
     const { data: marketDef } = await supabase
       .from("odi_market_definitions")
       .select("job_executor, chooser, jtbd, provenance_type")
-      .eq("company_id", companyId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      .eq("company_id", companyId).eq("journey_key", directionKey).maybeSingle();
+    if (!marketDef) {
+      return json({ error: `No market definition found for direction '${directionKey}' — the definition slot is key-matched; refusing any fallback selection.` }, 422);
+    }
 
     const { data: baselineRun } = await supabase
       .from("public_baseline_runs").select("id, result_json")
