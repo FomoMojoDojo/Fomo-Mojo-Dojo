@@ -7511,6 +7511,12 @@ Deno.serve(async (req) => {
       company_id,
       user_id: user.id,
       provenance_type: "public_research",
+      // OOD-1 register birth-stamp: this is the cold-start CUSTOMER SPINE — the
+      // internal anchor of the job map (every existing customer def is
+      // internal_inferred). provenance_type "public_research" is the legacy
+      // authorship label for how it was bootstrapped, NOT the corpus register;
+      // the spine is the internal working hypothesis the client then owns.
+      market_register: "internal_inferred",
       job_executor,
       chooser,
       jtbd,

@@ -24,13 +24,10 @@ const ROOTS = ["supabase/functions", "src"];
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
 // Legacy pre-OOD-1 writers awaiting per-writer register rulings → file: count.
-const KNOWN_UNSTAMPED: Record<string, number> = {
-  "supabase/functions/local-jobmap-synthesis/index.ts": 1,
-  "supabase/functions/research-company/index.ts": 1,
-  "supabase/functions/_shared/marketHypothesisSynthesis.ts": 1,
-  "src/components/admin/CompanyFilesPanel.tsx": 1,
-  "src/views/JobSteps/index.tsx": 1,
-};
+// EMPTY as of the 5-writer stamp gate (2026-07-16): every odi_market_definitions
+// insert now birth-stamps market_register explicitly. Any new unstamped writer
+// fails the build; this allowlist only ever grows by a deliberate, reviewed edit.
+const KNOWN_UNSTAMPED: Record<string, number> = {};
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

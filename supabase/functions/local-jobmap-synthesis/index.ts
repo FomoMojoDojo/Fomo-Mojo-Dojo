@@ -1445,6 +1445,11 @@ Deno.serve(async (req) => {
         company_id: companyId,
         user_id: runUserId,
         provenance_type: declaredDirection ? "internal_declared" : "framework_adjudicated",
+        // OOD-1 register birth-stamp: mirror the writer's two provenance modes.
+        // Declared-direction runs ingest the client's own direction (declared);
+        // adjudicated runs are our framework read of the internal corpus
+        // (inferred). Both are internal-register either way.
+        market_register: declaredDirection ? "internal_declared" : "internal_inferred",
         job_executor: marketDefinition.job_executor,
         chooser: marketDefinition.chooser,
         jtbd: marketDefinition.jtbd,

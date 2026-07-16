@@ -2673,6 +2673,11 @@ export default function JobStepsView() {
           jtbd: jtbdValue,
           source_path: "manual_context_edit",
           frameworks_used: marketFrameworks,
+          // OOD-1 register birth-stamp: the operator TYPES the executor/chooser/
+          // JTBD here verbatim (manual_override); provenance defaults to 'manual',
+          // which the resolver already treats as declared, and display_statement
+          // renders these exact words → internal_declared ("you've told us").
+          market_register: "internal_declared",
         });
         if (insertMarketError) {
           throw new Error(insertMarketError.message || "Failed to insert Strategic Decision System market context.");

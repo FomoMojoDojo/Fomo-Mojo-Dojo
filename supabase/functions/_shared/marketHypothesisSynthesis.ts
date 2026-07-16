@@ -158,7 +158,9 @@ export async function generateMarketHypothesisForSet(args: {
   } else {
     const userId = steps.find((s) => s.user_id)?.user_id ?? null;
     const { error } = await args.supabase.from("odi_market_definitions").insert({
-      company_id: args.companyId, journey_key: args.journeyKey, user_id: userId, ...payload,
+      // OOD-1 register birth-stamp: MH-5 synthesizes from the mixed internal
+      // job-map corpus (provenance internal_hypothesis) → internal_inferred.
+      company_id: args.companyId, journey_key: args.journeyKey, user_id: userId, market_register: "internal_inferred", ...payload,
     });
     if (error) return { ok: false, error: `market_def insert failed: ${error.message}` };
   }

@@ -1369,6 +1369,11 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
         jtbd: deriveJtbdStatement(payload),
         source_path: "intake.quiz",
         frameworks_used: ["Quiz Intake", "JTBD", "Strategic Decision System"],
+        // OOD-1 register birth-stamp: executor/JTBD are HEURISTIC template
+        // synthesis (regex + template sentences) over the intake-quiz corpus —
+        // our reading, NOT the client's verbatim words → internal_inferred.
+        // (Stamping declared here would falsely render it as "you've told us".)
+        market_register: "internal_inferred",
       });
       if (marketInsertError) {
         throw new Error(marketInsertError.message || "Failed to create Strategic Decision System market definition.");
