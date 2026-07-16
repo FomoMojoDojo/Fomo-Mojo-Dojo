@@ -157,12 +157,14 @@ export const SAME_MARKET_CRITERION =
   "a shared theme, service area, industry, or beneficiary population is NOT the same market; " +
   "DIFFERENT job executor means DIFFERENT market, always — never merge two candidates with different executors even when their jobs touch the same domain.";
 
-const SAME_MARKET_SYSTEM =
+// Exported (MPD-1f-1b): the declared-market ingest reuses the SAME judge for
+// cross-provenance reconciliation (pairing, never rejection).
+export const SAME_MARKET_SYSTEM =
   "You judge whether two market definitions are the SAME market. " +
   SAME_MARKET_CRITERION + " " +
   'JSON only: {"same_market":true|false,"reason":"<one short clause citing words from BOTH>"}.';
 
-function buildSameMarketUser(a: { executor: string; jtbd: string }, b: { executor: string; jtbd: string }): string {
+export function buildSameMarketUser(a: { executor: string; jtbd: string }, b: { executor: string; jtbd: string }): string {
   return `MARKET A — executor: ${a.executor}\njob: ${a.jtbd}\nMARKET B — executor: ${b.executor}\njob: ${b.jtbd}\nAre A and B the same market?`;
 }
 
