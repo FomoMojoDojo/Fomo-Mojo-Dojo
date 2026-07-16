@@ -347,6 +347,10 @@ export async function computeDeclaredIngest(
         declared_verbatim: source.verbatim,
         declared_source_ref: source.ref,
         provenance_type: "internal_declared",
+        // OOD-1 register law: register is a birth-stamped fact of the evidence
+        // corpus — declared ingest is internal by construction. The column is
+        // NOT NULL with no default; the immutability trigger blocks updates.
+        market_register: "internal_declared",
         source_path: `declared_market_ingest:${source.ref.split(":")[0]}`,
         frameworks_used: ["JTBD", "declared_market_ingest"],
         updated_at: args.nowIso,
