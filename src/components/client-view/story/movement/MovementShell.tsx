@@ -6,9 +6,9 @@
  * job map) will mount inside the same shell in later gates.
  */
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (MPD-3) ───────────────────
-const DIVIDER_EYEBROW = "TODO(sig): The strategy we can see";
-const DIVIDER_SUB = "TODO(sig): Our reading of your public footprint — not your words yet.";
+// ── Client-facing copy — SIGNED AS-IS 2026-07-16 (MPD-3 copy) ─────────────────
+const DIVIDER_EYEBROW = "The strategy we can see";
+const DIVIDER_SUB = "Our reading of your public footprint — not your words yet.";
 // ──────────────────────────────────────────────────────────────────────────────
 
 export default function MovementShell({ children }: { children: React.ReactNode }) {

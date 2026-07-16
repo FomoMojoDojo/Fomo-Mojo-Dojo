@@ -18,19 +18,19 @@ import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfoli
  * - Diagnose hand-off line ONLY when internal-declared defs exist.
  */
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (MPD-3) ───────────────────
-const EYEBROW = "TODO(sig): Act A · The markets we can see";
+// ── Client-facing copy — SIGNED AS-IS 2026-07-16 (MPD-3 copy) ─────────────────
+const EYEBROW = "Act A · The markets we can see";
 const BREADTH_LINE = (n: number) =>
-  `TODO(sig): From your public presence, we can see you serving ${n} different market${n === 1 ? "" : "s"}.`;
-const KIND_WHY_PREFIX = "TODO(sig): why"; // renders as "why <kind>: <basis>"
-const NEW_KIND_NOTE = "TODO(sig): a relationship kind we found in your signal";
-const DEFERRED_PREFIX = "TODO(sig): Also found in your public signal, held aside:";
+  `From your public presence, we can see you serving ${n} different market${n === 1 ? "" : "s"}.`;
+const KIND_WHY_PREFIX = "why"; // renders as "why <kind>: <basis>"
+const NEW_KIND_NOTE = "a relationship kind we found in your signal";
+const DEFERRED_PREFIX = "Also found in your public signal, held aside:";
 const CLOSING_INVITE =
-  "TODO(sig): This is what the outside world reveals — not yet your words. Tell us which of these you truly serve, and who we've missed.";
+  "This is what the outside world reveals — not yet your words. Tell us which of these you truly serve, and who we've missed.";
 const DIAGNOSE_HANDOFF =
-  "TODO(sig): You've also told us privately who you're for — whether your public presence matches is the Diagnose conversation.";
-const EMPTY_HEADLINE = "TODO(sig): We haven't read your public markets yet.";
-const EMPTY_PROMPT = "TODO(sig): Market discovery runs from the internal workshop — ask your operator to run the outside read.";
+  "You've also told us privately who you're for — whether your public presence matches is the Diagnose conversation.";
+const EMPTY_HEADLINE = "We haven't read your public markets yet.";
+const EMPTY_PROMPT = "Market discovery runs from the internal workshop — ask your operator to run the outside read.";
 // ──────────────────────────────────────────────────────────────────────────────
 
 // The emergent-kind meta-note rule (signed as optional; built as the simple
