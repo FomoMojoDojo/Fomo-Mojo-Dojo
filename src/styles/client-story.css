@@ -799,3 +799,267 @@
     gap: 32px;
   }
 }
+
+/* ── MPD-D: Diagnose say/see act (markets) ─────────────────────────────────── */
+.cvs-dg-block {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 56px 48px 0;
+}
+
+.cvs-dg-heading {
+  font-weight: 200;
+  font-size: clamp(22px, 2.3vw, 32px);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-dg-subhead {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--mm-amber);
+  margin: 10px 0 0;
+}
+
+.cvs-dg-disclaimer {
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-muted);
+  border-left: 2px solid var(--mm-line-12);
+  padding-left: 16px;
+  max-width: 64ch;
+  margin: 12px 0 0;
+}
+
+/* Executor + job — shared say/see line pair. */
+.cvs-dg-exec {
+  font-weight: 300;
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-dg-job {
+  font-weight: 300;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+  margin: 6px 0 0;
+}
+
+/* Declared "Where they meet" — two columns. */
+.cvs-dg-meet {
+  border: 1px solid var(--mm-line-12);
+  border-radius: 6px;
+  padding: 32px;
+  margin-top: 28px;
+  background: var(--mm-card-bg);
+}
+
+.cvs-dg-meet-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+
+.cvs-dg-col-label {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mm-label);
+  margin: 0 0 14px;
+}
+
+.cvs-dg-verbatim {
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-dg-independence {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  border-top: 1px solid var(--mm-line);
+  padding-top: 18px;
+  margin: 28px 0 0;
+}
+
+/* Inferred pairs — compact executor-level list. */
+.cvs-dg-pairlist {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+.cvs-dg-pairrow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  gap: 18px;
+  padding: 13px 0;
+  border-top: 1px solid var(--mm-line);
+  font-weight: 300;
+  font-size: 14.5px;
+  line-height: 1.4;
+}
+
+.cvs-dg-pairrow-int {
+  color: var(--mm-text);
+  text-align: right;
+}
+
+.cvs-dg-glyph {
+  font-size: 13px;
+  color: var(--mm-label-dim);
+}
+
+.cvs-dg-pairrow-pub {
+  color: var(--mm-secondary);
+  text-align: left;
+}
+
+/* Granularity finding — fan-out. */
+.cvs-dg-gran-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 32px;
+  margin-top: 28px;
+}
+
+.cvs-dg-gran {
+  border-left: 2px solid var(--mm-amber-line);
+  padding-left: 18px;
+}
+
+.cvs-dg-gran-anchor {
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.3;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-dg-gran-lead {
+  font-weight: 300;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mm-amber);
+  margin: 8px 0 0;
+}
+
+.cvs-dg-gran-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.cvs-dg-gran-cp {
+  font-weight: 300;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--mm-muted);
+  padding-left: 14px;
+  position: relative;
+}
+
+.cvs-dg-gran-cp::before {
+  content: "·";
+  position: absolute;
+  left: 0;
+  color: var(--mm-label-dim);
+}
+
+.cvs-dg-gran-close {
+  font-weight: 300;
+  font-style: italic;
+  font-size: clamp(15px, 1.6vw, 18px);
+  line-height: 1.45;
+  color: var(--mm-secondary);
+  max-width: 52ch;
+  margin: 32px 0 0;
+}
+
+/* Gap cards — said-not-shown | shown-not-said. */
+.cvs-dg-gaps {
+  max-width: 1160px;
+  margin: 56px auto 0;
+  padding: 0 48px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: start;
+}
+
+.cvs-dg-gapcard {
+  border-top: 1px solid var(--mm-line);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.cvs-dg-gap-note {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+  color: var(--mm-label);
+  margin: 10px 0 0;
+  max-width: 44ch;
+}
+
+.cvs-dg-question {
+  max-width: 1160px;
+  margin: 64px auto 0;
+  padding: 0 48px;
+  font-weight: 300;
+  font-style: italic;
+  font-size: clamp(18px, 1.9vw, 23px);
+  line-height: 1.4;
+  color: var(--mm-text);
+}
+
+/* Honest not-ready state. */
+.cvs-dg-notready {
+  max-width: 1160px;
+  margin: 24px auto 0;
+  padding: 0 48px;
+}
+
+.cvs-dg-notready-headline {
+  font-weight: 300;
+  font-size: clamp(20px, 2.2vw, 28px);
+  line-height: 1.25;
+  color: var(--mm-faint);
+  margin: 0;
+}
+
+.cvs-dg-notready-prompt {
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mm-muted);
+  max-width: 60ch;
+  margin: 16px 0 0;
+}
+
+@media (max-width: 820px) {
+  .cvs-dg-block { padding: 44px 22px 0; }
+  .cvs-dg-meet { padding: 22px; }
+  .cvs-dg-meet-cols { grid-template-columns: 1fr; gap: 28px; }
+  .cvs-dg-pairrow { grid-template-columns: 1fr; gap: 4px; text-align: left; }
+  .cvs-dg-pairrow-int, .cvs-dg-pairrow-pub { text-align: left; }
+  .cvs-dg-glyph { display: none; }
+  .cvs-dg-gaps { grid-template-columns: 1fr; gap: 32px; padding: 0 22px; }
+  .cvs-dg-question, .cvs-dg-notready { padding: 0 22px; }
+}

@@ -14,6 +14,7 @@ import {
   resolveMarketPortfolio,
   type MarketDefRow,
   type MarketLensRow,
+  type MarketSurface,
   type ResolvedPortfolio,
   type SameMarketVerdictRow,
 } from "@/lib/marketPortfolio/resolveMarketPortfolio";
@@ -25,7 +26,10 @@ export type MarketPortfolioState = {
   error: string | null;
 };
 
-export function useMarketPortfolio(companyId?: string): MarketPortfolioState {
+// surface defaults to 'outside' — Act A callers stay register-pure by omission;
+// the Diagnose act opts into 'diagnose' explicitly (all registers + say/see
+// pairs). Same fetch either way; only the resolver's per-surface filter differs.
+export function useMarketPortfolio(companyId?: string, surface: MarketSurface = "outside"): MarketPortfolioState {
   const [state, setState] = useState<MarketPortfolioState>({
     loading: Boolean(companyId),
     portfolio: null,
@@ -69,7 +73,7 @@ export function useMarketPortfolio(companyId?: string): MarketPortfolioState {
         defs,
         lenses: (lensRes.data ?? []) as unknown as MarketLensRow[],
         verdicts: (verdictRes.data ?? []) as unknown as SameMarketVerdictRow[],
-        surface: "outside", // register purity: Act A never sees internal markets
+        surface, // 'outside' = register-pure Act A; 'diagnose' = all registers + pairs
       });
       if (seq.current !== mySeq) return;
       setState({
@@ -79,7 +83,7 @@ export function useMarketPortfolio(companyId?: string): MarketPortfolioState {
         error: null,
       });
     })();
-  }, [companyId]);
+  }, [companyId, surface]);
 
   return state;
 }

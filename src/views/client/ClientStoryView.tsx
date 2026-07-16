@@ -10,6 +10,7 @@ import OutsideQuestionAct from "@/components/client-view/story/OutsideQuestionAc
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import MovementShell from "@/components/client-view/story/movement/MovementShell";
 import MarketAct from "@/components/client-view/story/movement/MarketAct";
+import DiagnoseMarketAct from "@/components/client-view/story/diagnose/DiagnoseMarketAct";
 import "@/styles/client-story.css";
 
 /*
@@ -158,6 +159,9 @@ export default function ClientStoryView() {
             </MovementShell>
           </>
         ) : null}
+        {/* MPD-D: the Diagnose say/see act (markets) — mounts alongside the
+            remaining CV-3/CV-4 scaffolds, which stay until those acts land. */}
+        {phase === "diagnosis" ? <DiagnoseMarketAct /> : null}
         {acts.map((act, index) => {
           return (
             <section className="cvs-act" key={`${phase}-${index}`} aria-label={`Act ${index + 1} scaffold`}>
