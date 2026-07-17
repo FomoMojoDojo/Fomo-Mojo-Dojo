@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { regenerateJobMapJourney } from "../_shared/jobMapRegeneration.ts";
 import { protectedJourneyKeys } from "../_shared/journeyProtection.ts";
-import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
+import { loadContributingDocs } from "../_shared/uploadCorpus.ts";
+import { assertCorpusVoiceClassified } from "../_shared/corpusVoiceGate.ts";
 import { recordIntegrityRun } from "../_shared/integrity.ts";
 import { judgeStepPerspectives } from "../_shared/stepPerspectiveJudge.ts";
 import { fireMarketReconcile } from "../_shared/marketReconcileTrigger.ts";
@@ -1028,36 +1029,31 @@ Deno.serve(async (req) => {
     const marketDef = asRecord(marketDefRow as Record<string, unknown> | null);
     const primaryOutcome = asRecord(primaryOutcomeRow as Record<string, unknown> | null);
 
-    // Gate 2a: .extracted.txt sidecar excerpts join the synthesis context — a new
-    // LOCAL read (Supabase storage download) with no boundary change. Uneven budget
-    // per the operator amendment: B2B_-prefixed core docs up to SIDECAR_CORE_CAP
-    // chars each; the rest share what remains of SIDECAR_TOTAL_BUDGET.
-    const sidecarOrder = [
-      ...files.filter((row) => safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
-      ...files.filter((row) => !safeText((row as Record<string, unknown>)?.file_name).startsWith("B2B_")),
-    ];
-    const internalDocuments: Array<{ file_name: string; excerpt: string }> = [];
-    for (const row of sidecarOrder) {
-      const filePath = safeText((row as Record<string, unknown>)?.file_path);
-      const fileName = safeText((row as Record<string, unknown>)?.file_name);
-      if (!filePath) continue;
-      // Operator-approved tiered allocation (shared with local-strategy-synthesis).
-      const cap = sidecarCapForFile(fileName);
-      try {
-        const { data: sidecar, error: sidecarErr } = await supabase.storage
-          .from("input-files")
-          .download(`${filePath}.extracted.txt`);
-        if (sidecarErr || !sidecar) continue;
-        const text = (await sidecar.text()).replace(/\s+/g, " ").trim();
-        if (!text) continue;
-        internalDocuments.push({ file_name: fileName, excerpt: text.slice(0, cap) });
-      } catch {
-        // Missing sidecar = that document simply contributes nothing; the file list
-        // itself still appears in the `files` block below.
-      }
+    // VOICE GATE (CHANNEL ≠ VOICE) — the uploaded-doc sidecars join the synthesis
+    // context through the ONE shared corpus loader (deterministic, B2B_-core first,
+    // archived excluded). operator-override='external' docs are dropped from the
+    // brief. While a declared-direction jobmap write still exists it is REFUSED
+    // (zero writes) unless every doc is cleared as client voice — commit 4 then
+    // removes the declared jobmap write entirely, hard-wiring internal_inferred.
+    const contributingDocs = await loadContributingDocs(
+      supabase as unknown as Parameters<typeof loadContributingDocs>[0],
+      companyId,
+    );
+    const voiceGate = await assertCorpusVoiceClassified(
+      supabase as unknown as { from: (t: string) => any },
+      companyId,
+      contributingDocs.map((d) => ({ input_file_id: d.input_file_id, content_sha: d.content_sha, file_name: d.file_name })),
+    );
+    if (declaredDirection && !voiceGate.ok) {
+      console.warn(`[local-jobmap-synthesis] voice gate refused declared run for ${companyId}: ${voiceGate.message}`);
+      return json({ error: voiceGate.message, voice_gate: { blocked: voiceGate.blocked } }, 422);
     }
+    const excludedFileIds = new Set(voiceGate.ok ? voiceGate.excluded.map((d) => d.input_file_id) : []);
+    const internalDocuments: Array<{ file_name: string; excerpt: string }> = contributingDocs
+      .filter((d) => !excludedFileIds.has(d.input_file_id))
+      .map((d) => ({ file_name: d.file_name, excerpt: d.excerpt }));
     console.log(
-      `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${sidecarOrder.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (tiered allocation)`,
+      `[local-jobmap-synthesis] internal_documents: ${internalDocuments.length}/${contributingDocs.length} sidecars, ${internalDocuments.reduce((sum, d) => sum + d.excerpt.length, 0)} chars (voice-gated)`,
     );
 
     const industryLabel = inferStandardMarketCategory(

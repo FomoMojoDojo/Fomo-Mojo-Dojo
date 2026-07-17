@@ -54,9 +54,14 @@ export async function loadContributingDocs(
     archived_at?: string | null;
   }>).filter((f) => !f?.archived_at); // withdrawn uploads are never declared voice
 
+  // Operator-approved ordering: B2B_ core first, the rest after. Within each
+  // partition sort by file_path so the corpus (and the declared brief built from
+  // it) is deterministic across runs without a DB ORDER BY.
+  const byPath = (a: { file_path?: string }, b: { file_path?: string }) =>
+    String(a?.file_path || "").localeCompare(String(b?.file_path || ""));
   const ordered = [
-    ...files.filter((f) => String(f?.file_name || "").trim().startsWith("B2B_")),
-    ...files.filter((f) => !String(f?.file_name || "").trim().startsWith("B2B_")),
+    ...files.filter((f) => String(f?.file_name || "").trim().startsWith("B2B_")).sort(byPath),
+    ...files.filter((f) => !String(f?.file_name || "").trim().startsWith("B2B_")).sort(byPath),
   ];
 
   const out: ContributingDoc[] = [];
@@ -84,6 +89,6 @@ export async function loadContributingDocs(
       // missing/unreadable sidecar contributes nothing
     }
   }
-  // Stable order for deterministic runs/proofs.
-  return out.sort((a, b) => a.input_file_id.localeCompare(b.input_file_id));
+  // `ordered` already fixes B2B_-first + within-partition file_path order.
+  return out;
 }

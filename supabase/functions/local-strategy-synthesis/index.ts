@@ -26,7 +26,8 @@ import { buildClientCorpus } from "../_shared/syndication.ts";
 import { buildStoreSupplement, buildStoreSupplementBrief, type StoreSupplement } from "../_shared/storeSupplement.ts";
 import { buildCompetitorMarketBrief } from "../_shared/contextBuilders.ts";
 import { fireCascadeReconcile } from "../_shared/cascadeReconcileTrigger.ts";
-import { sidecarCapForFile } from "../_shared/sidecarAllocation.ts";
+import { loadContributingDocs } from "../_shared/uploadCorpus.ts";
+import { assertCorpusVoiceClassified } from "../_shared/corpusVoiceGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -283,31 +284,29 @@ Deno.serve(async (req) => {
       .eq("company_id", companyId).order("created_at", { ascending: false }).limit(1).maybeSingle();
     const competitorBrief = buildCompetitorMarketBrief((competitorRun as { result_json?: unknown } | null)?.result_json ?? null);
 
-    // Sidecars — the signed Gate 2a allocation.
-    const { data: inputRows } = await supabase.from("inputs").select("id").eq("company_id", companyId).limit(60);
-    const inputIds = (inputRows ?? []).map((r) => String((r as Record<string, unknown>)?.id || "")).filter(Boolean);
-    const { data: fileRows } = inputIds.length > 0
-      ? await supabase.from("input_files").select("file_name, file_path").in("input_id", inputIds).limit(180)
-      : { data: [] as unknown[] };
-    const files = (fileRows ?? []) as Array<{ file_name?: string; file_path?: string }>;
-    const ordered = [
-      ...files.filter((f) => safeText(f?.file_name).startsWith("B2B_")),
-      ...files.filter((f) => !safeText(f?.file_name).startsWith("B2B_")),
-    ];
-    const internalDocuments: Array<{ file_name: string; excerpt: string }> = [];
-    for (const f of ordered) {
-      const filePath = safeText(f?.file_path);
-      const fileName = safeText(f?.file_name);
-      if (!filePath) continue;
-      // Operator-approved tiered allocation (shared with local-jobmap-synthesis).
-      const cap = sidecarCapForFile(fileName);
-      try {
-        const { data: sidecar, error } = await supabase.storage.from("input-files").download(`${filePath}.extracted.txt`);
-        if (error || !sidecar) continue;
-        const text = (await sidecar.text()).replace(/\s+/g, " ").trim();
-        if (text) internalDocuments.push({ file_name: fileName, excerpt: text.slice(0, cap) });
-      } catch { /* missing sidecar contributes nothing */ }
+    // VOICE GATE (CHANNEL ≠ VOICE) — this function ONLY produces declared_direction
+    // / internal_declared artifacts, so an uploaded doc reaching the brief here IS
+    // being read as the client's voice. Load the contributing docs through the one
+    // shared corpus loader (deterministic, B2B_-core first) and REFUSE the whole
+    // declared run — zero model calls, zero writes — unless every doc is cleared as
+    // client voice. operator-override='external' docs are dropped from the brief.
+    const contributingDocs = await loadContributingDocs(
+      supabase as unknown as Parameters<typeof loadContributingDocs>[0],
+      companyId,
+    );
+    const voiceGate = await assertCorpusVoiceClassified(
+      supabase as unknown as { from: (t: string) => any },
+      companyId,
+      contributingDocs.map((d) => ({ input_file_id: d.input_file_id, content_sha: d.content_sha, file_name: d.file_name })),
+    );
+    if (!voiceGate.ok) {
+      console.warn(`[local-strategy-synthesis] voice gate refused for ${companyId}: ${voiceGate.message}`);
+      return json({ error: voiceGate.message, voice_gate: { blocked: voiceGate.blocked } }, 422);
     }
+    const excludedFileIds = new Set(voiceGate.excluded.map((d) => d.input_file_id));
+    const internalDocuments: Array<{ file_name: string; excerpt: string }> = contributingDocs
+      .filter((d) => !excludedFileIds.has(d.input_file_id))
+      .map((d) => ({ file_name: d.file_name, excerpt: d.excerpt }));
 
     // Store supplement (local DB reads; public-class content).
     let storeSupplement: StoreSupplement | null = null;
