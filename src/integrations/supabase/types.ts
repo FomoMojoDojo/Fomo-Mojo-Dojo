@@ -1021,6 +1021,63 @@ export type Database = {
           },
         ]
       }
+      doc_voice_verdicts: {
+        Row: {
+          basis: string
+          classifier_model: string | null
+          company_id: string
+          content_sha: string
+          created_at: string
+          id: string
+          input_file_id: string
+          operator_override: string | null
+          override_by: string | null
+          override_reason: string | null
+          verdict: string
+        }
+        Insert: {
+          basis: string
+          classifier_model?: string | null
+          company_id: string
+          content_sha: string
+          created_at?: string
+          id?: string
+          input_file_id: string
+          operator_override?: string | null
+          override_by?: string | null
+          override_reason?: string | null
+          verdict: string
+        }
+        Update: {
+          basis?: string
+          classifier_model?: string | null
+          company_id?: string
+          content_sha?: string
+          created_at?: string
+          id?: string
+          input_file_id?: string
+          operator_override?: string | null
+          override_by?: string | null
+          override_reason?: string | null
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doc_voice_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doc_voice_verdicts_input_file_id_fkey"
+            columns: ["input_file_id"]
+            isOneToOne: false
+            referencedRelation: "input_files"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       file_proposals: {
         Row: {
           applied_areas: string[]

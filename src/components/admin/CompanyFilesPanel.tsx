@@ -10,6 +10,7 @@ import { isInternalFileTag, sanitizeUserEditableTags, visibleFileTags } from "@/
 import { buildDefaultCheckpointSeed } from "@/lib/jtbdProcess";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import VoiceGatePanel from "@/components/admin/VoiceGatePanel";
 
 const c = {
   panel: "#FFFFFF",
@@ -1636,6 +1637,12 @@ export default function CompanyFilesPanel({ companyId, companyName, mode = "prev
               {filter}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {mode === "full" && allFiles.length > 0 ? (
+        <div className="mt-5">
+          <VoiceGatePanel companyId={companyId} />
         </div>
       ) : null}
 
