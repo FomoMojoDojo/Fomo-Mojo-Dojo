@@ -128,7 +128,8 @@ const GEN_SYSTEM =
   "CRITICAL LENS: map the job ENTIRELY from the EXECUTOR's side — the customer / the person the market SERVES, getting THEIR job done. " +
   "NEVER describe the provider or operator side (running, staffing, supplying, setting up, operating, or delivering the business/operation) — that is a DIFFERENT job and is forbidden. Every step is the executor's own step, in their words. " +
   "The ODI universal scaffold has 8 canonical checkpoints in FIXED order: define, locate, prepare, confirm, execute, monitor, modify, conclude. " +
-  "Use a SUBSET of these keys IN THIS ORDER — you may OMIT a checkpoint the industry genuinely doesn't exhibit, NEVER reorder, NEVER invent a step outside the 8. " +
+  "Use a SUBSET of these keys IN THIS ORDER — you may OMIT a checkpoint the industry genuinely doesn't exhibit, NEVER reorder, NEVER invent a step outside the 8. Omit ONLY when the executor's job truly lacks that stage; include every checkpoint the job really has. " +
+  "Each step's CONTENT must match its checkpoint's ODI intent: define = clarify the desired outcome; locate = find/gather options or information; prepare = get set up before the core task; confirm = verify readiness before doing it; execute = DO the core task; monitor = OBSERVE/TRACK how it is going while it is underway (NOT doing/using/enjoying the task — that is execute); modify = adjust or correct course; conclude = finish and confirm the outcome. Never put doing-the-task content under monitor. " +
   "Each step is solution-agnostic (no product, tool, brand, vendor, or prescribed method) and describes the EXECUTOR's job PROGRESS. " +
   "NEVER use these words or phrases (they are solution/process jargon, not job progress): feature, dashboard, portal, campaign, launch, tool, app, platform, build, implement, rollout, workflow, template, mvp, ui, productize, standardize, integrate, promote, negotiate, supplier, vendor, pricing, terms, partnership, onboarding, awareness, acquisition, activation, retention, engagement, funnel, pipeline, implementation plan, delivery process, consulting process. Describe the plain progress a customer makes, in everyday words. " +
   'Also produce a concise client-facing industry_label (2-6 words, Title Case). ' +
@@ -149,8 +150,9 @@ function buildGenUser(pin: IndustryPin, scaffold: string, feedback?: string): st
 const JUDGE_SYSTEM =
   "You are a strict judge. You are given a declared EXECUTOR + JOB and an ordered step sequence. Answer whether it is a legitimate, solution-agnostic ODI job map told ENTIRELY from the EXECUTOR's side (the customer / served-side getting THEIR job done). " +
   "REJECT (ok=false) if ANY step is framed from the PROVIDER / OPERATOR side — running, staffing, supplying, setting up, operating, or delivering the business/operation — instead of the executor getting the job done. " +
+  "CHECKPOINT-CONTENT MATCH: REJECT if any step's CONTENT does not match the ODI intent of its checkpoint key. Intents: define = clarify the desired outcome; locate = find/gather options or information; prepare = get set up before the core task; confirm = verify readiness before doing it; execute = DO the core task that produces the outcome; monitor = OBSERVE/TRACK how the in-progress job is going (NOT doing the job — if the content is performing, using, or enjoying the task itself, that is execute mis-slotted → REJECT); modify = adjust or correct course; conclude = finish and confirm the outcome. A step whose content belongs to a different checkpoint than its key is mis-slotted — reject. " +
   "Also reject product/solution/method/vendor framing or marketing claims. " +
-  'JSON only: {"ok":true|false,"reason":"one sentence"}.';
+  'JSON only: {"ok":true|false,"reason":"one sentence citing the offending step if any"}.';
 
 type GenResult = { industry_label: string; steps: NormStep[] };
 
@@ -194,7 +196,13 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
       const jv = JSON.parse(jr) as { ok?: unknown; reason?: unknown };
       judgeOk = jv.ok === true; reason = String(jv.reason ?? "").trim();
     } catch { lastIssue = `judge unparseable: ${jr.slice(0, 120)}`; continue; }
-    if (!judgeOk) { lastIssue = `70b judge rejected: ${reason}`; continue; }
+    if (!judgeOk) {
+      lastIssue = `70b judge rejected: ${reason}`;
+      // Feed the judge's reason back so the next attempt corrects the specific
+      // fault (e.g. a mis-slotted checkpoint), not blindly.
+      feedback = `Your previous attempt was REJECTED by the reviewer: ${reason}. Fix that specific problem — keep every step's content matching its ODI checkpoint intent (monitor = observing/tracking progress, NOT doing the task).`;
+      continue;
+    }
     return { ok: true, result: gen, judge_reason: reason };
   }
   return { ok: false, issue: lastIssue };
