@@ -23,7 +23,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { generateRouteConditionsForCompany } from "../_shared/routeConditionSynthesis.ts";
+import { generateRouteConditionsForCompany, type RouteConditionResult } from "../_shared/routeConditionSynthesis.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,9 +48,18 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write } = await req.json();
+    const { company_id, write, route_ids, plan, run_target } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false; // default true; write:false ⇒ dry-run
+    const doPlan = plan === true;
+    // WF-3: presence-gated scoping — an empty route_ids array is a caller error, never
+    // silently the whole company (a chunk intent must not become a full run).
+    let routeIds: string[] | undefined;
+    if (route_ids !== undefined && route_ids !== null) {
+      const filtered = Array.isArray(route_ids) ? (route_ids as unknown[]).filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+      if (filtered.length === 0) return json({ ok: false, error: "route_ids must be a non-empty array of route ids — omit it for the whole company" }, 422);
+      routeIds = filtered;
+    }
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     if (!isLocalOllamaUrl(ollamaUrl)) {
@@ -62,17 +71,69 @@ serve(async (req) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    );
+    ) as unknown as { from: (t: string) => any };
 
-    const result = await generateRouteConditionsForCompany({
-      supabase,
-      companyId: company_id,
-      ollamaUrl,
-      genModel,
-      judgeModel,
-      write: doWrite,
-      nowIso: new Date().toISOString(),
-    });
+    // PLAN — the route worklist manifest for the client's chunk loop (zero model calls,
+    // zero writes; resume truth).
+    if (doPlan) {
+      const p = await generateRouteConditionsForCompany({ supabase, companyId: company_id, ollamaUrl, genModel, judgeModel, write: false, routeIds, nowIso: new Date().toISOString(), plan: true });
+      if (p.ok) return json(p);
+      if (p.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — conditions aren't generated for it." }, 403);
+      return json({ ok: false, error: "no active routes for this company" }, 404);
+    }
+
+    // START-of-run ledger (long_runner_runs, WF-3) — the first WRITING chunk creates the
+    // row (client passes run_target = the plan's route count); each chunk advances
+    // done_count; when done_count ≥ target the run is marked completed. Non-fatal: a
+    // ledger failure never breaks the run. Resume-by-reclick: re-planning re-chunks the
+    // routes not yet reconciled; the origin-merge is idempotent per route.
+    const RUN_KIND = "route_conditions";
+    let ledgerRowId: string | null = null;
+    if (doWrite) {
+      try {
+        const { data: running } = await supabase.from("long_runner_runs").select("id").eq("run_kind", RUN_KIND).eq("company_id", company_id).eq("status", "running").limit(1);
+        ledgerRowId = (running as Array<{ id: string }> | null)?.[0]?.id ?? null;
+        if (!ledgerRowId) {
+          const target = typeof run_target === "number" && run_target >= 0 ? Math.floor(run_target) : (routeIds?.length ?? 0);
+          const { data: row } = await supabase.from("long_runner_runs").insert({ run_kind: RUN_KIND, company_id, status: "running", target_count: target }).select("id").single();
+          ledgerRowId = (row as { id?: unknown } | null)?.id ? String((row as { id: unknown }).id) : null;
+        }
+      } catch (e) {
+        console.log("[route-conditions] ledger start error", String((e as Error)?.message ?? e));
+      }
+    }
+
+    let result: RouteConditionResult;
+    try {
+      result = await generateRouteConditionsForCompany({
+        supabase,
+        companyId: company_id,
+        ollamaUrl,
+        genModel,
+        judgeModel,
+        write: doWrite,
+        routeIds,
+        nowIso: new Date().toISOString(),
+      });
+    } catch (err) {
+      if (ledgerRowId) {
+        try { await supabase.from("long_runner_runs").update({ status: "failed", error_text: String((err as Error)?.message ?? err), finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", ledgerRowId); } catch { /* non-fatal */ }
+      }
+      throw err;
+    }
+
+    if (result.ok && ledgerRowId) {
+      try {
+        const { data: row } = await supabase.from("long_runner_runs").select("done_count, target_count").eq("id", ledgerRowId).single();
+        const done = Number((row as { done_count?: unknown } | null)?.done_count ?? 0) + result.totals.routes;
+        const target = Number((row as { target_count?: unknown } | null)?.target_count ?? 0);
+        const patch: Record<string, unknown> = { done_count: done, updated_at: new Date().toISOString() };
+        if (target > 0 && done >= target) { patch.status = "completed"; patch.finished_at = new Date().toISOString(); }
+        await supabase.from("long_runner_runs").update(patch).eq("id", ledgerRowId);
+      } catch (e) {
+        console.log("[route-conditions] ledger update error", String((e as Error)?.message ?? e));
+      }
+    }
 
     if (result.ok) {
       return json({ ok: true, dry_run: !doWrite, totals: result.totals, perRoute: result.perRoute });

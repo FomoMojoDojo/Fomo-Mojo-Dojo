@@ -64,6 +64,15 @@ export type RouteConditionResult =
   | { ok: false; skipped: "frozen_company" | "no_routes" }
   | { ok: false; error: string };
 
+// WF-3 plan manifest: the route worklist for the client's chunk loop. Zero model
+// calls, zero writes — resume truth (a re-click re-plans and re-chunks only the
+// routes not yet reconciled). Route-condition re-rolls are idempotent per route
+// (origin-merge by contentIdentity), so a re-run over an already-done route
+// converges without duplicating.
+export type RouteConditionPlanResult =
+  | { ok: true; plan: true; routes: Array<{ id: string; title: string; condition_count: number }> }
+  | { ok: false; skipped: "frozen_company" | "no_routes" };
+
 // ── Local Ollama call (copied from routeLegSynthesis — native /api/chat, JSON) ──
 async function callOllamaJson(
   ollamaUrl: string,
@@ -359,18 +368,29 @@ export async function synthesizeRouteConditions(args: {
   const source = `${CONDITION_SOURCE_PREFIX}:${args.nowIso.slice(0, 10)}`;
   const perRoute: RouteConditionOutcome[] = [];
 
+  // WF-3 model-phase batching: run ALL 14b generations for the chunk FIRST (keep the
+  // gen model resident in VRAM), then ALL 70b judgments + per-route reconcile/write.
+  // Origin-merge: operator conditions (NO generate-route-conditions source) are kept
+  // verbatim; generated conditions are re-rolled. Don't duplicate an operator topic.
+  type Prepared = { route: RouteInput; operatorConditions: WrapCondition[]; operatorTexts: Set<string>; candidates: string[]; genError?: string };
+  const prepared: Prepared[] = [];
   for (const route of args.routes) {
-    // Origin-merge: operator conditions (NO generate-route-conditions source) are kept
-    // verbatim; generated conditions are re-rolled. Don't duplicate an operator topic.
     const operatorConditions = route.existing.filter((c) => !isGeneratedCondition(c) && String(c?.condition ?? "").trim());
     const operatorTexts = new Set(operatorConditions.map((c) => String(c.condition).trim().toLowerCase()));
-
-    let candidates: string[] = [];
     try {
-      candidates = await generateRouteConditions({ ollamaUrl: args.ollamaUrl, genModel, route });
+      const candidates = await generateRouteConditions({ ollamaUrl: args.ollamaUrl, genModel, route });
+      prepared.push({ route, operatorConditions, operatorTexts, candidates });
     } catch (e) {
-      // Surface a per-route generator failure without aborting the whole run.
-      perRoute.push({ route_id: route.id, route_title: route.title, proposed: [{ condition: "", kept: false, judge_reason: String((e as Error)?.message ?? e) }], written_count: null, preserved_operator: operatorConditions.length });
+      prepared.push({ route, operatorConditions, operatorTexts, candidates: [], genError: String((e as Error)?.message ?? e) });
+    }
+  }
+
+  // Phase B — 70b judgments + per-route origin-merge / reconcile / write (unchanged).
+  for (const p of prepared) {
+    const { route, operatorConditions, operatorTexts, candidates } = p;
+    if (p.genError) {
+      // Surface a per-route generator failure without aborting the whole chunk.
+      perRoute.push({ route_id: route.id, route_title: route.title, proposed: [{ condition: "", kept: false, judge_reason: p.genError }], written_count: null, preserved_operator: operatorConditions.length });
       continue;
     }
 
@@ -449,6 +469,16 @@ export async function synthesizeRouteConditions(args: {
 }
 
 // ── Company-level entry point (frozen guard + load routes + synthesize) ─────────
+// WF-3: `routeIds` scopes the run to a chunk of 1–2 routes (the client loops over
+// the plan manifest). `plan:true` returns the manifest only (zero model calls,
+// zero writes). Per-route reconcile + condition_removals audit is unchanged —
+// each route is self-contained, so chunking never breaks the reconcile invariant.
+export async function generateRouteConditionsForCompany(
+  args: { supabase: { from: (t: string) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan: true },
+): Promise<RouteConditionPlanResult>;
+export async function generateRouteConditionsForCompany(
+  args: { supabase: { from: (t: string) => any }; companyId: string; ollamaUrl: string; nowIso: string; genModel?: string; judgeModel?: string; write: boolean; routeIds?: string[]; plan?: false | undefined },
+): Promise<RouteConditionResult>;
 export async function generateRouteConditionsForCompany(args: {
   supabase: { from: (t: string) => any };
   companyId: string;
@@ -457,19 +487,22 @@ export async function generateRouteConditionsForCompany(args: {
   genModel?: string;
   judgeModel?: string;
   write: boolean;
-}): Promise<RouteConditionResult> {
+  routeIds?: string[];
+  plan?: boolean;
+}): Promise<RouteConditionResult | RouteConditionPlanResult> {
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
 
   const { data: companyRow } = await args.supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle();
   const companyName = String((companyRow as { name?: unknown } | null)?.name ?? "");
 
-  const { data: routeRows, error } = await args.supabase
+  let query = args.supabase
     .from("routes")
     .select("id, title, short_description, category, what_would_have_to_be_true")
     .eq("company_id", args.companyId)
     .eq("level", "route")
-    .eq("relevance_state", "active")
-    .order("sort_order", { ascending: true });
+    .eq("relevance_state", "active");
+  if (Array.isArray(args.routeIds) && args.routeIds.length > 0) query = query.in("id", args.routeIds);
+  const { data: routeRows, error } = await query.order("sort_order", { ascending: true });
   if (error) return { ok: false, error: String(error.message || error) };
 
   const routes: RouteInput[] = ((routeRows ?? []) as Array<Record<string, unknown>>).map((r) => ({
@@ -481,6 +514,11 @@ export async function generateRouteConditionsForCompany(args: {
   }));
 
   if (routes.length === 0) return { ok: false, skipped: "no_routes" };
+
+  // PLAN — the worklist manifest for the client's chunk loop. No model calls, no writes.
+  if (args.plan) {
+    return { ok: true, plan: true, routes: routes.map((r) => ({ id: r.id, title: r.title, condition_count: r.existing.length })) };
+  }
 
   const perRoute = await synthesizeRouteConditions({
     supabase: args.supabase,
