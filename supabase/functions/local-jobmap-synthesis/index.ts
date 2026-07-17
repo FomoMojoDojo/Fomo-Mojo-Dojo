@@ -46,8 +46,6 @@ const USER_TEXT_ABORT_CHARS = 28_000;
 const DECLARED_USER_TEXT_ABORT_CHARS = 60_000;
 const DEFAULT_NUM_CTX = 8_192;
 const DECLARED_NUM_CTX = 32_768;
-const DECLARED_EVIDENCE_BASIS =
-  "Declared direction, derived from your internal documents. Not yet validated by market or customer evidence.";
 const STANDARD_MARKET_CATEGORY_LIST =
   "B2B SaaS, B2C SaaS, Marketplace, E-commerce, Professional Services, Healthcare Services, Financial Services, Education Services, Nonprofit Services, Hospitality/Foodservice, Logistics/Transportation, Manufacturing, Public Sector/Government";
 
@@ -918,11 +916,14 @@ Deno.serve(async (req) => {
     // require_model — model failure/timeout is a loud error with ZERO writes;
     //   deterministic fallback is prohibited (it would write a set not derived from
     //   the documents while looking like success).
-    // declared_direction — written steps carry the operator-signed declared-direction
-    //   evidence wording, applied after normalization so the sanitizer cannot coerce it.
+    // VOICE-GATE-4: the `declared_direction` request bypass is REMOVED. A request
+    //   flag can no longer force internal_declared / declared step wording here —
+    //   this function is a framework read of the internal corpus and is therefore
+    //   internal_inferred by construction. The ONLY declared path is Gate 3b
+    //   (local-strategy-synthesis), which the voice gate refuses unless the corpus
+    //   is cleared as the client's voice.
     const selectedMapsOnly = Boolean((body as Record<string, unknown>)?.selected_maps_only);
     const requireModel = Boolean((body as Record<string, unknown>)?.require_model);
-    const declaredDirection = Boolean((body as Record<string, unknown>)?.declared_direction);
     // Model-experiment gate: dry_run = full assembly + generation + normalization
     // + ALL strict guards + judge verdicts, ZERO DB writes of any kind (no steps,
     // no market def, no reconcile, no integrity record, no verdict persists).
@@ -1031,10 +1032,10 @@ Deno.serve(async (req) => {
 
     // VOICE GATE (CHANNEL ≠ VOICE) — the uploaded-doc sidecars join the synthesis
     // context through the ONE shared corpus loader (deterministic, B2B_-core first,
-    // archived excluded). operator-override='external' docs are dropped from the
-    // brief. While a declared-direction jobmap write still exists it is REFUSED
-    // (zero writes) unless every doc is cleared as client voice — commit 4 then
-    // removes the declared jobmap write entirely, hard-wiring internal_inferred.
+    // archived excluded). This function is internal_inferred by construction, so it
+    // does NOT refuse a mixed corpus (an inferred read of an upload is honest — it
+    // never claims the words are the client's). It only DROPS docs the operator has
+    // explicitly overridden to 'external'. The declared refusal lives in Gate 3b.
     const contributingDocs = await loadContributingDocs(
       supabase as unknown as Parameters<typeof loadContributingDocs>[0],
       companyId,
@@ -1044,10 +1045,6 @@ Deno.serve(async (req) => {
       companyId,
       contributingDocs.map((d) => ({ input_file_id: d.input_file_id, content_sha: d.content_sha, file_name: d.file_name })),
     );
-    if (declaredDirection && !voiceGate.ok) {
-      console.warn(`[local-jobmap-synthesis] voice gate refused declared run for ${companyId}: ${voiceGate.message}`);
-      return json({ error: voiceGate.message, voice_gate: { blocked: voiceGate.blocked } }, 422);
-    }
     const excludedFileIds = new Set(voiceGate.ok ? voiceGate.excluded.map((d) => d.input_file_id) : []);
     const internalDocuments: Array<{ file_name: string; excerpt: string }> = contributingDocs
       .filter((d) => !excludedFileIds.has(d.input_file_id))
@@ -1097,12 +1094,7 @@ Deno.serve(async (req) => {
         status: safeText((row as Record<string, unknown>)?.status),
         completeness: Number((row as Record<string, unknown>)?.completeness) || 0,
       })),
-      // Declared-direction context-window fit (measured: prompt_eval 7,190 of 8,192
-      // left the JSON output truncated at done_reason=length): the files metadata
-      // block is fully redundant with internal_documents on declared runs, and the
-      // public-baseline ledger is context, not source, for an internal derivation.
-      // The signed sidecar budget is untouched by these trims.
-      files: declaredDirection ? [] : files.map((row) => ({
+      files: files.map((row) => ({
         input_id: safeText((row as Record<string, unknown>)?.input_id),
         file_name: safeText((row as Record<string, unknown>)?.file_name),
         tags: Array.isArray((row as Record<string, unknown>)?.tags)
@@ -1118,12 +1110,10 @@ Deno.serve(async (req) => {
         economic_engine: safeText(lensCard?.economic_engine),
       },
       baseline_signals: evidenceLedger
-        .slice(0, declaredDirection ? 10 : 18)
+        .slice(0, 18)
         .map((item) => ({
           bucket: safeText((item as Record<string, unknown>)?.bucket),
-          snippet: declaredDirection
-            ? safeText((item as Record<string, unknown>)?.snippet).slice(0, 160)
-            : safeText((item as Record<string, unknown>)?.snippet),
+          snippet: safeText((item as Record<string, unknown>)?.snippet),
         }))
         .filter((item) => item.bucket || item.snippet),
       industry_label: industryLabel || "",
@@ -1166,7 +1156,7 @@ Deno.serve(async (req) => {
         industryLabel: industryLabel || undefined,
         industryAnchors: industryAnchors || undefined,
         timeoutMs: requireModel ? OLLAMA_REQUIRE_MODEL_TIMEOUT_MS : undefined,
-        skipNeeds: declaredDirection,
+        skipNeeds: false,
         numCtx: requireModel ? DECLARED_NUM_CTX : DEFAULT_NUM_CTX,
         abortChars: requireModel ? DECLARED_USER_TEXT_ABORT_CHARS : USER_TEXT_ABORT_CHARS,
       });
@@ -1307,48 +1297,11 @@ Deno.serve(async (req) => {
       .filter((j) => dryRun || !provenanceProtectedKeys.has(j.journey_key.toLowerCase()))
       .filter((j) => !selectedMapsOnly || requestedMapKeys.has(j.journey_key))
       .sort((a, b) => Number(isCustomerJourneyKey(a.journey_key)) - Number(isCustomerJourneyKey(b.journey_key)));
-    if (declaredDirection) {
-      // Operator-signed declared-direction wording, applied after normalization so
-      // sanitizeEvidenceStatus cannot coerce it back to "unclear".
-      for (const journey of journeysToWrite) {
-        journey.steps = journey.steps.map((step) => ({
-          ...step,
-          evidence_status: "declared" as NormalizedStep["evidence_status"],
-          evidence_basis: DECLARED_EVIDENCE_BASIS,
-        }));
-      }
-    }
-
-    // Executor-perspective judge (operator-approved, band-judge pattern): declared
-    // steps must be provably buyer-side. Uncertain → 'seller' → loud block.
-    let perspectiveVerdicts: Awaited<ReturnType<typeof judgeStepPerspectives>> = [];
-    if (declaredDirection && journeysToWrite.length > 0) {
-      const executorBrief = [
-        safeText(marketDef?.job_executor),
-        safeText(marketDef?.jtbd),
-      ].filter(Boolean).join(" — ") || "the buying-side job executor";
-      const judgeSteps = journeysToWrite.flatMap((j) => j.steps.map((step) => ({
-        step_number: step.step_number,
-        step_label: step.step_label,
-        description: step.description,
-      })));
-      perspectiveVerdicts = await judgeStepPerspectives({
-        supabase: supabase as unknown as { from: (t: string) => any },
-        companyId,
-        steps: judgeSteps,
-        executorBrief,
-        ollamaUrl,
-        persist: !dryRun,
-      });
-      const sellerSteps = perspectiveVerdicts.filter((v) => v.verdict === "seller");
-      if (!dryRun && sellerSteps.length > 0) {
-        return json({
-          error: `executor-perspective judge: ${sellerSteps.length} step(s) judged seller-perspective — refusing write. ` +
-            sellerSteps.map((v) => `step ${v.step_number} "${v.step_label}"`).join("; "),
-          perspective_verdicts: perspectiveVerdicts,
-        }, 502);
-      }
-    }
+    // VOICE-GATE-4: declared-direction step wording and the declared-only
+    // executor-perspective judge were removed with the `declared_direction` bypass.
+    // This function no longer stamps steps 'declared' — it is internal_inferred by
+    // construction. perspectiveVerdicts stays an empty array for payload shape.
+    const perspectiveVerdicts: Awaited<ReturnType<typeof judgeStepPerspectives>> = [];
 
     // Dry run: visibility is the product — render everything, write nothing.
     if (dryRun) {
@@ -1422,10 +1375,10 @@ Deno.serve(async (req) => {
           job_executor: marketDefinition.job_executor,
           chooser: marketDefinition.chooser,
           jtbd: marketDefinition.jtbd,
-          // Gate 2a addendum: declared-direction runs must not leave internally
-          // derived content under a borrowed label — internal_declared is the
-          // honest enum value (widened by migration 20260612000002).
-          provenance_type: declaredDirection ? "internal_declared" : "framework_adjudicated",
+          // VOICE-GATE-4: this function is a framework read of the internal corpus.
+          // No request flag can force internal_declared here — provenance is always
+          // framework_adjudicated (register internal_inferred on insert below).
+          provenance_type: "framework_adjudicated",
           source_path: preserveManualMarket ? safeText(existingMarket?.source_path) : "local_jobmap_synthesis",
           frameworks_used: ["JTBD", "ODI", "local_ollama", "local_jobmap_synthesis"],
           updated_at: new Date().toISOString(),
@@ -1440,12 +1393,11 @@ Deno.serve(async (req) => {
       const { error: marketInsertError } = await supabase.from("odi_market_definitions").insert({
         company_id: companyId,
         user_id: runUserId,
-        provenance_type: declaredDirection ? "internal_declared" : "framework_adjudicated",
-        // OOD-1 register birth-stamp: mirror the writer's two provenance modes.
-        // Declared-direction runs ingest the client's own direction (declared);
-        // adjudicated runs are our framework read of the internal corpus
-        // (inferred). Both are internal-register either way.
-        market_register: declaredDirection ? "internal_declared" : "internal_inferred",
+        provenance_type: "framework_adjudicated",
+        // OOD-1 register birth-stamp. VOICE-GATE-4: jobmap is a framework read of
+        // the internal corpus — internal_inferred by construction. The declared
+        // register can only be born through Gate 3b (voice-gated), never here.
+        market_register: "internal_inferred",
         job_executor: marketDefinition.job_executor,
         chooser: marketDefinition.chooser,
         jtbd: marketDefinition.jtbd,
