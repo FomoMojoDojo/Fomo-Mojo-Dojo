@@ -46,15 +46,23 @@ const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.doc
 
 // The 8 SIGNED priority slugs → a SEED label (anchor seeding + 14b context only).
 // The stored industry_label is what the model refines (provisional, unpublished).
-const SIGNED_SLUGS: Record<string, string> = {
-  "nonprofit-social-services": "Nonprofit and social services organizations",
-  "coffee-cafe": "Coffee shops and cafés",
-  "cloud-infrastructure": "Cloud infrastructure and hosting providers",
-  "insurance-agency": "Insurance agencies and brokerages",
-  "environmental-remediation": "Environmental and remediation services",
-  "management-consulting": "Management and strategy consulting firms",
-  "b2b-saas": "B2B software (SaaS) companies",
-  "home-improvement-remodeling": "Home improvement and remodeling contractors",
+// FD-2a — each signed slug pins a SINGLE customer/served-side EXECUTOR + JTBD (the
+// front-door lens: whoever the market SERVES getting their job done — NOT the
+// provider/operator running the business, which is the Diagnose counterpart). This
+// is a system-side declaration (industry-keyed, not per-client); the lens is fed
+// into the 14b prompt AND enforced by the 70b judge so drift back to the operator
+// side is rejected, not just discouraged. seed_label seeds the anchor + gives the
+// 14b context; the stored industry_label is the model's refinement.
+type IndustryPin = { seed_label: string; executor: string; jtbd: string };
+const SIGNED_INDUSTRIES: Record<string, IndustryPin> = {
+  "nonprofit-social-services": { seed_label: "Nonprofit and social services organizations", executor: "a person or family seeking support", jtbd: "get the help or services they need to improve their situation" },
+  "coffee-cafe": { seed_label: "Coffee shops and cafés", executor: "a customer visiting a coffee shop or café", jtbd: "enjoy a satisfying coffee-shop visit" },
+  "cloud-infrastructure": { seed_label: "Cloud infrastructure and hosting providers", executor: "a technical team that needs computing capacity", jtbd: "get their applications running reliably on rented infrastructure" },
+  "insurance-agency": { seed_label: "Insurance agencies and brokerages", executor: "a person or business seeking insurance coverage", jtbd: "get the right coverage in place to protect against risk" },
+  "environmental-remediation": { seed_label: "Environmental and remediation services", executor: "a property owner facing an environmental problem", jtbd: "get the contamination resolved and the property made safe" },
+  "management-consulting": { seed_label: "Management and strategy consulting firms", executor: "a business leader facing a strategic problem", jtbd: "get a clear, workable path to solving a critical business problem" },
+  "b2b-saas": { seed_label: "B2B software (SaaS) companies", executor: "a business team with a problem to solve", jtbd: "get their business problem solved with the right software" },
+  "home-improvement-remodeling": { seed_label: "Home improvement and remodeling contractors", executor: "a homeowner planning an improvement", jtbd: "get their home improved the way they envisioned" },
 };
 
 function isLocalOllamaUrl(u: string): boolean {
@@ -115,33 +123,39 @@ function trippedWords(steps: NormStep[]): string[] {
 }
 
 const GEN_SYSTEM =
-  "You produce an INDUSTRY-STANDARD job map — the standard, solution-agnostic sequence of ODI job STEPS for the PRIMARY job a customer engages a business in a given industry to get done. " +
+  "You produce an INDUSTRY-STANDARD job map — the standard, solution-agnostic sequence of ODI job STEPS for how ONE declared job performer (the EXECUTOR) gets their job done in a given industry. " +
   "This is the generally-accepted standard for the industry, stated as the norm — NOT any one company's process. " +
+  "CRITICAL LENS: map the job ENTIRELY from the EXECUTOR's side — the customer / the person the market SERVES, getting THEIR job done. " +
+  "NEVER describe the provider or operator side (running, staffing, supplying, setting up, operating, or delivering the business/operation) — that is a DIFFERENT job and is forbidden. Every step is the executor's own step, in their words. " +
   "The ODI universal scaffold has 8 canonical checkpoints in FIXED order: define, locate, prepare, confirm, execute, monitor, modify, conclude. " +
   "Use a SUBSET of these keys IN THIS ORDER — you may OMIT a checkpoint the industry genuinely doesn't exhibit, NEVER reorder, NEVER invent a step outside the 8. " +
-  "Each step is solution-agnostic (no product, tool, brand, vendor, or prescribed method) and describes the customer's job PROGRESS. " +
+  "Each step is solution-agnostic (no product, tool, brand, vendor, or prescribed method) and describes the EXECUTOR's job PROGRESS. " +
   "NEVER use these words or phrases (they are solution/process jargon, not job progress): feature, dashboard, portal, campaign, launch, tool, app, platform, build, implement, rollout, workflow, template, mvp, ui, productize, standardize, integrate, promote, negotiate, supplier, vendor, pricing, terms, partnership, onboarding, awareness, acquisition, activation, retention, engagement, funnel, pipeline, implementation plan, delivery process, consulting process. Describe the plain progress a customer makes, in everyday words. " +
   'Also produce a concise client-facing industry_label (2-6 words, Title Case). ' +
   'JSON only: {"industry_label":"...","steps":[{"step_key":"define|locate|prepare|confirm|execute|monitor|modify|conclude","step_label":"2-8 words","description":"one sentence, industry-typical"}]}';
 
-function buildGenUser(seedLabel: string, scaffold: string, feedback?: string): string {
+function buildGenUser(pin: IndustryPin, scaffold: string, feedback?: string): string {
   return (
-    `Industry: ${seedLabel}\n` +
-    `\nODI scaffold (labels are hypotheses to sharpen, not to copy verbatim):\n${scaffold}\n\n` +
+    `Industry: ${pin.seed_label}\n` +
+    `EXECUTOR (map the job from THIS side ONLY): ${pin.executor}\n` +
+    `JOB TO BE DONE: ${pin.jtbd}\n` +
+    `Every step is a stage in how ${pin.executor} gets this job done — from the executor's own perspective. Do NOT describe how any business runs, staffs, supplies, or delivers its operation.\n` +
+    `\nODI scaffold (labels are hypotheses to sharpen, not to copy verbatim — and rephrase any that read from the operator side into the executor's side):\n${scaffold}\n\n` +
     (feedback ? `${feedback}\n\n` : "") +
-    `Produce the industry-standard ODI job map for the primary customer job in this industry. Use only the canonical keys, in canonical order, omitting any the industry doesn't exhibit.`
+    `Produce the industry-standard ODI job map for how ${pin.executor} gets this job done. Use only the canonical keys, in canonical order, omitting any the executor doesn't exhibit.`
   );
 }
 
 const JUDGE_SYSTEM =
-  "You are a strict judge. You are given an ordered industry job-step sequence. Answer whether it is a legitimate, solution-agnostic ODI job map for the industry's primary customer job: " +
-  "each step describes customer job PROGRESS (not a product/solution/method/vendor), the sequence reads as the industry standard, and nothing is a marketing claim. " +
+  "You are a strict judge. You are given a declared EXECUTOR + JOB and an ordered step sequence. Answer whether it is a legitimate, solution-agnostic ODI job map told ENTIRELY from the EXECUTOR's side (the customer / served-side getting THEIR job done). " +
+  "REJECT (ok=false) if ANY step is framed from the PROVIDER / OPERATOR side — running, staffing, supplying, setting up, operating, or delivering the business/operation — instead of the executor getting the job done. " +
+  "Also reject product/solution/method/vendor framing or marketing claims. " +
   'JSON only: {"ok":true|false,"reason":"one sentence"}.';
 
 type GenResult = { industry_label: string; steps: NormStep[] };
 
-async function generateForIndustry(ollamaUrl: string, genModel: string, judgeModel: string, seedLabel: string): Promise<{ ok: true; result: GenResult; judge_reason: string } | { ok: false; issue: string }> {
-  const coarse = inferStandardMarketCategory(seedLabel);
+async function generateForIndustry(ollamaUrl: string, genModel: string, judgeModel: string, pin: IndustryPin): Promise<{ ok: true; result: GenResult; judge_reason: string } | { ok: false; issue: string }> {
+  const coarse = inferStandardMarketCategory(pin.seed_label);
   const anchors = coarse ? getIndustryStepAnchors(coarse) : null;
   const scaffold = anchors ? anchorsToPromptBlock(anchors) : bareScaffoldBlock();
 
@@ -152,7 +166,7 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
   for (let attempt = 0; attempt < 5; attempt++) {
     let gen: GenResult;
     try {
-      const raw = await callOllamaJson(ollamaUrl, genModel, GEN_SYSTEM, buildGenUser(seedLabel, scaffold, feedback || undefined), GEN_TIMEOUT_MS);
+      const raw = await callOllamaJson(ollamaUrl, genModel, GEN_SYSTEM, buildGenUser(pin, scaffold, feedback || undefined), GEN_TIMEOUT_MS);
       const p = JSON.parse(raw) as { industry_label?: unknown; steps?: unknown };
       const label = String(p.industry_label ?? "").trim();
       const steps = (Array.isArray(p.steps) ? p.steps : []).map((s: any) => ({ step_key: String(s?.step_key || "").trim().toLowerCase(), step_label: String(s?.step_label || "").trim(), description: String(s?.description || "").trim() }));
@@ -173,7 +187,7 @@ async function generateForIndustry(ollamaUrl: string, genModel: string, judgeMod
       continue;
     }
     // 70b ODI-shape / solution-agnostic judge (judge-only).
-    const judgeUser = `Industry: ${seedLabel}\nSteps:\n` + gen.steps.map((s, i) => `${i + 1} (${s.step_key}): ${s.step_label} — ${s.description}`).join("\n");
+    const judgeUser = `Industry: ${pin.seed_label}\nEXECUTOR: ${pin.executor}\nJOB: ${pin.jtbd}\nSteps:\n` + gen.steps.map((s, i) => `${i + 1} (${s.step_key}): ${s.step_label} — ${s.description}`).join("\n");
     const jr = await callOllamaJson(ollamaUrl, judgeModel, JUDGE_SYSTEM, judgeUser, JUDGE_TIMEOUT_MS);
     let judgeOk = false; let reason = "";
     try {
@@ -192,7 +206,7 @@ serve(async (req) => {
     const { industry_key, industry_keys, force, dry_run } = await req.json();
     const keys: string[] = Array.isArray(industry_keys) ? industry_keys.map(String) : (industry_key ? [String(industry_key)] : []);
     if (keys.length === 0) return json({ ok: false, error: "industry_key or industry_keys required" }, 400);
-    const unknown = keys.filter((k) => !SIGNED_SLUGS[k]);
+    const unknown = keys.filter((k) => !SIGNED_INDUSTRIES[k]);
     if (unknown.length > 0) return json({ ok: false, error: `unknown/unsigned industry_key(s): ${unknown.join(", ")}` }, 400);
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
@@ -211,7 +225,8 @@ serve(async (req) => {
       if (rows.some((r) => r.is_published === true)) { results.push({ industry_key: key, status: "skipped_published" }); continue; }
       if (rows.length > 0 && !force) { results.push({ industry_key: key, status: "skipped_existing_draft", draft_rows: rows.length }); continue; }
 
-      const gen = await generateForIndustry(ollamaUrl, genModel, judgeModel, SIGNED_SLUGS[key]);
+      const pin = SIGNED_INDUSTRIES[key];
+      const gen = await generateForIndustry(ollamaUrl, genModel, judgeModel, pin);
       if (!gen.ok) { results.push({ industry_key: key, status: "failed", issue: gen.issue }); continue; }
 
       const stepRows = await Promise.all(gen.result.steps.map(async (s, i) => ({
@@ -228,7 +243,7 @@ serve(async (req) => {
         is_published: false,
       })));
 
-      if (dry_run) { results.push({ industry_key: key, status: "dry_run", industry_label: gen.result.industry_label, judge_reason: gen.judge_reason, steps: gen.result.steps }); continue; }
+      if (dry_run) { results.push({ industry_key: key, status: "dry_run", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, judge_reason: gen.judge_reason, steps: gen.result.steps }); continue; }
 
       // force replace: drop existing UNPUBLISHED drafts (published already skipped above).
       if (force && rows.length > 0) {
@@ -237,7 +252,7 @@ serve(async (req) => {
       }
       const { error: insErr } = await supabase.from("industry_reference_job_maps").insert(stepRows);
       if (insErr) return json({ ok: false, error: `draft insert failed (${key}): ${insErr.message}` }, 500);
-      results.push({ industry_key: key, status: "generated", industry_label: gen.result.industry_label, steps: gen.result.steps.length, judge_reason: gen.judge_reason });
+      results.push({ industry_key: key, status: "generated", industry_label: gen.result.industry_label, executor: pin.executor, jtbd: pin.jtbd, steps: gen.result.steps.length, judge_reason: gen.judge_reason });
     }
     return json({ ok: true, dry_run: !!dry_run, run_id: runId, results });
   } catch (err) {
