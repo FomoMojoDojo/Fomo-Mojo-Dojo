@@ -10,6 +10,7 @@ import OutsideQuestionAct from "@/components/client-view/story/OutsideQuestionAc
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import MovementShell from "@/components/client-view/story/movement/MovementShell";
 import MarketAct from "@/components/client-view/story/movement/MarketAct";
+import PositionAct from "@/components/client-view/story/movement/PositionAct";
 import DiagnoseMarketAct from "@/components/client-view/story/diagnose/DiagnoseMarketAct";
 import "@/styles/client-story.css";
 
@@ -156,6 +157,7 @@ export default function ClientStoryView() {
                 from the evidence acts above. Act A only; Acts B/C later. */}
             <MovementShell>
               <MarketAct />
+              <PositionAct />
             </MovementShell>
           </>
         ) : null}

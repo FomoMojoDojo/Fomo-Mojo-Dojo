@@ -790,6 +790,84 @@
   margin: 16px 0 0;
 }
 
+/* Act B — positioning honesty groups. Framing, not chips: the group header IS
+   the proof signal. Only the corroborated group reads as outside-backed. */
+.cvs-mv-posgroups {
+  margin-top: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  max-width: 760px;
+}
+
+.cvs-mv-posgroup {
+  border-left: 2px solid var(--mm-line-12);
+  padding-left: 20px;
+}
+.cvs-mv-posgroup.is-corroborated {
+  border-left-color: var(--mm-line);
+}
+.cvs-mv-posgroup.is-self_reported {
+  border-left-color: var(--mm-amber-line);
+}
+
+.cvs-mv-posgroup-head {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 0;
+  color: var(--mm-label-dim);
+}
+.cvs-mv-posgroup.is-corroborated .cvs-mv-posgroup-head {
+  color: var(--mm-text);
+}
+.cvs-mv-posgroup.is-self_reported .cvs-mv-posgroup-head {
+  color: var(--mm-amber);
+}
+
+.cvs-mv-posgroup-sub {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+  margin: 8px 0 0;
+  max-width: 56ch;
+}
+
+.cvs-mv-poslist {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+}
+
+.cvs-mv-posattr {
+  border-top: 1px solid var(--mm-line-12);
+  padding: 16px 0;
+}
+.cvs-mv-posattr:last-child {
+  border-bottom: 1px solid var(--mm-line-12);
+}
+
+.cvs-mv-posattr-name {
+  font-weight: 300;
+  font-size: clamp(17px, 1.7vw, 22px);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-mv-posattr-desc {
+  font-weight: 300;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-muted);
+  margin: 8px 0 0;
+  max-width: 60ch;
+}
+
 @media (max-width: 820px) {
   .cvs-mv-divider {
     padding: 56px 22px 0;
@@ -797,6 +875,9 @@
   .cvs-mv-grid {
     grid-template-columns: 1fr;
     gap: 32px;
+  }
+  .cvs-mv-posgroups {
+    gap: 36px;
   }
 }
 
