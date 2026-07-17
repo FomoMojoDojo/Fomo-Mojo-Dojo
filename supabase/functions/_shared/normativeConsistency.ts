@@ -133,7 +133,7 @@ export type NormRunResult =
   | {
     ok: true;
     scoped: boolean;
-    totals: { requested: number; judged: number; attested: number; not_attested: number; cached: number; skipped_ineligible: number; sources_pruned: number; rollup_written: number; rollup_unchanged: number };
+    totals: { requested: number; judged: number; attested: number; not_attested: number; cached: number; skipped_ineligible: number; sources_pruned: number; rollup_written: number; rollup_unchanged: number; rollup_skipped_incomplete: number };
     steps?: Array<{ step_id: string; step_number: number; distinct_host_count: number; tier: ConsistencyTier; host_list: string[] }>;
   }
   | { ok: false; skipped: "frozen_company" | "no_map" }
@@ -222,7 +222,7 @@ export async function computeNormativeConsistency(args: NormConsistencyArgs & { 
     return { ok: true, plan: true, source_run_id: args.sourceRunId, eligible_steps: steps.length, eligible_sources: sources.length, candidates_total: candidates.length, candidates_frozen: frozen, candidates_fresh: candidates.length - frozen, pairs };
   }
 
-  const totals = { requested: 0, judged: 0, attested: 0, not_attested: 0, cached: 0, skipped_ineligible: 0, sources_pruned: 0, rollup_written: 0, rollup_unchanged: 0 };
+  const totals = { requested: 0, judged: 0, attested: 0, not_attested: 0, cached: 0, skipped_ineligible: 0, sources_pruned: 0, rollup_written: 0, rollup_unchanged: 0, rollup_skipped_incomplete: 0 };
   const scoped = Array.isArray(args.pairs) && args.pairs.length > 0;
 
   // ── SCOPED CHUNK: judge requested pairs, inline-bank (content-frozen) ──
@@ -278,7 +278,36 @@ export async function computeNormativeConsistency(args: NormConsistencyArgs & { 
   const rollupByStep = new Map(((existingRollups ?? []) as any[]).map((r) => [r.step_id, r]));
   const reported: Array<{ step_id: string; step_number: number; distinct_host_count: number; tier: ConsistencyTier; host_list: string[] }> = [];
 
+  // SILENT-0 GATE: a step earns a tier (including a genuine 0 = industry-silent)
+  // ONLY when candidate-COMPLETE — every one of its ≥1-token candidate pairs has a
+  // frozen verdict. An unjudged / partially-judged step must NEVER roll up as
+  // tier-0 (unscored-0 ≠ silent-0). Incomplete steps get NO rollup row; any stale
+  // row is removed so a partial score can't linger as final.
+  const candidatesForGate = buildCandidates(steps, sources);
+  const candIdsByStep = new Map<string, string[]>();
+  for (const c of candidatesForGate) {
+    const id = await stepSourcePairIdentity(c.step.content_sha, c.source.content_sha);
+    const arr = candIdsByStep.get(c.step.id) ?? [];
+    arr.push(id);
+    candIdsByStep.set(c.step.id, arr);
+  }
+  const stepComplete = new Map<string, boolean>();
   for (const step of steps) {
+    const ids = candIdsByStep.get(step.id) ?? [];
+    stepComplete.set(step.id, ids.every((id) => verdictByIdentity.has(id)));
+  }
+
+  for (const step of steps) {
+    if (!stepComplete.get(step.id)) {
+      // GATE: incomplete — no tier. Drop any stale rollup row (partial-as-final).
+      const stale = rollupByStep.get(step.id);
+      if (stale && args.write) {
+        const { error } = await args.supabase.from("normative_step_recurrence").delete().eq("id", stale.id);
+        if (error) throw new Error(`stale rollup delete failed: ${error.message}`);
+      }
+      totals.rollup_skipped_incomplete++;
+      continue;
+    }
     const domains = new Set<string>();
     let verdictCount = 0;
     for (const [, v] of verdictByIdentity) {
