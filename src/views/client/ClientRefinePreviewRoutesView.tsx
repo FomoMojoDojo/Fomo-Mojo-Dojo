@@ -615,6 +615,8 @@ export function RoutesOrgPanel({
   useEffect(() => {
     setLegGenProgress(null);
     setTestGenProgress(null);
+    setConditionGenProgress(null);
+    setConditionLedger(null);
   }, [activeCompany?.id]);
 
   const handleGenerateAllTests = useCallback(async () => {
@@ -722,40 +724,181 @@ export function RoutesOrgPanel({
     }
   }, [activeCompany?.id, generatingTests, routes, testGenProgress, waitForTestChunk, handleLegTestGenerated]);
 
-  // Deliberate "Regenerate conditions" (Stage-0): re-rolls generated WWHTBT conditions
-  // on each route, preserving operator-authored conditions verbatim (the edge core's
-  // condition-level origin-merge). Additive — the route's provenance_type is never
-  // changed and legs/tests are untouched. Local qwen + 70b judge, no OpenAI. Long-running;
-  // a gateway timeout still leaves per-route writes landing, so it's treated as "done".
+  // Deliberate "Regenerate conditions" — CHUNKED (WF-3b, mirrors the legs/tests
+  // loops above): generate-route-conditions now chunks server-side (route_ids +
+  // run_kind='route_conditions' ledger, WF-3), so the client fires ONE edge request
+  // per ROUTE, keeping every request far under the 150s gateway wall that silently
+  // killed full-set runs. Per-chunk completion comes from the response, or from
+  // polling the route's conditions (its what_would_have_to_be_true changes on a
+  // re-roll) when the gateway cuts the response early. The write is a condition-level
+  // origin-merge (operator conditions kept verbatim, generated re-rolled with a
+  // condition_removals audit) and is idempotent per route, so a re-click resumes
+  // safely — resume re-runs ONLY routes that haven't completed; finished routes keep
+  // their fresh conditions untouched. A click after a fully-completed run is a fresh
+  // full re-roll. Resume is SAME-SESSION ONLY: doneIds comes from component state, so
+  // a reload clears it and the next click is a fresh full re-roll (idempotent, but it
+  // re-does the work). Reload-safe skip is WF-3c — the copy below promises no more
+  // than this honors, and the control can only read "Resume" while that state lives.
+  // The run_kind='route_conditions' ledger's done_count/target is surfaced for the
+  // operator's eye. All progress/failure strings are DRAFTS pending operator signature.
+  type ConditionGenRouteResult = { routeId: string; title: string; ok: boolean; reason?: string; seconds?: number };
+  const [conditionGenProgress, setConditionGenProgress] = useState<null | {
+    running: boolean;
+    current: number;
+    total: number;
+    title: string;
+    results: ConditionGenRouteResult[];
+  }>(null);
+  // Server-side WF-3 ledger snapshot (done_count/target for run_kind
+  // ='route_conditions'), surfaced alongside the client's per-route marks. Not in
+  // the generated types (server-written) — the established `supabase as any` read
+  // (see pollPublicBaseline). No browser storage: loop + resume state stay in
+  // component state only.
+  const [conditionLedger, setConditionLedger] = useState<null | { done: number; target: number; status: string }>(null);
+  const readConditionLedger = useCallback(async (companyId: string): Promise<{ done: number; target: number; status: string } | null> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    const { data, error } = await sb
+      .from("long_runner_runs")
+      .select("done_count, target_count, status, started_at")
+      .eq("company_id", companyId)
+      .eq("run_kind", "route_conditions")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      done: Number((data as { done_count?: unknown }).done_count ?? 0),
+      target: Number((data as { target_count?: unknown }).target_count ?? 0),
+      status: String((data as { status?: unknown }).status ?? ""),
+    };
+  }, []);
+  // Poll fallback: the chunk is done when the route's conditions changed — its
+  // what_would_have_to_be_true differs from the pre-fire snapshot (a re-roll
+  // rewrites generated conditions; operator conditions stay verbatim).
+  const waitForConditionChunk = useCallback(async (routeId: string, preSig: string) => {
+    const capMs = 420_000;
+    const t0 = Date.now();
+    while (Date.now() - t0 < capMs) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const { data } = await supabase
+        .from("routes")
+        .select("what_would_have_to_be_true")
+        .eq("id", routeId)
+        .maybeSingle();
+      const sig = JSON.stringify((data as { what_would_have_to_be_true?: unknown } | null)?.what_would_have_to_be_true ?? null);
+      if (sig !== preSig) return true;
+    }
+    return false;
+  }, []);
+
   const handleRegenerateConditions = useCallback(async () => {
     if (!activeCompany?.id || regeneratingConditions) return;
     if (isFrozenCompany(activeCompany.id)) {
       toast.error("This is a frozen reference company — conditions aren't generated for it.");
       return;
     }
-    setRegeneratingConditions(true);
-    toast.loading("Regenerating conditions… (~1–2 min)", { id: "gen-route-conditions" });
+    const companyId = activeCompany.id;
+
+    // PLAN — the zero-write/zero-model route worklist (WF-3). This is the resume
+    // truth: the full active-route set the chunk loop walks.
+    let worklist: Array<{ id: string; title: string }> = [];
     try {
-      const { data, error } = await supabase.functions.invoke("generate-route-conditions", {
-        body: { company_id: activeCompany.id, write: true },
+      const { data: planData, error: planErr } = await supabase.functions.invoke("generate-route-conditions", {
+        body: { company_id: companyId, plan: true },
       });
-      // Fast structured skips (frozen / no routes) surface their own message.
-      if (data && data.ok === false) {
-        toast.error(data.error || "Couldn't regenerate conditions.", { id: "gen-route-conditions" });
-        return;
-      }
-      if (error) throw error;
-      toast.success("Conditions refreshed — your edits kept", { id: "gen-route-conditions" });
-      onCommitSuccess?.();
+      if (planErr) throw planErr;
+      const rows = ((planData as { routes?: Array<{ id?: string; title?: string }> } | null)?.routes ?? []);
+      worklist = rows
+        .filter((r): r is { id: string; title: string } => typeof r?.id === "string")
+        .map((r) => ({ id: r.id, title: String(r.title ?? "Route") }));
     } catch (err) {
-      // A gateway timeout still leaves the writes landing — nudge a refresh rather than alarm.
-      console.warn("[RoutesOrgPanel] regenerate-conditions:", err);
-      toast.success("Conditions refreshed — your edits kept", { id: "gen-route-conditions" });
+      console.warn("[RoutesOrgPanel] route-conditions plan:", err);
+      toast.error("Couldn't plan the condition run — try again.", { id: "gen-route-conditions" });
+      return;
+    }
+    if (worklist.length === 0) {
+      toast.error("No active routes to generate conditions for.", { id: "gen-route-conditions" });
+      return;
+    }
+    const runTarget = worklist.length;
+
+    // RESUME (mirror CH-1): when the previous run left failures, re-run ONLY the
+    // routes that haven't completed — finished routes keep their fresh conditions
+    // (their chunk is simply not re-fired; the origin-merge would be idempotent
+    // anyway). A click after a fully-completed run is a fresh full re-roll.
+    const prior = conditionGenProgress?.results ?? [];
+    const resuming = prior.some((r) => !r.ok);
+    const doneIds = new Set(resuming ? prior.filter((r) => r.ok).map((r) => r.routeId) : []);
+    const results: ConditionGenRouteResult[] = resuming
+      ? prior.filter((r) => r.ok && worklist.some((w) => w.id === r.routeId))
+      : [];
+    const pending = worklist.filter((w) => !doneIds.has(w.id));
+
+    setRegeneratingConditions(true);
+    setConditionLedger(await readConditionLedger(companyId));
+    try {
+      for (let i = 0; i < pending.length; i++) {
+        const route = pending[i];
+        setConditionGenProgress({
+          running: true,
+          current: results.length + 1,
+          total: worklist.length,
+          title: route.title,
+          results: [...results],
+        });
+
+        const chunkT0 = Date.now();
+        const { data: preRow } = await supabase
+          .from("routes")
+          .select("what_would_have_to_be_true")
+          .eq("id", route.id)
+          .maybeSingle();
+        const preSig = JSON.stringify((preRow as { what_would_have_to_be_true?: unknown } | null)?.what_would_have_to_be_true ?? null);
+
+        let outcome: ConditionGenRouteResult;
+        try {
+          const { data, error } = await supabase.functions.invoke("generate-route-conditions", {
+            body: { company_id: companyId, write: true, route_ids: [route.id], run_target: runTarget },
+          });
+          if (data && data.ok === false) {
+            outcome = { routeId: route.id, title: route.title, ok: false, reason: String(data.error || "condition generation failed") };
+          } else if (error) {
+            throw error;
+          } else {
+            outcome = { routeId: route.id, title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) };
+          }
+        } catch {
+          // Gateway cut the response — the chunk usually keeps running server-side.
+          // Poll the route's conditions; only a silent 7 minutes is an honest timeout.
+          const landed = await waitForConditionChunk(route.id, preSig);
+          outcome = landed
+            ? { routeId: route.id, title: route.title, ok: true, seconds: Math.round((Date.now() - chunkT0) / 1000) }
+            : { routeId: route.id, title: route.title, ok: false, reason: "timeout — no conditions appeared within 7 minutes" };
+        }
+        results.push(outcome);
+        setConditionGenProgress({
+          running: i + 1 < pending.length,
+          current: results.length,
+          total: worklist.length,
+          title: route.title,
+          results: [...results],
+        });
+        setConditionLedger(await readConditionLedger(companyId));
+      }
+
+      const okCount = results.filter((r) => r.ok).length;
+      if (okCount === worklist.length) {
+        toast.success(`Conditions refreshed for all ${worklist.length} routes — your edits kept`, { id: "gen-route-conditions" });
+      } else {
+        toast.error(`${okCount} of ${worklist.length} routes completed this run — finished routes kept their conditions (your edits are always kept).`, { id: "gen-route-conditions" });
+      }
       onCommitSuccess?.();
     } finally {
       setRegeneratingConditions(false);
+      setConditionGenProgress((p) => (p ? { ...p, running: false } : p));
     }
-  }, [activeCompany?.id, regeneratingConditions, onCommitSuccess]);
+  }, [activeCompany?.id, regeneratingConditions, conditionGenProgress, readConditionLedger, waitForConditionChunk, onCommitSuccess]);
 
   const handleGenerateRouteProposal = useCallback(async (routeId: string) => {
     if (!activeCompany?.id) return;
@@ -1436,7 +1579,11 @@ export function RoutesOrgPanel({
                       opacity: regeneratingConditions ? 0.6 : 1,
                     }}
                   >
-                    {regeneratingConditions ? "Regenerating conditions…" : "Regenerate conditions"}
+                    {regeneratingConditions
+                      ? "Regenerating conditions…"
+                      : conditionGenProgress && conditionGenProgress.results.some((r) => !r.ok)
+                        ? "Resume condition generation"
+                        : "Regenerate conditions"}
                   </button>
                   <button
                     type="button"
@@ -1486,6 +1633,42 @@ export function RoutesOrgPanel({
                         ? "Resume test drafting"
                         : "Draft tests (all routes)"}
                   </button>
+                </div>
+              )}
+              {/* Chunked route-conditions progress (WF-3b; DRAFT strings pending
+                  operator signature): same vocabulary as the legs/tests panels — live
+                  per-route line, per-route ✓/✗ with reasons, honest completion/resume
+                  summary, plus the server-side run_kind='route_conditions' ledger. */}
+              {conditionGenProgress && (
+                <div style={{ margin: "0 0 12px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12 }}>
+                  {conditionGenProgress.running ? (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      Generating conditions — route {conditionGenProgress.current} of {conditionGenProgress.total}: {conditionGenProgress.title}
+                    </p>
+                  ) : (
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      {conditionGenProgress.results.filter((r) => r.ok).length} of {conditionGenProgress.total} routes completed this run
+                      {conditionGenProgress.results.some((r) => !r.ok)
+                        ? " — finished routes kept their conditions (your edits are always kept)."
+                        : "."}
+                    </p>
+                  )}
+                  {conditionLedger && (
+                    <p style={{ margin: "4px 0 0", color: "#667", fontSize: 11 }}>
+                      Server ledger: {conditionLedger.done}/{conditionLedger.target} routes · {conditionLedger.status}
+                    </p>
+                  )}
+                  {conditionGenProgress.results.length > 0 && (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                      {conditionGenProgress.results.map((r) => (
+                        <li key={r.routeId} style={{ color: r.ok ? "#2f6b3a" : "#b3261e" }}>
+                          {r.ok ? "✓" : "✗"} {r.title}
+                          {r.ok && typeof r.seconds === "number" ? ` (${r.seconds}s)` : ""}
+                          {!r.ok && r.reason ? ` — ${r.reason}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
               {/* Chunked-run progress (DRAFT strings pending operator signature):
