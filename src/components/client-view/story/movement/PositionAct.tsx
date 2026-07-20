@@ -1,6 +1,7 @@
 import { useCompany } from "@/hooks/useCompany";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import type { PositioningItem } from "@/lib/types";
+import ActDefinition from "@/components/client-view/story/ActDefinition";
 
 /*
  * MPD-3 — Act B: the positioning we can see (Outside MovementShell, INFERRED
@@ -35,6 +36,16 @@ const NOT_CHECKED_HEAD = "Not yet checked";
 const NOT_CHECKED_SUB = "We haven't tested these against outside voices.";
 const EMPTY_HEADLINE = "We haven't read your positioning yet.";
 const EMPTY_SUB = "Once a public read lands, the strengths we can see will show here.";
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Definitional copy — OPERATOR-SIGNED VERBATIM 2026-07-20 (DEF-1) ──────────
+// Defines "differentiator" ONLY. It must NEVER restate or paraphrase the
+// proof-tier group headers below (corroborated / yours-to-prove / not-yet-
+// checked) — those carry their own signed framing, and duplicating the proof
+// signal here would undercut FRAMING-NOT-CHIPS by sounding it twice.
+// Suppressed on honest-empty by ActDefinition — see that file's header.
+const DEFINITION =
+  "A differentiator is something you claim that, as far as the record shows, only you offer.";
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Group = { key: "corroborated" | "self_reported" | "not_checked"; head: string; sub: string; items: PositioningItem[] };
@@ -74,6 +85,12 @@ export default function PositionAct() {
   return (
     <section className="cvs-act" aria-label="Act B — positioning (inferred register)">
       <p className="cvs-act-eyebrow">{EYEBROW}</p>
+      {/* Content-gated: no canvas, zero differentiators, or still loading →
+          no definition. Mirrors the render condition of the branch below. */}
+      <ActDefinition
+        definition={DEFINITION}
+        hasContent={!loading && item !== null && attrs.length > 0}
+      />
 
       {loading ? (
         <p className="cvs-hero-empty">Reading your positioning…</p>

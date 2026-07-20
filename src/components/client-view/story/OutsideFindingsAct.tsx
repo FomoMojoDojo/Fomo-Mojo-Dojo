@@ -2,6 +2,7 @@ import { useCompany } from "@/hooks/useCompany";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
+import ActDefinition from "@/components/client-view/story/ActDefinition";
 
 /*
  * Outside · Act 2 — "What else stands out" (CV-2). Read-only.
@@ -20,6 +21,12 @@ import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/s
 const EYEBROW = "What else stands out";
 const EMPTY = "Nothing else is standing out from the outside read yet.";
 // ──────────────────────────────────────────────────────────────────────────────
+
+// ── Definitional copy — OPERATOR-SIGNED VERBATIM 2026-07-20 (DEF-1) ──────────
+// Suppressed on honest-empty by ActDefinition — see that file's header.
+const DEFINITION =
+  "A finding is something the outside record actually shows — not an opinion, and not everything we saw. Only what stood up.";
+// ─────────────────────────────────────────────────────────────────────────────
 
 const KIND_RANK: Record<Finding["kind"], number> = { watch_out: 0, frontier: 1, observation: 2 };
 
@@ -46,6 +53,8 @@ export default function OutsideFindingsAct({ preferredRun }: { preferredRun?: un
   return (
     <section className="cvs-act" aria-label="Outside · Act 2 — What else stands out">
       <p className="cvs-act-eyebrow">{EYEBROW}</p>
+      {/* Content-gated: no findings (or still loading) → no definition. */}
+      <ActDefinition definition={DEFINITION} hasContent={!isLoading && candidates.length > 0} />
 
       {isLoading ? (
         <p className="cvs-hero-empty">Reading the outside signals…</p>

@@ -1183,3 +1183,21 @@
     padding: 56px 24px 0;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* DEF-1 · Act definitional device (.cvs-act-def)                      */
+/* A caption on the client's own content, never a content block. Sits  */
+/* between the act eyebrow and the act's content, subordinate to both: */
+/* dimmer and smaller than body copy (.cvs-support), no border, no     */
+/* box, no icon. Weight precedent: .cvs-mv-posgroup-sub. Rendered ONLY */
+/* through ActDefinition.tsx, which gates it on content presence.      */
+/* ------------------------------------------------------------------ */
+.cvs-act-def {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-label-dim);
+  max-width: 62ch;
+  margin: 14px 0 0;
+}
