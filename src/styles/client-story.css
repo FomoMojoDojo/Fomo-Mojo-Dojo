@@ -1144,3 +1144,42 @@
   .cvs-dg-gaps { grid-template-columns: 1fr; gap: 32px; padding: 0 22px; }
   .cvs-dg-question, .cvs-dg-notready { padding: 0 22px; }
 }
+
+/* ------------------------------------------------------------------ */
+/* EOV-1 · Published standards register (.cvs-std-*)                   */
+/* DORMANT — StandardsShell is not mounted anywhere. Reserved as the    */
+/* Act C industry-standard job-map library home at FD-3. The divider is */
+/* deliberately cooler than the movement's amber: this register makes   */
+/* no claim about the reader. Act-specific rules (pyramids, tiers,      */
+/* attribution) were removed with ValueElementsAct by operator ruling   */
+/* 2026-07-20 — FD-3 brings its own.                                    */
+/* ------------------------------------------------------------------ */
+.cvs-std-divider {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 72px 48px 0;
+  border-top: 1px solid var(--mm-line-18);
+}
+
+.cvs-std-divider-eyebrow {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--mm-label-dim);
+  margin: 26px 0 0;
+}
+
+.cvs-std-divider-sub {
+  font-weight: 300;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--mm-muted);
+  margin: 10px 0 0;
+}
+
+@media (max-width: 900px) {
+  .cvs-std-divider {
+    padding: 56px 24px 0;
+  }
+}

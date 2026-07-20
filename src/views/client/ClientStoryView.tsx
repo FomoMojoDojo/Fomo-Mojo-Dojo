@@ -154,7 +154,8 @@ export default function ClientStoryView() {
             <OutsideQuestionAct preferredRun={preferredRun} loading={baselineLoading} />
             <OutsideNextMoveAct onStartDiagnose={() => selectPhase("diagnosis")} />
             {/* MPD-3: the inferred-strategy movement — a distinct register
-                from the evidence acts above. Act A only; Acts B/C later. */}
+                from the evidence acts above. Acts A and B: both readings of
+                THIS company's public footprint. */}
             <MovementShell>
               <MarketAct />
               <PositionAct />
