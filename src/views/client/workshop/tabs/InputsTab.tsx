@@ -1190,7 +1190,7 @@ export default function InputsTab({
 
   // ── Auth + public baseline ─────────────────────────────────────────────────
   const { isAdmin } = useAuth();
-  const { run: baselineRun, refetch: refetchBaseline } = usePublicBaseline(companyId ?? undefined);
+  const { run: baselineRun, loading: baselineLoading, refetch: refetchBaseline } = usePublicBaseline(companyId ?? undefined);
 
   const { data: runLock } = useQuery({
     queryKey: ['company-run-lock', companyId],
@@ -1656,6 +1656,31 @@ export default function InputsTab({
   const analyzedCount         = fileRows.filter((r) => proposalByFileId.get(r.id)?.processing_state === "ready").length;
   const allApplied            = fileRows.length > 0 && usedInFoundationCount === fileRows.length;
 
+  // BSL-1 — outside-signals trigger for the NO-HIERARCHY state. The existing control
+  // lives inside the `hasHierarchy` branch, so companies that most need a baseline
+  // (birth failed → no routes → no hierarchy) were exactly the ones with no button:
+  // the affordance was inverted relative to need. Same handler, same capability, same
+  // toast id — this un-hides the existing path for a state it never covered.
+  //
+  // DEF-3's lesson applies to the label: `baselineRun === null` means "no baseline"
+  // AND "not fetched yet". Conflating them would flash "Run outside signals" at a
+  // company that already has one, so the label waits for `baselineLoading` to clear
+  // rather than guessing.
+  const hasWebsiteForBaseline = Boolean(companyWebsite?.trim());
+  const hasBaselineRun = !baselineLoading && !!baselineRun;
+  const outsideSignalsLabel = baselineLoading
+    ? "Checking…"
+    : baselineRunning
+      ? (hasBaselineRun ? "Refreshing…" : "Running…")
+      : hasBaselineRun
+        ? "Refresh outside signals →"
+        : "Run outside signals →";
+  const outsideSignalsBlockedReason = !canRefresh
+    ? "Running outside signals requires the refresh-baseline capability"
+    : !hasWebsiteForBaseline
+      ? "Add a website for this company before running outside signals"
+      : undefined;
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -1751,6 +1776,39 @@ export default function InputsTab({
           <p style={{ margin: "4px 0 0", fontSize: 11, color: "#aaa", fontFamily: "monospace" }}>
             What evidence is shaping the strategy — and where signals came from.
           </p>
+          {/* BSL-1: the same admin-only trigger the hierarchy branch has, for the state
+              that had none. Identical handler/capability/toast — no new invocation path.
+              Rendered (not hidden) when blocked, with the reason in the title, because a
+              hidden control is what caused this gap. DRAFT strings pending signature. */}
+          {isAdmin && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline}
+                title={outsideSignalsBlockedReason}
+                onClick={() => void handleRefreshBaseline()}
+                style={{
+                  fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em",
+                  color: baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline ? "#bbb" : "#2f6b3a",
+                  background: "none", border: "none", padding: 0,
+                  cursor: baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline ? "default" : "pointer",
+                  textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
+                }}
+              >
+                {outsideSignalsLabel}
+              </button>
+              {!baselineLoading && !hasBaselineRun && (
+                <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
+                  No outside signals collected for this company yet.
+                </span>
+              )}
+              {hasBaselineRun && baselineRun?.created_at && (
+                <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
+                  Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
