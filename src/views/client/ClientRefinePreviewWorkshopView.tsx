@@ -390,6 +390,43 @@ export default function ClientRefinePreviewWorkshopView() {
     return () => { cancelled = true; };
   }, [activeCompany?.id, viewedSetKey, showAllJourneys]);
 
+  const workshopHasHierarchy = routes.some((r) => r.level === "route");
+  const unroutedCount = routes.filter((r) => r.parent_id == null && r.level !== "route").length;
+
+  const initialTab = (searchParams.get("tab") as WorkshopTab | null) ?? "positioning";
+
+  const [activeTab,   setActiveTab]   = useState<WorkshopTab>(initialTab);
+  const [showCompare, setShowCompare] = useState(false);
+  const [activeStepId,      setActiveStepId]      = useState<string | null>(null);
+  const [activeRouteId,     setActiveRouteId]     = useState<string | null>(null);
+  const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
+  const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
+  const [regeneratingConditions, setRegeneratingConditions] = useState(false);
+  const [regeneratingMarket, setRegeneratingMarket] = useState(false);
+  const [regeneratingOpportunities, setRegeneratingOpportunities] = useState(false);
+  // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
+  // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
+  const [chosenSetKey, setChosenSetKey] = useState<string | null | undefined>(undefined);
+  const [showCreateClient, setShowCreateClient] = useState(false);
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientWebsite, setNewClientWebsite] = useState("");
+  const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
+  // Gate 2 — create-new-instance: collision dialog state. stage 'confirm' shows the
+  // "already exists — create a new instance? OK/Cancel" prompt; stage 'name' is the
+  // validate-loop new-name prompt (re-checks on every OK, stays open on collision).
+  const [instancePrompt, setInstancePrompt] = useState<null | {
+    stage: "confirm" | "name";
+    original: CompanyCollision;
+    fileCount: number;
+  }>(null);
+  const [instanceName, setInstanceName] = useState("");
+  const [instanceNameError, setInstanceNameError] = useState<string | null>(null);
+  const [instanceCopyFiles, setInstanceCopyFiles] = useState(false);
+  const [creatingInstance, setCreatingInstance] = useState(false);
+
+  const companyId = activeCompany?.id;
+
   // BRT-1 — spine presence, mirroring _shared/spinePredicate.ts EXACTLY (routes at
   // level 'route', job_steps, positioning_canvases, strategy_cascades,
   // odi_market_definitions). Deliberately NOT hasHierarchy: that proxy has now caused
@@ -468,42 +505,6 @@ export default function ClientRefinePreviewWorkshopView() {
     }
   }, [companyId, activeCompany?.name, activeCompany?.website, birthRunning, refetchCompany]);
 
-  const workshopHasHierarchy = routes.some((r) => r.level === "route");
-  const unroutedCount = routes.filter((r) => r.parent_id == null && r.level !== "route").length;
-
-  const initialTab = (searchParams.get("tab") as WorkshopTab | null) ?? "positioning";
-
-  const [activeTab,   setActiveTab]   = useState<WorkshopTab>(initialTab);
-  const [showCompare, setShowCompare] = useState(false);
-  const [activeStepId,      setActiveStepId]      = useState<string | null>(null);
-  const [activeRouteId,     setActiveRouteId]     = useState<string | null>(null);
-  const [needsRefreshKey,   setNeedsRefreshKey]   = useState(0);
-  const [regeneratingJobMap, setRegeneratingJobMap] = useState(false);
-  const [regeneratingConditions, setRegeneratingConditions] = useState(false);
-  const [regeneratingMarket, setRegeneratingMarket] = useState(false);
-  const [regeneratingOpportunities, setRegeneratingOpportunities] = useState(false);
-  // Operator's CHOSEN on-strategy job-step set (operator_primary_selection,
-  // domain='job_step_set'). undefined = not loaded yet, null = nothing chosen.
-  const [chosenSetKey, setChosenSetKey] = useState<string | null | undefined>(undefined);
-  const [showCreateClient, setShowCreateClient] = useState(false);
-  const [creatingClient, setCreatingClient] = useState(false);
-  const [newClientName, setNewClientName] = useState("");
-  const [newClientWebsite, setNewClientWebsite] = useState("");
-  const [newClientRunBaseline, setNewClientRunBaseline] = useState(true);
-  // Gate 2 — create-new-instance: collision dialog state. stage 'confirm' shows the
-  // "already exists — create a new instance? OK/Cancel" prompt; stage 'name' is the
-  // validate-loop new-name prompt (re-checks on every OK, stays open on collision).
-  const [instancePrompt, setInstancePrompt] = useState<null | {
-    stage: "confirm" | "name";
-    original: CompanyCollision;
-    fileCount: number;
-  }>(null);
-  const [instanceName, setInstanceName] = useState("");
-  const [instanceNameError, setInstanceNameError] = useState<string | null>(null);
-  const [instanceCopyFiles, setInstanceCopyFiles] = useState(false);
-  const [creatingInstance, setCreatingInstance] = useState(false);
-
-  const companyId = activeCompany?.id;
   // Governance split (checkpoint 3a): positioning + cascade apply/reject gated by
   // capability. Single authority — never re-query roles/caps inline.
   const canApply = useCapability("governance.proposal.apply", companyId);
