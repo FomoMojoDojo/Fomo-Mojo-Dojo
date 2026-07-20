@@ -14,7 +14,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
-const WEAK_BASELINE_STATUSES = new Set(["ambiguous_public_evidence", "insufficient_public_evidence"]);
+// SRCH-1 adds search_unavailable: a couldn't-check is never a usable baseline.
+const WEAK_BASELINE_STATUSES = new Set(["ambiguous_public_evidence", "insufficient_public_evidence", "search_unavailable"]);
 const ALLOWED_AREAS = new Set(["positioning", "strategy", "market", "odi"]);
 type FrameworkMode = "dunford_positioning" | "torres_opportunity_map" | "martin_strategy_cascade";
 type ProgramStage = "outside" | "diagnose" | "focus" | "flow";

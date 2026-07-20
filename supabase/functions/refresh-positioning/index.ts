@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
         .limit(12);
 
       const isWeakStatus = (run: { result_json?: unknown }) =>
-        ["ambiguous_public_evidence", "insufficient_public_evidence"].includes(
+        ["ambiguous_public_evidence", "insufficient_public_evidence", "search_unavailable"].includes(
           String((run?.result_json as { status?: string } | null)?.status || ""),
         );
 

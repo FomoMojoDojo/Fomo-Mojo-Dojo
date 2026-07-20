@@ -5274,7 +5274,7 @@ Deno.serve(async (req) => {
     const recentBaselineRuns = (Array.isArray(baselineRuns) ? baselineRuns : []) as BaselineRunRow[];
     const latestBaselineRun = recentBaselineRuns[0] ?? null;
     const isWeakBaselineStatus = (status: string) =>
-      status === "ambiguous_public_evidence" || status === "insufficient_public_evidence";
+      status === "ambiguous_public_evidence" || status === "insufficient_public_evidence" || status === "search_unavailable";
     const baselineStatusFor = (run: BaselineRunRow | null) =>
       String((run?.result_json as { status?: string } | null)?.status || "ok");
     const baselineReasonFor = (run: BaselineRunRow | null) =>
@@ -5357,7 +5357,7 @@ Deno.serve(async (req) => {
       companyId: company_id,
     });
     const hasWeakBaselineStatus =
-      baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence";
+      baselineStatus === "ambiguous_public_evidence" || baselineStatus === "insufficient_public_evidence" || baselineStatus === "search_unavailable";
     const hasUploadedEvidence = uploadedEvidenceContext.fileCount > 0;
     let researchContextMode: "public_baseline" | "uploaded_evidence_fallback" = "public_baseline";
     let effectiveBaselineResultJson: unknown = baselineRun?.result_json ?? null;

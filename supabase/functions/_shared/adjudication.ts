@@ -37,6 +37,9 @@ export class AdjudicationBlockedError extends Error {
 const WEAK_BASELINE_STATUSES = new Set([
   "ambiguous_public_evidence",
   "insufficient_public_evidence",
+  // SRCH-1: a search outage is a couldn't-check. It must never read as a usable
+  // baseline — nothing was looked at, so it is at least as weak as thin evidence.
+  "search_unavailable",
 ]);
 
 function isWeak(status: string): boolean {

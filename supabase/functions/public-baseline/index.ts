@@ -439,7 +439,43 @@ function scoreCompanyMatch(args: {
   return { score, reasons, variants, domain, stem };
 }
 
-async function searxSearch(searxUrl: string, query: string, count: number) {
+// SRCH-1 — search-health accumulator. A suspended SearXNG answers HTTP 200 with
+// results:[] and names the fault in unresponsive_engines, so "the search backend is
+// blocked" was indistinguishable from "this company has thin public evidence": a
+// couldn't-check was persisted as a looked-and-found-nothing. This collects, across
+// every query in a run, what the backend actually reported so the refusal can be
+// classified honestly instead of guessed at.
+type SearchDiag = {
+  queriesRun: number;
+  queriesWithResults: number;
+  totalRawResults: number;
+  /** engine name → the reason SearXNG gave (e.g. "Suspended: too many requests"). */
+  unresponsive: Map<string, string>;
+};
+
+function newSearchDiag(): SearchDiag {
+  return { queriesRun: 0, queriesWithResults: 0, totalRawResults: 0, unresponsive: new Map() };
+}
+
+/**
+ * Unambiguous-outage rule (deliberately conservative — see SRCH-1). Only claim the
+ * backend was unusable when BOTH hold:
+ *   1. every query in the run came back with ZERO raw results, and
+ *   2. SearXNG itself named at least one unresponsive engine.
+ * If ANY query returned anything, search was working and a thin verdict is the honest
+ * one. If nothing came back but no engine reported a fault, that is a genuine
+ * looked-and-found-nothing (or a query problem) and also stays thin. Only the
+ * both-conditions case is reported as a couldn't-check.
+ */
+function isUnambiguousSearchOutage(diag: SearchDiag): boolean {
+  return diag.queriesRun > 0 && diag.totalRawResults === 0 && diag.unresponsive.size > 0;
+}
+
+function describeUnresponsive(diag: SearchDiag): string {
+  return [...diag.unresponsive.entries()].map(([engine, why]) => `${engine}: ${why}`).join("; ");
+}
+
+async function searxSearch(searxUrl: string, query: string, count: number, diag?: SearchDiag) {
   console.log("[baseline] starting search", { searxUrl, query, count });
 
   const u = new URL("/search", searxUrl);
@@ -453,6 +489,20 @@ async function searxSearch(searxUrl: string, query: string, count: number) {
 
   const data = await resp.json();
   const results = Array.isArray(data?.results) ? data.results : [];
+
+  // SRCH-1: record what the backend said about itself. Shape per SearXNG:
+  // "unresponsive_engines": [["brave","Suspended: too many requests"], ...]
+  if (diag) {
+    diag.queriesRun += 1;
+    diag.totalRawResults += results.length;
+    if (results.length > 0) diag.queriesWithResults += 1;
+    const unresponsive = Array.isArray(data?.unresponsive_engines) ? data.unresponsive_engines : [];
+    for (const entry of unresponsive) {
+      const engine = Array.isArray(entry) ? String(entry[0] ?? "") : String((entry as any)?.engine ?? "");
+      const why = Array.isArray(entry) ? String(entry[1] ?? "") : String((entry as any)?.error ?? "");
+      if (engine && !diag.unresponsive.has(engine)) diag.unresponsive.set(engine, why || "unresponsive");
+    }
+  }
 
   const seen = new Set<string>();
   const out: any[] = [];
@@ -1653,10 +1703,13 @@ async function callClaudeWebSearch(opts: {
   return parsed;
 }
 
-const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous", string> = {
+const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
   no_results: "No public data found for this company. Upload internal documents to establish a starting baseline — strategy, positioning, or customer research.",
   thin: "Public evidence is too thin to infer a complete baseline. Upload internal documents to improve signal quality.",
   ambiguous: "Search results don't clearly match this company. Verify the company name and domain, or upload internal documents to supplement.",
+  // SRCH-1: a couldn't-check, NOT a finding about the company. The prompt must not
+  // suggest the company lacks public evidence — nothing was actually looked at.
+  search_unavailable: "The search backend returned nothing for any query and reported its engines as blocked, so no public evidence could be checked. This is not a finding about this company. Re-run once search recovers.",
 };
 
 function buildInsufficientResult(args: {
@@ -1666,12 +1719,15 @@ function buildInsufficientResult(args: {
   variants: string[];
   reason: string;
   debug: Record<string, any>;
-  qualityType: "no_results" | "thin";
+  qualityType: "no_results" | "thin" | "search_unavailable";
+  /** SRCH-1: defaults to the evidence verdict; a search outage overrides it so a
+   *  couldn't-check is never persisted as a looked-and-found-nothing. */
+  status?: string;
 }) {
   const { companyName, website, domain, variants, reason, debug, qualityType } = args;
 
   return {
-    status: "insufficient_public_evidence",
+    status: args.status ?? "insufficient_public_evidence",
     reason,
     company: { name: companyName, website, domain, variants },
     debug,
@@ -2038,6 +2094,12 @@ Deno.serve(async (req) => {
     }
     let ledgerOutcome: "completed" | "failed" = "failed";
     let ledgerErrText: string | null = null;
+    // SRCH-1: when a refusal path has already determined the honest terminal reason,
+    // it wins over whatever exception surfaces afterwards. Zero-evidence runs still
+    // throw out of ingestPublicBaselineSignals ("produced zero signals"), which is a
+    // symptom of the refusal, not its cause — that generic text is exactly what made
+    // the Sonos outage read as thin evidence in the ledger.
+    let ledgerRefusalText: string | null = null;
 
     try {
       const resp: Response = await (async (): Promise<Response> => {
@@ -2080,14 +2142,23 @@ Deno.serve(async (req) => {
       return out;
     };
 
-    const sourcesA = await searxSearch(searxUrl, queryA, 20);
-    const sourcesB = await searxSearch(searxUrl, queryB, 20);
-    const sourcesC = await searxSearch(searxUrl, queryC, 20);
-    const sourcesD = await searxSearch(searxUrl, queryD, 16);
-    const sourcesE = await searxSearch(searxUrl, queryE, 16);
-    const sourcesF = await searxSearch(searxUrl, queryF, 16);
-    const sourcesG = await searxSearch(searxUrl, queryG, 16);
-    const sourcesH = await searxSearch(searxUrl, queryH, 20);
+    // SRCH-1: one accumulator across every query in this run — the outage rule is a
+    // whole-run judgement, never a per-query one.
+    const searchDiag = newSearchDiag();
+    const sourcesA = await searxSearch(searxUrl, queryA, 20, searchDiag);
+    const sourcesB = await searxSearch(searxUrl, queryB, 20, searchDiag);
+    const sourcesC = await searxSearch(searxUrl, queryC, 20, searchDiag);
+    const sourcesD = await searxSearch(searxUrl, queryD, 16, searchDiag);
+    const sourcesE = await searxSearch(searxUrl, queryE, 16, searchDiag);
+    const sourcesF = await searxSearch(searxUrl, queryF, 16, searchDiag);
+    const sourcesG = await searxSearch(searxUrl, queryG, 16, searchDiag);
+    const sourcesH = await searxSearch(searxUrl, queryH, 20, searchDiag);
+    console.log("[baseline] search health", {
+      queriesRun: searchDiag.queriesRun,
+      queriesWithResults: searchDiag.queriesWithResults,
+      totalRawResults: searchDiag.totalRawResults,
+      unresponsive: describeUnresponsive(searchDiag) || "none",
+    });
     const inferredLinkedInUrls = inferLinkedInCompanyUrls(company_name, website);
     const inferredLinkedInSources = inferredLinkedInUrls.map((url) => ({
       url,
@@ -2731,14 +2802,33 @@ Deno.serve(async (req) => {
         match_reason: x.match_reason,
       }));
 
+      // SRCH-1 — classify the refusal before recording it. If the search backend was
+      // unusable for this entire run, "not enough extractable evidence" is a lie: we
+      // never got to look. Distinct status, distinct reason naming the engines.
+      const searchOutage = isUnambiguousSearchOutage(searchDiag);
+      const outageDetail = describeUnresponsive(searchDiag);
+      if (searchOutage) {
+        ledgerRefusalText = `Search backend unavailable — no engine returned results for any of ${searchDiag.queriesRun} queries (${outageDetail}). No public evidence could be checked; this is not a finding about the company.`;
+      }
+
       const resultJson = buildInsufficientResult({
         companyName: company_name,
         website,
         domain,
         variants,
-        qualityType: "thin",
-        reason: "Not enough extractable evidence (need at least 2 sources with meaningful text).",
+        qualityType: searchOutage ? "search_unavailable" : "thin",
+        status: searchOutage ? "search_unavailable" : undefined,
+        reason: searchOutage
+          ? `Search backend unavailable — no engine returned results for any of ${searchDiag.queriesRun} queries (${outageDetail}). No public evidence could be checked; this is not a finding about the company.`
+          : "Not enough extractable evidence (need at least 2 sources with meaningful text).",
         debug: {
+          search_health: {
+            queries_run: searchDiag.queriesRun,
+            queries_with_results: searchDiag.queriesWithResults,
+            total_raw_results: searchDiag.totalRawResults,
+            unresponsive_engines: [...searchDiag.unresponsive.entries()].map(([engine, why]) => ({ engine, why })),
+            classified_outage: searchOutage,
+          },
           queryA,
           queryB,
           queryC,
@@ -2800,8 +2890,10 @@ Deno.serve(async (req) => {
       });
 
       return json({
-        message: "Public baseline: insufficient public evidence",
-        status: "insufficient_public_evidence",
+        message: searchOutage
+          ? "Public baseline: search backend unavailable"
+          : "Public baseline: insufficient public evidence",
+        status: searchOutage ? "search_unavailable" : "insufficient_public_evidence",
         run_id: inserted?.id,
       });
     }
@@ -2941,7 +3033,8 @@ Deno.serve(async (req) => {
       return resp;
     } catch (bodyErr) {
       ledgerOutcome = "failed";
-      ledgerErrText = String((bodyErr as { message?: unknown })?.message ?? bodyErr);
+      // SRCH-1: prefer the refusal's own honest text; fall back to the exception.
+      ledgerErrText = ledgerRefusalText ?? String((bodyErr as { message?: unknown })?.message ?? bodyErr);
       throw bodyErr;
     } finally {
       stopLockHeartbeat();
