@@ -182,6 +182,67 @@ export type Database = {
           },
         ]
       }
+      claim_delta_rejections: {
+        Row: {
+          company_id: string
+          computed_at: string
+          content_identity: string
+          declared_claim_id: string
+          gen_model: string
+          id: string
+          judge_model: string | null
+          public_claim_id: string
+          reject_reason: string | null
+          rejected_by: string
+        }
+        Insert: {
+          company_id: string
+          computed_at?: string
+          content_identity: string
+          declared_claim_id: string
+          gen_model: string
+          id?: string
+          judge_model?: string | null
+          public_claim_id: string
+          reject_reason?: string | null
+          rejected_by: string
+        }
+        Update: {
+          company_id?: string
+          computed_at?: string
+          content_identity?: string
+          declared_claim_id?: string
+          gen_model?: string
+          id?: string
+          judge_model?: string | null
+          public_claim_id?: string
+          reject_reason?: string | null
+          rejected_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_delta_rejections_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_rejections_declared_claim_id_fkey"
+            columns: ["declared_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_rejections_public_claim_id_fkey"
+            columns: ["public_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_deltas: {
         Row: {
           company_id: string
@@ -705,6 +766,42 @@ export type Database = {
           },
         ]
       }
+      condition_removals: {
+        Row: {
+          actor: string
+          affected_leg_ids: string[]
+          company_id: string
+          condition_identity: string
+          condition_text: string
+          id: string
+          reason: string
+          removed_at: string
+          route_id: string
+        }
+        Insert: {
+          actor: string
+          affected_leg_ids?: string[]
+          company_id: string
+          condition_identity: string
+          condition_text: string
+          id?: string
+          reason: string
+          removed_at?: string
+          route_id: string
+        }
+        Update: {
+          actor?: string
+          affected_leg_ids?: string[]
+          company_id?: string
+          condition_identity?: string
+          condition_text?: string
+          id?: string
+          reason?: string
+          removed_at?: string
+          route_id?: string
+        }
+        Relationships: []
+      }
       council_recommendations: {
         Row: {
           category: string
@@ -1188,6 +1285,104 @@ export type Database = {
           },
         ]
       }
+      finding_cluster_verdicts: {
+        Row: {
+          candidate_basis: string
+          company_id: string
+          created_at: string
+          finding_id: string
+          finding_statement_identity: string
+          id: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          signal_id: string
+          signal_statement_identity: string
+          verdict: string
+        }
+        Insert: {
+          candidate_basis: string
+          company_id: string
+          created_at?: string
+          finding_id: string
+          finding_statement_identity: string
+          id?: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          signal_id: string
+          signal_statement_identity: string
+          verdict: string
+        }
+        Update: {
+          candidate_basis?: string
+          company_id?: string
+          created_at?: string
+          finding_id?: string
+          finding_statement_identity?: string
+          id?: string
+          judge_model?: string
+          judge_reason?: string
+          pair_identity?: string
+          signal_id?: string
+          signal_statement_identity?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finding_cluster_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      finding_recurrence: {
+        Row: {
+          cluster_signal_ids: Json
+          company_id: string
+          computed_at: string
+          distinct_host_count: number
+          finding_id: string
+          host_list: Json
+          verdict_count: number
+        }
+        Insert: {
+          cluster_signal_ids: Json
+          company_id: string
+          computed_at?: string
+          distinct_host_count: number
+          finding_id: string
+          host_list: Json
+          verdict_count: number
+        }
+        Update: {
+          cluster_signal_ids?: Json
+          company_id?: string
+          computed_at?: string
+          distinct_host_count?: number
+          finding_id?: string
+          host_list?: Json
+          verdict_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finding_recurrence_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finding_recurrence_finding_id_fkey"
+            columns: ["finding_id"]
+            isOneToOne: true
+            referencedRelation: "findings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       findings: {
         Row: {
           beats: Json | null
@@ -1251,6 +1446,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      industry_reference_job_maps: {
+        Row: {
+          content_sha: string | null
+          created_at: string
+          description: string
+          generator_run_id: string | null
+          id: string
+          industry_key: string
+          industry_label: string
+          is_published: boolean
+          provenance: string
+          step_key: string
+          step_label: string
+          step_number: number
+          taxonomy_version: string | null
+        }
+        Insert: {
+          content_sha?: string | null
+          created_at?: string
+          description: string
+          generator_run_id?: string | null
+          id?: string
+          industry_key: string
+          industry_label: string
+          is_published?: boolean
+          provenance?: string
+          step_key: string
+          step_label: string
+          step_number: number
+          taxonomy_version?: string | null
+        }
+        Update: {
+          content_sha?: string | null
+          created_at?: string
+          description?: string
+          generator_run_id?: string | null
+          id?: string
+          industry_key?: string
+          industry_label?: string
+          is_published?: boolean
+          provenance?: string
+          step_key?: string
+          step_label?: string
+          step_number?: number
+          taxonomy_version?: string | null
+        }
+        Relationships: []
       }
       input_files: {
         Row: {
@@ -1566,6 +1809,48 @@ export type Database = {
           },
         ]
       }
+      long_runner_runs: {
+        Row: {
+          company_id: string
+          done_count: number
+          error_text: string | null
+          finished_at: string | null
+          id: string
+          request_id: string | null
+          run_kind: string
+          started_at: string
+          status: string
+          target_count: number
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          done_count?: number
+          error_text?: string | null
+          finished_at?: string | null
+          id?: string
+          request_id?: string | null
+          run_kind: string
+          started_at?: string
+          status?: string
+          target_count?: number
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          done_count?: number
+          error_text?: string | null
+          finished_at?: string | null
+          id?: string
+          request_id?: string | null
+          run_kind?: string
+          started_at?: string
+          status?: string
+          target_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       managed_outcomes: {
         Row: {
           action: string
@@ -1694,6 +1979,53 @@ export type Database = {
             columns: ["stale_since_event_id"]
             isOneToOne: false
             referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_discovery_verdicts: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          judge_model: string
+          judge_reason: string
+          market_a_identity: string
+          market_b_identity: string | null
+          pair_identity: string
+          verdict: string
+          verdict_kind: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          judge_model: string
+          judge_reason: string
+          market_a_identity: string
+          market_b_identity?: string | null
+          pair_identity: string
+          verdict: string
+          verdict_kind: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          judge_model?: string
+          judge_reason?: string
+          market_a_identity?: string
+          market_b_identity?: string | null
+          pair_identity?: string
+          verdict?: string
+          verdict_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_discovery_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]
@@ -1953,6 +2285,268 @@ export type Database = {
           },
         ]
       }
+      normative_industry_sources: {
+        Row: {
+          company_id: string
+          computed_at: string
+          content_sha: string
+          host: string | null
+          id: string
+          registrable_domain: string | null
+          source_run_id: string
+          source_text: string
+          source_url: string | null
+          syndicated: boolean
+        }
+        Insert: {
+          company_id: string
+          computed_at?: string
+          content_sha: string
+          host?: string | null
+          id?: string
+          registrable_domain?: string | null
+          source_run_id: string
+          source_text: string
+          source_url?: string | null
+          syndicated?: boolean
+        }
+        Update: {
+          company_id?: string
+          computed_at?: string
+          content_sha?: string
+          host?: string | null
+          id?: string
+          registrable_domain?: string | null
+          source_run_id?: string
+          source_text?: string
+          source_url?: string | null
+          syndicated?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "normative_industry_sources_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      normative_job_steps: {
+        Row: {
+          company_id: string
+          computed_at: string
+          content_sha: string
+          description: string
+          executor_context: string
+          id: string
+          journey_key: string
+          provenance: string
+          source_run_id: string
+          step_key: string
+          step_label: string
+          step_number: number
+          title_source: string
+        }
+        Insert: {
+          company_id: string
+          computed_at?: string
+          content_sha: string
+          description: string
+          executor_context: string
+          id?: string
+          journey_key: string
+          provenance?: string
+          source_run_id: string
+          step_key: string
+          step_label: string
+          step_number: number
+          title_source: string
+        }
+        Update: {
+          company_id?: string
+          computed_at?: string
+          content_sha?: string
+          description?: string
+          executor_context?: string
+          id?: string
+          journey_key?: string
+          provenance?: string
+          source_run_id?: string
+          step_key?: string
+          step_label?: string
+          step_number?: number
+          title_source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "normative_job_steps_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      normative_source_removals: {
+        Row: {
+          company_id: string
+          content_sha: string | null
+          id: string
+          reason: string
+          registrable_domain: string | null
+          removed_at: string
+          removed_source_id: string
+          source_run_id: string
+        }
+        Insert: {
+          company_id: string
+          content_sha?: string | null
+          id?: string
+          reason: string
+          registrable_domain?: string | null
+          removed_at?: string
+          removed_source_id: string
+          source_run_id: string
+        }
+        Update: {
+          company_id?: string
+          content_sha?: string | null
+          id?: string
+          reason?: string
+          registrable_domain?: string | null
+          removed_at?: string
+          removed_source_id?: string
+          source_run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "normative_source_removals_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      normative_step_recurrence: {
+        Row: {
+          company_id: string
+          computed_at: string
+          distinct_host_count: number
+          host_list: Json
+          id: string
+          source_run_id: string
+          step_id: string
+          verdict_count: number
+        }
+        Insert: {
+          company_id: string
+          computed_at?: string
+          distinct_host_count?: number
+          host_list?: Json
+          id?: string
+          source_run_id: string
+          step_id: string
+          verdict_count?: number
+        }
+        Update: {
+          company_id?: string
+          computed_at?: string
+          distinct_host_count?: number
+          host_list?: Json
+          id?: string
+          source_run_id?: string
+          step_id?: string
+          verdict_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "normative_step_recurrence_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "normative_step_recurrence_step_id_fkey"
+            columns: ["step_id"]
+            isOneToOne: true
+            referencedRelation: "normative_job_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      normative_step_source_verdicts: {
+        Row: {
+          candidate_basis: string
+          company_id: string
+          created_at: string
+          id: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          source_id: string
+          source_identity: string
+          source_run_id: string
+          step_id: string
+          step_identity: string
+          verdict: string
+        }
+        Insert: {
+          candidate_basis: string
+          company_id: string
+          created_at?: string
+          id?: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          source_id: string
+          source_identity: string
+          source_run_id: string
+          step_id: string
+          step_identity: string
+          verdict: string
+        }
+        Update: {
+          candidate_basis?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          judge_model?: string
+          judge_reason?: string
+          pair_identity?: string
+          source_id?: string
+          source_identity?: string
+          source_run_id?: string
+          step_id?: string
+          step_identity?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "normative_step_source_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "normative_step_source_verdicts_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "normative_industry_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "normative_step_source_verdicts_step_id_fkey"
+            columns: ["step_id"]
+            isOneToOne: false
+            referencedRelation: "normative_job_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       object_dependencies: {
         Row: {
           company_id: string
@@ -2006,13 +2600,18 @@ export type Database = {
           company_id: string
           confidence: number | null
           created_at: string
+          declared_source_ref: string | null
+          declared_verbatim: string | null
           frameworks_used: string[]
           id: string
           innovation_strategy: string | null
           job_executor: string
           journey_key: string
           jtbd: string
+          market_register: string
           provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          relationship_basis: string | null
+          relationship_kind: string | null
           source_path: string
           updated_at: string
           user_id: string
@@ -2022,13 +2621,18 @@ export type Database = {
           company_id: string
           confidence?: number | null
           created_at?: string
+          declared_source_ref?: string | null
+          declared_verbatim?: string | null
           frameworks_used?: string[]
           id?: string
           innovation_strategy?: string | null
           job_executor?: string
           journey_key?: string
           jtbd?: string
+          market_register: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          relationship_basis?: string | null
+          relationship_kind?: string | null
           source_path?: string
           updated_at?: string
           user_id: string
@@ -2038,13 +2642,18 @@ export type Database = {
           company_id?: string
           confidence?: number | null
           created_at?: string
+          declared_source_ref?: string | null
+          declared_verbatim?: string | null
           frameworks_used?: string[]
           id?: string
           innovation_strategy?: string | null
           job_executor?: string
           journey_key?: string
           jtbd?: string
+          market_register?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          relationship_basis?: string | null
+          relationship_kind?: string | null
           source_path?: string
           updated_at?: string
           user_id?: string
@@ -2869,6 +3478,59 @@ export type Database = {
             columns: ["stale_since_event_id"]
             isOneToOne: false
             referencedRelation: "strategic_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_recurrence_verdicts: {
+        Row: {
+          candidate_basis: string
+          company_id: string
+          created_at: string
+          id: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          signal_a_id: string
+          signal_b_id: string
+          statement_a_identity: string
+          statement_b_identity: string
+          verdict: string
+        }
+        Insert: {
+          candidate_basis: string
+          company_id: string
+          created_at?: string
+          id?: string
+          judge_model: string
+          judge_reason: string
+          pair_identity: string
+          signal_a_id: string
+          signal_b_id: string
+          statement_a_identity: string
+          statement_b_identity: string
+          verdict: string
+        }
+        Update: {
+          candidate_basis?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          judge_model?: string
+          judge_reason?: string
+          pair_identity?: string
+          signal_a_id?: string
+          signal_b_id?: string
+          statement_a_identity?: string
+          statement_b_identity?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_recurrence_verdicts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]
@@ -3817,6 +4479,63 @@ export type Database = {
           },
         ]
       }
+      test_removals: {
+        Row: {
+          action_id: string
+          actor: string | null
+          company_id: string
+          expected_negative_signal: string | null
+          expected_positive_signal: string | null
+          hypothesis: string
+          id: string
+          leg_condition: string | null
+          leg_title: string | null
+          no_test_needed: boolean | null
+          no_test_needed_reason: string | null
+          parent_route_title: string | null
+          reason_category: string
+          removed_at: string
+          result: string | null
+          test_source: string | null
+        }
+        Insert: {
+          action_id: string
+          actor?: string | null
+          company_id: string
+          expected_negative_signal?: string | null
+          expected_positive_signal?: string | null
+          hypothesis: string
+          id?: string
+          leg_condition?: string | null
+          leg_title?: string | null
+          no_test_needed?: boolean | null
+          no_test_needed_reason?: string | null
+          parent_route_title?: string | null
+          reason_category: string
+          removed_at?: string
+          result?: string | null
+          test_source?: string | null
+        }
+        Update: {
+          action_id?: string
+          actor?: string | null
+          company_id?: string
+          expected_negative_signal?: string | null
+          expected_positive_signal?: string | null
+          hypothesis?: string
+          id?: string
+          leg_condition?: string | null
+          leg_title?: string | null
+          no_test_needed?: boolean | null
+          no_test_needed_reason?: string | null
+          parent_route_title?: string | null
+          reason_category?: string
+          removed_at?: string
+          result?: string | null
+          test_source?: string | null
+        }
+        Relationships: []
+      }
       tests: {
         Row: {
           action_id: string
@@ -3963,6 +4682,14 @@ export type Database = {
           p_claim_ids: string[]
           p_reason_category: string
         }
+        Returns: number
+      }
+      remove_test: {
+        Args: { p_actor?: string; p_reason_category: string; p_test_id: string }
+        Returns: undefined
+      }
+      remove_tests_for_leg_reroll: {
+        Args: { p_actor?: string; p_leg_ids: string[] }
         Returns: number
       }
       resolve_primary_job_step_set: {
