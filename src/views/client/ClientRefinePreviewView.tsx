@@ -413,15 +413,22 @@ export default function ClientRefinePreviewView() {
     }
     if (analysisRunning) return;
     toast.loading("Starting analysis…", { id: "run-analysis" });
-    const { error } = await supabase.functions.invoke("run-mojo-analysis", {
-      body: { company_id: activeCompany.id, trigger_type: "manual" },
-    });
-    if (error) {
-      console.error("[run-mojo-analysis]", error);
-      toast.error(`Could not start analysis: ${error.message}`, { id: "run-analysis" });
-    } else {
-      toast.success("Analysis started.", { id: "run-analysis" });
-      queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+    // DEF-1b: the handled branches below already replace the loading toast by id, but
+    // a THROWN rejection would exit past them and leave sonner's duration:Infinity
+    // toast mounted for the page session — the Sonos phantom by another door.
+    try {
+      const { error } = await supabase.functions.invoke("run-mojo-analysis", {
+        body: { company_id: activeCompany.id, trigger_type: "manual" },
+      });
+      if (error) {
+        console.error("[run-mojo-analysis]", error);
+        toast.error(`Could not start analysis: ${error.message}`, { id: "run-analysis" });
+      } else {
+        toast.success("Analysis started.", { id: "run-analysis" });
+        queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+      }
+    } catch (err) {
+      toast.error(`Analysis failed to start — ${err instanceof Error ? err.message : String(err)}`, { id: "run-analysis" });
     }
   }, [activeCompany?.id, analysisRunning, queryClient]);
 
@@ -444,31 +451,37 @@ export default function ClientRefinePreviewView() {
     }
     toast.loading("Running outside signals…", { id: "run-outside-signals" });
     const startedAt = new Date().toISOString();
-    const { error } = await supabase.functions.invoke("public-baseline", {
-      body: {
-        company_id: activeCompany.id,
-        company_name: activeCompany.name,
-        website: activeCompany.website,
-      },
-    });
-    if (error) {
-      // The 150s wall may have cut the browser after the isolate already succeeded.
-      // Poll the durable run-status row instead of trusting the failed invoke.
-      const terminal = await pollPublicBaselineTerminal({ companyId: activeCompany.id, sinceIso: startedAt });
-      if (terminal === "completed") {
-        toast.success("Outside signals updated.", { id: "run-outside-signals" });
-        queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+    // DEF-1b: pollPublicBaselineTerminal can throw, which would exit past every
+    // handled branch below and strand the duration:Infinity loading toast.
+    try {
+      const { error } = await supabase.functions.invoke("public-baseline", {
+        body: {
+          company_id: activeCompany.id,
+          company_name: activeCompany.name,
+          website: activeCompany.website,
+        },
+      });
+      if (error) {
+        // The 150s wall may have cut the browser after the isolate already succeeded.
+        // Poll the durable run-status row instead of trusting the failed invoke.
+        const terminal = await pollPublicBaselineTerminal({ companyId: activeCompany.id, sinceIso: startedAt });
+        if (terminal === "completed") {
+          toast.success("Outside signals updated.", { id: "run-outside-signals" });
+          queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+          return;
+        }
+        if (terminal === "running") {
+          toast.message("Outside signals still running in the background — refresh shortly.", { id: "run-outside-signals" });
+          return;
+        }
+        toast.error(error.message || "Outside signals failed.", { id: "run-outside-signals" });
         return;
       }
-      if (terminal === "running") {
-        toast.message("Outside signals still running in the background — refresh shortly.", { id: "run-outside-signals" });
-        return;
-      }
-      toast.error(error.message || "Outside signals failed.", { id: "run-outside-signals" });
-      return;
+      toast.success("Outside signals updated.", { id: "run-outside-signals" });
+      queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
+    } catch (err) {
+      toast.error(`Outside signals failed — ${err instanceof Error ? err.message : String(err)}`, { id: "run-outside-signals" });
     }
-    toast.success("Outside signals updated.", { id: "run-outside-signals" });
-    queryClient.invalidateQueries({ queryKey: ["file-proposals", activeCompany.id] });
   }, [activeCompany?.id, activeCompany?.name, activeCompany?.website, queryClient]);
 
   // Deprecated cold-start re-run handler removed (was "Rebuild foundation + routes"):
@@ -480,29 +493,35 @@ export default function ClientRefinePreviewView() {
       return;
     }
     toast.loading("Regenerating job map…", { id: "rerun-jobmap-scope" });
-    const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
-      body: {
-        company_id: activeCompany.id,
-        selected_job_maps: [
-          {
-            journey_key: "customer",
-            journey_title: "Customer Progress",
-            journey_subtitle: "How the primary job performer moves through the core job.",
-          },
-        ],
-        trigger: "command_workbench_scoped_rerun",
-      },
-    });
-    if (error) {
-      toast.error(error.message || "Job map rerun failed.", { id: "rerun-jobmap-scope" });
-      return;
+    // DEF-1b: the invoke or refetchClientViewData can throw past every handled
+    // branch below, stranding the duration:Infinity loading toast.
+    try {
+      const { data, error } = await supabase.functions.invoke("local-jobmap-synthesis", {
+        body: {
+          company_id: activeCompany.id,
+          selected_job_maps: [
+            {
+              journey_key: "customer",
+              journey_title: "Customer Progress",
+              journey_subtitle: "How the primary job performer moves through the core job.",
+            },
+          ],
+          trigger: "command_workbench_scoped_rerun",
+        },
+      });
+      if (error) {
+        toast.error(error.message || "Job map rerun failed.", { id: "rerun-jobmap-scope" });
+        return;
+      }
+      if (data && typeof data === "object" && "error" in data && data.error) {
+        toast.error(String(data.error), { id: "rerun-jobmap-scope" });
+        return;
+      }
+      await refetchClientViewData();
+      toast.success("Job map regenerated.", { id: "rerun-jobmap-scope" });
+    } catch (err) {
+      toast.error(`Job map rerun failed — ${err instanceof Error ? err.message : String(err)}`, { id: "rerun-jobmap-scope" });
     }
-    if (data && typeof data === "object" && "error" in data && data.error) {
-      toast.error(String(data.error), { id: "rerun-jobmap-scope" });
-      return;
-    }
-    await refetchClientViewData();
-    toast.success("Job map regenerated.", { id: "rerun-jobmap-scope" });
   }, [activeCompany?.id, refetchClientViewData]);
   const diagnostic = useMemo((): MojoMapDiagnostic | null => {
     const best = selectBestProposal(fileProposals);

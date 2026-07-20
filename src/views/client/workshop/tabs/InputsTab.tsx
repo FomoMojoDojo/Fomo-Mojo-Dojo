@@ -1218,24 +1218,30 @@ export default function InputsTab({
     }
     toast.loading("Refreshing outside signals…", { id: "refresh-baseline" });
     const startedAt = new Date().toISOString();
-    const { error } = await supabase.functions.invoke("public-baseline", {
-      body: { company_id: companyId, company_name: companyName, website: companyWebsite },
-    });
-    if (error) {
-      // The 150s wall may have cut the browser after the isolate already succeeded.
-      // Poll the durable run-status row instead of trusting the failed invoke.
-      const terminal = await pollPublicBaselineTerminal({ companyId, sinceIso: startedAt });
-      if (terminal === "completed") {
+    // DEF-1b: pollPublicBaselineTerminal can throw, which would exit past every
+    // handled branch below and strand the duration:Infinity loading toast.
+    try {
+      const { error } = await supabase.functions.invoke("public-baseline", {
+        body: { company_id: companyId, company_name: companyName, website: companyWebsite },
+      });
+      if (error) {
+        // The 150s wall may have cut the browser after the isolate already succeeded.
+        // Poll the durable run-status row instead of trusting the failed invoke.
+        const terminal = await pollPublicBaselineTerminal({ companyId, sinceIso: startedAt });
+        if (terminal === "completed") {
+          toast.success("Outside signals updated.", { id: "refresh-baseline" });
+          void refetchBaseline();
+        } else if (terminal === "running") {
+          toast.message("Outside signals still running in the background — refresh shortly.", { id: "refresh-baseline" });
+        } else {
+          toast.error(error.message || "Outside signal refresh failed.", { id: "refresh-baseline" });
+        }
+      } else {
         toast.success("Outside signals updated.", { id: "refresh-baseline" });
         void refetchBaseline();
-      } else if (terminal === "running") {
-        toast.message("Outside signals still running in the background — refresh shortly.", { id: "refresh-baseline" });
-      } else {
-        toast.error(error.message || "Outside signal refresh failed.", { id: "refresh-baseline" });
       }
-    } else {
-      toast.success("Outside signals updated.", { id: "refresh-baseline" });
-      void refetchBaseline();
+    } catch (err) {
+      toast.error(`Outside signal refresh failed — ${err instanceof Error ? err.message : String(err)}`, { id: "refresh-baseline" });
     }
   }, [companyId, companyName, companyWebsite, canRefresh, refetchBaseline]);
 
