@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
+import { engagementDayFrom } from "@/lib/engagementDay";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
@@ -183,12 +184,10 @@ export default function ClientRefinePreviewView() {
   // gracefully, so thin/empty companies (e.g. zero-route Edgewood) get an honest early state.
   // Cafe Barra (3 route-level routes) was already `true`, so it is unchanged.
   const hasHierarchy = true;
-  const ENGAGEMENT_DAY = useMemo((): number | null => {
-    const startAt = activeCompany?.engagement_started_at;
-    if (!startAt) return null;
-    const ms = Date.now() - new Date(startAt).getTime();
-    return Math.max(1, Math.floor(ms / 86_400_000));
-  }, [activeCompany?.engagement_started_at]);
+  const ENGAGEMENT_DAY = useMemo(
+    () => engagementDayFrom(activeCompany?.engagement_started_at),
+    [activeCompany?.engagement_started_at],
+  );
   const topLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
   const dominantClaimState = useMemo((): ClaimState | null => {
     if (!hasHierarchy || topLevelRoutes.length === 0) return null;

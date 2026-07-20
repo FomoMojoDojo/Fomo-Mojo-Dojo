@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
+import { engagementDayFrom } from "@/lib/engagementDay";
 import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
@@ -419,12 +420,10 @@ export default function ClientRefinePreviewWorkshopView() {
   const { landscape: workshopSignalLandscape } = useSignalLandscape(companyId);
   // DAY-52 hardcode removed (queue item): same formula as the homepage's ENGAGEMENT_DAY
   // (ClientRefinePreviewView) — computed from companies.engagement_started_at, "—" when unset.
-  const workshopEngagementDay = useMemo((): number | null => {
-    const startAt = activeCompany?.engagement_started_at;
-    if (!startAt) return null;
-    const ms = Date.now() - new Date(startAt).getTime();
-    return Math.max(1, Math.floor(ms / 86_400_000));
-  }, [activeCompany?.engagement_started_at]);
+  const workshopEngagementDay = useMemo(
+    () => engagementDayFrom(activeCompany?.engagement_started_at),
+    [activeCompany?.engagement_started_at],
+  );
 
   const workshopSignalBasis: SignalBasis | undefined = workshopSignalLandscape ? {
     publicCount:   workshopSignalLandscape.byBand.outside.count,
@@ -2549,6 +2548,10 @@ export default function ClientRefinePreviewWorkshopView() {
             nextBestMove={nextBestMove}
             needs={filteredNeeds}
             onRouteActivate={(id) => setActiveRouteId(id)}
+            /* DEF-2: only when the LENS filter is what emptied the view (the same
+               condition the jobmap tab uses for its unassessed note) does the panel
+               get the unfiltered set — as a view-only escape, never a lens change. */
+            lensHiddenRoutes={lensRoutesUnassessed ? routes : null}
           />
         </div>
       ) : compareActive ? (

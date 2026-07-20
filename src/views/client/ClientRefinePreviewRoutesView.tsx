@@ -75,6 +75,7 @@ import SurfaceEducationTrigger from "@/components/surface-education/SurfaceEduca
 import FlowCommitSheet from "@/components/claims/FlowCommitSheet";
 import { R, RouteCategory, CATEGORY_META, CATEGORY_POSTURE_LABEL, isHypothesisPhase, toSentence, deriveClientWhyReasons, deriveCanonicalRouteSentence, EvidenceItem, ClientAssumption, CLIENT_LAYER_LABELS, CLIENT_STATUS_LABELS, CLIENT_STATUS_COLORS, CLIENT_STATUS_GLYPHS, deriveStrengthMoves, DetailItem, statusGlyph, statusTip, ROUTE_FIELD_LABELS, ROUTE_FIELDS, summarizeRouteValue, routeDiffedFields, routeTimeAgo, WrapAlt, WrapCond, HIERARCHY_STATE_ACCENT, HIERARCHY_STATE_LABEL, HIERARCHY_FRAMING, HIERARCHY_HERO, inferRelevantCategory } from "./routes/shared";
 import { ExpandRingBtn, ExpandRingIndicator, InkMetaChip, RouteStateTag, ScoreChip, HierarchyScoreStrip, KeystoneStripe } from "./routes/primitives";
+import { engagementDayFrom } from "@/lib/engagementDay";
 import { ClientRouteInspectPanel, ClientDecisionBanner, RouteWhyRisingPanel, RouteProposalSection, RouteCard, RoutesColumn, HierarchyWrapPanel, HierarchyPageHeader, LegRow, HierarchyRouteSection, HierarchyGroupCard } from "./routes/components";
 
 
@@ -216,6 +217,12 @@ export default function ClientRefinePreviewRoutesView() {
   const ceilingReason   = readiness.ceilingReason;
   const hasHierarchy    = routes.some((r) => r.level === "route");
   const { claims: pageClaimsMap } = useCompanyClaims(activeCompany?.id);
+  // DEF-2: this header rendered a literal "DAY 52" for every company on every day.
+  // Same computation the workshop and home headers use, from engagement_started_at.
+  const pageEngagementDay = useMemo(
+    () => engagementDayFrom(activeCompany?.engagement_started_at),
+    [activeCompany?.engagement_started_at],
+  );
   const pageTopLevelRoutes = useMemo(() => routes.filter((r) => r.level === "route"), [routes]);
   const pagesDominantClaimState = useMemo((): ClaimState | null => {
     if (!hasHierarchy || pageTopLevelRoutes.length === 0) return null;
@@ -276,7 +283,7 @@ export default function ClientRefinePreviewRoutesView() {
                 [{toSentence(activeCompany?.name) || "COMPANY"}]
                 <span className="crpv-co-caret">{showHeaderSwitcher ? "▲" : "▼"}</span>
               </button>
-              <span className="cap" style={{ marginLeft: 4 }}>· DAY 52 · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+              <span className="cap" style={{ marginLeft: 4 }}>· DAY {pageEngagementDay ?? "—"} · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
               {showHeaderSwitcher && (
                 <div className="crpv-co-dropdown" role="listbox">
                   <ul className="crpv-co-list">
@@ -301,7 +308,7 @@ export default function ClientRefinePreviewRoutesView() {
               )}
             </div>
           ) : (
-            <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY 52 · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
+            <span className="cap">[{toSentence(activeCompany?.name) || "COMPANY"}] · DAY {pageEngagementDay ?? "—"} · {pagesDominantClaimState ? pagesDominantClaimState.replace(/_/g, " ").toUpperCase() : stageLabel(phase).toUpperCase()}</span>
           )}
         </div>
       </header>
@@ -361,7 +368,7 @@ export default function ClientRefinePreviewRoutesView() {
 
 
 export function RoutesOrgPanel({
-  routes,
+  routes: routesProp,
   loading,
   activeCompany,
   routeIdParam,
@@ -371,6 +378,7 @@ export function RoutesOrgPanel({
   needs,
   onRouteActivate,
   onCommitSuccess,
+  lensHiddenRoutes,
 }: {
   routes: RouteRow[];
   loading: boolean;
@@ -382,9 +390,31 @@ export function RoutesOrgPanel({
   needs?: OdiNeedRow[];
   onRouteActivate?: (routeId: string) => void;
   onCommitSuccess?: () => void;
+  /** DEF-2: the company's UNFILTERED route set, supplied only when the focused
+   *  market lens is what emptied `routes`. Lets this panel offer a view-only
+   *  "Show all routes" escape instead of reading as "no routes exist". */
+  lensHiddenRoutes?: RouteRow[] | null;
 }) {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
+  // DEF-2 — view-only lens escape. Widens what THIS tab shows for this session; it
+  // does NOT change the focused lens, write route_lens_refs, or choose/lead anything.
+  // Component state only, no browser storage. The `routesProp.length === 0` guard makes
+  // it self-cancelling: the moment the focused lens actually has assessed routes, the
+  // real filtered set wins again, so a stale escape can never mask a lens's own result.
+  const [showAllRoutes, setShowAllRoutes] = useState(false);
+  const lensEscapeAvailable = !!lensHiddenRoutes && routesProp.length === 0;
+  const routes = showAllRoutes && lensEscapeAvailable ? (lensHiddenRoutes as RouteRow[]) : routesProp;
+  // Note-accuracy law: only claim "not assessed for this market" when ACTIVE routes
+  // actually exist and the lens filter is what hid them. A company with zero routes
+  // keeps the plain "No routes in this category yet." empty state.
+  const lensHiddenActiveCount = useMemo(
+    () => (lensHiddenRoutes ?? []).filter(
+      (r) => r.level === "route" && (r.relevance_state ?? "active") === "active",
+    ).length,
+    [lensHiddenRoutes],
+  );
+  const showLensUnassessedNote = lensEscapeAvailable && lensHiddenActiveCount > 0;
   const [inspectRoute, setInspectRoute]     = useState<RouteRow | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
@@ -611,12 +641,14 @@ export function RoutesOrgPanel({
 
   // Progress (and its resume bookkeeping) is company-scoped: switching the
   // active company must not leak another company's ✓ routes into doneIds or
-  // render its stale panel. Applies to both chunked loops.
+  // render its stale panel. Applies to both chunked loops. The DEF-2 lens escape
+  // resets here too — it is a per-company viewing choice, never a sticky mode.
   useEffect(() => {
     setLegGenProgress(null);
     setTestGenProgress(null);
     setConditionGenProgress(null);
     setConditionLedger(null);
+    setShowAllRoutes(false);
   }, [activeCompany?.id]);
 
   const handleGenerateAllTests = useCallback(async () => {
@@ -1552,6 +1584,41 @@ export function RoutesOrgPanel({
         <div className="crpv-ws-placeholder cap">Loading routes…</div>
       ) : (
         <>
+          {/* DEF-2 — honest lens empty state. Without this the three columns read
+              "No routes in this category yet." while the company has active routes
+              that simply aren't assessed for the focused market. View-only: the
+              control widens what's shown, it does not focus/choose/assess anything.
+              Strings are DRAFTS pending operator signature. */}
+          {showLensUnassessedNote && !showAllRoutes && (
+            <div style={{ margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12 }}>
+              <p style={{ margin: 0, fontWeight: 600 }}>No routes assessed for this market yet.</p>
+              <p style={{ margin: "4px 0 0", color: "#667" }}>
+                This company has {lensHiddenActiveCount} active route{lensHiddenActiveCount === 1 ? "" : "s"} that {lensHiddenActiveCount === 1 ? "hasn't" : "haven't"} been assessed for the market in focus.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAllRoutes(true)}
+                style={{ marginTop: 8, fontSize: 12, fontWeight: 600, letterSpacing: 0.2, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(120,120,140,0.35)", background: "transparent", color: "inherit", cursor: "pointer" }}
+              >
+                Show all routes
+              </button>
+            </div>
+          )}
+          {showAllRoutes && lensEscapeAvailable && (
+            <div style={{ margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <p style={{ margin: 0 }}>
+                <span style={{ fontWeight: 600 }}>Showing all routes.</span>
+                <span style={{ color: "#667" }}> None are assessed for the market in focus — viewing only, nothing has been assessed or chosen.</span>
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAllRoutes(false)}
+                style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, letterSpacing: 0.2, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(120,120,140,0.35)", background: "transparent", color: "inherit", cursor: "pointer" }}
+              >
+                Back to this market
+              </button>
+            </div>
+          )}
           {!isReady && !hasHierarchy && (
             <p style={{ fontSize: 11, color: "#999", margin: "0 0 14px", fontStyle: "italic" }}>
               {phasePriority.routes.unreadyNote}
