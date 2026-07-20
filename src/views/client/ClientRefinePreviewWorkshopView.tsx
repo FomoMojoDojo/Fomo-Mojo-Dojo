@@ -336,13 +336,29 @@ export default function ClientRefinePreviewWorkshopView() {
   // Focused lens's referenced route ids: null = no lens layer for the focused key
   // (legacy filtering applies); a Set (possibly empty) = lens-scoped.
   const [focusedLensRouteIds, setFocusedLensRouteIds] = useState<Set<string> | null>(null);
+  // DEF-3: `null` alone cannot say WHY there are no ids — "no lens layer" and "the
+  // fetch hasn't resolved yet" both read as null. That conflation is the flash: on
+  // mount null took the legacy branch and rendered every route, then the Set landed
+  // and the filter collapsed the view. This flag separates loading from resolved so
+  // consumers can hold a stable state instead of rendering-then-swapping.
+  const [lensRefsLoading, setLensRefsLoading] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const cid = activeCompany?.id;
-    if (!cid || !viewedSetKey || showAllJourneys) { setFocusedLensRouteIds(null); return; }
-    fetchLensRouteRefs(cid, viewedSetKey).then((res) => {
-      if (!cancelled) setFocusedLensRouteIds(res.lens ? res.referencedRouteIds : null);
-    });
+    if (!cid || !viewedSetKey || showAllJourneys) { setFocusedLensRouteIds(null); setLensRefsLoading(false); return; }
+    setLensRefsLoading(true);
+    fetchLensRouteRefs(cid, viewedSetKey)
+      .then((res) => {
+        if (!cancelled) setFocusedLensRouteIds(res.lens ? res.referencedRouteIds : null);
+      })
+      .catch(() => {
+        // A rejected read must not strand the loading state (it would hold the panel
+        // in "Loading routes…" forever). Fall back to the legacy/unscoped branch.
+        if (!cancelled) setFocusedLensRouteIds(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLensRefsLoading(false);
+      });
     return () => { cancelled = true; };
   }, [activeCompany?.id, viewedSetKey, showAllJourneys]);
 
@@ -2538,9 +2554,17 @@ export default function ClientRefinePreviewWorkshopView() {
         </div>
       ) : activeTab === "routes" ? (
         <div className="crpv-ws-content">
+          {/* DEF-3 — pre-assessment default (operator ruling 2026-07-20, inverting
+              DEF-2's polarity). A lens that has assessed NOTHING should not scope the
+              view down to nothing: until it has refs, this tab shows the company's
+              full route list, labelled honestly. Once the lens has assessed routes,
+              the scoped view below is exactly as before. `loading` also waits on the
+              lens read, so the correct view renders once instead of the full list
+              flashing and then collapsing. View-only: choosing what to DISPLAY,
+              never writing refs or focusing/choosing anything. */}
           <RoutesOrgPanel
-            routes={filteredRoutes}
-            loading={routesLoading}
+            routes={lensRoutesUnassessed ? routes : filteredRoutes}
+            loading={routesLoading || lensRefsLoading}
             activeCompany={activeCompany}
             routeIdParam={pendingInspectRouteId}
             onClearRouteIdParam={() => setPendingInspectRouteId(null)}
@@ -2548,10 +2572,7 @@ export default function ClientRefinePreviewWorkshopView() {
             nextBestMove={nextBestMove}
             needs={filteredNeeds}
             onRouteActivate={(id) => setActiveRouteId(id)}
-            /* DEF-2: only when the LENS filter is what emptied the view (the same
-               condition the jobmap tab uses for its unassessed note) does the panel
-               get the unfiltered set — as a view-only escape, never a lens change. */
-            lensHiddenRoutes={lensRoutesUnassessed ? routes : null}
+            lensUnassessed={lensRoutesUnassessed}
           />
         </div>
       ) : compareActive ? (

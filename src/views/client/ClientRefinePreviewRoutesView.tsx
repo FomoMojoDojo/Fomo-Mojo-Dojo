@@ -368,7 +368,7 @@ export default function ClientRefinePreviewRoutesView() {
 
 
 export function RoutesOrgPanel({
-  routes: routesProp,
+  routes,
   loading,
   activeCompany,
   routeIdParam,
@@ -378,7 +378,7 @@ export function RoutesOrgPanel({
   needs,
   onRouteActivate,
   onCommitSuccess,
-  lensHiddenRoutes,
+  lensUnassessed,
 }: {
   routes: RouteRow[];
   loading: boolean;
@@ -390,31 +390,14 @@ export function RoutesOrgPanel({
   needs?: OdiNeedRow[];
   onRouteActivate?: (routeId: string) => void;
   onCommitSuccess?: () => void;
-  /** DEF-2: the company's UNFILTERED route set, supplied only when the focused
-   *  market lens is what emptied `routes`. Lets this panel offer a view-only
-   *  "Show all routes" escape instead of reading as "no routes exist". */
-  lensHiddenRoutes?: RouteRow[] | null;
+  /** DEF-3: the focused market lens has resolved and assessed NOTHING, so the caller
+   *  is passing the company's full unfiltered route set rather than an empty
+   *  lens-scoped one. Purely a labelling signal — it makes the panel state that these
+   *  routes aren't assessed for the market in focus. Never a choose/lead/focus act. */
+  lensUnassessed?: boolean;
 }) {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
-  // DEF-2 — view-only lens escape. Widens what THIS tab shows for this session; it
-  // does NOT change the focused lens, write route_lens_refs, or choose/lead anything.
-  // Component state only, no browser storage. The `routesProp.length === 0` guard makes
-  // it self-cancelling: the moment the focused lens actually has assessed routes, the
-  // real filtered set wins again, so a stale escape can never mask a lens's own result.
-  const [showAllRoutes, setShowAllRoutes] = useState(false);
-  const lensEscapeAvailable = !!lensHiddenRoutes && routesProp.length === 0;
-  const routes = showAllRoutes && lensEscapeAvailable ? (lensHiddenRoutes as RouteRow[]) : routesProp;
-  // Note-accuracy law: only claim "not assessed for this market" when ACTIVE routes
-  // actually exist and the lens filter is what hid them. A company with zero routes
-  // keeps the plain "No routes in this category yet." empty state.
-  const lensHiddenActiveCount = useMemo(
-    () => (lensHiddenRoutes ?? []).filter(
-      (r) => r.level === "route" && (r.relevance_state ?? "active") === "active",
-    ).length,
-    [lensHiddenRoutes],
-  );
-  const showLensUnassessedNote = lensEscapeAvailable && lensHiddenActiveCount > 0;
   const [inspectRoute, setInspectRoute]     = useState<RouteRow | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [decisionSavedAt, setDecisionSavedAt] = useState<string | null>(null);
@@ -641,14 +624,12 @@ export function RoutesOrgPanel({
 
   // Progress (and its resume bookkeeping) is company-scoped: switching the
   // active company must not leak another company's ✓ routes into doneIds or
-  // render its stale panel. Applies to both chunked loops. The DEF-2 lens escape
-  // resets here too — it is a per-company viewing choice, never a sticky mode.
+  // render its stale panel. Applies to both chunked loops.
   useEffect(() => {
     setLegGenProgress(null);
     setTestGenProgress(null);
     setConditionGenProgress(null);
     setConditionLedger(null);
-    setShowAllRoutes(false);
   }, [activeCompany?.id]);
 
   const handleGenerateAllTests = useCallback(async () => {
@@ -1584,39 +1565,19 @@ export function RoutesOrgPanel({
         <div className="crpv-ws-placeholder cap">Loading routes…</div>
       ) : (
         <>
-          {/* DEF-2 — honest lens empty state. Without this the three columns read
-              "No routes in this category yet." while the company has active routes
-              that simply aren't assessed for the focused market. View-only: the
-              control widens what's shown, it does not focus/choose/assess anything.
-              Strings are DRAFTS pending operator signature. */}
-          {showLensUnassessedNote && !showAllRoutes && (
+          {/* DEF-3 — pre-assessment default. The focused lens has assessed nothing, so
+              the caller passed the FULL route set rather than an empty lens-scoped one
+              (scoping to a lens that assessed nothing would hide the company's real
+              routes and read as "no routes exist"). This note keeps that honest.
+              View-only: it labels what's shown, it does not focus/choose/assess
+              anything. Gated on routes actually being present so a zero-route company
+              never claims routes it doesn't have. DRAFT string pending signature. */}
+          {lensUnassessed && topLevelRoutes.length > 0 && (
             <div style={{ margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12 }}>
-              <p style={{ margin: 0, fontWeight: 600 }}>No routes assessed for this market yet.</p>
-              <p style={{ margin: "4px 0 0", color: "#667" }}>
-                This company has {lensHiddenActiveCount} active route{lensHiddenActiveCount === 1 ? "" : "s"} that {lensHiddenActiveCount === 1 ? "hasn't" : "haven't"} been assessed for the market in focus.
+              <p style={{ margin: 0, color: "#667" }}>
+                <span style={{ fontWeight: 600, color: "inherit" }}>Showing all routes.</span>{" "}
+                None of these routes have been assessed for the market in focus yet.
               </p>
-              <button
-                type="button"
-                onClick={() => setShowAllRoutes(true)}
-                style={{ marginTop: 8, fontSize: 12, fontWeight: 600, letterSpacing: 0.2, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(120,120,140,0.35)", background: "transparent", color: "inherit", cursor: "pointer" }}
-              >
-                Show all routes
-              </button>
-            </div>
-          )}
-          {showAllRoutes && lensEscapeAvailable && (
-            <div style={{ margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(120,120,140,0.3)", borderRadius: 8, background: "#fafafa", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <p style={{ margin: 0 }}>
-                <span style={{ fontWeight: 600 }}>Showing all routes.</span>
-                <span style={{ color: "#667" }}> None are assessed for the market in focus — viewing only, nothing has been assessed or chosen.</span>
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowAllRoutes(false)}
-                style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, letterSpacing: 0.2, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(120,120,140,0.35)", background: "transparent", color: "inherit", cursor: "pointer" }}
-              >
-                Back to this market
-              </button>
             </div>
           )}
           {!isReady && !hasHierarchy && (
