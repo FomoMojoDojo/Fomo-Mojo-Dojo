@@ -1576,6 +1576,11 @@ export default function ClientRefinePreviewWorkshopView() {
       return;
     }
 
+    // DEF-1: names the company once the baseline step has started, so the catch can
+    // (a) replace the infinite toast.loading by its id and (b) name the step that
+    // actually failed. Null until then = the failure was the create itself.
+    let baselineName: string | null = null;
+
     try {
       const { data, error } = await supabase
         .from("companies")
@@ -1595,6 +1600,7 @@ export default function ClientRefinePreviewWorkshopView() {
       await refetchCompany();
 
       if (newClientRunBaseline && sanitizedWebsite) {
+        baselineName = data.name;
         toast.loading(`Running outside signals for ${data.name}…`, { id: "create-client-baseline" });
         await runPublicBaseline(data.id, data.name, sanitizedWebsite);
         toast.success(`Outside signals captured for ${data.name}.`, { id: "create-client-baseline" });
@@ -1610,7 +1616,18 @@ export default function ClientRefinePreviewWorkshopView() {
       setNewClientRunBaseline(true);
       setShowCreateClient(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to create client.");
+      const message = error instanceof Error ? error.message : "Failed to create client.";
+      if (baselineName) {
+        // Carry the loading toast's id: sonner's toast.loading is duration:Infinity,
+        // so an error WITHOUT the id leaves the "Running outside signals for X…" toast
+        // on screen for the rest of the page session — a false "running" claim that
+        // survives navigation and company switches (it outlived a failed run by 3 days
+        // and showed on another company's screen). Naming the step keeps it honest:
+        // the company WAS created; it's the baseline that failed.
+        toast.error(`Outside signals failed for ${baselineName} — ${message}`, { id: "create-client-baseline" });
+      } else {
+        toast.error(message);
+      }
     } finally {
       setCreatingClient(false);
     }
