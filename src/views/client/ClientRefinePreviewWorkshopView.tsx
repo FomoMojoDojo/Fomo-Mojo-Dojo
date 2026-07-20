@@ -306,6 +306,34 @@ function deriveStrategicStateLine({
   return "";
 }
 
+/**
+ * BRT-1 — the ONE definition of the cold-start (birth) payload for this surface.
+ *
+ * Extracted from handleCreateInstance so the create-instance path and the Inputs-tab
+ * birth trigger cannot drift: both send byte-identical bodies by construction rather
+ * than by copy-paste. `include_public_collection: false` is the load-bearing flag —
+ * it makes research-company CONSUME the company's already-banked public signals
+ * instead of re-running public collection (the SIAA/Wasabi procedure). Flipping it
+ * true would re-collect a baseline the operator already paid for.
+ *
+ * research-company's cold-start guard is birth-only and refuses any company that
+ * already has a spine, so callers must gate on an empty spine before invoking.
+ */
+function coldStartBody(companyId: string, companyName: string, website: string, trigger: string) {
+  return {
+    company_id: companyId,
+    company_name: companyName,
+    website,
+    mode: "hybrid",
+    include_public_collection: false,
+    include_local_alignment: true,
+    apply_score_update: true,
+    trigger,
+    review_mode: "advisory",
+    allow_review_block_save: true,
+  };
+}
+
 export default function ClientRefinePreviewWorkshopView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -361,6 +389,84 @@ export default function ClientRefinePreviewWorkshopView() {
       });
     return () => { cancelled = true; };
   }, [activeCompany?.id, viewedSetKey, showAllJourneys]);
+
+  // BRT-1 — spine presence, mirroring _shared/spinePredicate.ts EXACTLY (routes at
+  // level 'route', job_steps, positioning_canvases, strategy_cascades,
+  // odi_market_definitions). Deliberately NOT hasHierarchy: that proxy has now caused
+  // four gaps, and here it would be actively wrong — a company can have job steps or a
+  // market definition (hence a spine, hence refused by the birth guard) while still
+  // having zero routes. The gate must match the server's predicate or the button lies.
+  //
+  // `null` = not yet determined; the button must not claim "no spine" while loading
+  // (DEF-3's lesson), because that would offer birth to a company that already has one.
+  const [companyHasSpine, setCompanyHasSpine] = useState<boolean | null>(null);
+  const [birthRunning, setBirthRunning] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const cid = companyId;
+    if (!cid) { setCompanyHasSpine(null); return; }
+    setCompanyHasSpine(null);
+    void (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sb = supabase as any;
+      const hasRow = async (table: string) => {
+        const { count } = await sb.from(table).select("id", { count: "exact", head: true }).eq("company_id", cid);
+        return (count ?? 0) > 0;
+      };
+      try {
+        const { count: routeCount } = await sb
+          .from("routes")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", cid)
+          .eq("level", "route");
+        const found = (routeCount ?? 0) > 0
+          || await hasRow("job_steps")
+          || await hasRow("positioning_canvases")
+          || await hasRow("strategy_cascades")
+          || await hasRow("odi_market_definitions");
+        if (!cancelled) setCompanyHasSpine(found);
+      } catch {
+        // Unknown stays unknown — never report "no spine" on a failed read, or the
+        // button would offer a birth the server will refuse with 409.
+        if (!cancelled) setCompanyHasSpine(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, needsRefreshKey]);
+
+  // BRT-1 — birth an EXISTING baseline-only company. Same run-agent-flow invocation
+  // and payload as create-instance (shared coldStartBody), so no second definition of
+  // the birth contract exists. run-agent-flow writes NO long_runner_runs row, so there
+  // is no ledger to poll for this flow: past the ~150s edge cut the honest report is
+  // "still running server-side" — the SPINE itself is the truth, and when it lands the
+  // trigger flips to its already-spined disabled state on the next refresh.
+  const handleBirthSpine = useCallback(async () => {
+    const cid = companyId;
+    const name = activeCompany?.name ?? "";
+    const site = activeCompany?.website ?? "";
+    if (!cid || !name || !site || birthRunning) return;
+    setBirthRunning(true);
+    toast.loading(`Building ${name}'s spine — routes, job map, market definition… (~3–7 min)`, { id: "birth-spine" });
+    try {
+      const { error } = await supabase.functions.invoke("run-agent-flow", {
+        body: coldStartBody(cid, name, site, "workshop_birth_spine"),
+      });
+      if (error) {
+        // The ~150s gateway wall cuts the browser while the isolate keeps running —
+        // both prior births (SIAA, Wasabi) landed this way. Not a failure.
+        console.warn("[Workshop] birth-spine cold start:", error);
+        toast.success(`${name}'s spine is still building server-side — reload in a few minutes to see it.`, { id: "birth-spine" });
+      } else {
+        toast.success(`${name}'s spine is built — routes, job map and market definition are in.`, { id: "birth-spine" });
+      }
+      await refetchCompany();
+      setNeedsRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast.error(`Spine build failed — ${err instanceof Error ? err.message : String(err)}`, { id: "birth-spine" });
+    } finally {
+      setBirthRunning(false);
+    }
+  }, [companyId, activeCompany?.name, activeCompany?.website, birthRunning, refetchCompany]);
 
   const workshopHasHierarchy = routes.some((r) => r.level === "route");
   const unroutedCount = routes.filter((r) => r.parent_id == null && r.level !== "route").length;
@@ -1706,18 +1812,7 @@ export default function ClientRefinePreviewWorkshopView() {
       // a gateway timeout means it is still running server-side, not a failure.
       toast.loading(`Researching ${clone.companyName}… (~3–7 min)`, { id: "create-instance" });
       const { error: flowError } = await supabase.functions.invoke("run-agent-flow", {
-        body: {
-          company_id: clone.companyId,
-          company_name: clone.companyName,
-          website: clone.website,
-          mode: "hybrid",
-          include_public_collection: false,
-          include_local_alignment: true,
-          apply_score_update: true,
-          trigger: "workshop_create_instance",
-          review_mode: "advisory",
-          allow_review_block_save: true,
-        },
+        body: coldStartBody(clone.companyId, clone.companyName, clone.website, "workshop_create_instance"),
       });
       if (flowError) {
         console.warn("[Workshop] create-instance cold start:", flowError);
@@ -2471,6 +2566,13 @@ export default function ClientRefinePreviewWorkshopView() {
             onAdded={() => setNeedsRefreshKey((k) => k + 1)}
             hasHierarchy={workshopHasHierarchy}
             signalBasis={workshopSignalBasis}
+            /* BRT-1: birth trigger for a baseline-banked, spineless company. The
+               invocation stays in this file (the only preview file that invokes
+               run-agent-flow); InputsTab receives a callback and the state it needs
+               to render honestly. */
+            companyHasSpine={companyHasSpine}
+            birthRunning={birthRunning}
+            onBirthSpine={handleBirthSpine}
           />
         </div>
       ) : activeTab === "council" ? (

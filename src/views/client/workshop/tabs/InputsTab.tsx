@@ -1119,6 +1119,9 @@ export default function InputsTab({
   onAdded,
   hasHierarchy,
   signalBasis,
+  companyHasSpine,
+  birthRunning,
+  onBirthSpine,
 }: {
   companyId:      string | null;
   companyName?:   string;
@@ -1127,6 +1130,11 @@ export default function InputsTab({
   onAdded:        () => void;
   hasHierarchy?:  boolean;
   signalBasis?:   SignalBasis;
+  /** BRT-1: server-predicate spine check (five tables), NOT hasHierarchy.
+   *  null = not yet determined — never render "no spine" from an unknown. */
+  companyHasSpine?: boolean | null;
+  birthRunning?:  boolean;
+  onBirthSpine?:  () => void;
 }) {
   const [showSocial,       setShowSocial]       = useState(false);
   const [typeFilter,       setTypeFilter]       = useState<TypeFilter>("all");
@@ -1681,6 +1689,28 @@ export default function InputsTab({
       ? "Add a website for this company before running outside signals"
       : undefined;
 
+  // BRT-1 — the birth trigger's state. Offered only when the outside read is banked
+  // AND the spine is genuinely empty (research-company's cold-start guard refuses any
+  // company that already has one, so offering it otherwise would promise a 409).
+  // Blocked states RENDER disabled with the reason rather than hiding — a hidden
+  // control is the defect class this whole thread keeps rediscovering.
+  const spineKnown = companyHasSpine !== null && companyHasSpine !== undefined;
+  const canBirthSpine = spineKnown && companyHasSpine === false && hasBaselineRun && hasWebsiteForBaseline && !!onBirthSpine;
+  const birthBlockedReason = !spineKnown
+    ? "Checking what this company already has…"
+    : companyHasSpine
+      ? "This company already has a spine — cold start only ever runs once, on an empty company."
+      : !hasBaselineRun
+        ? "Run outside signals first — the spine is built from that evidence."
+        : !hasWebsiteForBaseline
+          ? "Add a website for this company first"
+          : undefined;
+  const birthLabel = birthRunning
+    ? "Building…"
+    : !spineKnown
+      ? "Checking…"
+      : "Build company spine →";
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -1807,6 +1837,35 @@ export default function InputsTab({
                   Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                 </span>
               )}
+            </div>
+          )}
+          {/* BRT-1 — cold start for a company whose outside read is banked but whose
+              spine was never built. Until now the only birth trigger on this surface
+              lived inside company CREATION, so an existing company in this state had
+              no path at all. Runs the same run-agent-flow invocation create-instance
+              makes (shared coldStartBody, include_public_collection:false → consumes
+              the banked signals rather than re-collecting). DRAFT strings pending
+              operator signature. */}
+          {isAdmin && (companyHasSpine === false || birthRunning) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={!canBirthSpine || birthRunning}
+                title={birthBlockedReason}
+                onClick={() => onBirthSpine?.()}
+                style={{
+                  fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em",
+                  color: !canBirthSpine || birthRunning ? "#bbb" : "#2f6b3a",
+                  background: "none", border: "none", padding: 0,
+                  cursor: !canBirthSpine || birthRunning ? "default" : "pointer",
+                  textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
+                }}
+              >
+                {birthLabel}
+              </button>
+              <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
+                {birthBlockedReason ?? "Builds this company's routes, job map and market definition from the outside read. Takes a few minutes."}
+              </span>
             </div>
           )}
         </div>
