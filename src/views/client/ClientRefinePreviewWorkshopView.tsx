@@ -2035,9 +2035,15 @@ export default function ClientRefinePreviewWorkshopView() {
               onCheckSurfaceDrift={handleCheckSurfaceDrift}
               checkingSurfaceId={driftCheckingSurfaceId}
             />
+            {/* DEF-4: this empty state WAS "company id: {companyId}" — debug residue from
+                c8383b5 that leaked an internal uuid onto a client-facing surface and was
+                the entire empty state, so a company with no opportunities saw a bare
+                uuid and nothing else. Operator-signed minimal wording: states the fact
+                without asserting a cause (we have not established that none were found
+                vs. that the job map is not built yet). */}
             {!odiLoading && filteredNeeds.length === 0 && (
               <p className="crpv-ws-hint" style={{ marginTop: 8, textAlign: "center" }}>
-                company id: {companyId}
+                No opportunities yet.
               </p>
             )}
           </>

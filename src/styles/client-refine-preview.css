@@ -3886,12 +3886,18 @@ html.crpv-boot body {
   }
 }
 
-/* Content area */
+/* Content area — white canvas behind all tab panels, for EVERY company.
+   DEF-4: this was var(--crpv-paper-2) (#efefec) with a .has-hierarchy-scoped white
+   override added by A9 (df4d7a3), whose intent was "white-bg override for all tabs at
+   once". The scoping silently left zero-route companies on the legacy gray from
+   b2a6183 — visible across every workshop tab, since they all share this wrapper.
+   The override is deleted rather than stacked; --crpv-paper-2 keeps its 12 other
+   consumers. */
 .crpv-ws-content {
   flex: 1;
   overflow-y: auto;
   padding: 36px;
-  background: var(--crpv-paper-2);
+  background: #ffffff;
 }
 
 /* Section */
@@ -8222,7 +8228,6 @@ input.crpv-ws-list-input::placeholder {
   margin-left: 0;
 }
 
-/* Workshop hierarchy — white canvas behind all tab panels */
-.crpv-workshop-page.has-hierarchy .crpv-ws-content {
-  background: #ffffff;
-}
+/* DEF-4: the .has-hierarchy-scoped white override lived here. Removed — the base
+   .crpv-ws-content rule is white unconditionally now, so this only reintroduced the
+   hierarchy/no-hierarchy split it was meant to erase. */
