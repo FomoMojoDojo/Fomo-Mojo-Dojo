@@ -1229,6 +1229,14 @@
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 32px 40px;
   margin-top: 28px;
+  /* MO-2c-fix-2: THE JOB starts in the same place regardless of how many jobs
+     sit under a NEIGHBOURING card. Grid rows stretch by default, so a card
+     beside the six-job "Families" group was pulled to its height and its own
+     grid rows stretched with it — pushing THE JOB down by up to 122px purely
+     because of what was next to it (measured: identical one-job cards landed at
+     138/120/109px). Each card now sizes to its own content, so the label's
+     position depends only on that card's own WHO half. */
+  align-items: start;
 }
 
 /* The two halves are the teaching device — the split must stay visible. */
