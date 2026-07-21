@@ -415,6 +415,43 @@ function buildNoOfferingUser(job: string): string {
   return `JOB STATEMENT: ${job}\nIs this free of any named offering, provider, or purchase act?`;
 }
 
+// ── duplicate detection (MO-2b (c)) ──────────────────────────────────────────
+//
+// Same tokenisation as the reconcile path (reconcilePublicSynthesis): lower ->
+// strip non letter/number -> split -> drop universal scaffold. Kept local rather
+// than exported from there because the THRESHOLD differs and must not drift into
+// that module's reconcile behaviour.
+//
+// THRESHOLD 0.55, operator-confirmed against both fixtures:
+//   direct-care pair 0.636 -> collapses    (shared 7 of 11 distinctive tokens)
+//   families pair    0.143 -> survives     (shared 2 of 14)
+// The safe band is 0.40-0.63; 0.55 leans high because under the breadth
+// calibration the costly error is collapsing a NON-duplicate, not missing one.
+export const DUPLICATE_THRESHOLD = 0.55;
+
+const DUP_STOP_TOKENS = new Set(["the", "to", "of", "a", "it", "takes", "time", "minimize"]);
+
+function jobTokens(statement: string): Set<string> {
+  return new Set(
+    normalizeForHash(statement)
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((w) => !DUP_STOP_TOKENS.has(w)),
+  );
+}
+
+/** Distinctive-token Jaccard over two job statements. 0 when either is empty. */
+export function jobSimilarity(a: string, b: string): number {
+  const ta = jobTokens(a);
+  const tb = jobTokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
 // ── identity ─────────────────────────────────────────────────────────────────
 
 /**
@@ -439,12 +476,16 @@ export type MarketOptionArgs = {
   write?: boolean;
   plan?: boolean;
   revise?: boolean;
+  /** MO-2b (c): deterministic true-duplicate suppression. Zero model calls. */
+  collapse?: boolean;
   candidates?: MarketOptionCandidate[];
   runId?: string | null;
 };
 
 export type MarketOptionResult =
   | { ok: true; plan: { candidates: MarketOptionCandidate[]; fresh: number; cached: number; gen_calls: number } }
+  // MO-2b (c): deterministic duplicate suppression — zero model calls.
+  | { ok: true; collapse: { considered: number; suppressed: Array<{ id: string; duplicate_of: string; score: number }>; threshold: number } }
   | {
     ok: true;
     scoped: boolean;
@@ -534,6 +575,84 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       fresh.push(c);
     }
     return { ok: true, plan: { candidates: fresh, fresh: fresh.length, cached, gen_calls: 1 } };
+  }
+
+  // ── COLLAPSE: suppress TRUE duplicates among passing candidates. ───────────
+  //
+  // DETERMINISTIC — zero model calls. Mirrors the distinctive-token Jaccard the
+  // reconcile path already uses; a judge was considered and rejected because the
+  // operator's two fixtures separate by 4.4x (0.636 vs 0.143), which no judge is
+  // needed to tell apart.
+  //
+  // Gated to the SAME normalized executor: same WHO with genuinely different
+  // jobs is BREADTH and must survive (the families fixture). Only the same WHO
+  // saying the same thing twice collapses (the direct-care fixture).
+  //
+  // SURVIVOR (operator rule ii): lowest attempt wins, tie-break earliest
+  // created_at. An attempt-1 clean pass sits closer to what the evidence
+  // actually said than a coached rewrite does.
+  if (args.collapse) {
+    const { data: passRows } = await args.supabase
+      .from("market_options")
+      .select("id, executor_statement, job_statement, attempt, created_at")
+      .eq("company_id", args.companyId)
+      .eq("status", "candidate")
+      .eq("criteria_version", MO1_CRITERIA_VERSION);
+    const passing = ((passRows ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(r.id),
+      executor: String(r.executor_statement ?? ""),
+      job: String(r.job_statement ?? ""),
+      attempt: Number(r.attempt) || 1,
+      createdAt: String(r.created_at ?? ""),
+    }));
+
+    // Group by normalized executor; cluster within each group.
+    const groups = new Map<string, typeof passing>();
+    for (const p of passing) {
+      const key = normalizeForHash(p.executor);
+      const g = groups.get(key);
+      if (g) g.push(p); else groups.set(key, [p]);
+    }
+
+    const better = (a: typeof passing[number], b: typeof passing[number]) =>
+      a.attempt !== b.attempt ? (a.attempt < b.attempt ? a : b)
+        : (a.createdAt <= b.createdAt ? a : b);
+
+    const suppressed: Array<{ id: string; duplicate_of: string; score: number }> = [];
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      // Survivor-first clustering: each member joins the first cluster it is a
+      // duplicate of, so a 3-way duplicate resolves to ONE survivor.
+      const clusters: Array<typeof passing> = [];
+      for (const p of g) {
+        let placed = false;
+        for (const c of clusters) {
+          const score = jobSimilarity(c[0].job, p.job);
+          if (score >= DUPLICATE_THRESHOLD) { c.push(p); placed = true; break; }
+        }
+        if (!placed) clusters.push([p]);
+      }
+      for (const c of clusters) {
+        if (c.length < 2) continue;
+        const survivor = c.reduce(better);
+        for (const p of c) {
+          if (p.id === survivor.id) continue;
+          suppressed.push({ id: p.id, duplicate_of: survivor.id, score: jobSimilarity(survivor.job, p.job) });
+        }
+      }
+    }
+
+    if (write) {
+      for (const s of suppressed) {
+        // Status only — the passing verdict is NEVER rewritten.
+        const { error } = await args.supabase
+          .from("market_options")
+          .update({ status: "duplicate", duplicate_of: s.duplicate_of })
+          .eq("id", s.id);
+        if (error) throw new Error(`market-options duplicate suppression failed (${s.id}): ${error.message}`);
+      }
+    }
+    return { ok: true, collapse: { considered: passing.length, suppressed, threshold: DUPLICATE_THRESHOLD } };
   }
 
   // ── REVISE: ONE rewrite cycle per rejected attempt-1 option. 14b ONLY. ─────
