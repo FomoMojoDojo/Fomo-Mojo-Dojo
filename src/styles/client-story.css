@@ -1201,3 +1201,76 @@
   max-width: 62ch;
   margin: 14px 0 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* MO-1 · Act A market OPTIONS (.cvs-mv-opt*)                          */
+/* The card EMBODIES the definition: two labelled halves, WHO and THE  */
+/* JOB, rendered only from the separate columns. Truth-status lives    */
+/* once in the group header ("Early readings") — FRAMING-NOT-CHIPS —   */
+/* so a card carries no badge, score, rank, or mark of any kind.       */
+/* ------------------------------------------------------------------ */
+.cvs-mv-optgroup {
+  margin-top: 40px;
+  border-left: 2px solid var(--mm-line-12);
+  padding-left: 20px;
+}
+
+.cvs-mv-optgroup-head {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mm-label-dim);
+  margin: 0;
+}
+
+.cvs-mv-optgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 32px 40px;
+  margin-top: 28px;
+}
+
+/* The two halves are the teaching device — the split must stay visible. */
+.cvs-mv-opt {
+  border-top: 1px solid var(--mm-line);
+  padding-top: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.cvs-mv-opt-label {
+  font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mm-label-dim);
+  margin: 0 0 6px;
+}
+
+.cvs-mv-opt-who {
+  font-weight: 300;
+  font-size: 19px;
+  line-height: 1.3;
+  color: var(--mm-text);
+  margin: 0;
+}
+
+.cvs-mv-opt-job {
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--mm-muted);
+  margin: 0;
+}
+
+/* Sentence-case the job at the PRESENTATION layer only. Generator output is
+   occasionally lowercase ("seek better working conditions ..."). The stored
+   statement is the judged artifact and stays byte-identical — require_model
+   forbids patching a statement in code, and rewriting it would break the audit
+   chain between what the judge ruled on and what is on file. ::first-letter is
+   pure CSS: nothing in the DOM text changes, so a copy-paste still yields the
+   stored string. */
+.cvs-mv-opt-job::first-letter {
+  text-transform: capitalize;
+}

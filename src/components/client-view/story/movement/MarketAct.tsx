@@ -1,5 +1,7 @@
 import { useCompany } from "@/hooks/useCompany";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
+import { useMarketOptions } from "@/hooks/useMarketOptions";
+import ActDefinition from "@/components/client-view/story/ActDefinition";
 import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfolio";
 
 /*
@@ -16,6 +18,22 @@ import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfoli
  * - Empty state = "not discovered yet" + operator-directed prompt — NEVER
  *   "the public is quiet" (unprovable without a completed-run marker).
  * - Diagnose hand-off line ONLY when internal-declared defs exist.
+ *
+ * MO-1 RENDER SWAP (operator-confirmed 2026-07-20): when ODI-form market
+ * OPTIONS exist for the company, the options render and the blended-def cards
+ * STAND DOWN entirely. With no options, this act's behaviour is exactly as
+ * before. The two paths never mix: a blended def and an ODI option make
+ * incompatible claims about what a market statement IS, and showing both would
+ * teach the form and contradict it on the same screen.
+ *
+ * The option card is EMBODIED — the definition is the card's structure. Its two
+ * halves render ONLY from the separate executor_statement / job_statement
+ * columns. Nothing is ever split, parsed, or inferred out of one blended
+ * string; that is the whole reason market_options exists.
+ *
+ * Options carry NO kind chip (they have no relationship_kind), no score, no
+ * rank, no per-card mark. Truth-status is carried once, by the "Early readings"
+ * group header — FRAMING-NOT-CHIPS.
  */
 
 // ── Client-facing copy — SIGNED AS-IS 2026-07-16 (MPD-3 copy) ─────────────────
@@ -32,6 +50,23 @@ const DIAGNOSE_HANDOFF =
 const EMPTY_HEADLINE = "We haven't read your public markets yet.";
 const EMPTY_PROMPT = "Market discovery runs from the internal workshop — ask your operator to run the outside read.";
 // ──────────────────────────────────────────────────────────────────────────────
+
+// ── MO-1 options copy — OPERATOR-SIGNED VERBATIM 2026-07-20 ──────────────────
+// "Early readings" replaces inferred_hypothesis in ALL client-facing copy.
+const OPTIONS_DEFINITION =
+  "A market is a group of people plus the job they're trying to get done — not an industry, not a product category.";
+const OPTIONS_GROUP_HEAD = "Early readings";
+const WHO_LABEL = "WHO";
+const JOB_LABEL = "THE JOB";
+const OPTIONS_INVITE = "These are early readings, not conclusions and are meant for us to discuss.";
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// COPY BOUNDARIES on the options path (do not re-litigate):
+//   * BREADTH_LINE is NOT rendered — "we can see you serving N different
+//     markets" asserts established fact and does not fit early readings.
+//   * CLOSING_INVITE is NOT rendered — it is signed for the blended-def path
+//     only. OPTIONS_INVITE above is its options-path counterpart, signed
+//     2026-07-20, and carries the invitation to push back.
 
 // The emergent-kind meta-note rule (signed as optional; built as the simple
 // set rule): kinds outside this small known set get a subtle note. The chip
@@ -52,9 +87,54 @@ function KindChip({ market }: { market: ResolvedMarket }) {
 export default function MarketAct() {
   const { activeCompany } = useCompany();
   const { loading, portfolio, hasInternalDeclared } = useMarketPortfolio(activeCompany?.id);
+  const { loading: optionsLoading, options } = useMarketOptions(activeCompany?.id);
 
   const active = portfolio?.active ?? [];
   const deferred = portfolio?.deferred ?? [];
+
+  // RENDER SWAP: options present ⇒ options render, blended-def cards stand down.
+  const showOptions = !optionsLoading && options.length > 0;
+
+  if (optionsLoading && !loading) {
+    return (
+      <section className="cvs-act" aria-label="Act A — market options">
+        <p className="cvs-act-eyebrow">{EYEBROW}</p>
+        <p className="cvs-hero-empty">Reading the public markets…</p>
+      </section>
+    );
+  }
+
+  if (showOptions) {
+    return (
+      <section className="cvs-act" aria-label="Act A — market options (early readings)">
+        <p className="cvs-act-eyebrow">{EYEBROW}</p>
+        {/* Content-gated by the shared device: options exist, so it renders. */}
+        <ActDefinition definition={OPTIONS_DEFINITION} hasContent={options.length > 0} />
+
+        {/* Truth-status lives HERE, once, for the whole group — not per card. */}
+        <div className="cvs-mv-optgroup">
+          <p className="cvs-mv-optgroup-head">{OPTIONS_GROUP_HEAD}</p>
+          <div className="cvs-mv-optgrid">
+            {options.map((o) => (
+              /* Embodied card: the halves come ONLY from the separate columns. */
+              <article className="cvs-mv-opt" key={o.id}>
+                <div className="cvs-mv-opt-half">
+                  <p className="cvs-mv-opt-label">{WHO_LABEL}</p>
+                  <p className="cvs-mv-opt-who">{o.executor_statement}</p>
+                </div>
+                <div className="cvs-mv-opt-half">
+                  <p className="cvs-mv-opt-label">{JOB_LABEL}</p>
+                  <p className="cvs-mv-opt-job">{o.job_statement}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <p className="cvs-mv-invite">{OPTIONS_INVITE}</p>
+      </section>
+    );
+  }
 
   return (
     <section className="cvs-act" aria-label="Act A — market portfolio (public register)">

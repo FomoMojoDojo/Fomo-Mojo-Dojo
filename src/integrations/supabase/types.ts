@@ -2139,6 +2139,99 @@ export type Database = {
           },
         ]
       }
+      market_options: {
+        Row: {
+          attempt: number
+          basis: string | null
+          company_id: string
+          content_identity: string
+          created_at: string
+          criterion_executor_group: boolean | null
+          criterion_executor_reason: string | null
+          criterion_odi_form: boolean | null
+          criterion_odi_form_reason: string | null
+          criterion_solution_agnostic: boolean | null
+          criterion_solution_agnostic_reason: string | null
+          executor_statement: string
+          gen_model: string
+          id: string
+          job_statement: string
+          judge_model: string | null
+          market_register: string
+          proof_tier: string
+          provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          rejected_criterion: string | null
+          revision_of: string | null
+          run_id: string | null
+          status: string
+        }
+        Insert: {
+          attempt?: number
+          basis?: string | null
+          company_id: string
+          content_identity: string
+          created_at?: string
+          criterion_executor_group?: boolean | null
+          criterion_executor_reason?: string | null
+          criterion_odi_form?: boolean | null
+          criterion_odi_form_reason?: string | null
+          criterion_solution_agnostic?: boolean | null
+          criterion_solution_agnostic_reason?: string | null
+          executor_statement: string
+          gen_model: string
+          id?: string
+          job_statement: string
+          judge_model?: string | null
+          market_register?: string
+          proof_tier?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          rejected_criterion?: string | null
+          revision_of?: string | null
+          run_id?: string | null
+          status: string
+        }
+        Update: {
+          attempt?: number
+          basis?: string | null
+          company_id?: string
+          content_identity?: string
+          created_at?: string
+          criterion_executor_group?: boolean | null
+          criterion_executor_reason?: string | null
+          criterion_odi_form?: boolean | null
+          criterion_odi_form_reason?: string | null
+          criterion_solution_agnostic?: boolean | null
+          criterion_solution_agnostic_reason?: string | null
+          executor_statement?: string
+          gen_model?: string
+          id?: string
+          job_statement?: string
+          judge_model?: string | null
+          market_register?: string
+          proof_tier?: string
+          provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          rejected_criterion?: string | null
+          revision_of?: string | null
+          run_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_options_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_options_revision_of_fkey"
+            columns: ["revision_of"]
+            isOneToOne: false
+            referencedRelation: "market_options"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       methodology_pages: {
         Row: {
           created_at: string
