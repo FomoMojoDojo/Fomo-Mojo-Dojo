@@ -84,6 +84,19 @@ function KindChip({ market }: { market: ResolvedMarket }) {
   );
 }
 
+// MO-2c: the options-path chip. Same markup, same classes and the same signed
+// note as the pre-MO-1 KindChip — the only difference is that its kind arrives on
+// the option (deterministically traced) rather than on the blended definition.
+function OptionKindChip({ kind }: { kind: string }) {
+  const isNew = !KNOWN_KINDS.has(kind);
+  return (
+    <span className="cvs-mv-kindrow">
+      <span className="cvs-mv-kindchip">{kind}</span>
+      {isNew ? <span className="cvs-mv-kindnew">{NEW_KIND_NOTE}</span> : null}
+    </span>
+  );
+}
+
 export default function MarketAct() {
   const { activeCompany } = useCompany();
   const { loading, portfolio, hasInternalDeclared } = useMarketPortfolio(activeCompany?.id);
@@ -105,6 +118,35 @@ export default function MarketAct() {
   }
 
   if (showOptions) {
+    // MO-2c GROUP-BY-WHO. At 17 cards the flat grid repeats the same WHO up to six
+    // times and the surface reads as noise — MO-1's own noisy-at-scale trigger.
+    // Grouping is presentation only: no option is merged, dropped or reordered
+    // relative to the others in its group.
+    //
+    // ORDER (both the existing display law, "the order they were decided in"):
+    //   groups  — by their earliest member's position in the created_at ASC list
+    //   within  — created_at ASC, i.e. the order the hook already returns
+    //
+    // CHIP PLACEMENT is per GROUP, and that is structural rather than a choice:
+    // the grouping key and the relationship_kind trace are both pure functions of
+    // executor_statement, so cards that group together necessarily carry the same
+    // kind. The mixed-kind fallback below can therefore never fire on real data —
+    // it exists so the invariant cannot break silently if either rule changes.
+    const groups: Array<{ key: string; who: string; kind: string | null; mixed: boolean; jobs: typeof options }> = [];
+    const byKey = new Map<string, number>();
+    for (const o of options) {
+      const key = o.executor_statement.trim().toLowerCase().replace(/\s+/g, " ");
+      const at = byKey.get(key);
+      if (at === undefined) {
+        byKey.set(key, groups.length);
+        groups.push({ key, who: o.executor_statement, kind: o.relationship_kind ?? null, mixed: false, jobs: [o] });
+      } else {
+        const g = groups[at];
+        g.jobs.push(o);
+        if ((o.relationship_kind ?? null) !== g.kind) g.mixed = true;
+      }
+    }
+
     return (
       <section className="cvs-act" aria-label="Act A — market options (early readings)">
         <p className="cvs-act-eyebrow">{EYEBROW}</p>
@@ -115,16 +157,25 @@ export default function MarketAct() {
         <div className="cvs-mv-optgroup">
           <p className="cvs-mv-optgroup-head">{OPTIONS_GROUP_HEAD}</p>
           <div className="cvs-mv-optgrid">
-            {options.map((o) => (
-              /* Embodied card: the halves come ONLY from the separate columns. */
-              <article className="cvs-mv-opt" key={o.id}>
+            {groups.map((g) => (
+              /* A single-job WHO renders as a group of one — uniform, no special case. */
+              <article className="cvs-mv-opt" key={g.key}>
                 <div className="cvs-mv-opt-half">
                   <p className="cvs-mv-opt-label">{WHO_LABEL}</p>
-                  <p className="cvs-mv-opt-who">{o.executor_statement}</p>
+                  <p className="cvs-mv-opt-who">{g.who}</p>
+                  {/* Chip only where the trace earned one. NULL ⇒ no chip, silently. */}
+                  {!g.mixed && g.kind ? <OptionKindChip kind={g.kind} /> : null}
                 </div>
                 <div className="cvs-mv-opt-half">
                   <p className="cvs-mv-opt-label">{JOB_LABEL}</p>
-                  <p className="cvs-mv-opt-job">{o.job_statement}</p>
+                  {g.jobs.map((o) => (
+                    <p className="cvs-mv-opt-job" key={o.id}>
+                      {o.job_statement}
+                      {/* Fallback only: a group whose members disagree on kind labels
+                          each job, so a mixed group can never hide behind one chip. */}
+                      {g.mixed && o.relationship_kind ? <OptionKindChip kind={o.relationship_kind} /> : null}
+                    </p>
+                  ))}
                 </div>
               </article>
             ))}
@@ -135,6 +186,7 @@ export default function MarketAct() {
       </section>
     );
   }
+
 
   return (
     <section className="cvs-act" aria-label="Act A — market portfolio (public register)">
