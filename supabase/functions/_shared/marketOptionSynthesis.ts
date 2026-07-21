@@ -298,8 +298,28 @@ function buildReviseUser(
     .filter((k) => k !== criterion)
     .map((k) => `${k}:\n${CRITERION_SPEC[k]}`)
     .join("\n\n");
+  // MO-2f (2): when the SCAN rejected this row, the judge's own reason says it
+  // passed — handing that over unqualified would tell the reviser nothing is
+  // wrong. Replace the header with the scan's finding and name the fix.
+  const scanIdx = (reason || "").indexOf(SCAN_CLAUSE_F_MARKER);
+  const scanFragment = scanIdx >= 0
+    ? (reason || "").slice(scanIdx + SCAN_CLAUSE_F_MARKER.length).trim().replace(/^"|"$/g, "")
+    : null;
+  const scanBlock = scanFragment
+    ? `WHY THIS FAILED — a form scan of the WHO, not the judge. The judge passed this WHO, ` +
+      `and the judge was wrong about the text in front of it: ${scanFragment} is a clause ` +
+      `describing what these people DO, not a name for who they are.\n` +
+      `Rule (f): name the ROLE, not the work the role performs. There is almost always a plain ` +
+      `role noun available — the people who fund are FUNDERS; the people who give are DONORS; ` +
+      `the people who make grants are GRANTMAKERS; people working for a charity are CHARITY STAFF.\n` +
+      `Replace the whole clause with that noun. Do not keep the clause and reword it, do not move ` +
+      `it elsewhere in the statement, and do not swap one activity word for another — ` +
+      `"People who fund X" and "People funding X" fail identically.\n` +
+      `KEEP THE JOB EXACTLY AS WRITTEN unless it independently fails a criterion below.\n\n`
+    : "";
   return (
     `OPTION AS WRITTEN —\n  WHO: ${executor}\n  THE JOB: ${job}\n\n` +
+    scanBlock +
     `FAILED CRITERION: ${criterion} — ${named}.\n` +
     `JUDGE'S REASON: ${reason || "(none given)"}\n\n` +
     `THE FAILED CRITERION IN FULL — your revision must satisfy EVERY line, not only the reason above:\n${spec}\n\n` +
@@ -433,6 +453,85 @@ function buildNoOfferingUser(job: string): string {
   return `JOB STATEMENT: ${job}\nIs this free of any named offering, provider, or purchase act?`;
 }
 
+// ── MO-2f (1): odi_form COHERENCE GUARD ──────────────────────────────────────
+//
+// MO-2e census, 97 assessable verdicts: the ONLY boolean-vs-reason contradictions
+// were 2 odi_form rows, both with the identical reason "No clarifier present" on
+// a TRUE boolean. The signature is exact — of 31 odi_form passes, 29 carry NO
+// reason and the 2 that carry one both state failure:
+//
+//   odi_form FALSE -> 11 rows, 11 carry a reason  (100%)
+//   odi_form TRUE  -> 31 rows, 29 carry NO reason (94%), 2 carry one — both wrong
+//
+// So: an odi_form PASS that bothers to explain itself is explaining a failure.
+// Refuse it, re-ask once, and if it recurs hard-fail the chain by name rather
+// than banking a verdict we can see is incoherent. Deterministic; no criteria
+// text, no judge prompt, no banked verdict touched.
+export function odiFormPassIsIncoherent(pass: boolean, reason: string): boolean {
+  return pass === true && String(reason ?? "").trim().length > 0;
+}
+
+// ── MO-2f (2): CLAUSE-(f) STATEMENT SCAN ─────────────────────────────────────
+//
+// The larger MO-2e class: 8 of 42 passing executor_group verdicts (19%) sit on a
+// WHO containing duty language clause (f) names as failing, and the judge waved
+// them through with reasons that are factually untrue of the text ("People who
+// support youth initiatives" judged "verb-free"). A coherence check cannot see
+// this — the reason agrees with the boolean, both are just wrong about the text.
+//
+// So this is a deterministic READ of the statement, not a re-judge. It never
+// overrides the judge toward rejection: a scan hit does NOT store a pass and does
+// NOT silently drop the option — it COACHES, feeding the offending clause back as
+// a targeted revision instruction so the reviser reaches for the role noun the
+// judge never forced it to find.
+//
+// Exclusions are deliberate and extensible: these are -ing words that are part of
+// a role NOUN, not a description of activity. Add to this list, with the reason,
+// rather than weakening the scan.
+const CLAUSE_F_ING_EXCLUSIONS = new Set([
+  "nursing",   // "nursing staff" — the word names the profession, not an activity
+  "housing",   // "housing caseworkers"
+  "training",  // "training officers"
+  "safeguarding", // UK statutory role: "safeguarding leads"
+  "counselling", "counseling", // "counselling staff"
+]);
+
+/**
+ * Marker separating the JUDGE's verbatim reason from the SCAN's finding in a
+ * stored executor_group reason. Provenance must stay legible in the record: the
+ * judge said what it said; the scan is what rejected the row.
+ */
+export const SCAN_CLAUSE_F_MARKER = "scan-clause-f:";
+
+// ⚠ FUTURE CONSISTENCY CENSUSES MUST EXCLUDE ROWS CARRYING THIS MARKER.
+//
+// A scan-coached row deliberately stores the judge's TRUE executor_group verdict
+// beside status='rejected' — the honest record: the judge passed it, the SCAN
+// rejected it. A boolean-vs-reason heuristic (see MO-2e) reads that shape as a
+// contradiction, because the reason now contains fail language next to a TRUE
+// boolean. It is not one.
+//
+// So a RISING contradiction rate driven by these rows is THE GUARD WORKING, not
+// judge decay. Filter `criterion_executor_reason LIKE '%scan-clause-f:%'` out of
+// the assessable population before computing any rate, and say so in the report.
+
+const CLAUSE_F_RELATIVE = /\b(who|that|which)\s+\w+/i;
+const CLAUSE_F_DUTY_WORD = /\b(responsible|in\s+charge|tasked|accountable|charged|overseeing)\b/i;
+
+/** The offending fragment, or null when the WHO is clean. Read-only, no models. */
+export function clauseFViolation(executor: string): string | null {
+  const who = String(executor ?? "");
+  const rel = CLAUSE_F_RELATIVE.exec(who);
+  if (rel) return rel[0];
+  const duty = CLAUSE_F_DUTY_WORD.exec(who);
+  if (duty) return duty[0];
+  for (const m of who.matchAll(/\b([A-Za-z]+ing)\b/g)) {
+    const w = m[1].toLowerCase();
+    if (!CLAUSE_F_ING_EXCLUSIONS.has(w)) return m[1];
+  }
+  return null;
+}
+
 // ── duplicate detection (MO-2b (c)) ──────────────────────────────────────────
 //
 // Same tokenisation as the reconcile path (reconcilePublicSynthesis): lower ->
@@ -515,6 +614,9 @@ export type MarketOptionResult =
       terminal: number;
       judge_calls: number;
       gen_calls: number;
+      clause_f_coached: number;
+      coherence_reasks: number;
+      coherence_recovered: number;
     };
     results: Array<Record<string, unknown>>;
   }
@@ -767,7 +869,9 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
 
   // ── SCOPED CHUNK: judge the given candidates, bank verdicts INLINE. ─────────
   if (args.candidates && args.candidates.length > 0) {
-    const totals = { considered: 0, cached: 0, written_candidates: 0, written_rejections: 0, terminal: 0, judge_calls: 0, gen_calls: 0 };
+    // MO-2f counters: clause_f_coached = scan-coached rows; coherence_reasks /
+    // coherence_recovered = odi_form guard firings and recoveries.
+    const totals = { considered: 0, cached: 0, written_candidates: 0, written_rejections: 0, terminal: 0, judge_calls: 0, gen_calls: 0, clause_f_coached: 0, coherence_reasks: 0, coherence_recovered: 0 };
     const results: Array<Record<string, unknown>> = [];
 
     for (const cand of args.candidates) {
@@ -794,13 +898,47 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
         totals.judge_calls++;
         passExec = v.value; reasonExec = v.reason;
         if (!v.value) rejected = "executor_group";
+        // MO-2f (2) CLAUSE-(f) SCAN-AS-COACH. The judge's boolean and reason are
+        // stored EXACTLY as given — nothing here rewrites a verdict. What the
+        // scan changes is the ROW STATUS: a WHO carrying duty language does not
+        // reach Act A on a reason that is untrue of its own text. The offending
+        // fragment is appended under an explicit `scan-clause-f:` marker so the
+        // record shows plainly that the pipeline, not the judge, rejected it —
+        // and buildReviseUser turns that marker into targeted coaching.
+        if (v.value) {
+          const frag = clauseFViolation(cand.executor_statement);
+          if (frag) {
+            totals.clause_f_coached++;
+            rejected = "executor_group";
+            reasonExec = `${v.reason} | ${SCAN_CLAUSE_F_MARKER} "${frag}"`;
+            console.log(`[market-options] clause-(f) scan coached: "${cand.executor_statement}" (fragment: ${frag})`);
+          }
+        }
       }
 
       // (2) verb + object + contextual clarifier. Short-circuits on (1).
       if (!rejected) {
-        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, ODI_FORM_SYSTEM, buildOdiFormUser(cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
-        const v = parseBool(raw, "odi_form", "odi-form judge");
+        let raw = await callOllamaJson(args.ollamaUrl, judgeModel, ODI_FORM_SYSTEM, buildOdiFormUser(cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
+        let v = parseBool(raw, "odi_form", "odi-form judge");
         totals.judge_calls++;
+        // MO-2f (1) COHERENCE GUARD: a PASS that carries a reason is, on the
+        // census evidence (2/2), explaining a failure. Re-ask once, then refuse
+        // to bank an incoherent verdict rather than shipping it to Act A.
+        if (odiFormPassIsIncoherent(v.value, v.reason)) {
+          totals.coherence_reasks++;
+          console.log(`[market-options] odi_form coherence guard: PASS carried reason "${v.reason}" — re-asking once`);
+          raw = await callOllamaJson(args.ollamaUrl, judgeModel, ODI_FORM_SYSTEM, buildOdiFormUser(cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
+          v = parseBool(raw, "odi_form", "odi-form judge");
+          totals.judge_calls++;
+          if (odiFormPassIsIncoherent(v.value, v.reason)) {
+            throw new Error(
+              `market-options odi_form COHERENCE FAILURE (strict): judge returned odi_form=true ` +
+              `with a reason that states failure — "${v.reason}" — for job "${cand.job_statement}". ` +
+              `Re-ask reproduced it. Refusing to bank an incoherent verdict.`,
+            );
+          }
+          totals.coherence_recovered++;
+        }
         passForm = v.value; reasonForm = v.reason;
         if (!v.value) rejected = "odi_form";
       }
@@ -910,6 +1048,9 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       terminal: rows.length,
       judge_calls: 0,
       gen_calls: 0,
+      clause_f_coached: 0,
+      coherence_reasks: 0,
+      coherence_recovered: 0,
     },
     results: rows,
   };
