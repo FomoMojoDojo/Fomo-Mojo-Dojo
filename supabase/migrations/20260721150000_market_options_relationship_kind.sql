@@ -46,7 +46,7 @@ ALTER TABLE public.market_options
 -- evaluation of Edgewood's 17 live candidates — referrer 7 · funder 1 ·
 -- recipient 1 · NULL 8 — matching per-option, not merely in aggregate.
 WITH d AS (
-  SELECT relationship_kind k,
+  SELECT company_id, relationship_kind k,
     (SELECT array_agg(t) FROM unnest(regexp_split_to_array(lower(regexp_replace(job_executor,'[^a-zA-Z0-9]+',' ','g')),'\s+')) t
       WHERE t <> '' AND t <> ALL (ARRAY['and','of','the','in','at','for','to','a','an','their','who','that','which','with','or'])) toks
   FROM odi_market_definitions
@@ -59,7 +59,7 @@ o AS (
 ),
 m AS (
   SELECT o.id, array_agg(DISTINCT d.k) FILTER (WHERE d.k IS NOT NULL) kinds
-  FROM o LEFT JOIN d ON o.toks IS NOT NULL AND o.toks <@ d.toks
+  FROM o LEFT JOIN d ON o.company_id = d.company_id AND o.toks IS NOT NULL AND o.toks <@ d.toks
   GROUP BY o.id
 )
 UPDATE market_options mo SET relationship_kind = m.kinds[1]
