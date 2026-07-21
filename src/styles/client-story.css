@@ -1264,6 +1264,19 @@
   margin: 0;
 }
 
+/* MO-2c-fix: vertical rhythm BETWEEN job lines in a grouped WHO.
+   Found in first real use — six jobs under "Families and caregivers" ran
+   together as one block of prose and could not be read as separate items.
+   12px is the surface's existing step (the same value .cvs-mv-kindrow uses)
+   and sits deliberately BELOW the 16px .cvs-mv-opt half-gap, so jobs still
+   cohere to each other more tightly than the WHO and THE JOB halves do — the
+   group reads as one unit containing several items, not as several cards.
+   Adjacent-sibling only: no space before the first job, none after the last,
+   and a single-job group has no sibling so it is visually untouched. */
+.cvs-mv-opt-job + .cvs-mv-opt-job {
+  margin-top: 12px;
+}
+
 /* Sentence-case the job at the PRESENTATION layer only. Generator output is
    occasionally lowercase ("seek better working conditions ..."). The stored
    statement is the judged artifact and stays byte-identical — require_model
