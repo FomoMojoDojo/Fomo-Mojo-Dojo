@@ -326,30 +326,6 @@ async function writeJourneySteps(
   }
 }
 
-// ODI need templates keyed by checkpoint position (1–8), matching local-jobmap-synthesis pattern
-const ODI_NEED_TEMPLATES: Record<number, string[]> = {
-  1: ["Minimize the time it takes to agree on measurable success criteria for {topic}.", "Increase confidence that teams define success for {topic} the same way."],
-  2: ["Minimize the time it takes to find the strongest evidence for {topic}.", "Increase confidence that the chosen path for {topic} fits the real customer need."],
-  3: ["Minimize delays caused by missing ownership or data before work on {topic} starts.", "Increase confidence that owners are ready before execution on {topic} begins."],
-  4: ["Reduce the risk of committing to a weak approach for {topic}.", "Increase confidence that the selected approach for {topic} will hold up in real use."],
-  5: ["Minimize mistakes while executing the core work tied to {topic}.", "Increase first-pass success while executing the core work tied to {topic}."],
-  6: ["Increase visibility into live progress signals for {topic}.", "Minimize the time it takes to detect when {topic} is drifting off track."],
-  7: ["Minimize the time to adjust when {topic} is not producing expected results.", "Increase confidence that course corrections improve {topic} quickly."],
-  8: ["Minimize the time to confirm whether the work delivered {topic}.", "Increase clarity on what to repeat next cycle for {topic}."],
-};
-
-function needOutcomeFromStep(step: NormalizedStep, index: number): string {
-  const templates = ODI_NEED_TEMPLATES[step.step_number] ?? ODI_NEED_TEMPLATES[1];
-  const topic = step.step_label.toLowerCase().replace(/^(identify|define|evaluate|select|confirm|monitor|adjust|validate)\s+/i, "").trim() || "this checkpoint";
-  return templates[index % templates.length].replace(/{topic}/g, topic);
-}
-
-function needServiceState(importance: number, satisfaction: number): string {
-  if (importance >= 7 && satisfaction <= 4) return "underserved";
-  if (importance <= 4 && satisfaction >= 8) return "overserved";
-  return "served";
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -436,54 +412,6 @@ async function restoreJobStepsForJourney(
   if (result.error) {
     throw new Error(result.error.message || "Failed to restore previous job steps after regeneration error.");
   }
-}
-
-async function generateNeedsFromSteps(
-  supabase: ReturnType<typeof createClient>,
-  companyId: string,
-  userId: string,
-  steps: NormalizedStep[],
-  journeyKey: string,
-) {
-  if (steps.length === 0) return;
-
-  await supabase.from("odi_needs").delete().eq("company_id", companyId).eq("journey_key", journeyKey);
-
-  // Generate both template variants per step for broad Diagnose-phase coverage.
-  // Template 0 uses the base importance/satisfaction; template 1 bumps satisfaction
-  // by 1, producing a slightly less urgent variant of the same step concern.
-  let sortOrder = 1;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    const baseImportance = Math.max(5, Math.min(9, 8 - ((step.step_number - 1) % 3)));
-    const baseSatisfaction = Math.max(2, Math.min(7, 4 + ((step.step_number + 1) % 3)));
-    const templates = ODI_NEED_TEMPLATES[step.step_number] ?? ODI_NEED_TEMPLATES[1];
-
-    for (let t = 0; t < templates.length; t++) {
-      const importance = baseImportance;
-      const satisfaction = Math.min(7, baseSatisfaction + t);
-      const opportunityScore = importance + Math.max(0, importance - satisfaction);
-
-      await supabase.from("odi_needs").insert({
-        company_id: companyId,
-        user_id: userId,
-        tier: "need",
-        desired_outcome: needOutcomeFromStep(step, t),
-        journey_key: journeyKey,
-        step_number: step.step_number,
-        step_label: step.step_label,
-        importance,
-        satisfaction,
-        opportunity_score: opportunityScore,
-        sort_order: sortOrder++,
-        service_state: needServiceState(importance, satisfaction),
-        source_path: "dify_mojo_analysis",
-        frameworks_used: ["JTBD", "ODI", "dify_mojo_analysis"],
-      });
-    }
-  }
-
-  console.log("[run-mojo-analysis] generated", steps.length * 2, "needs from job steps — journey:", journeyKey);
 }
 
 async function applyJobStepsFromDify(
