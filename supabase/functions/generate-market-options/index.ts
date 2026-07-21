@@ -87,6 +87,9 @@ serve(async (req) => {
           job_statement: (x as MarketOptionCandidate).job_statement,
           basis: (x as MarketOptionCandidate).basis,
           revision_of: (x as MarketOptionCandidate).revision_of,
+          // MO-2b: the attempt number the revise phase assigned (2 or 3).
+          // Dropping it here silently wrote attempt-3 revisions as attempt 2.
+          revision_attempt: (x as MarketOptionCandidate).revision_attempt,
         }))
         : [];
       if (filtered.length === 0) {
