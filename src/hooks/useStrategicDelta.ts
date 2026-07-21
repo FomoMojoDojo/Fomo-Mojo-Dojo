@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { sourceHost } from "@/lib/sourceHost";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -169,13 +170,8 @@ function toRaw(payload: unknown): Record<string, unknown> {
 function normalizeUrl(u: unknown): string {
   return String(u ?? "").trim().toLowerCase();
 }
-function deltaHostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-}
+// MO-2: host derivation consolidated into src/lib/sourceHost.ts.
+const deltaHostOf = (url: string): string | null => sourceHost(url);
 function setsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;

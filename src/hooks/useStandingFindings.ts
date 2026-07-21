@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { sourceHost } from "@/lib/sourceHost";
 
 // Findings layer (read-side). Standing findings persist across snapshots until
 // resolved — a distinct tier from the current snapshot (PVT-1) and run-over-run
@@ -38,13 +39,8 @@ const db = supabase as unknown as {
   rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown }>;
 };
 
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-}
+// MO-2: host derivation consolidated into src/lib/sourceHost.ts.
+const hostOf = (url: string): string | null => sourceHost(url);
 
 export function useStandingFindings(companyId?: string) {
   const queryClient = useQueryClient();

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
 import { useClaimDeltaRecompute } from "@/hooks/useClaimDeltaRecompute";
 import { D } from "@/components/design-system/tokens";
+import { sourceHost, sourceLinkTitle } from "@/lib/sourceHost";
 import { supabase } from "@/integrations/supabase/client";
 import { previewStrikeScoreDelta, type StrikeScorePreview } from "@/lib/mojoScore/strikePreview";
 import { residualStruckClaims } from "@/lib/claimState/struckResidual";
@@ -117,13 +118,8 @@ const SOURCE_TAG: Record<string, string> = {
   analysis: "Public mention",   // findings-layer synthesis stamp — same as blank's fallback (net-zero)
 };
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
+// MO-2: host derivation consolidated into src/lib/sourceHost.ts.
+const hostOf = (url: string): string => sourceHost(url) ?? "";
 
 function provenanceTag(s: DeltaSignal): string {
   const st = typeof s.rawPayload.source_type === "string" ? s.rawPayload.source_type : "";
@@ -266,6 +262,22 @@ function PublicVoiceDeltaBlock({ delta, primary }: { delta: PublicVoiceDelta; pr
   // iaqm.com/about vs bare iaqm.com) are distinct sources and must read as distinct.
   const nameOf = (e: { host: string | null; url: string }) =>
     e.url.replace(/^https?:\/\//, "").replace(/^www\./, "") || e.host || e.url;
+  // MO-2: the source name links out to the page when we have a url; plain text
+  // otherwise (honest degrade — never a dead link). Signed label on the anchor.
+  const SourceName = ({ e }: { e: { host: string | null; url: string } }) =>
+    e.url ? (
+      <a
+        href={e.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={sourceLinkTitle(null)}
+        style={{ color: "inherit", textDecorationColor: D.hairline }}
+      >
+        {nameOf(e)}
+      </a>
+    ) : (
+      <>{nameOf(e)}</>
+    );
   const rowStyle: React.CSSProperties = {
     fontFamily: D.sans, fontSize: primary ? 12 : 11, color: D.ink, lineHeight: 1.5, margin: "0 0 4px",
   };
@@ -287,20 +299,20 @@ function PublicVoiceDeltaBlock({ delta, primary }: { delta: PublicVoiceDelta; pr
           {newSources.map((e) => (
             <p key={`n-${e.url}`} style={rowStyle}>
               <span style={{ color: D.signal, fontWeight: 600 }}>+ </span>
-              You're now hearing from <strong>{nameOf(e)}</strong>.
+              You're now hearing from <strong><SourceName e={e} /></strong>.
             </p>
           ))}
           {shiftedSources.map((e) => (
             <p key={`s-${e.url}`} style={rowStyle}>
               <span style={{ color: A.queued, fontWeight: 600 }}>~ </span>
-              <strong>{nameOf(e)}</strong> is still talking, but the voice has moved
+              <strong><SourceName e={e} /></strong> is still talking, but the voice has moved
               <span style={{ color: D.inkFaint }}> (approximate)</span>.
             </p>
           ))}
           {droppedSources.map((e) => (
             <p key={`d-${e.url}`} style={{ ...rowStyle, color: D.inkFaint }}>
               <span style={{ fontWeight: 600 }}>– </span>
-              <span style={{ textDecoration: "line-through" }}>{nameOf(e)}</span> has gone quiet since baseline.
+              <span style={{ textDecoration: "line-through" }}><SourceName e={e} /></span> has gone quiet since baseline.
             </p>
           ))}
         </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { sourceHostLower } from "@/lib/sourceHost";
 
 type SignalBand = "outside" | "organization" | "customer";
 
@@ -63,13 +64,8 @@ function normalizedWords(text: string): string {
     .join(" ");
 }
 
-function urlHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-  } catch {
-    return "";
-  }
-}
+// MO-2: host derivation consolidated into src/lib/sourceHost.ts.
+const urlHost = (url: string): string => sourceHostLower(url);
 
 function isCompanySource(row: SignalRow, companyHost: string): boolean {
   const host = urlHost(String(row.source_url || ""));

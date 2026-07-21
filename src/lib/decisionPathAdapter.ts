@@ -1,3 +1,4 @@
+import { sourceHost } from "./sourceHost";
 import {
   LOVABLE_DRIVER_IDS,
   type LovableDriver,
@@ -874,15 +875,9 @@ function toQuotedSignal(value: unknown) {
   return `"${clean}"`;
 }
 
+// MO-2: host derivation consolidated into src/lib/sourceHost.ts.
 function toHostLabel(value: unknown) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const normalized = raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
-    return new URL(normalized).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
+  return sourceHost(String(value || "")) ?? "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -1,5 +1,6 @@
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { D } from "@/components/design-system/tokens";
+import { sourceLinkTitle } from "@/lib/sourceHost";
 
 // PROVISIONAL copy (section label + framing) — pending operator phrasing approval.
 // Body is rendered as-stored; the Observe/Name/Open three-beat framing is a later item.
@@ -60,7 +61,27 @@ function FindingRow({
       }}>
         {f.kind === "watch_out" ? "Watch-out" : f.kind === "frontier" ? "Your bet" : "Observation"}
         {f.origin_run_id != null && ` · Update #${f.origin_run_id}`}
-        {showHost && ` · ${showHost}`}
+        {showHost && (
+          <>
+            {" · "}
+            {/* MO-2: link out to the source page when we have a url; plain text when
+                we don't (uploaded org documents have no public page — an honest
+                degrade, never a dead link). Signed label carries the capture date. */}
+            {f.sourceUrl ? (
+              <a
+                href={f.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={sourceLinkTitle(f.signalCapturedAt)}
+                style={{ color: "inherit", textDecorationColor: D.hairline }}
+              >
+                {showHost}
+              </a>
+            ) : (
+              showHost
+            )}
+          </>
+        )}
       </p>
       <div style={{ display: "flex", gap: 12, marginTop: 5 }}>
         {!isPrimary && (
