@@ -351,11 +351,18 @@ function buildReviseUser(
         `              verdict: ${c.verdict}`
       ).join("\n") +
       `\n\nTHE MARKET TO RECOVER IS THE ONE THIS CHAIN BEGAN FROM — attempt 1's WHO,\n` +
-      `"${chain[0].executor}". Later attempts drifted away from it while trying to fix form,\n` +
-      `and the drift is what you are undoing. Apply the role-noun move to THAT original WHO:\n` +
-      `name the people it was about, not the people the last attempt ended up describing.\n` +
-      `Where attempt 1 named an organisation, the people are the ones who staff it or act\n` +
-      `through it — the organisation half is what failed, the people half is what to keep.\n\n`
+      `"${chain[0].executor}". Later attempts changed it while trying to fix form, and drifted\n` +
+      `off that market in the process. Go back to the market attempt 1 was about — but do NOT\n` +
+      `simply restate attempt 1's wording: it was rejected too, and repeating it fails again.\n` +
+      `Apply the role-noun move to THAT original WHO: name the people it was about, not the\n` +
+      `people the last attempt ended up describing.\n` +
+      `If attempt 1 already named PEOPLE somewhere in it, keep that people-noun and drop\n` +
+      `whatever failed around it — in "Grantmakers and charitable trusts" the failing part is\n` +
+      `the trusts, and GRANTMAKERS is what to keep.\n` +
+      `If attempt 1 named ONLY an organisation, an institution, or an activity, then there is\n` +
+      `no people-noun in it to keep, and RESTATING IT IS NOT A RECOVERY — it will fail exactly\n` +
+      `as it failed the first time. Name the PEOPLE WHO STAFF IT OR ACT THROUGH IT instead:\n` +
+      `for an organisation, the people are its staff, its officers, or its members.\n\n`
     : "";
   return (
     `OPTION AS WRITTEN —\n  WHO: ${executor}\n  THE JOB: ${job}\n\n` +
@@ -844,12 +851,17 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       return out.reverse();
     };
 
-    // Skip anything already recovered — one recovery attempt per misread row.
+    // Skip rows whose recovery has LANDED. Only a candidate counts: a recovery
+    // that was itself rejected must not lock the row out of a further attempt —
+    // that is what MO-2g's failed "Nonprofit organizations" recovery would have
+    // done to 57de177f, silently turning MO-2h into a no-op. Retries stay
+    // operator-gated: each one requires a gate, not a loop.
     const { data: recRows } = await args.supabase
       .from("market_options")
       .select("recovered_from")
       .eq("company_id", args.companyId)
       .eq("criteria_version", MO1_CRITERIA_VERSION)
+      .eq("status", "candidate")
       .not("recovered_from", "is", null);
     const alreadyRecovered = new Set(
       ((recRows ?? []) as Array<{ recovered_from: string | null }>).map((r) => String(r.recovered_from ?? "")),
