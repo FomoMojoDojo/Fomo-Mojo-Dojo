@@ -158,13 +158,16 @@ function buildGenUser(companyName: string, outsideLines: string[]): string {
   );
 }
 
-const SOLUTION_AGNOSTIC_SYSTEM =
+// Exported for MO-1 (_shared/marketOptionSynthesis.ts), which EXTENDS this
+// judge as its third criterion rather than duplicating the criterion text.
+// Export only — the prompt and its user builder are unchanged.
+export const SOLUTION_AGNOSTIC_SYSTEM =
   "You judge whether a market definition is SOLUTION-AGNOSTIC. " +
   "The job must be stated entirely in the executor's own world — a job that names, presupposes, or is only meaningful in terms of the company's product, service, or solution FAILS. " +
   "The job existed before this company and would exist without it. " +
   'JSON only: {"solution_free":true|false,"reason":"<one short clause>"}.';
 
-function buildSolutionAgnosticUser(companyName: string, executor: string, jtbd: string): string {
+export function buildSolutionAgnosticUser(companyName: string, executor: string, jtbd: string): string {
   return `COMPANY: ${companyName}\nCANDIDATE MARKET — executor: ${executor}\njob: ${jtbd}\nIs this job free of ${companyName}'s product/solution?`;
 }
 
