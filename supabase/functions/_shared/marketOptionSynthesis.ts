@@ -70,24 +70,6 @@ export const RUN_KIND = "market_options";
  */
 export const MO1_CRITERIA_VERSION = 2;
 
-/**
- * INPUT QUARANTINE — odi_market_definitions rows excluded from generator input.
- *
- * These are not markets. They are test fixtures whose text leaks into the WHO
- * list and produces nonsense options: the row below generated
- * "Families bootstrapping a fresh declared set for the A2-4b" and, on one run,
- * PASSED all three judges — a test artifact one verdict away from rendering to
- * a client.
- *
- * Excluded by EXACT ROW ID, deliberately: no general test-row heuristic, and no
- * mutation of odi_market_definitions (immutable-at-birth, and not this gate's
- * table). REMOVE THIS CONSTANT when the queued a2b-lens cleanup gate deletes
- * the row — this finding is why that gate's urgency was elevated.
- */
-export const MO1_INPUT_QUARANTINE: readonly string[] = [
-  "c5218595-ff44-47cc-8f2f-94c23b9ad8dc", // Edgewood: '[A2B TEST] Families bootstrapping ...' (journey_key 'a2b')
-];
-
 export type MarketOptionCandidate = {
   executor_statement: string;
   job_statement: string;
@@ -444,18 +426,12 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       .join("\n");
 
     // WHO ONLY. jtbd is deliberately NOT selected — see buildGenUser.
-    // Quarantined rows are excluded by exact id — see MO1_INPUT_QUARANTINE.
     const { data: defRows } = await args.supabase
       .from("odi_market_definitions")
       .select("id, job_executor")
       .eq("company_id", args.companyId);
     const allDefs = (defRows ?? []) as Array<{ id: string; job_executor: string }>;
-    const usableDefs = allDefs.filter((d) => !MO1_INPUT_QUARANTINE.includes(String(d.id)));
-    const quarantined = allDefs.length - usableDefs.length;
-    if (quarantined > 0) {
-      console.log(`[market-options] input quarantine: excluded ${quarantined} def row(s) from WHO context`);
-    }
-    const knownWho = usableDefs.map((d) => `- ${d.job_executor}`).join("\n") || "(none on file)";
+    const knownWho = allDefs.map((d) => `- ${d.job_executor}`).join("\n") || "(none on file)";
 
     const raw = await callOllamaJson(
       args.ollamaUrl,
