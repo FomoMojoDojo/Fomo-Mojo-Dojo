@@ -82,12 +82,28 @@ type Criterion = "executor_group" | "odi_form" | "solution_agnostic";
 
 // ── ollama (sibling-module pattern; require_model: loud fail, no fallback) ────
 
+// MO-2 ruling 3 — DETERMINISM CONTROLS on the judge.
+//
+// Recorded honestly: pinning temperature/seed makes verdicts REPRODUCIBLE, not
+// more CORRECT. It removes the run-to-run variance that let two lexically
+// equivalent jobs land opposite verdicts under the same model —
+//   "Determine necessary mental health support for youth in need"   -> PASS
+//   "Determine appropriate mental health support for youth in need." -> REJECT
+// — but a judge that is consistently wrong stays consistently wrong. N-of-M
+// judging was considered and rejected for now on cost.
+//
+// Applied to JUDGE calls ONLY. The generator and reviser keep temperature 0.2:
+// proposal diversity is what puts breadth on a conversation surface, and pinning
+// it would make every re-run re-propose an identical set.
+const JUDGE_SEED = 1729;
+
 async function callOllamaJson(
   ollamaUrl: string,
   model: string,
   system: string,
   user: string,
   timeoutMs: number,
+  opts?: { deterministic?: boolean },
 ): Promise<string> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
   const ctrl = new AbortController();
@@ -100,7 +116,9 @@ async function callOllamaJson(
         model,
         format: "json",
         stream: false,
-        options: { num_ctx: 8192, temperature: 0.2 },
+        options: opts?.deterministic
+          ? { num_ctx: 8192, temperature: 0, top_p: 1, top_k: 1, seed: JUDGE_SEED }
+          : { num_ctx: 8192, temperature: 0.2 },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -188,28 +206,82 @@ function buildGenUser(companyName: string, evidence: string, knownWho: string, m
 // nothing here appends a clarifier or rewrites a statement in code.
 const REVISE_SYSTEM =
   "You REVISE a single market option that failed a form check. " +
-  "You are given the option and the exact criterion it failed, with the judge's reason. " +
-  "Fix ONLY that failure while keeping the reading intact — the same people, the same underlying progress. " +
+  "You are given the option, the criterion it failed IN FULL, and every reason the judge recorded. " +
+  "Fix the failure while keeping the same PEOPLE and the same underlying progress they are pursuing. " +
   "Do not invent a different market. Do not broaden or narrow WHO unless WHO is what failed. " +
+  "The criterion is given in full because a statement can fail it in more than one way at once: " +
+  "satisfy EVERY requirement listed, not only the one the judge happened to name. " +
   "executor_statement = a group of people, named as people, containing no verb. " +
   "job_statement = VERB + OBJECT OF THE VERB + CONTEXTUAL CLARIFIER, one clause. " +
   "The clarifier states the circumstance (when / under what condition / for whom) and is REQUIRED. " +
   "The job must name no product, service, provider, or offering category, and must not be a " +
   "buying, choosing, finding, selecting or sourcing act. " +
+  "WHEN THE FAILURE IS THAT THE JOB DESCRIBES AN ACT — referring, routing, assessing, coordinating, " +
+  "selecting, or any other step someone performs — DO NOT rephrase that act. Replace it. " +
+  "State instead the PROGRESS those same people are trying to make, the outcome the act was in service of. " +
+  "Ask what would be true for them if the act had succeeded, and write THAT as the job. " +
+  "Keeping the act and rewording it around the edges is the failure repeating itself, not a revision. " +
   "State the progress the people are trying to make, as it would read if no supplier existed. " +
   'JSON only: {"executor_statement":"...","job_statement":"...","basis":"..."}.';
 
-function buildReviseUser(executor: string, job: string, criterion: string, reason: string): string {
+// FULL criterion text handed to the reviser (MO-2 ruling 1). Previously it saw
+// only the judge's one-line reason, which is why the donor option died: attempt 1
+// was told "contains a verb ('raising')", removed the verb, and attempt 2 then
+// failed the SAME criterion on its OTHER requirement — "names an organisation" —
+// which had never been stated to it. These strings enumerate every requirement of
+// the criterion so a single revision can satisfy all of them at once. They
+// PARAPHRASE the judge prompts for instruction; they do not alter judging.
+const CRITERION_SPEC: Record<string, string> = {
+  executor_group:
+    "WHO must be a GROUP OF PEOPLE, stated with NO job content. ALL of the following must hold:\n" +
+    "  (a) it names people — a role, profession, or population a human being could belong to;\n" +
+    "  (b) it is VERB-FREE — only who they are, never what they are doing, seeking, or wanting;\n" +
+    "  (c) it is NOT a company, brand, vendor, or named organisation;\n" +
+    "  (d) it is NOT an industry, sector, market, or field;\n" +
+    "  (e) it is NOT an institution or entity — name the PEOPLE IN IT instead\n" +
+    "      ('schools' fails, 'school counsellors' passes; 'agencies' fails, 'agency caseworkers' passes;\n" +
+    "       'community organizations' fails — name the people who do the work or give the money).",
+  odi_form:
+    "THE JOB must be VERB + OBJECT OF THE VERB + CONTEXTUAL CLARIFIER — all three present and\n" +
+    "structurally separable, as ONE clause. A missing clarifier fails. Multiple jobs chained fails.\n" +
+    "A noun phrase with no verb fails. Prose rather than one clause fails.",
+  solution_agnostic:
+    "THE JOB must be free of SOLUTIONS, from ANY supplier — not merely free of this company's. ALL must hold:\n" +
+    "  (a) it names no product, service, programme, treatment, facility, channel, platform, or tool;\n" +
+    "  (b) it names no PROVIDER, VENDOR, or SUPPLIER of those, and no CATEGORY of such an offering;\n" +
+    "  (c) it is not a purchase or procurement act — buying, choosing, selecting, finding, sourcing,\n" +
+    "      procuring, hiring, contracting, or evaluating a provider or offering;\n" +
+    "  (d) it describes the PROGRESS itself, in the executor's own world — stated so it would still be\n" +
+    "      true if no supplier existed at all.",
+};
+
+// Every recorded reason, not just the failing criterion's. A revision that fixes
+// the named failure while re-breaking a criterion the judge already commented on
+// is the loop the widened payload exists to stop.
+function buildReviseUser(
+  executor: string,
+  job: string,
+  criterion: string,
+  reason: string,
+  allReasons?: { executor_group?: string; odi_form?: string; solution_agnostic?: string },
+): string {
   const named = criterion === "executor_group"
     ? "WHO is not a group of people"
     : criterion === "odi_form"
     ? "THE JOB is not verb + object + contextual clarifier"
     : "THE JOB names a solution, provider, or offering, or is a purchase act";
+  const spec = CRITERION_SPEC[criterion] ?? "";
+  const others = Object.entries(allReasons ?? {})
+    .filter(([k, v]) => k !== criterion && String(v ?? "").trim())
+    .map(([k, v]) => `  - ${k}: ${v}`)
+    .join("\n");
   return (
     `OPTION AS WRITTEN —\n  WHO: ${executor}\n  THE JOB: ${job}\n\n` +
     `FAILED CRITERION: ${criterion} — ${named}.\n` +
     `JUDGE'S REASON: ${reason || "(none given)"}\n\n` +
-    `Rewrite the option so it passes, keeping the same reading.`
+    `THE CRITERION IN FULL — your revision must satisfy EVERY line, not only the reason above:\n${spec}\n\n` +
+    (others ? `ALSO RECORDED BY THE JUDGE ON THIS OPTION (do not re-break these):\n${others}\n\n` : "") +
+    `Rewrite the option so it passes, keeping the same people and the same underlying progress.`
   );
 }
 
@@ -498,7 +570,11 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
         args.ollamaUrl,
         genModel,
         REVISE_SYSTEM,
-        buildReviseUser(String(r.executor_statement), String(r.job_statement), criterion, reason),
+        buildReviseUser(String(r.executor_statement), String(r.job_statement), criterion, reason, {
+          executor_group: String(r.criterion_executor_reason ?? ""),
+          odi_form: String(r.criterion_odi_form_reason ?? ""),
+          solution_agnostic: String(r.criterion_solution_agnostic_reason ?? ""),
+        }),
         GEN_TIMEOUT_MS,
       );
       genCalls++;
@@ -536,7 +612,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
 
       // (1) executor is a group of people.
       {
-        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, EXECUTOR_GROUP_SYSTEM, buildExecutorGroupUser(cand.executor_statement), JUDGE_TIMEOUT_MS);
+        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, EXECUTOR_GROUP_SYSTEM, buildExecutorGroupUser(cand.executor_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
         const v = parseBool(raw, "is_group_of_people", "executor-group judge");
         totals.judge_calls++;
         passExec = v.value; reasonExec = v.reason;
@@ -545,7 +621,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
 
       // (2) verb + object + contextual clarifier. Short-circuits on (1).
       if (!rejected) {
-        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, ODI_FORM_SYSTEM, buildOdiFormUser(cand.job_statement), JUDGE_TIMEOUT_MS);
+        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, ODI_FORM_SYSTEM, buildOdiFormUser(cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
         const v = parseBool(raw, "odi_form", "odi-form judge");
         totals.judge_calls++;
         passForm = v.value; reasonForm = v.reason;
@@ -558,7 +634,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       // named offering, provider, or purchase act. Part A alone lets
       // "Select a residential treatment provider ..." through — proven live.
       if (!rejected) {
-        const rawA = await callOllamaJson(args.ollamaUrl, judgeModel, SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUser(companyName, cand.executor_statement, cand.job_statement), JUDGE_TIMEOUT_MS);
+        const rawA = await callOllamaJson(args.ollamaUrl, judgeModel, SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUser(companyName, cand.executor_statement, cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
         const a = parseBool(rawA, "solution_free", "solution-agnostic judge");
         totals.judge_calls++;
         if (!a.value) {
@@ -566,7 +642,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
           reasonSol = `company-solution: ${a.reason}`;
           rejected = "solution_agnostic";
         } else {
-          const rawB = await callOllamaJson(args.ollamaUrl, judgeModel, NO_OFFERING_SYSTEM, buildNoOfferingUser(cand.job_statement), JUDGE_TIMEOUT_MS);
+          const rawB = await callOllamaJson(args.ollamaUrl, judgeModel, NO_OFFERING_SYSTEM, buildNoOfferingUser(cand.job_statement), JUDGE_TIMEOUT_MS, { deterministic: true });
           const b = parseBool(rawB, "offering_free", "no-offering judge");
           totals.judge_calls++;
           passSol = b.value;
