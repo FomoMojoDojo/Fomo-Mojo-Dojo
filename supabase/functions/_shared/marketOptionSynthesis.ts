@@ -532,6 +532,53 @@ export function clauseFViolation(executor: string): string | null {
   return null;
 }
 
+// ── MO-2c (1): relationship_kind by UNAMBIGUOUS TRACE ────────────────────────
+//
+// Restores the pre-MO-1 Act A chip. NEVER model-assigned: the kind is derived
+// deterministically from the company's own odi_market_definitions, or it is NULL.
+//
+// An option TRACES to a def iff every distinctive token of its executor appears
+// in that def's job_executor — the def is the blended original, the option is the
+// distilled WHO, so containment runs option ⊆ def. Resolution is on the DISTINCT
+// KIND, not on def count: Edgewood has two defs that duplicate each other
+// (differing only in case), and that is not ambiguity unless their kinds differ.
+//
+// NULL = no chip, silently (pre-MO-1 behaviour). Display-honesty law: an honest
+// absent chip beats a guessed one. No fuzzy borrow, no nearest-neighbour, no
+// threshold — if it does not resolve to exactly one kind, it stays NULL.
+const KIND_STOP_TOKENS = new Set([
+  "and", "of", "the", "in", "at", "for", "to", "a", "an",
+  "their", "who", "that", "which", "with", "or",
+]);
+
+function kindTokens(s: string): Set<string> {
+  return new Set(
+    normalizeForHash(s).replace(/[^a-z0-9]+/g, " ").split(/\s+/)
+      .filter((w) => w && !KIND_STOP_TOKENS.has(w)),
+  );
+}
+
+export type MarketDefForKind = { job_executor: string; relationship_kind: string | null };
+
+/** The traced kind, or null when it does not resolve to exactly one. */
+export function resolveRelationshipKind(
+  executor: string,
+  defs: readonly MarketDefForKind[],
+): string | null {
+  const ot = kindTokens(executor);
+  if (ot.size === 0) return null;
+  const kinds = new Set<string>();
+  for (const d of defs) {
+    const dt = kindTokens(String(d.job_executor ?? ""));
+    let subset = true;
+    for (const t of ot) if (!dt.has(t)) { subset = false; break; }
+    if (!subset) continue;
+    const k = String(d.relationship_kind ?? "").trim();
+    if (k) kinds.add(k);
+  }
+  return kinds.size === 1 ? [...kinds][0] : null;
+}
+
 // ── duplicate detection (MO-2b (c)) ──────────────────────────────────────────
 //
 // Same tokenisation as the reconcile path (reconcilePublicSynthesis): lower ->
@@ -873,6 +920,13 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     // coherence_recovered = odi_form guard firings and recoveries.
     const totals = { considered: 0, cached: 0, written_candidates: 0, written_rejections: 0, terminal: 0, judge_calls: 0, gen_calls: 0, clause_f_coached: 0, coherence_reasks: 0, coherence_recovered: 0 };
     const results: Array<Record<string, unknown>> = [];
+    // MO-2c: the company's own market definitions, read ONCE per chunk, for the
+    // write-time relationship_kind trace. Read-only; never mutated here.
+    const { data: kindDefRows } = await args.supabase
+      .from("odi_market_definitions")
+      .select("job_executor, relationship_kind")
+      .eq("company_id", args.companyId);
+    const kindDefs = (kindDefRows ?? []) as MarketDefForKind[];
 
     for (const cand of args.candidates) {
       totals.considered++;
@@ -984,6 +1038,8 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
           criterion_solution_agnostic_reason: reasonSol || null,
           rejected_criterion: rejected,
           content_identity: identity,
+          // Deterministic trace, or NULL. Never model-assigned.
+          relationship_kind: resolveRelationshipKind(cand.executor_statement, kindDefs),
           criteria_version: MO1_CRITERIA_VERSION,
           attempt: cand.revision_attempt ?? (cand.revision_of ? 2 : 1),
           revision_of: cand.revision_of ?? null,
