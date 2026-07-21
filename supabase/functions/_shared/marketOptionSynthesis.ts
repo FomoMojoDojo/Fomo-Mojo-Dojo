@@ -243,9 +243,12 @@ const CRITERION_SPEC: Record<string, string> = {
     "  (e) it is NOT an institution or entity — name the PEOPLE IN IT instead\n" +
     "      ('schools' fails, 'school counsellors' passes; 'agencies' fails, 'agency caseworkers' passes;\n" +
     "       'community organizations' fails — name the people who do the work or give the money);\n" +
-    "  (f) it carries NO ROLE-DUTY phrasing. 'responsible for', 'in charge of', 'tasked with',\n" +
-    "      'accountable for', 'overseeing', 'charged with' are ACTIVITY language and fail (b) even\n" +
-    "      when the words around them name people. Naming the duty is naming what they DO.\n" +
+    "  (f) it carries NO ROLE-DUTY phrasing. ANY participle, gerund, or relative clause describing\n" +
+    "      what these people DO — their duty, function, task, or service — is ACTIVITY language and\n" +
+    "      fails (b), REGARDLESS OF WHICH VERB CARRIES IT. Name the ROLE those people hold, not the\n" +
+    "      work the role performs. ('responsible for', 'in charge of', 'tasked with', 'accountable\n" +
+    "      for', 'overseeing', 'charged with', 'providing', 'delivering', 'working on' are examples\n" +
+    "      of the rule, NOT a closed list — substituting a verb outside this list does not pass it.)\n" +
     "      'People responsible for youth mental health services in government agencies' FAILS;\n" +
     "      'Government programme officers' passes. Do not relocate the duty phrase inside the\n" +
     "      statement — remove it, and name the role those people hold instead.",
@@ -283,13 +286,28 @@ function buildReviseUser(
     .filter(([k, v]) => k !== criterion && String(v ?? "").trim())
     .map(([k, v]) => `  - ${k}: ${v}`)
     .join("\n");
+  // MO-2d (A): the OTHER TWO criteria, in full, flagged MUST-PRESERVE.
+  // Evidence — every donor revision fixed its named criterion and regressed on
+  // one that had been passing:
+  //   42f2b76b  executor_group -> solution_agnostic -> odi_form ("Missing clarifier")
+  //   26a600b5  executor_group -> executor_group    -> odi_form ("No clarifier present.")
+  // The reviser dropped the clarifier because odi_form had never failed, so no
+  // reason mentioned it and the old payload never showed it the form rule. A
+  // revision is re-judged on ALL THREE, so it must SEE all three.
+  const preserve = (["executor_group", "odi_form", "solution_agnostic"] as const)
+    .filter((k) => k !== criterion)
+    .map((k) => `${k}:\n${CRITERION_SPEC[k]}`)
+    .join("\n\n");
   return (
     `OPTION AS WRITTEN —\n  WHO: ${executor}\n  THE JOB: ${job}\n\n` +
     `FAILED CRITERION: ${criterion} — ${named}.\n` +
     `JUDGE'S REASON: ${reason || "(none given)"}\n\n` +
-    `THE CRITERION IN FULL — your revision must satisfy EVERY line, not only the reason above:\n${spec}\n\n` +
+    `THE FAILED CRITERION IN FULL — your revision must satisfy EVERY line, not only the reason above:\n${spec}\n\n` +
+    `MUST-PRESERVE — these two criteria CURRENTLY PASS and your revision is re-judged on all\n` +
+    `three. Fixing one by breaking another is a FAILED revision, not a partial success. Keep\n` +
+    `satisfying every line below while you fix the failure above:\n\n${preserve}\n\n` +
     (others ? `ALSO RECORDED BY THE JUDGE ON THIS OPTION (do not re-break these):\n${others}\n\n` : "") +
-    `Rewrite the option so it passes, keeping the same people and the same underlying progress.`
+    `Rewrite the option so it passes ALL THREE criteria, keeping the same people and the same underlying progress.`
   );
 }
 
