@@ -68,6 +68,7 @@ import { displayConfidenceLabel } from "@/lib/strategicLanguage";
 import "@/styles/client-refine-preview.css";
 import { useCompanyClaims } from "@/lib/claims/useCompanyClaims";
 import { useChosenSetKey } from "@/lib/chosenJobStepSet";
+import { admitForSurface } from "@/lib/registerGuard";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
@@ -325,8 +326,15 @@ export default function ClientRefinePreviewView() {
   }, [allMarketDefs, chosenSetKey]);
 
   // ── Audience short-form — company's own job_executor noun phrase ─────────
+  // RG-1: the register guard is the safety boundary here, NOT deriveAudienceShort's
+  // 40-char limit. A def whose register is not admitted on the 'decision' surface
+  // (anything not public-register, incl. NULL) is blocked BEFORE its text is
+  // derived, so internal-register job_executor text can never reach this copy.
+  // Blocked → null → the audience line simply does not render (honest empty).
   const audienceShort = useMemo(
-    () => deriveAudienceShort(strategicMarketDef?.job_executor),
+    () => (admitForSurface(strategicMarketDef, "decision")
+      ? deriveAudienceShort(strategicMarketDef?.job_executor)
+      : null),
     [strategicMarketDef],
   );
 

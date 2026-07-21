@@ -52,9 +52,11 @@ export type MarketDefRow = {
 };
 
 // OOD-3 register law: Act A (Outside) renders public-register only.
+// RG-1: isPublicRegister is now sourced from THE register guard — one authority,
+// no second copy. resolveMarketPortfolio consumes it; it does not define it.
 export type MarketSurface = "outside" | "diagnose";
-const PUBLIC_REGISTERS = new Set(["public_inferred", "publicly_declared"]);
-export const isPublicRegister = (r: string) => PUBLIC_REGISTERS.has(r);
+export { isPublicRegister } from "@/lib/registerGuard";
+import { isPublicRegister } from "@/lib/registerGuard";
 // Register CLASS bounds collapse semantics: within-class twin groups collapse
 // (the 1f-2 behavior — e.g. CB2's declared↔generated corroboration, both
 // internal-class); ACROSS the public↔internal boundary there is NO union-find

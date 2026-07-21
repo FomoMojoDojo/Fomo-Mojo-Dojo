@@ -9,6 +9,9 @@ export type OdiMarketDefinitionRow = {
   chooser: string;
   jtbd: string;
   source_path: string;
+  // RG-1: the stored register, birth-immutable. Present via select("*"); typed
+  // so the register guard can judge this row before its text reaches client copy.
+  market_register?: string | null;
   frameworks_used: string[];
   innovation_strategy?: string | null;
   created_at: string;

@@ -41,6 +41,8 @@ export type MarketOption = {
   basis: string | null;
   /** MO-2c: deterministic trace from the company's market definitions, or null. */
   relationship_kind: string | null;
+  /** RG-1: stored register. Routed through the guard; see the RG-2b flag below. */
+  market_register: string | null;
 };
 
 export function useMarketOptions(companyId?: string) {
@@ -59,7 +61,7 @@ export function useMarketOptions(companyId?: string) {
     (async () => {
       const { data, error } = await supabase
         .from("market_options")
-        .select("id, executor_statement, job_statement, basis, relationship_kind")
+        .select("id, executor_statement, job_statement, basis, relationship_kind, market_register")
         .eq("company_id", companyId)
         .eq("status", "candidate") // DISPLAY LAW — see header
         .eq("criteria_version", MO1_CRITERIA_VERSION) // never show a superseded pass
