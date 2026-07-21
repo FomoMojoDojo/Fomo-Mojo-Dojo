@@ -63,12 +63,14 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write, plan, revise, collapse, candidates, run_target } = await req.json();
+    const { company_id, write, plan, revise, collapse, recover, supersede, candidates, run_target } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
     const doRevise = revise === true;
     const doCollapse = collapse === true;
+    const doRecover = recover === true;
+    const doSupersede = supersede === true;
 
     // Presence-gated scoping: present-but-empty is a caller error, never a
     // silent finalize.
@@ -90,6 +92,8 @@ serve(async (req) => {
           // MO-2b: the attempt number the revise phase assigned (2 or 3).
           // Dropping it here silently wrote attempt-3 revisions as attempt 2.
           revision_attempt: (x as MarketOptionCandidate).revision_attempt,
+          // MO-2g: the misread row this fresh chain replaces (whitelist, see ebf0231).
+          recovered_from: (x as MarketOptionCandidate).recovered_from,
         }))
         : [];
       if (filtered.length === 0) {
@@ -160,6 +164,10 @@ serve(async (req) => {
         ? await computeMarketOptions({ ...baseArgs, revise: true })
         : doCollapse
         ? await computeMarketOptions({ ...baseArgs, collapse: true })
+        : doRecover
+        ? await computeMarketOptions({ ...baseArgs, recover: true })
+        : doSupersede
+        ? await computeMarketOptions({ ...baseArgs, supersede: true })
         : await computeMarketOptions(baseArgs);
     } catch (err) {
       // Terminal-mark on a chunk crash. Verdicts banked inline survive; a
@@ -200,6 +208,8 @@ serve(async (req) => {
     if (result.ok) {
       if ("plan" in result) return json(result);
       if ("collapse" in result) return json(result);
+      if ("recover" in result) return json(result);
+      if ("supersede" in result) return json(result);
       return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, results: result.results });
     }
     if ("skipped" in result) {

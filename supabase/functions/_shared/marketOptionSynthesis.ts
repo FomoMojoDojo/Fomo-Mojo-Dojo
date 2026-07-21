@@ -78,6 +78,8 @@ export type MarketOptionCandidate = {
   revision_of?: string;
   /** MO-2b: the attempt number THIS candidate will be written as (2 or 3). */
   revision_attempt?: number;
+  /** MO-2g: the MISREAD row this fresh attempt-1 chain replaces. */
+  recovered_from?: string;
 };
 
 type Criterion = "executor_group" | "odi_form" | "solution_agnostic";
@@ -269,12 +271,24 @@ const CRITERION_SPEC: Record<string, string> = {
 // Every recorded reason, not just the failing criterion's. A revision that fixes
 // the named failure while re-breaking a criterion the judge already commented on
 // is the loop the widened payload exists to stop.
+/**
+ * MO-2g: one link of a chain's drift history, rendered factually for the coach.
+ * These are stored rows read back verbatim — no interpretation, no invention.
+ */
+export type ChainLink = {
+  attempt: number;
+  executor: string;
+  job: string;
+  verdict: string;
+};
+
 function buildReviseUser(
   executor: string,
   job: string,
   criterion: string,
   reason: string,
   allReasons?: { executor_group?: string; odi_form?: string; solution_agnostic?: string },
+  chain?: readonly ChainLink[],
 ): string {
   const named = criterion === "executor_group"
     ? "WHO is not a group of people"
@@ -317,9 +331,36 @@ function buildReviseUser(
       `"People who fund X" and "People funding X" fail identically.\n` +
       `KEEP THE JOB EXACTLY AS WRITTEN unless it independently fails a criterion below.\n\n`
     : "";
+  // MO-2g AMENDMENT — CHAIN DRIFT HISTORY.
+  //
+  // A recovery seeded only with the flagged row coaches toward the wrong market.
+  // 329bf478's chain began at "Funders and philanthropic organizations" and
+  // drifted fund -> fund -> support across three attempts; asked to fix the WHO
+  // of the LEAF, a reviser reasonably reaches for "Supporters" and lands a
+  // scan-clean, judge-passable card that is not the market the chain was about.
+  //
+  // So the coach is given the chain as STORED — each attempt's WHO, JOB and
+  // verdict, read back verbatim — and told which one identifies the market. This
+  // is factual provenance, not a hint: the reviser still authors the statement
+  // and the judge still rules on it. Nothing is hand-written into the option.
+  const chainBlock = chain && chain.length > 1
+    ? `HOW THIS OPTION GOT HERE — every attempt in its chain, as recorded:\n` +
+      chain.map((c) =>
+        `  attempt ${c.attempt}: WHO "${c.executor}"\n` +
+        `              JOB "${c.job}"\n` +
+        `              verdict: ${c.verdict}`
+      ).join("\n") +
+      `\n\nTHE MARKET TO RECOVER IS THE ONE THIS CHAIN BEGAN FROM — attempt 1's WHO,\n` +
+      `"${chain[0].executor}". Later attempts drifted away from it while trying to fix form,\n` +
+      `and the drift is what you are undoing. Apply the role-noun move to THAT original WHO:\n` +
+      `name the people it was about, not the people the last attempt ended up describing.\n` +
+      `Where attempt 1 named an organisation, the people are the ones who staff it or act\n` +
+      `through it — the organisation half is what failed, the people half is what to keep.\n\n`
+    : "";
   return (
     `OPTION AS WRITTEN —\n  WHO: ${executor}\n  THE JOB: ${job}\n\n` +
     scanBlock +
+    chainBlock +
     `FAILED CRITERION: ${criterion} — ${named}.\n` +
     `JUDGE'S REASON: ${reason || "(none given)"}\n\n` +
     `THE FAILED CRITERION IN FULL — your revision must satisfy EVERY line, not only the reason above:\n${spec}\n\n` +
@@ -642,6 +683,10 @@ export type MarketOptionArgs = {
   revise?: boolean;
   /** MO-2b (c): deterministic true-duplicate suppression. Zero model calls. */
   collapse?: boolean;
+  /** MO-2g: fresh chains for misread live candidates. */
+  recover?: boolean;
+  /** MO-2g: retire a misread once its replacement has landed. */
+  supersede?: boolean;
   candidates?: MarketOptionCandidate[];
   runId?: string | null;
 };
@@ -650,6 +695,8 @@ export type MarketOptionResult =
   | { ok: true; plan: { candidates: MarketOptionCandidate[]; fresh: number; cached: number; gen_calls: number } }
   // MO-2b (c): deterministic duplicate suppression — zero model calls.
   | { ok: true; collapse: { considered: number; suppressed: Array<{ id: string; duplicate_of: string; score: number }>; threshold: number } }
+  | { ok: true; recover: { flagged: Array<{ id: string; executor: string; fragment: string }>; candidates: MarketOptionCandidate[]; fresh: number; cached: number; gen_calls: number } }
+  | { ok: true; supersede: { superseded: Array<{ id: string; superseded_by: string }> } }
   | {
     ok: true;
     scoped: boolean;
@@ -742,6 +789,146 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       fresh.push(c);
     }
     return { ok: true, plan: { candidates: fresh, fresh: fresh.length, cached, gen_calls: 1 } };
+  }
+
+  // ── RECOVER (MO-2g): fresh chains for MISREAD live candidates. 14b ONLY. ───
+  //
+  // MO-2f installed the clause-(f) scan forward-only, and MO-2f's own run proved
+  // that cannot reach a misread already banked: the donor chain did not fail and
+  // stay open for coaching, it PASSED wrongly and closed. Freeze-on-reject then
+  // makes its identities permanently cached. So the misread is unreachable by any
+  // coaching change — the only way through is a genuinely fresh proposal.
+  //
+  // This phase retro-scans LIVE v2 CANDIDATES (rejected rows are already
+  // rejected; v1 is out of scope), and for each flagged row renders the SIGNED
+  // coaching template seeded with that row's own content. The reviser's output
+  // returns as a fresh attempt-1 candidate carrying recovered_from.
+  //
+  // NO STATUS CHANGE HERE. The flagged row stays a live candidate throughout, so
+  // there is never an interval with no donor card on Act A. Supersession happens
+  // only after a replacement has actually landed — see the supersede phase.
+  //
+  // Zero judge calls, zero writes: like plan and revise, this returns a manifest
+  // the driver feeds to the judge chunk, where the scan and coherence guard are
+  // live at write time.
+  if (args.recover) {
+    // ALL v2 rows: the live candidates to scan, plus the ancestors needed to walk
+    // each flagged row's chain back to its root (MO-2g chain-drift amendment).
+    const { data: allV2 } = await args.supabase
+      .from("market_options")
+      .select("id, status, attempt, revision_of, rejected_criterion, executor_statement, job_statement, criterion_executor_reason")
+      .eq("company_id", args.companyId)
+      .eq("criteria_version", MO1_CRITERIA_VERSION);
+    const v2 = (allV2 ?? []) as Array<Record<string, unknown>>;
+    const byId = new Map(v2.map((r) => [String(r.id), r]));
+    const live = v2.filter((r) => String(r.status) === "candidate");
+
+    // Walk revision_of to the root, then render leaf-last so attempt 1 reads first.
+    const chainOf = (leafId: string): ChainLink[] => {
+      const out: ChainLink[] = [];
+      let cur = byId.get(leafId);
+      const seen = new Set<string>();
+      while (cur && !seen.has(String(cur.id))) {
+        seen.add(String(cur.id));
+        out.push({
+          attempt: Number(cur.attempt) || 1,
+          executor: String(cur.executor_statement ?? ""),
+          job: String(cur.job_statement ?? ""),
+          verdict: String(cur.status) === "candidate"
+            ? "PASSED all three criteria"
+            : `rejected on ${String(cur.rejected_criterion ?? "unknown")}`,
+        });
+        const parent = String(cur.revision_of ?? "");
+        cur = parent ? byId.get(parent) : undefined;
+      }
+      return out.reverse();
+    };
+
+    // Skip anything already recovered — one recovery attempt per misread row.
+    const { data: recRows } = await args.supabase
+      .from("market_options")
+      .select("recovered_from")
+      .eq("company_id", args.companyId)
+      .eq("criteria_version", MO1_CRITERIA_VERSION)
+      .not("recovered_from", "is", null);
+    const alreadyRecovered = new Set(
+      ((recRows ?? []) as Array<{ recovered_from: string | null }>).map((r) => String(r.recovered_from ?? "")),
+    );
+
+    const recoveries: MarketOptionCandidate[] = [];
+    let genCalls = 0;
+    let skipped = 0;
+    const flagged: Array<{ id: string; executor: string; fragment: string }> = [];
+    for (const r of live) {
+      const id = String(r.id);
+      const executor = String(r.executor_statement ?? "");
+      const fragment = clauseFViolation(executor);
+      if (!fragment) continue;
+      flagged.push({ id, executor, fragment });
+      if (alreadyRecovered.has(id)) { skipped++; continue; }
+      // Seed the SIGNED template exactly as the live scan would: the judge's own
+      // reason, then the scan marker naming the offending clause. buildReviseUser
+      // renders the signed coaching block off that marker — same asset, no fork.
+      const seededReason = `${String(r.criterion_executor_reason ?? "")} | ${SCAN_CLAUSE_F_MARKER} "${fragment}"`;
+      const raw = await callOllamaJson(
+        args.ollamaUrl,
+        genModel,
+        REVISE_SYSTEM,
+        buildReviseUser(executor, String(r.job_statement ?? ""), "executor_group", seededReason, {
+          executor_group: seededReason,
+        }, chainOf(id)),
+        GEN_TIMEOUT_MS,
+      );
+      genCalls++;
+      const rev = parseRevision(raw);
+      const identity = await optionIdentity(rev.executor_statement, rev.job_statement);
+      // A recovery landing on a frozen identity is a real outcome, not an error:
+      // report it rather than re-judging something already decided.
+      if (banked.has(identity)) { skipped++; continue; }
+      recoveries.push({ ...rev, recovered_from: id });
+    }
+    return {
+      ok: true,
+      recover: { flagged, candidates: recoveries, fresh: recoveries.length, cached: skipped, gen_calls: genCalls },
+    };
+  }
+
+  // ── SUPERSEDE (MO-2g): retire a misread ONLY once its replacement exists. ──
+  // Deterministic, zero model calls. Ordering is the operator's no-interval law
+  // and is also structural: superseded_by_id is a FK, so a row cannot be retired
+  // into nothing.
+  if (args.supersede) {
+    const { data: allRows } = await args.supabase
+      .from("market_options")
+      .select("id, status, executor_statement, recovered_from")
+      .eq("company_id", args.companyId)
+      .eq("criteria_version", MO1_CRITERIA_VERSION);
+    const rows = (allRows ?? []) as Array<Record<string, unknown>>;
+    // A landed recovery = a CANDIDATE row naming the misread it recovered.
+    const landed = new Map<string, string>();
+    for (const r of rows) {
+      if (String(r.status) !== "candidate") continue;
+      const from = String(r.recovered_from ?? "");
+      if (from) landed.set(from, String(r.id));
+    }
+    const done: Array<{ id: string; superseded_by: string }> = [];
+    for (const r of rows) {
+      const id = String(r.id);
+      if (String(r.status) !== "candidate") continue;
+      if (!clauseFViolation(String(r.executor_statement ?? ""))) continue;
+      const replacement = landed.get(id);
+      if (!replacement) continue; // no replacement landed -> row STAYS live
+      if (write) {
+        // Status + link only. The judged verdict is NOT touched.
+        const { error } = await args.supabase
+          .from("market_options")
+          .update({ status: "superseded", superseded_by_id: replacement })
+          .eq("id", id);
+        if (error) throw new Error(`market-options supersede failed (${id}): ${error.message}`);
+      }
+      done.push({ id, superseded_by: replacement });
+    }
+    return { ok: true, supersede: { superseded: done } };
   }
 
   // ── COLLAPSE: suppress TRUE duplicates among passing candidates. ───────────
@@ -1040,6 +1227,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
           content_identity: identity,
           // Deterministic trace, or NULL. Never model-assigned.
           relationship_kind: resolveRelationshipKind(cand.executor_statement, kindDefs),
+          recovered_from: cand.recovered_from ?? null,
           criteria_version: MO1_CRITERIA_VERSION,
           attempt: cand.revision_attempt ?? (cand.revision_of ? 2 : 1),
           revision_of: cand.revision_of ?? null,
