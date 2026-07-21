@@ -74,8 +74,10 @@ export type MarketOptionCandidate = {
   executor_statement: string;
   job_statement: string;
   basis?: string;
-  /** Set only on a revision: the id of the attempt-1 row this rewrites. */
+  /** Set only on a revision: the id of the row this rewrites (attempt 1 or 2). */
   revision_of?: string;
+  /** MO-2b: the attempt number THIS candidate will be written as (2 or 3). */
+  revision_attempt?: number;
 };
 
 type Criterion = "executor_group" | "odi_form" | "solution_agnostic";
@@ -240,7 +242,13 @@ const CRITERION_SPEC: Record<string, string> = {
     "  (d) it is NOT an industry, sector, market, or field;\n" +
     "  (e) it is NOT an institution or entity — name the PEOPLE IN IT instead\n" +
     "      ('schools' fails, 'school counsellors' passes; 'agencies' fails, 'agency caseworkers' passes;\n" +
-    "       'community organizations' fails — name the people who do the work or give the money).",
+    "       'community organizations' fails — name the people who do the work or give the money);\n" +
+    "  (f) it carries NO ROLE-DUTY phrasing. 'responsible for', 'in charge of', 'tasked with',\n" +
+    "      'accountable for', 'overseeing', 'charged with' are ACTIVITY language and fail (b) even\n" +
+    "      when the words around them name people. Naming the duty is naming what they DO.\n" +
+    "      'People responsible for youth mental health services in government agencies' FAILS;\n" +
+    "      'Government programme officers' passes. Do not relocate the duty phrase inside the\n" +
+    "      statement — remove it, and name the role those people hold instead.",
   odi_form:
     "THE JOB must be VERB + OBJECT OF THE VERB + CONTEXTUAL CLARIFIER — all three present and\n" +
     "structurally separable, as ONE clause. A missing clarifier fails. Multiple jobs chained fails.\n" +
@@ -534,25 +542,55 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
   // plan and revise are the 14b phases, every chunk is 70b-only, so a model
   // swap happens once per phase instead of once per candidate.
   if (args.revise) {
+    const REV_COLS = "id, executor_statement, job_statement, status, attempt, revision_of, rejected_criterion, criterion_executor_reason, criterion_odi_form_reason, criterion_solution_agnostic_reason";
+    // MO-2b: attempts 1 AND 2 are revisable. A third attempt is BOUNDED — see
+    // qualifiesForThirdAttempt below. Never a 4th (the CHECK is the backstop).
     const { data: rejRows } = await args.supabase
       .from("market_options")
-      .select("id, executor_statement, job_statement, status, attempt, rejected_criterion, criterion_executor_reason, criterion_odi_form_reason, criterion_solution_agnostic_reason")
+      .select(REV_COLS)
       .eq("company_id", args.companyId)
       .eq("status", "rejected")
-      .eq("attempt", 1)
+      .in("attempt", [1, 2])
       .eq("criteria_version", MO1_CRITERIA_VERSION);
     const rejected = (rejRows ?? []) as Array<Record<string, unknown>>;
 
-    // One rewrite per original: skip any that already has a revision.
+    // One rewrite per parent: skip any row that already has a revision of its own.
     const { data: revRows } = await args.supabase
       .from("market_options")
       .select("revision_of")
       .eq("company_id", args.companyId)
-      .eq("attempt", 2)
+      .in("attempt", [2, 3])
       .eq("criteria_version", MO1_CRITERIA_VERSION);
     const alreadyRevised = new Set(
       ((revRows ?? []) as Array<{ revision_of: string | null }>).map((r) => String(r.revision_of ?? "")),
     );
+
+    const byId = new Map(rejected.map((r) => [String(r.id), r]));
+    const reasonFor = (row: Record<string, unknown> | undefined, criterion: string): string => {
+      if (!row) return "";
+      return criterion === "executor_group"
+        ? String(row.criterion_executor_reason ?? "")
+        : criterion === "odi_form"
+        ? String(row.criterion_odi_form_reason ?? "")
+        : String(row.criterion_solution_agnostic_reason ?? "");
+    };
+
+    // THE BOUND (MO-2b ruling a). An attempt-2 rejection earns a third pass only
+    // when the loop is still MOVING: it failed a DIFFERENT criterion than its
+    // parent (the sequential-defect case — donor chain A, where fixing WHO
+    // exposed a defect in THE JOB), or the SAME criterion for a DIFFERENT reason.
+    // Same criterion AND same reason means the coaching did not land and another
+    // identical pass would burn model calls to repeat itself — that stays a HOLD
+    // for the operator, not an automatic retry.
+    const qualifiesForThirdAttempt = (row: Record<string, unknown>): boolean => {
+      const parent = byId.get(String(row.revision_of ?? ""));
+      if (!parent) return false; // unwalkable chain — never guess
+      const c2 = String(row.rejected_criterion ?? "");
+      const c1 = String(parent.rejected_criterion ?? "");
+      if (c1 !== c2) return true; // different criterion — sequential defect
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+      return norm(reasonFor(row, c2)) !== norm(reasonFor(parent, c1));
+    };
 
     const revisions: MarketOptionCandidate[] = [];
     let genCalls = 0;
@@ -560,6 +598,8 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
     for (const r of rejected) {
       const originalId = String(r.id);
       if (alreadyRevised.has(originalId)) { skipped++; continue; }
+      const parentAttempt = Number(r.attempt) || 1;
+      if (parentAttempt === 2 && !qualifiesForThirdAttempt(r)) { skipped++; continue; }
       const criterion = String(r.rejected_criterion ?? "");
       const reason = criterion === "executor_group"
         ? String(r.criterion_executor_reason ?? "")
@@ -583,7 +623,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       // A revision identical to something already judged is a frozen verdict —
       // don't spend judge calls re-deciding it.
       if (banked.has(identity)) { skipped++; continue; }
-      revisions.push({ ...rev, revision_of: originalId });
+      revisions.push({ ...rev, revision_of: originalId, revision_attempt: parentAttempt + 1 });
     }
     return { ok: true, plan: { candidates: revisions, fresh: revisions.length, cached: skipped, gen_calls: genCalls } };
   }
@@ -670,7 +710,7 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
           rejected_criterion: rejected,
           content_identity: identity,
           criteria_version: MO1_CRITERIA_VERSION,
-          attempt: cand.revision_of ? 2 : 1,
+          attempt: cand.revision_attempt ?? (cand.revision_of ? 2 : 1),
           revision_of: cand.revision_of ?? null,
           gen_model: genModel,
           judge_model: judgeModel,
@@ -690,13 +730,17 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       // owed, and counting it here would overshoot target by the number of
       // refinement cycles. Terminal = passed first time, or judged at attempt 2,
       // or already frozen in the cache.
-      const isTerminal = status === "candidate" || cand.revision_of != null;
+      // MO-2b: an attempt-2 rejection may still earn a bounded third pass, so it
+      // is NOT terminal by the mere fact of being a revision. Terminal = passed,
+      // or judged at the final allowed attempt (3), or already frozen.
+      const writtenAttempt = cand.revision_attempt ?? (cand.revision_of ? 2 : 1);
+      const isTerminal = status === "candidate" || writtenAttempt >= 3;
       if (isTerminal) totals.terminal++;
 
       results.push({
         executor_statement: cand.executor_statement,
         job_statement: cand.job_statement,
-        attempt: cand.revision_of ? 2 : 1,
+        attempt: cand.revision_attempt ?? (cand.revision_of ? 2 : 1),
         revision_of: cand.revision_of ?? null,
         status,
         rejected_criterion: rejected,
