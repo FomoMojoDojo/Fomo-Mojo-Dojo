@@ -1,4 +1,5 @@
 import { useCompany } from "@/hooks/useCompany";
+import { admitForSurface } from "@/lib/registerGuard";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
@@ -45,6 +46,11 @@ export default function OutsideFindingsAct({ preferredRun }: { preferredRun?: un
   const companyDomain = data?.companyDomain ?? null;
   const ledgerDates = buildLedgerDateMap(preferredRun);
   const candidates = (data?.findings ?? [])
+    // RG-2: register guard — a finding renders on the client Outside surface only
+    // if its birth-stamped register is admitted there. NULL / internal → blocked
+    // (honest empty), never substituted. This is the real boundary; findings no
+    // longer reach client copy on an incidental property.
+    .filter((f) => admitForSurface(f, "outside"))
     .filter((f) => f.id !== data?.primaryId) // Act 1 hero excluded
     .slice() // stable sort on a copy
     .sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind])

@@ -51,14 +51,19 @@ const SURFACE_ALLOWS: Record<RegisterSurface, (r: string | null | undefined) => 
   diagnose: () => true, // permissive BY DESIGN — see note above
 };
 
-/** A row that carries a stored register. Anything with the field can be judged. */
-export type RegisterBearing = { market_register?: string | null };
+// A row that carries a stored register. market_options rows carry `market_register`;
+// findings (RG-2) carry `register`. Both are the same vocabulary
+// (public_inferred / publicly_declared / internal_inferred / internal_declared);
+// whichever is present is the row's register. A row that carries NEITHER is
+// unclassified and blocks — the guard never invents a register.
+export type RegisterBearing = { market_register?: string | null; register?: string | null };
 
 /**
  * May this row's text render on this client surface? Allowlist per surface;
- * NULL / unknown / non-permitted register → false (block → honest empty).
+ * NULL / unknown / non-permitted / absent register → false (block → honest empty).
  */
 export function admitForSurface(row: RegisterBearing | null | undefined, surface: RegisterSurface): boolean {
   if (!row) return false;
-  return SURFACE_ALLOWS[surface](row.market_register ?? null);
+  const register = row.market_register ?? row.register ?? null;
+  return SURFACE_ALLOWS[surface](register);
 }

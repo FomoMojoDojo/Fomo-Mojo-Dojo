@@ -202,6 +202,11 @@ export async function generateFrontier(args: {
       body: mined.body,
       beats,
       status: "open",
+      // RG-2: a frontier is a company-level synthesis of the PUBLIC baseline run
+      // it mines — public/outside register, earned from the run, not defaulted.
+      // origin_signal_id is deliberately null here, so there is no signal band to
+      // inherit; the run type IS the provenance.
+      register: "public_inferred",
     });
     if (insErr) {
       console.log(`[frontier] insert error for company=${companyId}:`, insErr.message);

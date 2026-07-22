@@ -18,6 +18,9 @@ export type Finding = {
   beats: FindingBeats | null; // second-person three-beat; display the Observe, fall back to body
   status: "open" | "resolved";
   created_at: string;
+  // RG-2: birth-stamped provenance register (public_inferred / internal_inferred),
+  // or null when unresolvable. The register guard reads this before rendering.
+  register: string | null;
   host: string | null; // provenance host, derived from the origin signal url when present
   // Origin-signal provenance (CV-2c date badges) — read-only enrichment.
   sourceUrl: string | null; // full origin-signal url
@@ -55,7 +58,7 @@ export function useStandingFindings(companyId?: string) {
 
       const [openRes, primaryRes, companyRes] = await Promise.all([
         db.from("findings")
-          .select("id, origin_run_id, origin_signal_id, kind, body, beats, status, created_at")
+          .select("id, origin_run_id, origin_signal_id, kind, body, beats, status, created_at, register")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: true }),

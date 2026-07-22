@@ -1,4 +1,5 @@
 import { useCompany } from "@/hooks/useCompany";
+import { admitForSurface } from "@/lib/registerGuard";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
 import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
@@ -47,8 +48,14 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
   const { data, isLoading: findingsLoading } = useStandingFindings(companyId);
 
   // find_primary_finding() is the sole selector (operator ruling). No kind filter.
+  // RG-2: the hero finding renders only if the register guard admits it on the
+  // client Outside surface. A primary whose register is NULL or internal is
+  // blocked → null → the hero falls back to its empty state, never internal text.
   const primary = data?.primaryId
-    ? data.findings.find((f) => f.id === data.primaryId) ?? null
+    ? (() => {
+        const p = data.findings.find((f) => f.id === data.primaryId) ?? null;
+        return p && admitForSurface(p, "outside") ? p : null;
+      })()
     : null;
   const companyDomain = data?.companyDomain ?? null;
 

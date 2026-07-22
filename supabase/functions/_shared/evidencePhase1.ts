@@ -591,20 +591,28 @@ export async function ingestPublicBaselineSignals(args: {
     const runIdNum = Number(args.runId);
     const { data: analysisSignals } = await args.supabase
       .from("signals")
-      .select("id, claim_text")
+      .select("id, claim_text, signal_band")
       .eq("company_id", args.companyId)
       .eq("source_type", "public_baseline_run")
       .eq("source_id", String(args.runId))
       .eq("raw_payload->>source_type", "analysis");
     const findingRows = (Array.isArray(analysisSignals) ? analysisSignals : [])
       .filter((s: { claim_text?: unknown }) => typeof s.claim_text === "string" && s.claim_text.trim().length > 0)
-      .map((s: { id: string; claim_text: string }) => ({
+      .map((s: { id: string; claim_text: string; signal_band?: string | null }) => ({
         company_id: args.companyId,
         origin_run_id: Number.isFinite(runIdNum) ? runIdNum : null,
         origin_signal_id: s.id,
         kind: "observation",
         body: s.claim_text,
         status: "open",
+        // RG-2: register EARNED from the origin signal's band, never defaulted.
+        // outside → public_inferred, organization → internal_inferred. An
+        // unrecognised band leaves register NULL, which BLOCKS at render.
+        register: s.signal_band === "outside"
+          ? "public_inferred"
+          : s.signal_band === "organization"
+            ? "internal_inferred"
+            : null,
       }));
     if (findingRows.length > 0) {
       const { error: findingsErr } = await args.supabase
