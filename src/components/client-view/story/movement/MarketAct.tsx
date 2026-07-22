@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
