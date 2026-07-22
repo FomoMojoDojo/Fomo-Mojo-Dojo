@@ -222,7 +222,7 @@ function buildReviseUser(route: RouteInput, condition: string, judgeReason: stri
   );
 }
 
-async function reviseRouteCondition(args: {
+export async function reviseRouteCondition(args: {
   ollamaUrl: string; genModel: string; route: RouteInput; condition: string; judgeReason: string;
 }): Promise<string> {
   const r = await callOllamaJson(args.ollamaUrl, args.genModel, REVISE_SYSTEM, buildReviseUser(args.route, args.condition, args.judgeReason), GEN_TIMEOUT_MS);

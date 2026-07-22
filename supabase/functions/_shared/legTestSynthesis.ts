@@ -21,6 +21,8 @@
 // dry-run. One primary test per leg, keyed by tests.action_id = leg.id.
 
 import { buildOrgNameGuard } from "./stepConditionsSynthesis.ts";
+import { judgeRouteCondition, reviseRouteCondition, type RouteInput } from "./routeConditionSynthesis.ts";
+import { contentIdentity } from "./contentIdentity.ts";
 
 // Frozen reference fixtures — SELECT-only, never written. Mirror of the frontend
 // guard (src/lib/frozenCompanies.ts). Remove when CB1/CB2 are retired.
@@ -41,6 +43,7 @@ export type LegInput = {
   user_id?: string | null;
   move: string;                      // the leg's title — the concrete move
   condition: string;                 // the leg's source condition (what_would_have_to_be_true[0].condition)
+  route_id?: string | null;          // parent route id — the surgical heal supersedes ITS condition
   route_title: string;               // parent route, for grounding
   route_description?: string | null;
   // CG-2: the leg's raw what_would_have_to_be_true (verbatim) — so a judge DECLINE can
@@ -204,17 +207,24 @@ const RE_ROLL_ACTOR = "generate-leg-tests";
 // A subsequently KEPT test clears it (an honest test supersedes the decline). The
 // merge preserves every other head key (condition, leg_class, satisfied_flag, orphan
 // stamp, …). Non-fatal: a stamp failure never aborts the leg's outcome.
-const DECLINE_KEYS = ["test_declined", "test_declined_reason", "test_declined_at"] as const;
+const DECLINE_KEYS = ["test_declined", "test_declined_reason", "test_declined_at", "test_declined_retry_reason"] as const;
 
 async function stampLegDeclined(
   supabase: { from: (t: string) => any },
   leg: LegInput,
   reason: string,
   nowIso: string,
+  retryReason?: string | null,
 ): Promise<void> {
   const existing = Array.isArray(leg.wwhtbt) ? leg.wwhtbt : [];
   const head = { ...(existing[0] ?? {}) };
-  const stampedHead = { ...head, test_declined: true, test_declined_reason: reason, test_declined_at: nowIso };
+  // A residual decline after an auto-heal carries BOTH reasons verbatim: the original
+  // leg-test decline AND the retry decline (the corrected attempt that still failed).
+  // Absent retry ⇒ a non-healed decline (guard didn't fire) — original reason only, and
+  // any stale retry reason is cleared so the render never shows a phantom second attempt.
+  const stampedHead: Record<string, unknown> = { ...head, test_declined: true, test_declined_reason: reason, test_declined_at: nowIso };
+  if (retryReason && retryReason.trim()) stampedHead.test_declined_retry_reason = retryReason.trim();
+  else delete stampedHead.test_declined_retry_reason;
   const next = [stampedHead, ...existing.slice(1)];
   const { error } = await supabase.from("routes").update({ what_would_have_to_be_true: next }).eq("id", leg.id);
   if (error) console.log(`[leg-tests] decline-stamp failed for leg ${leg.id}: ${String(error.message ?? error)}`);
@@ -234,6 +244,150 @@ async function clearLegDeclined(
   const { error } = await supabase.from("routes").update({ what_would_have_to_be_true: next }).eq("id", leg.id);
   if (error) console.log(`[leg-tests] decline-clear failed for leg ${leg.id}: ${String(error.message ?? error)}`);
   else leg.wwhtbt = next;
+}
+
+// Insert one belief-only test row (result ALWAYS null — honest not-yet-run). Shared by
+// the normal kept path and the heal's retried-and-kept path.
+async function insertLegTest(
+  supabase: { from: (t: string) => any },
+  companyId: string,
+  legId: string,
+  gen: { hypothesis: string; expected_positive_signal: string; expected_negative_signal: string },
+  source: string,
+): Promise<void> {
+  const { error } = await supabase.from("tests").insert({
+    company_id: companyId, action_id: legId,
+    hypothesis: gen.hypothesis,
+    expected_positive_signal: gen.expected_positive_signal,
+    expected_negative_signal: gen.expected_negative_signal,
+    result: null, no_test_needed: false, source,
+  });
+  if (error) throw new Error(`leg-test insert failed for leg ${legId}: ${error.message}`);
+}
+
+// ── HEAL (self-heal on deficiency-caused decline) ───────────────────────────────
+// Operator ruling (2026-07-22): the declined state must SELF-HEAL — the system does the
+// surgical repair the first time, no operator rerun. When a leg-test is declined because
+// its SOURCE CONDITION is deficiency-framed, auto-heal: rewrite that ONE condition through
+// the hardened CG-1 path (surgical — the exact proven Sonos repair, now in code), rebind
+// the leg in place, retry the test ONCE. Bounded: one cycle per leg per run. Any other
+// decline reason → stamp and stop (never auto-rewrite a condition the judge didn't indict).
+//
+// TRIGGER GUARD (both must hold; (a) is a cheap pre-filter, (b) is authoritative):
+//   (a) the leg-test decline is the deficiency-as-the-bet class — the judge's reason names
+//       a deficiency/problem/pain/gap/confusion; AND
+//   (b) the CG-1 deficiency judge, run on the SOURCE CONDITION, itself declines it as
+//       deficiency-framed. (b) is what "never auto-rewrite a condition the judge didn't
+//       indict" means — a loose (a) match that isn't a real deficiency is rejected by (b).
+const DEFICIENCY_SIGNAL = /deficien|problem|pain|gap|confus|deficit/i;
+export const isDeficiencyDeclineReason = (reason: string): boolean => DEFICIENCY_SIGNAL.test(String(reason ?? ""));
+
+export type HealOutcome =
+  | { outcome: "healed"; test: { hypothesis: string; expected_positive_signal: string; expected_negative_signal: string }; healedCondition: string }
+  | { outcome: "failed"; retryReason: string }   // condition rewritten + rebound, retry test still declined
+  | { outcome: "not_healed" };                    // (b) failed, couldn't rewrite, or no matching condition — no data change
+
+// Surgical single-condition repair + one retried test. Writes only on a successful
+// rewrite: condition_removals audit (auto-heal provenance), the route's ONE condition
+// element replaced (siblings byte-intact by construction), the leg rebound in place.
+async function attemptDeficiencyHeal(args: {
+  supabase: { from: (t: string) => any };
+  companyId: string;
+  companyName: string;
+  leg: LegInput;
+  ollamaUrl: string;
+  genModel: string;
+  judgeModel: string;
+  orgGuard: (s: string) => boolean;
+  nowIso: string;
+}): Promise<HealOutcome> {
+  const { leg } = args;
+  const routeId = String(leg.route_id ?? "");
+  const source = String(leg.condition ?? "").trim();
+  if (!routeId || !source) return { outcome: "not_healed" };
+
+  const route: RouteInput = {
+    id: routeId, title: leg.route_title, short_description: leg.route_description ?? null, category: null, existing: [],
+  };
+
+  // (b) authoritative: the CG-1 deficiency judge must indict the SOURCE CONDITION.
+  const condVerdict = await judgeRouteCondition({ ollamaUrl: args.ollamaUrl, judgeModel: args.judgeModel, route, condition: source });
+  if (condVerdict.keep || !isDeficiencyDeclineReason(condVerdict.reason)) return { outcome: "not_healed" };
+
+  // Rewrite the condition through the hardened reviser, judged by the CG-1 judge, WITH the
+  // one coached-rewrite allowance (mirrors CG-1). No rebind unless a rewrite passes.
+  const sourceId = await contentIdentity(source);
+  const acceptable = (c: string): boolean => !!c && !args.orgGuard(c);
+  let healedCondition = "";
+  // First pass revises the SOURCE deficiency condition, handed the CG-1 judge's indictment;
+  // the coached pass (CG-1 allowance) revises the rejected CANDIDATE with the judge's reason.
+  let toRevise = source;
+  let reviseReason = condVerdict.reason;
+  for (let attempt = 0; attempt < 2 && !healedCondition; attempt++) {
+    let cand = "";
+    try {
+      cand = String(await reviseRouteCondition({ ollamaUrl: args.ollamaUrl, genModel: args.genModel, route, condition: toRevise, judgeReason: reviseReason }) ?? "").trim();
+    } catch { return { outcome: "not_healed" }; }
+    // A real rewrite must be non-empty, org-clean, and DIFFERENT from the source deficiency.
+    if (!acceptable(cand) || (await contentIdentity(cand)) === sourceId) {
+      toRevise = cand || toRevise;
+      reviseReason = "the rewrite must be a forward/target precondition, not a restatement of the problem";
+      continue;
+    }
+    const v = await judgeRouteCondition({ ollamaUrl: args.ollamaUrl, judgeModel: args.judgeModel, route, condition: cand });
+    if (v.keep) { healedCondition = cand; break; }
+    toRevise = cand;                       // coached rewrite revises THIS candidate…
+    reviseReason = v.reason || "rejected"; // …handed the judge's reason (CG-1 pattern)
+  }
+  if (!healedCondition) return { outcome: "not_healed" };
+
+  // Surgical reconcile — supersede exactly the matching condition on the route by
+  // contentIdentity; siblings are copied verbatim (byte-intact by construction).
+  const { data: routeRow } = await args.supabase.from("routes").select("what_would_have_to_be_true").eq("id", routeId).maybeSingle();
+  const wwt = Array.isArray((routeRow as { what_would_have_to_be_true?: unknown } | null)?.what_would_have_to_be_true)
+    ? ((routeRow as { what_would_have_to_be_true: Array<Record<string, unknown>> }).what_would_have_to_be_true)
+    : [];
+  let idx = -1;
+  for (let i = 0; i < wwt.length; i++) {
+    if ((await contentIdentity(String(wwt[i]?.condition ?? ""))) === sourceId) { idx = i; break; }
+  }
+  if (idx < 0) return { outcome: "not_healed" }; // condition already gone — nothing to supersede
+
+  // Audit the superseded deficiency condition with AUTO-HEAL provenance (distinct from an
+  // operator/generator 'condition_rerolled'): reason + actor are the marker (no new column).
+  const { error: remErr } = await args.supabase.from("condition_removals").insert({
+    company_id: args.companyId, route_id: routeId,
+    condition_identity: sourceId, condition_text: source,
+    reason: "condition_auto_healed", actor: "generate-leg-tests:auto-heal",
+    affected_leg_ids: [leg.id], removed_at: args.nowIso,
+  });
+  if (remErr) { console.log(`[leg-tests] heal audit failed for leg ${leg.id}: ${String(remErr.message ?? remErr)}`); return { outcome: "not_healed" }; }
+
+  // Replace ONLY the matching element's condition text; keep its source/satisfied_flag and
+  // every sibling verbatim. The healed condition stays in the generated class (re-rollable).
+  const nextWwt = wwt.map((el, i) => (i === idx ? { ...el, condition: healedCondition } : el));
+  const { error: upRouteErr } = await args.supabase.from("routes").update({ what_would_have_to_be_true: nextWwt, updated_at: args.nowIso }).eq("id", routeId);
+  if (upRouteErr) throw new Error(`heal route-condition update failed for route ${routeId}: ${upRouteErr.message}`);
+
+  // Rebind the leg in place (same id, no orphan/decline stamp) — its wwhtbt[0].condition is
+  // the "what this would establish" mirror; it now reads the healed forward condition.
+  const legExisting = Array.isArray(leg.wwhtbt) ? leg.wwhtbt : [];
+  const legHead = legExisting[0] ?? {};
+  const nextLegWwt = [{ ...legHead, condition: healedCondition }, ...legExisting.slice(1)];
+  const { error: upLegErr } = await args.supabase.from("routes").update({ what_would_have_to_be_true: nextLegWwt, updated_at: args.nowIso }).eq("id", leg.id);
+  if (upLegErr) throw new Error(`heal leg-rebind failed for leg ${leg.id}: ${upLegErr.message}`);
+  leg.wwhtbt = nextLegWwt;
+  leg.condition = healedCondition;
+
+  // Retry the test ONCE against the healed condition (bounded — no loop).
+  const retryGen = await generateLegTest({ ollamaUrl: args.ollamaUrl, genModel: args.genModel, leg });
+  const retryHasAll = !!retryGen.hypothesis && !!retryGen.expected_positive_signal && !!retryGen.expected_negative_signal;
+  const retryNamesOrg = args.orgGuard(retryGen.hypothesis) || args.orgGuard(retryGen.expected_positive_signal) || args.orgGuard(retryGen.expected_negative_signal);
+  if (!retryHasAll) return { outcome: "failed", retryReason: "incomplete test" };
+  if (retryNamesOrg) return { outcome: "failed", retryReason: "names the company" };
+  const retryVerdict = await judgeLegTest({ ollamaUrl: args.ollamaUrl, judgeModel: args.judgeModel, leg, test: retryGen });
+  if (retryVerdict.keep) return { outcome: "healed", test: retryGen, healedCondition };
+  return { outcome: "failed", retryReason: retryVerdict.reason || "rejected" };
 }
 
 // ── Synthesize: per test-leg → gen → judge → (write+preserve | dry) ─────────────
@@ -314,6 +468,8 @@ export async function synthesizeLegTests(args: {
     const namesOrg = orgGuard(gen.hypothesis) || orgGuard(gen.expected_positive_signal) || orgGuard(gen.expected_negative_signal);
     let keep = hasAll && !namesOrg;
     let reason = !hasAll ? "incomplete test" : namesOrg ? "names the company" : "";
+    // judged = the 70b honesty judge actually ran (deterministic-guard declines never heal).
+    const judged = hasAll && !namesOrg;
     if (keep) {
       const v = await judgeLegTest({ ollamaUrl: args.ollamaUrl, judgeModel, leg, test: gen });
       keep = v.keep; reason = v.reason || (v.keep ? "ok" : "rejected");
@@ -363,25 +519,36 @@ export async function synthesizeLegTests(args: {
         }
       }
       if (keep) {
-        const { error: insErr } = await args.supabase.from("tests").insert({
-          company_id: args.companyId,
-          action_id: leg.id,
-          hypothesis: gen.hypothesis,
-          expected_positive_signal: gen.expected_positive_signal,
-          expected_negative_signal: gen.expected_negative_signal,
-          result: null,            // NEVER write a result — honest not-yet-run state
-          no_test_needed: false,
-          source,
-        });
-        if (insErr) throw new Error(`leg-test insert failed for leg ${leg.id}: ${insErr.message}`);
+        await insertLegTest(args.supabase, args.companyId, leg.id, gen, source);
         written = true;
         // CG-2: an honest test now exists — clear any prior decline stamp on the leg.
         await clearLegDeclined(args.supabase, leg);
       } else {
-        // CG-2: the honesty judge (or a deterministic guard) declined this test. Persist
-        // the VERBATIM reason on the leg so the render shows attempted-and-declined
-        // distinctly from never-attempted. Mirrors the hole-close orphan stamp.
-        await stampLegDeclined(args.supabase, leg, reason, args.nowIso);
+        // HEAL (operator ruling 2026-07-22): a deficiency-caused decline SELF-HEALS — the
+        // system rewrites that ONE source condition (surgical, hardened CG-1 path), rebinds
+        // the leg, and retries the test ONCE. Bounded: one cycle per leg per run. Any other
+        // decline reason (deterministic guard, non-deficiency judge) → stamp and stop.
+        let retryReason: string | null = null;
+        if (judged && isDeficiencyDeclineReason(reason)) {
+          const h = await attemptDeficiencyHeal({
+            supabase: args.supabase, companyId: args.companyId, companyName: args.companyName,
+            leg, ollamaUrl: args.ollamaUrl, genModel, judgeModel, orgGuard, nowIso: args.nowIso,
+          });
+          if (h.outcome === "healed") {
+            // The corrected attempt passed — write it; the operator simply sees a passing test.
+            await insertLegTest(args.supabase, args.companyId, leg.id, h.test, source);
+            written = true;
+            await clearLegDeclined(args.supabase, leg);
+          } else if (h.outcome === "failed") {
+            retryReason = h.retryReason; // residual: rewrote + retried, still declined
+          }
+          // not_healed → no data changed; fall through to the original-reason-only stamp.
+        }
+        if (!written) {
+          // CG-2 + HEAL: persist the honest record. A residual carries BOTH reasons verbatim
+          // (original + retry); a non-healed decline carries the original only — no instructions.
+          await stampLegDeclined(args.supabase, leg, reason, args.nowIso, retryReason);
+        }
       }
     }
 
@@ -457,6 +624,7 @@ export async function generateLegTestsForCompany(args: {
       user_id: (r.user_id as string | null) ?? null,
       move: String(r.title ?? ""),
       condition: String(firstWwhtbt(r)?.condition ?? "").trim(),
+      route_id: (r.parent_id as string | null) ?? null,
       route_title: parent.title,
       route_description: parent.short_description,
       wwhtbt: Array.isArray(r.what_would_have_to_be_true) ? (r.what_would_have_to_be_true as Array<Record<string, unknown>>) : [],

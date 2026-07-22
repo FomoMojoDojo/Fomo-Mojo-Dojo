@@ -315,6 +315,9 @@ export type WrapCond = {
   test_declined?: boolean;
   test_declined_reason?: string;
   test_declined_at?: string;
+  // HEAL: set only on the residual — the corrected (auto-rewritten) condition's retried test
+  // was also declined; carries that retry decline reason verbatim, distinct from the original.
+  test_declined_retry_reason?: string;
 };
 
 export const HIERARCHY_STATE_ACCENT: Record<string, string> = {
