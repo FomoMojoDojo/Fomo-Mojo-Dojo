@@ -44,6 +44,10 @@ export type ProposedCondition = {
   condition: string;
   kept: boolean;        // judge verdict — false ⇒ dropped, not written
   judge_reason: string;
+  // Coached-rewrite (CG-1): set on the 2nd-attempt candidate — the id of the
+  // attempt-1 text this revision rewrites. Both attempts are recorded in `proposed`;
+  // only a kept attempt is ever written to the route.
+  revision_of?: string;
 };
 
 export type RouteConditionOutcome = {
@@ -123,6 +127,7 @@ const GEN_SYSTEM =
   "(4) NEVER name the company, its brand, or any specific vendor/supplier. " +
   "(5) Do NOT invent facts, numbers, or specifics not grounded in the route. " +
   "(6) Solution-agnostic; concrete everyday nouns; no abstract business filler. " +
+  "(7) FORWARD/TARGET FRAMING — each condition is the POSITIVE precondition that must HOLD for the route to win (the forward win, stated affirmatively). NEVER state the condition as the PRESENCE of a problem, pain, confusion, gap, or deficiency. If the route addresses a pain ('users hit frequent audio issues'), state the target that must be true instead ('users can resolve common audio issues on their own when given clear, specific guidance'). It must still be a GENUINE, falsifiable bet that could turn out false — asserting the forward precondition holds is NOT a truism; asserting a problem is present is deficiency framing and is forbidden. " +
   "Each condition is a single short sentence. " +
   "JSON only: {\"conditions\":[\"...\",\"...\"]}.";
 
@@ -164,19 +169,20 @@ const JUDGE_SYSTEM =
   "(a) it PRESCRIBES A SOLUTION OR AN ACTION (e.g. 'build a portal', 'launch a program', 'create X', 'implement Y') — that is a move, NOT a condition; a condition states WHAT MUST BE TRUE, never HOW to do it; " +
   "(b) not falsifiable, vague, or a restatement of the route; " +
   "(c) not a genuine precondition for THIS route; " +
-  "(d) fabricated — it invents facts, numbers, or specifics not grounded in the route. " +
-  "Accept (keep=true) ONLY a falsifiable, on-point, solution-agnostic condition. Judge substance and honesty, not style. " +
+  "(d) fabricated — it invents facts, numbers, or specifics not grounded in the route; " +
+  "(e) DEFICIENCY-AS-THE-CONDITION — the thing the condition asserts MUST BE TRUE is the PRESENCE of a problem, pain, confusion, gap, or deficiency, rather than the positive/target precondition the route needs to hold. Judge the PROPOSITION the condition asserts, NOT vocabulary: do NOT reject merely because a problem is named as context — reject only when the asserted precondition ITSELF is that the deficiency exists (e.g. 'users encounter frequent issues …' asserts the problem is present, so any leg built on it bets the problem exists instead of betting on progress). A forward precondition the route depends on is acceptable. " +
+  "Accept (keep=true) ONLY a falsifiable, on-point, solution-agnostic, forward/target-framed condition. Judge substance and honesty, not style. " +
   "JSON only: {\"keep\":true|false,\"reason\":\"<one short clause>\"}.";
 
 function buildJudgeUser(route: RouteInput, condition: string): string {
   return (
     `Route: ${route.title}\n` +
     `Proposed condition: ${condition}\n` +
-    `Is this a falsifiable precondition for the route that states WHAT MUST BE TRUE (not a solution/action to take), without fabricating?`
+    `Is this a falsifiable, forward/target-framed precondition for the route that states WHAT MUST BE TRUE (the positive thing that must hold — NOT that a problem exists, NOT a solution/action to take), without fabricating?`
   );
 }
 
-async function judgeRouteCondition(args: {
+export async function judgeRouteCondition(args: {
   ollamaUrl: string; judgeModel: string; route: RouteInput; condition: string;
 }): Promise<{ keep: boolean; reason: string }> {
   const r = await callOllamaJson(args.ollamaUrl, args.judgeModel, JUDGE_SYSTEM, buildJudgeUser(args.route, args.condition), JUDGE_TIMEOUT_MS);
@@ -187,6 +193,44 @@ async function judgeRouteCondition(args: {
   const keep = (parsed as { keep?: unknown })?.keep === true;
   const reason = String((parsed as { reason?: unknown })?.reason ?? "").trim();
   return { keep, reason };
+}
+
+// ── Coached rewrite (CG-1): ONE revision cycle for a judge-rejected condition ──
+// Mirrors the MO refinement pattern (marketOptionSynthesis.ts): the generator is
+// handed the rejected condition plus the judge's NAMED reason as a targeted
+// instruction, and produces ONE revised condition. The revision re-enters the FULL
+// judge; one cycle only. Both attempts are recorded in `proposed`; only a kept
+// attempt is written. require_model: the revision is MODEL output — nothing here
+// patches or rewrites the condition in code. The most common rejection this exists
+// to recover is (e) deficiency framing — restate the target the pain implies.
+const REVISE_SYSTEM =
+  "You REVISE a single strategic CONDITION that a strict reviewer rejected. " +
+  "You are given the route, the rejected condition, and the reason it was rejected. " +
+  "Produce ONE revised condition that fixes the failure while keeping the SAME underlying precondition the route depends on. " +
+  "A condition states WHAT MUST BE TRUE for the route to win — never a solution or an action to take. " +
+  "WHEN THE FAILURE IS DEFICIENCY FRAMING — the condition asserted that a problem, pain, confusion, gap, or deficiency is PRESENT — DO NOT reword the problem. Replace it: state the POSITIVE/TARGET precondition the route needs to HOLD instead. Ask what would be TRUE for these people if the route had succeeded, and write THAT as the condition ('users encounter frequent audio issues' → 'users can resolve common audio issues on their own when given clear, specific guidance'). Keeping the problem and softening its wording is the failure repeating itself, not a revision. " +
+  "The revised condition must still be FALSIFIABLE (it could turn out false), a genuine precondition for THIS route, solution-agnostic, and must NOT name the company, brand, or any vendor. " +
+  "One single short sentence. JSON only: {\"condition\":\"...\"}.";
+
+function buildReviseUser(route: RouteInput, condition: string, judgeReason: string): string {
+  return (
+    `Route (the win we are trying to make true): ${route.title}\n` +
+    `Route detail: ${route.short_description || "(none)"}\n` +
+    `Rejected condition: ${condition}\n` +
+    `Why it was rejected: ${judgeReason || "(no reason recorded)"}\n` +
+    `Rewrite it as the forward/target precondition that must be TRUE for this route to win.`
+  );
+}
+
+async function reviseRouteCondition(args: {
+  ollamaUrl: string; genModel: string; route: RouteInput; condition: string; judgeReason: string;
+}): Promise<string> {
+  const r = await callOllamaJson(args.ollamaUrl, args.genModel, REVISE_SYSTEM, buildReviseUser(args.route, args.condition, args.judgeReason), GEN_TIMEOUT_MS);
+  if (!r.ok) throw new Error(`route-condition reviser: model call failed for route ${args.route.id}: ${r.err}`);
+  let parsed: unknown;
+  try { parsed = JSON.parse(r.content ?? ""); }
+  catch { throw new Error(`route-condition reviser: unparseable model output for route ${args.route.id} (strict): ${String(r.content).slice(0, 160)}`); }
+  return String((parsed as { condition?: unknown })?.condition ?? "").trim();
 }
 
 const isGeneratedCondition = (c: WrapCondition) => String(c?.source ?? "").startsWith(`${CONDITION_SOURCE_PREFIX}:`);
@@ -396,18 +440,37 @@ export async function synthesizeRouteConditions(args: {
 
     const proposed: ProposedCondition[] = [];
     const keptGenerated: WrapCondition[] = [];
+    // Deterministic org-name guard + operator-duplicate skip (no model needed).
+    const guardFail = (c: string): string =>
+      orgGuard(c) ? "names the company" : operatorTexts.has(c.toLowerCase()) ? "duplicates an operator condition" : "";
     for (const cond of candidates) {
       const condition = cond.trim();
       if (!condition) continue;
-      // Deterministic org-name guard + operator-duplicate skip, then the 70b judge.
-      let keep = !orgGuard(condition) && !operatorTexts.has(condition.toLowerCase());
-      let reason = orgGuard(condition) ? "names the company" : operatorTexts.has(condition.toLowerCase()) ? "duplicates an operator condition" : "";
-      if (keep) {
-        const v = await judgeRouteCondition({ ollamaUrl: args.ollamaUrl, judgeModel, route, condition });
-        keep = v.keep; reason = v.reason || (v.keep ? "ok" : "rejected");
+      const g = guardFail(condition);
+      if (g) { proposed.push({ condition, kept: false, judge_reason: g }); continue; }
+      // 70b judge on attempt 1.
+      const v = await judgeRouteCondition({ ollamaUrl: args.ollamaUrl, judgeModel, route, condition });
+      proposed.push({ condition, kept: v.keep, judge_reason: v.reason || (v.keep ? "ok" : "rejected") });
+      if (v.keep) { keptGenerated.push({ condition, satisfied_flag: false, source }); continue; }
+      // Coached-rewrite (CG-1): ONE revision cycle handed the judge's named reason.
+      // The revision re-enters the FULL judge; both attempts recorded, only a kept one
+      // is written. Mirrors the MO refinement pattern — refine the statement, never
+      // loosen the judge.
+      let revised = "";
+      try {
+        revised = await reviseRouteCondition({ ollamaUrl: args.ollamaUrl, genModel, route, condition, judgeReason: v.reason });
+      } catch (e) {
+        proposed.push({ condition: "", kept: false, judge_reason: `revision failed: ${String((e as Error)?.message ?? e)}`, revision_of: condition });
+        continue;
       }
-      proposed.push({ condition, kept: keep, judge_reason: reason });
-      if (keep) keptGenerated.push({ condition, satisfied_flag: false, source });
+      if (!revised) { proposed.push({ condition: "", kept: false, judge_reason: "revision produced nothing", revision_of: condition }); continue; }
+      const g2 = guardFail(revised);
+      if (g2) { proposed.push({ condition: revised, kept: false, judge_reason: g2, revision_of: condition }); continue; }
+      const alreadyKept = keptGenerated.some((k) => String(k.condition).trim().toLowerCase() === revised.toLowerCase());
+      if (alreadyKept) { proposed.push({ condition: revised, kept: false, judge_reason: "duplicates a condition already kept on this route", revision_of: condition }); continue; }
+      const v2 = await judgeRouteCondition({ ollamaUrl: args.ollamaUrl, judgeModel, route, condition: revised });
+      proposed.push({ condition: revised, kept: v2.keep, judge_reason: v2.reason || (v2.keep ? "ok" : "rejected"), revision_of: condition });
+      if (v2.keep) keptGenerated.push({ condition: revised, satisfied_flag: false, source });
     }
 
     // New array = operator conditions (verbatim) ∪ fresh kept-generated.
