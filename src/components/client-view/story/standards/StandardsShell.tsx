@@ -1,18 +1,18 @@
 /*
- * EOV-1 — the REFERENCE (standards) shell: a THIRD register in the outside
- * phase, designed to mount after MovementShell.
+ * EOV-1 — the REFERENCE (standards) shell: a THIRD register in the outside phase.
  *
- * ══ DORMANT — NOT MOUNTED ANYWHERE ═══════════════════════════════════════════
- * Client-facing mount REMOVED by operator ruling 2026-07-20: generic reference
- * data must not render in the client story. The Elements of Value pyramids are
- * byte-identical for every company, so in a story that opens all-about-them they
- * read as fill-in-the-blank content. Those elements now reach the client only
- * via the future selection/delta layer, attached to their instance.
+ * ══ MOUNTED AT FD-3 ══════════════════════════════════════════════════════════
+ * As of FD-3 this shell is MOUNTED at the TOP of the Outside phase in
+ * ClientStoryView, wrapping FrontDoorMapAct — the industry-standard job map, the
+ * cold-open "standard shape" shown before any reading of the company. (The
+ * earlier "designed to mount after MovementShell" plan is superseded: FD-3 is the
+ * cold open and stands FIRST.)
  *
- * This file is RESERVED as the home of the Act C industry-standard job-map
- * library at FD-3. That library stays client-facing because it is
- * industry-specific — it IS about them. Do not mount this shell until FD-3
- * exists, and never mount company-identical content in it.
+ * The Elements of Value pyramids remain OUT (operator ruling 2026-07-20): generic,
+ * byte-identical-per-company content must never mount here. Only industry-specific
+ * reference content — which IS about the client's world — belongs in this shell.
+ * FrontDoorMapAct is that content: a published, industry-keyed standard map, never
+ * company-identical fill.
  *
  * The divider copy below remains operator-signed and must not be altered.
  *

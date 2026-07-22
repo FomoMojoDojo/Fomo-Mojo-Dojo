@@ -20,6 +20,9 @@ export interface Company {
   created_at: string;
   quarter?: string | null;
   archetype?: string | null;
+  // FD-3: operator-set published industry_reference_job_maps key for the
+  // front-door standard map. Exact-match-or-fallback at read; never fuzzy.
+  industry_key?: string | null;
 
   // NEW
   mojo_score: number | null;
@@ -146,7 +149,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       return;
     }
     const baseSelect =
-      "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json";
+      "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key";
     const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
 
     let companiesQuery = supabase

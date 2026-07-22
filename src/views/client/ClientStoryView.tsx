@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ClientSystemPhase } from "@/hooks/useClientMapInteractionState";
 import { useCompany } from "@/hooks/useCompany";
+import StandardsShell from "@/components/client-view/story/standards/StandardsShell";
+import FrontDoorMapAct from "@/components/client-view/story/standards/FrontDoorMapAct";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { CLIENT_PHASE_NAV_ITEMS } from "@/lib/clientPhaseRoutes";
 import { CLIENT_STORY_THEME_KEY, type ClientStoryTheme } from "@/lib/clientStoryView";
@@ -149,6 +151,12 @@ export default function ClientStoryView() {
         {/* Outside page: all four acts real (CV-1 + CV-2). Diagnose stays scaffolds. */}
         {phase === "outside" ? (
           <>
+            {/* FD-3: the cold-open industry-standard job map — the standard shape,
+                shown BEFORE any reading of this company. Reference register
+                (StandardsShell), stands permanently at the top of Outside. */}
+            <StandardsShell>
+              <FrontDoorMapAct />
+            </StandardsShell>
             <OutsideHeroAct preferredRun={preferredRun} />
             <OutsideFindingsAct preferredRun={preferredRun} />
             <OutsideQuestionAct preferredRun={preferredRun} loading={baselineLoading} />
