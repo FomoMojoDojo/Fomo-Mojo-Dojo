@@ -43,6 +43,9 @@ export type LegInput = {
   condition: string;                 // the leg's source condition (what_would_have_to_be_true[0].condition)
   route_title: string;               // parent route, for grounding
   route_description?: string | null;
+  // CG-2: the leg's raw what_would_have_to_be_true (verbatim) — so a judge DECLINE can
+  // be stamped durably onto wwhtbt[0], and a subsequent KEPT test can clear that stamp.
+  wwhtbt?: Array<Record<string, unknown>>;
 };
 
 export type ProposedTest = {
@@ -192,6 +195,47 @@ async function judgeLegTest(args: {
 // pipeline writes on its inserts.
 const RE_ROLL_ACTOR = "generate-leg-tests";
 
+// ── CG-2: durable decline stamp on the leg's wwhtbt[0] ──────────────────────────
+// When the honesty judge DECLINES a fresh test, no `tests` row is written (hypothesis
+// et al. are NOT NULL, and a declined bet is not a belief-only artifact) — so the
+// refusal would vanish and the render could not tell attempted-and-declined from
+// never-attempted. We persist it exactly like the hole-close orphan stamp: a marker
+// merged into wwhtbt[0], carrying the JUDGE'S VERBATIM reason. No new table/column.
+// A subsequently KEPT test clears it (an honest test supersedes the decline). The
+// merge preserves every other head key (condition, leg_class, satisfied_flag, orphan
+// stamp, …). Non-fatal: a stamp failure never aborts the leg's outcome.
+const DECLINE_KEYS = ["test_declined", "test_declined_reason", "test_declined_at"] as const;
+
+async function stampLegDeclined(
+  supabase: { from: (t: string) => any },
+  leg: LegInput,
+  reason: string,
+  nowIso: string,
+): Promise<void> {
+  const existing = Array.isArray(leg.wwhtbt) ? leg.wwhtbt : [];
+  const head = { ...(existing[0] ?? {}) };
+  const stampedHead = { ...head, test_declined: true, test_declined_reason: reason, test_declined_at: nowIso };
+  const next = [stampedHead, ...existing.slice(1)];
+  const { error } = await supabase.from("routes").update({ what_would_have_to_be_true: next }).eq("id", leg.id);
+  if (error) console.log(`[leg-tests] decline-stamp failed for leg ${leg.id}: ${String(error.message ?? error)}`);
+  else leg.wwhtbt = next; // keep the in-memory copy consistent for any later touch this run
+}
+
+async function clearLegDeclined(
+  supabase: { from: (t: string) => any },
+  leg: LegInput,
+): Promise<void> {
+  const existing = Array.isArray(leg.wwhtbt) ? leg.wwhtbt : [];
+  const head = existing[0] ?? {};
+  if (!DECLINE_KEYS.some((k) => k in head)) return; // nothing to clear — no write
+  const cleanedHead: Record<string, unknown> = { ...head };
+  for (const k of DECLINE_KEYS) delete cleanedHead[k];
+  const next = [cleanedHead, ...existing.slice(1)];
+  const { error } = await supabase.from("routes").update({ what_would_have_to_be_true: next }).eq("id", leg.id);
+  if (error) console.log(`[leg-tests] decline-clear failed for leg ${leg.id}: ${String(error.message ?? error)}`);
+  else leg.wwhtbt = next;
+}
+
 // ── Synthesize: per test-leg → gen → judge → (write+preserve | dry) ─────────────
 export async function synthesizeLegTests(args: {
   supabase: { from: (t: string) => any; rpc: (fn: string, params?: Record<string, unknown>) => any };
@@ -331,6 +375,13 @@ export async function synthesizeLegTests(args: {
         });
         if (insErr) throw new Error(`leg-test insert failed for leg ${leg.id}: ${insErr.message}`);
         written = true;
+        // CG-2: an honest test now exists — clear any prior decline stamp on the leg.
+        await clearLegDeclined(args.supabase, leg);
+      } else {
+        // CG-2: the honesty judge (or a deterministic guard) declined this test. Persist
+        // the VERBATIM reason on the leg so the render shows attempted-and-declined
+        // distinctly from never-attempted. Mirrors the hole-close orphan stamp.
+        await stampLegDeclined(args.supabase, leg, reason, args.nowIso);
       }
     }
 
@@ -408,6 +459,7 @@ export async function generateLegTestsForCompany(args: {
       condition: String(firstWwhtbt(r)?.condition ?? "").trim(),
       route_title: parent.title,
       route_description: parent.short_description,
+      wwhtbt: Array.isArray(r.what_would_have_to_be_true) ? (r.what_would_have_to_be_true as Array<Record<string, unknown>>) : [],
     };
   }).filter((l) => l.move && l.condition);
 

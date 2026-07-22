@@ -1395,11 +1395,16 @@ function LegTestPanel({
   companyId,
   refreshKey,
   onGenerated,
+  declinedReason,
 }: {
   legId: string;
   companyId: string;
   refreshKey?: number;
   onGenerated?: () => void;
+  // CG-2: the verbatim honesty-judge reason this leg's test was declined for, stamped
+  // durably on the leg's wwhtbt[0] (test_declined_reason). Present ⇒ attempted-and-declined
+  // (distinct from never-attempted). Null/absent ⇒ no decline on record.
+  declinedReason?: string | null;
 }) {
   const { isAdmin } = useAuth();
   const [test, setTest] = useState<LegTestRow | null>(null);
@@ -1467,7 +1472,22 @@ function LegTestPanel({
       <p style={{ fontFamily: R.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: R.inkSoft, margin: "0 0 10px" }}>
         Test for this leg
       </p>
-      {!loaded ? null : test === null ? (
+      {!loaded ? null : test === null && declinedReason ? (
+        // CG-2: attempted-and-declined — the honesty judge refused this test and the
+        // reason was stamped on the leg. Surface the STORED reason verbatim (never a
+        // canned string posing as the judge), plus what unlocks it.
+        <div style={{ marginTop: 4 }}>
+          <p style={{ fontFamily: R.sans, fontSize: 13, fontWeight: 600, color: "#b45309", margin: 0, lineHeight: 1.4 }}>
+            The honesty check declined this test.
+          </p>
+          <p style={{ fontFamily: R.sans, fontSize: 12, color: "rgba(17,17,17,0.6)", margin: "3px 0 0", lineHeight: 1.5 }}>
+            Reason: {declinedReason}
+          </p>
+          <p style={{ fontFamily: R.sans, fontSize: 12, color: "rgba(17,17,17,0.45)", margin: "6px 0 0", lineHeight: 1.5 }}>
+            This unlocks once the leg's source condition is rewritten as a forward target. Regenerate conditions on the Routes panel, then draft the test again.
+          </p>
+        </div>
+      ) : test === null ? (
         <LegTestState title="Test not yet drafted" sub="This leg is marked as a test, but no hypothesis has been written yet." />
       ) : test.no_test_needed ? (
         <LegTestState title="No test needed" sub={test.no_test_needed_reason || ""} />
@@ -1484,19 +1504,37 @@ function LegTestPanel({
         </div>
       )}
       {isAdmin && !frozen && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); handleGenerate(); }}
-          disabled={generating}
-          style={{
-            marginTop: 12, fontFamily: R.mono, fontSize: 10, letterSpacing: "0.06em",
-            padding: "5px 10px", borderRadius: 4, border: `1px solid ${R.hairline}`,
-            background: generating ? "rgba(120,120,140,0.12)" : "transparent",
-            color: R.inkSoft, cursor: generating ? "default" : "pointer", opacity: generating ? 0.6 : 1,
-          }}
-        >
-          {generating ? "Drafting test…" : test ? "Regenerate test" : "Generate test"}
-        </button>
+        test === null && declinedReason ? (
+          // CG-2: in the declined state, re-running "Generate test" just re-hits the same
+          // judge wall — the real unblock is upstream. Offer the honest next step, disabled
+          // here because the condition control is not on this surface (name where it lives).
+          <button
+            type="button"
+            disabled
+            title="The condition control lives on the Routes panel — use “Regenerate conditions” there, then draft this test again."
+            style={{
+              marginTop: 12, fontFamily: R.mono, fontSize: 10, letterSpacing: "0.06em",
+              padding: "5px 10px", borderRadius: 4, border: `1px solid ${R.hairline}`,
+              background: "rgba(120,120,140,0.08)", color: R.inkSoft, cursor: "not-allowed", opacity: 0.55,
+            }}
+          >
+            Regenerate condition first
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleGenerate(); }}
+            disabled={generating}
+            style={{
+              marginTop: 12, fontFamily: R.mono, fontSize: 10, letterSpacing: "0.06em",
+              padding: "5px 10px", borderRadius: 4, border: `1px solid ${R.hairline}`,
+              background: generating ? "rgba(120,120,140,0.12)" : "transparent",
+              color: R.inkSoft, cursor: generating ? "default" : "pointer", opacity: generating ? 0.6 : 1,
+            }}
+          >
+            {generating ? "Drafting test…" : test ? "Regenerate test" : "Generate test"}
+          </button>
+        )
       )}
     </div>
   );
@@ -1562,6 +1600,10 @@ export function LegRow({
   const legHead = conditions[0];
   const isOrphaned = !!legHead?.orphaned;
   const orphanReason = String(legHead?.orphaned_reason ?? "");
+  // CG-2: a durable decline stamp (test_declined) means the honesty judge refused this
+  // leg's test — the render shows attempted-and-declined distinctly from never-attempted,
+  // surfacing the STORED judge reason verbatim.
+  const testDeclinedReason = legHead?.test_declined ? String(legHead?.test_declined_reason ?? "") : null;
   // Strip a loose trailing em/en-dash a generator can leave behind — it reads as unfinished.
   const legTitle = (leg.title || "").replace(/\s*[—–]+\s*$/, "").trimEnd();
 
@@ -1673,6 +1715,7 @@ export function LegRow({
             companyId={leg.company_id}
             refreshKey={legTestRefreshKey}
             onGenerated={onLegTestGenerated}
+            declinedReason={testDeclinedReason}
           />
         )}
         {/* Meta line */}

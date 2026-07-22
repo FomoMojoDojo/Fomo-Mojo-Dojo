@@ -309,6 +309,12 @@ export type WrapCond = {
   orphaned_reason?: string;
   orphaned_at?: string;
   orphaned_from_identity?: string;
+  // CG-2: stamped on a test-class leg's carried condition when the honesty judge DECLINES
+  // its test — persists the refusal (verbatim reason) so the panel shows attempted-and-
+  // declined distinctly from never-attempted. Cleared when a subsequent test is kept.
+  test_declined?: boolean;
+  test_declined_reason?: string;
+  test_declined_at?: string;
 };
 
 export const HIERARCHY_STATE_ACCENT: Record<string, string> = {
