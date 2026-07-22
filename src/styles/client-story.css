@@ -1653,3 +1653,70 @@
   margin-left: auto;
   margin-right: auto;
 }
+
+/* ─── First Read · Act 5 The Proposal (Gate 4) ─────────────────────────────── */
+.cvs-fr-proposal,
+.cvs-fr-proposal-issue {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+.cvs-fr-proposal-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+}
+.cvs-fr-proposal-headline {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0 0 24px;
+}
+.cvs-fr-proposal-block { margin: 0 0 22px; }
+.cvs-fr-proposal-heading {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.55;
+  margin: 0 0 6px;
+}
+.cvs-fr-proposal-body {
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.cvs-fr-proposal-refused {
+  font-size: 13px;
+  font-style: italic;
+  opacity: 0.6;
+  border-left: 2px solid rgba(180, 83, 9, 0.5);
+  padding-left: 10px;
+  margin: 0 0 22px;
+}
+.cvs-fr-proposal-meta {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.5;
+  margin: 24px 0 8px;
+}
+.cvs-fr-proposal-empty {
+  font-size: 14px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 0;
+}
+
+/* First Read · terminal not-found (Gate 4 fix) */
+.cvs-fr-notfound {
+  max-width: 560px;
+  margin: 24px auto 0;
+  color: #b45309;
+}

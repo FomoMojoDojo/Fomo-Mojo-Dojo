@@ -2,21 +2,22 @@
  * First Read · Act 3 — The Check (content).
  *
  * Wires the Gate 2 capture surface (useFirstReadCapture + CheckItemRow +
- * CheckTally) to a REAL session for the route's company:
- *   - resume: if an open session already exists for this company, use it.
- *   - bootstrap: otherwise a pre-meeting intake form (the Gate 1 schema fields)
- *     creates one.
- * No lifecycle transitions here (Gate 4) — sessions stay 'open'. Act framing is
- * supplied by the rail; this renders the session bar, tally, and item list.
+ * CheckTally) to the meeting's session, which the rail (FirstReadView) resolves
+ * and owns:
+ *   - sessionId present → capture surface. If the session is proposal_issued it
+ *     renders FROZEN (Gate 2 behavior) — the read-only record of the meeting.
+ *   - sessionId absent → pre-meeting intake form (Gate 1 schema fields) creates
+ *     one, then hands the new id back to the rail.
+ * No lifecycle transitions here — issuance (open → proposal_issued) is Act 5.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFirstReadCapture";
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (Gate 3) ─────────────────
+// ── Client-facing copy — SIGNED (Gate 3) / carried forward ───────────────────
 const INTAKE_TITLE = "Before the meeting";
 const INTAKE_HINT = "A few notes for the room. Captured with this session, not shown to the client.";
 const L_PRESENTER = "Presenter";
@@ -30,30 +31,28 @@ const FROZEN_MSG = "This session is locked — the proposal has been issued. Ver
 // ─────────────────────────────────────────────────────────────────────────────
 
 function parseRoomRoles(raw: string): { name: string; role: string }[] | null {
-  const lines = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0) return null;
   return lines.map((line) => {
     const m = line.split(/\s+[—–-]\s+|:\s*/);
-    return m.length > 1
-      ? { name: m[0].trim(), role: m.slice(1).join(" ").trim() }
-      : { name: line, role: "" };
+    return m.length > 1 ? { name: m[0].trim(), role: m.slice(1).join(" ").trim() } : { name: line, role: "" };
   });
 }
 
 function parseDomains(raw: string): string[] | null {
-  const parts = raw
-    .split(/[,\s]+/)
-    .map((d) => d.trim())
-    .filter(Boolean);
+  const parts = raw.split(/[,\s]+/).map((d) => d.trim()).filter(Boolean);
   return parts.length ? parts : null;
 }
 
-export default function TheCheckAct({ companyId }: { companyId: string }) {
-  const [sessionId, setSessionId] = useState<string>("");
-  const [resolving, setResolving] = useState(true);
+export default function TheCheckAct({
+  companyId,
+  sessionId,
+  onSessionCreated,
+}: {
+  companyId: string;
+  sessionId: string;
+  onSessionCreated: (id: string) => void;
+}) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState({
@@ -64,29 +63,6 @@ export default function TheCheckAct({ companyId }: { companyId: string }) {
     domains: "",
     landmines: "",
   });
-
-  // Resume: the latest OPEN session for this company, if any.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setResolving(true);
-      const { data } = await supabase
-        .from("first_read_sessions")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("status", "open")
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (!cancelled) {
-        setSessionId((data as { id: string } | null)?.id ?? "");
-        setResolving(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId]);
 
   const { items, tally, loading, frozen, sessionStatus, setVerdict } = useFirstReadCapture(
     companyId,
@@ -114,22 +90,16 @@ export default function TheCheckAct({ companyId }: { companyId: string }) {
       setError(insErr.message);
       return;
     }
-    setSessionId((data as { id: string }).id);
+    onSessionCreated((data as { id: string }).id);
   };
 
   const onSet = async (item: CheckItem, v: Verdict, correction?: string) => {
     setError(await setVerdict(item, v, correction));
   };
 
-  if (resolving) return <p className="cvs-support">Looking for an open session…</p>;
-
-  // ── Bootstrap: intake form ────────────────────────────────────────────────
+  // ── Bootstrap: intake form ──────────────────────────────────────────────────
   if (!sessionId) {
-    const field = (
-      key: keyof typeof intake,
-      label: string,
-      opts?: { area?: boolean; placeholder?: string },
-    ) => (
+    const field = (key: keyof typeof intake, label: string, opts?: { area?: boolean }) => (
       <label className="cvs-fr-field">
         <span className="cvs-fr-field-label">{label}</span>
         {opts?.area ? (
@@ -167,7 +137,7 @@ export default function TheCheckAct({ companyId }: { companyId: string }) {
     );
   }
 
-  // ── Capture surface ───────────────────────────────────────────────────────
+  // ── Capture surface ─────────────────────────────────────────────────────────
   return (
     <div className="cvs-fr-check">
       <div className="cvs-check-session-bar">

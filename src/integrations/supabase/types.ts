@@ -1515,6 +1515,7 @@ export type Database = {
           mojo_score_at_open: number | null
           presenter: string | null
           proposal_issued_at: string | null
+          proposal_json: Json | null
           rejected_count: number | null
           resolved_at: string | null
           room_roles: Json | null
@@ -1533,6 +1534,7 @@ export type Database = {
           mojo_score_at_open?: number | null
           presenter?: string | null
           proposal_issued_at?: string | null
+          proposal_json?: Json | null
           rejected_count?: number | null
           resolved_at?: string | null
           room_roles?: Json | null
@@ -1551,6 +1553,7 @@ export type Database = {
           mojo_score_at_open?: number | null
           presenter?: string | null
           proposal_issued_at?: string | null
+          proposal_json?: Json | null
           rejected_count?: number | null
           resolved_at?: string | null
           room_roles?: Json | null

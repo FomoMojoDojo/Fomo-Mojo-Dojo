@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { CLIENT_STORY_THEME_KEY, type ClientStoryTheme } from "@/lib/clientStoryView";
@@ -22,9 +23,9 @@ import OutsideFindingsAct from "@/components/client-view/story/OutsideFindingsAc
 import MovementShell from "@/components/client-view/story/movement/MovementShell";
 import MarketAct from "@/components/client-view/story/movement/MarketAct";
 import PositionAct from "@/components/client-view/story/movement/PositionAct";
-import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
+import ProposalAct from "@/components/client-view/story/check/ProposalAct";
 import "@/styles/client-story.css";
 
 // ── Act framing — the meeting-script rail. Client-visible; PENDING OPERATOR
@@ -36,6 +37,14 @@ const ACTS = [
   { key: "gap", name: "The Gap", line: "Where the outside read runs out — the questions only you can answer." },
   { key: "proposal", name: "The Proposal", line: "Where this goes next." },
 ] as const;
+
+// Terminal not-found copy — presenter-screen, PENDING OPERATOR SIGNATURE (Gate 4).
+const NOT_FOUND = "No company matches this link — it may have the wrong id, or the company was removed.";
+
+// A generous backstop so the wait can never be infinite even if the company list
+// never resolves. The real terminator is the list finishing load (see notFound);
+// this only guards a pathological stall and never preempts a slow-but-valid load.
+const RESOLVE_TIMEOUT_MS = 15000;
 
 function readStoredTheme(): ClientStoryTheme {
   if (typeof window === "undefined") return "dark";
@@ -51,7 +60,7 @@ function readStoredTheme(): ClientStoryTheme {
 export default function FirstReadView() {
   const { companyId } = useParams();
   const navigate = useNavigate();
-  const { activeCompany, setActiveCompanyId } = useCompany();
+  const { activeCompany, setActiveCompanyId, companies, loading: companiesLoading } = useCompany();
   const [theme, setTheme] = useState<ClientStoryTheme>(readStoredTheme);
   const [step, setStep] = useState(0);
 
@@ -70,6 +79,26 @@ export default function FirstReadView() {
 
   const { preferredRun } = usePublicBaseline(companyId);
 
+  // The meeting's session — the most recent open|proposal_issued session for this
+  // company. Owned here and shared by Act 3 (capture) and Act 5 (proposal), so
+  // issuance in Act 5 flips Act 3 to its frozen state.
+  const [sessionId, setSessionId] = useState<string>("");
+  const resolveSession = useCallback(async () => {
+    if (!companyId) return;
+    const { data } = await supabase
+      .from("first_read_sessions")
+      .select("id")
+      .eq("company_id", companyId)
+      .in("status", ["open", "proposal_issued"])
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setSessionId((data as { id: string } | null)?.id ?? "");
+  }, [companyId]);
+  useEffect(() => {
+    void resolveSession();
+  }, [resolveSession]);
+
   const go = useCallback((delta: number) => {
     setStep((s) => Math.min(ACTS.length - 1, Math.max(0, s + delta)));
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "auto" });
@@ -85,7 +114,20 @@ export default function FirstReadView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [go]);
 
+  // Bounded not-found. The company list always resolves (loading -> false on every
+  // path); once it has, an id that isn't in it is dead. `waitElapsed` is a
+  // defensive backstop only. A slow-but-valid resolve keeps companiesLoading true
+  // and stays "Loading" — never a false not-found.
+  const [waitElapsed, setWaitElapsed] = useState(false);
+  useEffect(() => {
+    setWaitElapsed(false);
+    const t = setTimeout(() => setWaitElapsed(true), RESOLVE_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [companyId]);
+
   const ready = !!companyId && activeCompany?.id === companyId;
+  const companyKnown = !!companyId && companies.some((c) => c.id === companyId);
+  const notFound = !!companyId && !ready && ((!companiesLoading && !companyKnown) || waitElapsed);
   const act = ACTS[step];
 
   const renderAct = () => {
@@ -108,18 +150,18 @@ export default function FirstReadView() {
           </>
         );
       case "check":
-        return <TheCheckAct companyId={companyId!} />;
+        return (
+          <TheCheckAct companyId={companyId!} sessionId={sessionId} onSessionCreated={setSessionId} />
+        );
       case "gap":
         return <GapAct preferredRun={preferredRun} />;
       case "proposal":
         return (
-          <>
-            <OutsideNextMoveAct onStartDiagnose={() => navigate("/diagnosis")} />
-            <p className="cvs-fr-devnote">
-              ⚠ Dev note (not shown to clients): the generated one-screen proposal renders here at
-              Gate 4. This act currently closes on the Start Diagnose control only.
-            </p>
-          </>
+          <ProposalAct
+            sessionId={sessionId}
+            onIssued={resolveSession}
+            onStartDiagnose={() => navigate("/diagnosis")}
+          />
         );
       default:
         return null;
@@ -131,7 +173,7 @@ export default function FirstReadView() {
       <header className="cvs-rail">
         <div className="cvs-rail-inner">
           <div className="cvs-rail-left">
-            <p className="cvs-rail-kicker">First Read{activeCompany?.name ? ` · ${activeCompany.name}` : ""}</p>
+            <p className="cvs-rail-kicker">First Read{!notFound && activeCompany?.name ? ` · ${activeCompany.name}` : ""}</p>
             <nav className="cvs-rail-phases" aria-label="First Read acts">
               {ACTS.map((a, i) => (
                 <button
@@ -167,7 +209,13 @@ export default function FirstReadView() {
           <p className="cvs-support cvs-fr-actline">{act.line}</p>
         </div>
 
-        {ready ? renderAct() : <p className="cvs-support">Loading company…</p>}
+        {notFound ? (
+          <p className="cvs-support cvs-fr-notfound">{NOT_FOUND}</p>
+        ) : ready ? (
+          renderAct()
+        ) : (
+          <p className="cvs-support">Loading company…</p>
+        )}
 
         <div className="cvs-fr-nav">
           <button type="button" className="cvs-pill-ghost" disabled={step === 0} onClick={() => go(-1)}>
