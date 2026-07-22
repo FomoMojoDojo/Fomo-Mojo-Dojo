@@ -146,7 +146,9 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
         .upsert(payload, { onConflict: "session_id,item_identity" });
       if (error) {
         if (/frozen/i.test(error.message)) {
-          setFrozen(true);
+          // Re-read the session so its real status (and the frozen flag) replace
+          // the now-stale 'open' the UI last saw — no raw error surfaces.
+          await refetchResponses();
           return "This session is locked — the proposal has been issued. Verdicts can no longer change.";
         }
         return error.message;
