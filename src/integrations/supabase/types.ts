@@ -1396,6 +1396,7 @@ export type Database = {
           kind: string
           origin_run_id: number | null
           origin_signal_id: string | null
+          register: string | null
           resolved_at: string | null
           status: string
           tone: string | null
@@ -1409,6 +1410,7 @@ export type Database = {
           kind?: string
           origin_run_id?: number | null
           origin_signal_id?: string | null
+          register?: string | null
           resolved_at?: string | null
           status?: string
           tone?: string | null
@@ -1422,6 +1424,7 @@ export type Database = {
           kind?: string
           origin_run_id?: number | null
           origin_signal_id?: string | null
+          register?: string | null
           resolved_at?: string | null
           status?: string
           tone?: string | null
@@ -1446,6 +1449,121 @@ export type Database = {
             columns: ["origin_signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      first_read_responses: {
+        Row: {
+          captured_at: string
+          company_id: string
+          correction_text: string | null
+          id: string
+          item_identity: string
+          item_kind: string
+          item_ref: string | null
+          item_text: string
+          session_id: string
+          source: string
+          verdict: string
+        }
+        Insert: {
+          captured_at?: string
+          company_id: string
+          correction_text?: string | null
+          id?: string
+          item_identity: string
+          item_kind: string
+          item_ref?: string | null
+          item_text: string
+          session_id: string
+          source?: string
+          verdict: string
+        }
+        Update: {
+          captured_at?: string
+          company_id?: string
+          correction_text?: string | null
+          id?: string
+          item_identity?: string
+          item_kind?: string
+          item_ref?: string | null
+          item_text?: string
+          session_id?: string
+          source?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_responses_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "first_read_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      first_read_sessions: {
+        Row: {
+          company_id: string
+          confirmed_count: number | null
+          corrected_count: number | null
+          domains: string[] | null
+          id: string
+          landmines: string | null
+          legal_name: string | null
+          mojo_score_at_open: number | null
+          presenter: string | null
+          proposal_issued_at: string | null
+          rejected_count: number | null
+          resolved_at: string | null
+          room_roles: Json | null
+          started_at: string
+          status: string
+          trigger_event: string | null
+        }
+        Insert: {
+          company_id: string
+          confirmed_count?: number | null
+          corrected_count?: number | null
+          domains?: string[] | null
+          id?: string
+          landmines?: string | null
+          legal_name?: string | null
+          mojo_score_at_open?: number | null
+          presenter?: string | null
+          proposal_issued_at?: string | null
+          rejected_count?: number | null
+          resolved_at?: string | null
+          room_roles?: Json | null
+          started_at?: string
+          status?: string
+          trigger_event?: string | null
+        }
+        Update: {
+          company_id?: string
+          confirmed_count?: number | null
+          corrected_count?: number | null
+          domains?: string[] | null
+          id?: string
+          landmines?: string | null
+          legal_name?: string | null
+          mojo_score_at_open?: number | null
+          presenter?: string | null
+          proposal_issued_at?: string | null
+          rejected_count?: number | null
+          resolved_at?: string | null
+          room_roles?: Json | null
+          started_at?: string
+          status?: string
+          trigger_event?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_sessions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]
@@ -2149,12 +2267,14 @@ export type Database = {
           company_id: string
           content_identity: string
           created_at: string
+          criteria_version: number
           criterion_executor_group: boolean | null
           criterion_executor_reason: string | null
           criterion_odi_form: boolean | null
           criterion_odi_form_reason: string | null
           criterion_solution_agnostic: boolean | null
           criterion_solution_agnostic_reason: string | null
+          duplicate_of: string | null
           executor_statement: string
           gen_model: string
           id: string
@@ -2163,10 +2283,13 @@ export type Database = {
           market_register: string
           proof_tier: string
           provenance_type: Database["public"]["Enums"]["provenance_type_enum"]
+          recovered_from: string | null
           rejected_criterion: string | null
+          relationship_kind: string | null
           revision_of: string | null
           run_id: string | null
           status: string
+          superseded_by_id: string | null
         }
         Insert: {
           attempt?: number
@@ -2174,24 +2297,29 @@ export type Database = {
           company_id: string
           content_identity: string
           created_at?: string
+          criteria_version?: number
           criterion_executor_group?: boolean | null
           criterion_executor_reason?: string | null
           criterion_odi_form?: boolean | null
           criterion_odi_form_reason?: string | null
           criterion_solution_agnostic?: boolean | null
           criterion_solution_agnostic_reason?: string | null
+          duplicate_of?: string | null
           executor_statement: string
           gen_model: string
           id?: string
           job_statement: string
           judge_model?: string | null
-          market_register?: string
+          market_register: string
           proof_tier?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          recovered_from?: string | null
           rejected_criterion?: string | null
+          relationship_kind?: string | null
           revision_of?: string | null
           run_id?: string | null
           status: string
+          superseded_by_id?: string | null
         }
         Update: {
           attempt?: number
@@ -2199,12 +2327,14 @@ export type Database = {
           company_id?: string
           content_identity?: string
           created_at?: string
+          criteria_version?: number
           criterion_executor_group?: boolean | null
           criterion_executor_reason?: string | null
           criterion_odi_form?: boolean | null
           criterion_odi_form_reason?: string | null
           criterion_solution_agnostic?: boolean | null
           criterion_solution_agnostic_reason?: string | null
+          duplicate_of?: string | null
           executor_statement?: string
           gen_model?: string
           id?: string
@@ -2213,10 +2343,13 @@ export type Database = {
           market_register?: string
           proof_tier?: string
           provenance_type?: Database["public"]["Enums"]["provenance_type_enum"]
+          recovered_from?: string | null
           rejected_criterion?: string | null
+          relationship_kind?: string | null
           revision_of?: string | null
           run_id?: string | null
           status?: string
+          superseded_by_id?: string | null
         }
         Relationships: [
           {
@@ -2227,8 +2360,29 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "market_options_duplicate_of_fkey"
+            columns: ["duplicate_of"]
+            isOneToOne: false
+            referencedRelation: "market_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_options_recovered_from_fkey"
+            columns: ["recovered_from"]
+            isOneToOne: false
+            referencedRelation: "market_options"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "market_options_revision_of_fkey"
             columns: ["revision_of"]
+            isOneToOne: false
+            referencedRelation: "market_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_options_superseded_by_id_fkey"
+            columns: ["superseded_by_id"]
             isOneToOne: false
             referencedRelation: "market_options"
             referencedColumns: ["id"]
@@ -4742,6 +4896,7 @@ export type Database = {
           kind: string
           origin_run_id: number | null
           origin_signal_id: string | null
+          register: string | null
           resolved_at: string | null
           status: string
           tone: string | null
@@ -4801,6 +4956,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      shares_company_with: { Args: { _other: string }; Returns: boolean }
       trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
     }

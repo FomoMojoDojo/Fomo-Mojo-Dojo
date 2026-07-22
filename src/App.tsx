@@ -19,6 +19,8 @@ import AnalyticsView from "./views/Analytics";
 import RoutesView from "./views/Routes";
 import MovementView from "./views/Movement";
 import FMDStrategicField from "./views/FMDStrategicField";
+// TEMP · First Read Gate 2 dev harness — REMOVE/REPLACE at Gate 3 (real rail).
+import FirstReadHarness from "./views/FirstReadHarness";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminCompanies from "./pages/AdminCompanies";
@@ -270,6 +272,8 @@ const App = () => (
                 <Route path="/legacy/routes" element={<InternalViewOnlyRoute><RoutesView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/movement" element={<InternalViewOnlyRoute><MovementView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
+                {/* TEMP · First Read Gate 2 capture-write dev harness. Admin-gated. REMOVE/REPLACE at Gate 3 (real /first-read/:companyId rail). */}
+                <Route path="/first-read-harness/:companyId?" element={<AdminModeRoute><FirstReadHarness /></AdminModeRoute>} />
                 <Route path="/legacy/inputs" element={<InternalViewOnlyRoute><InputsView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/files" element={<InternalViewOnlyRoute><FilesRepository /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/job-steps" element={<InternalViewOnlyRoute><JobStepsView /></InternalViewOnlyRoute>} />

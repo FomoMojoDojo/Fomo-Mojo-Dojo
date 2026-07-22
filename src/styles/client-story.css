@@ -1393,3 +1393,146 @@
 .cvs-mv-opt-job::first-letter {
   text-transform: capitalize;
 }
+
+/* ─── First Read · Act 3 (The Check) — Gate 2 capture surface ───────────────── */
+.cvs-check-harness-flag {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0 0 20px;
+}
+.cvs-check-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 4px;
+  flex-wrap: wrap;
+}
+.cvs-check-session-meta {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.6;
+}
+.cvs-check-tally {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  margin: 14px 0 0;
+  opacity: 0.85;
+}
+.cvs-check-tally-n { font-weight: 700; opacity: 1; }
+.cvs-check-frozen {
+  font-size: 13px;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 12px 0 0;
+}
+.cvs-check-refusal {
+  font-size: 13px;
+  color: #b91c1c;
+  margin: 10px 0 0;
+}
+.cvs-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 22px;
+}
+.cvs-check-item {
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: var(--cvs-card-bg, #fff);
+}
+.cvs-check-item.is-confirmed { border-color: rgba(31, 122, 77, 0.5); }
+.cvs-check-item.is-rejected  { border-color: rgba(17, 17, 17, 0.12); opacity: 0.82; }
+.cvs-check-kind {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.5;
+  margin: 0 0 6px;
+}
+.cvs-check-text {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.cvs-check-ctrl { display: flex; flex-direction: column; gap: 10px; }
+.cvs-check-btn-row { display: flex; gap: 8px; }
+.cvs-check-btn {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid rgba(17, 17, 17, 0.2);
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+.cvs-check-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.cvs-check-confirm.is-active { background: rgba(31, 122, 77, 0.12); border-color: rgba(31, 122, 77, 0.6); color: #1f7a4d; }
+.cvs-check-correct.is-active { background: rgba(229, 84, 31, 0.1);  border-color: rgba(229, 84, 31, 0.55); color: #c0451a; }
+.cvs-check-reject.is-active  { background: rgba(17, 17, 17, 0.06);  border-color: rgba(17, 17, 17, 0.45); text-decoration: line-through; }
+.cvs-check-correction { display: flex; flex-direction: column; gap: 6px; max-width: 460px; }
+.cvs-check-correction-input {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(17, 17, 17, 0.22);
+  resize: vertical;
+  font-family: inherit;
+  background: #fff;
+  color: inherit;
+}
+.cvs-check-correction-input.has-error { border-color: #b91c1c; }
+.cvs-check-correction-err { font-size: 12px; color: #b91c1c; }
+.cvs-check-correction-save {
+  align-self: flex-start;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid rgba(17, 17, 17, 0.25);
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+.cvs-check-lift {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+}
+.cvs-check-band {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #1f7a4d;
+  border: 1px solid rgba(31, 122, 77, 0.45);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+.cvs-check-source { opacity: 0.7; }
+.cvs-check-rejected-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  opacity: 0.7;
+}
+.cvs-check-corrected-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: #c0451a;
+}
