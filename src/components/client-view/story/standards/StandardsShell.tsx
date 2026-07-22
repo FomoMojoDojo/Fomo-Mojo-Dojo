@@ -29,19 +29,38 @@
  * (Elements of Value). Nothing company-scoped may ever mount in here.
  */
 
-// ── Client-facing copy — OPERATOR-SIGNED VERBATIM 2026-07-20 (EOV-1) ──────────
-const DIVIDER_EYEBROW = "How value gets measured";
-const DIVIDER_SUB =
+// ── EOV divider copy — OPERATOR-SIGNED VERBATIM 2026-07-20 (EOV-1) ────────────
+// RETIRED for the FD-3 job-map act (display-honesty: the maps are generated, so
+// "shown as they were published" is a false claim over them). PRESERVED and
+// EXPORTED for the future Elements-of-Value surface, which is a genuinely
+// published Bain framework and will pass these in explicitly via the `divider`
+// prop below. They are NO LONGER a default: the shell renders NO divider unless a
+// caller opts in, so this copy is structurally incapable of appearing over the
+// job maps — the wrong pairing cannot be recreated by a forgotten flag, only by a
+// deliberate, visible opt-in that no job-map mount performs.
+export const EOV_DIVIDER_EYEBROW = "How value gets measured";
+export const EOV_DIVIDER_SUB =
   "Published frameworks, shown as they were published — not a reading of your business.";
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function StandardsShell({ children }: { children: React.ReactNode }) {
+export default function StandardsShell({
+  divider,
+  children,
+}: {
+  /** Register-shift header. OPT-IN — omit it (as the FD-3 job-map mount does) and
+   *  the shell renders no divider, so the wrapped act's own signed header stands
+   *  alone. Passed only by a surface that has an honestly-published divider. */
+  divider?: { eyebrow: string; sub: string };
+  children: React.ReactNode;
+}) {
   return (
     <div className="cvs-std" aria-label="Published standards register">
-      <div className="cvs-std-divider">
-        <p className="cvs-std-divider-eyebrow">{DIVIDER_EYEBROW}</p>
-        <p className="cvs-std-divider-sub">{DIVIDER_SUB}</p>
-      </div>
+      {divider ? (
+        <div className="cvs-std-divider">
+          <p className="cvs-std-divider-eyebrow">{divider.eyebrow}</p>
+          <p className="cvs-std-divider-sub">{divider.sub}</p>
+        </div>
+      ) : null}
       {children}
     </div>
   );

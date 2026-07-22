@@ -23,6 +23,11 @@ vi.mock("@/hooks/useIndustryReferenceMaps", () => ({
 }));
 
 import FrontDoorMapAct from "./FrontDoorMapAct";
+import StandardsShell from "./StandardsShell";
+
+// The two RETIRED EOV divider strings — must never appear over the job maps.
+const EOV_EYEBROW = "How value gets measured";
+const EOV_SUB = "Published frameworks, shown as they were published — not a reading of your business.";
 
 const stepFor = (label: string) => ({ step_number: 1, step_label: label, description: `desc for ${label}` });
 const mapFor = (key: string, label: string) => ({ industry_key: key, industry_label: label, taxonomy_version: "fd1-priority-8", steps: [stepFor(`${label} step`)] });
@@ -86,5 +91,34 @@ describe("FrontDoorMapAct — FD-3 tripwire", () => {
     MAPS = new Map();
     render(<FrontDoorMapAct />);
     expect(screen.getByText("That industry map isn't published yet.")).toBeTruthy();
+  });
+
+  // ── WRAPPED TREE: the RETIRED EOV divider must not appear over the job maps ──
+  // Renders the real <StandardsShell><FrontDoorMapAct/></StandardsShell> mount and
+  // asserts against the RENDERED OUTPUT — not a file grep — in BOTH states. This
+  // is the miss that held the FD-3 screenshot: the shell was printing the retired
+  // "as published" claim above the act. Falsification (gate report): restoring the
+  // shell's unconditional divider turns these RED naming the leaked string.
+  it("MATCHED wrapped: no retired EOV divider strings in the rendered output; exactly one header", () => {
+    COMPANY = { industry_key: "nonprofit-social-services" };
+    MAPS = publishedSix();
+    LOADING = false;
+    const { container } = render(<StandardsShell><FrontDoorMapAct /></StandardsShell>);
+    expect(screen.queryByText(EOV_EYEBROW), `LEAK: retired EOV eyebrow "${EOV_EYEBROW}" rendered over the matched job map`).toBeNull();
+    expect(screen.queryByText(EOV_SUB), `LEAK: retired EOV sub ("…shown as they were published…") rendered over the matched job map`).toBeNull();
+    // exactly one register-shift divider block (zero — the act owns the header).
+    expect(container.querySelectorAll(".cvs-std-divider").length).toBe(0);
+    // the act's own signed header is the single header present.
+    expect(screen.getByText("How this job is done — the standard shape")).toBeTruthy();
+  });
+
+  it("FALLBACK wrapped: no retired EOV divider strings in the rendered output", () => {
+    COMPANY = { industry_key: null };
+    MAPS = publishedSix();
+    const { container } = render(<StandardsShell><FrontDoorMapAct /></StandardsShell>);
+    expect(screen.queryByText(EOV_EYEBROW), `LEAK: retired EOV eyebrow rendered over the fallback state`).toBeNull();
+    expect(screen.queryByText(EOV_SUB), `LEAK: retired EOV sub rendered over the fallback state`).toBeNull();
+    expect(container.querySelectorAll(".cvs-std-divider").length).toBe(0);
+    expect(screen.getByText("How this job is done — the standard shape")).toBeTruthy();
   });
 });
