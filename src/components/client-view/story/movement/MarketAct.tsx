@@ -104,17 +104,13 @@ export default function MarketAct() {
   const { loading, portfolio, hasInternalDeclared } = useMarketPortfolio(activeCompany?.id);
   const { loading: optionsLoading, options: rawOptions } = useMarketOptions(activeCompany?.id);
 
-  // RG-1: the MO-1 options path is now STRUCTURALLY routed through the register
-  // guard — every option is admit-checked on the 'outside' surface before it can
-  // render, exactly like the blended-def path.
-  //
-  // ⚠ NOT YET PROTECTED (queued RG-2b). market_options.market_register is
-  // NOT NULL DEFAULT 'public_inferred' and the generator never SETS it, so every
-  // row passes this guard because of a column default, not a derived register.
-  // The guard is honest; its INPUT is not earned yet. When RG-2b makes the
-  // generator derive the register, this line starts biting with no change here.
-  // Until then it is a vacuous pass and is documented as one — not silently
-  // relied upon as real protection.
+  // RG-1 + RG-2b: the MO-1 options path is routed through the register guard —
+  // every option is admit-checked on the 'outside' surface before it renders,
+  // exactly like the blended-def path. As of RG-2b the input is EARNED: the
+  // generator derives market_register from the finding corpus (fail-toward-
+  // internal) and the column default is dropped, so this is real protection, not
+  // the vacuous pass RG-1 documented. An internal-register option is now blocked
+  // here → honest empty, never substituted.
   const options = useMemo(
     () => rawOptions.filter((o) => admitForSurface(o, "outside")),
     [rawOptions],

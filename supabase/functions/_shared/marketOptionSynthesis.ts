@@ -1127,6 +1127,30 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
       .eq("company_id", args.companyId);
     const kindDefs = (kindDefRows ?? []) as MarketDefForKind[];
 
+    // RG-2b: EARN market_register from the finding corpus, ONCE per chunk (a
+    // corpus property, per MO-1's law that findings are the substance). Options
+    // are built from the company's findings; their register follows the evidence
+    // that justifies the claim. FAIL-TOWARD-INTERNAL: any non-public or NULL
+    // finding taints the whole run's options to internal_inferred (we cannot
+    // prove which findings a given option drew on). No corpus at all → null,
+    // which fails loud at the NOT-NULL insert (the no_evidence guard makes this
+    // unreachable in practice — a NULL here is a code bug, surfaced not hidden).
+    const { data: nonPublicFinding } = await args.supabase
+      .from("findings")
+      .select("id")
+      .eq("company_id", args.companyId)
+      .or("register.is.null,register.neq.public_inferred")
+      .limit(1);
+    const { data: anyFinding } = await args.supabase
+      .from("findings")
+      .select("id")
+      .eq("company_id", args.companyId)
+      .limit(1);
+    const corpusRegister: string | null =
+      (anyFinding?.length ?? 0) === 0 ? null
+        : (nonPublicFinding?.length ?? 0) > 0 ? "internal_inferred"
+          : "public_inferred";
+
     for (const cand of args.candidates) {
       totals.considered++;
       const identity = await optionIdentity(cand.executor_statement, cand.job_statement);
@@ -1239,6 +1263,10 @@ export async function computeMarketOptions(args: MarketOptionArgs): Promise<Mark
           content_identity: identity,
           // Deterministic trace, or NULL. Never model-assigned.
           relationship_kind: resolveRelationshipKind(cand.executor_statement, kindDefs),
+          // RG-2b: EARNED from the finding corpus (above), never defaulted. Same
+          // value for every option in a chunk — a corpus property. Uniform across
+          // generate / revise / recover, since all route through this insert.
+          market_register: corpusRegister,
           recovered_from: cand.recovered_from ?? null,
           criteria_version: MO1_CRITERIA_VERSION,
           attempt: cand.revision_attempt ?? (cand.revision_of ? 2 : 1),
