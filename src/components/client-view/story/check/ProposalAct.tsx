@@ -13,12 +13,13 @@
 
 import { useFirstReadProposal, type Proposal, type ProposalBlock } from "@/hooks/useFirstReadProposal";
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
+import ExportButton from "./ExportButton";
 
 // ── Client-facing FIXED copy — PENDING OPERATOR SIGNATURE (Gate 4) ───────────
 const ISSUE_LEAD = "Issuing the proposal freezes the client's verdicts and generates their one-screen offer from this read.";
 const ISSUE_LABEL = "Issue proposal";
 const ISSUING_LABEL = "Generating…";
-const REFUSED_BLOCK = "This section had no sourced data — withheld.";
+export const REFUSED_BLOCK = "This section had no sourced data — withheld.";
 const NO_SESSION = "Start a session in The Check to build a proposal.";
 // The generated prose itself is signed per-render by the operator at acceptance.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,9 +43,13 @@ function fmtDate(iso?: string): string {
 
 export function ProposalRender({
   proposal,
+  companyId,
+  sessionId,
   onStartDiagnose,
 }: {
   proposal: Proposal;
+  companyId?: string;
+  sessionId?: string;
   onStartDiagnose: () => void;
 }) {
   const blocks = proposal.blocks ?? [];
@@ -74,16 +79,22 @@ export function ProposalRender({
         Generated {fmtDate(proposal.generated_at)} · {proposal.trace?.model ?? "model"}
       </p>
 
+      {companyId && sessionId && (
+        <ExportButton companyId={companyId} sessionId={sessionId} proposal={proposal} />
+      )}
+
       <OutsideNextMoveAct onStartDiagnose={onStartDiagnose} />
     </div>
   );
 }
 
 export default function ProposalAct({
+  companyId,
   sessionId,
   onIssued,
   onStartDiagnose,
 }: {
+  companyId?: string;
   sessionId?: string;
   onIssued?: () => void;
   onStartDiagnose: () => void;
@@ -94,7 +105,14 @@ export default function ProposalAct({
   if (loading) return <p className="cvs-support">Loading…</p>;
 
   if (proposal?.status === "generated") {
-    return <ProposalRender proposal={proposal} onStartDiagnose={onStartDiagnose} />;
+    return (
+      <ProposalRender
+        proposal={proposal}
+        companyId={companyId}
+        sessionId={sessionId}
+        onStartDiagnose={onStartDiagnose}
+      />
+    );
   }
 
   const onIssue = async () => {

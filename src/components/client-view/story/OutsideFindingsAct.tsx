@@ -31,6 +31,18 @@ const DEFINITION =
 
 const KIND_RANK: Record<Finding["kind"], number> = { watch_out: 0, frontier: 1, observation: 2 };
 
+// The "what else stands out" selection, extracted as the single source so the
+// Gate 5 export leave-behind orders and caps its Mirror findings IDENTICALLY.
+// Register guard (outside) → exclude the Act 1 primary → kind rank → top three.
+export function orderOtherFindings(findings: Finding[], primaryId: string | null): Finding[] {
+  return findings
+    .filter((f) => admitForSurface(f, "outside"))
+    .filter((f) => f.id !== primaryId)
+    .slice() // stable sort on a copy
+    .sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind])
+    .slice(0, 3);
+}
+
 // Same light formatting rule as CV-1: never adds or strengthens a claim.
 function formatStatement(raw: string): string {
   const t = raw.trim();
@@ -45,16 +57,9 @@ export default function OutsideFindingsAct({ preferredRun }: { preferredRun?: un
 
   const companyDomain = data?.companyDomain ?? null;
   const ledgerDates = buildLedgerDateMap(preferredRun);
-  const candidates = (data?.findings ?? [])
-    // RG-2: register guard — a finding renders on the client Outside surface only
-    // if its birth-stamped register is admitted there. NULL / internal → blocked
-    // (honest empty), never substituted. This is the real boundary; findings no
-    // longer reach client copy on an incidental property.
-    .filter((f) => admitForSurface(f, "outside"))
-    .filter((f) => f.id !== data?.primaryId) // Act 1 hero excluded
-    .slice() // stable sort on a copy
-    .sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind])
-    .slice(0, 3);
+  // RG-2: register guard, primary exclusion, kind rank and top-three cap all live
+  // in orderOtherFindings — the same selection the Gate 5 export reuses.
+  const candidates = orderOtherFindings(data?.findings ?? [], data?.primaryId ?? null);
 
   return (
     <section className="cvs-act" aria-label="Outside · Act 2 — What else stands out">

@@ -1720,3 +1720,6 @@
   margin: 24px auto 0;
   color: #b45309;
 }
+
+/* First Read · export control (Gate 5) */
+.cvs-fr-export-btn { margin: 8px 0 24px; }

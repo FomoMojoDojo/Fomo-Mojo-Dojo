@@ -158,6 +158,7 @@ export default function FirstReadView() {
       case "proposal":
         return (
           <ProposalAct
+            companyId={companyId}
             sessionId={sessionId}
             onIssued={resolveSession}
             onStartDiagnose={() => navigate("/diagnosis")}

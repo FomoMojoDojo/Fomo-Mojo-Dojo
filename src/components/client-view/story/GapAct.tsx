@@ -10,10 +10,14 @@
  */
 
 // ── Client-facing copy — PENDING OPERATOR SIGNATURE (Gate 3) ─────────────────
-const EMPTY = "The outside read left no open questions for this company.";
+// Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
+// for The Gap section (single source — no parallel literal in exportHtml).
+export const GAP_EMPTY = "The outside read left no open questions for this company.";
 // ─────────────────────────────────────────────────────────────────────────────
 
-function openQuestions(run: unknown): string[] {
+// Exported: the Gate 5 ExportButton reads open_questions with the SAME parser,
+// so the leave-behind's Gap can never diverge from this act's list.
+export function openQuestions(run: unknown): string[] {
   if (!run || typeof run !== "object") return [];
   const result = (run as { result_json?: unknown }).result_json;
   if (!result || typeof result !== "object") return [];
@@ -26,7 +30,7 @@ export default function GapAct({ preferredRun }: { preferredRun?: unknown }) {
   const questions = openQuestions(preferredRun);
 
   if (questions.length === 0) {
-    return <p className="cvs-support cvs-gap-empty">{EMPTY}</p>;
+    return <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>;
   }
 
   return (

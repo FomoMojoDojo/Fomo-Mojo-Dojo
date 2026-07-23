@@ -26,7 +26,9 @@ export const KIND_LABEL: Record<Finding["kind"], string> = {
 const SCORE_CAVEAT_1 = "This is an early likelihood read, not a settled answer.";
 const SCORE_CAVEAT_2 = "It moves only on evidence — every lens added moves it honestly.";
 // Empty states.
-const HERO_EMPTY = "The outside read hasn't surfaced a lead finding for this company yet.";
+// Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
+// for The Mirror's bet slot (single source — no parallel literal in exportHtml).
+export const HERO_EMPTY = "The outside read hasn't surfaced a lead finding for this company yet.";
 const SCORE_EMPTY = "No score has been computed yet.";
 const SCORE_EMPTY_SUB = "It appears once the first analysis runs.";
 // ──────────────────────────────────────────────────────────────────────────────

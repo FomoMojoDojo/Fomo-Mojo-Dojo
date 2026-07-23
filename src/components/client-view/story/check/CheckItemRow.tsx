@@ -10,24 +10,8 @@
 //   - corrected  → the client's correction shown verbatim.
 
 import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
-import { BAND_LABELS } from "@/lib/evidenceBands";
-import { baselineFindingBand, liftBand } from "@/lib/firstRead/bandLift";
+import { CHECK_KIND_LABEL, checkItemAnnotation } from "@/lib/firstRead/checkItemView";
 import CheckControl from "./CheckControl";
-
-const KIND_LABEL: Record<CheckItem["kind"], string> = {
-  finding: "Finding",
-  market: "Market",
-  differentiator: "Differentiator",
-};
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleDateString();
-  } catch {
-    return iso;
-  }
-}
 
 export default function CheckItemRow({
   item,
@@ -40,16 +24,13 @@ export default function CheckItemRow({
 }) {
   const confirmed = item.verdict === "confirmed";
   const rejected = item.verdict === "rejected";
-  const corrected = item.verdict === "corrected";
-
-  const band =
-    item.kind === "finding" ? liftBand(baselineFindingBand(), confirmed) : null;
+  const ann = checkItemAnnotation(item);
 
   return (
     <div
       className={`cvs-check-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}`}
     >
-      <p className="cvs-check-kind">{KIND_LABEL[item.kind]}</p>
+      <p className="cvs-check-kind">{CHECK_KIND_LABEL[item.kind]}</p>
       <p className="cvs-check-text">{item.text}</p>
 
       <CheckControl
@@ -59,21 +40,19 @@ export default function CheckItemRow({
         disabled={disabled}
       />
 
-      {confirmed && band && (
+      {ann?.kind === "confirmed" && ann.bandLabel && (
         <p className="cvs-check-lift">
-          <span className="cvs-check-band">{BAND_LABELS[band]}</span>
-          <span className="cvs-check-source"> — Confirmed by you · {fmtDate(item.capturedAt)}</span>
+          <span className="cvs-check-band">{ann.bandLabel}</span>
+          <span className="cvs-check-source"> — Confirmed by you · {ann.date}</span>
         </p>
       )}
 
-      {rejected && (
-        <p className="cvs-check-rejected-note">
-          Rejected by the client · {fmtDate(item.capturedAt)}
-        </p>
+      {ann?.kind === "rejected" && (
+        <p className="cvs-check-rejected-note">Rejected by the client · {ann.date}</p>
       )}
 
-      {corrected && item.correctionText && (
-        <p className="cvs-check-corrected-note">Corrected: “{item.correctionText}”</p>
+      {ann?.kind === "corrected" && (
+        <p className="cvs-check-corrected-note">Corrected: “{ann.text}”</p>
       )}
     </div>
   );
