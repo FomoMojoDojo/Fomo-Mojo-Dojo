@@ -24,11 +24,15 @@ export default function CheckItemRow({
 }) {
   const confirmed = item.verdict === "confirmed";
   const rejected = item.verdict === "rejected";
+  const notImportant = item.verdict === "not_important";
   const ann = checkItemAnnotation(item);
+  // OC-2 capture note — DISPLAY COPY PENDING OPERATOR SIGNATURE. The signed string
+  // is the button label; this in-place note surfaces the captured state on re-render.
+  const NOT_IMPORTANT_NOTE = "Marked true but not important · ";
 
   return (
     <div
-      className={`cvs-check-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}`}
+      className={`cvs-check-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}${notImportant ? " is-notimportant" : ""}`}
     >
       <p className="cvs-check-kind">{CHECK_KIND_LABEL[item.kind]}</p>
       <p className="cvs-check-text">{item.text}</p>
@@ -49,6 +53,10 @@ export default function CheckItemRow({
 
       {ann?.kind === "rejected" && (
         <p className="cvs-check-rejected-note">Rejected by the client · {ann.date}</p>
+      )}
+
+      {ann?.kind === "not_important" && (
+        <p className="cvs-check-notimportant-note">{NOT_IMPORTANT_NOTE}{ann.date}</p>
       )}
 
       {ann?.kind === "corrected" && (

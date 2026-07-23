@@ -18,7 +18,10 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 import { contentIdentity } from "../../supabase/functions/_shared/contentIdentity.ts";
 import { assembleCheckItems, type RawCheckItem } from "@/lib/firstRead/checkItems";
 
-export type Verdict = "confirmed" | "corrected" | "rejected";
+// OC-2: 'not_important' — "True — but not important to us". Its own verdict value
+// beside reject, so the feed can map it to contest_kind='immaterial' (reject →
+// 'disputed'). Never an overload of reject.
+export type Verdict = "confirmed" | "corrected" | "rejected" | "not_important";
 
 export interface CheckItem extends RawCheckItem {
   identity: string;
@@ -38,6 +41,7 @@ export interface CaptureTally {
   confirmed: number;
   corrected: number;
   rejected: number;
+  not_important: number;
 }
 
 export function useFirstReadCapture(companyId?: string, sessionId?: string) {
@@ -121,7 +125,7 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
   );
 
   const tally = useMemo<CaptureTally>(() => {
-    const t: CaptureTally = { confirmed: 0, corrected: 0, rejected: 0 };
+    const t: CaptureTally = { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 };
     for (const r of Object.values(responses)) t[r.verdict] += 1;
     return t;
   }, [responses]);

@@ -25,6 +25,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
 import { pairIdentity, silenceIdentity } from "../_shared/claimDeltaSynthesis.ts";
+import { deriveContests, type FeedResponse, type ObservedClaim } from "../_shared/contestFeed.ts";
+
+// OC-2: a contest is a client-attested verdict AGAINST an observed finding. Its
+// source stamp is the client-attested provenance origin — the only value the
+// OC-1 claim_contests.source CHECK admits. Contests are born UNRESOLVED
+// (resolution stays NULL); resolution is OC-3 and touches claims.status there,
+// never here.
+const CONTEST_SOURCE = "client_attested";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,23 +108,41 @@ Deno.serve(async (req) => {
       (r) => typeof r.correction_text === "string" && r.correction_text.trim().length > 0,
     );
 
-    // Honest-empty: no corrections in this session → nothing to feed, no writes.
-    if (corrections.length === 0) {
-      return json({ ok: true, session_id, corrections_fed: 0, paired: 0, silent: 0, rejections_pruned: 0, pruned_identities: [] });
+    // ── (a2) OC-2: read the frozen contest responses (reject / not_important) ────
+    // Independent of corrections — a session may have contests but no corrections.
+    const { data: contestRespData, error: crErr } = await supabase
+      .from("first_read_responses")
+      .select("id, verdict, item_identity")
+      .eq("session_id", session_id)
+      .in("verdict", ["rejected", "not_important"]);
+    if (crErr) return json({ error: `contest responses load failed: ${crErr.message}` }, 500);
+    const contestResponses = (contestRespData ?? []) as FeedResponse[];
+
+    // Honest-empty: nothing to feed on EITHER axis → no writes at all.
+    if (corrections.length === 0 && contestResponses.length === 0) {
+      return json({
+        ok: true, session_id,
+        corrections_fed: 0, paired: 0, silent: 0, rejections_pruned: 0, pruned_identities: [],
+        contests_born: 0, contests_disputed: 0, contests_immaterial: 0,
+        contests_skipped: 0, contests_unanchored: 0,
+      });
     }
 
     // ── Observed side: this company's public_observed claims, indexed by content
-    //    identity so a corrected item's finding resolves deterministically. ──────
+    //    identity so a corrected/contested item's finding resolves deterministically.
+    //    The map value carries `identity` (its own key) so the OC-2 contest feed can
+    //    stamp claim_identity without recomputing it. ─────────────────────────────
     const { data: pubData, error: pErr } = await supabase
       .from("claims")
       .select("id, statement, status")
       .eq("company_id", companyId)
       .eq("provenance", "public_observed");
     if (pErr) return json({ error: `public claims load failed: ${pErr.message}` }, 500);
-    const publicByIdentity = new Map<string, { id: string; statement: string }>();
+    const publicByIdentity = new Map<string, { id: string; statement: string; identity: string }>();
     for (const c of (pubData ?? []) as Array<{ id: string; statement: string; status: string }>) {
       if (c.status === "struck") continue; // struck claims are out of the reading
-      publicByIdentity.set(await contentIdentity(c.statement), { id: c.id, statement: c.statement });
+      const identity = await contentIdentity(c.statement);
+      publicByIdentity.set(identity, { id: c.id, statement: c.statement, identity });
     }
 
     let paired = 0, silent = 0, rejectionsPruned = 0;
@@ -210,6 +236,43 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── (e) OC-2: birth contests from reject / not_important responses ──────────
+    // ANCHORED-ONLY, IDEMPOTENT (skip-before-insert), MODEL-FREE. No claims write;
+    // contests are born unresolved. deriveContests owns the law; we only INSERT the
+    // rows it returns (which it already filtered against existing contests).
+    const { data: existingContestData, error: ecErr } = await supabase
+      .from("claim_contests")
+      .select("claim_id")
+      .eq("session_id", session_id);
+    if (ecErr) return json({ error: `existing contests load failed: ${ecErr.message}` }, 500);
+    const existingClaimIds = ((existingContestData ?? []) as Array<{ claim_id: string }>).map(
+      (x) => x.claim_id,
+    );
+
+    const contestMap = publicByIdentity as unknown as Map<string, ObservedClaim>;
+    const plan = deriveContests({
+      responses: contestResponses,
+      publicByIdentity: contestMap,
+      existingClaimIds,
+    });
+
+    if (plan.births.length > 0) {
+      // Plain INSERT (not upsert): deriveContests already skipped every existing
+      // (session, claim), so a conflict here would be a real fault to surface — the
+      // unique constraint is the backstop, never the dedup mechanism.
+      const { error: insErr } = await supabase.from("claim_contests").insert(
+        plan.births.map((b) => ({
+          session_id,
+          company_id: companyId,
+          claim_id: b.claim_id,
+          claim_identity: b.claim_identity,
+          contest_kind: b.contest_kind,
+          source: CONTEST_SOURCE,
+        })),
+      );
+      if (insErr) throw new Error(`contest insert failed: ${insErr.message}`);
+    }
+
     return json({
       ok: true,
       session_id,
@@ -218,6 +281,11 @@ Deno.serve(async (req) => {
       silent,
       rejections_pruned: rejectionsPruned,
       pruned_identities: prunedIdentities,
+      contests_born: plan.births.length,
+      contests_disputed: plan.disputed,
+      contests_immaterial: plan.immaterial,
+      contests_skipped: plan.skipped_existing,
+      contests_unanchored: plan.unanchored,
     });
   } catch (e) {
     return json({ error: String(e instanceof Error ? e.message : e) }, 500);

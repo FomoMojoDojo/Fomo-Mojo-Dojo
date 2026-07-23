@@ -1,12 +1,18 @@
-// First Read · Act 3 (The Check) — the three-verdict control.
+// First Read · Act 3 (The Check) — the four-verdict control.
 //
-// Confirm / Correct / Reject. "Correct" opens a short free-text field; submit
-// refuses empty/whitespace text CLIENT-SIDE (a mirror of the DB
+// Confirm / Correct / Reject / Not important. "Correct" opens a short free-text
+// field; submit refuses empty/whitespace text CLIENT-SIDE (a mirror of the DB
 // corrected_requires_text check — the trigger/constraint is the backstop, not
-// the UX). No canned text: every label is UI chrome, the correction is real.
+// the UX). No canned text: every label is UI chrome, the verdict is real.
 
 import { useState } from "react";
 import type { Verdict } from "@/hooks/useFirstReadCapture";
+
+// ── Client-visible copy — SIGNED (OC-2 brief, 2026-07-23) ────────────────────
+// The fourth option: the client concedes the finding is true but says it does
+// not matter to them. Feeds contest_kind='immaterial'.
+const NOT_IMPORTANT_LABEL = "True — but not important to us";
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CheckControl({
   verdict,
@@ -59,6 +65,14 @@ export default function CheckControl({
           onClick={() => onSet("rejected")}
         >
           Reject
+        </button>
+        <button
+          type="button"
+          className={`cvs-check-btn cvs-check-notimportant${verdict === "not_important" ? " is-active" : ""}`}
+          disabled={disabled}
+          onClick={() => onSet("not_important")}
+        >
+          {NOT_IMPORTANT_LABEL}
         </button>
       </div>
 

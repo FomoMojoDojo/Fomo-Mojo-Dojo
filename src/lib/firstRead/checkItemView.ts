@@ -27,6 +27,7 @@ export function checkItemDate(iso: string | null): string {
 export type CheckItemAnnotation =
   | { kind: "confirmed"; bandLabel: string; date: string } // bandLabel "" for non-finding confirmations
   | { kind: "rejected"; date: string }
+  | { kind: "not_important"; date: string } // OC-2: true-but-immaterial capture note
   | { kind: "corrected"; text: string }
   | null;
 
@@ -36,6 +37,7 @@ export function checkItemAnnotation(item: CheckItem): CheckItemAnnotation {
     return { kind: "confirmed", bandLabel: band ? BAND_LABELS[band] : "", date: checkItemDate(item.capturedAt) };
   }
   if (item.verdict === "rejected") return { kind: "rejected", date: checkItemDate(item.capturedAt) };
+  if (item.verdict === "not_important") return { kind: "not_important", date: checkItemDate(item.capturedAt) };
   if (item.verdict === "corrected" && item.correctionText) return { kind: "corrected", text: item.correctionText };
   return null;
 }
