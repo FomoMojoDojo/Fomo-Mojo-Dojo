@@ -27,7 +27,7 @@ import {
   type ExportMirrorFinding,
 } from "@/lib/firstRead/exportHtml";
 
-const EXPORT_LABEL = "Export leave-behind"; // PENDING OPERATOR SIGNATURE (Gate 5)
+const EXPORT_LABEL = "Export leave-behind"; // OPERATOR-SIGNED 2026-07-23 (Gate 5)
 
 function download(filename: string, html: string) {
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });

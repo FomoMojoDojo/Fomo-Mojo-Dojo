@@ -38,14 +38,17 @@ import { buildFirstReadExportHtml, type FirstReadExportData } from "@/lib/firstR
 
 beforeEach(() => { existingSession = null; insertCount = 0; lastInsert = null; });
 
-describe("FR-FLOW-1b — rail opens cold (no intake form)", () => {
-  it("no session → honest-empty pointer to the workshop; no intake fields", () => {
-    const { container, getByText } = render(<TheCheckAct companyId="c1" sessionId="" />);
-    expect(getByText(/hasn't been prepared yet/i)).toBeTruthy();
-    expect(container.querySelectorAll("input, textarea")).toHaveLength(0);
+describe("FR-V2-1 — the Check renders cold (no session, no honest-empty)", () => {
+  it("no session → the capture surface renders; no intake form and NO honest-empty message", () => {
+    const { container } = render(<TheCheckAct companyId="c1" sessionId="" />);
     const text = container.textContent || "";
+    // the retired honest-empty string is GONE (lazy-mint replaced it)
+    expect(text).not.toContain("hasn't been prepared yet");
     expect(text).not.toContain("Before the meeting");
-    expect(text).not.toContain("Prepare First Read"); // the retired control is gone
+    expect(text).not.toContain("Prepare First Read");
+    expect(container.querySelectorAll("input, textarea")).toHaveLength(0);
+    // the capture surface is live even with no session (lazy-mint on first tap)
+    expect(container.querySelector(".cvs-fr-check")).toBeTruthy();
   });
 });
 

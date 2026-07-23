@@ -24,7 +24,7 @@ import { STANDARD_ATTRIBUTION_LINE, STANDARD_INTRO_SUB } from "@/lib/firstRead/s
 const ACT_EYEBROW = "How this job is done — the standard shape";
 // ACT_SUB and the attribution now live in standardCopy.ts so the leave-behind
 // (exportHtml) prints the identical text — plain English, no framework name, no
-// internal tag (operator ruling 2026-07-23). Both are PENDING SIGNATURE there.
+// internal tag (operator ruling 2026-07-23). Both are OPERATOR-SIGNED there (FR-EXPORT-SETASIDE).
 const ACT_SUB = STANDARD_INTRO_SUB;
 // ─────────────────────────────────────────────────────────────────────────────
 

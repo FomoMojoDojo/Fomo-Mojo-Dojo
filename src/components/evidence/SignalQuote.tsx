@@ -9,7 +9,7 @@
 
 import type { CSSProperties } from "react";
 
-// ── Client-visible copy — DRAFT PENDING OPERATOR SIGNATURE ("as captured" family) ──
+// ── Client-visible copy — OPERATOR-SIGNED 2026-07-23 ("as captured" family) ──
 export const AS_CAPTURED_LABEL = "As captured";
 // ───────────────────────────────────────────────────────────────────────────────────
 

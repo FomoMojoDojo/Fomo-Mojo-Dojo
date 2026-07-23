@@ -17,6 +17,7 @@ import { checkItemAnnotation, CHECK_KIND_LABEL, TALLY_SEGMENTS, NOT_IMPORTANT_NO
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
+import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
 export interface ExportMirrorFinding { label: string; text: string }
@@ -36,7 +37,7 @@ export interface FirstReadExportData {
   exportedAt: string;
 }
 
-// ── Fixed client-visible copy — PENDING OPERATOR SIGNATURE (Gate 5). Section
+// ── Fixed client-visible copy — OPERATOR-SIGNED 2026-07-23 (Gate 5). Section
 //    titles reuse the signed act names. Honest-empty strings mirror the acts. ──
 // The bet and gap empty lines are NOT restated here: they import from their act
 // modules (HERO_EMPTY, GAP_EMPTY) so the export can never drift from the screen.
@@ -233,13 +234,18 @@ export function buildFirstReadExportHtml(d: FirstReadExportData): string {
   const sec = (title: string, body: string) => `<section><h1 class="sec">${esc(title)}</h1>${body}</section>`;
   const footer = `<footer>Session ${esc(d.session.id)} · Exported ${esc(fmtDateTime(d.exportedAt))}</footer>`;
 
+  // FR-V2-1 — the leave-behind follows the v2 act order + titles from the SAME source
+  // as the rail (FR_EXPORT_ACTS), so screen and export can't diverge. The two
+  // placeholder acts carry no substance and are OMITTED (a leave-behind of real
+  // content only). Act 5 ("How We Can Help") folds the job map + Gap + Proposal.
+  const sectionByKey: Record<string, (d: FirstReadExportData) => string> = {
+    outside_shows: sectionMirror,
+    check: sectionCheck,
+    help: (dd) => `${sectionStandard(dd)}${sectionGap(dd)}${sectionProposal(dd)}`,
+  };
   const body = [
     cover,
-    sec(T.standard, sectionStandard(d)),
-    sec(T.mirror, sectionMirror(d)),
-    sec(T.check, sectionCheck(d)),
-    sec(T.gap, sectionGap(d)),
-    sec(T.proposal, sectionProposal(d)),
+    ...FR_EXPORT_ACTS.map((a) => sec(a.title, (sectionByKey[a.key] ?? (() => ""))(d))),
     footer,
   ].join("");
 

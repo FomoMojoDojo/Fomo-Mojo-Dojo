@@ -323,10 +323,14 @@ build time.
    Confirm the plan block names scope, not price, until a pricing input exists.
 7. **70b judge on the proposal prose (Act 5) — add it (house discipline) or keep
    single-model 14b?**
-8. **Where does the operator's ONLINE FORM land?** Standing ruling: trigger event
-   arrives via an external online form. Does anything in v2 *read* that form (e.g.,
-   Act 1 context), or is it purely operator-side and out of the rail entirely?
-   (Today: nothing reads it; intake is dead.)
+8. **Online form — RULED (2026-07-23).** The operator's online-form content enters at
+   **COMPANY CREATION** as **client-voice, INTERNAL-register declared content**. For
+   Act 1: the act **reads the PUBLIC page** (own-domain client_voice); the form is
+   **operator-side context / cross-check**, a *different register* (internal declared),
+   and **registers never blend silently** — Act 1 shows "what you say" from the public
+   page, and any form-derived context is kept register-separate. V2-2 wires the Act-1
+   read against the public page; the form content is available as declared internal
+   context, never presented as the public "what you say."
 9. **not_important cache fix (Act 5)** — provision `not_important_count` on the
    session + in the proposal `bundle_summary` as part of V2-9 (recommended), so the
    playback and flywheel stats count set-asides?

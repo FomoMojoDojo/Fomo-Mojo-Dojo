@@ -10,7 +10,7 @@
  * no edits to their internals or their signed copy.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
@@ -26,20 +26,17 @@ import PositionAct from "@/components/client-view/story/movement/PositionAct";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
+import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
 import FirstReadNav from "./FirstReadNav";
+import { FR_ACTS } from "@/lib/firstRead/acts";
+import { createSessionEnsurer } from "@/lib/firstRead/lazyMint";
 import "@/styles/client-story.css";
 
-// ── Act framing — the meeting-script rail. Client-visible; PENDING OPERATOR
-//    SIGNATURE (Gate 3). One eyebrow (act name) + one framing sentence each.
-const ACTS = [
-  { key: "standard", name: "The Standard", line: "Every industry has a standard shape — here's yours, before we look at you." },
-  { key: "mirror", name: "The Mirror", line: "What the outside record shows about you — reached without a single document from you." },
-  { key: "check", name: "The Check", line: "Now you tell us where we're right, where we're close, and where we're wrong." },
-  { key: "gap", name: "The Gap", line: "Where the outside read runs out — the questions only you can answer." },
-  { key: "proposal", name: "The Proposal", line: "Where this goes next." },
-] as const;
+// FR-V2-1 — the rail's act sequence is the v2 five, single-sourced with the export
+// (FR_ACTS). name = the client-facing title (OPERATOR-SIGNED 2026-07-23, in acts.ts).
+const ACTS = FR_ACTS.map((a) => ({ key: a.key, name: a.title, line: a.line }));
 
-// Terminal not-found copy — presenter-screen, PENDING OPERATOR SIGNATURE (Gate 4).
+// Terminal not-found copy — presenter-screen, OPERATOR-SIGNED 2026-07-23 (Gate 4).
 const NOT_FOUND = "No company matches this link — it may have the wrong id, or the company was removed.";
 
 // A generous backstop so the wait can never be infinite even if the company list
@@ -100,6 +97,21 @@ export default function FirstReadView() {
     void resolveSession();
   }, [resolveSession]);
 
+  // FR-V2-1 LAZY-MINT. No session is minted on load; the FIRST verdict tap mints the
+  // open session, then records the verdict. createSessionEnsurer owns the single-flight
+  // guarantee (rapid taps can never create a second session — no double-mint).
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  const ensureSession = useMemo(
+    () => createSessionEnsurer({
+      supabase,
+      companyId,
+      getSessionId: () => sessionIdRef.current,
+      setSessionId: (id) => { sessionIdRef.current = id; setSessionId(id); },
+    }),
+    [companyId],
+  );
+
   const go = useCallback((delta: number) => {
     setStep((s) => Math.min(ACTS.length - 1, Math.max(0, s + delta)));
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "auto" });
@@ -133,13 +145,12 @@ export default function FirstReadView() {
 
   const renderAct = () => {
     switch (act.key) {
-      case "standard":
-        return (
-          <StandardsShell>
-            <FrontDoorMapAct />
-          </StandardsShell>
-        );
-      case "mirror":
+      // Acts 1–2: honest placeholders this gate (V2-2 / V2-3 build the content).
+      case "say":
+      case "why_outside":
+        return <ActUnderConstruction />;
+      // Act 3 — today's Mirror content, re-slotted.
+      case "outside_shows":
         return (
           <>
             <OutsideHeroAct preferredRun={preferredRun} />
@@ -150,20 +161,26 @@ export default function FirstReadView() {
             </MovementShell>
           </>
         );
+      // Act 4 — today's Check, unchanged machinery; lazy-mint on first verdict.
       case "check":
         return (
-          <TheCheckAct companyId={companyId!} sessionId={sessionId} />
+          <TheCheckAct companyId={companyId!} sessionId={sessionId} ensureSession={ensureSession} />
         );
-      case "gap":
-        return <GapAct preferredRun={preferredRun} />;
-      case "proposal":
+      // Act 5 — the job map (norm exhibit) + Gap + Proposal folded (restructure = V2-8/9).
+      case "help":
         return (
-          <ProposalAct
-            companyId={companyId}
-            sessionId={sessionId}
-            onIssued={resolveSession}
-            onStartDiagnose={() => navigate("/diagnosis")}
-          />
+          <>
+            <StandardsShell>
+              <FrontDoorMapAct />
+            </StandardsShell>
+            <GapAct preferredRun={preferredRun} />
+            <ProposalAct
+              companyId={companyId}
+              sessionId={sessionId}
+              onIssued={resolveSession}
+              onStartDiagnose={() => navigate("/diagnosis")}
+            />
+          </>
         );
       default:
         return null;

@@ -1,15 +1,11 @@
 /*
- * First Read · Act 3 — The Check (content).
+ * First Read · The Check (content) — v2 slot 4 ("Where the customer agrees").
  *
- * FR-FLOW-1: intake is prep, not performance — it moved OFF this act to the workshop
- * ("Prepare First Read"), which mints the OPEN session ahead of the meeting. This act
- * NO LONGER renders an intake form. The rail resolves the prepared session and passes
- * its id here:
- *   - sessionId present → the capture surface. If the session is proposal_issued it
- *     renders FROZEN (Gate 2) — the read-only record of the meeting.
- *   - sessionId absent → an honest-empty pointer to the workshop (no session was
- *     prepared). No session is minted here; capture cannot run without preparation.
- * No lifecycle transitions here — issuance (open → proposal_issued) is Act 5.
+ * FR-V2-1: LAZY-MINT. The Check renders with NO session (the findings, no verdicts).
+ * The FIRST verdict tap mints the open session (single-flight, via the rail's
+ * ensureSession) and records the verdict — no prep, no honest-empty message. A
+ * proposal_issued session renders FROZEN (Gate 2). No lifecycle transitions here —
+ * issuance (open → proposal_issued) is the Proposal.
  */
 
 import { useState } from "react";
@@ -19,41 +15,40 @@ import CheckTally from "./CheckTally";
 
 // ── Client-facing copy — SIGNED (Gate 3) / carried forward ───────────────────
 const FROZEN_MSG = "This session is locked — the proposal has been issued. Verdicts can no longer change.";
-// FR-FLOW-1 honest-empty — NEW, PENDING OPERATOR SIGNATURE.
-const NO_SESSION_MSG = "This meeting hasn't been prepared yet — set it up from the workshop first.";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function TheCheckAct({
   companyId,
   sessionId,
+  ensureSession,
 }: {
   companyId: string;
   sessionId: string;
+  /** FR-V2-1 lazy-mint — mints the session on the first verdict tap. */
+  ensureSession?: () => Promise<string>;
 }) {
   const [error, setError] = useState<string | null>(null);
 
   const { items, tally, loading, frozen, sessionStatus, setVerdict } = useFirstReadCapture(
     companyId,
     sessionId || undefined,
+    ensureSession,
   );
 
   const onSet = async (item: CheckItem, v: Verdict, correction?: string) => {
     setError(await setVerdict(item, v, correction));
   };
 
-  // ── No prepared session → honest-empty (intake now lives in the workshop) ────
-  if (!sessionId) {
-    return <p className="cvs-support cvs-fr-nosession">{NO_SESSION_MSG}</p>;
-  }
-
-  // ── Capture surface ─────────────────────────────────────────────────────────
   return (
     <div className="cvs-fr-check">
-      <div className="cvs-check-session-bar">
-        <span className="cvs-check-session-meta">
-          session {sessionId.slice(0, 8)}… · status {sessionStatus ?? "…"}
-        </span>
-      </div>
+      {/* session bar only once a session exists (lazy-mint mints on first verdict) */}
+      {sessionId && (
+        <div className="cvs-check-session-bar">
+          <span className="cvs-check-session-meta">
+            session {sessionId.slice(0, 8)}… · status {sessionStatus ?? "…"}
+          </span>
+        </div>
+      )}
 
       <CheckTally tally={tally} />
 

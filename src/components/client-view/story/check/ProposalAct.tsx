@@ -16,7 +16,7 @@ import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAc
 import ExportButton from "./ExportButton";
 import FeedCorrectionsButton from "./FeedCorrectionsButton";
 
-// ── Client-facing FIXED copy — PENDING OPERATOR SIGNATURE (Gate 4) ───────────
+// ── Client-facing FIXED copy — OPERATOR-SIGNED 2026-07-23 (Gate 4) ───────────
 const ISSUE_LEAD = "Issuing the proposal freezes the client's verdicts and generates their one-screen offer from this read.";
 const ISSUE_LABEL = "Issue proposal";
 const ISSUING_LABEL = "Generating…";

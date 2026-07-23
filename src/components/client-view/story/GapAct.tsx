@@ -9,7 +9,7 @@
  * when the run carries no questions.
  */
 
-// ── Client-facing copy — PENDING OPERATOR SIGNATURE (Gate 3) ─────────────────
+// ── Client-facing copy — OPERATOR-SIGNED 2026-07-23 (Gate 3) ─────────────────
 // Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
 // for The Gap section (single source — no parallel literal in exportHtml).
 export const GAP_EMPTY = "The outside read left no open questions for this company.";

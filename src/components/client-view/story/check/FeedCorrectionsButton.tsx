@@ -16,7 +16,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-// ── Client-visible copy — PENDING OPERATOR SIGNATURE (FR-D2) ─────────────────
+// ── Client-visible copy — OPERATOR-SIGNED 2026-07-23 (FR-D2) ─────────────────
 const LABEL = "Feed corrections to the strategic reading";
 const RUNNING = "Feeding…";
 const EMPTY_RESULT = "No corrections to feed — the client confirmed or rejected every item.";

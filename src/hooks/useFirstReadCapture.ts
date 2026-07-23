@@ -67,7 +67,13 @@ export function isVerdictNoop(
   return true;
 }
 
-export function useFirstReadCapture(companyId?: string, sessionId?: string) {
+export function useFirstReadCapture(
+  companyId?: string,
+  sessionId?: string,
+  // FR-V2-1 lazy-mint: when there is no session yet, the first verdict calls this to
+  // mint one (single-flight, owned by the rail) and record against the new id.
+  ensureSessionId?: () => Promise<string>,
+) {
   const { data: findingsData } = useStandingFindings(companyId);
   const { options: markets } = useMarketOptions(companyId);
   const { item: canvas } = usePositioningCanvas(companyId);
@@ -157,7 +163,14 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
   // human message on refusal (frozen session / empty correction backstop).
   const setVerdict = useCallback(
     async (item: CheckItem, verdict: Verdict, correctionText?: string): Promise<string | null> => {
-      if (!sessionId || !companyId) return "No session.";
+      if (!companyId) return "No session.";
+      // FR-V2-1 lazy-mint: no session yet → mint one now (single-flight), record against
+      // it. `sid` is the effective session for THIS write; the rail's setSessionId (inside
+      // ensureSessionId) re-inits the hook so its own refetch loads the new session's rows.
+      let sid = sessionId ?? "";
+      const lazyMinted = !sid;
+      if (!sid && ensureSessionId) sid = await ensureSessionId();
+      if (!sid) return "No session.";
 
       // TOGGLE-OFF (FR-UX-1): re-tapping the ALREADY-STORED verdict REMOVES the row —
       // the finding returns to unanswered (tally decrements, the in-place note and a
@@ -170,7 +183,7 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
         const { error } = await supabase
           .from("first_read_responses")
           .delete()
-          .eq("session_id", sessionId)
+          .eq("session_id", sid)
           .eq("item_identity", item.identity);
         if (error) {
           if (/frozen/i.test(error.message)) {
@@ -184,7 +197,7 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
       }
 
       const payload = {
-        session_id: sessionId,
+        session_id: sid,
         company_id: companyId,
         item_kind: item.kind,
         item_ref: item.ref,
@@ -205,10 +218,13 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
         }
         return error.message;
       }
-      await refetchResponses();
+      // On a lazy-mint the hook's sessionId was empty, so refetchResponses would read
+      // the wrong (empty) session; the rail's setSessionId re-inits the hook and its
+      // effect refetches the new session. Otherwise refetch through the bound closure.
+      if (!lazyMinted) await refetchResponses();
       return null;
     },
-    [sessionId, companyId, refetchResponses],
+    [sessionId, companyId, refetchResponses, ensureSessionId],
   );
 
   return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses };
