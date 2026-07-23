@@ -60,7 +60,13 @@ export default function PrepareFirstReadControl({
   });
 
   const linkColor = dark ? "#7a9e90" : "#2f6b3a";
-  const muted = dark ? "rgba(246,246,244,0.35)" : "#aaa";
+  const muted = dark ? "rgba(246,246,244,0.35)" : "#aaa"; // entry-link chrome only (sits on the intro)
+  // FR-FLOW-2a contrast fix: the intake FORM renders as a workshop-style light card
+  // with dark ink, so its labels are readable regardless of the intro's dark theme
+  // (the operator saw rail-theme light-on-light). These are workshop form inks.
+  const FORM_LABEL = "#555";
+  const FORM_TITLE = "#555";
+  const FORM_HINT = "#777";
 
   const createSession = async () => {
     if (!companyId) return;
@@ -91,7 +97,7 @@ export default function PrepareFirstReadControl({
 
   const field = (key: keyof typeof intake, label: string, area?: boolean) => (
     <label key={key} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
-      <span style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.04em", color: muted }}>{label}</span>
+      <span className="cvs-fr-prep-label" style={{ fontFamily: "monospace", fontSize: 10, letterSpacing: "0.04em", color: FORM_LABEL }}>{label}</span>
       {area ? (
         <textarea
           rows={2}
@@ -129,9 +135,9 @@ export default function PrepareFirstReadControl({
       )}
 
       {open && (
-        <div style={{ marginTop: 12, maxWidth: 460 }}>
-          <p style={{ fontFamily: "monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: muted, margin: "0 0 4px" }}>{INTAKE_TITLE}</p>
-          <p style={{ fontFamily: "monospace", fontSize: 10, color: muted, margin: "0 0 12px" }}>{INTAKE_HINT}</p>
+        <div className="cvs-fr-prep-form" style={{ marginTop: 12, maxWidth: 460, background: "#fff", border: "1px solid #ede9e4", borderRadius: 6, padding: "16px 18px" }}>
+          <p style={{ fontFamily: "monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: FORM_TITLE, margin: "0 0 4px" }}>{INTAKE_TITLE}</p>
+          <p style={{ fontFamily: "monospace", fontSize: 10, color: FORM_HINT, margin: "0 0 12px" }}>{INTAKE_HINT}</p>
           {field("presenter", L_PRESENTER)}
           {field("trigger_event", L_TRIGGER, true)}
           {field("room_roles", L_ROOM, true)}

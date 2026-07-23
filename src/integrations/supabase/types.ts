@@ -1588,6 +1588,44 @@ export type Database = {
           },
         ]
       }
+      first_read_open_questions: {
+        Row: {
+          company_id: string
+          created_at: string
+          finding_identity: string | null
+          id: string
+          question_identity: string
+          question_text: string
+          run_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          finding_identity?: string | null
+          id?: string
+          question_identity: string
+          question_text: string
+          run_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          finding_identity?: string | null
+          id?: string
+          question_identity?: string
+          question_text?: string
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_open_questions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       first_read_responses: {
         Row: {
           captured_at: string

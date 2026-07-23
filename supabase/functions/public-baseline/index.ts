@@ -1337,6 +1337,21 @@ async function callOpenAI(opts: {
         },
         top_hypotheses: { type: "array", items: { type: "string" } },
         open_questions: { type: "array", items: { type: "string" } },
+        // FR-FLOW-2a — per-question dependency on a finding, BY EXACT TEXT, so the link
+        // resolves by content identity at persistence. Return [] when a question depends
+        // on no specific finding (linkless is honest — never invent a dependency).
+        open_question_links: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              question: { type: "string" },
+              depends_on: { type: "string" },
+            },
+            required: ["question", "depends_on"],
+          },
+        },
         market_initiative_success: {
           type: "object",
           additionalProperties: false,
@@ -1404,6 +1419,7 @@ async function callOpenAI(opts: {
         "evidence_ledger",
         "top_hypotheses",
         "open_questions",
+        "open_question_links",
         "market_initiative_success",
         "message_alignment",
         "outside_voice_signals",
@@ -1569,6 +1585,7 @@ async function callClaudeWebSearch(opts: {
     `  "evidence_ledger": [ { "url":"<real url>","source_type":"<type>","voice_class":"<class>","date":"YYYY-MM-DD","snippet":"<string>","bucket":"<string>","signal_strength":"weak|medium|strong","confidence":<0-100 int> } ],\n` +
     `  "top_hypotheses": ["<string>"],\n` +
     `  "open_questions": ["<string>"],\n` +
+    `  "open_question_links": [ { "question":"<exact open_questions entry>","depends_on":"<the exact finding text this question hinges on>" } ],\n` +
     `  "market_initiative_success": { "proven":<bool>,"low_pct":<int>,"typical_pct":<int>,"high_pct":<int>,"source":"<string>","as_of":"<string>","confidence":<0-100 int>,"evidence_urls":["<url>"],"evidence_snippets":["<string>"] },\n` +
     `  "message_alignment": { "company_claim_posture","outside_voice_posture","alignment_status","alignment_summary": "<string each>" },\n` +
     `  "outside_voice_signals": [ { "perspective":"<string>","source_type":"<type>","voice_class":"<class>","signal":"<string>","sentiment":"<string>","alignment":"<string>","url":"<real url>","confidence":<0-100 int> } ]\n` +
