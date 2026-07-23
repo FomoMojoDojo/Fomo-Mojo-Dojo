@@ -120,9 +120,11 @@ export type SignalDraft = Omit<Signal, "id" | "created_at" | "updated_at">;
 // INT-2 Law 7: provenance (where a claim came from) is ORTHOGONAL to proof
 // (the state/confidence ladder). internal_declared = born from the operator's
 // own uploaded/declared material; public_observed = inferred from public
-// signals. Set ONCE at birth by deriveClaimProvenance (sole authority) and
-// immutable thereafter (DB trigger).
-export type ClaimProvenance = "public_observed" | "internal_declared";
+// signals; client_attested = spoken by the client in a First Read meeting and
+// operator-attested (FR-D1), stamped directly by the corrections feed — NOT by
+// deriveClaimProvenance (which is signal-backing-based and cannot produce it).
+// Set ONCE at birth and immutable thereafter (DB trigger).
+export type ClaimProvenance = "public_observed" | "internal_declared" | "client_attested";
 
 export type Claim = {
   id: string;

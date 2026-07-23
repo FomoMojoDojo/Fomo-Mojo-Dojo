@@ -39,6 +39,26 @@ async function deterministicSignalClaimId(companyId: string, statement: string):
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
+// FR-D1 — client_attested id-namespace rule (implemented by the FR-D2 corrections
+// feed, documented here where the sibling namespace lives). A First Read
+// correction is born as a claim with provenance='client_attested'. Its
+// deterministic id MUST use a DISTINCT namespace segment — 'client_attested' in
+// place of the 'signal_derived' segment above (e.g. NAMESPACE
+// "client-attested-claims-2026-07", input `${NS}:${companyId}:client_attested:${
+// normalized correction_text}`). This keeps a client-spoken claim from ever
+// colliding with a signal-derived claim of identical text: per the design-gate
+// ruling, same-text claims of different provenance COEXIST and are never merged,
+// so their ids must differ by construction.
+//
+// STAMP LAW: provenance='client_attested' is stamped DIRECTLY at the corrections
+// feed only — never via deriveClaimProvenance (signal-backing-based; a spoken
+// correction has no signal) and never through the Gate 3b document path
+// (local-strategy-synthesis, voice-gated on doc_voice_verdicts a correction lacks).
+// ATTESTATION CONVENTION: the feed records provenance of the utterance in the
+// claim's raw_payload as { session_id, response_id } (append newest across re-runs;
+// the immutable provenance column itself never changes). See FR-D1 migration
+// 20260723100000_claims_provenance_client_attested.sql.
+
 type DependencyTarget = {
   upstream_object_type: string;
   upstream_object_id: string;

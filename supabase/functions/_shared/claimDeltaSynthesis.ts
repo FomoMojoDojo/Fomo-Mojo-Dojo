@@ -81,7 +81,7 @@ export type DeltaClaim = {
   id: string;
   statement: string;
   topic: string | null;
-  provenance: "internal_declared" | "public_observed";
+  provenance: "internal_declared" | "public_observed" | "client_attested";
 };
 
 export type ComputedDelta = {
@@ -303,7 +303,12 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string }>).filter(
     (c) => c.status !== "struck",
   );
-  const declared = claims.filter((c) => c.provenance === "internal_declared");
+  // Declared side = the client-side corpus: operator-uploaded (internal_declared)
+  // PLUS room-attested First Read corrections (client_attested, FR-D1). Both are
+  // "things the client declared"; the observed side stays public_observed only.
+  const declared = claims.filter(
+    (c) => c.provenance === "internal_declared" || c.provenance === "client_attested",
+  );
   const publics = claims.filter((c) => c.provenance === "public_observed");
   if (declared.length === 0) return { ok: false, skipped: "no_declared_claims" };
 
