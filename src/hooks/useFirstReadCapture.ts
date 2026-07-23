@@ -44,6 +44,25 @@ export interface CaptureTally {
   not_important: number;
 }
 
+// OC-2c — verdict-change mechanics. A mis-click is recoverable: tapping a DIFFERENT
+// verdict on the same finding REPLACES the stored one (an in-place upsert on the
+// (session, item) key — one verdict per finding, never a second row). Tapping the
+// SAME verdict again is a NO-OP: it must not churn the row (rewrite captured_at,
+// re-fire the freeze trigger). This pure predicate decides "skip the write"; the
+// upsert only runs when it returns false.
+export function isVerdictNoop(
+  current: { verdict: Verdict | null; correctionText: string | null },
+  next: Verdict,
+  nextText?: string,
+): boolean {
+  if (current.verdict !== next) return false;
+  // 'corrected' additionally carries text — a changed correction is a real write.
+  if (next === "corrected") {
+    return (nextText?.trim() ?? null) === (current.correctionText ?? null);
+  }
+  return true;
+}
+
 export function useFirstReadCapture(companyId?: string, sessionId?: string) {
   const { data: findingsData } = useStandingFindings(companyId);
   const { options: markets } = useMarketOptions(companyId);
@@ -135,6 +154,11 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
   const setVerdict = useCallback(
     async (item: CheckItem, verdict: Verdict, correctionText?: string): Promise<string | null> => {
       if (!sessionId || !companyId) return "No session.";
+      // Re-tapping the already-stored verdict writes nothing (see isVerdictNoop). A
+      // DIFFERENT verdict falls through to the upsert, which replaces in place.
+      if (isVerdictNoop({ verdict: item.verdict, correctionText: item.correctionText }, verdict, correctionText)) {
+        return null;
+      }
       const payload = {
         session_id: sessionId,
         company_id: companyId,

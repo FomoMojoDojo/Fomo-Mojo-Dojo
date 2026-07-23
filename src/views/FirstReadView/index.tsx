@@ -26,6 +26,7 @@ import PositionAct from "@/components/client-view/story/movement/PositionAct";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
+import FirstReadNav from "./FirstReadNav";
 import "@/styles/client-story.css";
 
 // ── Act framing — the meeting-script rail. Client-visible; PENDING OPERATOR
@@ -218,15 +219,7 @@ export default function FirstReadView() {
           <p className="cvs-support">Loading company…</p>
         )}
 
-        <div className="cvs-fr-nav">
-          <button type="button" className="cvs-pill-ghost" disabled={step === 0} onClick={() => go(-1)}>
-            ← Back
-          </button>
-          <span className="cvs-fr-nav-count">{step + 1} / {ACTS.length}</span>
-          <button type="button" className="cvs-pill-primary" disabled={step === ACTS.length - 1} onClick={() => go(1)}>
-            Next →
-          </button>
-        </div>
+        <FirstReadNav step={step} total={ACTS.length} onBack={() => go(-1)} onNext={() => go(1)} />
       </main>
     </div>
   );
