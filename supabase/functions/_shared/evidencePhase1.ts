@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
+import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
 import {
@@ -75,6 +76,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function normalizeSignalInsert(signal: SignalDraft) {
+  // CV-2e — verbatim quote is a SEPARATE write path from claim_text/evidence_excerpt.
+  // It is admitted ONLY when the draft's candidate quote is a byte-exact substring of
+  // the retained fetched source (liftVerbatimQuote); otherwise NULL (honest absence).
+  // The extraction path cannot smuggle model text in here: a paraphrase isn't a
+  // substring, so it returns null (and the DB CHECK is the backstop). event_date is
+  // taken only when the source carried a real date — never inferred.
+  const lifted = liftVerbatimQuote(signal.quote_source_text, signal.quote);
   return {
     company_id: signal.company_id,
     source_id: signal.source_id,
@@ -85,6 +93,9 @@ function normalizeSignalInsert(signal: SignalDraft) {
     evidence_type: signal.evidence_type,
     claim_text: signal.claim_text,
     evidence_excerpt: signal.evidence_excerpt,
+    quote: lifted?.quote ?? null,
+    quote_source_text: lifted?.quote_source_text ?? null,
+    event_date: pickEventDate(signal.event_date),
     topic: signal.topic,
     framework: signal.framework,
     directness: signal.directness,

@@ -93,6 +93,13 @@ export type Signal = {
   evidence_type: EvidenceType;
   claim_text: string;
   evidence_excerpt: string;
+  // CV-2e (tier A): provably-verbatim capture. `quote` is text lifted VERBATIM from
+  // the fetched source (a byte-exact substring of `quote_source_text`, DB-enforced) —
+  // never model output; NULL when the signal has no quotable line (honest absence).
+  // `event_date` is the source's visible publication/event date, NULL when none.
+  quote?: string | null;
+  quote_source_text?: string | null;
+  event_date?: string | null;
   topic: string | null;
   framework: string | null;
   directness: Directness;

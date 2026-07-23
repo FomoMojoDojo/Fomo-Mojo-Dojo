@@ -19,6 +19,7 @@
 //     the real ids/indices that fed each block — never authored by the model.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { US_ENGLISH_RULE, flagBritishisms } from "../_shared/languageRule.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -174,7 +175,9 @@ HARD RULES:
 - Use ONLY the data provided. Do NOT invent scope, deliverables, prices, timelines, team, guarantees, or any fact not present in the data.
 - If a field's data is absent (null), return an EMPTY STRING for its block. Never fabricate to fill a gap.
 - No hype, no filler, no canned consulting language. Short sentences.
-- The engagement block is the offer: what the next phase (Diagnose) would establish, grounded only in the questions/gaps and the score spread provided. It ends where the meeting hands off to Diagnose; do not name a price or a duration unless one is in the data (none is — so never).`;
+- The engagement block is the offer: what the next phase (Diagnose) would establish, grounded only in the questions/gaps and the score spread provided. It ends where the meeting hands off to Diagnose; do not name a price or a duration unless one is in the data (none is — so never).
+
+${US_ENGLISH_RULE}`;
 
     const userPrompt = `Real data for this company (JSON):
 ${JSON.stringify(bundle, null, 2)}
@@ -266,8 +269,16 @@ Produce the proposal fields:
     }
 
     const headline = String(fields.headline ?? "").trim();
+    // LANGUAGE JUDGE CRITERION (CV-2e): flag British spellings the US-English rule
+    // forbids — surfaced honestly in the trace, NEVER silently rewritten. (Present as
+    // signal for the operator; not a hard refusal — a spelling must not kill a real
+    // proposal.)
+    const language_flags = flagBritishisms(
+      [headline, ...blocks.map((b) => b.body)].join(" "),
+    );
     const proposal = {
       status: "generated" as const,
+      language_flags,
       headline: headline || null,
       headline_sources: headline ? unionSources : null,
       blocks,

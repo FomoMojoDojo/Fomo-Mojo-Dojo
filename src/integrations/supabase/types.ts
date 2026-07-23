@@ -3966,11 +3966,14 @@ export type Database = {
           confidence_to_use: string
           created_at: string
           directness: string
+          event_date: string | null
           evidence_excerpt: string
           evidence_type: string
           framework: string | null
           framing_fit: string
           id: string
+          quote: string | null
+          quote_source_text: string | null
           raw_payload: Json
           recency: string | null
           relevance_state: string
@@ -3993,11 +3996,14 @@ export type Database = {
           confidence_to_use?: string
           created_at?: string
           directness?: string
+          event_date?: string | null
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null
           framing_fit?: string
           id?: string
+          quote?: string | null
+          quote_source_text?: string | null
           raw_payload?: Json
           recency?: string | null
           relevance_state?: string
@@ -4020,11 +4026,14 @@ export type Database = {
           confidence_to_use?: string
           created_at?: string
           directness?: string
+          event_date?: string | null
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null
           framing_fit?: string
           id?: string
+          quote?: string | null
+          quote_source_text?: string | null
           raw_payload?: Json
           recency?: string | null
           relevance_state?: string
