@@ -31,6 +31,7 @@ import { SignalBasisChip, type SignalBasis } from "@/components/design-system/Si
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import PrepareFirstReadControl from "../PrepareFirstReadControl";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -1906,8 +1907,14 @@ export default function InputsTab({
         </div>
       )}
 
-      {/* ── OC-2b: First Read entry point — always present, ungated by company-state ── */}
-      {isAdmin && <OpenFirstReadControl companyId={companyId} dark={hasHierarchy} />}
+      {/* ── First Read entry points — prepare (FR-FLOW-1) + open (OC-2b). Always
+             present, ungated by company-state. ── */}
+      {isAdmin && (
+        <>
+          <PrepareFirstReadControl companyId={companyId} dark={hasHierarchy} />
+          <OpenFirstReadControl companyId={companyId} dark={hasHierarchy} />
+        </>
+      )}
 
       {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
       {evidenceStatus && (

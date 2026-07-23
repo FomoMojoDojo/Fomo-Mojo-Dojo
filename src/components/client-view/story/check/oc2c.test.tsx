@@ -54,7 +54,7 @@ describe("OC-2c GOAL 1 — post-issuance UI shows locked, not silent", () => {
       setVerdict: async () => null, refetchResponses: async () => {},
     };
     const { container, getByText } = render(
-      <TheCheckAct companyId="c1" sessionId="s1" onSessionCreated={() => {}} />,
+      <TheCheckAct companyId="c1" sessionId="s1" />,
     );
     // honest, not silent: the locked banner is present
     expect(getByText(/This session is locked/i)).toBeTruthy();
@@ -68,7 +68,7 @@ describe("OC-2c GOAL 1 — post-issuance UI shows locked, not silent", () => {
     // is driven by frozen, not hard-coded.
     hookState = { ...hookState, frozen: false };
     const { container: open } = render(
-      <TheCheckAct companyId="c1" sessionId="s1" onSessionCreated={() => {}} />,
+      <TheCheckAct companyId="c1" sessionId="s1" />,
     );
     const openButtons = Array.from(open.querySelectorAll("button"))
       .filter((b) => /Confirm|Reject/i.test(b.textContent || ""));

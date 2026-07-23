@@ -152,7 +152,7 @@ export default function FirstReadView() {
         );
       case "check":
         return (
-          <TheCheckAct companyId={companyId!} sessionId={sessionId} onSessionCreated={setSessionId} />
+          <TheCheckAct companyId={companyId!} sessionId={sessionId} />
         );
       case "gap":
         return <GapAct preferredRun={preferredRun} />;
