@@ -204,7 +204,8 @@ export default function FirstReadView() {
         </div>
       </header>
 
-      <main>
+      {/* paddingBottom clears the fixed FirstReadNav bar so no content hides behind it. */}
+      <main style={{ paddingBottom: 120 }}>
         <div className="cvs-fr-actframe">
           <p className="cvs-fr-actcount">Act {step + 1} / {ACTS.length}</p>
           <p className="cvs-act-eyebrow">{act.name}</p>

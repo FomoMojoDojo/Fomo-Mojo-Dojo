@@ -1565,10 +1565,17 @@
   margin-top: 4px;
   max-width: 560px;
 }
+/* FR-UX-1 — the nav bar is fixed to the viewport bottom (position set inline in
+   FirstReadNav). This class carries the theme-aware chrome; the inner .cvs-fr-nav
+   keeps the centered Back/count/Next row. */
+.cvs-fr-navbar {
+  background: var(--mm-bg);
+  border-top: 1px solid var(--mm-line);
+}
 .cvs-fr-nav {
   max-width: 760px;
-  margin: 40px auto 0;
-  padding: 20px 24px 60px;
+  margin: 0 auto;
+  padding: 16px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;

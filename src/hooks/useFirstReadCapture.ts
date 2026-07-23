@@ -50,6 +50,10 @@ export interface CaptureTally {
 // SAME verdict again is a NO-OP: it must not churn the row (rewrite captured_at,
 // re-fire the freeze trigger). This pure predicate decides "skip the write"; the
 // upsert only runs when it returns false.
+// Shown when a write/delete is refused because the session froze at issuance.
+const LOCKED_MSG =
+  "This session is locked — the proposal has been issued. Verdicts can no longer change.";
+
 export function isVerdictNoop(
   current: { verdict: Verdict | null; correctionText: string | null },
   next: Verdict,
@@ -149,16 +153,36 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
     return t;
   }, [responses]);
 
-  // Upsert a verdict on the open session. Returns null on success, or a short
+  // Set / toggle a verdict on the open session. Returns null on success, or a short
   // human message on refusal (frozen session / empty correction backstop).
   const setVerdict = useCallback(
     async (item: CheckItem, verdict: Verdict, correctionText?: string): Promise<string | null> => {
       if (!sessionId || !companyId) return "No session.";
-      // Re-tapping the already-stored verdict writes nothing (see isVerdictNoop). A
-      // DIFFERENT verdict falls through to the upsert, which replaces in place.
+
+      // TOGGLE-OFF (FR-UX-1): re-tapping the ALREADY-STORED verdict REMOVES the row —
+      // the finding returns to unanswered (tally decrements, the in-place note and a
+      // confirm's evidenced-lift stand down at render, since item.verdict → null). A
+      // DIFFERENT verdict replaces in place (the upsert below). Post-issuance the
+      // freeze trigger refuses this DELETE exactly as it refuses the upsert — no
+      // audit trigger sits on first_read_responses, so an open-session delete is
+      // clean and a frozen-session delete surfaces the locked state.
       if (isVerdictNoop({ verdict: item.verdict, correctionText: item.correctionText }, verdict, correctionText)) {
+        const { error } = await supabase
+          .from("first_read_responses")
+          .delete()
+          .eq("session_id", sessionId)
+          .eq("item_identity", item.identity);
+        if (error) {
+          if (/frozen/i.test(error.message)) {
+            await refetchResponses();
+            return LOCKED_MSG;
+          }
+          return error.message;
+        }
+        await refetchResponses();
         return null;
       }
+
       const payload = {
         session_id: sessionId,
         company_id: companyId,
@@ -177,7 +201,7 @@ export function useFirstReadCapture(companyId?: string, sessionId?: string) {
           // Re-read the session so its real status (and the frozen flag) replace
           // the now-stale 'open' the UI last saw — no raw error surfaces.
           await refetchResponses();
-          return "This session is locked — the proposal has been issued. Verdicts can no longer change.";
+          return LOCKED_MSG;
         }
         return error.message;
       }
