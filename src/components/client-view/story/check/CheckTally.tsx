@@ -4,22 +4,21 @@
 // from the session's response rows (see useFirstReadCapture). "corrected" verdicts
 // read as "refined"; "not_important" reads as "set aside" — the client-facing framing.
 
+import { Fragment } from "react";
 import type { CaptureTally } from "@/hooks/useFirstReadCapture";
-
-// OC-2c — the fourth verdict's tally label. DRAFT copy PENDING OPERATOR SIGNATURE
-// (house pattern); operator signs "set aside" at acceptance.
-const SET_ASIDE_LABEL = "set aside";
+// Segment labels (incl. the OPERATOR-SIGNED "set aside") are single-sourced with the
+// export in checkItemView.ts so the screen and the leave-behind can never diverge.
+import { TALLY_SEGMENTS } from "@/lib/firstRead/checkItemView";
 
 export default function CheckTally({ tally }: { tally: CaptureTally }) {
   return (
     <p className="cvs-check-tally">
-      <span className="cvs-check-tally-n">{tally.confirmed}</span> confirmed
-      {" · "}
-      <span className="cvs-check-tally-n">{tally.corrected}</span> refined
-      {" · "}
-      <span className="cvs-check-tally-n">{tally.rejected}</span> wrong
-      {" · "}
-      <span className="cvs-check-tally-n">{tally.not_important}</span> {SET_ASIDE_LABEL}
+      {TALLY_SEGMENTS.map((seg, i) => (
+        <Fragment key={seg.key}>
+          {i > 0 ? " · " : null}
+          <span className="cvs-check-tally-n">{tally[seg.key]}</span> {seg.label}
+        </Fragment>
+      ))}
     </p>
   );
 }

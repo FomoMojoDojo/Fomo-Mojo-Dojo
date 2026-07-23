@@ -7,13 +7,30 @@
 
 import { BAND_LABELS } from "@/lib/evidenceBands";
 import { baselineFindingBand, liftBand } from "@/lib/firstRead/bandLift";
-import type { CheckItem } from "@/hooks/useFirstReadCapture";
+import type { CheckItem, CaptureTally } from "@/hooks/useFirstReadCapture";
 
 export const CHECK_KIND_LABEL: Record<CheckItem["kind"], string> = {
   finding: "Finding",
   market: "Market",
   differentiator: "Differentiator",
 };
+
+// The single source for the Check tally's segment labels — the SCREEN (CheckTally)
+// and the LEAVE-BEHIND (exportHtml) both map over this, so they can never diverge
+// (the divergence FR-FLOW-D found: the export omitted the fourth verdict). Verdict
+// keys map to client-facing labels: corrected→refined, not_important→set aside.
+// All four labels OPERATOR-SIGNED 2026-07-23.
+export const TALLY_SEGMENTS: { key: keyof CaptureTally; label: string }[] = [
+  { key: "confirmed", label: "confirmed" },
+  { key: "corrected", label: "refined" },
+  { key: "rejected", label: "wrong" },
+  { key: "not_important", label: "set aside" },
+];
+
+// The in-place / leave-behind note for a set-aside (not_important) finding. Shared
+// so screen and export render it identically. Date is appended by the caller.
+// OPERATOR-SIGNED 2026-07-23 ("Marked true but not important · {date}").
+export const NOT_IMPORTANT_NOTE = "Marked true but not important · ";
 
 export function checkItemDate(iso: string | null): string {
   if (!iso) return "";

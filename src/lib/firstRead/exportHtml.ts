@@ -13,7 +13,7 @@
 import type { CheckItem, CaptureTally } from "@/hooks/useFirstReadCapture";
 import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitProposalBlock, REFUSED_BLOCK } from "@/components/client-view/story/check/ProposalAct";
-import { checkItemAnnotation, CHECK_KIND_LABEL } from "@/lib/firstRead/checkItemView";
+import { checkItemAnnotation, CHECK_KIND_LABEL, TALLY_SEGMENTS, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
@@ -123,7 +123,9 @@ function sectionMirror(d: FirstReadExportData): string {
 
 function sectionCheck(d: FirstReadExportData): string {
   const { items, tally } = d.check;
-  const tallyHtml = `<p class="tally"><b>${tally.confirmed}</b> confirmed · <b>${tally.corrected}</b> refined · <b>${tally.rejected}</b> wrong</p>`;
+  // Single-sourced with the screen (CheckTally) via TALLY_SEGMENTS — same order,
+  // same labels, incl. the fourth "set aside" segment.
+  const tallyHtml = `<p class="tally">${TALLY_SEGMENTS.map((seg) => `<b>${tally[seg.key]}</b> ${seg.label}`).join(" · ")}</p>`;
   if (items.length === 0) return `${tallyHtml}<p class="empty">${esc(T.checkEmpty)}</p>`;
   const rows = items
     .map((item) => {
@@ -136,8 +138,13 @@ function sectionCheck(d: FirstReadExportData): string {
         annHtml = `<p class="ann rejected">Rejected by the client · ${esc(ann.date)}</p>`;
       } else if (ann?.kind === "corrected") {
         annHtml = `<p class="ann corrected">Corrected: “${esc(ann.text)}”</p>`;
+      } else if (ann?.kind === "not_important") {
+        annHtml = `<p class="ann notimportant">${esc(NOT_IMPORTANT_NOTE)}${esc(ann.date)}</p>`;
       }
-      const cls = ann?.kind === "rejected" ? "item is-rejected" : ann?.kind === "confirmed" ? "item is-confirmed" : "item";
+      const cls = ann?.kind === "rejected" ? "item is-rejected"
+        : ann?.kind === "confirmed" ? "item is-confirmed"
+        : ann?.kind === "not_important" ? "item is-notimportant"
+        : "item";
       return `<div class="${cls}"><p class="kind">${esc(CHECK_KIND_LABEL[item.kind])}</p><p class="item-text">${esc(item.text)}</p>${annHtml}</div>`;
     })
     .join("");
@@ -200,12 +207,14 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .item{border:1px solid rgba(17,17,17,.12);border-radius:8px;padding:14px 16px}
 .item.is-confirmed{border-color:rgba(31,122,77,.5)}
 .item.is-rejected{opacity:.82}
+.item.is-notimportant{border-color:rgba(120,113,108,.35)}
 .item-text{margin:0 0 8px}
 .ann{margin:8px 0 0;font-size:13px}
 .ann .band{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#1f7a4d;border:1px solid rgba(31,122,77,.45);border-radius:3px;padding:2px 7px}
 .ann.confirmed{color:#3c3327}
 .ann.rejected{font-style:italic;opacity:.7}
 .ann.corrected{color:#c0451a}
+.ann.notimportant{font-style:italic;color:#57534e;opacity:.85}
 .tally{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin:0 0 18px}
 .gap-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px}
 .gap-list li{display:flex;gap:12px;align-items:baseline}

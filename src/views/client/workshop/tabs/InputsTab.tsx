@@ -427,7 +427,7 @@ function OpenFirstReadControl({ companyId, dark }: { companyId: string | null; d
       >
         {OPEN_FIRST_READ_LABEL}
       </a>
-      {/* DRAFT sub-line — PENDING OPERATOR SIGNATURE (house pattern). */}
+      {/* Sub-line — OPERATOR-SIGNED 2026-07-23. */}
       <span style={{ fontFamily: "monospace", fontSize: dark ? 9 : 10, color: dark ? "rgba(246,246,244,0.35)" : "#aaa" }}>
         The presenter-led first-meeting walkthrough for this company.
       </span>

@@ -6,7 +6,7 @@
 // / fd1-* id). Method-attribution belongs in internal provenance, never on the
 // client's screen or their leave-behind.
 //
-// PENDING OPERATOR SIGNATURE (house pattern) — both strings are drafts until signed.
+// OPERATOR-SIGNED 2026-07-23 — both strings are final.
 
 // The attribution printed under every rendered standard map (screen + export).
 export const STANDARD_ATTRIBUTION_LINE = "Standard reference model for your industry";

@@ -10,7 +10,7 @@
 //   - corrected  → the client's correction shown verbatim.
 
 import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
-import { CHECK_KIND_LABEL, checkItemAnnotation } from "@/lib/firstRead/checkItemView";
+import { CHECK_KIND_LABEL, checkItemAnnotation, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
 import CheckControl from "./CheckControl";
 
 export default function CheckItemRow({
@@ -26,9 +26,8 @@ export default function CheckItemRow({
   const rejected = item.verdict === "rejected";
   const notImportant = item.verdict === "not_important";
   const ann = checkItemAnnotation(item);
-  // OC-2 capture note — DISPLAY COPY PENDING OPERATOR SIGNATURE. The signed string
-  // is the button label; this in-place note surfaces the captured state on re-render.
-  const NOT_IMPORTANT_NOTE = "Marked true but not important · ";
+  // The set-aside note is OPERATOR-SIGNED and single-sourced in checkItemView (shared
+  // with the export leave-behind), so screen and export render it identically.
 
   return (
     <div
