@@ -11,6 +11,7 @@ const row = (over: Partial<ClaimDeltaRow>): ClaimDeltaRow => ({
   operator_disposition: null, declared_statement: "dec", public_statement: "pub",
   declared_claim_id: null, public_claim_id: null,
   declared_claim_status: null, public_claim_status: null,
+  declared_claim_provenance: null, declared_attested_date: null,
   ...over,
 });
 const struck = (id: string): StruckClaim => ({

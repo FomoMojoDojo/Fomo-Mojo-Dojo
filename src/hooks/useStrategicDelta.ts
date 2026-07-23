@@ -77,6 +77,13 @@ export type ClaimDeltaRow = {
   public_claim_id: string | null;
   declared_claim_status: "active" | "minimized" | "struck" | null;
   public_claim_status: "active" | "minimized" | "struck" | null;
+  // FR-D3: provenance of the DECLARED claim, so the surface can distinguish a
+  // client-spoken (client_attested) delta from a document-declared one. The
+  // attested date is the attesting First Read session's started_at (raw_payload
+  // session_id -> session), or null when unresolvable (honest degrade: chip
+  // without a date rather than a wrong one).
+  declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | null;
+  declared_attested_date: string | null;
 };
 
 // Strike Gate B: struck claims never disappear — they collapse under the
@@ -85,7 +92,7 @@ export type ClaimDeltaRow = {
 export type StruckClaim = {
   id: string;
   statement: string;
-  provenance: "internal_declared" | "public_observed";
+  provenance: "internal_declared" | "public_observed" | "client_attested";
   struck_reason: string | null;
   struck_at: string | null;
   struck_by: string | null;
@@ -240,7 +247,7 @@ export function useStrategicDelta(companyId?: string) {
           .order("delta_type", { ascending: true }),
         supabase
           .from("claims")
-          .select("id, statement, provenance, status, struck_reason, struck_at, struck_by")
+          .select("id, statement, provenance, status, struck_reason, struck_at, struck_by, raw_payload")
           .eq("company_id", companyId),
       ]);
 
@@ -248,10 +255,48 @@ export function useStrategicDelta(companyId?: string) {
         id: string; statement: string; provenance: StruckClaim["provenance"];
         status: "active" | "minimized" | "struck";
         struck_reason: string | null; struck_at: string | null; struck_by: string | null;
+        raw_payload: { session_id?: string | null } | null;
       };
       const claimRows = (claimRes.data ?? []) as ClaimRow[];
       const claimStatementById = new Map<string, string>(claimRows.map((c) => [c.id, c.statement]));
       const claimStatusById = new Map<string, ClaimRow["status"]>(claimRows.map((c) => [c.id, c.status]));
+      const claimProvenanceById = new Map<string, ClaimRow["provenance"]>(claimRows.map((c) => [c.id, c.provenance]));
+
+      // FR-D3: resolve the attesting First Read date for client_attested claims.
+      // raw_payload.session_id -> first_read_sessions.started_at. One extra read,
+      // and only when the company actually has client-attested claims. A claim
+      // whose session can't be resolved gets no date (honest degrade, not a wrong
+      // one). Never blocks the rest of the surface if the read fails.
+      const claimAttestedDateById = new Map<string, string>();
+      const attestedSessionByClaim = new Map<string, string>();
+      for (const c of claimRows) {
+        if (c.provenance !== "client_attested") continue;
+        const sid = c.raw_payload?.session_id ?? null;
+        if (sid) attestedSessionByClaim.set(c.id, sid);
+      }
+      if (attestedSessionByClaim.size > 0) {
+        const sessionIds = [...new Set(attestedSessionByClaim.values())];
+        // Shallow, concrete client type — deliberately NOT the supabase generic
+        // builder here: adding another fully-typed .from().select().in() chain to
+        // this already-large hook overflows tsc's instantiation-depth budget
+        // (TS2589 cascade). A hand-typed chain keeps inference flat.
+        type SessRow = { id: string; started_at: string | null };
+        const sessClient = supabase as unknown as {
+          from: (t: string) => {
+            select: (c: string) => { in: (col: string, vals: string[]) => Promise<{ data: SessRow[] | null }> };
+          };
+        };
+        const { data: sessRows } = await sessClient.from("first_read_sessions").select("id, started_at").in("id", sessionIds);
+        const startedById = new Map<string, string>(
+          (sessRows ?? [])
+            .filter((s) => !!s.started_at)
+            .map((s) => [s.id, s.started_at as string]),
+        );
+        for (const [claimId, sid] of attestedSessionByClaim) {
+          const started = startedById.get(sid);
+          if (started) claimAttestedDateById.set(claimId, started);
+        }
+      }
       const struckClaims: StruckClaim[] = claimRows
         .filter((c) => c.status === "struck")
         .map((c) => ({ id: c.id, statement: c.statement, provenance: c.provenance, struck_reason: c.struck_reason, struck_at: c.struck_at, struck_by: c.struck_by }));
@@ -275,6 +320,8 @@ export function useStrategicDelta(companyId?: string) {
         public_claim_id: r.public_claim_id,
         declared_claim_status: r.declared_claim_id ? claimStatusById.get(r.declared_claim_id) ?? null : null,
         public_claim_status: r.public_claim_id ? claimStatusById.get(r.public_claim_id) ?? null : null,
+        declared_claim_provenance: r.declared_claim_id ? claimProvenanceById.get(r.declared_claim_id) ?? null : null,
+        declared_attested_date: r.declared_claim_id ? claimAttestedDateById.get(r.declared_claim_id) ?? null : null,
       }));
 
       const toDeltaSignal = (r: {

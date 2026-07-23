@@ -418,6 +418,34 @@ const DELTA_CHIP: Record<string, { label: string; color: string; bg: string }> =
   divergent: { label: "Divergent", color: "#8a3b1f", bg: "#fdf1e9" },
 };
 
+// FR-D3: provenance chip for the DECLARED side of a client-spoken delta. Only
+// client_attested claims earn it — a document-declared (internal_declared) delta
+// stays chip-less (absence is the default state; chips only when earned). Matches
+// the chip grammar above (mono, bordered, tinted); a distinct blue reads as
+// "attested in the room," apart from the green/rust delta chips. Date comes from
+// the attesting First Read session; absent -> the chip renders WITHOUT a date
+// rather than a wrong one. Copy is DRAFT, PENDING OPERATOR SIGNATURE (FR-D3).
+function AttestedChip({ date }: { date: string | null }) {
+  let day: string | null = null;
+  if (date) {
+    const d = new Date(date);
+    if (!Number.isNaN(d.getTime())) day = d.toLocaleDateString();
+  }
+  const label = day ? `Client-attested · First Read · ${day}` : "Client-attested · First Read";
+  return (
+    <span
+      title="This declared statement was spoken by the client in a First Read meeting (client_attested provenance) — not read from an uploaded document."
+      style={{
+        fontFamily: D.mono, fontSize: 8.5, letterSpacing: "0.06em",
+        color: "#37527d", background: "#eef2f9", border: "1px solid #cad6ea",
+        borderRadius: 3, padding: "2px 7px", whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function DeltaDispositionActions({ row, onSet }: {
   row: ClaimDeltaRow;
   onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
@@ -716,6 +744,7 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
                   Inferred pairing
                 </span>
               )}
+              {d.declared_claim_provenance === "client_attested" && <AttestedChip date={d.declared_attested_date} />}
             </div>
             <p style={{ fontFamily: D.sans, fontSize: 12, color: D.ink, margin: "0 0 4px", lineHeight: 1.5 }}>
               <span style={{ fontFamily: D.mono, fontSize: 8.5, textTransform: "uppercase", color: D.inkFaint }}>You declare · </span>
@@ -773,6 +802,9 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
           </p>
           {openQuestions.map((d) => (
             <div key={d.id} style={{ paddingLeft: 8, borderLeft: `2px solid ${D.hairlineFaint}`, marginBottom: 8 }}>
+              {d.declared_claim_provenance === "client_attested" && (
+                <div style={{ marginBottom: 4 }}><AttestedChip date={d.declared_attested_date} /></div>
+              )}
               <p style={{ fontFamily: D.sans, fontSize: 11.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
                 <span style={statementStatusStyle(d.declared_claim_status)}
                   title={d.declared_claim_id ? struckById.get(d.declared_claim_id)?.struck_reason ?? undefined : undefined}>
