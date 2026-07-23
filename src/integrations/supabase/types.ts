@@ -1783,6 +1783,7 @@ export type Database = {
       first_read_stated_problem: {
         Row: {
           company_id: string
+          descriptive_fallback: boolean
           gen_model: string
           generated_at: string
           id: string
@@ -1795,6 +1796,7 @@ export type Database = {
         }
         Insert: {
           company_id: string
+          descriptive_fallback?: boolean
           gen_model: string
           generated_at?: string
           id?: string
@@ -1807,6 +1809,7 @@ export type Database = {
         }
         Update: {
           company_id?: string
+          descriptive_fallback?: boolean
           gen_model?: string
           generated_at?: string
           id?: string

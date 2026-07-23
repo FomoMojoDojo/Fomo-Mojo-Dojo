@@ -29,10 +29,10 @@ export function formatEventDate(iso: string | null | undefined): string {
   return `${month} ${Number(dd)}, ${y}`;
 }
 
+// V2-2b (standing style rule): NO vertical accent bars. The quote block has no
+// left-border motif; breathing room above separates it from the statement.
 const figureStyle: CSSProperties = {
-  margin: "8px 0 0",
-  paddingLeft: 12,
-  borderLeft: "2px solid rgba(17,17,17,0.18)",
+  margin: "20px 0 0",
 };
 const quoteStyle: CSSProperties = {
   margin: 0,

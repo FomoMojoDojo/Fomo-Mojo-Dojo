@@ -39,7 +39,17 @@ all registers (the surface whose job is the say/see split). **Voice law**
 (`claimProvenance.classifyVoice`): own-domain content → `client_voice`
 unconditionally (declared, no corroboration rights); else outside/competitor/market.
 
-### Act 1 — "What you say" (stated problem, own-domain)
+### Act 1 — "What you say" (stated problem) — SHIPPED (V2-2 / V2-2b)
+> **SOURCE INVERSION (V2-2b, supersedes the earlier "reads the public page" note):**
+> the stated problem comes FIRST from the company's OWN declared brief
+> (`companies.strategic_problem_brief` — internal register, the problem the client
+> brought at creation), lightly distilled in their words. ONLY when that's blank is it
+> INFERRED from their public own-domain site (public register, preferring a problem
+> framing over an offerings description; a description-only read is stamped
+> `descriptive_fallback` and labeled honestly). The two NEVER blend; the row's
+> `register` (`internal_declared` | `public_observed`) stamps which fired, with a
+> provenance label at render. 14b gen + 70b judge; honest-empty only when both blank.
+
 - **Exists:** public-baseline **crawls the company's own domain**
   (`crawlWebsiteEvidence` / `siteEvidence`) and the model reads it into `lens_card`
   (primary_buyer, chooser, switching_costs, …) + own-domain signals. Own-domain

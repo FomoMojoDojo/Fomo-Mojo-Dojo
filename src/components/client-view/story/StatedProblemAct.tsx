@@ -6,7 +6,7 @@
 // captured", signed) beside the distillation; quote-less is honest.
 
 import { useFirstReadStatedProblem } from "@/hooks/useFirstReadStatedProblem";
-import { admitStatedProblem } from "@/lib/firstRead/statedProblem";
+import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import SignalQuote from "@/components/evidence/SignalQuote";
 
 // ── Client-facing copy — PENDING OPERATOR SIGNATURE ──────────────────────────
@@ -25,10 +25,14 @@ export default function StatedProblemAct({ companyId }: { companyId?: string }) 
     return <p className="cvs-support cvs-fr-statedproblem">{HONEST_EMPTY}</p>;
   }
 
+  const label = statedProblemLabel(data!.register, data!.descriptive_fallback);
   return (
     <div className="cvs-fr-statedproblem">
       <p className="cvs-fr-statedproblem-text">{statement}</p>
-      {/* verbatim own-domain anchor when one exists; SignalQuote renders nothing if null */}
+      {/* provenance label — which source/register fired */}
+      <p className="cvs-fr-statedproblem-source">{label}</p>
+      {/* verbatim own-domain anchor when one exists; SignalQuote renders nothing if null.
+          V2-2b: spacing between the statement and the quote (no vertical bar). */}
       <SignalQuote quote={data!.quote} />
     </div>
   );

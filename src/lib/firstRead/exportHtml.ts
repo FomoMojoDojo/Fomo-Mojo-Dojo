@@ -18,7 +18,7 @@ import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHe
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
-import { admitStatedProblem } from "@/lib/firstRead/statedProblem";
+import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
@@ -27,8 +27,8 @@ export interface ExportMirrorFinding { label: string; text: string }
 export interface FirstReadExportData {
   company: { name: string };
   session: { id: string; date: string; presenter: string | null };
-  // V2-2 Act 1 — the client's stated problem (client_voice own-domain distillation).
-  statedProblem: { statement: string; quote: string | null } | null;
+  // V2-2 / V2-2b Act 1 — the client's stated problem + which source/register fired.
+  statedProblem: { statement: string; quote: string | null; register: string; descriptive_fallback: boolean } | null;
   standard: { label: string; taxonomyVersion: string | null; steps: ExportStandardStep[] } | null;
   mirror: {
     score: number | null;
@@ -96,11 +96,13 @@ export function firstReadExportFilename(companyName: string, sessionDateIso: str
 function sectionSay(d: FirstReadExportData): string {
   const sp = d.statedProblem;
   if (!sp || !admitStatedProblem(sp.statement)) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
+  // provenance label — single-sourced with the screen (statedProblemLabel).
+  const label = `<p class="source-label">${esc(statedProblemLabel(sp.register, sp.descriptive_fallback))}</p>`;
   // The verbatim quote (if lifted) carries the SIGNED "As captured" label — single-sourced.
   const quoteHtml = sp.quote
     ? `<figure class="ann notimportant"><blockquote>“${esc(sp.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}</figcaption></figure>`
     : "";
-  return `<p class="std-label">${esc(sp.statement)}</p>${quoteHtml}`;
+  return `<p class="std-label">${esc(sp.statement)}</p>${label}${quoteHtml}`;
 }
 
 function sectionStandard(d: FirstReadExportData): string {

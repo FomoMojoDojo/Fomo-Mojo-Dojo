@@ -16,3 +16,17 @@ export function admitStatedProblem(statement: string | null | undefined): boolea
   if (CANNED_CLASS.some((re) => re.test(s))) return false; // generic canned class — refused
   return true;
 }
+
+// V2-2b — the provenance label under the statement (which source/register fired).
+// Client-facing — PENDING OPERATOR SIGNATURE.
+export const STATED_PROBLEM_LABELS = {
+  company_declared: "The problem you brought to us",   // register = internal_declared
+  site_inferred: "Read from your public site",         // register = public_observed, problem framing
+  site_descriptive: "How you describe yourselves publicly", // register = public_observed, descriptive fallback
+} as const;
+
+export function statedProblemLabel(register: string, descriptiveFallback: boolean): string {
+  if (register === "internal_declared") return STATED_PROBLEM_LABELS.company_declared;
+  // public_observed
+  return descriptiveFallback ? STATED_PROBLEM_LABELS.site_descriptive : STATED_PROBLEM_LABELS.site_inferred;
+}

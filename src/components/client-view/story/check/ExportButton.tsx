@@ -120,7 +120,9 @@ export default function ExportButton({
     const data: FirstReadExportData = {
       company: { name: activeCompany?.name ?? "Company" },
       session: { id: sessionId, date: sessionDate, presenter: session?.presenter ?? null },
-      statedProblem: statedProblem ? { statement: statedProblem.statement, quote: statedProblem.quote } : null,
+      statedProblem: statedProblem
+        ? { statement: statedProblem.statement, quote: statedProblem.quote, register: statedProblem.register, descriptive_fallback: statedProblem.descriptive_fallback }
+        : null,
       standard: map
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,

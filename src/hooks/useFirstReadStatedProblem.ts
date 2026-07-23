@@ -6,7 +6,8 @@ export interface StatedProblemRow {
   statement: string;
   quote: string | null;
   quote_source_text: string | null;
-  register: string;
+  register: string; // 'internal_declared' (the brief) | 'public_observed' (the site)
+  descriptive_fallback: boolean;
 }
 
 export function useFirstReadStatedProblem(companyId?: string) {
@@ -23,7 +24,7 @@ export function useFirstReadStatedProblem(companyId?: string) {
       }
       const { data: row } = await supabase
         .from("first_read_stated_problem")
-        .select("statement, quote, quote_source_text, register")
+        .select("statement, quote, quote_source_text, register, descriptive_fallback")
         .eq("company_id", companyId)
         .maybeSingle();
       if (!cancelled) { setData((row as StatedProblemRow | null) ?? null); setLoading(false); }
