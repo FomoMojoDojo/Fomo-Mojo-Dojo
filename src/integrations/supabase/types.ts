@@ -182,6 +182,39 @@ export type Database = {
           },
         ]
       }
+      claim_delta_rejection_removals: {
+        Row: {
+          company_id: string
+          content_identity: string
+          declared_claim_id: string | null
+          id: string
+          public_claim_id: string | null
+          reason: string
+          rejected_by: string | null
+          removed_at: string
+        }
+        Insert: {
+          company_id: string
+          content_identity: string
+          declared_claim_id?: string | null
+          id?: string
+          public_claim_id?: string | null
+          reason: string
+          rejected_by?: string | null
+          removed_at?: string
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string
+          declared_claim_id?: string | null
+          id?: string
+          public_claim_id?: string | null
+          reason?: string
+          rejected_by?: string | null
+          removed_at?: string
+        }
+        Relationships: []
+      }
       claim_delta_rejections: {
         Row: {
           company_id: string
@@ -1502,6 +1535,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      first_read_session_removals: {
+        Row: {
+          company_id: string
+          confirmed_count: number
+          corrected_count: number
+          deleted_at: string
+          id: string
+          reason: string
+          rejected_count: number
+          session_id: string
+          status_at_deletion: string
+        }
+        Insert: {
+          company_id: string
+          confirmed_count?: number
+          corrected_count?: number
+          deleted_at?: string
+          id?: string
+          reason: string
+          rejected_count?: number
+          session_id: string
+          status_at_deletion: string
+        }
+        Update: {
+          company_id?: string
+          confirmed_count?: number
+          corrected_count?: number
+          deleted_at?: string
+          id?: string
+          reason?: string
+          rejected_count?: number
+          session_id?: string
+          status_at_deletion?: string
+        }
+        Relationships: []
       }
       first_read_sessions: {
         Row: {
@@ -4930,6 +4999,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      remove_claim_delta_rejections: {
+        Args: { p_ids: string[]; p_reason: string }
+        Returns: number
+      }
       remove_claims_bulk: {
         Args: {
           p_actor?: string
@@ -4937,6 +5010,10 @@ export type Database = {
           p_reason_category: string
         }
         Returns: number
+      }
+      remove_first_read_session: {
+        Args: { p_reason: string; p_session_id: string }
+        Returns: undefined
       }
       remove_test: {
         Args: { p_actor?: string; p_reason_category: string; p_test_id: string }

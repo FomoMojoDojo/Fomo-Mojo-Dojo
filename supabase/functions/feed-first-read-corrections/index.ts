@@ -160,12 +160,16 @@ Deno.serve(async (req) => {
           .eq("company_id", companyId)
           .eq("content_identity", identity);
         if (rej && rej.length > 0) {
-          const { error: pErr2 } = await supabase
-            .from("claim_delta_rejections")
-            .delete()
-            .in("id", (rej as Array<{ id: string }>).map((x) => x.id));
+          // Audit-hardening bundle: prune through the sanctioned RPC so the delete
+          // is attributed 'attestation_wins' in claim_delta_rejection_removals
+          // (a bare .delete() would audit as 'unaudited_direct_delete').
+          const ids = (rej as Array<{ id: string }>).map((x) => x.id);
+          const { error: pErr2 } = await supabase.rpc("remove_claim_delta_rejections", {
+            p_ids: ids,
+            p_reason: "attestation_wins",
+          });
           if (pErr2) throw new Error(`rejection prune failed: ${pErr2.message}`);
-          rejectionsPruned += rej.length;
+          rejectionsPruned += ids.length;
           prunedIdentities.push(identity);
         }
 
