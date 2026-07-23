@@ -18,7 +18,7 @@ export function admitStatedProblem(statement: string | null | undefined): boolea
 }
 
 // V2-2b — the provenance label under the statement (which source/register fired).
-// Client-facing — PENDING OPERATOR SIGNATURE.
+// Client-facing — OPERATOR-SIGNED 2026-07-23.
 export const STATED_PROBLEM_LABELS = {
   company_declared: "The problem you brought to us",   // register = internal_declared
   site_inferred: "Read from your public site",         // register = public_observed, problem framing
