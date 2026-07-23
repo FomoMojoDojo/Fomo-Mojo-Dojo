@@ -83,6 +83,7 @@ describe("FR-FLOW-1b — export cover degrades honestly without presenter", () =
   const data = (presenter: string | null): FirstReadExportData => ({
     company: { name: "Acme" },
     session: { id: "s1", date: "2026-07-23", presenter },
+    statedProblem: null,
     standard: null,
     mirror: { score: null, bet: null, findings: [] },
     check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },

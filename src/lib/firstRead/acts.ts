@@ -20,8 +20,10 @@ export interface FirstReadAct {
 }
 
 export const FR_ACTS: readonly FirstReadAct[] = [
+  // V2-2 — `say` now carries content (the stated-problem distillation); no longer a
+  // placeholder, so it reaches the leave-behind.
   { key: "say", title: "What You Say",
-    line: "The problem you tell the world you solve — in your own words.", placeholder: true },
+    line: "The problem you tell the world you solve — in your own words." },
   { key: "why_outside", title: "Why We Start Outside",
     line: "Why we read the outside record before asking you for anything.", placeholder: true },
   { key: "outside_shows", title: "What the Outside Shows",

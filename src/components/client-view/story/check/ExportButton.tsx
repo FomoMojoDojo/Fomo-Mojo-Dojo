@@ -15,6 +15,7 @@ import { useStandingFindings } from "@/hooks/useStandingFindings";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useIndustryReferenceMaps } from "@/hooks/useIndustryReferenceMaps";
 import { useFirstReadCapture } from "@/hooks/useFirstReadCapture";
+import { useFirstReadStatedProblem } from "@/hooks/useFirstReadStatedProblem";
 import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitForSurface } from "@/lib/registerGuard";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
@@ -56,6 +57,7 @@ export default function ExportButton({
   const { preferredRun, loading: baselineLoading } = usePublicBaseline(companyId);
   const { maps, loading: mapsLoading } = useIndustryReferenceMaps();
   const { items, tally, loading: captureLoading } = useFirstReadCapture(companyId, sessionId);
+  const { data: statedProblem, loading: statedProblemLoading } = useFirstReadStatedProblem(companyId);
   const [session, setSession] = useState<{ started_at: string | null; presenter: string | null } | null>(null);
 
   // The export must match the meeting exactly — never capture a not-yet-loaded
@@ -70,7 +72,8 @@ export default function ExportButton({
   }, [scoreLoading]);
 
   const dataReady =
-    !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading && session !== null;
+    !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading &&
+    !statedProblemLoading && session !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +120,7 @@ export default function ExportButton({
     const data: FirstReadExportData = {
       company: { name: activeCompany?.name ?? "Company" },
       session: { id: sessionId, date: sessionDate, presenter: session?.presenter ?? null },
+      statedProblem: statedProblem ? { statement: statedProblem.statement, quote: statedProblem.quote } : null,
       standard: map
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,

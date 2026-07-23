@@ -1780,6 +1780,53 @@ export type Database = {
           },
         ]
       }
+      first_read_stated_problem: {
+        Row: {
+          company_id: string
+          gen_model: string
+          generated_at: string
+          id: string
+          judge_model: string | null
+          quote: string | null
+          quote_source_text: string | null
+          register: string
+          statement: string
+          statement_identity: string
+        }
+        Insert: {
+          company_id: string
+          gen_model: string
+          generated_at?: string
+          id?: string
+          judge_model?: string | null
+          quote?: string | null
+          quote_source_text?: string | null
+          register?: string
+          statement: string
+          statement_identity: string
+        }
+        Update: {
+          company_id?: string
+          gen_model?: string
+          generated_at?: string
+          id?: string
+          judge_model?: string | null
+          quote?: string | null
+          quote_source_text?: string | null
+          register?: string
+          statement?: string
+          statement_identity?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_stated_problem_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       industry_reference_job_maps: {
         Row: {
           content_sha: string | null

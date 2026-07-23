@@ -18,6 +18,8 @@ import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHe
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
+import { admitStatedProblem } from "@/lib/firstRead/statedProblem";
+import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
 export interface ExportMirrorFinding { label: string; text: string }
@@ -25,6 +27,8 @@ export interface ExportMirrorFinding { label: string; text: string }
 export interface FirstReadExportData {
   company: { name: string };
   session: { id: string; date: string; presenter: string | null };
+  // V2-2 Act 1 — the client's stated problem (client_voice own-domain distillation).
+  statedProblem: { statement: string; quote: string | null } | null;
   standard: { label: string; taxonomyVersion: string | null; steps: ExportStandardStep[] } | null;
   mirror: {
     score: number | null;
@@ -54,6 +58,7 @@ const T = {
   scoreEmpty: "No score has been computed yet.",
   checkEmpty: "No items were put to the client.",
   proposalEmpty: "No proposal was generated for this session.",
+  sayEmpty: "No problem is stated on this company's own public site.", // V2-2 — PENDING SIGNATURE
 };
 
 const esc = (v: unknown): string =>
@@ -87,6 +92,16 @@ export function firstReadExportFilename(companyName: string, sessionDateIso: str
 }
 
 // ── Section renderers ────────────────────────────────────────────────────────
+
+function sectionSay(d: FirstReadExportData): string {
+  const sp = d.statedProblem;
+  if (!sp || !admitStatedProblem(sp.statement)) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
+  // The verbatim quote (if lifted) carries the SIGNED "As captured" label — single-sourced.
+  const quoteHtml = sp.quote
+    ? `<figure class="ann notimportant"><blockquote>“${esc(sp.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}</figcaption></figure>`
+    : "";
+  return `<p class="std-label">${esc(sp.statement)}</p>${quoteHtml}`;
+}
 
 function sectionStandard(d: FirstReadExportData): string {
   const s = d.standard;
@@ -239,6 +254,7 @@ export function buildFirstReadExportHtml(d: FirstReadExportData): string {
   // placeholder acts carry no substance and are OMITTED (a leave-behind of real
   // content only). Act 5 ("How We Can Help") folds the job map + Gap + Proposal.
   const sectionByKey: Record<string, (d: FirstReadExportData) => string> = {
+    say: sectionSay,
     outside_shows: sectionMirror,
     check: sectionCheck,
     help: (dd) => `${sectionStandard(dd)}${sectionGap(dd)}${sectionProposal(dd)}`,

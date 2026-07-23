@@ -150,6 +150,7 @@ describe("FR-ATTR — no framework names / internal tags on client-facing surfac
       company: { name: "Acme" },
       session: { id: "s1", date: "2026-07-23", presenter: null },
       // taxonomyVersion is present in the DATA — the serializer must NOT print it
+      statedProblem: null,
       standard: {
         label: "Seeking Support",
         taxonomyVersion: "fd1-priority-8",

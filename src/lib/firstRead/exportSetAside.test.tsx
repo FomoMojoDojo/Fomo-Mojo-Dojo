@@ -35,6 +35,7 @@ function exportData(tally: CaptureTally, items: CheckItem[]): FirstReadExportDat
   return {
     company: { name: "Acme" },
     session: { id: "s1", date: "2026-07-23", presenter: null },
+    statedProblem: null,
     standard: null,
     mirror: { score: null, bet: null, findings: [] },
     check: { items, tally },

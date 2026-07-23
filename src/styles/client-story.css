@@ -1565,6 +1565,21 @@
   margin-top: 4px;
   max-width: 560px;
 }
+/* V2-2 — placeholder copy sits INSIDE the act content column (was at the viewport
+   edge), matching the actframe's centered 760px column. */
+.cvs-fr-underconstruction,
+.cvs-fr-statedproblem {
+  max-width: 760px;
+  margin: 24px auto;
+  padding: 0 24px;
+}
+.cvs-fr-statedproblem-text {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 22px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
 /* FR-UX-1 — the nav bar is fixed to the viewport bottom (position set inline in
    FirstReadNav). This class carries the theme-aware chrome; the inner .cvs-fr-nav
    keeps the centered Back/count/Next row. */
