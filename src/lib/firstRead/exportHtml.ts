@@ -16,6 +16,7 @@ import { admitProposalBlock, REFUSED_BLOCK } from "@/components/client-view/stor
 import { checkItemAnnotation, CHECK_KIND_LABEL } from "@/lib/firstRead/checkItemView";
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
+import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
 export interface ExportMirrorFinding { label: string; text: string }
@@ -95,8 +96,11 @@ function sectionStandard(d: FirstReadExportData): string {
         `<li><span class="num">${esc(st.step_number)}</span><div><p class="step-label">${esc(st.step_label)}</p><p class="step-desc">${esc(st.description)}</p></div></li>`,
     )
     .join("");
-  const attribution = `Reference model · Jobs-to-be-Done / ODI framework · ${esc(s.taxonomyVersion ?? "unversioned")}`;
-  return `<p class="std-label">${esc(s.label)}</p><ol class="steps">${steps}</ol><p class="attribution">${attribution}</p>`;
+  // FR-ATTR — single-sourced with the screen (FrontDoorMapAct). Plain English, no
+  // framework name, no internal tag; taxonomyVersion stays in the data as provenance
+  // but is never printed on the client's leave-behind.
+  const attribution = STANDARD_ATTRIBUTION_LINE;
+  return `<p class="std-label">${esc(s.label)}</p><ol class="steps">${steps}</ol><p class="attribution">${esc(attribution)}</p>`;
 }
 
 function sectionMirror(d: FirstReadExportData): string {

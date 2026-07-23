@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { useIndustryReferenceMaps, type ReferenceMap } from "@/hooks/useIndustryReferenceMaps";
+import { STANDARD_ATTRIBUTION_LINE, STANDARD_INTRO_SUB } from "@/lib/firstRead/standardCopy";
 
 /*
  * FD-3 — FrontDoorMapAct: the cold-open industry-standard job-map act.
@@ -19,16 +20,12 @@ import { useIndustryReferenceMaps, type ReferenceMap } from "@/hooks/useIndustry
  * it never collapses when company data exists (operator ruling).
  */
 
-// ── Client-facing copy — OPERATOR-SIGNED VERBATIM (FD-3) ─────────────────────
+// ── Client-facing copy — SIGNED eyebrow (FD-3); FR-ATTR strings single-sourced ──
 const ACT_EYEBROW = "How this job is done — the standard shape";
-const ACT_SUB =
-  "The standard way your industry's customer gets this job done — a reference model on the Jobs-to-be-Done framework, the same for everyone. Not a reading of your business.";
-// Attribution is STRUCTURAL (referenceLibrary contract) — always printed when a
-// map renders. {taxonomy_version} is interpolated from the map's own row. This is
-// method-attribution, not a publisher claim: the maps are generated on the JTBD/
-// ODI framework, not transcribed from an external published work.
-const attributionLine = (taxonomyVersion: string | null) =>
-  `Reference model · Jobs-to-be-Done / ODI framework · ${taxonomyVersion ?? "unversioned"}`;
+// ACT_SUB and the attribution now live in standardCopy.ts so the leave-behind
+// (exportHtml) prints the identical text — plain English, no framework name, no
+// internal tag (operator ruling 2026-07-23). Both are PENDING SIGNATURE there.
+const ACT_SUB = STANDARD_INTRO_SUB;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Fallback-state copy — PROPOSED (operator first-real-use look) ────────────
@@ -51,7 +48,7 @@ function MapBody({ map }: { map: ReferenceMap }) {
         ))}
       </ol>
       {/* Attribution — always printed on a rendered map (structural warrant). */}
-      <p className="cvs-std-attribution">{attributionLine(map.taxonomy_version)}</p>
+      <p className="cvs-std-attribution">{STANDARD_ATTRIBUTION_LINE}</p>
     </div>
   );
 }

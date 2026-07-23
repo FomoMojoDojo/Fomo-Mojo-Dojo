@@ -24,6 +24,7 @@ vi.mock("@/hooks/useIndustryReferenceMaps", () => ({
 
 import FrontDoorMapAct from "./FrontDoorMapAct";
 import StandardsShell from "./StandardsShell";
+import { buildFirstReadExportHtml, type FirstReadExportData } from "@/lib/firstRead/exportHtml";
 
 // The two RETIRED EOV divider strings — must never appear over the job maps.
 const EOV_EYEBROW = "How value gets measured";
@@ -60,8 +61,8 @@ describe("FrontDoorMapAct — FD-3 tripwire", () => {
       screen.queryByText("No standard map matched this company's industry yet. Choose one:"),
       "a picker rendered in the MATCHED state — FD-3 forbids it",
     ).toBeNull();
-    // attribution always printed on a rendered map.
-    expect(screen.getByText(/Reference model · Jobs-to-be-Done \/ ODI framework · fd1-priority-8/)).toBeTruthy();
+    // attribution always printed on a rendered map — now plain English (FR-ATTR).
+    expect(screen.getByText("Standard reference model for your industry")).toBeTruthy();
   });
 
   it("NO-MATCH: a NULL / non-published key falls back to the selector, renders no map", () => {
@@ -120,5 +121,50 @@ describe("FrontDoorMapAct — FD-3 tripwire", () => {
     expect(screen.queryByText(EOV_SUB), `LEAK: retired EOV sub rendered over the fallback state`).toBeNull();
     expect(container.querySelectorAll(".cvs-std-divider").length).toBe(0);
     expect(screen.getByText("How this job is done — the standard shape")).toBeTruthy();
+  });
+});
+
+// ── FR-ATTR — plain-English law: no framework name, no internal tag, client-facing.
+// Rendered-tree / serialized-output absence (standing law: absence proven against
+// the mounted output + the leave-behind, never a file grep). Single-sourced, so the
+// screen and the export are asserted with the SAME forbidden-token set.
+describe("FR-ATTR — no framework names / internal tags on client-facing surfaces", () => {
+  const FORBIDDEN = ["ODI", "Jobs-to-be-Done", "Jobs to be Done", "JTBD", "fd1-"];
+
+  it("BOTH surfaces (rail + /client-view share FrontDoorMapAct): matched render is plain English", () => {
+    COMPANY = { industry_key: "nonprofit-social-services" };
+    MAPS = publishedSix(); // fixtures carry taxonomy_version "fd1-priority-8" in the DATA
+    LOADING = false;
+    const { container } = render(<StandardsShell><FrontDoorMapAct /></StandardsShell>);
+    const text = container.textContent || "";
+    for (const token of FORBIDDEN) {
+      expect(text, `LEAK: client-facing Standard output contains "${token}"`).not.toContain(token);
+    }
+    // the signed plain-English strings are present
+    expect(text).toContain("Standard reference model for your industry");
+    expect(text).toContain("The standard way your industry's customer gets this job done — the same for everyone. Not a reading of your business.");
+  });
+
+  it("the leave-behind (exportHtml) matches the screen: standard section carries no tag/framework", () => {
+    const data: FirstReadExportData = {
+      company: { name: "Acme" },
+      session: { id: "s1", date: "2026-07-23", presenter: null },
+      // taxonomyVersion is present in the DATA — the serializer must NOT print it
+      standard: {
+        label: "Seeking Support",
+        taxonomyVersion: "fd1-priority-8",
+        steps: [{ step_number: 1, step_label: "Recognize the need", description: "desc" }],
+      },
+      mirror: { score: null, bet: null, findings: [] },
+      check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
+      gap: [],
+      proposal: null,
+      exportedAt: "2026-07-23T00:00:00Z",
+    };
+    const html = buildFirstReadExportHtml(data);
+    for (const token of FORBIDDEN) {
+      expect(html, `LEAK: leave-behind contains "${token}"`).not.toContain(token);
+    }
+    expect(html).toContain("Standard reference model for your industry");
   });
 });
