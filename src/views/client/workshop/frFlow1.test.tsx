@@ -1,18 +1,27 @@
-// FR-FLOW-1 — intake moved to the workshop; the rail opens cold (no intake form).
+// FR-FLOW-1b — intake removed entirely; "Open First Read" is the single control and
+// mints-if-missing on click. The rail still opens cold (honest-empty for no session).
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 
-// ── supabase mock: capture the session insert PrepareFirstReadControl performs ──
-let insertPayload: Record<string, unknown> | null = null;
+// ── supabase mock: the mint-if-missing path ──────────────────────────────────
+let existingSession: { id: string } | null = null;
+let insertCount = 0;
+let lastInsert: Record<string, unknown> | null = null;
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    from: () => ({
-      insert: (payload: Record<string, unknown>) => {
-        insertPayload = payload;
-        return { select: () => ({ single: async () => ({ data: { id: "new-session" }, error: null }) }) };
-      },
-    }),
+    from: () => {
+      // deno-lint-ignore no-explicit-any
+      const b: any = {
+        select: () => b, eq: () => b, in: () => b, order: () => b, limit: () => b,
+        maybeSingle: async () => ({ data: existingSession, error: null }),
+        insert: (payload: Record<string, unknown>) => {
+          insertCount++; lastInsert = payload;
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+      return b;
+    },
   },
 }));
 // TheCheckAct calls the real hook — stub it so the no-session branch renders cleanly.
@@ -24,47 +33,50 @@ vi.mock("@/hooks/useFirstReadCapture", () => ({
 }));
 
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
-import PrepareFirstReadControl from "./PrepareFirstReadControl";
+import OpenFirstReadControl from "./OpenFirstReadControl";
 import { buildFirstReadExportHtml, type FirstReadExportData } from "@/lib/firstRead/exportHtml";
 
-describe("FR-FLOW-1 GOAL 2 — the rail's Check renders NO intake form cold", () => {
-  it("no session → honest-empty pointer to the workshop; the intake form is absent", () => {
+beforeEach(() => { existingSession = null; insertCount = 0; lastInsert = null; });
+
+describe("FR-FLOW-1b — rail opens cold (no intake form)", () => {
+  it("no session → honest-empty pointer to the workshop; no intake fields", () => {
     const { container, getByText } = render(<TheCheckAct companyId="c1" sessionId="" />);
-    // honest-empty present
     expect(getByText(/hasn't been prepared yet/i)).toBeTruthy();
-    // the intake form is GONE from the rail (rendered-tree absence)
+    expect(container.querySelectorAll("input, textarea")).toHaveLength(0);
     const text = container.textContent || "";
     expect(text).not.toContain("Before the meeting");
-    expect(text).not.toContain("Start the read");
-    expect(container.querySelectorAll("input, textarea")).toHaveLength(0); // no form fields
+    expect(text).not.toContain("Prepare First Read"); // the retired control is gone
   });
 });
 
-describe("FR-FLOW-1 GOAL 1 — the workshop step writes the session fields (open)", () => {
-  it("Prepare → Start inserts an OPEN session with the parsed intake fields", async () => {
-    insertPayload = null;
-    const { getByText, getByLabelText } = render(<PrepareFirstReadControl companyId="c1" dark={false} />);
-    fireEvent.click(getByText("Prepare First Read →")); // open the form
-    fireEvent.change(getByLabelText("Presenter"), { target: { value: "Jane Presenter" } });
-    fireEvent.change(getByLabelText("Domains (comma-separated)"), { target: { value: "acme.com, acme.io" } });
-    fireEvent.change(getByLabelText("Room roles (one per line: Name — Role)"), { target: { value: "Bob — CEO" } });
-    fireEvent.click(getByText("Start the read"));
+describe("FR-FLOW-1b — Open First Read mints-if-missing (deliberate click)", () => {
+  it("no session → mints exactly ONE open session, then navigates", async () => {
+    const navigate = vi.fn();
+    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
+    fireEvent.click(getByText("Open First Read →"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/first-read/c1"));
+    expect(insertCount).toBe(1); // exactly one
+    expect(lastInsert).toMatchObject({ company_id: "c1", status: "open" });
+  });
 
-    await waitFor(() => expect(insertPayload).not.toBeNull());
-    expect(insertPayload).toMatchObject({
-      company_id: "c1",
-      status: "open", // creatable ahead of the meeting
-      presenter: "Jane Presenter",
-      domains: ["acme.com", "acme.io"],
-      room_roles: [{ name: "Bob", role: "CEO" }],
-    });
-    // FALSIFICATION: empty fields become NULL, never a fabricated value
-    expect(insertPayload!.legal_name).toBeNull();
-    expect(insertPayload!.landmines).toBeNull();
+  it("existing open session → NO new mint, just navigates (re-click reuses)", async () => {
+    existingSession = { id: "s-existing" };
+    const navigate = vi.fn();
+    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
+    fireEvent.click(getByText("Open First Read →"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/first-read/c1"));
+    // FALSIFICATION (double-mint detector): a control that minted despite an existing
+    // session would push insertCount above 0 — this catches it.
+    expect(insertCount).toBe(0);
+  });
+
+  it("keeps the plain href target (router-less OC-2b contract)", () => {
+    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} />);
+    expect((getByText("Open First Read →") as HTMLAnchorElement).getAttribute("href")).toBe("/first-read/c1");
   });
 });
 
-describe("FR-FLOW-1 GOAL 2 — export cover degrades honestly on empty intake", () => {
+describe("FR-FLOW-1b — export cover degrades honestly without presenter", () => {
   const data = (presenter: string | null): FirstReadExportData => ({
     company: { name: "Acme" },
     session: { id: "s1", date: "2026-07-23", presenter },
@@ -73,13 +85,11 @@ describe("FR-FLOW-1 GOAL 2 — export cover degrades honestly on empty intake", 
     check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
     gap: [], proposal: null, exportedAt: "2026-07-23T00:00:00Z",
   });
-
-  it("presenter present → cover shows it; absent → no fabricated value", () => {
-    expect(buildFirstReadExportHtml(data("Jane Presenter"))).toContain("Jane Presenter");
+  it("absent presenter → no fabricated value; date still renders", () => {
     const bare = buildFirstReadExportHtml(data(null));
-    expect(bare).not.toContain("Jane Presenter");
     expect(bare).not.toContain(" · undefined");
-    expect(bare).not.toContain(" · null"); // dateless/nameless degrade — never a placeholder
-    expect(bare).toContain("2026-07-23"); // the date still renders
+    expect(bare).not.toContain(" · null");
+    expect(bare).toContain("2026-07-23");
+    expect(buildFirstReadExportHtml(data("Jane"))).toContain("Jane"); // present → shown (unchanged path)
   });
 });

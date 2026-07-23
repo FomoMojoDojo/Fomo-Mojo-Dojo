@@ -148,3 +148,17 @@ describe("OC-2b — First Read entry point on the Inputs tab", () => {
     expect(link!.getAttribute("href")).not.toBe("/first-read/");
   });
 });
+
+// FR-FLOW-1b — the intake form + Prepare control are GONE; "Open First Read →" is the
+// single control (rendered-tree absence proof over the real mounted Inputs tab).
+describe("FR-FLOW-1b — no intake form, single Open control", () => {
+  it("the mounted Inputs tab has NO intake form and NO Prepare control", () => {
+    const { container } = render(<InputsTab {...sonosProps} />);
+    const text = container.textContent || "";
+    expect(text).not.toContain("Before the meeting"); // intake form gone
+    expect(text).not.toContain("Prepare First Read");  // retired control gone
+    // exactly one First Read entry point remains
+    const opens = Array.from(container.querySelectorAll("a")).filter((a) => (a.textContent || "").includes("Open First Read"));
+    expect(opens).toHaveLength(1);
+  });
+});

@@ -31,7 +31,7 @@ import { SignalBasisChip, type SignalBasis } from "@/components/design-system/Si
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import PrepareFirstReadControl from "../PrepareFirstReadControl";
+import OpenFirstReadControl from "../OpenFirstReadControl";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -398,41 +398,6 @@ function PrimaryAddBtn({ label, active, onClick, disabled = false, disabledReaso
     }}>
       {active ? "↑ Cancel" : `+ ${label}`}
     </button>
-  );
-}
-
-// OC-2b — the operator's door to the First Read presenter rail. ALWAYS rendered for
-// every company: the rail owns its own empty / dead-id states (terminating in the
-// bounded honest state shipped at First Read Gate 5), so this control is deliberately
-// NOT gated on hasHierarchy / spine / baseline — those company-state proxies are the
-// known defect class this thread keeps rediscovering. `dark` only picks the theme to
-// match the intro branch it renders under; it never decides whether to render. A hard
-// link (not a router hook) so the target is a plain href and the router-less mount
-// tests keep passing.
-const OPEN_FIRST_READ_LABEL = "Open First Read →"; // operator-signed (OC-2b brief)
-function OpenFirstReadControl({ companyId, dark }: { companyId: string | null; dark?: boolean }) {
-  const disabled = !companyId;
-  const href = companyId ? `/first-read/${companyId}` : undefined;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: dark ? 16 : 12, flexWrap: "wrap" }}>
-      <a
-        href={href}
-        aria-disabled={disabled}
-        style={{
-          fontFamily: "monospace", fontSize: dark ? 9 : 10, letterSpacing: "0.06em",
-          color: disabled ? (dark ? "rgba(246,246,244,0.25)" : "#bbb") : (dark ? "#7a9e90" : "#2f6b3a"),
-          background: "none", padding: 0,
-          textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
-          pointerEvents: disabled ? "none" : "auto", cursor: disabled ? "default" : "pointer",
-        }}
-      >
-        {OPEN_FIRST_READ_LABEL}
-      </a>
-      {/* Sub-line — OPERATOR-SIGNED 2026-07-23. */}
-      <span style={{ fontFamily: "monospace", fontSize: dark ? 9 : 10, color: dark ? "rgba(246,246,244,0.35)" : "#aaa" }}>
-        The presenter-led first-meeting walkthrough for this company.
-      </span>
-    </div>
   );
 }
 
@@ -1907,14 +1872,9 @@ export default function InputsTab({
         </div>
       )}
 
-      {/* ── First Read entry points — prepare (FR-FLOW-1) + open (OC-2b). Always
-             present, ungated by company-state. ── */}
-      {isAdmin && (
-        <>
-          <PrepareFirstReadControl companyId={companyId} dark={hasHierarchy} />
-          <OpenFirstReadControl companyId={companyId} dark={hasHierarchy} />
-        </>
-      )}
+      {/* ── First Read entry point — the SINGLE control (FR-FLOW-1b: intake removed;
+             Open mints-if-missing on click). Always present, ungated by company-state. ── */}
+      {isAdmin && <OpenFirstReadControl companyId={companyId} dark={hasHierarchy} />}
 
       {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
       {evidenceStatus && (
