@@ -1723,3 +1723,10 @@
 
 /* First Read · export control (Gate 5) */
 .cvs-fr-export-btn { margin: 8px 0 24px; }
+
+/* First Read · corrections feed control (FR-D2) */
+.cvs-fr-feed { margin: 0 0 24px; }
+.cvs-fr-feed-btn { margin: 0; }
+.cvs-fr-feed-result { margin: 10px 0 0; font-size: 14px; color: #3c3327; }
+.cvs-fr-feed-result.is-error { color: #c0451a; }
+.cvs-fr-feed-pruned { margin: 4px 0 0; font-size: 13px; color: #6b5f4f; font-style: italic; }

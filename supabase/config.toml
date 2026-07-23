@@ -77,3 +77,6 @@ jwt_secret = "GuctHgcw5y9L50rere9wZAGfbDQpjDu8S4hNMsTjwJIJfU/nymbI47u3gS40YdSl"
 
 [functions.generate-first-read-proposal]
 verify_jwt = false
+
+[functions.feed-first-read-corrections]
+verify_jwt = false

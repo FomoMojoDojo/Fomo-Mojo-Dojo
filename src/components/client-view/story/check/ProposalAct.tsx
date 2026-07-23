@@ -14,6 +14,7 @@
 import { useFirstReadProposal, type Proposal, type ProposalBlock } from "@/hooks/useFirstReadProposal";
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import ExportButton from "./ExportButton";
+import FeedCorrectionsButton from "./FeedCorrectionsButton";
 
 // ── Client-facing FIXED copy — PENDING OPERATOR SIGNATURE (Gate 4) ───────────
 const ISSUE_LEAD = "Issuing the proposal freezes the client's verdicts and generates their one-screen offer from this read.";
@@ -82,6 +83,7 @@ export function ProposalRender({
       {companyId && sessionId && (
         <ExportButton companyId={companyId} sessionId={sessionId} proposal={proposal} />
       )}
+      {sessionId && <FeedCorrectionsButton sessionId={sessionId} />}
 
       <OutsideNextMoveAct onStartDiagnose={onStartDiagnose} />
     </div>
