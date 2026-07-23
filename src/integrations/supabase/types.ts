@@ -182,6 +182,108 @@ export type Database = {
           },
         ]
       }
+      claim_contest_removals: {
+        Row: {
+          claim_id: string | null
+          claim_identity: string
+          company_id: string
+          contest_id: string
+          contest_kind: string
+          id: string
+          reason: string
+          removed_at: string
+          resolution: string | null
+          session_id: string
+        }
+        Insert: {
+          claim_id?: string | null
+          claim_identity: string
+          company_id: string
+          contest_id: string
+          contest_kind: string
+          id?: string
+          reason: string
+          removed_at?: string
+          resolution?: string | null
+          session_id: string
+        }
+        Update: {
+          claim_id?: string | null
+          claim_identity?: string
+          company_id?: string
+          contest_id?: string
+          contest_kind?: string
+          id?: string
+          reason?: string
+          removed_at?: string
+          resolution?: string | null
+          session_id?: string
+        }
+        Relationships: []
+      }
+      claim_contests: {
+        Row: {
+          claim_id: string
+          claim_identity: string
+          company_id: string
+          contest_kind: string
+          created_at: string
+          id: string
+          rationale: string | null
+          resolution: string | null
+          resolution_reason: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          session_id: string
+          source: string
+        }
+        Insert: {
+          claim_id: string
+          claim_identity: string
+          company_id: string
+          contest_kind: string
+          created_at?: string
+          id?: string
+          rationale?: string | null
+          resolution?: string | null
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          session_id: string
+          source?: string
+        }
+        Update: {
+          claim_id?: string
+          claim_identity?: string
+          company_id?: string
+          contest_kind?: string
+          created_at?: string
+          id?: string
+          rationale?: string | null
+          resolution?: string | null
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          session_id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_contests_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_contests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "first_read_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_delta_rejection_removals: {
         Row: {
           company_id: string
