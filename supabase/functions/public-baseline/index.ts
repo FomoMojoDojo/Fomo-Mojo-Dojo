@@ -1,6 +1,7 @@
 // supabase/functions/public-baseline/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
+import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3009,6 +3010,15 @@ Deno.serve(async (req) => {
       .single();
 
     if (insErr) return json({ error: "DB insert failed", details: insErr }, 500);
+    // V2-6 — hand the crawl's REAL retained source text (evidence[].extracted) to ingest,
+    // keyed by normalized URL, so the quote producer can lift a verbatim line per signal.
+    // Only real fetched text is included; synthetic-label evidence carries none to lift.
+    const sourceTextByUrl = new Map<string, string>();
+    for (const e of evidence) {
+      const key = normalizeUrlKey(String((e as { url?: unknown })?.url || ""));
+      const extracted = String((e as { extracted?: unknown })?.extracted || "");
+      if (key && extracted.trim().length >= 40) sourceTextByUrl.set(key, extracted);
+    }
     await ingestPublicBaselineSignals({
       supabase,
       companyId: company_id,
@@ -3019,6 +3029,7 @@ Deno.serve(async (req) => {
         resultWithDiscoveredSources,
         runLedger,
       ),
+      sourceTextByUrl,
     });
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });

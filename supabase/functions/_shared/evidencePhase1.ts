@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
+import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
@@ -537,6 +538,9 @@ export async function ingestPublicBaselineSignals(args: {
   companyName?: string | null;
   website?: string | null;
   resultJson: unknown;
+  /** V2-6 — normalizeUrlKey(url) → retained fetched source text, from the crawl evidence.
+   *  Present only on the full-crawl path; absent paths simply produce no quotes. */
+  sourceTextByUrl?: Map<string, string>;
 }) {
   const signals = mapPublicBaselineOutputToSignals({
     companyId: args.companyId,
@@ -545,6 +549,32 @@ export async function ingestPublicBaselineSignals(args: {
     sourceUrl: args.website ?? null,
     resultJson: args.resultJson,
   });
+
+  // V2-6 — VERBATIM QUOTE PRODUCER. Signals are minted from the model's result_json
+  // (paraphrases), so the candidate CANNOT come from claim_text. It is selected from the
+  // REAL retained source text (crawl `extracted`, joined by URL) — the source's own words.
+  // liftVerbatimQuote (in normalizeSignalInsert) is the byte-exact AUTHORITY; a signal
+  // whose source text isn't retained simply stays quote-less (absence never blocks
+  // ingestion). Own-domain (client_voice) is processed first, then outside voices.
+  if (args.sourceTextByUrl && args.sourceTextByUrl.size > 0) {
+    const map = args.sourceTextByUrl;
+    let quoted = 0, dated = 0;
+    const ordered = [...signals].sort((a, b) => (a.voice_class === "client_voice" ? 0 : 1) - (b.voice_class === "client_voice" ? 0 : 1));
+    for (const draft of ordered) {
+      if (draft.quote) continue; // never overwrite an existing quote
+      const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
+      if (!src) continue; // no retained source for this URL → honest absence
+      const record = (draft.raw_payload ?? {}) as { date?: unknown };
+      const produced = produceQuote(src, typeof record.date === "string" ? record.date : null, draft.claim_text || "");
+      if (!produced) continue;
+      draft.quote = produced.quote;
+      draft.quote_source_text = produced.quote_source_text;
+      draft.event_date = produced.event_date ?? draft.event_date ?? null;
+      quoted++;
+      if (produced.event_date) dated++;
+    }
+    console.log("[quote-producer] lifted", { quoted, dated, of_signals: signals.length });
+  }
 
   // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
   // verdict at persistence. client_voice/market_context (and B2.1's competitor_voice)
