@@ -328,6 +328,51 @@ out of V2-6c scope** (OUT-OF-SCOPE: engine-default product decision). Flagged as
 (**V2-6d — elicit citations under the JSON output contract**). The V2-6c plumbing is harmless and
 forward-ready: net-zero when citations are absent, OpenAI path untouched.
 
+### V2-6d — fetch-and-retain quote supply (operator ruling 2026-07-24)
+
+The operator did NOT take the prompt-elicitation route V2-6c flagged. Ruling: receipts supply on
+the default engine comes from a **deterministic fetch-and-retain pass** — AFTER signals mint, fetch
+each quote-less signal's OWN `source_url`, retain what actually comes back, lift a byte-exact quote
+from the retained text with the SHIPPED producer. **No model, no prompt change, the fragile
+public-baseline generator untouched.** The same mechanism closes the queued competitor-discovery
+fetch-and-retain gap. `signals_quote_verbatim` stays sole authority; bot-walled/failed fetches and
+pages with no quotable line are honest absence, never padded (partial coverage is the design).
+
+**Shape.** A **standalone edge function** `retain-quote-supply` (not an extension of public-baseline —
+keeps the fragile generator untouched, is independently re-clickable/resumable, and is source-agnostic
+so it covers competitor-discovery signals too). Pure core `src/lib/firstRead/quoteSupply.ts`
+(`liftQuoteFromFetch` disposition + `signalQuoteUpdate` write-scope + `FETCH_RATE_SHAPE`); fetch path
+reused verbatim from public-baseline's own primitives via `_shared/fetchAndExtract.ts` ("reuse, don't
+fork"; public-baseline keeps its inline copies — migrating it to the shared module is deferred under
+the untouched ruling). Selection is `quote IS NULL AND source_url ~ http(s)` → **idempotent**
+resume-by-reclick (already-quoted skipped, failed retryable). START-of-run `long_runner_runs`
+(`run_kind='quote_supply'`) ledger; concurrency-capped (3) + jittered-delay (250–700ms) fetch burst
+(SRCH-1 lesson); ~110s run budget stops before the edge cut, remaining resume on re-click. **Writes
+`quote`/`quote_source_text`/`event_date` on signal rows ONLY** — proven no score/claim/verdict effect
+(these columns are read only by the Act 4 render join, not by score/claim-state/delta-gen). Event
+dates ride from the signal's own `raw_payload.date` via `pickEventDate` — never scraped/inferred.
+
+**Trigger placement (reported shape, no new prominent control).** The pass rides the existing
+post-baseline refresh flow: after `pollPublicBaselineTerminal` returns `completed`, the refresh
+handler fires `retain-quote-supply` as a follow-up (fire-and-forget, idempotent so safe on every
+refresh). Wiring is deferred to that seam rather than a new button — the function is independently
+re-clickable, which is the resume-by-reclick model. (Not wired into a client control in this gate.)
+
+**V2-6d LIVE (Edgewood run 37, 42 signals, 2026-07-24).** Disposition: **1 lifted / 14 fetch_failed
+(403 bot-wall ×11, network ×3) / 27 fetched_no_quote / 0 skipped_budget**, 1 dated, elapsed 13.9s.
+The bot-walled review sites (glassdoor/yelp/indeed/linkedin/facebook) 403'd exactly as the fetchability
+report predicted — honest partial coverage. The lift: privateschoolreview.com, byte-exact
+(`quote_source_text LIKE '%quote%'` = true), event_date 2025-01-01. **Idempotence:** a second plan
+showed candidates 42→41 (the quoted signal excluded). **No verdict effect:** a content hash of
+score + claims + claim_deltas + non-quote signal columns is **byte-identical** before/after
+(`e2c39fa9…`); a planted one-char control flips the hash (proving the comparison is sensitive).
+**Act 4 receipts:** the exact `useFirstReadCapture` join (claim_deltas → claim_signal_refs(supports) →
+signals.quote) surfaces the lifted quote on 2 echoed deltas — proven via a **reverted control ref**
+(inserted, join run, deleted; refs back to 0, hash unchanged), because Edgewood's public claims
+currently carry **0 `claim_signal_refs`** (this monitor-only fixture never ran the analysis that
+builds `supports` refs). That claim↔signal linkage gap is orthogonal to V2-6d and out of scope —
+the pass makes the quote render-ready; the join surfaces it wherever the linkage exists.
+
 ---
 
 ## 5. Journey visual (Act 2)
