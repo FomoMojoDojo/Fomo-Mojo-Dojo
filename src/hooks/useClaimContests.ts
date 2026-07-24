@@ -34,7 +34,9 @@ type ContestJoinRow = {
   resolved_at: string | null;
   created_at: string;
   claims: { statement: string | null; status: string | null } | null;
-  first_read_sessions: { created_at: string | null } | null;
+  // OC-3b: the session's date column is `started_at` (there is no created_at on
+  // first_read_sessions). Embedding a nonexistent column 400s the whole PostgREST query.
+  first_read_sessions: { started_at: string | null } | null;
 };
 
 export function useClaimContests(companyId: string | undefined) {
@@ -49,7 +51,7 @@ export function useClaimContests(companyId: string | undefined) {
       const { data, error } = await supabase
         .from("claim_contests")
         .select(
-          "id, claim_id, contest_kind, rationale, resolution, resolution_reason, resolved_at, created_at, claims(statement, status), first_read_sessions(created_at)",
+          "id, claim_id, contest_kind, rationale, resolution, resolution_reason, resolved_at, created_at, claims(statement, status), first_read_sessions(started_at)",
         )
         .eq("company_id", companyId)
         .order("created_at", { ascending: false });
@@ -65,7 +67,7 @@ export function useClaimContests(companyId: string | undefined) {
         resolution: r.resolution,
         resolution_reason: r.resolution_reason,
         resolved_at: r.resolved_at,
-        session_date: r.first_read_sessions?.created_at ?? r.created_at,
+        session_date: r.first_read_sessions?.started_at ?? r.created_at,
         created_at: r.created_at,
       }));
 
@@ -95,6 +97,10 @@ export function useClaimContests(companyId: string | undefined) {
     open: query.data?.open ?? [],
     resolved: query.data?.resolved ?? [],
     isLoading: query.isLoading,
+    // OC-3b error honesty: a query failure (RLS deny, malformed embed, network) is a
+    // DISTINCT state from "no contests". The consumer renders an honest error rather than
+    // silently vanishing — the exact masquerade the created_at embed bug rode.
+    isError: query.isError,
     resolve,
   };
 }

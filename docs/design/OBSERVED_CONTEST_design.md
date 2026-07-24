@@ -181,3 +181,41 @@ render-query returns the open queue → `resolve_contest` (disputed→dismissed 
 claim `active`; immaterial→set_aside → `minimized`) → open queue empty, both in the trail →
 ROLLBACK, zero residue (both claims back to `active`, 0 contests). The RPC/CHECK/auto-resolve/
 teardown laws are additionally proven on the OC-1 fixture company by the SQL test.
+
+---
+
+## OC-3b — Contested render fix + error honesty (2026-07-24)
+
+**The bug (CONTESTED-UI-D).** After OC-2d birthed 3 open contests, the operator saw NO
+Contested section. Cause: `useClaimContests` embedded `first_read_sessions(created_at)` — a
+column that does not exist (the session's date is `started_at`). PostgREST rejected the whole
+query with `42703` **before RLS ran**; the hook threw, `open`/`resolved` collapsed to `[]`,
+and `ContestedFindings` self-quieted — for every user. RLS was clean (all four operator
+identities are Edgewood members AND admins). Fix: `started_at` in the embed, type, and mapping.
+
+**Error honesty (adopted hardening).** The hook now surfaces `isError` distinctly from empty;
+`ContestedFindings` renders an honest inline error ("Couldn't load contested findings — reload
+or check access." — PENDING SIGNATURE) on failure instead of vanishing. Empty stays a
+null-render. A failed query can never again masquerade as "no contests".
+
+### STANDING VERIFICATION LAW (from CONTESTED-UI-D) — recorded here
+
+> **An RLS/PostgREST-gated render hook is proven against the REAL authenticated PostgREST
+> path — anon key + a member/admin-shaped JWT — never service-role SQL, and never only
+> mocked.** A render proof run as superuser `psql` (as OC-3's "Act 4 renders" was) bypasses
+> BOTH the PostgREST embed-parse layer AND RLS: it is an *unproven proof* for the actual
+> query the browser runs. The falsification form: the same query on the wrong column must
+> **fail loudly** (`42703`), not return green-with-empty.
+
+**OC-3b proof of the law (2026-07-24).** A throwaway user was granted Edgewood membership
+(operator-shaped), authenticated for a real JWT, and used to hit PostgREST directly:
+- FIXED query (`…first_read_sessions(started_at)`) → **HTTP 200, 3 rows** (disputed, disputed,
+  immaterial; open=3) — the Contested section renders "awaiting your judgment (3)".
+- FALSIFICATION — old query (`…created_at`), SAME identity → **HTTP 400 `42703`** "column
+  first_read_sessions_1.created_at does not exist" — the exact masquerade, now loud.
+- Membership reverted (Edgewood back to its 4 real members); zero residue. pg_dump
+  `backups/pre_oc3b_20260724.sql`.
+
+**Rider (signed via the OC-3b paste).** When contests are born, the feed button appends
+"{N} client pushback(s) recorded — decide each under Contested below." — so a zero-corrections
+feed still points the operator at the queue. Single-sourced in `FeedCorrectionsButton`.

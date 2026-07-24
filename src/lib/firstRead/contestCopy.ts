@@ -71,4 +71,7 @@ export const CONTEST_COPY = {
   cancel: "Cancel",
   resolvedTrailTitle: "Resolved",
   emptyResolvedReason: "—",
+  // OC-3b error-honesty state (rendered when the contests query FAILS — distinct from the
+  // empty null-render). PENDING SIGNATURE.
+  loadError: "Couldn't load contested findings — reload or check access.",
 } as const;

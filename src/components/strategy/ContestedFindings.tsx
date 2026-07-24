@@ -138,7 +138,18 @@ function OpenContestRow({
 }
 
 export function ContestedFindings({ companyId }: { companyId: string }) {
-  const { open, resolved, resolve } = useClaimContests(companyId);
+  const { open, resolved, resolve, isError } = useClaimContests(companyId);
+
+  // OC-3b error honesty: a FAILED query is not "no contests". Render an honest inline
+  // error (never silently vanish — the created_at-embed masquerade). Empty (below) is
+  // still a null-render.
+  if (isError) {
+    return (
+      <p style={{ ...mono, fontSize: 11, color: "#a4442f", margin: 0 }} role="status">
+        {CONTEST_COPY.loadError}
+      </p>
+    );
+  }
 
   // Quiet when there is nothing contested at all (matches StandingFindings' behavior).
   if (open.length === 0 && resolved.length === 0) return null;

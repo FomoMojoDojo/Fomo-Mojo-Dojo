@@ -26,6 +26,10 @@ const resultLine = (fed: number, paired: number, silent: number) =>
   `${silent === 1 ? "1 stands as an open question" : `${silent} stand as open questions`}.`;
 const prunedLine = (n: number) =>
   `${n} prior model rejection${n === 1 ? "" : "s"} overruled by the client's attestation.`;
+// OC-3b rider — SIGNED via the OC-3b paste. Shown only when contests were born, so the
+// operator is pointed at the Contested queue even when there were zero corrections.
+const contestsLine = (n: number) =>
+  `${n} client pushback${n === 1 ? "" : "s"} recorded — decide each under Contested below.`;
 // ──────────────────────────────────────────────────────────────────────────────
 
 type FeedResult = {
@@ -34,6 +38,7 @@ type FeedResult = {
   paired?: number;
   silent?: number;
   rejections_pruned?: number;
+  contests_born?: number;
   error?: string;
 };
 
@@ -41,12 +46,14 @@ export default function FeedCorrectionsButton({ sessionId }: { sessionId: string
   const [running, setRunning] = useState(false);
   const [line, setLine] = useState<string | null>(null);
   const [pruned, setPruned] = useState<string | null>(null);
+  const [contests, setContests] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
 
   const onFeed = async () => {
     setRunning(true);
     setLine(null);
     setPruned(null);
+    setContests(null);
     setIsError(false);
     try {
       const { data, error } = await supabase.functions.invoke("feed-first-read-corrections", {
@@ -62,6 +69,9 @@ export default function FeedCorrectionsButton({ sessionId }: { sessionId: string
         setLine(resultLine(fed, r.paired ?? 0, r.silent ?? 0));
         if ((r.rejections_pruned ?? 0) > 0) setPruned(prunedLine(r.rejections_pruned as number));
       }
+      // OC-3b: contests are a SEPARATE axis from corrections — surface them independently
+      // (Edgewood had 0 corrections but 3 contests) so the operator is sent to the queue.
+      if ((r.contests_born ?? 0) > 0) setContests(contestsLine(r.contests_born as number));
     } catch (e) {
       setIsError(true);
       setLine(errorLine(e instanceof Error ? e.message : String(e)));
@@ -86,6 +96,7 @@ export default function FeedCorrectionsButton({ sessionId }: { sessionId: string
         </p>
       )}
       {pruned && <p className="cvs-fr-feed-pruned" role="status">{pruned}</p>}
+      {contests && <p className="cvs-fr-feed-contests" role="status">{contests}</p>}
     </div>
   );
 }
