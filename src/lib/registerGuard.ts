@@ -35,14 +35,22 @@ const PUBLIC_REGISTERS = new Set(["public_inferred", "publicly_declared"]);
 export const isPublicRegister = (r: string | null | undefined): boolean =>
   typeof r === "string" && PUBLIC_REGISTERS.has(r);
 
-// V2-5 — claims carry `provenance` on a SEPARATE axis (public_observed vs
-// internal_declared), not the register vocabulary above. Same allowlist polarity:
-// only an explicit public_observed passes; internal_declared / null / unknown BLOCK
-// (fail-toward-blocked at the client seam). The Act 3 "message" band (public
-// perception claims) routes through here so internal/declared claims can never leak.
+// V2-5 / V2-5c — claims carry `provenance` on a SEPARATE axis from the register
+// vocabulary above: public_observed | internal_declared | client_attested | analytic.
+// CLIENT-FACING ADMISSION IS AN ALLOWLIST (fail-toward-blocked): ONLY public_observed
+// passes. internal_declared (the client's own words → Act 4's job), client_attested,
+// 'analytic' (V2-5c — OUR reading, workshop/operator only), null, and any UNKNOWN value
+// all BLOCK. A new value or a new client surface therefore cannot leak by omission —
+// nothing renders client-facing unless it is explicitly public_observed. This is the
+// sole client-facing authority for claims.provenance.
 const PUBLIC_PROVENANCE = new Set(["public_observed"]);
 export const isPublicProvenance = (p: string | null | undefined): boolean =>
   typeof p === "string" && PUBLIC_PROVENANCE.has(p);
+
+// V2-5c — an explicit predicate for the WORKSHOP/ADMIN surfaces that DO render analytic
+// claims (with their provenance visible). Never used to admit onto a client surface —
+// client admission is isPublicProvenance only.
+export const isAnalyticProvenance = (p: string | null | undefined): boolean => p === "analytic";
 
 // Client-view surface classes and the registers each admits.
 //   outside  — Act A / the outside story: public register only (OOD-3).

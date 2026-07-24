@@ -35,7 +35,7 @@ import { checkOutsideViewToDiagnose } from "../gates.ts";
 export type ClaimInferenceInput = {
   claimType: string;
   // INT-2: provenance axis; absent ⇒ public_observed (public paths unchanged).
-  provenance?: "public_observed" | "internal_declared";
+  provenance?: "public_observed" | "internal_declared" | "analytic";
   signalRefs: Array<{
     relationship: string;
     signal_band: "outside" | "organization" | "customer";

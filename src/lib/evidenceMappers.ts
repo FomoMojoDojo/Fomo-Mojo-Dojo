@@ -851,6 +851,14 @@ export function deriveClaimProvenance(
   backing: Array<{ sourceType: string; band: SignalBand }>,
 ): ClaimProvenance {
   if (backing.length === 0) return "public_observed";
+  // V2-5c — a claim backed ENTIRELY by analysis (mojo_analysis) is OUR reading, not the
+  // client's declared words and not the outside record: provenance='analytic' (renders
+  // nowhere client-facing). MIXED backing (analytic + public/uploaded) is NOT tainted to
+  // analytic — it falls through to the rules below (public_observed unless all-declared).
+  // REPORTED (not silently fixed): a claim with SOME analytic backing but ALSO public
+  // backing keeps public_observed, so an analytic-flavored line CAN reach a public
+  // surface if its public backing is thin — the V2-5b render guard is the backstop there.
+  if (backing.every((b) => b.sourceType === "mojo_analysis")) return "analytic";
   return backing.every((b) => b.sourceType === "uploaded_file" && b.band === "organization")
     ? "internal_declared"
     : "public_observed";

@@ -64,7 +64,7 @@ export type ClaimForGate = {
   triangulation_state: string;
   // INT-2: provenance axis (orthogonal to the state ladder). Optional so every
   // public-path caller is untouched; absent ⇒ treated as public_observed.
-  provenance?: "public_observed" | "internal_declared";
+  provenance?: "public_observed" | "internal_declared" | "analytic";
 };
 
 export type SignalForGate = {

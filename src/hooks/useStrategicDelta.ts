@@ -82,7 +82,7 @@ export type ClaimDeltaRow = {
   // attested date is the attesting First Read session's started_at (raw_payload
   // session_id -> session), or null when unresolvable (honest degrade: chip
   // without a date rather than a wrong one).
-  declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | null;
+  declared_claim_provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic" | null;
   declared_attested_date: string | null;
 };
 
@@ -92,7 +92,7 @@ export type ClaimDeltaRow = {
 export type StruckClaim = {
   id: string;
   statement: string;
-  provenance: "internal_declared" | "public_observed" | "client_attested";
+  provenance: "internal_declared" | "public_observed" | "client_attested" | "analytic";
   struck_reason: string | null;
   struck_at: string | null;
   struck_by: string | null;

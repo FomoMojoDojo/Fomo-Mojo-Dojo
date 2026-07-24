@@ -30,7 +30,12 @@ export default function OutsideMessageBand() {
   // upstream fixing (dev console). Then near-duplicates collapse to the fuller variant.
   const { admitted, excluded } = splitPerception(publicClaims, (c) => c.statement);
   if (excluded.length > 0 && typeof console !== "undefined") {
-    console.info("[Act3 Message] excluded (upstream mislabel to fix):", excluded.map((e) => ({ id: e.item.id, reason: e.reason, text: e.item.statement })));
+    // V2-5c — newborns from analysis now carry provenance='analytic' (blocked upstream by
+    // isPublicProvenance), so anything excluded HERE is a public_observed row: a LEGACY
+    // mislabel (born before V2-5c, birth-immutable) that this guard covers. A NON-legacy
+    // anomaly would be a genuinely public row that happens to trip the guard — worth a look.
+    console.info("[Act3 Message] excluded from a public_observed row (legacy mislabel — pre-V2-5c, immutable; guard covers):",
+      excluded.map((e) => ({ id: e.item.id, reason: e.reason, text: e.item.statement })));
   }
   const shown = dedupeByContainment(admitted, (c) => c.statement);
 

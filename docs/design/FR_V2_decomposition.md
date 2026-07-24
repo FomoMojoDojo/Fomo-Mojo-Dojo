@@ -96,6 +96,26 @@ unconditionally (declared, no corroboration rights); else outside/competitor/mar
   intentionally hand-authored method copy, signed once.
 
 ### Act 3 — "What the outside shows" (strategy / positioning / messaging read)
+
+> **THREE-WAY CLAIM PROVENANCE LAW (V2-5c, operator ruling 2026-07-23).** A claim's
+> `provenance` is one of THREE mutually-exclusive origins, plus the corrections lane:
+> - **`public_observed`** — the outside record's own words about the company. The ONLY
+>   value that renders on a client-facing surface (Act 3 Message band, export). Admission
+>   is an ALLOWLIST via `isPublicProvenance` (fail-toward-blocked: a new value or a new
+>   surface cannot leak by omission).
+> - **`internal_declared`** — the client's own declared words (Act 4's say-vs-see job).
+> - **`analytic`** — OUR reading, born entirely from analysis (`mojo_analysis` backing).
+>   Renders NOWHERE client-facing by default; workshop/operator territory only.
+> - (`client_attested` — the corrections feed lane, stamped at the seam.)
+>
+> The writer is `deriveClaimProvenance` (evidenceMappers): all-`mojo_analysis` → `analytic`;
+> all-`uploaded_file`+`organization` → `internal_declared`; else `public_observed`. **MIXED
+> backing (analytic + public) stays `public_observed`** — the analytic signal does not taint
+> the claim; a thin-public row with analytic backing can still reach a public surface, where
+> the V2-5b render guard (framework tokens + analytic voice) is the backstop. `provenance` is
+> **birth-immutable** (INT-2 trigger), so legacy mislabels can't be corrected in place — the
+> render guard covers them; V2-5c closes the class for all newborns.
+
 - **Exists, substantially** — but note the **mixed generator tiers**:
   - **Market options** — `marketOptionSynthesis` / `generate-market-options`,
     **14b gen + 70b judge (local Ollama)**. Renders in `MarketAct` (outside surface,

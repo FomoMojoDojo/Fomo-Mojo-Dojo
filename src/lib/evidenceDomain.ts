@@ -131,7 +131,10 @@ export type SignalDraft = Omit<Signal, "id" | "created_at" | "updated_at">;
 // operator-attested (FR-D1), stamped directly by the corrections feed — NOT by
 // deriveClaimProvenance (which is signal-backing-based and cannot produce it).
 // Set ONCE at birth and immutable thereafter (DB trigger).
-export type ClaimProvenance = "public_observed" | "internal_declared" | "client_attested";
+// V2-5c — 'analytic': a claim born entirely from analysis (mojo_analysis). Neither the
+// client's declared words nor the outside record; renders NOWHERE client-facing by
+// default (workshop/operator territory only). See deriveClaimProvenance + isPublicProvenance.
+export type ClaimProvenance = "public_observed" | "internal_declared" | "client_attested" | "analytic";
 
 export type Claim = {
   id: string;
