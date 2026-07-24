@@ -20,6 +20,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { US_ENGLISH_RULE, flagBritishisms } from "../_shared/languageRule.ts";
+import { contentIdentity } from "../_shared/contentIdentity.ts";
+import { groundPlanStages, type RawPlanStage } from "../../../src/lib/firstRead/planGrounding.ts";
+
+// V2-9 — the plan judge model (house discipline: 14b gen + 70b judge).
+const JUDGE_MODEL = "llama3:70b";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,11 +56,13 @@ type ResponseRow = {
   id: string;
   item_kind: string;
   item_text: string;
-  verdict: "confirmed" | "corrected" | "rejected";
+  item_identity: string;
+  verdict: "confirmed" | "corrected" | "rejected" | "not_important";
   correction_text: string | null;
 };
 
 type Sources = {
+  open_question_identities?: string[]; // V2-9 — cite questions by content identity
   open_question_indices?: number[];
   response_ids?: string[];
   score_ref?: string;
@@ -78,7 +85,7 @@ Deno.serve(async (req) => {
     if (!isLocalOllamaUrl(OLLAMA_BASE_URL)) {
       return json({ error: "Local-only policy violation: OLLAMA_BASE_URL must be localhost/host.docker.internal." }, 412);
     }
-    const trace = { provider: "local_ollama", model: OLLAMA_MODEL, endpoint: OLLAMA_BASE_URL };
+    const trace = { provider: "local_ollama", model: OLLAMA_MODEL, judge_model: JUDGE_MODEL, endpoint: OLLAMA_BASE_URL };
 
     const { session_id } = await req.json().catch(() => ({}));
     if (!session_id) return json({ error: "session_id is required" }, 400);
@@ -105,29 +112,32 @@ Deno.serve(async (req) => {
     }
 
     // ── Assemble the real-data bundle ─────────────────────────────────────────
-    // Open questions — the preferred (most recent with questions) public baseline run.
-    const { data: runs } = await supabase
-      .from("public_baseline_runs")
-      .select("id, created_at, result_json")
+    // V2-9 COUPLING FIX: open questions come from the IDENTITY-BEARING table
+    // (first_read_open_questions, live rows) — not the transient run json. The plan
+    // and the what-we-would-answer block cite them by content identity.
+    const { data: oqData } = await supabase
+      .from("first_read_open_questions")
+      .select("question_text, question_identity")
       .eq("company_id", session.company_id)
-      .order("created_at", { ascending: false })
-      .limit(12);
-    let openQuestions: string[] = [];
-    for (const r of runs ?? []) {
-      const list = (r?.result_json as { open_questions?: unknown })?.open_questions;
-      const qs = Array.isArray(list) ? list.filter((q): q is string => typeof q === "string" && q.trim().length > 0).map((q) => q.trim()) : [];
-      if (qs.length > 0) { openQuestions = qs; break; }
-    }
+      .eq("status", "live")
+      .order("created_at", { ascending: true });
+    const openQuestionRows = ((oqData ?? []) as Array<{ question_text: string; question_identity: string }>)
+      .filter((q) => q.question_text?.trim());
+    const openQuestions: string[] = openQuestionRows.map((q) => q.question_text.trim());
+    const openQuestionIdentities: string[] = openQuestionRows.map((q) => q.question_identity);
+    const questionIdSet = new Set(openQuestionIdentities);
 
-    // Session responses — tally + corrections + rejections + confirmations.
+    // Session responses — tally + corrections + rejections + confirmations + set-asides.
     const { data: respData } = await supabase
       .from("first_read_responses")
-      .select("id, item_kind, item_text, verdict, correction_text")
+      .select("id, item_kind, item_text, item_identity, verdict, correction_text")
       .eq("session_id", session_id);
     const responses = (respData as ResponseRow[]) ?? [];
     const confirmed = responses.filter((r) => r.verdict === "confirmed");
     const corrected = responses.filter((r) => r.verdict === "corrected");
     const rejected = responses.filter((r) => r.verdict === "rejected");
+    const notImportant = responses.filter((r) => r.verdict === "not_important"); // V2-9: no longer dropped
+    const confirmedIdSet = new Set(confirmed.map((r) => r.item_identity));
 
     // Score spread.
     const { data: company } = await supabase
@@ -161,6 +171,7 @@ Deno.serve(async (req) => {
             confirmed_count: confirmed.length,
             corrected_count: corrected.length,
             rejected_count: rejected.length,
+            not_important_count: notImportant.length, // V2-9: set-asides are heard too
             confirmed_items: confirmed.map((r) => r.item_text),
             corrections: corrected.map((r) => ({ was: r.item_text, correction: r.correction_text })),
             rejected_items: rejected.map((r) => r.item_text),
@@ -232,6 +243,22 @@ Produce the proposal fields:
       return JSON.parse(args) as Record<string, string>;
     };
 
+    // Plain-JSON model helper (plan gen on 14b, judge on 70b — llama3:70b has no Ollama
+    // tool support; plain-JSON is the house pattern). require_model: unparseable throws.
+    const callJsonModel = async (model: string, system: string, user: string, temperature: number) => {
+      const res = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: "Bearer ollama", "Content-Type": "application/json" },
+        body: JSON.stringify({ model, temperature, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      });
+      if (!res.ok) throw new Error(`ollama ${model} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const data = await res.json();
+      const content = String(data?.choices?.[0]?.message?.content ?? "");
+      const m = content.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error(`${model} returned no JSON: ${content.slice(0, 200)}`);
+      return JSON.parse(m[0]) as Record<string, unknown>;
+    };
+
     let fields: Record<string, string>;
     try {
       fields = await callModel();
@@ -242,7 +269,7 @@ Produce the proposal fields:
 
     // ── Assemble blocks + server-built sources (model text, server truth) ─────
     const unionSources: Sources = {};
-    if (hasQuestions) unionSources.open_question_indices = openQuestions.map((_, i) => i);
+    if (hasQuestions) unionSources.open_question_identities = openQuestionIdentities; // V2-9: identities
     if (hasResponses) unionSources.response_ids = responses.map((r) => r.id);
     if (hasScore) unionSources.score_ref = "companies.mojo_score";
 
@@ -250,12 +277,12 @@ Produce the proposal fields:
     const push = (key: string, body: string | undefined, sources: Sources) => {
       const text = String(body ?? "").trim();
       if (!text) return; // model produced nothing for this block — drop, never pad
-      if (!sources.open_question_indices?.length && !sources.response_ids?.length && !sources.score_ref) return;
+      if (!sources.open_question_identities?.length && !sources.open_question_indices?.length && !sources.response_ids?.length && !sources.score_ref) return;
       blocks.push({ key, heading: BLOCK_HEADINGS[key] ?? key, body: text, sources });
     };
     if (hasScore) push("where_you_are", fields.where_you_are, { score_ref: "companies.mojo_score" });
     if (hasResponses) push("what_the_read_shows", fields.what_the_read_shows, { response_ids: responses.map((r) => r.id) });
-    if (hasQuestions) push("what_we_would_answer", fields.what_we_would_answer, { open_question_indices: openQuestions.map((_, i) => i) });
+    if (hasQuestions) push("what_we_would_answer", fields.what_we_would_answer, { open_question_identities: openQuestionIdentities });
     push("the_engagement", fields.the_engagement, unionSources);
 
     if (blocks.length === 0) {
@@ -273,6 +300,49 @@ Produce the proposal fields:
     // forbids — surfaced honestly in the trace, NEVER silently rewritten. (Present as
     // signal for the operator; not a hard refusal — a spelling must not kill a real
     // proposal.)
+    // ── V2-9 THE PLAN — staged, PLAN-ONLY (no pricing), grounded (14b gen + 70b judge) ──
+    // Every stage must CITE a real on-the-table item (a confirmed heard-item or an open
+    // question) by content identity; the 70b judge rejects a stage that doesn't genuinely
+    // serve its cited item, and groundPlanStages drops any whose cite doesn't resolve. A
+    // proposal with no groundable plan is honest (empty plan) — never fabricated.
+    const idText = new Map<string, string>();
+    for (const q of openQuestionRows) idText.set(q.question_identity, q.question_text.trim());
+    for (const r of confirmed) idText.set(r.item_identity, r.item_text);
+    let plan: Array<{ title: string; cite_identity: string; cite_kind: "question" | "confirmed" }> = [];
+    try {
+      if (openQuestions.length > 0 || confirmed.length > 0) {
+        const planSys = `You draft a short STAGED plan for a consulting engagement — plan-only, NO pricing, NO durations, NO team, NO guarantees. Each stage is one plain deliverable that SERVES exactly one item the client already surfaced: an open question OR a confirmed finding. For each stage, echo the EXACT text of the item it serves in "serves_text". Order the stages so the FIRST serves the most important open question. Use ONLY the provided items; invent nothing. Respond with ONLY JSON: {"stages":[{"title":"...","serves_text":"..."}]}. No other text.
+
+${US_ENGLISH_RULE}`;
+        const planUser = `Open questions:\n${openQuestions.map((q) => `- ${q}`).join("\n") || "(none)"}\n\nConfirmed findings:\n${confirmed.map((r) => `- ${r.item_text}`).join("\n") || "(none)"}`;
+        const gen = await callJsonModel(OLLAMA_MODEL, planSys, planUser, 0.2);
+        const stageInputs = (Array.isArray(gen.stages) ? gen.stages : []) as Array<{ title?: string; serves_text?: string }>;
+        const rawStages: RawPlanStage[] = await Promise.all(stageInputs.slice(0, 6).map(async (s) => {
+          const servesText = String(s.serves_text ?? "").trim();
+          const id = servesText ? await contentIdentity(servesText) : "";
+          const kind: "question" | "confirmed" = questionIdSet.has(id) ? "question" : "confirmed";
+          const resolved = questionIdSet.has(id) || confirmedIdSet.has(id);
+          return { title: String(s.title ?? "").trim(), cite_identity: resolved ? id : null, cite_kind: kind };
+        }));
+        // 70b judge — grounding + plain + plan-only. Keep a stage ONLY if it genuinely
+        // serves its cited item and names no price/duration.
+        const candidates = rawStages.filter((s) => s.cite_identity);
+        if (candidates.length > 0) {
+          const judgeSys = `You judge plan stages against the item each one cites. Keep a stage ONLY if: it genuinely serves the cited item, it is plain (no jargon), and it names NO price, duration, team, or guarantee. Respond with ONLY JSON: {"verdicts":[{"title":"...","keep":true|false}]}. No other text.`;
+          const judgeUser = `Judge each stage:\n${candidates.map((s) => `- stage: "${s.title}" | serves: "${idText.get(s.cite_identity!) ?? ""}"`).join("\n")}`;
+          const jv = await callJsonModel(JUDGE_MODEL, judgeSys, judgeUser, 0);
+          const verdicts = (Array.isArray(jv.verdicts) ? jv.verdicts : []) as Array<{ title?: string; keep?: boolean }>;
+          const kept = candidates.filter((s) => {
+            const v = verdicts.find((x) => String(x.title ?? "").trim() === s.title);
+            return v ? v.keep === true : false; // no verdict → reject (require_model)
+          });
+          plan = groundPlanStages(kept, questionIdSet, confirmedIdSet);
+        }
+      }
+    } catch (_e) {
+      plan = []; // the plan is non-fatal: a proposal without a groundable plan is honest.
+    }
+
     const language_flags = flagBritishisms(
       [headline, ...blocks.map((b) => b.body)].join(" "),
     );
@@ -282,11 +352,14 @@ Produce the proposal fields:
       headline: headline || null,
       headline_sources: headline ? unionSources : null,
       blocks,
+      plan, // V2-9 — grounded plan stages (may be [])
       bundle_summary: {
         question_count: openQuestions.length,
         confirmed_count: confirmed.length,
         corrected_count: corrected.length,
         rejected_count: rejected.length,
+        not_important_count: notImportant.length, // V2-9: cached, no longer dropped
+        plan_stage_count: plan.length,
         score: hasScore ? { current: score, potential, projected } : null,
       },
       generated_at: new Date().toISOString(),

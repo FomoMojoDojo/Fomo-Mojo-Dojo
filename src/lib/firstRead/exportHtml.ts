@@ -12,7 +12,7 @@
 
 import type { CheckItem, CaptureTally } from "@/hooks/useFirstReadCapture";
 import type { Proposal } from "@/hooks/useFirstReadProposal";
-import { admitProposalBlock, REFUSED_BLOCK } from "@/components/client-view/story/check/ProposalAct";
+import { admitProposalBlock, REFUSED_BLOCK, PLAN_HEADING } from "@/components/client-view/story/check/ProposalAct";
 import { checkItemAnnotation, CHECK_KIND_LABEL, TALLY_SEGMENTS, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
@@ -281,8 +281,15 @@ function sectionProposal(d: FirstReadExportData): string {
         : `<p class="withheld">${esc(REFUSED_BLOCK)}</p>`,
     )
     .join("");
-  const meta = `<p class="proposal-meta">Generated ${esc(p.generated_at ? fmtDateTime(p.generated_at) : "")} · ${esc(p.trace?.model ?? "model")}</p>`;
-  return `${headline}${blocks}${meta}`;
+  // V2-9 — THE PLAN: grounded staged deliverables, single-sourced with the screen. Omitted
+  // when there is no groundable plan (never fabricated).
+  const plan = p.plan ?? [];
+  const planHtml = plan.length > 0
+    ? `<div class="plan"><p class="kind">${esc(PLAN_HEADING)}</p><ol class="plan-list">${plan.map((s) => `<li>${esc(s.title)}</li>`).join("")}</ol></div>`
+    : "";
+  // V2-9 SWEEP: no model name in the leave-behind copy.
+  const meta = `<p class="proposal-meta">Generated ${esc(p.generated_at ? fmtDateTime(p.generated_at) : "")}</p>`;
+  return `${headline}${blocks}${planHtml}${meta}`;
 }
 
 // ── The document ─────────────────────────────────────────────────────────────
@@ -334,6 +341,8 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .gap-list .num{font-family:ui-monospace,Menlo,monospace;font-size:11px;opacity:.5;min-width:18px}
 .proposal-headline{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.01em;margin:0 0 22px}
 .proposal-block{margin:0 0 20px}
+.plan{margin:0 0 20px}
+.plan-list{list-style:decimal;padding-left:20px;margin:8px 0 0;display:flex;flex-direction:column;gap:6px}
 .proposal-block p:last-child{margin:0;white-space:pre-wrap}
 .withheld{font-style:italic;opacity:.6;border-left:2px solid rgba(180,83,9,.5);padding-left:10px;margin:0 0 20px}
 .proposal-meta{font-family:ui-monospace,Menlo,monospace;font-size:10px;opacity:.5;margin:22px 0 0}

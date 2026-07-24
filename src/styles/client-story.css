@@ -1587,6 +1587,37 @@
   opacity: 0.55;
   margin: 10px 0 0;
 }
+/* V2-9 — Act 5 "What We Heard": deterministic verdict playback, grouped. No bars. */
+.cvs-heard { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+.cvs-heard-empty { max-width: 760px; margin: 0 auto; padding: 0 24px; color: var(--mm-muted); }
+.cvs-heard-group { margin: 0 0 22px; }
+.cvs-heard-heading {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--mm-muted); margin: 0 0 8px;
+}
+.cvs-heard-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.cvs-heard-item {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px; line-height: 1.5; color: var(--mm-secondary); margin: 0;
+}
+
+/* V2-9 — THE PLAN: grounded staged deliverables. No bars. */
+.cvs-fr-plan { max-width: 760px; margin: 24px auto 0; padding: 0 24px; }
+.cvs-fr-plan-heading {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 16px; font-weight: 600; color: var(--mm-text); margin: 0 0 12px;
+}
+.cvs-fr-plan-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.cvs-fr-plan-stage { display: flex; gap: 12px; align-items: baseline; }
+.cvs-fr-plan-num {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; opacity: 0.5; min-width: 18px;
+}
+.cvs-fr-plan-title {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px; line-height: 1.5; color: var(--mm-secondary);
+}
+
 /* V2-8 — Gap shrink: the collapsed "set aside by you" group. A native disclosure, no
    bar; the demoted questions read dimmer than the active list. */
 .cvs-gap-setaside {

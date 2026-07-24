@@ -45,8 +45,8 @@ vi.mock("@/hooks/useFirstReadCapture", async (importOriginal) => {
 });
 import TheCheckAct from "./TheCheckAct";
 
-describe("OC-2c GOAL 1 — post-issuance UI shows locked, not silent", () => {
-  it("frozen session → locked banner + every verdict button disabled", () => {
+describe("OC-2c GOAL 1 — post-issuance UI shows a banner, not silent (V2-9 swept copy)", () => {
+  it("frozen session → shared-with-client banner + every verdict button disabled", () => {
     hookState = {
       items: [FROZEN_ITEM],
       tally: { confirmed: 0, corrected: 0, rejected: 1, not_important: 0 },
@@ -56,8 +56,9 @@ describe("OC-2c GOAL 1 — post-issuance UI shows locked, not silent", () => {
     const { container, getByText } = render(
       <TheCheckAct companyId="c1" sessionId="s1" />,
     );
-    // honest, not silent: the locked banner is present
-    expect(getByText(/This session is locked/i)).toBeTruthy();
+    // honest, not silent: the post-issuance banner is present (V2-9 sweep: no freeze/lock
+    // machinery in room copy — a soft "shared with the client" line instead).
+    expect(getByText(/shared with the client/i)).toBeTruthy();
     // and the verdict buttons cannot be tapped
     const verdictButtons = Array.from(container.querySelectorAll("button"))
       .filter((b) => /Confirm|Correct|Reject|not important/i.test(b.textContent || ""));

@@ -14,8 +14,10 @@ import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
 
-// ── Client-facing copy — SIGNED (Gate 3) / carried forward ───────────────────
-const FROZEN_MSG = "This session is locked — the proposal has been issued. Verdicts can no longer change.";
+// ── Client-facing copy ───────────────────────────────────────────────────────
+// V2-9 SWEEP: freeze/lock/session machinery removed from room copy (the freeze still
+// happens silently at issuance). PENDING OPERATOR SIGNATURE.
+const FROZEN_MSG = "This read has been shared with the client.";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function TheCheckAct({
@@ -30,7 +32,7 @@ export default function TheCheckAct({
 }) {
   const [error, setError] = useState<string | null>(null);
 
-  const { items, tally, loading, frozen, sessionStatus, setVerdict } = useFirstReadCapture(
+  const { items, tally, loading, frozen, setVerdict } = useFirstReadCapture(
     companyId,
     sessionId || undefined,
     ensureSession,
@@ -47,15 +49,7 @@ export default function TheCheckAct({
 
   return (
     <div className="cvs-fr-check">
-      {/* session bar only once a session exists (lazy-mint mints on first verdict) */}
-      {sessionId && (
-        <div className="cvs-check-session-bar">
-          <span className="cvs-check-session-meta">
-            session {sessionId.slice(0, 8)}… · status {sessionStatus ?? "…"}
-          </span>
-        </div>
-      )}
-
+      {/* V2-9 SWEEP: the raw session-id/status bar (machinery) is removed from room copy. */}
       <CheckTally tally={tally} />
 
       {frozen && <p className="cvs-check-frozen">{FROZEN_MSG}</p>}

@@ -27,6 +27,7 @@ import OutsideBand from "@/components/client-view/story/movement/OutsideBand";
 import OutsideMessageBand from "@/components/client-view/story/movement/OutsideMessageBand";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
+import HeardAct from "@/components/client-view/story/check/HeardAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
 import WhyOutsideAct from "@/components/client-view/story/WhyOutsideAct";
 import StatedProblemAct from "@/components/client-view/story/StatedProblemAct";
@@ -175,13 +176,16 @@ export default function FirstReadView() {
           <TheCheckAct companyId={companyId!} sessionId={sessionId} ensureSession={ensureSession} />
         );
       // Act 5 — the job map (norm exhibit) + Gap + Proposal folded (restructure = V2-8/9).
+      // Act 5 — heard → help → plan (V2-9). The job map stays as the norm exhibit
+      // (where V2-1 slotted it), between the help questions and the plan.
       case "help":
         return (
           <>
+            <HeardAct companyId={companyId} sessionId={sessionId} />
+            <GapAct companyId={companyId} sessionId={sessionId} />
             <StandardsShell>
               <FrontDoorMapAct />
             </StandardsShell>
-            <GapAct companyId={companyId} sessionId={sessionId} />
             <ProposalAct
               companyId={companyId}
               sessionId={sessionId}

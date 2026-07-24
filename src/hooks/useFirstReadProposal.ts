@@ -10,6 +10,9 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type ProposalSources = {
+  // V2-9 — open questions cited by content IDENTITY (survives list reorder/regen). Legacy
+  // proposals may carry index positions; the generator no longer mints them.
+  open_question_identities?: string[];
   open_question_indices?: number[];
   response_ids?: string[];
   score_ref?: string;
@@ -17,11 +20,20 @@ export type ProposalSources = {
 
 export type ProposalBlock = { key: string; heading: string; body: string; sources: ProposalSources };
 
+// V2-9 — THE PLAN: staged, plan-only (no pricing). Each stage CITES the heard-item or
+// open question it serves, by content identity — ungrounded stages are judge-rejected.
+export type ProposalPlanStage = {
+  title: string;
+  cite_identity: string; // a real on-the-table question/confirmed-item identity
+  cite_kind: "question" | "confirmed";
+};
+
 export type Proposal = {
   status: "generated" | "empty";
   headline?: string | null;
   headline_sources?: ProposalSources | null;
   blocks?: ProposalBlock[];
+  plan?: ProposalPlanStage[]; // V2-9 — the grounded plan (may be empty; never fabricated)
   empty_reason?: string;
   bundle_summary?: unknown;
   generated_at?: string;
