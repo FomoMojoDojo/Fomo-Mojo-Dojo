@@ -1587,6 +1587,31 @@
   opacity: 0.55;
   margin: 10px 0 0;
 }
+/* V2-8 — Gap shrink: the collapsed "set aside by you" group. A native disclosure, no
+   bar; the demoted questions read dimmer than the active list. */
+.cvs-gap-setaside {
+  margin: 20px auto 0;
+  max-width: 760px;
+}
+.cvs-gap-setaside-head {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mm-muted);
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 0;
+}
+.cvs-gap-setaside-head::-webkit-details-marker { display: none; }
+.cvs-gap-setaside-head::before { content: "▸ "; opacity: 0.6; }
+.cvs-gap-setaside[open] .cvs-gap-setaside-head::before { content: "▾ "; }
+.cvs-gap-list-demoted { margin-top: 8px; }
+.cvs-gap-item.is-demoted {
+  opacity: 0.62;
+  color: var(--mm-muted);
+}
+
 /* V2-7 — Act 4 say-vs-see exhibit: three groups, each item shows the client's declared
    statement (say) beside the outside record's reading (see), explicitly labeled, with a
    verbatim receipt where one exists. No vertical accent bars; spacing carries structure. */

@@ -1,17 +1,19 @@
 /*
- * First Read · Act 4 — The Gap (content).
+ * First Read · Act 5 — The Gap (open questions).
  *
  * V2-4: renders the open questions from the first_read_open_questions TABLE (the
  * post-findings generator's output, keyed to the findings + publicly_silent deltas
- * they depend on) — NOT the old result_json.open_questions[] json path. The
- * generator-emitted (birth) order is the only ranking; none is invented. Distinct
- * from the story surface's OutsideQuestionAct, which shows a single lead question;
- * here the presenter walks the whole set. Act framing (eyebrow + sentence) is
- * supplied by the rail; this renders only the list, honest-empty when no live
- * questions exist for the company.
+ * they depend on). Birth order is the only ranking; none is invented.
+ *
+ * V2-8 SHRINK: a set-aside (not_important) verdict in the room DEMOTES the questions
+ * linked to that item (by anchor_identity) into a collapsed "set aside by you" group —
+ * visible, reversible (toggle the verdict off and they return), never deleted. Same
+ * live-in-session path as the Check tally (both read first_read_responses).
  */
 
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
+import { useSetAsideIdentities } from "@/hooks/useSetAsideIdentities";
+import { partitionByShrink, setAsideGroupHeading } from "@/lib/firstRead/gapShrink";
 
 // ── Client-facing copy — OPERATOR-SIGNED 2026-07-23 (Gate 3) ─────────────────
 // Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
@@ -19,22 +21,44 @@ import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 export const GAP_EMPTY = "The outside read left no open questions for this company.";
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function GapAct({ companyId }: { companyId?: string }) {
-  const { questions, loading } = useFirstReadOpenQuestions(companyId);
+export default function GapAct({ companyId, sessionId }: { companyId?: string; sessionId?: string }) {
+  const { rows, loading } = useFirstReadOpenQuestions(companyId);
+  const { identities: setAside } = useSetAsideIdentities(sessionId);
 
   if (loading) return null;
-  if (questions.length === 0) {
+  if (rows.length === 0) {
     return <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>;
   }
 
+  const { active, demoted } = partitionByShrink(rows, setAside);
+
   return (
-    <ol className="cvs-gap-list">
-      {questions.map((q, i) => (
-        <li className="cvs-gap-item" key={i}>
-          <span className="cvs-gap-num">{i + 1}</span>
-          <span className="cvs-gap-text">{q}</span>
-        </li>
-      ))}
-    </ol>
+    <div className="cvs-gap">
+      {active.length > 0 ? (
+        <ol className="cvs-gap-list">
+          {active.map((q, i) => (
+            <li className="cvs-gap-item" key={q.question_text + i}>
+              <span className="cvs-gap-num">{i + 1}</span>
+              <span className="cvs-gap-text">{q.question_text}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>
+      )}
+
+      {demoted.length > 0 && (
+        <details className="cvs-gap-setaside">
+          <summary className="cvs-gap-setaside-head">{setAsideGroupHeading(demoted.length)}</summary>
+          <ol className="cvs-gap-list cvs-gap-list-demoted">
+            {demoted.map((q, i) => (
+              <li className="cvs-gap-item is-demoted" key={q.question_text + i}>
+                <span className="cvs-gap-text">{q.question_text}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
   );
 }

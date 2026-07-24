@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
       publicByIdentity.set(identity, { id: c.id, statement: c.statement, identity });
     }
 
-    let paired = 0, silent = 0, rejectionsPruned = 0;
+    let paired = 0, silent = 0, rejectionsPruned = 0, deltaOnly = 0;
     const prunedIdentities: string[] = [];
 
     for (const r of corrections) {
@@ -170,6 +170,16 @@ Deno.serve(async (req) => {
         { onConflict: "id", ignoreDuplicates: true },
       );
       if (cErr) throw new Error(`attested claim upsert failed: ${cErr.message}`);
+
+      // ── V2-8 RIDER (2026-07-23) — a DELTA-item correction births the client_attested
+      //    claim ONLY. It must NOT stamp a delta: a delta item's item_identity is a delta
+      //    content_identity (not a claim-statement identity), so it never matches a public
+      //    claim → the old path always wrote a publicly_silent delta, FABRICATING a
+      //    comparison verdict for an uncompared claim (absence-isn't-a-verdict). Delta
+      //    classification belongs to the NEXT delta compute: generate-claim-deltas admits
+      //    client_attested as a declared candidate (claimDeltaSynthesis) and keys by fresh
+      //    pair/silence content_identity — not in the negcache — so it is picked up cleanly.
+      if (r.item_kind === "delta") { deltaOnly++; continue; }
 
       // ── (c) Resolve finding → public_observed claim by content identity ───────
       const match = publicByIdentity.get(r.item_identity);
@@ -279,6 +289,8 @@ Deno.serve(async (req) => {
       corrections_fed: corrections.length,
       paired,
       silent,
+      delta_only: deltaOnly, // V2-8 rider: delta corrections that birthed a claim but NO delta
+
       rejections_pruned: rejectionsPruned,
       pruned_identities: prunedIdentities,
       contests_born: plan.births.length,

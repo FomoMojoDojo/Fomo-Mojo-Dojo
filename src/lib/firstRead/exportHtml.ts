@@ -16,6 +16,7 @@ import { admitProposalBlock, REFUSED_BLOCK } from "@/components/client-view/stor
 import { checkItemAnnotation, CHECK_KIND_LABEL, TALLY_SEGMENTS, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
 import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHeroAct";
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
+import { setAsideGroupHeading } from "@/lib/firstRead/gapShrink";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
 import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/whyOutside";
@@ -44,7 +45,8 @@ export interface FirstReadExportData {
   // (public_observed claims, register-locked at the source). Empty → honest-absence.
   perception: string[];
   check: { items: CheckItem[]; tally: CaptureTally };
-  gap: string[];
+  gap: string[]; // the ACTIVE open questions at issuance (V2-8: set-aside ones demoted out)
+  gapSetAside?: string[]; // V2-8 — questions the client set aside, at issuance-time state
   proposal: Proposal | null;
   exportedAt: string;
 }
@@ -250,9 +252,19 @@ function sectionCheck(d: FirstReadExportData): string {
 }
 
 function sectionGap(d: FirstReadExportData): string {
-  if (d.gap.length === 0) return `<p class="empty">${esc(GAP_EMPTY)}</p>`;
+  const setAside = d.gapSetAside ?? [];
+  // V2-8 — the leave-behind reflects the issuance-time shrink: active questions render as
+  // the list; set-aside ones are demoted to a labeled group (never dropped), single-sourced
+  // with the screen's heading.
+  const demotedHtml = setAside.length > 0
+    ? `<div class="gap-setaside"><p class="gap-setaside-head">${esc(setAsideGroupHeading(setAside.length))}</p><ul class="gap-setaside-list">${setAside.map((q) => `<li>${esc(q)}</li>`).join("")}</ul></div>`
+    : "";
+  if (d.gap.length === 0) {
+    const emptyHtml = `<p class="empty">${esc(GAP_EMPTY)}</p>`;
+    return `${emptyHtml}${demotedHtml}`;
+  }
   const items = d.gap.map((q, i) => `<li><span class="num">${i + 1}</span><span>${esc(q)}</span></li>`).join("");
-  return `<ol class="gap-list">${items}</ol>`;
+  return `<ol class="gap-list">${items}</ol>${demotedHtml}`;
 }
 
 function sectionProposal(d: FirstReadExportData): string {
@@ -316,6 +328,9 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .tally{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin:0 0 18px}
 .gap-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px}
 .gap-list li{display:flex;gap:12px;align-items:baseline}
+.gap-setaside{margin:18px 0 0}
+.gap-setaside-head{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.55;margin:0 0 6px}
+.gap-setaside-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;opacity:.6}
 .gap-list .num{font-family:ui-monospace,Menlo,monospace;font-size:11px;opacity:.5;min-width:18px}
 .proposal-headline{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.01em;margin:0 0 22px}
 .proposal-block{margin:0 0 20px}

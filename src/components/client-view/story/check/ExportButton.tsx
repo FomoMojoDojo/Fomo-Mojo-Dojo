@@ -21,6 +21,8 @@ import { admitForSurface } from "@/lib/registerGuard";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { orderOtherFindings } from "@/components/client-view/story/OutsideFindingsAct";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
+import { useSetAsideIdentities } from "@/hooks/useSetAsideIdentities";
+import { partitionByShrink } from "@/lib/firstRead/gapShrink";
 import { useOutsidePerception } from "@/hooks/useOutsidePerception";
 import { isPublicProvenance } from "@/lib/registerGuard";
 import { splitPerception } from "@/lib/firstRead/perceptionGuard";
@@ -64,7 +66,10 @@ export default function ExportButton({
   const { data: statedProblem, loading: statedProblemLoading } = useFirstReadStatedProblem(companyId);
   // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
   // so the leave-behind can never diverge from the meeting.
-  const { questions: openQuestionList, loading: openQuestionsLoading } = useFirstReadOpenQuestions(companyId);
+  const { rows: openQuestionRows, loading: openQuestionsLoading } = useFirstReadOpenQuestions(companyId);
+  // V2-8 — the leave-behind reflects the issuance-time shrink: set-aside questions are
+  // demoted (never dropped), via the SAME partition the screen (GapAct) uses.
+  const { identities: setAsideIdentities } = useSetAsideIdentities(sessionId);
   // V2-5 — the Act 3 "Message" band: register-locked at the source (public_observed only).
   const { claims: perceptionClaims, loading: perceptionLoading } = useOutsidePerception(companyId);
   const [session, setSession] = useState<{ started_at: string | null; presenter: string | null } | null>(null);
@@ -143,7 +148,8 @@ export default function ExportButton({
         (c) => c.statement,
       ).map((c) => c.statement.trim()),
       check: { items, tally },
-      gap: openQuestionList,
+      gap: partitionByShrink(openQuestionRows, setAsideIdentities).active.map((q) => q.question_text),
+      gapSetAside: partitionByShrink(openQuestionRows, setAsideIdentities).demoted.map((q) => q.question_text),
       proposal,
       exportedAt: new Date().toISOString(),
     };

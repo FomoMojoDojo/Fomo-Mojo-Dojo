@@ -21,8 +21,15 @@ describe("V2-4 — packAnchorChunks (wall-clock cap)", () => {
 // Both surfaces read the SAME hook — mock it to drive the render + prove the source.
 let hookState: { questions: string[]; loading: boolean } = { questions: [], loading: false };
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({
-  useFirstReadOpenQuestions: () => ({ ...hookState, rows: [] }),
+  // V2-8: GapAct reads `rows` (with anchor_identity); derive them from the mocked questions.
+  useFirstReadOpenQuestions: () => ({
+    loading: hookState.loading,
+    questions: hookState.questions,
+    rows: hookState.questions.map((q) => ({ question_text: q, anchor_identity: null, source_kind: "finding", finding_identity: null })),
+  }),
 }));
+// V2-8: GapAct also reads the set-aside identities — none in these tests.
+vi.mock("@/hooks/useSetAsideIdentities", () => ({ useSetAsideIdentities: () => ({ identities: new Set<string>(), loading: false }) }));
 import GapAct from "@/components/client-view/story/GapAct";
 import OutsideQuestionAct from "@/components/client-view/story/OutsideQuestionAct";
 
