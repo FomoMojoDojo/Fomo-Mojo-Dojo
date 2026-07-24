@@ -8,10 +8,11 @@
  * issuance (open → proposal_issued) is the Proposal.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFirstReadCapture";
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
+import SayVsSeeExhibit from "./SayVsSeeExhibit";
 
 // ── Client-facing copy — SIGNED (Gate 3) / carried forward ───────────────────
 const FROZEN_MSG = "This session is locked — the proposal has been issued. Verdicts can no longer change.";
@@ -39,6 +40,11 @@ export default function TheCheckAct({
     setError(await setVerdict(item, v, correction));
   };
 
+  // V2-7 — the say-vs-see delta items render in the exhibit ABOVE; the non-delta findings/
+  // markets/differentiators render in the Check list below. Same session/verdict/tally.
+  const deltaItems = useMemo(() => items.filter((i) => i.kind === "delta"), [items]);
+  const checkItems = useMemo(() => items.filter((i) => i.kind !== "delta"), [items]);
+
   return (
     <div className="cvs-fr-check">
       {/* session bar only once a session exists (lazy-mint mints on first verdict) */}
@@ -57,14 +63,22 @@ export default function TheCheckAct({
 
       {loading ? (
         <p className="cvs-support">Loading items…</p>
-      ) : items.length === 0 ? (
-        <p className="cvs-support">No checkable items surfaced for this company yet.</p>
       ) : (
-        <div className="cvs-check-list">
-          {items.map((item) => (
-            <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
-          ))}
-        </div>
+        <>
+          {/* V2-7 say-vs-see exhibit — always renders its three groups (honest-absence
+              per empty group), so the contrast frame is present even before deltas exist. */}
+          <SayVsSeeExhibit items={deltaItems} onSet={onSet} disabled={frozen} />
+
+          {checkItems.length === 0 ? (
+            <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
+          ) : (
+            <div className="cvs-check-list">
+              {checkItems.map((item) => (
+                <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

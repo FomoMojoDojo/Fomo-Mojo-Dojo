@@ -17,6 +17,7 @@ import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 // The one identity authority. Same cross-runtime import the market portfolio uses.
 import { contentIdentity } from "../../supabase/functions/_shared/contentIdentity.ts";
 import { assembleCheckItems, type RawCheckItem } from "@/lib/firstRead/checkItems";
+import { assembleDeltaItems, dropCollidingDeltas, type DeltaInput } from "@/lib/firstRead/deltaItems";
 
 // OC-2: 'not_important' — "True — but not important to us". Its own verdict value
 // beside reject, so the feed can map it to contest_kind='immaterial' (reject →
@@ -95,24 +96,83 @@ export function useFirstReadCapture(
     [findingsData, markets, canvas],
   );
 
-  // Compute identities (async sha256) through the TS authority.
+  // V2-7 — the say-vs-see delta items (kind='delta'), fetched + register-guarded here so
+  // they carry the SAME verdict/tally/feed machinery as findings. Identity is the delta's
+  // content_identity (a distinct construction), joined to a verbatim quote on the see side.
+  const [deltaRaw, setDeltaRaw] = useState<RawCheckItem[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!companyId) { setDeltaRaw([]); return; }
+      const { data: dData } = await supabase
+        .from("claim_deltas")
+        .select("id, delta_type, content_identity, declared_claim_id, public_claim_id")
+        .eq("company_id", companyId)
+        .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
+      const dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
+      if (dRows.length === 0) { if (!cancelled) setDeltaRaw([]); return; }
+
+      const claimIds = [...new Set(dRows.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
+      const { data: cData } = await supabase.from("claims").select("id, statement, provenance").in("id", claimIds);
+      const claimById = new Map(((cData ?? []) as Array<{ id: string; statement: string; provenance: string }>).map((c) => [c.id, c]));
+
+      // Verbatim receipt on the SEE (public) claim: claim_signal_refs(supports) → signals.quote.
+      const publicClaimIds = [...new Set(dRows.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
+      const quoteByClaim = new Map<string, { quote: string; quote_source_text: string | null; event_date: string | null }>();
+      if (publicClaimIds.length) {
+        const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).eq("relationship", "supports");
+        const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+        const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+        if (sigIds.length) {
+          const { data: sigs } = await supabase.from("signals").select("id, quote, quote_source_text, event_date").in("id", sigIds).not("quote", "is", null);
+          const sigById = new Map(((sigs ?? []) as Array<{ id: string; quote: string; quote_source_text: string | null; event_date: string | null }>).map((s) => [s.id, s]));
+          for (const r of refRows) {
+            if (quoteByClaim.has(r.claim_id)) continue;
+            const s = sigById.get(r.signal_id);
+            if (s?.quote) quoteByClaim.set(r.claim_id, { quote: s.quote, quote_source_text: s.quote_source_text, event_date: s.event_date });
+          }
+        }
+      }
+
+      const inputs: DeltaInput[] = dRows.map((d) => {
+        const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : null;
+        const pub = d.public_claim_id ? claimById.get(d.public_claim_id) : null;
+        const q = d.public_claim_id ? quoteByClaim.get(d.public_claim_id) : null;
+        return {
+          id: d.id, delta_type: d.delta_type, content_identity: d.content_identity,
+          declared_statement: decl?.statement ?? null, public_statement: pub?.statement ?? null,
+          public_provenance: pub?.provenance ?? null,
+          quote: q?.quote ?? null, quote_source_text: q?.quote_source_text ?? null, event_date: q?.event_date ?? null,
+        };
+      });
+      if (!cancelled) setDeltaRaw(assembleDeltaItems(inputs));
+    })();
+    return () => { cancelled = true; };
+  }, [companyId]);
+
+  // Compute identities (async sha256) through the TS authority, then MERGE the delta items
+  // (identity already set). COLLISION DETECTION: a delta whose identity happens to equal a
+  // non-delta (finding) identity is DROPPED — the shared tally/response key
+  // (session_id, item_identity) must never conflate two different items under one verdict.
   useEffect(() => {
     const mySeq = ++identSeq.current;
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const withIdentity = await Promise.all(
-        raw.map(async (r) => ({ ...r, identity: await contentIdentity(r.text) })),
+      const hashed = await Promise.all(
+        raw.map(async (r) => ({ ...r, identity: r.identity ?? (await contentIdentity(r.text)) })),
       );
+      const nonDeltaIds = new Set(hashed.map((h) => h.identity));
+      const deltas = dropCollidingDeltas(deltaRaw, nonDeltaIds) as Array<RawCheckItem & { identity: string }>;
       if (!cancelled && mySeq === identSeq.current) {
-        setBase(withIdentity);
+        setBase([...hashed, ...deltas]);
         setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [raw]);
+  }, [raw, deltaRaw]);
 
   const refetchResponses = useCallback(async () => {
     if (!sessionId) {

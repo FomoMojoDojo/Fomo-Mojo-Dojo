@@ -14,12 +14,29 @@ import type { MarketOption } from "@/hooks/useMarketOptions";
 import type { PositioningItem } from "@/lib/types";
 import { admitForSurface } from "@/lib/registerGuard";
 
-export type CheckItemKind = "finding" | "market" | "differentiator";
+export type CheckItemKind = "finding" | "market" | "differentiator" | "delta";
+
+// V2-7 — a say-vs-see delta item's render data (kind='delta' only). The SAY side is the
+// client's declared statement; the SEE side is the outside record's reading; the receipt
+// is a verbatim quote on the SEE side (CV-2e) or null (honest absence).
+export interface DeltaRender {
+  deltaType: "echoed" | "divergent" | "publicly_silent";
+  say: string;
+  see: string;
+  quote: string | null;
+  quoteSourceText: string | null;
+  eventDate: string | null;
+}
 
 export interface RawCheckItem {
   kind: CheckItemKind;
   ref: string; // source row id — PROVENANCE ONLY (no FK on the capture row)
   text: string; // verbatim statement shown to the client and hashed for identity
+  // V2-7 — a precomputed identity (the delta's content_identity, a distinct construction
+  // from contentIdentity(text)); when absent, identity is hashed from `text` as before.
+  identity?: string;
+  // V2-7 — present only for kind='delta'; the say-vs-see render payload.
+  delta?: DeltaRender;
 }
 
 export function assembleCheckItems(args: {

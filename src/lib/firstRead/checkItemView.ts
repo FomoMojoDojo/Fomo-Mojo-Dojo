@@ -13,6 +13,9 @@ export const CHECK_KIND_LABEL: Record<CheckItem["kind"], string> = {
   finding: "Finding",
   market: "Market",
   differentiator: "Differentiator",
+  // V2-7 — delta items render in the say-vs-see exhibit with their own group labels
+  // (sayVsSee.ts), not this Check-list kind label; present to satisfy the exhaustive type.
+  delta: "Contrast",
 };
 
 // The single source for the Check tally's segment labels — the SCREEN (CheckTally)

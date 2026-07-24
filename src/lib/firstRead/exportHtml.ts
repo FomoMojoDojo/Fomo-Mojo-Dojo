@@ -21,6 +21,7 @@ import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
 import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/whyOutside";
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import { outsideBand } from "@/lib/firstRead/outsideBands";
+import { SAY_VS_SEE_GROUPS, SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, SILENT_BRIDGE_NOTE } from "@/lib/firstRead/sayVsSee";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
@@ -191,8 +192,40 @@ function sectionCheck(d: FirstReadExportData): string {
   // Single-sourced with the screen (CheckTally) via TALLY_SEGMENTS — same order,
   // same labels, incl. the fourth "set aside" segment.
   const tallyHtml = `<p class="tally">${TALLY_SEGMENTS.map((seg) => `<b>${tally[seg.key]}</b> ${seg.label}`).join(" · ")}</p>`;
-  if (items.length === 0) return `${tallyHtml}<p class="empty">${esc(T.checkEmpty)}</p>`;
-  const rows = items
+
+  // V2-7 — the say-vs-see exhibit renders ABOVE the Check list, single-sourced with the
+  // screen (SAY_VS_SEE_GROUPS + the same labels). Delta items partition out of the list.
+  const deltaItems = items.filter((i) => i.kind === "delta" && i.delta);
+  const checkOnly = items.filter((i) => i.kind !== "delta");
+  const annFor = (item: CheckItem): string => {
+    const ann = checkItemAnnotation(item);
+    if (ann?.kind === "confirmed") return `<p class="ann confirmed">Confirmed by you · ${esc(ann.date)}</p>`;
+    if (ann?.kind === "rejected") return `<p class="ann rejected">Rejected by the client · ${esc(ann.date)}</p>`;
+    if (ann?.kind === "corrected") return `<p class="ann corrected">Corrected: “${esc(ann.text)}”</p>`;
+    if (ann?.kind === "not_important") return `<p class="ann notimportant">${esc(NOT_IMPORTANT_NOTE)}${esc(ann.date)}</p>`;
+    return "";
+  };
+  const exhibit = SAY_VS_SEE_GROUPS.map((g) => {
+    const gi = deltaItems.filter((i) => i.delta!.deltaType === g.key);
+    if (gi.length === 0) return `<div class="ss-group"><p class="ss-head">${esc(g.heading)}</p><p class="empty">${esc(g.empty)}</p></div>`;
+    const rowsHtml = gi.map((i) => {
+      const dd = i.delta!;
+      const silent = g.key === "publicly_silent" || !dd.see;
+      const quoteHtml = dd.quote
+        ? `<figure class="ann notimportant"><blockquote>“${esc(dd.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}${dd.eventDate ? ` · ${esc(dd.eventDate)}` : ""}</figcaption></figure>`
+        : "";
+      return `<div class="ss-item">`
+        + `<div class="ss-side"><p class="kind">${esc(SAY_LABEL)}</p><p>${esc(dd.say)}</p></div>`
+        + `<div class="ss-side"><p class="kind">${esc(SEE_LABEL)}</p><p${silent ? ' class="empty"' : ""}>${esc(silent ? SILENT_SEE_LINE : dd.see)}</p>${quoteHtml}</div>`
+        + `${annFor(i)}</div>`;
+    }).join("");
+    const bridge = g.key === "publicly_silent" ? `<p class="ss-bridge">${esc(SILENT_BRIDGE_NOTE)}</p>` : "";
+    return `<div class="ss-group"><p class="ss-head">${esc(g.heading)}</p>${rowsHtml}${bridge}</div>`;
+  }).join("");
+  const exhibitHtml = `<div class="ss-exhibit">${exhibit}</div>`;
+
+  if (checkOnly.length === 0) return `${tallyHtml}${exhibitHtml}<p class="empty">${esc(T.checkEmpty)}</p>`;
+  const rows = checkOnly
     .map((item) => {
       const ann = checkItemAnnotation(item);
       let annHtml = "";
@@ -213,7 +246,7 @@ function sectionCheck(d: FirstReadExportData): string {
       return `<div class="${cls}"><p class="kind">${esc(CHECK_KIND_LABEL[item.kind])}</p><p class="item-text">${esc(item.text)}</p>${annHtml}</div>`;
     })
     .join("");
-  return `${tallyHtml}<div class="check-list">${rows}</div>`;
+  return `${tallyHtml}${exhibitHtml}<div class="check-list">${rows}</div>`;
 }
 
 function sectionGap(d: FirstReadExportData): string {
@@ -294,6 +327,14 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .j-node{font-weight:600}
 .j-sub{color:#5f5443;font-size:13px}
 .say-verbatim{white-space:pre-wrap}
+.ss-exhibit{margin:0 0 22px}
+.ss-group{margin:0 0 20px}
+.ss-head{font-weight:600;font-size:15px;margin:0 0 10px}
+.ss-item{padding:12px 0;border-top:1px solid rgba(17,17,17,.08);display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ss-item:first-of-type{border-top:none}
+.ss-item .ann{grid-column:1 / -1}
+.ss-side p:last-child{margin:4px 0 0}
+.ss-bridge{font-family:ui-monospace,Menlo,monospace;font-size:10px;opacity:.55;margin:8px 0 0}
 .ob-band{margin:24px 0 0;padding-top:18px;border-top:1px solid rgba(17,17,17,.08)}
 .ob-heading{font-weight:600;font-size:16px;margin:0 0 3px}
 .ob-framing{color:#5f5443;font-size:13px;margin:0 0 12px}

@@ -1587,6 +1587,68 @@
   opacity: 0.55;
   margin: 10px 0 0;
 }
+/* V2-7 — Act 4 say-vs-see exhibit: three groups, each item shows the client's declared
+   statement (say) beside the outside record's reading (see), explicitly labeled, with a
+   verbatim receipt where one exists. No vertical accent bars; spacing carries structure. */
+.cvs-saysee {
+  max-width: 760px;
+  margin: 0 auto 8px;
+  padding: 0 24px;
+}
+.cvs-saysee-group {
+  margin: 0 0 28px;
+}
+.cvs-saysee-heading {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mm-text);
+  margin: 0 0 12px;
+}
+.cvs-saysee-empty {
+  margin: 0;
+  color: var(--mm-muted);
+  font-size: 14px;
+}
+.cvs-saysee-bridge {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--mm-muted);
+  margin: 10px 0 0;
+}
+.cvs-delta-item {
+  padding: 16px 0;
+  border-top: 1px solid var(--mm-line);
+}
+.cvs-delta-item:first-child { border-top: none; }
+.cvs-delta-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 560px) { .cvs-delta-pair { grid-template-columns: 1fr; gap: 12px; } }
+.cvs-delta-label {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin: 0 0 5px;
+}
+.cvs-delta-text {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  margin: 0;
+}
+.cvs-delta-text.is-silent {
+  color: var(--mm-muted);
+  font-style: italic;
+}
+
 /* V2-5 — Act 3 "What the Outside Shows": the three register-locked bands (strategy /
    positioning / message). Signed heading + framing line above each band's public read,
    breathing room, NO vertical accent bar. */
