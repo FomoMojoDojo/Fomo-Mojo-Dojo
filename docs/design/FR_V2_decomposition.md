@@ -39,16 +39,32 @@ all registers (the surface whose job is the say/see split). **Voice law**
 (`claimProvenance.classifyVoice`): own-domain content → `client_voice`
 unconditionally (declared, no corroboration rights); else outside/competitor/market.
 
-### Act 1 — "What you say" (stated problem) — SHIPPED (V2-2 / V2-2b)
-> **SOURCE INVERSION (V2-2b, supersedes the earlier "reads the public page" note):**
-> the stated problem comes FIRST from the company's OWN declared brief
-> (`companies.strategic_problem_brief` — internal register, the problem the client
-> brought at creation), lightly distilled in their words. ONLY when that's blank is it
-> INFERRED from their public own-domain site (public register, preferring a problem
-> framing over an offerings description; a description-only read is stamped
-> `descriptive_fallback` and labeled honestly). The two NEVER blend; the row's
-> `register` (`internal_declared` | `public_observed`) stamps which fired, with a
-> provenance label at render. 14b gen + 70b judge; honest-empty only when both blank.
+### Act 1 — "What you say" (stated problem) — SHIPPED (V2-2 / V2-2b / V2-3 / V2-3b)
+
+> **THREE-LAYER LAW (operator ruling 2026-07-23).** The read triangulates three layers:
+> (1) **what they told us** — the problem the client stated in the survey (Act 1);
+> (2) **what they say publicly** — their positioning; (3) **what customers experience**.
+> The product reads the **gaps between (2) and (3) in the context of (1)**. Act 1 is
+> layer (1): the client's stated problem, rendered so they know they're heard.
+
+> **VERBATIM-FIRST (V2-3b, supersedes the V2-2b distillation AND V2-3 Part 2's
+> parseable headline+points shape).** When `companies.strategic_problem_brief` is
+> present, Act 1 renders it **VERBATIM — the client's own words, no model, no row, no
+> distillation** (source-direct at render time; paragraph breaks preserved, no bar). The
+> signed label "The problem you brought to us" stays. **Long briefs get no generator
+> handling** — the field is editable on the company page and curation is the
+> operator's/client's act (a collapsed "read more" is the render-side ceiling, only if
+> genuinely needed). ONLY when the brief is blank does it fall back to the **site-inference
+> path** (public register, 14b gen + 70b judge, problem-framing preference,
+> `descriptive_fallback` when description-only) — the sole model territory left in this
+> act. The `first_read_stated_problem` table now caches **site-inference rows only**
+> (`public_observed`, signed/pending lifecycle); the declared path never touches it.
+> honest-empty only when both the brief and the site are blank.
+>
+> _Retired by V2-3b:_ the declared-path 14b distillation + 70b judge, the long-brief
+> `isLongBrief` threshold + headline/`supporting_points` shape (column dropped), and the
+> declared `internal_declared` rows (deleted). The generator returns `declared_verbatim`
+> (no model call) for any company that has a brief.
 
 - **Exists:** public-baseline **crawls the company's own domain**
   (`crawlWebsiteEvidence` / `siteEvidence`) and the model reads it into `lens_card`

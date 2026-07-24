@@ -121,7 +121,7 @@ export default function ExportButton({
       company: { name: activeCompany?.name ?? "Company" },
       session: { id: sessionId, date: sessionDate, presenter: session?.presenter ?? null },
       statedProblem: statedProblem
-        ? { statement: statedProblem.statement, supporting_points: statedProblem.supporting_points, quote: statedProblem.quote, register: statedProblem.register, descriptive_fallback: statedProblem.descriptive_fallback }
+        ? { statement: statedProblem.statement, verbatim: statedProblem.verbatim, quote: statedProblem.quote, register: statedProblem.register, descriptive_fallback: statedProblem.descriptive_fallback }
         : null,
       standard: map
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }

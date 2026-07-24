@@ -1580,22 +1580,10 @@
   letter-spacing: -0.01em;
   margin: 0;
 }
-/* V2-3 — long-brief supporting points: spaced lines under the headline, breathing
-   room, NO vertical accent bar and NO list bullet. */
-.cvs-fr-statedproblem-points {
-  list-style: none;
-  padding: 0;
-  margin: 18px 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.cvs-fr-statedproblem-point {
-  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
-  font-size: 15.5px;
+/* V2-3b — declared verbatim: the client's own words, paragraph breaks preserved,
+   breathing room, NO vertical accent bar. */
+.cvs-fr-statedproblem-verbatim {
   line-height: 1.5;
-  color: var(--mm-secondary);
-  margin: 0;
 }
 /* V2-2b — provenance label under the statement (which source/register fired). */
 .cvs-fr-statedproblem-source {

@@ -1794,7 +1794,6 @@ export type Database = {
           statement: string
           statement_identity: string
           status: string
-          supporting_points: Json
         }
         Insert: {
           company_id: string
@@ -1809,7 +1808,6 @@ export type Database = {
           statement: string
           statement_identity: string
           status?: string
-          supporting_points?: Json
         }
         Update: {
           company_id?: string
@@ -1824,7 +1822,6 @@ export type Database = {
           statement?: string
           statement_identity?: string
           status?: string
-          supporting_points?: Json
         }
         Relationships: [
           {

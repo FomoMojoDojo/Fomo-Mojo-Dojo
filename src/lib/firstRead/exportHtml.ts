@@ -28,9 +28,10 @@ export interface ExportMirrorFinding { label: string; text: string }
 export interface FirstReadExportData {
   company: { name: string };
   session: { id: string; date: string; presenter: string | null };
-  // V2-2 / V2-2b / V2-3 Act 1 — the client's stated problem + which source/register fired.
-  // supporting_points is non-empty only for a long declared brief (headline + ≤4 points).
-  statedProblem: { statement: string; supporting_points?: string[]; quote: string | null; register: string; descriptive_fallback: boolean } | null;
+  // V2-2 / V2-3b Act 1 — the client's stated problem + which source/register fired.
+  // verbatim=true → the declared brief rendered exactly (no distillation); verbatim=false
+  // → the site-inferred model distillation (render-guarded, may carry a quote).
+  statedProblem: { statement: string; verbatim: boolean; quote: string | null; register: string; descriptive_fallback: boolean } | null;
   standard: { label: string; taxonomyVersion: string | null; steps: ExportStandardStep[] } | null;
   mirror: {
     score: number | null;
@@ -97,20 +98,23 @@ export function firstReadExportFilename(companyName: string, sessionDateIso: str
 
 function sectionSay(d: FirstReadExportData): string {
   const sp = d.statedProblem;
-  if (!sp || !admitStatedProblem(sp.statement)) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
+  if (!sp) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
   // provenance label — single-sourced with the screen (statedProblemLabel).
   const label = `<p class="source-label">${esc(statedProblemLabel(sp.register, sp.descriptive_fallback))}</p>`;
-  // V2-3 — a long brief adds up to 4 supporting points beneath the headline (spaced
-  // lines, no bar), single-sourced with the screen (StatedProblemAct).
-  const points = (sp.supporting_points ?? []).filter((p) => typeof p === "string" && p.trim().length > 0);
-  const pointsHtml = points.length > 0
-    ? `<ul class="say-points">${points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
-    : "";
+
+  // V2-3b DECLARED (verbatim): the client's own words, exactly, paragraph breaks
+  // preserved (pre-wrap), no guard (it's their brief, not a model class), no quote.
+  if (sp.verbatim) {
+    return `<p class="std-label say-verbatim">${esc(sp.statement)}</p>${label}`;
+  }
+
+  // FALLBACK (site-inferred): the model distillation, render-guarded like the screen.
+  if (!admitStatedProblem(sp.statement)) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
   // The verbatim quote (if lifted) carries the SIGNED "As captured" label — single-sourced.
   const quoteHtml = sp.quote
     ? `<figure class="ann notimportant"><blockquote>“${esc(sp.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}</figcaption></figure>`
     : "";
-  return `<p class="std-label">${esc(sp.statement)}</p>${pointsHtml}${label}${quoteHtml}`;
+  return `<p class="std-label">${esc(sp.statement)}</p>${label}${quoteHtml}`;
 }
 
 // V2-3 — Act 2. The leave-behind renders the SIGNED rationale (the substance) plus the
@@ -278,8 +282,7 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .j-stations li{display:flex;flex-direction:column;gap:2px}
 .j-node{font-weight:600}
 .j-sub{color:#5f5443;font-size:13px}
-.say-points{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:9px}
-.say-points li{color:#3c3327}
+.say-verbatim{white-space:pre-wrap}
 .j-passes{display:flex;flex-direction:column;gap:14px;margin:0 0 26px}
 .j-pass .j-cap{margin:0;color:#3c3327}
 .why-block{margin:0 0 18px}
