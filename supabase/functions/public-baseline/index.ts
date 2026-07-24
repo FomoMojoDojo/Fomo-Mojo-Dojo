@@ -2,6 +2,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
+import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1578,7 +1579,7 @@ async function callClaudeWebSearch(opts: {
   domain: string;
   resolvedCategory?: string;
   excludeDomains?: string[];
-}): Promise<Record<string, unknown>> {
+}): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> }> {
   const schemaHint =
     `{\n` +
     `  "category_archetype": "<string>",\n` +
@@ -1718,7 +1719,13 @@ async function callClaudeWebSearch(opts: {
   if (Array.isArray((parsed as any).evidence_ledger)) {
     (parsed as any).evidence_ledger = reclassify((parsed as any).evidence_ledger);
   }
-  return parsed;
+  // V2-6c — surface the per-citation cited source text (keyed by normalized URL) from
+  // the raw web_search response, so the ok-synthesis branch can hand the producer a
+  // basis keyed to the URLs the minted signals actually carry. Reads `data` (raw
+  // blocks + citations), independent of the reclassified `parsed`. Empty when the
+  // model cited nothing — honest absence, no lift.
+  const citationSourceTextByUrl = extractCitationSourceText(data);
+  return { parsed, citationSourceTextByUrl };
 }
 
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
@@ -2941,24 +2948,33 @@ Deno.serve(async (req) => {
         });
       }
     }
-    const result = synthesis_engine === "claude_websearch"
-      ? await callClaudeWebSearch({
-          apiKey: anthropicKey ?? "",
-          model: anthropicModel,
-          companyName: company_name,
-          website,
-          domain,
-          resolvedCategory: priorCategoryArchetype,
-          excludeDomains: sourceFilters.exclude_domains,
-        })
-      : await callOpenAI({
-          apiKey: openaiKey,
-          model: openaiModel,
-          fallbackModels: openaiFallbackModels,
-          companyName: company_name,
-          companyUrl: website,
-          evidence,
-        });
+    // V2-6c — claudeCitationSourceText carries the per-citation cited source text
+    // (normalized URL → verbatim snippet) on the claude_websearch path; it stays empty
+    // on the OpenAI path (that producer already lifts from the crawl map).
+    let claudeCitationSourceText = new Map<string, string>();
+    let result: unknown;
+    if (synthesis_engine === "claude_websearch") {
+      const claudeOut = await callClaudeWebSearch({
+        apiKey: anthropicKey ?? "",
+        model: anthropicModel,
+        companyName: company_name,
+        website,
+        domain,
+        resolvedCategory: priorCategoryArchetype,
+        excludeDomains: sourceFilters.exclude_domains,
+      });
+      result = claudeOut.parsed;
+      claudeCitationSourceText = claudeOut.citationSourceTextByUrl;
+    } else {
+      result = await callOpenAI({
+        apiKey: openaiKey,
+        model: openaiModel,
+        fallbackModels: openaiFallbackModels,
+        companyName: company_name,
+        companyUrl: website,
+        evidence,
+      });
+    }
     const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
       .filter((entry) => String(entry?.url || "").trim().length > 0)
       .filter((entry) =>
@@ -3019,6 +3035,20 @@ Deno.serve(async (req) => {
       const extracted = String((e as { extracted?: unknown })?.extracted || "");
       if (key && extracted.trim().length >= 40) sourceTextByUrl.set(key, extracted);
     }
+    // V2-6c — on the claude_websearch (default) engine the minted signals carry the
+    // URLs Claude's own web_search returned, NOT the searx-crawl URLs, so the crawl
+    // map above never joins (the V2-6b-D miss class). Merge the per-citation cited
+    // source text — keyed to those same URLs — as the basis the producer lifts from.
+    // Crawl entries win on key collision (a full page beats a snippet). Empty on the
+    // OpenAI path → net-zero.
+    const citationMerge = mergeCitationSourceText(sourceTextByUrl, claudeCitationSourceText);
+    console.log("[baseline] V2-6c citation basis", {
+      engine: synthesis_engine,
+      citation_urls: claudeCitationSourceText.size,
+      added: citationMerge.added,
+      crawl_collisions: citationMerge.collisions,
+      source_text_urls: sourceTextByUrl.size,
+    });
     await ingestPublicBaselineSignals({
       supabase,
       companyId: company_id,

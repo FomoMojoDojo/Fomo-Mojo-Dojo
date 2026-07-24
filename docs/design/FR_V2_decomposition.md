@@ -278,6 +278,56 @@ unavailable" placeholder — the quote simply isn't there.
 **Blast radius:** producer wiring lives in the crawl/ingest path (evidencePhase1 +
 the crawl), NOT the public-baseline model. The verbatim CHECK is the backstop.
 
+### Addendum — V2-6b-D diagnosis + V2-6c (quote supply on the claude_websearch engine)
+
+**V2-6b-D diagnosis (recorded here per the ruling).** V2-6 was proven against the
+searx→crawl→OpenAI path: signals minted from `evidence[].url` joined `evidence[].extracted`
+by URL, so `produceQuote` had a basis. The **default-engine flip to `claude_websearch`**
+(OE-2, council 2026-06-10) broke that URL identity — a **latest-wins trap in engine form**:
+on the default path the minted signals carry the URLs *Claude's own* `web_search` returned,
+not the searx-crawl URLs, so `sourceTextByUrl` (built from `evidence`) never joins and every
+quote stays null. The producer was intact; its *supply* was keyed to the wrong engine.
+
+**Operator ruling 2026-07-24: c2.** Capture per-citation source text from the
+`claude_websearch` engine into `sourceTextByUrl`, keyed to the URLs the minted signals
+actually carry, so `produceQuote` lifts on the default path. `signals_quote_verbatim`
+(byte-exact `liftVerbatimQuote`) remains the sole authority — a snippet that isn't byte-exact
+against what we retain lifts nothing (absence is honest). Forward-capture only; no backfill.
+
+**V2-6c implementation.** New pure module `src/lib/firstRead/citationSource.ts`
+(`extractCitationSourceText` + `mergeCitationSourceText`), wired into the ok-synthesis branch:
+- `callClaudeWebSearch` now returns `{ parsed, citationSourceTextByUrl }`. The map is built
+  from the raw response's inline citations: each `web_search_result_location` citation carries
+  `{ url, cited_text }`, keyed by `normalizeUrlKey(url)`. `cited_text` is the only readable
+  per-citation source text the tool result surfaces (the `web_search_tool_result` blocks carry
+  only opaque `encrypted_content`) — so the retained basis is a **snippet**, verbatim, never
+  synthesized/padded; longest single snippet wins per URL (no concatenation).
+- The ok-synthesis branch merges that map into the crawl map with **crawl-wins-on-collision**
+  (a full page beats a snippet); `normalizeUrlKey` is applied on both sides (the diagnosis's
+  miss class), and event-date is untouched — citations carry no date field, so the existing
+  `pickEventDate` path (model `evidence_ledger[].date`) stays the only date source, never inferred.
+
+**V2-6c LIVE FINDING (Edgewood, run 37, default engine, 2026-07-24).** The capture/merge is
+correct and live-verified, but produced **zero receipts on this run** — and the reason is not a
+capture bug. The run logged `citation_urls: 0` (`added: 0`, `crawl_collisions: 0`,
+`source_text_urls: 11` = untouched searx entries); 42 signals minted, **0 quoted / 0 dated**;
+**0 CHECK refusals** (no basis matched any signal URL, so `produceQuote` was never reached — the
+CHECK was never invoked). A direct two-shot probe of the live web_search API characterizes why:
+- **Prose answer** → the final text block carries a `web_search_result_location` citation with
+  keys `[type, cited_text, url, title, encrypted_index]` (confirming the extractor's field names)
+  and `cited_text` ≈ 150 chars (a **snippet**, as designed).
+- **JSON-only answer** (the production synthesis prompt's shape — "a SINGLE JSON object and
+  NOTHING else") → **`n_citations: 0`**. The web_search API attaches citations to cited *prose*,
+  not to a synthesized JSON blob.
+
+So the receipts gap on the default engine is now a **prompt-shape** issue, not a capture issue:
+the plumbing lifts whenever the engine emits citations (proven by the prose-shape probe), but the
+current JSON-only synthesis prompt emits none. Closing the gap needs the production prompt to emit
+cited prose alongside/within the JSON (or a follow-up citation pass) — a **prompt/product decision
+out of V2-6c scope** (OUT-OF-SCOPE: engine-default product decision). Flagged as the OWED next step
+(**V2-6d — elicit citations under the JSON output contract**). The V2-6c plumbing is harmless and
+forward-ready: net-zero when citations are absent, OpenAI path untouched.
+
 ---
 
 ## 5. Journey visual (Act 2)
