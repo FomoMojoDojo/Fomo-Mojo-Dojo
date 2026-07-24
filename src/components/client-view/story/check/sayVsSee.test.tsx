@@ -65,8 +65,8 @@ describe("V2-7 — DeltaItemRow: registers labeled, receipt only via the quote f
     expect(labels).toEqual([SAY_LABEL, SEE_LABEL]);
     expect(container.textContent).toContain("We close gaps in youth mental health care.");
     expect(container.textContent).toContain("Edgewood is a leading nonprofit provider.");
-    // four-button verdict control present
-    expect(container.querySelectorAll("button").length).toBeGreaterThanOrEqual(4);
+    // verdict control present (V2-11: three buttons — the Correct/refine path was retired)
+    expect(container.querySelectorAll("button").length).toBeGreaterThanOrEqual(3);
   });
 
   it("RECEIPT ONLY VIA quote: a see claim with NO quote renders no quotation machinery", () => {

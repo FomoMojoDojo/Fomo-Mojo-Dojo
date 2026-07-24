@@ -59,10 +59,11 @@ describe("OC-2c GOAL 1 — post-issuance UI shows a banner, not silent (V2-9 swe
     // honest, not silent: the post-issuance banner is present (V2-9 sweep: no freeze/lock
     // machinery in room copy — a soft "shared with the client" line instead).
     expect(getByText(/shared with the client/i)).toBeTruthy();
-    // and the verdict buttons cannot be tapped
+    // and the verdict buttons cannot be tapped (V2-11: three buttons — Correct retired,
+    // fourth label is now "True, but not a focus now")
     const verdictButtons = Array.from(container.querySelectorAll("button"))
-      .filter((b) => /Confirm|Correct|Reject|not important/i.test(b.textContent || ""));
-    expect(verdictButtons.length).toBeGreaterThanOrEqual(4);
+      .filter((b) => /Confirm|Reject|not a focus/i.test(b.textContent || ""));
+    expect(verdictButtons.length).toBeGreaterThanOrEqual(3);
     for (const b of verdictButtons) expect((b as HTMLButtonElement).disabled).toBe(true);
 
     // FALSIFICATION: an unfrozen session leaves them enabled — proving the disable

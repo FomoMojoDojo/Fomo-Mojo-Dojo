@@ -19,9 +19,10 @@ import { contentIdentity } from "../../supabase/functions/_shared/contentIdentit
 import { assembleCheckItems, type RawCheckItem } from "@/lib/firstRead/checkItems";
 import { assembleDeltaItems, dropCollidingDeltas, type DeltaInput } from "@/lib/firstRead/deltaItems";
 
-// OC-2: 'not_important' — "True — but not important to us". Its own verdict value
-// beside reject, so the feed can map it to contest_kind='immaterial' (reject →
-// 'disputed'). Never an overload of reject.
+// OC-2: 'not_important' — surfaced as "True, but not a focus now" (V2-11 label; the
+// constant lives in CheckControl). Its own verdict value beside reject, so the feed
+// can map it to contest_kind='immaterial' (reject → 'disputed'). Never an overload of
+// reject. 'corrected' is retained but DORMANT (V2-11 retired its render path).
 export type Verdict = "confirmed" | "corrected" | "rejected" | "not_important";
 
 export interface CheckItem extends RawCheckItem {
