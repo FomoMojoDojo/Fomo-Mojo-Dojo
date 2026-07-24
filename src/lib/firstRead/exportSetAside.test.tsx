@@ -38,6 +38,7 @@ function exportData(tally: CaptureTally, items: CheckItem[]): FirstReadExportDat
     statedProblem: null,
     standard: null,
     mirror: { score: null, bet: null, findings: [] },
+    perception: [],
     check: { items, tally },
     gap: [],
     proposal: null,

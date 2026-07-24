@@ -1594,6 +1594,48 @@
   opacity: 0.55;
   margin: 10px 0 0;
 }
+/* V2-5 — Act 3 "What the Outside Shows": the three register-locked bands (strategy /
+   positioning / message). Signed heading + framing line above each band's public read,
+   breathing room, NO vertical accent bar. */
+.cvs-ob-band {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 24px 0;
+}
+.cvs-ob-heading {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mm-text);
+  margin: 0 0 4px;
+}
+.cvs-ob-framing {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-muted);
+  margin: 0 0 14px;
+}
+.cvs-ob-body {
+  /* the wrapped act renders its own content column; no extra chrome here */
+}
+.cvs-ob-msglist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cvs-ob-msg {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15.5px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  margin: 0;
+}
+
 /* V2-3 — Act 2 "Why We Start Outside": the journey exhibit + signed rationale. The
    SVG is theme-aware via the .cvs-story palette vars (no hardcoded colors); the copy
    sits in the centered act column with breathing room. NO vertical accent bars. */

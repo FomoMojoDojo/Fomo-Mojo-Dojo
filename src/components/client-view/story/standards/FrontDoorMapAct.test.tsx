@@ -157,6 +157,7 @@ describe("FR-ATTR — no framework names / internal tags on client-facing surfac
         steps: [{ step_number: 1, step_label: "Recognize the need", description: "desc" }],
       },
       mirror: { score: null, bet: null, findings: [] },
+    perception: [],
       check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
       gap: [],
       proposal: null,

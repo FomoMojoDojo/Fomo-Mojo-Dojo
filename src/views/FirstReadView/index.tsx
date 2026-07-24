@@ -23,6 +23,8 @@ import OutsideFindingsAct from "@/components/client-view/story/OutsideFindingsAc
 import MovementShell from "@/components/client-view/story/movement/MovementShell";
 import MarketAct from "@/components/client-view/story/movement/MarketAct";
 import PositionAct from "@/components/client-view/story/movement/PositionAct";
+import OutsideBand from "@/components/client-view/story/movement/OutsideBand";
+import OutsideMessageBand from "@/components/client-view/story/movement/OutsideMessageBand";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
@@ -152,15 +154,18 @@ export default function FirstReadView() {
       // Act 2 — the journey exhibit + signed rationale (V2-3). No longer a placeholder.
       case "why_outside":
         return <WhyOutsideAct />;
-      // Act 3 — today's Mirror content, re-slotted.
+      // Act 3 — "What the Outside Shows" (V2-5): the bet + score block stays, then the
+      // public read composed in three register-locked bands (strategy / positioning /
+      // message). Findings remain the lead outside read above the bands.
       case "outside_shows":
         return (
           <>
             <OutsideHeroAct preferredRun={preferredRun} />
             <OutsideFindingsAct preferredRun={preferredRun} />
             <MovementShell>
-              <MarketAct />
-              <PositionAct />
+              <OutsideBand bandKey="strategy"><MarketAct bare /></OutsideBand>
+              <OutsideBand bandKey="positioning"><PositionAct bare /></OutsideBand>
+              <OutsideBand bandKey="message"><OutsideMessageBand /></OutsideBand>
             </MovementShell>
           </>
         );

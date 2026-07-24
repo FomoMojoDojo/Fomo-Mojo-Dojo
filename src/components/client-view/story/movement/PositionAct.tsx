@@ -68,7 +68,8 @@ function AttrGroup({ group }: { group: Group }) {
   );
 }
 
-export default function PositionAct() {
+// V2-5 — `bare` suppresses this act's own eyebrow when it renders INSIDE an Act 3 band.
+export default function PositionAct({ bare = false }: { bare?: boolean } = {}) {
   const { activeCompany } = useCompany();
   const { loading, item } = usePositioningCanvas(activeCompany?.id);
 
@@ -84,7 +85,7 @@ export default function PositionAct() {
 
   return (
     <section className="cvs-act" aria-label="Act B — positioning (inferred register)">
-      <p className="cvs-act-eyebrow">{EYEBROW}</p>
+      {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
       {/* Content-gated: no canvas, zero differentiators, or still loading →
           no definition. Mirrors the render condition of the branch below. */}
       <ActDefinition

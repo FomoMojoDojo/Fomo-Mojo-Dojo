@@ -21,6 +21,8 @@ import { admitForSurface } from "@/lib/registerGuard";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { orderOtherFindings } from "@/components/client-view/story/OutsideFindingsAct";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
+import { useOutsidePerception } from "@/hooks/useOutsidePerception";
+import { isPublicProvenance } from "@/lib/registerGuard";
 import {
   buildFirstReadExportHtml,
   firstReadExportFilename,
@@ -61,6 +63,8 @@ export default function ExportButton({
   // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
   // so the leave-behind can never diverge from the meeting.
   const { questions: openQuestionList, loading: openQuestionsLoading } = useFirstReadOpenQuestions(companyId);
+  // V2-5 — the Act 3 "Message" band: register-locked at the source (public_observed only).
+  const { claims: perceptionClaims, loading: perceptionLoading } = useOutsidePerception(companyId);
   const [session, setSession] = useState<{ started_at: string | null; presenter: string | null } | null>(null);
 
   // The export must match the meeting exactly — never capture a not-yet-loaded
@@ -76,7 +80,7 @@ export default function ExportButton({
 
   const dataReady =
     !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading &&
-    !statedProblemLoading && !openQuestionsLoading && session !== null;
+    !statedProblemLoading && !openQuestionsLoading && !perceptionLoading && session !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -130,6 +134,7 @@ export default function ExportButton({
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,
       mirror: { score: score?.total_score ?? null, bet, findings: mirrorFindings },
+      perception: perceptionClaims.filter((c) => isPublicProvenance(c.provenance)).map((c) => c.statement.trim()),
       check: { items, tally },
       gap: openQuestionList,
       proposal,

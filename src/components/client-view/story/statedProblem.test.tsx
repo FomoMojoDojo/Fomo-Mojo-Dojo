@@ -125,6 +125,7 @@ describe("V2-3b — export follows the screen (verbatim declared / inferred fall
     statedProblem: sp,
     standard: null,
     mirror: { score: null, bet: null, findings: [] },
+    perception: [],
     check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
     gap: [], proposal: null, exportedAt: "2026-07-23T00:00:00Z",
   });

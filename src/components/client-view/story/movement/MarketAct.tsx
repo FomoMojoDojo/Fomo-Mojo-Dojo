@@ -99,7 +99,9 @@ function OptionKindChip({ kind }: { kind: string }) {
   );
 }
 
-export default function MarketAct() {
+// V2-5 — `bare` suppresses this act's own eyebrow when it renders INSIDE an Act 3 band
+// (the band supplies the signed heading). Default false = standalone, unchanged.
+export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
   const { activeCompany } = useCompany();
   const { loading, portfolio, hasInternalDeclared } = useMarketPortfolio(activeCompany?.id);
   const { loading: optionsLoading, options: rawOptions } = useMarketOptions(activeCompany?.id);
@@ -125,7 +127,7 @@ export default function MarketAct() {
   if (optionsLoading && !loading) {
     return (
       <section className="cvs-act" aria-label="Act A — market options">
-        <p className="cvs-act-eyebrow">{EYEBROW}</p>
+        {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
         <p className="cvs-hero-empty">Reading the public markets…</p>
       </section>
     );
@@ -163,7 +165,7 @@ export default function MarketAct() {
 
     return (
       <section className="cvs-act" aria-label="Act A — market options (early readings)">
-        <p className="cvs-act-eyebrow">{EYEBROW}</p>
+        {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
         {/* Content-gated by the shared device: options exist, so it renders. */}
         <ActDefinition definition={OPTIONS_DEFINITION} hasContent={options.length > 0} />
 
@@ -204,7 +206,7 @@ export default function MarketAct() {
 
   return (
     <section className="cvs-act" aria-label="Act A — market portfolio (public register)">
-      <p className="cvs-act-eyebrow">{EYEBROW}</p>
+      {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
 
       {loading ? (
         <p className="cvs-hero-empty">Reading the public markets…</p>

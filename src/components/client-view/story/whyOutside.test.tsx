@@ -93,6 +93,7 @@ describe("V2-3 — the leave-behind renders Act 2 (rationale + journey text)", (
     statedProblem: null,
     standard: null,
     mirror: { score: null, bet: null, findings: [] },
+    perception: [],
     check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
     gap: [], proposal: null, exportedAt: "2026-07-23T00:00:00Z",
   });

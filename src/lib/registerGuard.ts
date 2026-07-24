@@ -35,6 +35,15 @@ const PUBLIC_REGISTERS = new Set(["public_inferred", "publicly_declared"]);
 export const isPublicRegister = (r: string | null | undefined): boolean =>
   typeof r === "string" && PUBLIC_REGISTERS.has(r);
 
+// V2-5 — claims carry `provenance` on a SEPARATE axis (public_observed vs
+// internal_declared), not the register vocabulary above. Same allowlist polarity:
+// only an explicit public_observed passes; internal_declared / null / unknown BLOCK
+// (fail-toward-blocked at the client seam). The Act 3 "message" band (public
+// perception claims) routes through here so internal/declared claims can never leak.
+const PUBLIC_PROVENANCE = new Set(["public_observed"]);
+export const isPublicProvenance = (p: string | null | undefined): boolean =>
+  typeof p === "string" && PUBLIC_PROVENANCE.has(p);
+
 // Client-view surface classes and the registers each admits.
 //   outside  — Act A / the outside story: public register only (OOD-3).
 //   decision — the Decision Command Screen (deriveAudienceShort audience copy):

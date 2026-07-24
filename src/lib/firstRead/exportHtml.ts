@@ -20,6 +20,7 @@ import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
 import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/whyOutside";
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
+import { outsideBand } from "@/lib/firstRead/outsideBands";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
@@ -38,6 +39,9 @@ export interface FirstReadExportData {
     bet: ExportMirrorFinding | null;
     findings: ExportMirrorFinding[];
   };
+  // V2-5 Act 3 "Message" band — how the public record describes the company
+  // (public_observed claims, register-locked at the source). Empty → honest-absence.
+  perception: string[];
   check: { items: CheckItem[]; tally: CaptureTally };
   gap: string[];
   proposal: Proposal | null;
@@ -172,7 +176,14 @@ function sectionMirror(d: FirstReadExportData): string {
           .map((f) => `<div class="finding"><p class="kind">${esc(f.label)}</p><p>${esc(f.text)}</p></div>`)
           .join("")
       : `<p class="empty">${esc(T.findingsEmpty)}</p>`;
-  return `${betHtml}${scoreHtml}<div class="findings">${findingsHtml}</div>`;
+  // V2-5 — the "Message" band: how the public record describes the company. Heading +
+  // framing single-sourced with the screen (outsideBand); honest-absence when empty.
+  const msg = outsideBand("message");
+  const perceptionHtml = d.perception.length > 0
+    ? `<ul class="say-verbatim-list">${d.perception.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
+    : `<p class="empty">${esc(msg.empty)}</p>`;
+  const messageBand = `<div class="ob-band"><p class="ob-heading">${esc(msg.heading)}</p><p class="ob-framing">${esc(msg.framing)}</p>${perceptionHtml}</div>`;
+  return `${betHtml}${scoreHtml}<div class="findings">${findingsHtml}</div>${messageBand}`;
 }
 
 function sectionCheck(d: FirstReadExportData): string {
@@ -283,6 +294,11 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .j-node{font-weight:600}
 .j-sub{color:#5f5443;font-size:13px}
 .say-verbatim{white-space:pre-wrap}
+.ob-band{margin:24px 0 0;padding-top:18px;border-top:1px solid rgba(17,17,17,.08)}
+.ob-heading{font-weight:600;font-size:16px;margin:0 0 3px}
+.ob-framing{color:#5f5443;font-size:13px;margin:0 0 12px}
+.say-verbatim-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:9px}
+.say-verbatim-list li{color:#3c3327}
 .j-passes{display:flex;flex-direction:column;gap:14px;margin:0 0 26px}
 .j-pass .j-cap{margin:0;color:#3c3327}
 .why-block{margin:0 0 18px}
