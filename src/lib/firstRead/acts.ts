@@ -2,9 +2,10 @@
 // and the leave-behind (exportHtml) render the SAME act titles in the SAME order and
 // can never diverge (the export-single-source law the whole flow ships under).
 //
-// The five approved v2 acts (docs/design/FR_V2_decomposition.md). Acts 1–2 are
-// placeholders this gate (honest under-construction, no fabricated content); Acts 3–5
-// re-slot today's Mirror / Check / (Gap+Proposal+job-map) content.
+// The five approved v2 acts (docs/design/FR_V2_decomposition.md). Act 1 carries the
+// stated-problem distillation (V2-2/2b); Act 2 carries the journey exhibit + signed
+// rationale (V2-3); Acts 3–5 re-slot today's Mirror / Check / (Gap+Proposal+job-map).
+// No placeholder acts remain — every act reaches the leave-behind.
 //
 // Titles + framing lines are NEW client-facing strings — PENDING OPERATOR SIGNATURE.
 // (`check`'s line is carried forward from the shipped Check act.)
@@ -25,7 +26,7 @@ export const FR_ACTS: readonly FirstReadAct[] = [
   { key: "say", title: "What You Say",
     line: "The problem you tell the world you solve — in your own words." },
   { key: "why_outside", title: "Why We Start Outside",
-    line: "Why we read the outside record before asking you for anything.", placeholder: true },
+    line: "Why we read the outside record before asking you for anything." },
   { key: "outside_shows", title: "What the Outside Shows",
     line: "What the public record shows about your strategy, positioning, and message." },
   { key: "check", title: "The Check",

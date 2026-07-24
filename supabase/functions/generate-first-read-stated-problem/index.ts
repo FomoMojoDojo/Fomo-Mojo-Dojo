@@ -16,6 +16,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { contentIdentity } from "../_shared/contentIdentity.ts";
 import { liftVerbatimQuote } from "../../../src/lib/verbatimQuote.ts";
+import { isLongBrief } from "../../../src/lib/firstRead/statedProblem.ts";
 import { US_ENGLISH_RULE, flagBritishisms } from "../_shared/languageRule.ts";
 
 const corsHeaders = {
@@ -63,16 +64,20 @@ Deno.serve(async (req) => {
       return JSON.parse(m[0]) as Record<string, unknown>;
     };
 
-    const persist = async (statement: string, register: string, descriptive_fallback: boolean, quoteCandidate: string, sourceText: string) => {
+    // Generation stages a PENDING row (V2-3): it never overwrites the signed row the
+    // client is shown. The operator signs pending → signed out of band. onConflict on
+    // (company_id, status) replaces only a prior pending, never the signed one.
+    const persist = async (statement: string, register: string, descriptive_fallback: boolean, quoteCandidate: string, sourceText: string, supporting_points: string[] = []) => {
       const lifted = liftVerbatimQuote(sourceText, String(quoteCandidate ?? "").trim());
       const statement_identity = await contentIdentity(statement);
       const { error: upErr } = await supabase.from("first_read_stated_problem").upsert({
         company_id, statement, statement_identity, register, descriptive_fallback,
+        supporting_points, status: "pending",
         quote: lifted?.quote ?? null, quote_source_text: lifted?.quote_source_text ?? null,
         gen_model: GEN_MODEL, judge_model: JUDGE_MODEL, generated_at: new Date().toISOString(),
-      }, { onConflict: "company_id" });
+      }, { onConflict: "company_id,status" });
       if (upErr) throw new Error(`persist failed: ${upErr.message}`);
-      return { statement, statement_identity, register, descriptive_fallback, quote: lifted?.quote ?? null, language_flags: flagBritishisms(statement) };
+      return { statement, statement_identity, register, descriptive_fallback, supporting_points, status: "pending", quote: lifted?.quote ?? null, language_flags: flagBritishisms(statement) };
     };
 
     // ── SOURCE 1 (preferred): the company's own declared brief ──────────────────
@@ -80,14 +85,29 @@ Deno.serve(async (req) => {
     const brief = String((company as { strategic_problem_brief?: string } | null)?.strategic_problem_brief ?? "").trim();
 
     if (brief.length > 0) {
+      // ── LONG BRIEF (V2-3): parse into a headline + up to 4 supporting points ──────
+      if (isLongBrief(brief)) {
+        const gen = await callModel(GEN_MODEL, `You parse a company's OWN written problem brief into a PARSEABLE shape, in THEIR words. Give ONE short headline problem statement, plus UP TO 4 short supporting points — each a distinct dimension of the SAME problem, faithful to the brief, in their words, plain. Use ONLY the brief. Invent nothing not in the brief. No framework jargon. Each point one sentence. 'quote' MUST be an EXACT substring of the brief, one short line, or "". Respond with ONLY JSON: {"headline":"...","points":["...","..."],"quote":"..."}. No other text.
+
+${US_ENGLISH_RULE}`, `The company's own strategic problem brief:\n${brief.slice(0, 3500)}`, 0.2);
+        const headline = String(gen.headline ?? "").trim();
+        const points = (Array.isArray(gen.points) ? gen.points : [])
+          .map((p) => String(p ?? "").trim()).filter(Boolean).slice(0, 4);
+        if (!headline) return json({ status: "empty", empty_reason: "The brief produced no distillable headline.", trace });
+        const verdict = await callModel(JUDGE_MODEL, 'You judge whether a parsed problem (a headline + supporting points) is FAITHFUL to a company\'s own brief: EVERY line must be supported by the brief (invents nothing not in it) and use no framework jargon. If ANY line invents content absent from the brief, faithful is false. Respond with ONLY JSON: {"faithful": true|false, "reason": "..."}. No other text.', `Brief:\n${brief.slice(0, 3500)}\n\nHeadline: "${headline}"\nPoints:\n${points.map((p) => `- ${p}`).join("\n")}\n\nIs every line faithful?`, 0);
+        if (!verdict.faithful) return json({ status: "rejected", reject_reason: String(verdict.reason ?? ""), source: "company_declared", shape: "parsed", trace });
+        return json({ status: "generated", source: "company_declared", shape: "parsed", ...(await persist(headline, "internal_declared", false, String(gen.quote ?? ""), brief, points)), trace });
+      }
+
+      // ── SHORT BRIEF: the single distilled statement (unchanged) ──────────────────
       const gen = await callModel(GEN_MODEL, `You distill the ONE core problem a company brought to us, from THEIR OWN written problem brief, in THEIR words — lightly compressed, one or two sentences. Use ONLY the brief. Invent nothing. No framework jargon. 'quote' MUST be an EXACT substring of the brief, one short line, or "". Respond with ONLY JSON: {"stated_problem":"...","quote":"..."}. No other text.
 
 ${US_ENGLISH_RULE}`, `The company's own strategic problem brief:\n${brief.slice(0, 3500)}`, 0.2);
       const statement = String(gen.stated_problem ?? "").trim();
       if (!statement) return json({ status: "empty", empty_reason: "The brief produced no distillable problem.", trace });
       const verdict = await callModel(JUDGE_MODEL, 'You judge whether a one-line problem is FAITHFUL to a company\'s own brief: it invents nothing not in the brief and uses no framework jargon. Respond with ONLY JSON: {"faithful": true|false, "reason": "..."}. No other text.', `Brief:\n${brief.slice(0, 3500)}\n\nCandidate: "${statement}"\n\nFaithful?`, 0);
-      if (!verdict.faithful) return json({ status: "rejected", reject_reason: String(verdict.reason ?? ""), source: "company_declared", trace });
-      return json({ status: "generated", source: "company_declared", ...(await persist(statement, "internal_declared", false, String(gen.quote ?? ""), brief)), trace });
+      if (!verdict.faithful) return json({ status: "rejected", reject_reason: String(verdict.reason ?? ""), source: "company_declared", shape: "single", trace });
+      return json({ status: "generated", source: "company_declared", shape: "single", ...(await persist(statement, "internal_declared", false, String(gen.quote ?? ""), brief)), trace });
     }
 
     // ── SOURCE 2 (fallback): infer from the public own-domain site ──────────────

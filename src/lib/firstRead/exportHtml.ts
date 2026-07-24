@@ -18,6 +18,7 @@ import { KIND_LABEL, HERO_EMPTY } from "@/components/client-view/story/OutsideHe
 import { GAP_EMPTY } from "@/components/client-view/story/GapAct";
 import { STANDARD_ATTRIBUTION_LINE } from "@/lib/firstRead/standardCopy";
 import { FR_EXPORT_ACTS } from "@/lib/firstRead/acts";
+import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/whyOutside";
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
@@ -27,8 +28,9 @@ export interface ExportMirrorFinding { label: string; text: string }
 export interface FirstReadExportData {
   company: { name: string };
   session: { id: string; date: string; presenter: string | null };
-  // V2-2 / V2-2b Act 1 — the client's stated problem + which source/register fired.
-  statedProblem: { statement: string; quote: string | null; register: string; descriptive_fallback: boolean } | null;
+  // V2-2 / V2-2b / V2-3 Act 1 — the client's stated problem + which source/register fired.
+  // supporting_points is non-empty only for a long declared brief (headline + ≤4 points).
+  statedProblem: { statement: string; supporting_points?: string[]; quote: string | null; register: string; descriptive_fallback: boolean } | null;
   standard: { label: string; taxonomyVersion: string | null; steps: ExportStandardStep[] } | null;
   mirror: {
     score: number | null;
@@ -98,11 +100,41 @@ function sectionSay(d: FirstReadExportData): string {
   if (!sp || !admitStatedProblem(sp.statement)) return `<p class="empty">${esc(T.sayEmpty)}</p>`;
   // provenance label — single-sourced with the screen (statedProblemLabel).
   const label = `<p class="source-label">${esc(statedProblemLabel(sp.register, sp.descriptive_fallback))}</p>`;
+  // V2-3 — a long brief adds up to 4 supporting points beneath the headline (spaced
+  // lines, no bar), single-sourced with the screen (StatedProblemAct).
+  const points = (sp.supporting_points ?? []).filter((p) => typeof p === "string" && p.trim().length > 0);
+  const pointsHtml = points.length > 0
+    ? `<ul class="say-points">${points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
+    : "";
   // The verbatim quote (if lifted) carries the SIGNED "As captured" label — single-sourced.
   const quoteHtml = sp.quote
     ? `<figure class="ann notimportant"><blockquote>“${esc(sp.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}</figcaption></figure>`
     : "";
-  return `<p class="std-label">${esc(sp.statement)}</p>${label}${quoteHtml}`;
+  return `<p class="std-label">${esc(sp.statement)}</p>${pointsHtml}${label}${quoteHtml}`;
+}
+
+// V2-3 — Act 2. The leave-behind renders the SIGNED rationale (the substance) plus the
+// journey as an honest TEXT sequence built from the SAME labels the screen SVG uses
+// (JOURNEY_VISUAL_LABELS). The interactive SVG is intentionally NOT inlined here: its
+// palette resolves against the .cvs-story theme vars, which don't exist in this
+// light-only print doc — a text journey is the shape the leave-behind supports cleanly,
+// and single-sources its words with the screen. This act carries no company data.
+function sectionWhyOutside(_d: FirstReadExportData): string {
+  const L = JOURNEY_VISUAL_LABELS;
+  const stations = L.nodes
+    .map((n) => `<li><span class="j-node">${esc(n.title)}</span><span class="j-sub">${esc(n.sub)}</span></li>`)
+    .join("");
+  const passes = [
+    { h: L.beats.start, c: L.flows.forward },
+    { h: L.beats.backward, c: L.flows.reverse },
+    { h: L.beats.live, c: L.flows.monitor },
+  ]
+    .map((p) => `<div class="j-pass"><p class="kind">${esc(p.h)}</p><p class="j-cap">${esc(p.c)}</p></div>`)
+    .join("");
+  const rationale = WHY_OUTSIDE_RATIONALE.map(
+    (b) => `<div class="why-block"><p class="why-q">${esc(b.q)}</p><p class="why-a">${esc(b.a)}</p></div>`,
+  ).join("");
+  return `<ol class="j-stations">${stations}</ol><div class="j-passes">${passes}</div><div class="why-rationale">${rationale}</div>`;
 }
 
 function sectionStandard(d: FirstReadExportData): string {
@@ -242,6 +274,17 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .proposal-block p:last-child{margin:0;white-space:pre-wrap}
 .withheld{font-style:italic;opacity:.6;border-left:2px solid rgba(180,83,9,.5);padding-left:10px;margin:0 0 20px}
 .proposal-meta{font-family:ui-monospace,Menlo,monospace;font-size:10px;opacity:.5;margin:22px 0 0}
+.j-stations{list-style:none;padding:0;margin:0 0 22px;display:flex;flex-direction:column;gap:10px}
+.j-stations li{display:flex;flex-direction:column;gap:2px}
+.j-node{font-weight:600}
+.j-sub{color:#5f5443;font-size:13px}
+.say-points{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:9px}
+.say-points li{color:#3c3327}
+.j-passes{display:flex;flex-direction:column;gap:14px;margin:0 0 26px}
+.j-pass .j-cap{margin:0;color:#3c3327}
+.why-block{margin:0 0 18px}
+.why-q{font-weight:600;margin:0 0 5px}
+.why-a{margin:0;color:#3c3327}
 footer{border-top:1px solid rgba(17,17,17,.12);margin-top:48px;padding-top:16px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#8a7f6d}
 @media print{body{background:#fff}.wrap{padding:0}section{page-break-inside:avoid}}
 `;
@@ -251,12 +294,13 @@ export function buildFirstReadExportHtml(d: FirstReadExportData): string {
   const sec = (title: string, body: string) => `<section><h1 class="sec">${esc(title)}</h1>${body}</section>`;
   const footer = `<footer>Session ${esc(d.session.id)} · Exported ${esc(fmtDateTime(d.exportedAt))}</footer>`;
 
-  // FR-V2-1 — the leave-behind follows the v2 act order + titles from the SAME source
-  // as the rail (FR_EXPORT_ACTS), so screen and export can't diverge. The two
-  // placeholder acts carry no substance and are OMITTED (a leave-behind of real
-  // content only). Act 5 ("How We Can Help") folds the job map + Gap + Proposal.
+  // FR-V2-1 / V2-3 — the leave-behind follows the v2 act order + titles from the SAME
+  // source as the rail (FR_EXPORT_ACTS), so screen and export can't diverge. Every act
+  // now carries substance (no placeholders remain). Act 2 renders the signed rationale +
+  // a text journey; Act 5 ("How We Can Help") folds the job map + Gap + Proposal.
   const sectionByKey: Record<string, (d: FirstReadExportData) => string> = {
     say: sectionSay,
+    why_outside: sectionWhyOutside,
     outside_shows: sectionMirror,
     check: sectionCheck,
     help: (dd) => `${sectionStandard(dd)}${sectionGap(dd)}${sectionProposal(dd)}`,

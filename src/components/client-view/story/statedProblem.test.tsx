@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { admitStatedProblem, statedProblemLabel, STATED_PROBLEM_LABELS } from "@/lib/firstRead/statedProblem";
+import { admitStatedProblem, statedProblemLabel, STATED_PROBLEM_LABELS, isLongBrief, LONG_BRIEF_CHARS } from "@/lib/firstRead/statedProblem";
 import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
 import SignalQuote from "@/components/evidence/SignalQuote";
 import { buildFirstReadExportHtml, type FirstReadExportData } from "@/lib/firstRead/exportHtml";
@@ -41,8 +41,15 @@ vi.mock("@/hooks/useFirstReadStatedProblem", () => ({ useFirstReadStatedProblem:
 import StatedProblemAct from "@/components/client-view/story/StatedProblemAct";
 
 const row = (over: Record<string, unknown> = {}) => ({
-  statement: REAL, quote: null, quote_source_text: null, register: "internal_declared", descriptive_fallback: false, ...over,
+  statement: REAL, supporting_points: [], quote: null, quote_source_text: null, register: "internal_declared", descriptive_fallback: false, ...over,
 });
+
+const POINTS = [
+  "Families in crisis can't find Edgewood when they need it.",
+  "Referrers route to organizations that come to mind first.",
+  "Funders back the missions whose story they already know.",
+  "The community carries the cost of care that never reaches youth.",
+];
 
 describe("V2-2/2b — StatedProblemAct render", () => {
   it("company_declared → statement + 'brought to us' label; quote via SignalQuote when present", () => {
@@ -65,6 +72,43 @@ describe("V2-2/2b — StatedProblemAct render", () => {
     expect(render(<StatedProblemAct companyId="c1" />).container.querySelector(".cvs-fr-statedproblem-text")).toBeNull();
     hookState = { data: null, loading: false };
     expect((render(<StatedProblemAct companyId="c1" />).container.textContent || "")).toContain("couldn't find a problem stated");
+  });
+});
+
+describe("V2-3 — long-brief threshold", () => {
+  it("a short brief is single; a brief at/over the cut is long", () => {
+    expect(isLongBrief("A short one- or two-sentence problem statement.")).toBe(false);
+    expect(isLongBrief("x".repeat(LONG_BRIEF_CHARS - 1))).toBe(false); // just under → single
+    expect(isLongBrief("x".repeat(LONG_BRIEF_CHARS))).toBe(true); // at the cut → long
+    expect(isLongBrief(null)).toBe(false);
+    expect(isLongBrief("   ")).toBe(false);
+  });
+});
+
+describe("V2-3 — StatedProblemAct parsed shape (headline + supporting points)", () => {
+  it("long brief → headline + 4 spaced points; short brief → no points list", () => {
+    hookState = { data: row({ statement: REAL, supporting_points: POINTS }), loading: false };
+    const { container } = render(<StatedProblemAct companyId="c1" />);
+    expect(container.querySelector(".cvs-fr-statedproblem-text")?.textContent).toBe(REAL);
+    const pts = container.querySelectorAll(".cvs-fr-statedproblem-point");
+    expect(pts.length).toBe(4);
+    POINTS.forEach((p) => expect(container.textContent || "").toContain(p));
+    // FALSIFICATION: no points → no points list at all (single-statement shape)
+    hookState = { data: row({ statement: REAL, supporting_points: [] }), loading: false };
+    const single = render(<StatedProblemAct companyId="c1" />);
+    expect(single.container.querySelector(".cvs-fr-statedproblem-points")).toBeNull();
+  });
+
+  it("the points block carries NO vertical accent bar and NO list bullet marker", () => {
+    hookState = { data: row({ statement: REAL, supporting_points: POINTS }), loading: false };
+    const { container } = render(<StatedProblemAct companyId="c1" />);
+    const ul = container.querySelector(".cvs-fr-statedproblem-points") as HTMLElement;
+    expect(ul).toBeTruthy();
+    expect(ul.style.borderLeft).toBe("");
+    expect(ul.style.borderLeftWidth).toBe("");
+    for (const li of Array.from(container.querySelectorAll(".cvs-fr-statedproblem-point")) as HTMLElement[]) {
+      expect(li.style.borderLeft).toBe("");
+    }
   });
 });
 
@@ -111,5 +155,19 @@ describe("V2-2/2b — export renders Act 1 with its provenance label", () => {
     expect(desc).toContain(STATED_PROBLEM_LABELS.site_descriptive);
     const none = buildFirstReadExportHtml(data(null));
     expect(none).toContain("No problem is stated");
+  });
+
+  it("V2-3 — parsed shape renders the headline + supporting points; single shape omits them", () => {
+    const parsed = buildFirstReadExportHtml(
+      data({ statement: REAL, supporting_points: POINTS, quote: null, register: "internal_declared", descriptive_fallback: false }),
+    );
+    expect(parsed).toContain(REAL);
+    POINTS.forEach((p) => expect(parsed).toContain(p));
+    expect(parsed).toContain('class="say-points"');
+    // FALSIFICATION: single shape (no points) must not emit the points list
+    const single = buildFirstReadExportHtml(
+      data({ statement: REAL, quote: null, register: "internal_declared", descriptive_fallback: false }),
+    );
+    expect(single).not.toContain('class="say-points"');
   });
 });

@@ -26,7 +26,7 @@ import PositionAct from "@/components/client-view/story/movement/PositionAct";
 import GapAct from "@/components/client-view/story/GapAct";
 import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
-import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
+import WhyOutsideAct from "@/components/client-view/story/WhyOutsideAct";
 import StatedProblemAct from "@/components/client-view/story/StatedProblemAct";
 import FirstReadNav from "./FirstReadNav";
 import { FR_ACTS } from "@/lib/firstRead/acts";
@@ -149,9 +149,9 @@ export default function FirstReadView() {
       // Act 1 — the client's stated problem (V2-2).
       case "say":
         return <StatedProblemAct companyId={companyId} />;
-      // Act 2 — placeholder this gate (V2-3 builds the journey visual + rationale).
+      // Act 2 — the journey exhibit + signed rationale (V2-3). No longer a placeholder.
       case "why_outside":
-        return <ActUnderConstruction />;
+        return <WhyOutsideAct />;
       // Act 3 — today's Mirror content, re-slotted.
       case "outside_shows":
         return (

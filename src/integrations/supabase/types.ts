@@ -1793,6 +1793,8 @@ export type Database = {
           register: string
           statement: string
           statement_identity: string
+          status: string
+          supporting_points: Json
         }
         Insert: {
           company_id: string
@@ -1806,6 +1808,8 @@ export type Database = {
           register?: string
           statement: string
           statement_identity: string
+          status?: string
+          supporting_points?: Json
         }
         Update: {
           company_id?: string
@@ -1819,6 +1823,8 @@ export type Database = {
           register?: string
           statement?: string
           statement_identity?: string
+          status?: string
+          supporting_points?: Json
         }
         Relationships: [
           {

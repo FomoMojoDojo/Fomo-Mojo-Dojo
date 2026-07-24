@@ -26,9 +26,19 @@ export default function StatedProblemAct({ companyId }: { companyId?: string }) 
   }
 
   const label = statedProblemLabel(data!.register, data!.descriptive_fallback);
+  // V2-3 — a long brief parses into a headline (statement) + up to 4 supporting points,
+  // rendered as spaced lines. A short brief has no points and reads as the single line.
+  const points = (data!.supporting_points ?? []).filter((p) => typeof p === "string" && p.trim().length > 0);
   return (
     <div className="cvs-fr-statedproblem">
       <p className="cvs-fr-statedproblem-text">{statement}</p>
+      {points.length > 0 && (
+        <ul className="cvs-fr-statedproblem-points">
+          {points.map((p, i) => (
+            <li key={i} className="cvs-fr-statedproblem-point">{p}</li>
+          ))}
+        </ul>
+      )}
       {/* provenance label — which source/register fired */}
       <p className="cvs-fr-statedproblem-source">{label}</p>
       {/* verbatim own-domain anchor when one exists; SignalQuote renders nothing if null.

@@ -8,16 +8,16 @@ import { createSessionEnsurer } from "./lazyMint";
 import { buildFirstReadExportHtml, type FirstReadExportData } from "./exportHtml";
 import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
 
-describe("FR-V2-1/2-2 — act structure (single source)", () => {
-  it("the five v2 acts in order; only Act 2 is a placeholder (V2-2 filled Act 1)", () => {
+describe("FR-V2-1/2-2/2-3 — act structure (single source)", () => {
+  it("the five v2 acts in order; V2-3 retired the last placeholder (Act 2 filled)", () => {
     expect(FR_ACTS.map((a) => a.key)).toEqual(["say", "why_outside", "outside_shows", "check", "help"]);
     expect(FR_ACTS.map((a) => a.title)).toEqual([
       "What You Say", "Why We Start Outside", "What the Outside Shows", "The Check", "How We Can Help",
     ]);
-    expect(FR_ACTS.filter((a) => a.placeholder).map((a) => a.key)).toEqual(["why_outside"]);
-    // export acts = the non-placeholder four, in order (Act 1 "What You Say" now included)
+    // V2-3: no placeholders remain — every act carries substance and reaches the export.
+    expect(FR_ACTS.filter((a) => a.placeholder).map((a) => a.key)).toEqual([]);
     expect(FR_EXPORT_ACTS.map((a) => a.title)).toEqual([
-      "What You Say", "What the Outside Shows", "The Check", "How We Can Help",
+      "What You Say", "Why We Start Outside", "What the Outside Shows", "The Check", "How We Can Help",
     ]);
   });
 });
@@ -32,13 +32,13 @@ describe("FR-V2-1 — export byte-follows the screen act constants", () => {
     check: { items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
     gap: [], proposal: null, exportedAt: "2026-07-23T00:00:00Z",
   };
-  it("section titles = FR_EXPORT_ACTS titles, in order; placeholders omitted", () => {
+  it("section titles = FR_EXPORT_ACTS titles, in order; every act reaches the export", () => {
     const html = buildFirstReadExportHtml(data);
     const titles = [...html.matchAll(/<h1 class="sec">([^<]+)<\/h1>/g)].map((m) => m[1]);
     expect(titles).toEqual(FR_EXPORT_ACTS.map((a) => a.title));
-    // the remaining placeholder (Act 2) never reaches the leave-behind; Act 1 now does
+    // V2-3: Act 2 now carries substance and reaches the leave-behind (no placeholders left)
     expect(html).toContain("What You Say");
-    expect(html).not.toContain("Why We Start Outside");
+    expect(html).toContain("Why We Start Outside");
   });
 });
 

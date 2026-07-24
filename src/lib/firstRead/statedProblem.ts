@@ -30,3 +30,17 @@ export function statedProblemLabel(register: string, descriptiveFallback: boolea
   // public_observed
   return descriptiveFallback ? STATED_PROBLEM_LABELS.site_descriptive : STATED_PROBLEM_LABELS.site_inferred;
 }
+
+// V2-3 — long-brief threshold. A short brief (a sentence or two — a stated problem is
+// typically ~200–500 chars) distills cleanly to ONE line. Past this length a brief
+// carries multiple distinct dimensions (Edgewood's is 4097 chars / ~617 words, with
+// several "for X" consequence sections), and forcing it into one line drops faithful
+// substance — so we parse it into a headline + up to 4 supporting points. 900 chars
+// (~140 words, ~5+ sentences) is the honest cut between the two. Calibrated on the one
+// real brief that exists today (Edgewood) plus the "short = 1–2 sentences" definition;
+// re-tune when more briefs land.
+export const LONG_BRIEF_CHARS = 900;
+
+export function isLongBrief(brief: string | null | undefined): boolean {
+  return (brief ?? "").trim().length >= LONG_BRIEF_CHARS;
+}

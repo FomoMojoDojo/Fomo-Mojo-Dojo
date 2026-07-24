@@ -1580,6 +1580,23 @@
   letter-spacing: -0.01em;
   margin: 0;
 }
+/* V2-3 — long-brief supporting points: spaced lines under the headline, breathing
+   room, NO vertical accent bar and NO list bullet. */
+.cvs-fr-statedproblem-points {
+  list-style: none;
+  padding: 0;
+  margin: 18px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cvs-fr-statedproblem-point {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15.5px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  margin: 0;
+}
 /* V2-2b — provenance label under the statement (which source/register fired). */
 .cvs-fr-statedproblem-source {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1589,6 +1606,43 @@
   opacity: 0.55;
   margin: 10px 0 0;
 }
+/* V2-3 — Act 2 "Why We Start Outside": the journey exhibit + signed rationale. The
+   SVG is theme-aware via the .cvs-story palette vars (no hardcoded colors); the copy
+   sits in the centered act column with breathing room. NO vertical accent bars. */
+.cvs-fr-whyoutside {
+  max-width: 760px;
+  margin: 20px auto 0;
+  padding: 0 24px;
+}
+.cvs-fr-journey-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 auto 12px;
+}
+.cvs-fr-whyoutside-rationale {
+  max-width: 620px;
+  margin: 28px auto 0;
+}
+.cvs-fr-whyoutside-block {
+  margin: 0 0 22px;
+}
+.cvs-fr-whyoutside-q {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mm-text);
+  margin: 0 0 6px;
+}
+.cvs-fr-whyoutside-a {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--mm-secondary);
+  margin: 0;
+}
+
 /* FR-UX-1 — the nav bar is fixed to the viewport bottom (position set inline in
    FirstReadNav). This class carries the theme-aware chrome; the inner .cvs-fr-nav
    keeps the centered Back/count/Next row. */
