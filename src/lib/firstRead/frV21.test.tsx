@@ -2,11 +2,9 @@
 // single-flight (no double-mint), placeholder carries no fabricated substance.
 
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
 import { FR_ACTS, FR_EXPORT_ACTS } from "./acts";
 import { createSessionEnsurer } from "./lazyMint";
 import { buildFirstReadExportHtml, type FirstReadExportData } from "./exportHtml";
-import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
 
 describe("FR-V2-1/2-2/2-3 — act structure (single source)", () => {
   it("the five v2 acts in order; V2-3 retired the last placeholder (Act 2 filled)", () => {
@@ -14,8 +12,9 @@ describe("FR-V2-1/2-2/2-3 — act structure (single source)", () => {
     expect(FR_ACTS.map((a) => a.title)).toEqual([
       "What You Say", "Why We Start Outside", "What the Outside Shows", "The Check", "How We Can Help",
     ]);
-    // V2-3: no placeholders remain — every act carries substance and reaches the export.
-    expect(FR_ACTS.filter((a) => a.placeholder).map((a) => a.key)).toEqual([]);
+    // V2-10: the placeholder field is retired — every act carries substance, so the export
+    // follows ALL five (FR_EXPORT_ACTS === FR_ACTS, no filter).
+    expect(FR_EXPORT_ACTS.length).toBe(FR_ACTS.length);
     expect(FR_EXPORT_ACTS.map((a) => a.title)).toEqual([
       "What You Say", "Why We Start Outside", "What the Outside Shows", "The Check", "How We Can Help",
     ]);
@@ -78,15 +77,5 @@ describe("FR-V2-1 — lazy-mint single-flight (no double-mint)", () => {
     });
     expect(await ensure()).toBe("existing");
     expect(counters.inserts).toBe(0);
-  });
-});
-
-describe("FR-V2-1 — placeholder renders no fabricated substance", () => {
-  it("the under-construction act shows only the honest line", () => {
-    const { container } = render(<ActUnderConstruction />);
-    const text = (container.textContent || "").trim();
-    expect(text).toBe("This part of the read is still being built.");
-    // no data-bearing markup (no lists, no findings, no fabricated content)
-    expect(container.querySelectorAll("ol, ul, li, table, img")).toHaveLength(0);
   });
 });

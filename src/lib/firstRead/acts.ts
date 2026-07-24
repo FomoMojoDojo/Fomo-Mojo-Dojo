@@ -16,8 +16,6 @@ export interface FirstReadAct {
   title: string;
   /** One framing sentence (client-facing) — PENDING SIGNATURE. */
   line: string;
-  /** Placeholder acts have no substance this gate; the export omits them. */
-  placeholder?: boolean;
 }
 
 export const FR_ACTS: readonly FirstReadAct[] = [
@@ -35,5 +33,7 @@ export const FR_ACTS: readonly FirstReadAct[] = [
     line: "Where this goes — the opportunities we see and how we'd work them with you." },
 ] as const;
 
-// The acts that carry real content into the leave-behind (placeholders omitted).
-export const FR_EXPORT_ACTS = FR_ACTS.filter((a) => !a.placeholder);
+// V2-10 — every act carries substance (the placeholder-omission branch is retired; the
+// `placeholder` field and the `.filter(!placeholder)` are removed). The leave-behind
+// follows ALL five acts, in order.
+export const FR_EXPORT_ACTS = FR_ACTS;

@@ -4,7 +4,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { admitStatedProblem, statedProblemLabel, STATED_PROBLEM_LABELS } from "@/lib/firstRead/statedProblem";
-import ActUnderConstruction from "@/components/client-view/story/ActUnderConstruction";
 import SignalQuote from "@/components/evidence/SignalQuote";
 import { buildFirstReadExportHtml, type FirstReadExportData } from "@/lib/firstRead/exportHtml";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
@@ -109,12 +108,6 @@ describe("V2-2b — style: no vertical accent bar on the quote block", () => {
     expect(fig.style.borderLeft).toBe("");
     expect(fig.style.borderLeftWidth).toBe("");
     expect(fig.style.marginTop).toBe("20px"); // breathing room above the quote
-  });
-});
-
-describe("V2-2 — placeholder sits inside the act column", () => {
-  it("ActUnderConstruction carries the column class", () => {
-    expect(render(<ActUnderConstruction />).container.querySelector(".cvs-fr-underconstruction")).toBeTruthy();
   });
 });
 

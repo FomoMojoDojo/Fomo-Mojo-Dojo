@@ -106,13 +106,14 @@ describe("FR-UX-1 GOAL 1 — verdict toggle-off (open session)", () => {
     expect(h.store.responses).toHaveLength(1); // replaced, not a second row, not deleted
   });
 
-  it("issued session REFUSES toggle-off — locked message, row untouched", async () => {
+  it("issued session REFUSES toggle-off — shared-with-client message, row untouched", async () => {
     h.store.status = "proposal_issued";
     const { result } = renderHook(() => useFirstReadCapture("c1", "s1"));
     await waitFor(() => expect(result.current.items[0]?.verdict).toBe("confirmed"));
     let msg: string | null = "";
     await act(async () => { msg = await result.current.setVerdict(result.current.items[0], "confirmed"); });
-    expect(msg).toMatch(/locked/i);
+    // V2-10 rider: the refusal message is softened (no lock/session machinery).
+    expect(msg).toMatch(/shared with the client/i);
     expect(h.store.responses).toHaveLength(1); // freeze governs — nothing deleted
   });
 });

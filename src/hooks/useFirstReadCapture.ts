@@ -51,9 +51,11 @@ export interface CaptureTally {
 // SAME verdict again is a NO-OP: it must not churn the row (rewrite captured_at,
 // re-fire the freeze trigger). This pure predicate decides "skip the write"; the
 // upsert only runs when it returns false.
-// Shown when a write/delete is refused because the session froze at issuance.
+// Shown when a write/delete is refused because the read was shared (frozen) at issuance.
+// V2-10 rider: softened to match the swept room language (no lock/session machinery).
+// PENDING OPERATOR SIGNATURE.
 const LOCKED_MSG =
-  "This session is locked — the proposal has been issued. Verdicts can no longer change.";
+  "This read has been shared with the client — verdicts are part of the record now.";
 
 export function isVerdictNoop(
   current: { verdict: Verdict | null; correctionText: string | null },

@@ -57,11 +57,9 @@ export interface FirstReadExportData {
 // modules (HERO_EMPTY, GAP_EMPTY) so the export can never drift from the screen.
 const T = {
   coverTitle: "First Read",
-  standard: "The Standard",
-  mirror: "The Mirror",
-  check: "The Check",
-  gap: "The Gap",
-  proposal: "The Proposal",
+  // V2-10 audit: the old per-section titles (The Standard / The Mirror / The Check / The
+  // Gap / The Proposal) were DEAD — section titles come from FR_EXPORT_ACTS (the v2 act
+  // names) via buildFirstReadExportHtml. Removed to close the divergence risk.
   standardEmpty: "No industry-standard map matched this company's industry.",
   findingsEmpty: "Nothing else stood out from the outside read.",
   scoreLabel: "Mojo Score",
@@ -344,7 +342,7 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .plan{margin:0 0 20px}
 .plan-list{list-style:decimal;padding-left:20px;margin:8px 0 0;display:flex;flex-direction:column;gap:6px}
 .proposal-block p:last-child{margin:0;white-space:pre-wrap}
-.withheld{font-style:italic;opacity:.6;border-left:2px solid rgba(180,83,9,.5);padding-left:10px;margin:0 0 20px}
+.withheld{font-style:italic;opacity:.6;margin:0 0 20px}
 .proposal-meta{font-family:ui-monospace,Menlo,monospace;font-size:10px;opacity:.5;margin:22px 0 0}
 .j-stations{list-style:none;padding:0;margin:0 0 22px;display:flex;flex-direction:column;gap:10px}
 .j-stations li{display:flex;flex-direction:column;gap:2px}
@@ -376,7 +374,8 @@ footer{border-top:1px solid rgba(17,17,17,.12);margin-top:48px;padding-top:16px;
 export function buildFirstReadExportHtml(d: FirstReadExportData): string {
   const cover = `<header class="cover"><p class="title">${esc(T.coverTitle)}</p><p class="company">${esc(d.company.name)}</p><p class="meta">${esc(d.session.date)}${d.session.presenter ? ` · ${esc(d.session.presenter)}` : ""}</p></header>`;
   const sec = (title: string, body: string) => `<section><h1 class="sec">${esc(title)}</h1>${body}</section>`;
-  const footer = `<footer>Session ${esc(d.session.id)} · Exported ${esc(fmtDateTime(d.exportedAt))}</footer>`;
+  // V2-10 audit: the raw session id (machinery/internal) is out of the client leave-behind.
+  const footer = `<footer>Exported ${esc(fmtDateTime(d.exportedAt))}</footer>`;
 
   // FR-V2-1 / V2-3 — the leave-behind follows the v2 act order + titles from the SAME
   // source as the rail (FR_EXPORT_ACTS), so screen and export can't diverge. Every act
