@@ -10,6 +10,7 @@ import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectio
 import { SignalRecurrenceControl } from "@/components/strategy/SignalRecurrenceControl";
 import { StandingFindings } from "@/components/strategy/StandingFindings";
 import { ContestedFindings } from "@/components/strategy/ContestedFindings";
+import { ExtractsFeedControl } from "@/components/strategy/ExtractsFeedControl";
 import StrategyInspectPanel from "@/views/Strategy/StrategyInspectPanel";
 import DriftBadge from "@/components/drift/DriftBadge";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
@@ -92,8 +93,12 @@ export default function ClientRefinePreviewExtractsView() {
               <>
                 {/* OC-3: the contested-findings judgment queue. Self-quiets when there
                     are no contests (open or resolved), so it only appears when there's
-                    something to judge or a resolution trail to show. */}
+                    something to judge or a resolution trail to show.
+                    OC-2d: the corrections-feed control mounts above it (the same signed
+                    button, no fork) when a First Read session with verdicts exists — this
+                    is what BIRTHS the contests the queue then renders. */}
                 <section style={{ marginBottom: 36 }}>
+                  <ExtractsFeedControl companyId={companyId} />
                   <ContestedFindings companyId={companyId} />
                 </section>
 

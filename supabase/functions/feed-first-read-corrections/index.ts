@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     // Independent of corrections — a session may have contests but no corrections.
     const { data: contestRespData, error: crErr } = await supabase
       .from("first_read_responses")
-      .select("id, verdict, item_identity")
+      .select("id, verdict, item_kind, item_ref, item_identity")
       .eq("session_id", session_id)
       .in("verdict", ["rejected", "not_important"]);
     if (crErr) return json({ error: `contest responses load failed: ${crErr.message}` }, 500);
@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
         ok: true, session_id,
         corrections_fed: 0, paired: 0, silent: 0, rejections_pruned: 0, pruned_identities: [],
         contests_born: 0, contests_disputed: 0, contests_immaterial: 0,
-        contests_skipped: 0, contests_unanchored: 0,
+        contests_skipped: 0, contests_unanchored: 0, contests_market: 0,
       });
     }
 
@@ -139,10 +139,15 @@ Deno.serve(async (req) => {
       .eq("provenance", "public_observed");
     if (pErr) return json({ error: `public claims load failed: ${pErr.message}` }, 500);
     const publicByIdentity = new Map<string, { id: string; statement: string; identity: string }>();
+    // OC-2d: reverse index (claim id → identity) so a delta's public_claim_id resolves to
+    // a LIVE public claim (same struck-excluded set as publicByIdentity).
+    const publicById = new Map<string, { id: string; statement: string; identity: string }>();
     for (const c of (pubData ?? []) as Array<{ id: string; statement: string; status: string }>) {
       if (c.status === "struck") continue; // struck claims are out of the reading
       const identity = await contentIdentity(c.statement);
-      publicByIdentity.set(identity, { id: c.id, statement: c.statement, identity });
+      const entry = { id: c.id, statement: c.statement, identity };
+      publicByIdentity.set(identity, entry);
+      publicById.set(c.id, entry);
     }
 
     let paired = 0, silent = 0, rejectionsPruned = 0, deltaOnly = 0;
@@ -259,10 +264,37 @@ Deno.serve(async (req) => {
       (x) => x.claim_id,
     );
 
+    // OC-2d: resolve delta-item contest verdicts to their contested claim via the delta
+    // row's STORED public_claim_id — deterministic, never identity reconstruction. A delta
+    // whose row is gone, or whose public_claim_id is null (publicly_silent) or points to a
+    // non-live public claim, gets NO entry → deriveContests counts it unanchored.
+    const deltaAnchorByRef = new Map<string, ObservedClaim>();
+    const deltaRefs = [
+      ...new Set(
+        contestResponses
+          .filter((r) => r.item_kind === "delta" && typeof r.item_ref === "string" && r.item_ref)
+          .map((r) => r.item_ref as string),
+      ),
+    ];
+    if (deltaRefs.length > 0) {
+      const { data: deltaRows, error: dRowsErr } = await supabase
+        .from("claim_deltas")
+        .select("id, public_claim_id")
+        .eq("company_id", companyId)
+        .in("id", deltaRefs);
+      if (dRowsErr) return json({ error: `delta rows load failed: ${dRowsErr.message}` }, 500);
+      for (const d of (deltaRows ?? []) as Array<{ id: string; public_claim_id: string | null }>) {
+        if (!d.public_claim_id) continue; // publicly_silent / no observed side → no contest
+        const claim = publicById.get(d.public_claim_id);
+        if (claim) deltaAnchorByRef.set(d.id, claim as unknown as ObservedClaim); // live public claim only
+      }
+    }
+
     const contestMap = publicByIdentity as unknown as Map<string, ObservedClaim>;
     const plan = deriveContests({
       responses: contestResponses,
       publicByIdentity: contestMap,
+      deltaAnchorByRef,
       existingClaimIds,
     });
 
@@ -298,6 +330,7 @@ Deno.serve(async (req) => {
       contests_immaterial: plan.immaterial,
       contests_skipped: plan.skipped_existing,
       contests_unanchored: plan.unanchored,
+      contests_market: plan.market, // OC-2d: market verdicts excluded by design, reported
     });
   } catch (e) {
     return json({ error: String(e instanceof Error ? e.message : e) }, 500);

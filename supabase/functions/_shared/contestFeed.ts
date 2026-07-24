@@ -5,13 +5,21 @@
 // birth. The edge function (feed-first-read-corrections) does the SELECTs and the
 // INSERTs; this module owns the LAW so it can be unit-tested with zero residue.
 //
-// Laws encoded here (OC-2 brief + OC-1 schema):
+// Laws encoded here (OC-2 brief + OC-1 schema; OC-2d anchor extension):
 //   * reject → contest_kind='disputed'; not_important → contest_kind='immaterial'.
 //     No other verdict produces a contest (confirm/correct never do).
-//   * ANCHORED ONLY: a response contests a claim only when its item_identity
-//     resolves to an observed claim by CONTENT IDENTITY (the same map the
-//     corrections feed uses). An unanchored response is counted as render-only and
-//     births NOTHING — an anchor is never fabricated.
+//   * ANCHORED ONLY, by item KIND (OC-2d): a response contests a claim only when it
+//     resolves to a live observed claim.
+//       - kind='delta'  → resolve via the delta row's STORED public-claim reference
+//         (deltaAnchorByRef, keyed by the delta id in item_ref) — NEVER by identity
+//         reconstruction. A delta with no live public claim (publicly_silent has none,
+//         or the row is gone) has no entry → births nothing (honest, counted).
+//       - kind='market' → NO claim contest exists for a market item; excluded by
+//         design and counted separately (scope signal, never silently dropped).
+//       - otherwise (finding / differentiator / legacy) → resolve by CONTENT IDENTITY
+//         via publicByIdentity, exactly as before (untouched).
+//     An unanchored response is counted as render-only and births NOTHING — an anchor
+//     is never fabricated.
 //   * IDEMPOTENT by SKIP-BEFORE-INSERT: a (session, claim) that already has a
 //     contest — or that a prior response in this same run already claimed — is
 //     skipped here, so the caller never attempts a duplicate insert. The unique
@@ -33,6 +41,10 @@ export interface FeedResponse {
   id: string;
   verdict: string; // any first_read_responses verdict; non-contest verdicts are ignored
   item_identity: string;
+  // OC-2d: optional so the existing identity-path fixtures/callers are unchanged. When
+  // absent or not 'delta'/'market', the finding/identity path runs exactly as before.
+  item_kind?: string; // 'delta' | 'market' | 'finding' | 'differentiator' | undefined
+  item_ref?: string | null; // the source row id — for kind='delta', the claim_delta id
 }
 
 export interface ObservedClaim {
@@ -56,6 +68,7 @@ export interface ContestPlan {
   immaterial: number;
   skipped_existing: number; // resolved to a claim that already has a contest this session
   unanchored: number; // reject/not_important with no observed-claim anchor (render-only)
+  market: number; // OC-2d: reject/not_important on a MARKET item — no claim contest by design
   considered: number; // reject/not_important responses seen
 }
 
@@ -66,19 +79,35 @@ function isContestVerdict(v: string): v is ContestVerdict {
 export function deriveContests(args: {
   responses: FeedResponse[];
   publicByIdentity: Map<string, ObservedClaim>;
+  /** OC-2d: delta row id → the live public claim it references (from claim_deltas.public_claim_id).
+   *  Absent (default empty) preserves the pre-OC-2d identity-only behavior. */
+  deltaAnchorByRef?: Map<string, ObservedClaim>;
   existingClaimIds: Iterable<string>;
 }): ContestPlan {
+  const deltaAnchor = args.deltaAnchorByRef ?? new Map<string, ObservedClaim>();
   const claimed = new Set<string>(args.existingClaimIds); // claim_ids already contested this session
   const births: ContestBirth[] = [];
-  let disputed = 0, immaterial = 0, skipped_existing = 0, unanchored = 0, considered = 0;
+  let disputed = 0, immaterial = 0, skipped_existing = 0, unanchored = 0, market = 0, considered = 0;
 
   for (const r of args.responses) {
     if (!isContestVerdict(r.verdict)) continue; // confirm/correct/anything else → no contest
     considered++;
 
-    const anchor = args.publicByIdentity.get(r.item_identity);
+    // MARKET: no claim contest exists for a market item — excluded by design, counted
+    // honestly (scope signal for shrink/pricing), NEVER silently dropped.
+    if (r.item_kind === "market") {
+      market++;
+      continue;
+    }
+
+    // ANCHOR by kind. delta → the delta row's stored public-claim reference (never by
+    // identity reconstruction); everything else → content identity (unchanged path).
+    const anchor = r.item_kind === "delta"
+      ? (r.item_ref ? deltaAnchor.get(r.item_ref) : undefined)
+      : args.publicByIdentity.get(r.item_identity);
+
     if (!anchor) {
-      unanchored++; // render-only, counted elsewhere; never fabricate an anchor
+      unanchored++; // no live claim (publicly_silent delta / gone / non-matching) — never fabricated
       continue;
     }
 
@@ -98,5 +127,5 @@ export function deriveContests(args: {
     });
   }
 
-  return { births, disputed, immaterial, skipped_existing, unanchored, considered };
+  return { births, disputed, immaterial, skipped_existing, unanchored, market, considered };
 }

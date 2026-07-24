@@ -128,7 +128,106 @@ describe("deriveContests — OC-2 contest feed law", () => {
     }
     // the plan itself carries only counts + births — nothing claim-mutating
     expect(Object.keys(plan).sort()).toEqual(
-      ["births", "considered", "disputed", "immaterial", "skipped_existing", "unanchored"].sort(),
+      ["births", "considered", "disputed", "immaterial", "market", "skipped_existing", "unanchored"].sort(),
     );
+  });
+});
+
+describe("OC-2d — delta anchoring via public_claim_id + market disposition", () => {
+  const CLAIM_P: ObservedClaim = { id: "public-claim-1", identity: "pub-id-1" };
+
+  it("f. a delta-kind reject anchors via the delta row's public claim → disputed on the RIGHT claim", () => {
+    const responses: FeedResponse[] = [
+      // item_identity is the DELTA identity (pair hash) — it must NOT be used to anchor.
+      { id: "r1", verdict: "rejected", item_kind: "delta", item_ref: "delta-row-9", item_identity: "delta-pair-hash" },
+    ];
+    const plan = deriveContests({
+      responses,
+      publicByIdentity: mapOf(), // empty — proves the delta path does NOT use identity
+      deltaAnchorByRef: new Map([["delta-row-9", CLAIM_P]]),
+      existingClaimIds: [],
+    });
+    expect(plan.births).toHaveLength(1);
+    expect(plan.births[0].claim_id).toBe("public-claim-1"); // the RIGHT claim (via public_claim_id)
+    expect(plan.births[0].contest_kind).toBe("disputed");
+    expect(plan.unanchored).toBe(0);
+
+    // FALSIFICATION: a WRONG-claim mapping births a contest on the WRONG claim — proving the
+    // birth's claim_id is driven by deltaAnchorByRef, not by identity or a constant.
+    const wrong = deriveContests({
+      responses,
+      publicByIdentity: mapOf(),
+      deltaAnchorByRef: new Map([["delta-row-9", { id: "WRONG-claim", identity: "wrong-id" }]]),
+      existingClaimIds: [],
+    });
+    expect(wrong.births[0].claim_id).toBe("WRONG-claim");
+    expect(wrong.births[0].claim_id).not.toBe("public-claim-1");
+  });
+
+  it("g. a delta with no live public claim (publicly_silent / gone) births nothing — counted unanchored", () => {
+    const responses: FeedResponse[] = [
+      { id: "r1", verdict: "not_important", item_kind: "delta", item_ref: "delta-silent", item_identity: "d-id" },
+    ];
+    const plan = deriveContests({
+      responses,
+      publicByIdentity: mapOf(CLAIM_P),
+      deltaAnchorByRef: new Map(), // the delta resolved to no live public claim
+      existingClaimIds: [],
+    });
+    expect(plan.births).toHaveLength(0);
+    expect(plan.unanchored).toBe(1);
+    expect(plan.market).toBe(0);
+
+    // FALSIFICATION: give the SAME response a delta anchor and it DOES birth — so the zero
+    // above is the missing public claim, not delta verdicts being dropped wholesale.
+    const anchored = deriveContests({
+      responses,
+      publicByIdentity: mapOf(),
+      deltaAnchorByRef: new Map([["delta-silent", CLAIM_P]]),
+      existingClaimIds: [],
+    });
+    expect(anchored.births).toHaveLength(1);
+    expect(anchored.births[0].contest_kind).toBe("immaterial"); // not_important → immaterial
+  });
+
+  it("h. a market-kind verdict births no contest — counted honestly, never silently dropped", () => {
+    const responses: FeedResponse[] = [
+      { id: "r1", verdict: "rejected", item_kind: "market", item_ref: "mkt-1", item_identity: "m-id" },
+      { id: "r2", verdict: "not_important", item_kind: "market", item_ref: "mkt-2", item_identity: "m-id-2" },
+    ];
+    const plan = deriveContests({
+      responses,
+      publicByIdentity: mapOf(CLAIM_P),
+      deltaAnchorByRef: new Map(),
+      existingClaimIds: [],
+    });
+    expect(plan.births).toHaveLength(0);
+    expect(plan.market).toBe(2); // both counted as market — reported, not dropped
+    expect(plan.unanchored).toBe(0); // market is NOT lumped into unanchored
+    expect(plan.considered).toBe(2);
+  });
+
+  it("i. re-run idempotent across the delta path: an already-contested claim is skipped", () => {
+    const responses: FeedResponse[] = [
+      { id: "r1", verdict: "rejected", item_kind: "delta", item_ref: "delta-row-9", item_identity: "d" },
+    ];
+    const rerun = deriveContests({
+      responses,
+      publicByIdentity: mapOf(),
+      deltaAnchorByRef: new Map([["delta-row-9", CLAIM_P]]),
+      existingClaimIds: ["public-claim-1"], // already contested
+    });
+    expect(rerun.births).toHaveLength(0);
+    expect(rerun.skipped_existing).toBe(1);
+  });
+
+  it("j. legacy finding path (no item_kind) is untouched — still anchors by identity", () => {
+    const plan = deriveContests({
+      responses: [{ id: "r1", verdict: "rejected", item_identity: "id-a" }], // no item_kind
+      publicByIdentity: mapOf(CLAIM_A),
+      existingClaimIds: [],
+    });
+    expect(plan.births).toHaveLength(1);
+    expect(plan.births[0].claim_id).toBe("claim-a");
   });
 });
