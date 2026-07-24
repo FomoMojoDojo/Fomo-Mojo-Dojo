@@ -34,6 +34,10 @@ brief's GOAL). Ruling 9 (issued 2026-07-23) follows, verbatim.
    exist in the schema, but nothing writes them in OC-1. The allowed resolution
    vocabulary already covers all three sanctioned outcomes —
    `strike_resolved`, `dismissed`, `set_aside` — so OC-3 needs no schema change.
+   > **CORRECTION (2026-07-24, OC-3):** This proved not-quite-true. OC-3 took ONE
+   > schema change — widening the `claim_contests_resolution_kind` CHECK to admit
+   > `(immaterial, dismissed)` per the operator amendment below. The *vocabulary* was
+   > unchanged (`dismissed` already existed); only the kind→resolution *mapping* widened.
 
 4. **One contest per (session, claim).** A unique constraint on
    `(session_id, claim_id)`: a client gives one verdict per finding per meeting;
@@ -115,3 +119,65 @@ Delete-audit, no FKs on scoping ids, RLS left off (mirrors `claim_removals` /
 or `'unaudited_direct_delete'`), `removed_at`. Written by the `BEFORE DELETE`
 trigger `claim_contests_delete_audit`, which reads only the OLD contest row and
 never references `claims` or `claims.status`.
+
+---
+
+## OC-3 — render + resolve (as built, 2026-07-24)
+
+Migration: `supabase/migrations/20260724120000_observed_contest_resolve.sql`.
+SQL tests: `supabase/tests/oc3_contest_resolve.test.sql` (9 laws, each falsified in-line).
+Render tests: `contestCopy.test.ts`, `contestedFindings.test.tsx`, `signalQuoteDecode.test.tsx`.
+
+### Amendment (operator ruling 2026-07-24) — immaterial → Dismiss is lawful
+
+Ruling 9 mapped immaterial → `set_aside` only. The OC-3 brief's GOAL 2 listed immaterial
+→ set_aside **or** dismissed; the operator resolved the conflict by WIDENING the CHECK.
+Rationale (verbatim):
+
+> "A contest awaits the operator's judgment; a judgment that can only go one way isn't a
+> judgment. Without Dismiss, an immaterial contest forces minimize — the client's word
+> compelling a status change with the operator as rubber stamp, the exact auto-minimize
+> the schema forbids. Dismiss = disagree-and-close: contest resolved, claim untouched,
+> disagreement on record."
+
+The CHECK now admits `(immaterial, set_aside)` **and** `(immaterial, dismissed)`; the two
+cross-kind mismatches (`disputed→set_aside`, `immaterial→strike_resolved`) stay forbidden.
+
+### As built
+
+- **`resolve_contest(p_contest_id, p_resolution, p_reason)`** — the SOLE resolution path.
+  Admin-only (`has_role(auth.uid(),'admin')`), reason-required, refuses re-resolving, and
+  raises a clean kind-mismatch message before the CHECK backstop. Writes the contest
+  resolution FIRST, then delegates the status consequence to `set_claim_status` (strike =
+  `struck`, set_aside = `minimized`) — a SECOND resolution writer, never a second STATUS
+  writer. Dismiss changes no status. `resolved_by` = `auth.uid()`.
+- **External-strike auto-resolve** — trigger `claim_contests_auto_resolve_on_strike`
+  (`after update of status on claims`, `when new.status='struck'`): open contests on the
+  struck claim auto-resolve (disputed → `strike_resolved`, immaterial → `dismissed`).
+  Status→contest only (ruling 1 intact); OPEN rows only, so a self-strike from
+  `resolve_contest` — which resolved its own row first — is skipped. **This hook did NOT
+  exist in OC-1; it is built here** (OC-1 was schema-only).
+- **Company-teardown refusal** — trigger `companies_open_contest_guard`
+  (`before delete on companies`): a company with OPEN contests cannot be torn down; it
+  raises a plain-English message ("N open contest(s) await your judgment … resolve or
+  dismiss them (Extracts → Contested) before removing it"). **TEARDOWN FINDING: OC-1 had
+  NO refusal** — ruling 5's cascade+audit silently deleted+recorded open contests on
+  teardown. OC-3 adds the refusal. It lives on `companies` (not the contest delete
+  trigger) precisely so OC-1's audited-cascade of a *direct* contest delete — and its
+  test — stand unchanged (verified: OC-1 + OC-2 SQL tests still green).
+- **Render (operator surface, Extracts only)** — `ContestedFindings` (section
+  "Contested — awaiting your judgment (N)", open-only queue with a per-claim kind chip +
+  kind-appropriate controls + consequences-before-act; resolved contests in a trail below)
+  via `useClaimContests`; kind→controls in the pure `contestCopy.ts`. All strings PENDING
+  operator signature.
+- **Rider** — `SignalQuote` gains `decodeQuoteEntities` (presentational HTML-entity decode;
+  the stored quote stays byte-exact — the V2-6d `&amp;` case).
+
+### Live proof (Edgewood, 2026-07-24)
+No organic contests exist for Edgewood (its one session recorded no reject/not_important
+verdicts; `claim_contests` is empty repo-wide). The resolve flow was proven against
+Edgewood's real claims via a **rolled-back controlled proof**: seed disputed+immaterial →
+render-query returns the open queue → `resolve_contest` (disputed→dismissed leaves the
+claim `active`; immaterial→set_aside → `minimized`) → open queue empty, both in the trail →
+ROLLBACK, zero residue (both claims back to `active`, 0 contests). The RPC/CHECK/auto-resolve/
+teardown laws are additionally proven on the OC-1 fixture company by the SQL test.

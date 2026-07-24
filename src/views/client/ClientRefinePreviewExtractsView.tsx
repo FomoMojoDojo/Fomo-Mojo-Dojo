@@ -9,6 +9,7 @@ import { WorkshopSidebar, type SidebarTabKey } from "@/components/client/Worksho
 import { StrategicDirectionDelta } from "@/components/strategy/StrategicDirectionDelta";
 import { SignalRecurrenceControl } from "@/components/strategy/SignalRecurrenceControl";
 import { StandingFindings } from "@/components/strategy/StandingFindings";
+import { ContestedFindings } from "@/components/strategy/ContestedFindings";
 import StrategyInspectPanel from "@/views/Strategy/StrategyInspectPanel";
 import DriftBadge from "@/components/drift/DriftBadge";
 import DriftDetailPanel from "@/components/drift/DriftDetailPanel";
@@ -89,6 +90,13 @@ export default function ClientRefinePreviewExtractsView() {
               <p style={{ fontSize: 13, color: "#8a9a95" }}>Select a company to view its extracts.</p>
             ) : (
               <>
+                {/* OC-3: the contested-findings judgment queue. Self-quiets when there
+                    are no contests (open or resolved), so it only appears when there's
+                    something to judge or a resolution trail to show. */}
+                <section style={{ marginBottom: 36 }}>
+                  <ContestedFindings companyId={companyId} />
+                </section>
+
                 <section style={{ marginBottom: 36 }}>
                   <p style={SECTION_HEADER}>Direction Delta</p>
                   <StrategicDirectionDelta companyId={companyId} />

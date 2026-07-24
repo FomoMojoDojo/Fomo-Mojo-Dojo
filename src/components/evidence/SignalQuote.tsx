@@ -17,6 +17,24 @@ const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+// OC-3 RIDER — PRESENTATIONAL HTML-entity decode. The basic crawl extraction
+// (extractTextBasic) does not decode entities, so a byte-exact verbatim quote can retain
+// a literal "&amp;" (the V2-6d case). This decodes common entities AT RENDER only — the
+// stored `quote` is never touched, stays byte-exact against its retained source, and the
+// signals_quote_verbatim CHECK stays the authority. `&amp;` is decoded LAST so an escaped
+// entity like "&amp;lt;" becomes "&lt;", never "<".
+export function decodeQuoteEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
 // TZ-safe: format a YYYY-MM-DD date string from its parts (never new Date(), which
 // would shift a date-only value across the UTC boundary). Returns "" if not a date.
 export function formatEventDate(iso: string | null | undefined): string {
@@ -63,7 +81,7 @@ export default function SignalQuote({
   const dateStr = formatEventDate(eventDate);
   return (
     <figure className="cvs-signal-quote" style={figureStyle}>
-      <blockquote className="cvs-signal-quote-text" style={quoteStyle}>“{q}”</blockquote>
+      <blockquote className="cvs-signal-quote-text" style={quoteStyle}>“{decodeQuoteEntities(q)}”</blockquote>
       <figcaption className="cvs-signal-quote-cap" style={capStyle}>
         {AS_CAPTURED_LABEL}{dateStr ? ` · ${dateStr}` : ""}
       </figcaption>
