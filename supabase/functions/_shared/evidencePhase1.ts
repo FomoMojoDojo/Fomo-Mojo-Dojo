@@ -1,7 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
-import { deriveOpenQuestionRows } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
@@ -75,48 +74,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-// FR-FLOW-2a — persist the run's open questions as rows, each linked by content
-// identity to the finding it depends on. Link targets = the content identities of
-// the run's REAL findings (findings.body). A model-declared dependency
-// (result_json.open_question_links) that doesn't match a real finding is stored
-// LINKLESS — never fabricated. deriveOpenQuestionRows owns the law.
-async function persistOpenQuestionLinks(
-  supabase: SupabaseClient,
-  companyId: string,
-  runId: string,
-  resultJson: unknown,
-): Promise<void> {
-  const result = asRecord(resultJson);
-  if (!result) return;
-  const questions = (Array.isArray(result.open_questions) ? result.open_questions : [])
-    .filter((q): q is string => typeof q === "string" && q.trim().length > 0);
-  if (questions.length === 0) return;
-
-  const linkHints = (Array.isArray(result.open_question_links) ? result.open_question_links : [])
-    .map((h) => asRecord(h))
-    .filter((h): h is Record<string, unknown> => !!h)
-    .map((h) => ({ question: String(h.question ?? ""), depends_on: String(h.depends_on ?? "") }))
-    .filter((h) => h.question && h.depends_on);
-
-  // The run's REAL findings → their content identities (the only valid link targets).
-  const { data: findingRows } = await supabase
-    .from("findings")
-    .select("body")
-    .eq("company_id", companyId)
-    .eq("origin_run_id", Number(runId));
-  const findingIdentities = new Set<string>();
-  for (const f of (findingRows ?? []) as Array<{ body?: string | null }>) {
-    if (typeof f.body === "string" && f.body.trim()) findingIdentities.add(await contentIdentity(f.body));
-  }
-
-  const rows = await deriveOpenQuestionRows({ companyId, runId, questions, linkHints, findingIdentities });
-  if (rows.length === 0) return;
-  const { error } = await supabase
-    .from("first_read_open_questions")
-    .upsert(rows, { onConflict: "company_id,run_id,question_identity" });
-  if (error) throw new Error(`open-question upsert failed: ${error.message}`);
 }
 
 function normalizeSignalInsert(signal: SignalDraft) {
@@ -725,14 +682,12 @@ export async function ingestPublicBaselineSignals(args: {
   } catch (err) {
     console.log("[evidence] frontier generation exception:", String(err instanceof Error ? err.message : err));
   }
-  // FR-FLOW-2a — persist the run's open questions as ROWS, linked by content identity
-  // to the findings they depend on (the prerequisite for FR-FLOW-2b's live-shrink).
-  // Defensive: a failure here must NEVER break signal ingestion.
-  try {
-    await persistOpenQuestionLinks(args.supabase, args.companyId, String(args.runId), args.resultJson);
-  } catch (e) {
-    console.error("[open-questions] link persistence failed (non-fatal):", (e as Error).message);
-  }
+  // V2-4 — the OLD FR-FLOW-2a populator (result_json.open_questions[] → rows) is
+  // RETIRED. It generated questions from the model's working notes, not the persisted
+  // findings, so its links stayed honestly linkless. The authoritative writer is now the
+  // dedicated post-findings generator (generate-open-questions), which is handed the
+  // finding bodies + publicly_silent deltas verbatim, so links resolve by construction.
+  // Running both would write two competing lists — the exact thing V2-4 unifies away.
 
   const journeyStats = await inferJourneyHypothesesForCompany({
     supabase: args.supabase as any,

@@ -159,7 +159,7 @@ export default function ClientStoryView() {
             </StandardsShell>
             <OutsideHeroAct preferredRun={preferredRun} />
             <OutsideFindingsAct preferredRun={preferredRun} />
-            <OutsideQuestionAct preferredRun={preferredRun} loading={baselineLoading} />
+            <OutsideQuestionAct companyId={activeCompany?.id} />
             <OutsideNextMoveAct onStartDiagnose={() => selectPhase("diagnosis")} />
             {/* MPD-3: the inferred-strategy movement — a distinct register
                 from the evidence acts above. Acts A and B: both readings of

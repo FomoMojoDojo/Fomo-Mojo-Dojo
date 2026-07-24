@@ -176,7 +176,7 @@ export default function FirstReadView() {
             <StandardsShell>
               <FrontDoorMapAct />
             </StandardsShell>
-            <GapAct preferredRun={preferredRun} />
+            <GapAct companyId={companyId} />
             <ProposalAct
               companyId={companyId}
               sessionId={sessionId}

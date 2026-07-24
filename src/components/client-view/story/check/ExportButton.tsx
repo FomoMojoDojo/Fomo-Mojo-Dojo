@@ -20,7 +20,7 @@ import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitForSurface } from "@/lib/registerGuard";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { orderOtherFindings } from "@/components/client-view/story/OutsideFindingsAct";
-import { openQuestions } from "@/components/client-view/story/GapAct";
+import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import {
   buildFirstReadExportHtml,
   firstReadExportFilename,
@@ -58,6 +58,9 @@ export default function ExportButton({
   const { maps, loading: mapsLoading } = useIndustryReferenceMaps();
   const { items, tally, loading: captureLoading } = useFirstReadCapture(companyId, sessionId);
   const { data: statedProblem, loading: statedProblemLoading } = useFirstReadStatedProblem(companyId);
+  // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
+  // so the leave-behind can never diverge from the meeting.
+  const { questions: openQuestionList, loading: openQuestionsLoading } = useFirstReadOpenQuestions(companyId);
   const [session, setSession] = useState<{ started_at: string | null; presenter: string | null } | null>(null);
 
   // The export must match the meeting exactly — never capture a not-yet-loaded
@@ -73,7 +76,7 @@ export default function ExportButton({
 
   const dataReady =
     !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading &&
-    !statedProblemLoading && session !== null;
+    !statedProblemLoading && !openQuestionsLoading && session !== null;
 
   useEffect(() => {
     let cancelled = false;
@@ -128,7 +131,7 @@ export default function ExportButton({
         : null,
       mirror: { score: score?.total_score ?? null, bet, findings: mirrorFindings },
       check: { items, tally },
-      gap: openQuestions(preferredRun),
+      gap: openQuestionList,
       proposal,
       exportedAt: new Date().toISOString(),
     };

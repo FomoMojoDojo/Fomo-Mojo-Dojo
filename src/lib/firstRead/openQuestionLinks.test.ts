@@ -1,7 +1,7 @@
-// FR-FLOW-2a — the open-question → finding linkage LAW.
+// FR-FLOW-2a / V2-4 — the open-question → anchor linkage LAW.
 
 import { describe, it, expect } from "vitest";
-import { deriveOpenQuestionRows } from "./openQuestionLinks";
+import { deriveOpenQuestionRows, deriveAnchoredRows } from "./openQuestionLinks";
 import { contentIdentity } from "../../../supabase/functions/_shared/contentIdentity";
 
 const FINDING = "Their service footprint covers most US states";
@@ -56,5 +56,46 @@ describe("deriveOpenQuestionRows — content-identity linkage", () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0].finding_identity).toBeNull(); // no hints → linkless
+  });
+});
+
+describe("V2-4 — deriveAnchoredRows (finding + silent_delta provenance)", () => {
+  it("a finding anchor links by construction: finding_identity == anchor_identity, source_kind='finding'", async () => {
+    const identity = await contentIdentity(FINDING);
+    const rows = await deriveAnchoredRows({
+      companyId: "c1", runId: "12",
+      anchor: { kind: "finding", text: FINDING, identity },
+      questions: [Q_LINKED],
+      findingIdentities: new Set([identity]),
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_kind).toBe("finding");
+    expect(rows[0].finding_identity).toBe(identity);
+    expect(rows[0].anchor_identity).toBe(identity);
+    expect(rows[0].status).toBe("live");
+  });
+
+  it("FALSIFICATION: a finding anchor whose identity is NOT among the run's real findings → linkless", async () => {
+    const identity = await contentIdentity(FINDING);
+    const rows = await deriveAnchoredRows({
+      companyId: "c1", runId: "12",
+      anchor: { kind: "finding", text: FINDING, identity },
+      questions: [Q_LINKED],
+      findingIdentities: new Set(["some-other-identity"]), // the anchor isn't a real finding here
+    });
+    expect(rows[0].finding_identity).toBeNull();
+    expect(rows[0].anchor_identity).toBeNull();
+  });
+
+  it("a silent_delta anchor: finding_identity NULL, anchor_identity = the delta identity, source_kind='silent_delta'", async () => {
+    const rows = await deriveAnchoredRows({
+      companyId: "c1", runId: "12",
+      anchor: { kind: "silent_delta", text: "We are the leading provider in the region", identity: "delta-ci-abc" },
+      questions: ["Is that leadership recognized outside the company?"],
+      findingIdentities: new Set(), // deltas never link to a finding
+    });
+    expect(rows[0].source_kind).toBe("silent_delta");
+    expect(rows[0].finding_identity).toBeNull();
+    expect(rows[0].anchor_identity).toBe("delta-ci-abc");
   });
 });

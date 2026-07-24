@@ -1,11 +1,11 @@
 /*
  * Outside · Act 3 — the one open question (CV-2). Read-only.
  *
- * Renders EXACTLY ONE open question from the preferred public-baseline run
- * (usePublicBaseline's pickPreferredRun quality selection — the system's
- * existing mechanism, fetched once in ClientStoryView and passed down),
- * taking open_questions[0]: the generator-emitted array
- * order is the only ranking that exists; no ranking is invented.
+ * V2-4: renders EXACTLY ONE lead open question from the first_read_open_questions
+ * TABLE (the post-findings generator's output) — the SAME source of truth as the
+ * First Read's Gap list, so the two surfaces can never show unrelated questions.
+ * Takes the first live question in birth order; that order is the only ranking, none
+ * is invented.
  *
  * The reference's interpretive "caps everything downstream" headline has no
  * generator — deliberately NOT shipped. When no open question exists the act
@@ -13,30 +13,17 @@
  * client needs surfaced, unlike an absent score.
  */
 
+import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
+
 // ── Client-facing copy — PENDING OPERATOR SIGNATURE (CV-2) ────────────────────
 const EYEBROW = "So what";
 const LEAD_IN = "This read leaves one question only you can answer."; // static, company-agnostic
 const OQ_LABEL = "Open question";
 // ──────────────────────────────────────────────────────────────────────────────
 
-function firstOpenQuestion(run: unknown): string | null {
-  if (!run || typeof run !== "object") return null;
-  const result = (run as { result_json?: unknown }).result_json;
-  if (!result || typeof result !== "object") return null;
-  const list = (result as { open_questions?: unknown }).open_questions;
-  if (!Array.isArray(list)) return null;
-  const first = list.find((q) => typeof q === "string" && q.trim());
-  return first ? String(first).trim() : null;
-}
-
-export default function OutsideQuestionAct({
-  preferredRun,
-  loading,
-}: {
-  preferredRun?: unknown;
-  loading?: boolean;
-}) {
-  const question = firstOpenQuestion(preferredRun);
+export default function OutsideQuestionAct({ companyId }: { companyId?: string }) {
+  const { questions, loading } = useFirstReadOpenQuestions(companyId);
+  const question = questions[0] ?? null;
 
   // Collapse: no question → no act (see header comment).
   if (loading || !question) return null;

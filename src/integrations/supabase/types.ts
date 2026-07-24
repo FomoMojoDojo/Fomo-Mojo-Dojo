@@ -1590,6 +1590,7 @@ export type Database = {
       }
       first_read_open_questions: {
         Row: {
+          anchor_identity: string | null
           company_id: string
           created_at: string
           finding_identity: string | null
@@ -1597,8 +1598,11 @@ export type Database = {
           question_identity: string
           question_text: string
           run_id: string
+          source_kind: string
+          status: string
         }
         Insert: {
+          anchor_identity?: string | null
           company_id: string
           created_at?: string
           finding_identity?: string | null
@@ -1606,8 +1610,11 @@ export type Database = {
           question_identity: string
           question_text: string
           run_id: string
+          source_kind?: string
+          status?: string
         }
         Update: {
+          anchor_identity?: string | null
           company_id?: string
           created_at?: string
           finding_identity?: string | null
@@ -1615,6 +1622,8 @@ export type Database = {
           question_identity?: string
           question_text?: string
           run_id?: string
+          source_kind?: string
+          status?: string
         }
         Relationships: [
           {

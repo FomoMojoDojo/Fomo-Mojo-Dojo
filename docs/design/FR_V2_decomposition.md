@@ -166,7 +166,18 @@ unconditionally (declared, no corroboration rights); else outside/competitor/mar
 
 ---
 
-## 2. Shared-identity basis (FR-FLOW-2a tension #1)
+## 2. Shared-identity basis (FR-FLOW-2a tension #1) — SHIPPED (V2-4, Shape A)
+
+> **V2-4 shipped Shape A.** `generate-open-questions` (new edge fn, ZERO blast radius)
+> is handed the persisted `findings.body` + publicly_silent claim-deltas verbatim and
+> emits questions whose depends_on IS the anchor — so links resolve by construction
+> (`deriveAnchoredRows`). Findings + silent deltas are ONE list (`first_read_open_questions`,
+> stamped `source_kind`); Act 5 (GapAct), the story lead (OutsideQuestionAct), and the
+> leave-behind all read the table (`useFirstReadOpenQuestions`) — the old
+> `result_json.open_questions[]` populator (`persistOpenQuestionLinks`) is retired.
+> Chunked cap-3, `long_runner_runs` ledger, reconcile keep/add/supersede by identity
+> (temp-0 gen → idempotent re-click). NOTE: ProposalAct's `open_question_indices` still
+> index the run json — a coupling for V2-9 (Act 5 restructure) to align.
 
 **The tension:** question→finding links are keyed by **content identity**, but
 today findings (`findings.body`, generated from signals via `frontierFinding` /

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
 import { useClaimDeltaRecompute } from "@/hooks/useClaimDeltaRecompute";
+import OpenQuestionRecomputeControl from "@/components/strategy/OpenQuestionRecomputeControl";
 import { D } from "@/components/design-system/tokens";
 import { sourceHost, sourceLinkTitle } from "@/lib/sourceHost";
 import { supabase } from "@/integrations/supabase/client";
@@ -1029,6 +1030,10 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
       {/* CH-2b-2: deliberate chunked recompute — the real generate-claim-deltas path */}
       <DeltaRecomputeControl companyId={companyId} />
+
+      {/* V2-4: the post-findings open-question generator — findings + publicly_silent
+          deltas unified into ONE open-question list (generate-open-questions). */}
+      <OpenQuestionRecomputeControl companyId={companyId} />
 
       {/* ── INT-3: Declared vs Observed — the founding signal, first position ── */}
       <ClaimDeltaBlock deltas={claimDeltas} struckClaims={struckClaims} companyId={companyId}

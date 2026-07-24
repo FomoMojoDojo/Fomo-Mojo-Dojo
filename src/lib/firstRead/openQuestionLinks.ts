@@ -69,3 +69,54 @@ export async function deriveOpenQuestionRows(args: {
   }
   return rows;
 }
+
+// V2-4 — the anchored form the post-findings generator uses. Each question is generated
+// FOR a specific anchor (a persisted finding body, or a publicly_silent claim-delta), so
+// depends_on IS the anchor text — links resolve by construction. It routes through the
+// SAME law (deriveOpenQuestionRows) for the finding case (verify against the run's real
+// finding identities) and stamps provenance:
+//   * finding      → finding_identity = the resolved link; anchor_identity == it.
+//   * silent_delta → finding_identity NULL (no finding); anchor_identity = the delta's
+//                    content identity (its own provenance link).
+// A finding anchor whose identity does NOT match a real run finding still stores LINKLESS
+// (finding_identity null) — the absence law stands.
+export type QuestionSourceKind = "finding" | "silent_delta";
+
+export interface QuestionAnchor {
+  /** content identity of the dependency (finding body, or claim_delta content_identity). */
+  identity: string;
+  kind: QuestionSourceKind;
+  /** the anchor statement verbatim — used as depends_on so the link resolves by construction. */
+  text: string;
+}
+
+export interface AnchoredOpenQuestionRow extends OpenQuestionRow {
+  source_kind: QuestionSourceKind;
+  anchor_identity: string | null;
+  status: "live";
+}
+
+export async function deriveAnchoredRows(args: {
+  companyId: string;
+  runId: string;
+  anchor: QuestionAnchor;
+  questions: string[];
+  /** the run's REAL finding identities (verify target for a finding anchor). */
+  findingIdentities: Set<string>;
+}): Promise<AnchoredOpenQuestionRow[]> {
+  const { companyId, runId, anchor, questions } = args;
+  if (anchor.kind === "finding") {
+    const base = await deriveOpenQuestionRows({
+      companyId,
+      runId,
+      questions,
+      linkHints: questions.map((q) => ({ question: q.trim(), depends_on: anchor.text })),
+      findingIdentities: args.findingIdentities,
+    });
+    return base.map((r) => ({ ...r, source_kind: "finding", anchor_identity: r.finding_identity, status: "live" }));
+  }
+  // silent_delta: no finding link (empty verify set → finding_identity null), but the
+  // delta is its own provenance anchor.
+  const base = await deriveOpenQuestionRows({ companyId, runId, questions, linkHints: [], findingIdentities: new Set() });
+  return base.map((r) => ({ ...r, source_kind: "silent_delta", anchor_identity: anchor.identity, status: "live" }));
+}
