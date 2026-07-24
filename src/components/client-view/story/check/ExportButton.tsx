@@ -23,6 +23,8 @@ import { orderOtherFindings } from "@/components/client-view/story/OutsideFindin
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { useOutsidePerception } from "@/hooks/useOutsidePerception";
 import { isPublicProvenance } from "@/lib/registerGuard";
+import { splitPerception } from "@/lib/firstRead/perceptionGuard";
+import { dedupeByContainment } from "@/lib/firstRead/outsideCollapse";
 import {
   buildFirstReadExportHtml,
   firstReadExportFilename,
@@ -134,7 +136,12 @@ export default function ExportButton({
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,
       mirror: { score: score?.total_score ?? null, bet, findings: mirrorFindings },
-      perception: perceptionClaims.filter((c) => isPublicProvenance(c.provenance)).map((c) => c.statement.trim()),
+      // V2-5b — mirror the Message band exactly: register lock → framework/analytic guard
+      // → containment dedupe, single-sourced so the leave-behind can't diverge.
+      perception: dedupeByContainment(
+        splitPerception(perceptionClaims.filter((c) => isPublicProvenance(c.provenance)), (c) => c.statement).admitted,
+        (c) => c.statement,
+      ).map((c) => c.statement.trim()),
       check: { items, tally },
       gap: openQuestionList,
       proposal,

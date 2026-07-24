@@ -8,6 +8,8 @@ import { useCompany } from "@/hooks/useCompany";
 import { useOutsidePerception } from "@/hooks/useOutsidePerception";
 import { isPublicProvenance } from "@/lib/registerGuard";
 import { outsideBand } from "@/lib/firstRead/outsideBands";
+import { splitPerception } from "@/lib/firstRead/perceptionGuard";
+import { dedupeByContainment } from "@/lib/firstRead/outsideCollapse";
 
 // Light formatting only (matches the findings acts): capitalize + terminal punctuation.
 function formatStatement(raw: string): string {
@@ -23,15 +25,23 @@ export default function OutsideMessageBand() {
 
   // Render-boundary register lock: public_observed only, internal_declared blocked.
   const publicClaims = claims.filter((c) => isPublicProvenance(c.provenance));
+  // V2-5b — data-borne exclusions: framework tokens (ODI/JTBD) and analytic voice never
+  // reach this band even when mislabeled public_observed. Excluded rows are reported for
+  // upstream fixing (dev console). Then near-duplicates collapse to the fuller variant.
+  const { admitted, excluded } = splitPerception(publicClaims, (c) => c.statement);
+  if (excluded.length > 0 && typeof console !== "undefined") {
+    console.info("[Act3 Message] excluded (upstream mislabel to fix):", excluded.map((e) => ({ id: e.item.id, reason: e.reason, text: e.item.statement })));
+  }
+  const shown = dedupeByContainment(admitted, (c) => c.statement);
 
   if (loading) return <p className="cvs-hero-empty">Reading how the outside describes you…</p>;
-  if (publicClaims.length === 0) {
+  if (shown.length === 0) {
     return <p className="cvs-hero-empty cvs-ob-empty">{outsideBand("message").empty}</p>;
   }
 
   return (
     <ul className="cvs-ob-msglist">
-      {publicClaims.map((c) => (
+      {shown.map((c) => (
         <li className="cvs-ob-msg" key={c.id}>{formatStatement(c.statement)}</li>
       ))}
     </ul>

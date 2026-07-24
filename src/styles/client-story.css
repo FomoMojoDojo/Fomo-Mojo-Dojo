@@ -555,8 +555,8 @@
 /* Outside · Act 3 — open question (CV-2)                              */
 /* ------------------------------------------------------------------ */
 .cvs-oq {
-  border-left: 2px solid var(--mm-amber-line);
-  padding-left: 22px;
+  /* V2-5b — no vertical accent bar (standing no-bars law); spacing carries it. */
+  padding-left: 0;
   margin-top: 64px;
 }
 
@@ -743,8 +743,7 @@
   letter-spacing: 0.05em;
   line-height: 1.7;
   color: var(--mm-label-dim);
-  border-left: 2px solid var(--mm-line-12);
-  padding-left: 16px;
+  padding-left: 0; /* V2-5b — no vertical bar */
   margin: 56px 0 0;
   max-width: 72ch;
 }
@@ -764,8 +763,7 @@
   font-size: 14px;
   line-height: 1.55;
   color: var(--mm-muted);
-  border-left: 2px solid var(--mm-amber-line);
-  padding-left: 16px;
+  padding-left: 0; /* V2-5b — no vertical bar */
   max-width: 56ch;
   margin: 28px 0 0;
 }
@@ -801,14 +799,10 @@
 }
 
 .cvs-mv-posgroup {
-  border-left: 2px solid var(--mm-line-12);
-  padding-left: 20px;
-}
-.cvs-mv-posgroup.is-corroborated {
-  border-left-color: var(--mm-line);
-}
-.cvs-mv-posgroup.is-self_reported {
-  border-left-color: var(--mm-amber-line);
+  /* V2-5b — no vertical bar; the group HEADER carries the proof-tier signal (FRAMING-
+     NOT-CHIPS), never a rail. Spacing separates groups. */
+  padding-left: 0;
+  margin-top: 4px;
 }
 
 .cvs-mv-posgroup-head {
@@ -1309,8 +1303,7 @@
 /* ------------------------------------------------------------------ */
 .cvs-mv-optgroup {
   margin-top: 40px;
-  border-left: 2px solid var(--mm-line-12);
-  padding-left: 20px;
+  padding-left: 0; /* V2-5b — no vertical bar */
 }
 
 .cvs-mv-optgroup-head {

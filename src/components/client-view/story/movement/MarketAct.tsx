@@ -5,6 +5,7 @@ import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
 import { useMarketOptions } from "@/hooks/useMarketOptions";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
 import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfolio";
+import { collapseMarketsByWho, normalizeForContainment } from "@/lib/firstRead/outsideCollapse";
 
 /*
  * MPD-3 — Act A: the market portfolio (public register ONLY, via the
@@ -148,20 +149,23 @@ export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
     // executor_statement, so cards that group together necessarily carry the same
     // kind. The mixed-kind fallback below can therefore never fire on real data —
     // it exists so the invariant cannot break silently if either rule changes.
-    const groups: Array<{ key: string; who: string; kind: string | null; mixed: boolean; jobs: typeof options }> = [];
-    const byKey = new Map<string, number>();
-    for (const o of options) {
-      const key = o.executor_statement.trim().toLowerCase().replace(/\s+/g, " ");
-      const at = byKey.get(key);
-      if (at === undefined) {
-        byKey.set(key, groups.length);
-        groups.push({ key, who: o.executor_statement, kind: o.relationship_kind ?? null, mixed: false, jobs: [o] });
-      } else {
-        const g = groups[at];
-        g.jobs.push(o);
-        if ((o.relationship_kind ?? null) !== g.kind) g.mixed = true;
-      }
-    }
+    // V2-5b MARKET COLLAPSE (render-side only; no writes — stored options untouched):
+    // fold near-duplicate WHOs by containment (not just exact match) and merge+dedupe
+    // their jobs. Order-stable. The exact-match grouping is a special case of this.
+    const collapsed = collapseMarketsByWho(
+      options.map((o) => ({ who: o.executor_statement, jobs: [o] })),
+      (o) => o.job_statement,
+    );
+    const groups = collapsed.map((g) => {
+      const kinds = new Set(g.jobs.map((o) => o.relationship_kind ?? null));
+      return {
+        key: normalizeForContainment(g.who),
+        who: g.who,
+        kind: g.jobs[0]?.relationship_kind ?? null,
+        mixed: kinds.size > 1,
+        jobs: g.jobs,
+      };
+    });
 
     return (
       <section className="cvs-act" aria-label="Act A — market options (early readings)">
