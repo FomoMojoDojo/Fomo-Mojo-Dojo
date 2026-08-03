@@ -90,7 +90,22 @@ export function useClaimContests(companyId: string | undefined) {
       p_reason: reason,
     });
     if (error) throw new Error(error.message);
-    await queryClient.invalidateQueries({ queryKey });
+    // A resolution can flip claims.status via set_claim_status (set_aside → minimized,
+    // strike_resolved → struck). Every surface that renders claims.status lives under its
+    // OWN query key and would otherwise serve a stale pre-resolve status until it
+    // independently refetches (the diagnosed in-place-no-reload bug). Refresh each — and
+    // only those the diagnostic proved are status readers:
+    //   ["claim-contests", …]        — the Contested queue/trail (this hook)
+    //   ["strategic-delta", …]       — Declared-vs-Observed pairs (StrategicDirectionDelta)
+    //   ["evidence-graph", …]        — EvidenceInspectorPanel claims list (useEvidenceGraph)
+    //   ["foundation-provenance", …] — FoundationClaimSupport (useFoundationProvenance;
+    //                                  prefix-matches the full 4-part key for the company)
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey }),
+      queryClient.invalidateQueries({ queryKey: ["strategic-delta", companyId] }),
+      queryClient.invalidateQueries({ queryKey: ["evidence-graph", companyId] }),
+      queryClient.invalidateQueries({ queryKey: ["foundation-provenance", companyId] }),
+    ]);
   }
 
   return {
