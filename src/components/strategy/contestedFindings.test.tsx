@@ -6,13 +6,13 @@ import { render, within } from "@testing-library/react";
 import type { ContestRow } from "@/hooks/useClaimContests";
 
 const openDisputed: ContestRow = {
-  id: "open-1", claim_id: "c1", claim_statement: "OPEN DISPUTED CLAIM TEXT",
+  id: "open-1", claim_id: "c1", session_id: "s1", claim_statement: "OPEN DISPUTED CLAIM TEXT",
   claim_status: "active", contest_kind: "disputed", rationale: "they say it's wrong",
   resolution: null, resolution_reason: null, resolved_at: null,
   session_date: "2026-07-20", created_at: "2026-07-20",
 };
 const resolvedDismissed: ContestRow = {
-  id: "res-1", claim_id: "c2", claim_statement: "RESOLVED DISMISSED CLAIM TEXT",
+  id: "res-1", claim_id: "c2", session_id: "s1", claim_statement: "RESOLVED DISMISSED CLAIM TEXT",
   claim_status: "active", contest_kind: "disputed", rationale: null,
   resolution: "dismissed", resolution_reason: "operator disagrees", resolved_at: "2026-07-21",
   session_date: "2026-07-20", created_at: "2026-07-20",

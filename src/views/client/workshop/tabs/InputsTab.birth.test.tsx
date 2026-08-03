@@ -28,7 +28,12 @@ vi.mock("@/integrations/supabase/client", () => ({
     functions: { invoke: async () => ({ data: null, error: null }) },
   },
 }));
-vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }) }));
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: [] }),
+  // FR-REOPEN-3: InputsTab now mounts ReopenFirstReadControl, whose hooks call
+  // useQueryClient (the control itself renders null here — no live session).
+  useQueryClient: () => ({ invalidateQueries: () => {} }),
+}));
 vi.mock("@/hooks/useCompanyFiles", () => ({ useCompanyFiles: () => ({ data: [], refetch: () => {} }) }));
 vi.mock("@/hooks/useCapability", () => ({ useCapability: () => true }));
 vi.mock("@/hooks/useInputs", () => ({

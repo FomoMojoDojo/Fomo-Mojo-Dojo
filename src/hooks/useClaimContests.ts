@@ -13,6 +13,7 @@ export type ContestResolution = "strike_resolved" | "dismissed" | "set_aside";
 export type ContestRow = {
   id: string;
   claim_id: string;
+  session_id: string; // FR-REOPEN-3: the meeting this contest belongs to (per-session counting)
   claim_statement: string;
   claim_status: string | null;
   contest_kind: ContestKind;
@@ -27,6 +28,7 @@ export type ContestRow = {
 type ContestJoinRow = {
   id: string;
   claim_id: string;
+  session_id: string;
   contest_kind: ContestKind;
   rationale: string | null;
   resolution: ContestResolution | null;
@@ -51,7 +53,7 @@ export function useClaimContests(companyId: string | undefined) {
       const { data, error } = await supabase
         .from("claim_contests")
         .select(
-          "id, claim_id, contest_kind, rationale, resolution, resolution_reason, resolved_at, created_at, claims(statement, status), first_read_sessions(started_at)",
+          "id, claim_id, session_id, contest_kind, rationale, resolution, resolution_reason, resolved_at, created_at, claims(statement, status), first_read_sessions(started_at)",
         )
         .eq("company_id", companyId)
         .order("created_at", { ascending: false });
@@ -60,6 +62,7 @@ export function useClaimContests(companyId: string | undefined) {
       const rows: ContestRow[] = ((data ?? []) as unknown as ContestJoinRow[]).map((r) => ({
         id: r.id,
         claim_id: r.claim_id,
+        session_id: r.session_id,
         claim_statement: r.claims?.statement ?? "(finding no longer present)",
         claim_status: r.claims?.status ?? null,
         contest_kind: r.contest_kind,

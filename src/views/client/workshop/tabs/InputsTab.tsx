@@ -32,6 +32,7 @@ import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import OpenFirstReadControl from "../OpenFirstReadControl";
+import ReopenFirstReadControl from "../ReopenFirstReadControl";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -1875,6 +1876,9 @@ export default function InputsTab({
       {/* ── First Read entry point — the SINGLE control (FR-FLOW-1b: intake removed;
              Open mints-if-missing on click). Always present, ungated by company-state. ── */}
       {isAdmin && <OpenFirstReadControl companyId={companyId} dark={hasHierarchy} />}
+      {/* FR-REOPEN-3: operator Reopen — only shows for an issued session; disabled-with-
+          reason while contests are unresolved. Beside "Open First Read →" (R6). */}
+      {isAdmin && <ReopenFirstReadControl companyId={companyId} dark={hasHierarchy} />}
 
       {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
       {evidenceStatus && (
