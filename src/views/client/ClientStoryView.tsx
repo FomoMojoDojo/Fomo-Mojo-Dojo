@@ -21,33 +21,22 @@ import "@/styles/client-story.css";
  * "story mode" surface (/client-view). Full-bleed (no PageShell): the phase
  * rail is the only chrome, per the design reference.
  *
- * CV-0 scope: chrome, both palettes, empty act scaffold ONLY. No data is
- * read or rendered here. The scaffold blocks are deliberately marked as
- * placeholders so pacing can be judged before content lands (CV-1+).
+ * Outside phase: all acts real (CV-1/CV-2). Diagnose phase: the markets say-vs-see
+ * act (DiagnoseMarketAct) plus ONE operator-signed honest-empty bridging to the
+ * CV-3 say-vs-see acts (position/audience/root) that are not yet built.
  */
 
 // Focus / Flow are disabled per the reference (only Outside / Diagnose switch).
 const DISABLED_PHASES: ReadonlySet<ClientSystemPhase> = new Set(["focus", "execution"]);
 
-type ScaffoldAct = { eyebrow: string; role: string; awaiting: string };
-
-// Empty act scaffolds per phase. Order + count follow the design reference so
-// the one-idea-per-viewport pacing can be judged now. "The Pause" (Diagnose
-// Act 6) is intentionally omitted — held until a real two-futures generator
-// exists (operator ruling 3), with no placeholder.
-const SCAFFOLD_ACTS: Record<"outside" | "diagnosis", ScaffoldAct[]> = {
-  // Outside acts are all real as of CV-2 (rendered directly, not from this list).
-  outside: [],
-  diagnosis: [
-    { eyebrow: "Diagnose · Said next to seen", role: "Hero + Mojo Score (moves)", awaiting: "CV-3" },
-    { eyebrow: "Gap 01 · Position", role: "Say vs. See", awaiting: "CV-3" },
-    { eyebrow: "Gap 02 · Audience", role: "Say vs. See", awaiting: "CV-3" },
-    { eyebrow: "Match · The one that holds", role: "Say vs. See (the single green moment)", awaiting: "CV-3" },
-    { eyebrow: "Root · Where it starts", role: "Say vs. See", awaiting: "CV-3" },
-    // The Pause (Act 6) is held — no scaffold, no placeholder.
-    { eyebrow: "Next move", role: "Unproven claims → customer lens", awaiting: "CV-4" },
-  ],
-};
+// ── Diagnosis honest-empty — OPERATOR-SIGNED 2026-08-03 (FR-DIAG-EMPTY) ───────
+// Replaces the six CV-0 build scaffolds with ONE honest-empty: the signed bridge
+// shown after the markets act until the CV-3 say-vs-see acts (position / audience
+// / root) land. Reuses the established .cvs-dg-notready shape + voice from
+// DiagnoseMarketAct — no new class, no scaffold markup.
+const DIAGNOSIS_REST_HEADLINE = "The rest of your diagnosis is still being prepared.";
+const DIAGNOSIS_REST_PROMPT =
+  "You've seen how your markets read against the outside. The rest — where your position, audience, and root causes line up or diverge — comes next.";
 
 const META_LINE: Record<"outside" | "diagnosis", string> = {
   outside: "Read from public signals · Story mode",
@@ -92,8 +81,6 @@ export default function ClientStoryView() {
     }
   };
 
-  const acts = SCAFFOLD_ACTS[phase];
-
   return (
     <div className="cvs-story" data-mm-theme={theme}>
       <header className="cvs-rail">
@@ -122,9 +109,8 @@ export default function ClientStoryView() {
           </div>
 
           <div className="cvs-rail-controls">
-            {/* Build-phase chip; palette control removed — warm is the only
-                palette (CV-2 amendment 3). */}
-            <span className="cvs-buildchip">CV-0 shell</span>
+            {/* FR-DIAG-EMPTY: the "CV-0 shell" build chip is deleted — build status
+                is operator-only, never client-facing. No replacement. */}
             <div className="cvs-toggle" role="group" aria-label="Theme">
               <button
                 type="button"
@@ -170,24 +156,22 @@ export default function ClientStoryView() {
             </MovementShell>
           </>
         ) : null}
-        {/* MPD-D: the Diagnose say/see act (markets) — mounts alongside the
-            remaining CV-3/CV-4 scaffolds, which stay until those acts land. */}
-        {phase === "diagnosis" ? <DiagnoseMarketAct /> : null}
-        {acts.map((act, index) => {
-          return (
-            <section className="cvs-act" key={`${phase}-${index}`} aria-label={`Act ${index + 1} scaffold`}>
-              <p className="cvs-act-eyebrow">{act.eyebrow}</p>
-              <div className="cvs-scaffold">
-                <span className="cvs-scaffold-tag">Scaffold · awaiting {act.awaiting}</span>
-                <p className="cvs-scaffold-title">{act.role}</p>
-                <p className="cvs-scaffold-note">
-                  CV-0 shell — no data wired. This block marks where the “{act.role}” act will render once
-                  {` ${act.awaiting}`} lands. It is a build-phase placeholder, not a finding.
-                </p>
+        {/* MPD-D + FR-DIAG-EMPTY: the Diagnose markets say/see act, then ONE
+            operator-signed honest-empty bridging to the not-yet-built CV-3 acts.
+            The empty is its OWN sibling section — never nested in DiagnoseMarketAct
+            — and renders only in the diagnosis phase (never where the Outside
+            phase's real acts live). */}
+        {phase === "diagnosis" ? (
+          <>
+            <DiagnoseMarketAct />
+            <section className="cvs-act cvs-dg" aria-label="Diagnose — the rest is being prepared">
+              <div className="cvs-dg-notready">
+                <p className="cvs-dg-notready-headline">{DIAGNOSIS_REST_HEADLINE}</p>
+                <p className="cvs-dg-notready-prompt">{DIAGNOSIS_REST_PROMPT}</p>
               </div>
             </section>
-          );
-        })}
+          </>
+        ) : null}
       </main>
     </div>
   );
