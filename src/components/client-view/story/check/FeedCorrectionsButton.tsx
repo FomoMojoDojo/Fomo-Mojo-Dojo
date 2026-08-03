@@ -26,8 +26,8 @@ const resultLine = (fed: number, paired: number, silent: number) =>
   `${silent === 1 ? "1 stands as an open question" : `${silent} stand as open questions`}.`;
 const prunedLine = (n: number) =>
   `${n} prior model rejection${n === 1 ? "" : "s"} overruled by the client's attestation.`;
-// OC-3b rider — SIGNED via the OC-3b paste. Shown only when contests were born, so the
-// operator is pointed at the Contested queue even when there were zero corrections.
+// OC-3b rider — OPERATOR-SIGNED 2026-08-03 (OC-3). Shown only when contests were born, so
+// the operator is pointed at the Contested queue even when there were zero corrections.
 const contestsLine = (n: number) =>
   `${n} client pushback${n === 1 ? "" : "s"} recorded — decide each under Contested below.`;
 // ──────────────────────────────────────────────────────────────────────────────
