@@ -1,7 +1,7 @@
-// G1 — WhereYouStand: the client's verdicts return, each with its OWN signed outcome
-// line; the statement renders unchanged; operator-voice resolution_reason never reaches
-// the DOM; zero verdicts suppress structurally; a query error is honest, not silent.
-// Falsification: break the verdict→line map and the wrong line renders (RED).
+// G1-b — WhereYouStand: dedupe by statement; conflicts show every distinct verdict's line
+// + the signed conflict line; market items use market lines; no verdict is lost to dedupe;
+// statement byte-unchanged; operator reasons never in the DOM; zero → nothing; error → error.
+// Falsification: break the conflict gate / the market keying and the RED tests fire.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
@@ -15,14 +15,27 @@ vi.mock("@/hooks/useMeetingVerdicts", () => ({
   useMeetingVerdicts: () => ({ verdicts: h.verdicts, isLoading: h.isLoading, isError: h.isError }),
 }));
 
-import WhereYouStand, { WYS_HEADER, WYS_OUTCOME, WYS_LOAD_ERROR } from "./WhereYouStand";
+import WhereYouStand, {
+  WYS_HEADER,
+  WYS_OUTCOME,
+  WYS_MARKET_OUTCOME,
+  WYS_CONFLICT_LINE,
+  WYS_LOAD_ERROR,
+} from "./WhereYouStand";
 
-const CONFIRMED = WYS_OUTCOME.confirmed;
-const REJECTED = WYS_OUTCOME.rejected;
-const SET_ASIDE = WYS_OUTCOME.not_important;
-
-// Real Edgewood rows (for the byte-compare + resolution_reason absence).
 const BETTING = "You're betting that your integrated continuum of youth mental health care under one roof will deliver better long-term outcomes and become the strategic default choice for children, teens, young adults, and their families in the Bay Area.";
+
+// The full Edgewood 8 (operator fixture), for the dedupe + no-verdict-lost proof.
+const EDGEWOOD_8 = [
+  { id: "1", statement: "Close gaps in youth mental health care to provide integrated services.", verdict: "confirmed", item_kind: "delta" },
+  { id: "2", statement: "The struggle is to navigate a fragmented youth mental health care landscape.", verdict: "not_important", item_kind: "delta" },
+  { id: "3", statement: "The struggle is to navigate a fragmented youth mental health care landscape.", verdict: "not_important", item_kind: "delta" },
+  { id: "4", statement: "Close gaps in youth mental health care to provide integrated services.", verdict: "rejected", item_kind: "delta" },
+  { id: "5", statement: "The struggle is to navigate a fragmented youth mental health care landscape.", verdict: "rejected", item_kind: "delta" },
+  { id: "6", statement: BETTING, verdict: "confirmed", item_kind: "finding" },
+  { id: "7", statement: "Direct care staff — Secure better working conditions in youth mental health settings.", verdict: "not_important", item_kind: "market" },
+  { id: "8", statement: "Families and caregivers of at-risk youth aged 5-26 — Understand the complex mental health resource landscape for their children.", verdict: "rejected", item_kind: "market" },
+];
 
 beforeEach(() => {
   h.verdicts = [];
@@ -30,43 +43,61 @@ beforeEach(() => {
   h.isError = false;
 });
 
-describe("G1 — WhereYouStand", () => {
-  it("each outcome line renders for its OWN verdict and NOT the others", () => {
-    h.verdicts = [{ id: "1", statement: "S", verdict: "confirmed", item_kind: "finding" }];
-    const c = render(<WhereYouStand companyId="co" />);
-    expect(c.getByText(CONFIRMED)).toBeTruthy();
-    expect(c.queryByText(REJECTED)).toBeNull();
-    expect(c.queryByText(SET_ASIDE)).toBeNull();
-    c.unmount();
+describe("G1-b — WhereYouStand", () => {
+  it("a CONFLICTING statement renders ONCE, with BOTH lines AND the conflict line", () => {
+    h.verdicts = [
+      { id: "a", statement: "Close gaps.", verdict: "confirmed", item_kind: "delta" },
+      { id: "b", statement: "Close gaps.", verdict: "rejected", item_kind: "delta" },
+    ];
+    const { getAllByText, getByText } = render(<WhereYouStand companyId="co" />);
+    expect(getAllByText("Close gaps.")).toHaveLength(1); // once
+    expect(getByText(WYS_OUTCOME.confirmed)).toBeTruthy();
+    expect(getByText(WYS_OUTCOME.rejected)).toBeTruthy();
+    expect(getByText(WYS_CONFLICT_LINE)).toBeTruthy();
+  });
 
-    h.verdicts = [{ id: "2", statement: "S", verdict: "rejected", item_kind: "delta" }];
-    const r = render(<WhereYouStand companyId="co" />);
-    expect(r.getByText(REJECTED)).toBeTruthy();
-    expect(r.queryByText(CONFIRMED)).toBeNull();
-    expect(r.queryByText(SET_ASIDE)).toBeNull();
-    r.unmount();
+  it("the conflict line does NOT render when the verdicts AGREE", () => {
+    h.verdicts = [
+      { id: "a", statement: "Agreed.", verdict: "confirmed", item_kind: "delta" },
+      { id: "b", statement: "Agreed.", verdict: "confirmed", item_kind: "delta" },
+    ];
+    const { getAllByText, queryByText } = render(<WhereYouStand companyId="co" />);
+    expect(getAllByText("Agreed.")).toHaveLength(1);
+    expect(queryByText(WYS_CONFLICT_LINE)).toBeNull();
+  });
 
-    h.verdicts = [{ id: "3", statement: "S", verdict: "not_important", item_kind: "delta" }];
-    const n = render(<WhereYouStand companyId="co" />);
-    expect(n.getByText(SET_ASIDE)).toBeTruthy();
-    expect(n.queryByText(CONFIRMED)).toBeNull();
-    expect(n.queryByText(REJECTED)).toBeNull();
+  it("a MARKET item uses the market line and NOT the claim-shaped one; a non-market item the reverse", () => {
+    h.verdicts = [{ id: "m", statement: "A market item.", verdict: "rejected", item_kind: "market" }];
+    const mkt = render(<WhereYouStand companyId="co" />);
+    expect(mkt.getByText(WYS_MARKET_OUTCOME.rejected)).toBeTruthy();
+    expect(mkt.queryByText(WYS_OUTCOME.rejected)).toBeNull();
+    mkt.unmount();
+
+    h.verdicts = [{ id: "d", statement: "A delta item.", verdict: "rejected", item_kind: "delta" }];
+    const nm = render(<WhereYouStand companyId="co" />);
+    expect(nm.getByText(WYS_OUTCOME.rejected)).toBeTruthy();
+    expect(nm.queryByText(WYS_MARKET_OUTCOME.rejected)).toBeNull();
+  });
+
+  it("no verdict is lost to dedupe: distinct (statement, verdict) pairs in == outcome lines rendered", () => {
+    h.verdicts = EDGEWOOD_8;
+    const distinctPairs = new Set(EDGEWOOD_8.map((v) => `${v.statement.trim()}::${v.verdict}`)).size;
+    const { container } = render(<WhereYouStand companyId="co" />);
+    const renderedLines = container.querySelectorAll('[data-wys="outcome"]').length;
+    expect(distinctPairs).toBe(7); // 8 responses, one duplicate (statement,verdict) pair
+    expect(renderedLines).toBe(distinctPairs);
+    // 5 distinct statements → 5 groups
+    expect(container.querySelectorAll('[data-wys="group"]').length).toBe(5);
   });
 
   it("the verdicted statement renders UNCHANGED (byte-compare)", () => {
     h.verdicts = [{ id: "6", statement: BETTING, verdict: "confirmed", item_kind: "finding" }];
     const { getByText } = render(<WhereYouStand companyId="co" />);
-    expect(getByText(BETTING)).toBeTruthy(); // exact-match query → byte-identical
+    expect(getByText(BETTING)).toBeTruthy();
   });
 
   it("operator-voice resolution_reason NEVER reaches the DOM", () => {
-    // Even with all three verdict types present, the recap reads only responses — the
-    // operator reasons ("referers", "this is true", "This is fundamentally true") cannot appear.
-    h.verdicts = [
-      { id: "1", statement: BETTING, verdict: "confirmed", item_kind: "finding" },
-      { id: "2", statement: "Close gaps in youth mental health care.", verdict: "rejected", item_kind: "delta" },
-      { id: "3", statement: "The struggle is to navigate a fragmented landscape.", verdict: "not_important", item_kind: "delta" },
-    ];
+    h.verdicts = EDGEWOOD_8;
     const { container } = render(<WhereYouStand companyId="co" />);
     const text = container.textContent ?? "";
     for (const leak of ["referers", "this is true", "This is fundamentally true"]) {
@@ -74,16 +105,15 @@ describe("G1 — WhereYouStand", () => {
     }
   });
 
-  it("zero verdicts renders NOTHING (structural suppression, no header)", () => {
+  it("zero verdicts renders NOTHING; a query error renders the honest error state", () => {
     h.verdicts = [];
-    const { container, queryByText } = render(<WhereYouStand companyId="co" />);
-    expect(queryByText(WYS_HEADER)).toBeNull();
-    expect(container.textContent ?? "").toBe("");
-  });
+    const empty = render(<WhereYouStand companyId="co" />);
+    expect(empty.queryByText(WYS_HEADER)).toBeNull();
+    expect(empty.container.textContent ?? "").toBe("");
+    empty.unmount();
 
-  it("a query error renders the honest error state, not empty", () => {
     h.isError = true;
-    const { getByText } = render(<WhereYouStand companyId="co" />);
-    expect(getByText(WYS_LOAD_ERROR)).toBeTruthy();
+    const err = render(<WhereYouStand companyId="co" />);
+    expect(err.getByText(WYS_LOAD_ERROR)).toBeTruthy();
   });
 });
