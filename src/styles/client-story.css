@@ -260,6 +260,17 @@
   box-sizing: border-box;
 }
 
+/* First act of a phase top-aligns — the leading act opens the page instead of
+   centering ~half a viewport of whitespace under the kicker (operator ruling). Only
+   the LEADING act; every other act keeps the signed one-idea-per-viewport centering.
+   `:first-child` follows suppression: when WhereYouStand returns null (zero-verdict
+   company) it leaves no node, so the next act becomes main's first child and top-aligns.
+   Scoped to ClientStoryView's structure (acts are direct children of <main>); the
+   First Read rail nests its act in .cvs-fr-actframe, so this does not reach it. */
+.cvs-story main > .cvs-act:first-child {
+  justify-content: flex-start;
+}
+
 .cvs-act-eyebrow {
   font-family: var(--font-mono, "DM Mono", ui-monospace, monospace);
   font-size: 11px;
