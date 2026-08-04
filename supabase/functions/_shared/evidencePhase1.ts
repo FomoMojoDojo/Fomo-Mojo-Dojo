@@ -187,8 +187,16 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // R2 prune (selectPruneVictims) can scope itself to public_observed — RB-1.
   const existingRows = (allExistingRows ?? []) as Array<{ id: string; state: string; status?: string | null; provenance: string | null }>;
   const existingStateById = new Map<string, string>();
+  // RB-3: birth provenance of every existing claim. deriveClaimProvenance is
+  // data-level and drifts as the signal corpus changes, but INT-2 freezes
+  // provenance at birth — re-setting a drifted derivation on upsert throws and
+  // rolls the whole rebuild back (RB-2's real-data failure). So the stored birth
+  // stamp is authoritative on upsert, exactly as `state` is preserved below. Built
+  // over ALL existing rows (not just non-manual) so no upsert can ever trip INT-2.
+  const existingProvenanceById = new Map<string, string>();
   for (const row of existingRows) {
     if (!manualClaimIds.has(row.id)) existingStateById.set(row.id, row.state);
+    if (row.provenance) existingProvenanceById.set(row.id, row.provenance);
   }
 
   // RB-1 Stage 2: everything above is READ/PURE (no model, no network). The
@@ -197,13 +205,22 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // transaction, so a partial failure rolls the whole sequence back (the ref-wipe
   // can never outlive an abort — the defect that stranded Edgewood at 21/0).
 
-  // UPSERT payloads: `state` is preserved for existing rows so G-STATE (below) is
-  // the only writer for non-outside_view states. action_category and need_statement
-  // are NOT in the payload and are untouched on the UPDATE path.
-  const upsertPayloads = candidates.map((candidate, i) => ({
-    ...normalizeClaimInsert({ ...candidate.claim, id: stableIds[i] }),
-    state: existingStateById.get(stableIds[i]) ?? "outside_view",
-  }));
+  // UPSERT payloads: `state` and `provenance` are preserved for existing rows.
+  // state — so G-STATE (below) is the only writer for non-outside_view states.
+  // provenance — RB-3: an existing claim keeps its BIRTH stamp; the derivation
+  // never overwrites it (INT-2). A NEW claim (no existing row) still receives its
+  // derived provenance at birth. action_category and need_statement are NOT in the
+  // payload and are untouched on the UPDATE path.
+  const upsertPayloads = candidates.map((candidate, i) => {
+    const id = stableIds[i];
+    const base = normalizeClaimInsert({ ...candidate.claim, id });
+    const birthProvenance = existingProvenanceById.get(id);
+    return {
+      ...base,
+      provenance: birthProvenance ?? base.provenance,
+      state: existingStateById.get(id) ?? "outside_view",
+    };
+  });
 
   // PRUNE (R2): delete non-manual claims whose backing signals are gone.
   // ON DELETE CASCADE on claim_events fires here — correct, those claims are
