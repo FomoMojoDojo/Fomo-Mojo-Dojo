@@ -5,12 +5,22 @@
 // de-emphasis with no recorded decision attached — it counts like active
 // everywhere, so it prunes like active.
 //
+// RB-1 provenance scoping (08-04 gate): the reconcile rebuild derives ONLY from
+// public signals, so it may prune ONLY public_observed claims. internal_declared,
+// client_attested (and any other provenance) are NOT signal-derived and are
+// structurally out of reach here — a rebuild must never delete a declared or
+// attested claim (or the frozen verdicts that cascade off it). `provenance` is
+// therefore REQUIRED on every candidate row: a caller cannot omit it and silently
+// widen scope; a non-public_observed row is refused before the manual/struck
+// exemptions are even consulted. This narrows scope; it never widens it.
+//
 // Single victim-selection authority for the reconcile's R2 prune — the edge
 // reconcile (evidencePhase1) imports this; tests pin the law here.
 
 export type PruneCandidateRow = {
   id: string;
   status?: string | null;
+  provenance: string | null;
 };
 
 export function selectPruneVictims(
@@ -20,6 +30,7 @@ export function selectPruneVictims(
 ): string[] {
   return rows
     .filter((r) =>
+      r.provenance === "public_observed" &&
       !manualClaimIds.has(r.id) &&
       r.status !== "struck" &&
       !candidateIds.has(r.id)
