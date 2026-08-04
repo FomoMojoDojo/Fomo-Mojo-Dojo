@@ -85,14 +85,17 @@ export function groupVerdicts(verdicts: MeetingVerdict[]): VerdictGroup[] {
     }));
 }
 
-const mono: React.CSSProperties = { fontFamily: '"IBM Plex Mono", ui-monospace, monospace' };
+// House mono, via the design token (not a hardcoded family) — for the small notes.
+const monoNote: React.CSSProperties = { fontFamily: "var(--font-mono, 'DM Mono', ui-monospace, monospace)" };
 
 export default function WhereYouStand({ companyId }: { companyId: string | null }) {
   const { verdicts, isLoading, isError } = useMeetingVerdicts(companyId);
 
+  // OC-3b: a failed load is distinct from "no verdicts". Neutral house token — the
+  // story palette carries no red.
   if (isError) {
     return (
-      <p style={{ ...mono, fontSize: 11, color: "#a4442f", margin: 0 }} role="status">
+      <p role="status" style={{ ...monoNote, fontSize: 11, color: "var(--mm-muted)", margin: 0 }}>
         {WYS_LOAD_ERROR}
       </p>
     );
@@ -105,36 +108,38 @@ export default function WhereYouStand({ companyId }: { companyId: string | null 
 
   return (
     <section className="cvs-act" aria-label="Where you stand — your first-meeting verdicts">
-      <p style={{ ...mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.13em", color: "#9298B5", margin: "0 0 6px" }}>
-        {WYS_HEADER}
-      </p>
-      <p style={{ fontSize: 12, color: "#6e847f", lineHeight: 1.5, margin: "0 0 16px", maxWidth: 560 }}>
-        {WYS_SUB}
-      </p>
+      {/* Frame reuses the signed house classes — the act eyebrow + support line. */}
+      <p className="cvs-act-eyebrow">{WYS_HEADER}</p>
+      <p className="cvs-support">{WYS_SUB}</p>
 
-      {groups.map((g) => (
-        <div key={dedupeKey(g.statement)} data-wys="group" style={{ paddingLeft: 10, borderLeft: "2px solid rgba(30,51,64,0.12)", marginBottom: 14 }}>
-          {/* The client's verdicted statement, UNCHANGED. */}
-          <p data-wys="statement" style={{ fontFamily: "Georgia, serif", fontSize: 14, color: "#1e3340", lineHeight: 1.5, margin: 0 }}>
-            {g.statement}
-          </p>
-          {/* One signed line per DISTINCT verdict (kind-appropriate). None dropped. */}
-          {g.verdicts.map((vd) => {
-            const line = outcomeLine(g.isMarket, vd);
-            return line ? (
-              <p key={vd} data-wys="outcome" style={{ ...mono, fontSize: 11, color: "#6e847f", margin: "5px 0 0" }}>
-                {line}
-              </p>
-            ) : null;
-          })}
-          {/* Conflict line only when the client read it differently across places. */}
-          {g.conflict && (
-            <p data-wys="conflict" style={{ ...mono, fontSize: 11, color: "#8a6d1c", margin: "6px 0 0", fontStyle: "italic" }}>
-              {WYS_CONFLICT_LINE}
+      {/* NO vertical accent bar (standing law, 2026-07-23): groups are separated by
+          SPACING, matching the sanctioned .cvs-mv-posgroups stack (gap 48, max-width 760). */}
+      <div style={{ marginTop: 44, display: "flex", flexDirection: "column", gap: 48, maxWidth: 760 }}>
+        {groups.map((g) => (
+          <div key={dedupeKey(g.statement)} data-wys="group">
+            {/* The client's verdicted statement, UNCHANGED — house sans list register
+                (matches .cvs-dg-verbatim), never serif. */}
+            <p data-wys="statement" className="cvs-dg-verbatim">
+              {g.statement}
             </p>
-          )}
-        </div>
-      ))}
+            {/* One signed line per DISTINCT verdict (kind-appropriate). None dropped. */}
+            {g.verdicts.map((vd) => {
+              const line = outcomeLine(g.isMarket, vd);
+              return line ? (
+                <p key={vd} data-wys="outcome" style={{ fontWeight: 300, fontSize: 14, lineHeight: 1.5, color: "var(--mm-muted)", margin: "10px 0 0" }}>
+                  {line}
+                </p>
+              ) : null;
+            })}
+            {/* Conflict line — a neutral mono note (amber is reserved for eyebrows/self-reported). */}
+            {g.conflict && (
+              <p data-wys="conflict" style={{ ...monoNote, fontSize: 10, letterSpacing: "0.04em", lineHeight: 1.6, color: "var(--mm-label)", margin: "12px 0 0", maxWidth: "44ch" }}>
+                {WYS_CONFLICT_LINE}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

@@ -105,6 +105,26 @@ describe("G1-b — WhereYouStand", () => {
     }
   });
 
+  it("house-style: NO vertical bar on the group; no serif; no hardcoded hex color", () => {
+    h.verdicts = EDGEWOOD_8; // includes conflicts, so a conflict line exists
+    const { container } = render(<WhereYouStand companyId="co" />);
+    const group = container.querySelector('[data-wys="group"]') as HTMLElement;
+    const statement = container.querySelector('[data-wys="statement"]') as HTMLElement;
+    const conflict = container.querySelector('[data-wys="conflict"]') as HTMLElement;
+    expect(group).toBeTruthy();
+    expect(conflict).toBeTruthy();
+    // Standing law: NO vertical accent bar (the 2026-07-23 rule).
+    expect(group.style.borderLeft).toBe("");
+    expect(group.style.borderInlineStart).toBe("");
+    // No serif — the house uses --font-sans for statements.
+    expect(statement.style.fontFamily.toLowerCase()).not.toContain("serif");
+    expect(statement.style.fontFamily.toLowerCase()).not.toContain("georgia");
+    // No hardcoded hex/rgb color anywhere — colors come from --mm-* tokens.
+    const HEX = /#[0-9a-f]{3,6}|rgb\(/i;
+    expect(HEX.test(statement.style.color)).toBe(false);
+    expect(HEX.test(conflict.style.color)).toBe(false);
+  });
+
   it("zero verdicts renders NOTHING; a query error renders the honest error state", () => {
     h.verdicts = [];
     const empty = render(<WhereYouStand companyId="co" />);
