@@ -522,6 +522,21 @@ export async function persistSignalsAndRebuildClaims(args: {
   };
 }
 
+// RB-1 Stage 4: reconcile WITHOUT inserting signals — the off-request-path,
+// resumable entry point. Signals already exist; this re-derives claims (the
+// atomic, idempotent rebuild_claims_apply) plus the dependent foundation/hypothesis
+// rebuilds. Invoked by the rebuild-claims edge function with its own fresh request
+// budget, so a rebuild stranded in the generation request's overtime (Edgewood:
+// 21 claims / 0 refs) is completed here. Re-invoking is safe: deterministic ids +
+// atomic upsert + delete-all/insert-same refs converge to a fixed point (idempotent).
+export async function rebuildCompanyReconcile(supabase: SupabaseClient, companyId: string) {
+  const claimStats = await rebuildClaimsForCompany(supabase, companyId);
+  const dependencyStats = await rebuildFoundationDependenciesForCompany(supabase, companyId);
+  const hypothesisStats = await rebuildStrategicHypothesesForCompany({ supabase, companyId, sourceRunId: null });
+  const routeHypothesisStats = await rebuildRouteHypothesisDependencies({ supabase, companyId });
+  return { ...claimStats, ...dependencyStats, ...hypothesisStats, ...routeHypothesisStats };
+}
+
 export async function ingestPublicBaselineSignals(args: {
   supabase: SupabaseClient;
   companyId: string;

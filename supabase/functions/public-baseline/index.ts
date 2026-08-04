@@ -86,6 +86,25 @@ async function triggerMojoAnalysis(companyId: string, supabaseUrl: string, servi
   }
 }
 
+// RB-1 Stage 4: fire the claim reconcile in its OWN invocation (fresh request
+// budget), so it no longer runs in this request's overtime where it could be cut
+// off mid-run (Edgewood: 21 claims / 0 refs). The reconcile is idempotent, so this
+// is safe alongside the inline rebuild ingest already ran: whichever finishes, the
+// pool converges to the same fixed point; if the inline one was cut, this one (with
+// a full budget) completes it.
+async function triggerRebuildClaims(companyId: string, supabaseUrl: string, serviceRoleKey: string) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/rebuild-claims`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRoleKey}` },
+      body: JSON.stringify({ company_id: companyId }),
+    });
+    console.log("[baseline] triggered rebuild-claims, status:", res.status);
+  } catch (err) {
+    console.error("[baseline] failed to trigger rebuild-claims:", err);
+  }
+}
+
 function startCompanyRunLockHeartbeat(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
@@ -3063,6 +3082,13 @@ Deno.serve(async (req) => {
     });
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
+
+    // RB-1 Stage 4: complete the claim reconcile off this request's budget (idempotent).
+    waitUntil(triggerRebuildClaims(
+      company_id,
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    ));
 
     if (skip_mojo_analysis) {
       console.log("[baseline] skip_mojo_analysis=true — monitor-only run, not chaining run-mojo-analysis");
