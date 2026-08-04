@@ -14,6 +14,7 @@ import MovementShell from "@/components/client-view/story/movement/MovementShell
 import MarketAct from "@/components/client-view/story/movement/MarketAct";
 import PositionAct from "@/components/client-view/story/movement/PositionAct";
 import DiagnoseMarketAct from "@/components/client-view/story/diagnose/DiagnoseMarketAct";
+import WhereYouStand from "@/components/client-view/story/WhereYouStand";
 import "@/styles/client-story.css";
 
 /*
@@ -137,12 +138,11 @@ export default function ClientStoryView() {
         {/* Outside page: all four acts real (CV-1 + CV-2). Diagnose stays scaffolds. */}
         {phase === "outside" ? (
           <>
-            {/* FD-3: the cold-open industry-standard job map — the standard shape,
-                shown BEFORE any reading of this company. Reference register
-                (StandardsShell), stands permanently at the top of Outside. */}
-            <StandardsShell>
-              <FrontDoorMapAct />
-            </StandardsShell>
+            {/* G2: continuity leads — the client's own first-meeting verdicts open the
+                Outside phase, before anything generic. Self-suppresses (renders nothing)
+                for a company with no meeting verdicts, so the phase never opens with a
+                hole. */}
+            <WhereYouStand companyId={activeCompany?.id ?? null} />
             <OutsideHeroAct preferredRun={preferredRun} />
             <OutsideFindingsAct preferredRun={preferredRun} />
             <OutsideQuestionAct companyId={activeCompany?.id} />
@@ -154,6 +154,12 @@ export default function ClientStoryView() {
               <MarketAct />
               <PositionAct />
             </MovementShell>
+            {/* FD-3 / G2: the industry-standard job map — the standard shape, now a
+                reference exhibit near the END of Outside (mirrors the meeting rail's
+                Act-5 norm-exhibit placement), no longer a cold open at the top. */}
+            <StandardsShell>
+              <FrontDoorMapAct />
+            </StandardsShell>
           </>
         ) : null}
         {/* MPD-D + FR-DIAG-EMPTY: the Diagnose markets say/see act, then ONE
