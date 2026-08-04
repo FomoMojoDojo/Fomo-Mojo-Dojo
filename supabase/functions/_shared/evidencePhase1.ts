@@ -158,11 +158,6 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   const signals = allSignals.filter((row) => (row as { voice_class?: string | null })?.voice_class !== "competitor_voice");
   const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>);
 
-  // Always wipe + re-insert refs (safe: claim IDs are now stable, so re-inserted
-  // refs point at the same persisted claim rows).
-  const { error: deleteRefsError } = await supabase.from("claim_signal_refs").delete().eq("company_id", companyId);
-  if (deleteRefsError) throw new Error(`Failed clearing claim refs: ${deleteRefsError.message}`);
-
   // Compute deterministic stable IDs for every candidate.
   const stableIds = await Promise.all(
     candidates.map((c) => deterministicSignalClaimId(companyId, c.claim.statement)),
@@ -195,24 +190,19 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     if (!manualClaimIds.has(row.id)) existingStateById.set(row.id, row.state);
   }
 
-  // UPSERT: insert new candidates, update existing ones in-place.
-  // CRITICAL (R4): `state` is explicitly preserved for existing rows so G-STATE
-  // (which runs below) is the only writer for non-outside_view states.
-  // `action_category` and `need_statement` are NOT in the payload and are
-  // therefore untouched by the UPDATE path.
-  if (candidates.length > 0) {
-    const upsertPayloads = candidates.map((candidate, i) => ({
-      ...normalizeClaimInsert({ ...candidate.claim, id: stableIds[i] }),
-      // Preserve current state for existing rows; new rows default to outside_view
-      // (G-STATE below will advance them if signal evidence warrants it).
-      state: existingStateById.get(stableIds[i]) ?? "outside_view",
-    }));
+  // RB-1 Stage 2: everything above is READ/PURE (no model, no network). The
+  // mutations below — delete-refs, upsert-claims, prune, insert-refs, G-STATE —
+  // are computed here and applied TOGETHER by rebuild_claims_apply in ONE
+  // transaction, so a partial failure rolls the whole sequence back (the ref-wipe
+  // can never outlive an abort — the defect that stranded Edgewood at 21/0).
 
-    const { error: upsertError } = await supabase
-      .from("claims")
-      .upsert(upsertPayloads, { onConflict: "id" });
-    if (upsertError) throw new Error(`Failed upserting claims: ${upsertError.message}`);
-  }
+  // UPSERT payloads: `state` is preserved for existing rows so G-STATE (below) is
+  // the only writer for non-outside_view states. action_category and need_statement
+  // are NOT in the payload and are untouched on the UPDATE path.
+  const upsertPayloads = candidates.map((candidate, i) => ({
+    ...normalizeClaimInsert({ ...candidate.claim, id: stableIds[i] }),
+    state: existingStateById.get(stableIds[i]) ?? "outside_view",
+  }));
 
   // PRUNE (R2): delete non-manual claims whose backing signals are gone.
   // ON DELETE CASCADE on claim_events fires here — correct, those claims are
@@ -222,20 +212,12 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // selection lives in the single policy authority (src/lib/claimState/prunePolicy).
   const prunedIds = selectPruneVictims(existingRows, allCandidateIdSet, manualClaimIds);
   if (prunedIds.length > 0) {
+    // The DELETE runs inside rebuild_claims_apply → remove_claims_bulk (category
+    // 'signals_gone', audited by claims_delete_audit). Victims are provenance-scoped
+    // to public_observed by selectPruneVictims (RB-1); struck is re-guarded in the RPC.
     console.log(
-      `[evidence/reconcile] Pruning ${prunedIds.length} stale signal-derived claim(s) for company=${companyId}: ${prunedIds.join(", ")}`,
+      `[evidence/reconcile] Pruning ${prunedIds.length} stale public_observed claim(s) for company=${companyId}: ${prunedIds.join(", ")}`,
     );
-    // Strike Gate B: every DELETE is audited by the claims_delete_audit trigger;
-    // sanctioned paths declare their category through remove_claims_bulk. The
-    // automatic R2 prune is relevance by definition (backing signals are gone),
-    // category 'signals_gone'. The Gate A manual audit insert is gone — the
-    // trigger writing a second row would double-audit.
-    const { error: pruneError } = await supabase.rpc("remove_claims_bulk", {
-      p_claim_ids: prunedIds,
-      p_reason_category: "signals_gone",
-      p_actor: "evidencePhase1:R2",
-    } as never);
-    if (pruneError) throw new Error(`Failed pruning stale claims: ${pruneError.message}`);
   }
 
   // Re-insert claim_signal_refs (unchanged logic; stable IDs mean no orphan risk).
@@ -255,19 +237,12 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     });
   });
 
-  if (refPayloads.length > 0) {
-    const { error: refInsertError } = await supabase
-      .from("claim_signal_refs")
-      .insert(refPayloads);
-    if (refInsertError) throw new Error(`Failed inserting claim refs: ${refInsertError.message}`);
-  }
-
   // G-STATE: derive claim state from backing signals — single source of truth.
   // Omit linkedRoute/linkedOdiNeed/positioningCanvas: focus/flow states are set
   // by separate flows (ODI scoring, route linkage). Only signal-driven states here.
   // GUARD: skip focus/flow claims — those are operator decision states and must not
   // be re-derived from signals. Only outside_view and diagnose are signal-managed.
-  const stateByValue = new Map<string, string[]>();
+  const stateByValue: Record<string, string[]> = {};
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     const claimId = stableIds[i];
@@ -298,18 +273,22 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     });
 
     if (inferred !== "outside_view") {
-      if (!stateByValue.has(inferred)) stateByValue.set(inferred, []);
-      stateByValue.get(inferred)!.push(claimId);
+      if (!stateByValue[inferred]) stateByValue[inferred] = [];
+      stateByValue[inferred].push(claimId);
     }
   }
 
-  for (const [state, ids] of stateByValue) {
-    const { error: stateUpdateError } = await supabase
-      .from("claims")
-      .update({ state })
-      .in("id", ids);
-    if (stateUpdateError) throw new Error(`Failed updating claim state to '${state}': ${stateUpdateError.message}`);
-  }
+  // ── ONE transactional apply (RB-1 Stage 2): delete-refs → upsert-claims →
+  // prune → insert-refs → G-STATE, atomic. PostgREST wraps the rpc() call in a
+  // single transaction, so any failure rolls the whole sequence back.
+  const { error: applyError } = await supabase.rpc("rebuild_claims_apply", {
+    p_company_id: companyId,
+    p_claim_rows: upsertPayloads,
+    p_prune_ids: prunedIds,
+    p_ref_rows: refPayloads,
+    p_state_updates: stateByValue,
+  } as never);
+  if (applyError) throw new Error(`Failed applying claim rebuild (transactional): ${applyError.message}`);
 
   return {
     signalCount: signals.length,
