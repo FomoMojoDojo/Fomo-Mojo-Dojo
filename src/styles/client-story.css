@@ -250,7 +250,11 @@
 }
 
 .cvs-act {
-  min-height: 100vh;
+  /* One-idea-per-viewport as a FLOOR, not a forced full screen (operator ruling): a short
+     act keeps generous breathing room but no longer pads out to 100vh. 560px = the act's
+     own 100+100 padding + a 360px content floor (80+80+80+80+40, scale members). Content-
+     rich acts grow past it; padding/max-width/top-align (f457b65) unchanged. */
+  min-height: 560px;
   max-width: 1240px;
   margin: 0 auto;
   padding: 100px 48px;
@@ -916,8 +920,8 @@
   font-size: 14px;
   line-height: 1.55;
   color: var(--mm-muted);
-  border-left: 2px solid var(--mm-line-12);
-  padding-left: 16px;
+  /* No vertical bar (2026-07-23 law): the muted color + smaller size + its position
+     directly under the heading subordinate it as an aside — no rail needed. */
   max-width: 64ch;
   margin: 12px 0 0;
 }
@@ -1025,8 +1029,10 @@
 }
 
 .cvs-dg-gran {
-  border-left: 2px solid var(--mm-amber-line);
-  padding-left: 18px;
+  /* No vertical bar (2026-07-23 law): the inferred/"our-read" register is carried by the
+     amber .cvs-dg-gran-lead line (the house amber-text pattern), and separation by the
+     .cvs-dg-gran-grid gap — the rail was redundant with both. */
+  padding-left: 0;
 }
 
 .cvs-dg-gran-anchor {
@@ -1939,8 +1945,8 @@
   font-size: 13px;
   font-style: italic;
   opacity: 0.6;
-  border-left: 2px solid rgba(180, 83, 9, 0.5);
-  padding-left: 10px;
+  /* No vertical bar (2026-07-23 law): the copy ("… — withheld.") states the meaning; the
+     italic + 0.6 opacity carry the de-emphasis. The orange was off-palette decoration. */
   margin: 0 0 22px;
 }
 .cvs-fr-proposal-meta {
