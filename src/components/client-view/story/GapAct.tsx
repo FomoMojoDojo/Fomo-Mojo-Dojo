@@ -14,6 +14,8 @@
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { useSetAsideIdentities } from "@/hooks/useSetAsideIdentities";
 import { partitionByShrink, setAsideGroupHeading } from "@/lib/firstRead/gapShrink";
+import ActRecap from "./ActRecap";
+import { GAP_RECAP } from "./recapCopy";
 
 // ── Client-facing copy — OPERATOR-SIGNED 2026-07-23 (Gate 3) ─────────────────
 // Exported: Gate 5 export leave-behind reuses the same signed honest-empty line
@@ -59,6 +61,10 @@ export default function GapAct({ companyId, sessionId }: { companyId?: string; s
           </ol>
         </details>
       )}
+
+      {/* Name-the-moves recap — this return only renders when rows > 0 (the empty case
+          returns GAP_EMPTY earlier), so the gap move genuinely happened. */}
+      <ActRecap recap={GAP_RECAP} hasContent={rows.length > 0} />
     </div>
   );
 }

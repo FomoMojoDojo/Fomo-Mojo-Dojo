@@ -13,6 +13,8 @@ import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFi
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
+import ActRecap from "../ActRecap";
+import { CHECK_RECAP } from "../recapCopy";
 
 // ── Client-facing copy ───────────────────────────────────────────────────────
 // V2-9 SWEEP: freeze/lock/session machinery removed from room copy (the freeze still
@@ -74,6 +76,8 @@ export default function TheCheckAct({
           )}
         </>
       )}
+      {/* Name-the-moves recap — suppressed when there is nothing to check (items === 0). */}
+      <ActRecap recap={CHECK_RECAP} hasContent={items.length > 0} />
     </div>
   );
 }

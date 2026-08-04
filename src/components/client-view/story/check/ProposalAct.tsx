@@ -15,6 +15,8 @@ import { useFirstReadProposal, type Proposal, type ProposalBlock } from "@/hooks
 import OutsideNextMoveAct from "@/components/client-view/story/OutsideNextMoveAct";
 import ExportButton from "./ExportButton";
 import FeedCorrectionsButton from "./FeedCorrectionsButton";
+import ActRecap from "../ActRecap";
+import { CHOOSE_RECAP } from "../recapCopy";
 
 // ── Client-facing FIXED copy ─────────────────────────────────────────────────
 // V2-9 SWEEP: freeze/machinery language removed from room copy (the freeze still
@@ -128,12 +130,16 @@ export default function ProposalAct({
 
   if (proposal?.status === "generated") {
     return (
-      <ProposalRender
-        proposal={proposal}
-        companyId={companyId}
-        sessionId={sessionId}
-        onStartDiagnose={onStartDiagnose}
-      />
+      <>
+        <ProposalRender
+          proposal={proposal}
+          companyId={companyId}
+          sessionId={sessionId}
+          onStartDiagnose={onStartDiagnose}
+        />
+        {/* Name-the-moves recap — only in the generated-proposal branch (else no plan). */}
+        <ActRecap recap={CHOOSE_RECAP} hasContent />
+      </>
     );
   }
 

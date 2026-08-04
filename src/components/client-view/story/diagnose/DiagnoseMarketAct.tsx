@@ -2,6 +2,8 @@ import { useCompany } from "@/hooks/useCompany";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
 import { deriveDiagnoseModel, type DiagnosePair, type FanOutFinding } from "@/lib/marketPortfolio/diagnosePairs";
 import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfolio";
+import ActRecap from "../ActRecap";
+import { GAP_RECAP } from "../recapCopy";
 
 /*
  * MPD-D — the Diagnose say/see act (markets). surface:'diagnose' (all
@@ -212,6 +214,8 @@ export default function DiagnoseMarketAct() {
           <p className="cvs-dg-question">{CLOSING_QUESTION}</p>
         </>
       )}
+      {/* Name-the-moves recap — suppressed on the honest-empty state (!model.ready). */}
+      <ActRecap recap={GAP_RECAP} hasContent={model.ready} />
     </section>
   );
 }
