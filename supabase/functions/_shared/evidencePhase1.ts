@@ -296,6 +296,41 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     }
   }
 
+  // ── RB-3 Stage 2: RECORD provenance drift — observe, never overwrite.
+  // For every existing claim whose derived provenance differs from its preserved
+  // birth stamp, note the disagreement (claim, birth, derived). This is written in
+  // its OWN commit, SEPARATE from and BEFORE the transactional apply below: the
+  // drift is a fact about the current data, TRUE regardless of whether the rebuild
+  // commits, so a rollback (from any unrelated cause) must never erase a real
+  // observation. Recording it inside the transaction would lose it on any rollback;
+  // recording it success-only would never capture drift for a company whose rebuild
+  // keeps failing for some OTHER reason — exactly when the operator would want to see
+  // it. The only cost of a separate commit is a drift row for a rebuild that then
+  // rolls back — honest, since the disagreement is real either way. Idempotent:
+  // ON CONFLICT DO NOTHING on (company, claim, birth, derived) — repeated rebuilds of
+  // the same unchanged disagreement add no rows. Non-fatal: an observation-write
+  // failure must never break the rebuild the fix already made safe.
+  const driftRows = candidates
+    .map((candidate, i) => {
+      const id = stableIds[i];
+      const birth = existingProvenanceById.get(id);
+      const derived = normalizeClaimInsert({ ...candidate.claim, id }).provenance;
+      return birth && derived && birth !== derived
+        ? { company_id: companyId, claim_id: id, birth_provenance: birth, derived_provenance: derived }
+        : null;
+    })
+    .filter((r): r is { company_id: string; claim_id: string; birth_provenance: string; derived_provenance: string } => r !== null);
+  if (driftRows.length > 0) {
+    const { error: driftErr } = await supabase
+      .from("claim_provenance_drift")
+      .upsert(driftRows, { onConflict: "company_id,claim_id,birth_provenance,derived_provenance", ignoreDuplicates: true });
+    if (driftErr) {
+      console.log(`[evidence/reconcile] provenance-drift record failed (non-fatal) for company=${companyId}: ${driftErr.message}`);
+    } else {
+      console.log(`[evidence/reconcile] recorded ${driftRows.length} provenance-drift disagreement(s) for company=${companyId}`);
+    }
+  }
+
   // ── ONE transactional apply (RB-1 Stage 2): delete-refs → upsert-claims →
   // prune → insert-refs → G-STATE, atomic. PostgREST wraps the rpc() call in a
   // single transaction, so any failure rolls the whole sequence back. Wrapped in
