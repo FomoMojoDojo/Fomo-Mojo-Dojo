@@ -3,6 +3,7 @@ import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } fro
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { contentIdentity } from "./contentIdentity.ts";
+import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
 import {
@@ -280,15 +281,25 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   // ── ONE transactional apply (RB-1 Stage 2): delete-refs → upsert-claims →
   // prune → insert-refs → G-STATE, atomic. PostgREST wraps the rpc() call in a
-  // single transaction, so any failure rolls the whole sequence back.
-  const { error: applyError } = await supabase.rpc("rebuild_claims_apply", {
-    p_company_id: companyId,
-    p_claim_rows: upsertPayloads,
-    p_prune_ids: prunedIds,
-    p_ref_rows: refPayloads,
-    p_state_updates: stateByValue,
-  } as never);
-  if (applyError) throw new Error(`Failed applying claim rebuild (transactional): ${applyError.message}`);
+  // single transaction, so any failure rolls the whole sequence back. Wrapped in
+  // the RB-1 Stage 3 rebuild ledger so the rebuild records its own outcome — a
+  // stuck 'running' claim_rebuild row now reveals an aborted rebuild that
+  // result_json.status='ok' used to hide.
+  await withRebuildLedger(
+    supabase as unknown as Parameters<typeof withRebuildLedger>[0],
+    companyId,
+    candidates.length,
+    async () => {
+      const { error: applyError } = await supabase.rpc("rebuild_claims_apply", {
+        p_company_id: companyId,
+        p_claim_rows: upsertPayloads,
+        p_prune_ids: prunedIds,
+        p_ref_rows: refPayloads,
+        p_state_updates: stateByValue,
+      } as never);
+      if (applyError) throw new Error(`Failed applying claim rebuild (transactional): ${applyError.message}`);
+    },
+  );
 
   return {
     signalCount: signals.length,
