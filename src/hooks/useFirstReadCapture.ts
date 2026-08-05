@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAsyncRead, type AsyncState } from "@/hooks/useAsyncRead";
 import { useStandingFindings } from "@/hooks/useStandingFindings";
 import { useMarketOptions } from "@/hooks/useMarketOptions";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
@@ -24,6 +25,11 @@ import { assembleDeltaItems, dropCollidingDeltas, type DeltaInput } from "@/lib/
 // can map it to contest_kind='immaterial' (reject → 'disputed'). Never an overload of
 // reject. 'corrected' is retained but DORMANT (V2-11 retired its render path).
 export type Verdict = "confirmed" | "corrected" | "rejected" | "not_important";
+
+// Stable empty reference for the derived deltaRaw — a fresh [] each render would churn
+// the identity effect's deps. `deltaRaw` is this exact ref whenever the delta read is not
+// ready (loading / error), preserving the pre-Gate-B "no deltas until loaded" behaviour.
+const EMPTY_DELTA: RawCheckItem[] = [];
 
 export interface CheckItem extends RawCheckItem {
   identity: string;
@@ -102,56 +108,67 @@ export function useFirstReadCapture(
   // V2-7 — the say-vs-see delta items (kind='delta'), fetched + register-guarded here so
   // they carry the SAME verdict/tally/feed machinery as findings. Identity is the delta's
   // content_identity (a distinct construction), joined to a verbatim quote on the see side.
-  const [deltaRaw, setDeltaRaw] = useState<RawCheckItem[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!companyId) { setDeltaRaw([]); return; }
-      const { data: dData } = await supabase
-        .from("claim_deltas")
-        .select("id, delta_type, content_identity, declared_claim_id, public_claim_id")
-        .eq("company_id", companyId)
-        .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-      const dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
-      if (dRows.length === 0) { if (!cancelled) setDeltaRaw([]); return; }
+  //
+  // GATE B — this read now runs through useAsyncRead so its outcome is honest: a failed or
+  // never-returning delta read is EXPOSED as `deltaState` (additive), instead of silently
+  // collapsing to []. That matters because SayVsSeeExhibit renders its three signed
+  // group-empty lines when the delta items are empty — a swallowed error was rendering
+  // signed absence copy (e.g. "Everything you've told us turned up somewhere in what we've
+  // read.") on a dropped connection. TheCheckAct gates the exhibit on `deltaState`.
+  //
+  // BACK-COMPAT (shared hook): `deltaRaw` derives from the SAME state — ready→data, else the
+  // stable EMPTY_DELTA. On a primary-read error or timeout deltaRaw is [] exactly as before,
+  // so `items`/`tally`/`loading` (read by HeardAct + ExportButton) are byte-identical to the
+  // pre-Gate-B hook in every case. Sub-query (claims/refs/signals) failures keep their old
+  // `?? []` swallow, so only the PRIMARY delta-read failure surfaces — matching prior `items`.
+  const deltaState = useAsyncRead<RawCheckItem[]>(async (signal) => {
+    if (!companyId) return EMPTY_DELTA;
+    const { data: dData, error: dErr } = await supabase
+      .from("claim_deltas")
+      .select("id, delta_type, content_identity, declared_claim_id, public_claim_id")
+      .eq("company_id", companyId)
+      .in("delta_type", ["echoed", "divergent", "publicly_silent"])
+      .abortSignal(signal);
+    if (dErr) throw new Error(dErr.message);
+    const dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
+    if (dRows.length === 0) return EMPTY_DELTA;
 
-      const claimIds = [...new Set(dRows.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
-      const { data: cData } = await supabase.from("claims").select("id, statement, provenance").in("id", claimIds);
-      const claimById = new Map(((cData ?? []) as Array<{ id: string; statement: string; provenance: string }>).map((c) => [c.id, c]));
+    const claimIds = [...new Set(dRows.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
+    const { data: cData } = await supabase.from("claims").select("id, statement, provenance").in("id", claimIds).abortSignal(signal);
+    const claimById = new Map(((cData ?? []) as Array<{ id: string; statement: string; provenance: string }>).map((c) => [c.id, c]));
 
-      // Verbatim receipt on the SEE (public) claim: claim_signal_refs(supports) → signals.quote.
-      const publicClaimIds = [...new Set(dRows.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
-      const quoteByClaim = new Map<string, { quote: string; quote_source_text: string | null; event_date: string | null }>();
-      if (publicClaimIds.length) {
-        const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).eq("relationship", "supports");
-        const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
-        const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
-        if (sigIds.length) {
-          const { data: sigs } = await supabase.from("signals").select("id, quote, quote_source_text, event_date").in("id", sigIds).not("quote", "is", null);
-          const sigById = new Map(((sigs ?? []) as Array<{ id: string; quote: string; quote_source_text: string | null; event_date: string | null }>).map((s) => [s.id, s]));
-          for (const r of refRows) {
-            if (quoteByClaim.has(r.claim_id)) continue;
-            const s = sigById.get(r.signal_id);
-            if (s?.quote) quoteByClaim.set(r.claim_id, { quote: s.quote, quote_source_text: s.quote_source_text, event_date: s.event_date });
-          }
+    // Verbatim receipt on the SEE (public) claim: claim_signal_refs(supports) → signals.quote.
+    const publicClaimIds = [...new Set(dRows.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
+    const quoteByClaim = new Map<string, { quote: string; quote_source_text: string | null; event_date: string | null }>();
+    if (publicClaimIds.length) {
+      const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).eq("relationship", "supports").abortSignal(signal);
+      const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+      const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+      if (sigIds.length) {
+        const { data: sigs } = await supabase.from("signals").select("id, quote, quote_source_text, event_date").in("id", sigIds).not("quote", "is", null).abortSignal(signal);
+        const sigById = new Map(((sigs ?? []) as Array<{ id: string; quote: string; quote_source_text: string | null; event_date: string | null }>).map((s) => [s.id, s]));
+        for (const r of refRows) {
+          if (quoteByClaim.has(r.claim_id)) continue;
+          const s = sigById.get(r.signal_id);
+          if (s?.quote) quoteByClaim.set(r.claim_id, { quote: s.quote, quote_source_text: s.quote_source_text, event_date: s.event_date });
         }
       }
+    }
 
-      const inputs: DeltaInput[] = dRows.map((d) => {
-        const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : null;
-        const pub = d.public_claim_id ? claimById.get(d.public_claim_id) : null;
-        const q = d.public_claim_id ? quoteByClaim.get(d.public_claim_id) : null;
-        return {
-          id: d.id, delta_type: d.delta_type, content_identity: d.content_identity,
-          declared_statement: decl?.statement ?? null, public_statement: pub?.statement ?? null,
-          public_provenance: pub?.provenance ?? null,
-          quote: q?.quote ?? null, quote_source_text: q?.quote_source_text ?? null, event_date: q?.event_date ?? null,
-        };
-      });
-      if (!cancelled) setDeltaRaw(assembleDeltaItems(inputs));
-    })();
-    return () => { cancelled = true; };
+    const inputs: DeltaInput[] = dRows.map((d) => {
+      const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : null;
+      const pub = d.public_claim_id ? claimById.get(d.public_claim_id) : null;
+      const q = d.public_claim_id ? quoteByClaim.get(d.public_claim_id) : null;
+      return {
+        id: d.id, delta_type: d.delta_type, content_identity: d.content_identity,
+        declared_statement: decl?.statement ?? null, public_statement: pub?.statement ?? null,
+        public_provenance: pub?.provenance ?? null,
+        quote: q?.quote ?? null, quote_source_text: q?.quote_source_text ?? null, event_date: q?.event_date ?? null,
+      };
+    });
+    return assembleDeltaItems(inputs);
   }, [companyId]);
+  const deltaRaw = deltaState.status === "ready" ? deltaState.data : EMPTY_DELTA;
 
   // Compute identities (async sha256) through the TS authority, then MERGE the delta items
   // (identity already set). COLLISION DETECTION: a delta whose identity happens to equal a
@@ -290,5 +307,10 @@ export function useFirstReadCapture(
     [sessionId, companyId, refetchResponses, ensureSessionId],
   );
 
-  return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses };
+  // `deltaState` is ADDITIVE — the say-vs-see read's honest outcome for TheCheckAct to
+  // gate its exhibit through <ActData>. Existing consumers (HeardAct, ExportButton) do not
+  // read it and see byte-identical items/tally/loading.
+  return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses, deltaState };
 }
+
+export type { AsyncState };

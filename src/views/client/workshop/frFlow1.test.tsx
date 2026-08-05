@@ -29,6 +29,7 @@ vi.mock("@/hooks/useFirstReadCapture", () => ({
   useFirstReadCapture: () => ({
     items: [], tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 },
     loading: false, frozen: false, sessionStatus: null, setVerdict: async () => null, refetchResponses: async () => {},
+    deltaState: { status: "ready", data: [] },
   }),
 }));
 

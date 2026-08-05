@@ -13,6 +13,7 @@ import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFi
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
+import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
 import { CHECK_RECAP } from "../recapCopy";
 
@@ -34,7 +35,7 @@ export default function TheCheckAct({
 }) {
   const [error, setError] = useState<string | null>(null);
 
-  const { items, tally, loading, frozen, setVerdict } = useFirstReadCapture(
+  const { items, tally, loading, frozen, setVerdict, deltaState } = useFirstReadCapture(
     companyId,
     sessionId || undefined,
     ensureSession,
@@ -62,8 +63,14 @@ export default function TheCheckAct({
       ) : (
         <>
           {/* V2-7 say-vs-see exhibit — always renders its three groups (honest-absence
-              per empty group), so the contrast frame is present even before deltas exist. */}
-          <SayVsSeeExhibit items={deltaItems} onSet={onSet} disabled={frozen} />
+              per empty group), so the contrast frame is present even before deltas exist.
+              GATE B: gated on the delta read's honest state. A FAILED or never-returning
+              delta read renders the signed error via <ActData> — NOT the three signed
+              group-empty lines / heading, which are only reachable in the ready branch
+              (a genuine zero-delta read). deltaItems carry the verdict join from `items`. */}
+          <ActData state={deltaState} loading={null}>
+            {() => <SayVsSeeExhibit items={deltaItems} onSet={onSet} disabled={frozen} />}
+          </ActData>
 
           {checkItems.length === 0 ? (
             <p className="cvs-support">No other checkable items surfaced for this company yet.</p>

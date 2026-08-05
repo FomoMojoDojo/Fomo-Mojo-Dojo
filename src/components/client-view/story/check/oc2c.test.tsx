@@ -52,6 +52,7 @@ describe("OC-2c GOAL 1 — post-issuance UI shows a banner, not silent (V2-9 swe
       tally: { confirmed: 0, corrected: 0, rejected: 1, not_important: 0 },
       loading: false, frozen: true, sessionStatus: "proposal_issued",
       setVerdict: async () => null, refetchResponses: async () => {},
+      deltaState: { status: "ready", data: [] },
     };
     const { container, getByText } = render(
       <TheCheckAct companyId="c1" sessionId="s1" />,
