@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useCompany } from "@/hooks/useCompany";
 import { useIndustryReferenceMaps, type ReferenceMap } from "@/hooks/useIndustryReferenceMaps";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import { STANDARD_ATTRIBUTION_LINE, STANDARD_INTRO_SUB } from "@/lib/firstRead/standardCopy";
 
 /*
@@ -55,37 +57,45 @@ function MapBody({ map }: { map: ReferenceMap }) {
 
 export default function FrontDoorMapAct() {
   const { activeCompany } = useCompany();
-  const { maps, keys, loading } = useIndustryReferenceMaps();
+  // GATE C-2 — useIndustryReferenceMaps now exposes `error`; useReadState adds the 10s deadline.
+  // A failed / never-returning read renders the signed error via <ActData> instead of "That
+  // industry map isn't published yet." (reachable ONLY on a successful read that returned no
+  // published maps — byte-identical). The FALLBACK selector is a genuine no-MATCH affordance on
+  // a successful read (company industry not in the published set), NOT a read failure.
+  const { maps, keys, loading, error } = useIndustryReferenceMaps();
   const [fallbackKey, setFallbackKey] = useState<string | null>(null);
+  const mapsState = useReadState(loading, error, { maps, keys }, "industry-maps");
 
   // EXACT match only — never fuzzy. A key not in the published set → no match.
   const companyKey = activeCompany?.industry_key ?? null;
-  const matched = companyKey && maps.has(companyKey) ? maps.get(companyKey)! : null;
-  const selected = matched ?? (fallbackKey ? maps.get(fallbackKey) ?? null : null);
 
   return (
     <section className="cvs-std-act" aria-label="Industry-standard job map">
       <p className="cvs-std-act-eyebrow">{ACT_EYEBROW}</p>
       <p className="cvs-std-act-sub">{ACT_SUB}</p>
 
-      {loading ? (
-        <p className="cvs-std-empty">Loading the standard map…</p>
-      ) : keys.length === 0 ? (
-        // Defensive: no published maps exist at all. Should be unreachable.
-        <p className="cvs-std-empty">{DEFENSIVE_EMPTY}</p>
-      ) : selected ? (
-        // Matched (auto-select) OR fallback-picked. In the matched state NO
-        // picker renders — the map stands alone.
-        <>
-          {!matched ? (
+      <ActData state={mapsState} loading={<p className="cvs-std-empty">Loading the standard map…</p>}>
+        {({ maps, keys }) => {
+          const matched = companyKey && maps.has(companyKey) ? maps.get(companyKey)! : null;
+          const selected = matched ?? (fallbackKey ? maps.get(fallbackKey) ?? null : null);
+          return keys.length === 0 ? (
+            // Defensive: no published maps exist at all. Should be unreachable.
+            <p className="cvs-std-empty">{DEFENSIVE_EMPTY}</p>
+          ) : selected ? (
+            // Matched (auto-select) OR fallback-picked. In the matched state NO
+            // picker renders — the map stands alone.
+            <>
+              {!matched ? (
+                <FallbackSelector keys={keys} maps={maps} value={fallbackKey} onChange={setFallbackKey} />
+              ) : null}
+              <MapBody map={selected} />
+            </>
+          ) : (
+            // No company match and nothing picked yet → the fallback selector only.
             <FallbackSelector keys={keys} maps={maps} value={fallbackKey} onChange={setFallbackKey} />
-          ) : null}
-          <MapBody map={selected} />
-        </>
-      ) : (
-        // No company match and nothing picked yet → the fallback selector only.
-        <FallbackSelector keys={keys} maps={maps} value={fallbackKey} onChange={setFallbackKey} />
-      )}
+          );
+        }}
+      </ActData>
     </section>
   );
 }

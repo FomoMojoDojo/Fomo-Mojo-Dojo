@@ -137,5 +137,10 @@ export function useStandingFindings(companyId?: string) {
     await queryClient.invalidateQueries({ queryKey });
   }
 
-  return { data: query.data, isLoading: query.isLoading, markPrimary, resolve };
+  // GATE C-2 — `error` is ADDITIVE (react-query already tracks query.error/isError; this hook
+  // had DISCARDED it). OutsideFindingsAct / OutsideHeroAct now render the signed error via
+  // <ActData> instead of their honest-empty line on a failed read. `data` / `isLoading` are
+  // byte-identical: NO existing consumer reads the new `error`, so none changes behaviour —
+  // a consumer that previously saw data=undefined on error (→ empty) still does.
+  return { data: query.data, isLoading: query.isLoading, error: query.error ? String((query.error as Error)?.message ?? query.error) : null, markPrimary, resolve };
 }

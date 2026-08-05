@@ -1,6 +1,8 @@
 import { useCompany } from "@/hooks/useCompany";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
 import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
@@ -53,54 +55,63 @@ function formatStatement(raw: string): string {
 
 export default function OutsideFindingsAct({ preferredRun }: { preferredRun?: unknown }) {
   const { activeCompany } = useCompany();
-  const { data, isLoading } = useStandingFindings(activeCompany?.id);
-
-  const companyDomain = data?.companyDomain ?? null;
+  // GATE C-2 — useStandingFindings now exposes `error` (react-query's, previously discarded);
+  // useReadState adds the 10s deadline. A failed / never-returning read renders the signed
+  // error via <ActData> instead of "Nothing else is standing out from the outside read yet."
+  // (reachable ONLY on a successful zero-finding read — byte-identical to before).
+  const { data, isLoading, error } = useStandingFindings(activeCompany?.id);
+  const findingsState = useReadState<typeof data>(isLoading, error, data, activeCompany?.id);
   const ledgerDates = buildLedgerDateMap(preferredRun);
-  // RG-2: register guard, primary exclusion, kind rank and top-three cap all live
-  // in orderOtherFindings — the same selection the Gate 5 export reuses.
-  const candidates = orderOtherFindings(data?.findings ?? [], data?.primaryId ?? null);
 
   return (
     <section className="cvs-act" aria-label="Outside · Act 2 — What else stands out">
       <p className="cvs-act-eyebrow">{EYEBROW}</p>
-      {/* Content-gated: no findings (or still loading) → no definition. */}
-      <ActDefinition definition={DEFINITION} hasContent={!isLoading && candidates.length > 0} />
-
-      {isLoading ? (
-        <p className="cvs-hero-empty">Reading the outside signals…</p>
-      ) : candidates.length === 0 ? (
-        <p className="cvs-hero-empty">{EMPTY}</p>
-      ) : (
-        candidates.map((f, i) => {
-          const statement = f.beats?.observe ?? f.body;
-          const showHost = f.host && f.host !== companyDomain ? f.host : null;
-          const badge = resolveDateBadge({
-            sourceUrl: f.sourceUrl,
-            signalRawDate: f.signalRawDate,
-            signalCapturedAt: f.signalCapturedAt,
-            findingCreatedAt: f.created_at,
-            companyDomain,
-            ledgerDates,
-          });
+      <ActData state={findingsState} loading={<p className="cvs-hero-empty">Reading the outside signals…</p>}>
+        {(data) => {
+          const companyDomain = data?.companyDomain ?? null;
+          // RG-2: register guard, primary exclusion, kind rank and top-three cap all live
+          // in orderOtherFindings — the same selection the Gate 5 export reuses.
+          const candidates = orderOtherFindings(data?.findings ?? [], data?.primaryId ?? null);
           return (
-            <div key={f.id}>
-              {i > 0 ? <hr className="cvs-finding-rule" /> : null}
-              <div className="cvs-finding">
-                <p className="cvs-kind">{KIND_LABEL[f.kind]}</p>
-                <h2 className="cvs-finding-statement">{formatStatement(statement)}</h2>
-                {showHost || badge ? (
-                  <p className="cvs-source">
-                    {showHost ? <>Source · {showHost}</> : null}
-                    {showHost && badge ? " · " : null}
-                    {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
-                  </p>
-                ) : null}
-              </div>
-            </div>
+            <>
+              {/* Content-gated: no findings → no definition. */}
+              <ActDefinition definition={DEFINITION} hasContent={candidates.length > 0} />
+              {candidates.length === 0 ? (
+                <p className="cvs-hero-empty">{EMPTY}</p>
+              ) : (
+                candidates.map((f, i) => {
+                  const statement = f.beats?.observe ?? f.body;
+                  const showHost = f.host && f.host !== companyDomain ? f.host : null;
+                  const badge = resolveDateBadge({
+                    sourceUrl: f.sourceUrl,
+                    signalRawDate: f.signalRawDate,
+                    signalCapturedAt: f.signalCapturedAt,
+                    findingCreatedAt: f.created_at,
+                    companyDomain,
+                    ledgerDates,
+                  });
+                  return (
+                    <div key={f.id}>
+                      {i > 0 ? <hr className="cvs-finding-rule" /> : null}
+                      <div className="cvs-finding">
+                        <p className="cvs-kind">{KIND_LABEL[f.kind]}</p>
+                        <h2 className="cvs-finding-statement">{formatStatement(statement)}</h2>
+                        {showHost || badge ? (
+                          <p className="cvs-source">
+                            {showHost ? <>Source · {showHost}</> : null}
+                            {showHost && badge ? " · " : null}
+                            {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </>
           );
-        })
-      )}
+        }}
+      </ActData>
     </section>
   );
 }

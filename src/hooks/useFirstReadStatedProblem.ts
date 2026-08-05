@@ -21,22 +21,29 @@ export interface StatedProblemRow {
 export function useFirstReadStatedProblem(companyId?: string) {
   const [data, setData] = useState<StatedProblemRow | null>(null);
   const [loading, setLoading] = useState(true);
+  // GATE C-2 — `error` is ADDITIVE. A returning query error on the declared brief OR the
+  // fallback row is exposed, so StatedProblemAct renders the signed error via <ActData>
+  // rather than "We couldn't find a problem stated…" on a failed read. `data` / `loading`
+  // are byte-identical for every existing consumer in every case (error still leaves data null).
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       if (!companyId) {
         if (!cancelled) { setData(null); setLoading(false); }
         return;
       }
 
       // ── DECLARED (preferred): the client's own stated problem, verbatim ──────────
-      const { data: company } = await supabase
+      const { data: company, error: companyErr } = await supabase
         .from("companies")
         .select("strategic_problem_brief")
         .eq("id", companyId)
         .maybeSingle();
+      if (!cancelled && companyErr) setError(companyErr.message);
       const brief = (company as { strategic_problem_brief?: string | null } | null)?.strategic_problem_brief ?? "";
       if (brief.trim().length > 0) {
         if (!cancelled) {
@@ -54,12 +61,13 @@ export function useFirstReadStatedProblem(companyId?: string) {
       }
 
       // ── FALLBACK: the site-inferred signed row (public_observed) ─────────────────
-      const { data: row } = await supabase
+      const { data: row, error: rowErr } = await supabase
         .from("first_read_stated_problem")
         .select("statement, quote, quote_source_text, register, descriptive_fallback")
         .eq("company_id", companyId)
         .eq("status", "signed") // client sees the signed shape only; pending stays hidden
         .maybeSingle();
+      if (!cancelled && rowErr) setError(rowErr.message);
       if (!cancelled) {
         setData(
           row
@@ -79,5 +87,5 @@ export function useFirstReadStatedProblem(companyId?: string) {
     return () => { cancelled = true; };
   }, [companyId]);
 
-  return { data, loading };
+  return { data, loading, error };
 }

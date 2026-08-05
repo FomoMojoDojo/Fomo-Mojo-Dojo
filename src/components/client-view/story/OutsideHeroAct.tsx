@@ -2,6 +2,8 @@ import { useCompany } from "@/hooks/useCompany";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useMojoScore } from "@/hooks/useMojoScore";
 import { useStandingFindings, type Finding } from "@/hooks/useStandingFindings";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import { buildLedgerDateMap, resolveDateBadge } from "@/components/client-view/story/dateBadge";
 
 /*
@@ -46,39 +48,16 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
   const { activeCompany } = useCompany();
   const companyId = activeCompany?.id;
 
-  const { score, loading: scoreLoading } = useMojoScore(companyId);
-  const { data, isLoading: findingsLoading } = useStandingFindings(companyId);
-
-  // find_primary_finding() is the sole selector (operator ruling). No kind filter.
-  // RG-2: the hero finding renders only if the register guard admits it on the
-  // client Outside surface. A primary whose register is NULL or internal is
-  // blocked → null → the hero falls back to its empty state, never internal text.
-  const primary = data?.primaryId
-    ? (() => {
-        const p = data.findings.find((f) => f.id === data.primaryId) ?? null;
-        return p && admitForSurface(p, "outside") ? p : null;
-      })()
-    : null;
-  const companyDomain = data?.companyDomain ?? null;
-
-  const statement = primary ? primary.beats?.observe ?? primary.body : null;
-  // Show a source host only when it's a genuine third-party source — suppress the
-  // company's own domain (synthesis reads are stamped with the company website).
-  const showHost = primary?.host && primary.host !== companyDomain ? primary.host : null;
-
-  // CV-2c date badge: source date where real (third-party only), else capture time.
-  const badge = primary
-    ? resolveDateBadge({
-        sourceUrl: primary.sourceUrl,
-        signalRawDate: primary.signalRawDate,
-        signalCapturedAt: primary.signalCapturedAt,
-        findingCreatedAt: primary.created_at,
-        companyDomain,
-        ledgerDates: buildLedgerDateMap(preferredRun),
-      })
-    : null;
-
-  const scoreValue = score ? Math.round(score.total_score) : null;
+  // GATE C-2 — TWO independent reads feed two independent, side-by-side sections (the hero
+  // finding and the score card), each with its own failure string (HERO_EMPTY / SCORE_EMPTY).
+  // Unlike Gate B's single delta read split across groups, these are genuinely separate reads,
+  // so TWO <ActData> boundaries are correct (a findings failure + a live score is honest, and
+  // vice versa) — NOT the mixed-state hazard the one-boundary rule guards against. Each hook
+  // now exposes `error`; useReadState adds the 10s deadline per section.
+  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId);
+  const { data, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
+  const findingsState = useReadState<typeof data>(findingsLoading, findingsError, data, companyId);
+  const scoreState = useReadState<typeof score>(scoreLoading, scoreError, score, companyId);
 
   return (
     <section className="cvs-act" aria-label="Outside · Act 1 — Hero and Mojo Score">
@@ -86,56 +65,84 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
 
       <div className="cvs-hero">
         <div className="cvs-hero-copy">
-          {findingsLoading ? (
-            <p className="cvs-hero-empty">Reading the outside signals…</p>
-          ) : primary && statement ? (
-            <>
-              <p className="cvs-kind">{KIND_LABEL[primary.kind]}</p>
-              <h1 className="cvs-statement">{formatStatement(statement)}</h1>
-              {showHost || badge ? (
-                <p className="cvs-source">
-                  {showHost ? <>Source · {showHost}</> : null}
-                  {showHost && badge ? " · " : null}
-                  {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <p className="cvs-hero-empty">{HERO_EMPTY}</p>
-          )}
+          <ActData state={findingsState} loading={<p className="cvs-hero-empty">Reading the outside signals…</p>}>
+            {(data) => {
+              // find_primary_finding() is the sole selector (operator ruling). No kind filter.
+              // RG-2: the hero finding renders only if the register guard admits it on the
+              // client Outside surface. A primary whose register is NULL or internal is
+              // blocked → null → the hero falls back to its empty state, never internal text.
+              const primary = data?.primaryId
+                ? (() => {
+                    const p = data.findings.find((f) => f.id === data.primaryId) ?? null;
+                    return p && admitForSurface(p, "outside") ? p : null;
+                  })()
+                : null;
+              const companyDomain = data?.companyDomain ?? null;
+              const statement = primary ? primary.beats?.observe ?? primary.body : null;
+              // Third-party host only — suppress the company's own domain.
+              const showHost = primary?.host && primary.host !== companyDomain ? primary.host : null;
+              const badge = primary
+                ? resolveDateBadge({
+                    sourceUrl: primary.sourceUrl,
+                    signalRawDate: primary.signalRawDate,
+                    signalCapturedAt: primary.signalCapturedAt,
+                    findingCreatedAt: primary.created_at,
+                    companyDomain,
+                    ledgerDates: buildLedgerDateMap(preferredRun),
+                  })
+                : null;
+              return primary && statement ? (
+                <>
+                  <p className="cvs-kind">{KIND_LABEL[primary.kind]}</p>
+                  <h1 className="cvs-statement">{formatStatement(statement)}</h1>
+                  {showHost || badge ? (
+                    <p className="cvs-source">
+                      {showHost ? <>Source · {showHost}</> : null}
+                      {showHost && badge ? " · " : null}
+                      {badge ? <span className="cvs-datebadge">{badge.label}</span> : null}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="cvs-hero-empty">{HERO_EMPTY}</p>
+              );
+            }}
+          </ActData>
         </div>
 
         <aside className="cvs-score-card" aria-label="Mojo Score">
           <p className="cvs-score-label">Mojo Score</p>
+          <ActData state={scoreState} loading={<p className="cvs-score-empty">Loading…</p>}>
+            {(score) => {
+              const scoreValue = score ? Math.round(score.total_score) : null;
+              return scoreValue != null ? (
+                <>
+                  {/* No status word: the score row carries no honest confidence field,
+                      so none is invented (operator ruling / display honesty). */}
+                  <div className="cvs-score-row">
+                    <span className="cvs-score-num">{scoreValue}</span>
+                  </div>
+                  <p className="cvs-score-cap">/ 100</p>
 
-          {scoreLoading ? (
-            <p className="cvs-score-empty">Loading…</p>
-          ) : scoreValue != null ? (
-            <>
-              {/* No status word: the score row carries no honest confidence field,
-                  so none is invented (operator ruling / display honesty). */}
-              <div className="cvs-score-row">
-                <span className="cvs-score-num">{scoreValue}</span>
-              </div>
-              <p className="cvs-score-cap">/ 100</p>
+                  <div className="cvs-score-sentences">
+                    <p className="cvs-score-line">{SCORE_CAVEAT_1}</p>
+                    <p className="cvs-score-line is-muted">{SCORE_CAVEAT_2}</p>
+                  </div>
 
-              <div className="cvs-score-sentences">
-                <p className="cvs-score-line">{SCORE_CAVEAT_1}</p>
-                <p className="cvs-score-line is-muted">{SCORE_CAVEAT_2}</p>
-              </div>
-
-              <div className="cvs-score-divider" />
-              <div className="cvs-score-current">
-                <span className="cvs-score-current-label">Current</span>
-                <span className="cvs-score-current-val">{scoreValue}</span>
-              </div>
-            </>
-          ) : (
-            <div className="cvs-score-empty">
-              <p style={{ margin: 0 }}>{SCORE_EMPTY}</p>
-              <p className="cvs-score-empty-sub">{SCORE_EMPTY_SUB}</p>
-            </div>
-          )}
+                  <div className="cvs-score-divider" />
+                  <div className="cvs-score-current">
+                    <span className="cvs-score-current-label">Current</span>
+                    <span className="cvs-score-current-val">{scoreValue}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="cvs-score-empty">
+                  <p style={{ margin: 0 }}>{SCORE_EMPTY}</p>
+                  <p className="cvs-score-empty-sub">{SCORE_EMPTY_SUB}</p>
+                </div>
+              );
+            }}
+          </ActData>
         </aside>
       </div>
     </section>

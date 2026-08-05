@@ -13,6 +13,8 @@
 
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { useSetAsideIdentities } from "@/hooks/useSetAsideIdentities";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import { partitionByShrink, setAsideGroupHeading } from "@/lib/firstRead/gapShrink";
 import ActRecap from "./ActRecap";
 import { GAP_RECAP } from "./recapCopy";
@@ -24,47 +26,56 @@ export const GAP_EMPTY = "The outside read left no open questions for this compa
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function GapAct({ companyId, sessionId }: { companyId?: string; sessionId?: string }) {
-  const { rows, loading } = useFirstReadOpenQuestions(companyId);
+  // GATE C-2 — gate on the open-questions read (its failure produces GAP_EMPTY). A failed /
+  // never-returning read renders the signed error via <ActData> instead of "The outside read
+  // left no open questions for this company." (reachable ONLY on a successful zero-question
+  // read — byte-identical). useSetAsideIdentities is a SECONDARY read: on failure it degrades
+  // to no set-aside demotion (never a false empty), so it gets no separate boundary.
+  const { rows, loading, error } = useFirstReadOpenQuestions(companyId);
   const { identities: setAside } = useSetAsideIdentities(sessionId);
-
-  if (loading) return null;
-  if (rows.length === 0) {
-    return <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>;
-  }
-
-  const { active, demoted } = partitionByShrink(rows, setAside);
+  const state = useReadState(loading, error, rows, companyId);
 
   return (
-    <div className="cvs-gap">
-      {active.length > 0 ? (
-        <ol className="cvs-gap-list">
-          {active.map((q, i) => (
-            <li className="cvs-gap-item" key={q.question_text + i}>
-              <span className="cvs-gap-num">{i + 1}</span>
-              <span className="cvs-gap-text">{q.question_text}</span>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>
-      )}
+    <ActData state={state} loading={null}>
+      {(rows) => {
+        if (rows.length === 0) {
+          return <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>;
+        }
+        const { active, demoted } = partitionByShrink(rows, setAside);
+        return (
+          <div className="cvs-gap">
+            {active.length > 0 ? (
+              <ol className="cvs-gap-list">
+                {active.map((q, i) => (
+                  <li className="cvs-gap-item" key={q.question_text + i}>
+                    <span className="cvs-gap-num">{i + 1}</span>
+                    <span className="cvs-gap-text">{q.question_text}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="cvs-support cvs-gap-empty">{GAP_EMPTY}</p>
+            )}
 
-      {demoted.length > 0 && (
-        <details className="cvs-gap-setaside">
-          <summary className="cvs-gap-setaside-head">{setAsideGroupHeading(demoted.length)}</summary>
-          <ol className="cvs-gap-list cvs-gap-list-demoted">
-            {demoted.map((q, i) => (
-              <li className="cvs-gap-item is-demoted" key={q.question_text + i}>
-                <span className="cvs-gap-text">{q.question_text}</span>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
+            {demoted.length > 0 && (
+              <details className="cvs-gap-setaside">
+                <summary className="cvs-gap-setaside-head">{setAsideGroupHeading(demoted.length)}</summary>
+                <ol className="cvs-gap-list cvs-gap-list-demoted">
+                  {demoted.map((q, i) => (
+                    <li className="cvs-gap-item is-demoted" key={q.question_text + i}>
+                      <span className="cvs-gap-text">{q.question_text}</span>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            )}
 
-      {/* Name-the-moves recap — this return only renders when rows > 0 (the empty case
-          returns GAP_EMPTY earlier), so the gap move genuinely happened. */}
-      <ActRecap recap={GAP_RECAP} hasContent={rows.length > 0} />
-    </div>
+            {/* Name-the-moves recap — this branch only renders when rows > 0 (the empty case
+                returns GAP_EMPTY earlier), so the gap move genuinely happened. */}
+            <ActRecap recap={GAP_RECAP} hasContent={rows.length > 0} />
+          </div>
+        );
+      }}
+    </ActData>
   );
 }

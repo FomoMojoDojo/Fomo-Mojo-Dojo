@@ -23,6 +23,7 @@ export type UseMojoScoreResult = {
   loading: boolean;
   score: MojoScoreResult | null;
   history: MojoScoreHistoryPoint[];
+  error: string | null;
 };
 
 // ── Parsers ───────────────────────────────────────────────────────────────────
@@ -85,6 +86,12 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
   const [loading, setLoading] = useState(false);
   const [score, setScore] = useState<MojoScoreResult | null>(null);
   const [history, setHistory] = useState<MojoScoreHistoryPoint[]>([]);
+  // GATE C-2 — `error` is ADDITIVE. A returning query error is exposed (split from the old
+  // conflation of error and genuine-empty), so OutsideHeroAct renders the signed error via
+  // <ActData> rather than "No score has been computed yet." on a failed read. `score` /
+  // `history` / `loading` are byte-identical for every existing consumer (a genuine empty
+  // still yields score=null with error=null; only a real query error sets error).
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!companyId) {
@@ -95,9 +102,10 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
 
     let cancelled = false;
     setLoading(true);
+    setError(null);
 
     (async () => {
-      const { data, error } = await supabase
+      const { data, error: qErr } = await supabase
         .from("mojo_scores")
         .select(
           "id, company_id, computed_at, total_score, component_scores, explanation, methodology_version",
@@ -108,7 +116,8 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
 
       if (cancelled) return;
 
-      if (error || !data || data.length === 0) {
+      if (qErr) setError(qErr.message); // a real query error (distinct from a genuine empty)
+      if (qErr || !data || data.length === 0) {
         setScore(null);
         setHistory([]);
         setLoading(false);
@@ -154,5 +163,5 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
     };
   }, [companyId]);
 
-  return { loading, score, history };
+  return { loading, score, history, error };
 }

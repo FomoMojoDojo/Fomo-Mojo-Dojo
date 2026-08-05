@@ -42,21 +42,28 @@ export function useIndustryReferenceMaps(): {
   maps: Map<string, ReferenceMap>;
   keys: string[];
   loading: boolean;
+  error: string | null;
 } {
   const [maps, setMaps] = useState<Map<string, ReferenceMap>>(new Map());
   const [loading, setLoading] = useState(true);
+  // GATE C-2 — `error` is ADDITIVE, so FrontDoorMapAct renders the signed error via <ActData>
+  // instead of the fallback selector on a failed read. `maps` / `keys` / `loading` are
+  // byte-identical for every existing consumer (error still leaves maps empty).
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     (async () => {
-      const { data } = await supabase
+      const { data, error: qErr } = await supabase
         .from("industry_reference_job_maps")
         .select("industry_key, industry_label, step_number, step_label, description, taxonomy_version")
         .eq("is_published", true) // published-only at the query layer, on top of RLS
         .order("industry_key", { ascending: true })
         .order("step_number", { ascending: true });
       if (cancelled) return;
+      if (qErr) setError(qErr.message);
       const rows = (data ?? []) as Row[];
       const grouped = new Map<string, ReferenceMap>();
       for (const r of rows) {
@@ -75,5 +82,5 @@ export function useIndustryReferenceMaps(): {
 
   // Alphabetical, deterministic — the fallback selector's option order.
   const keys = [...maps.keys()].sort();
-  return { maps, keys, loading };
+  return { maps, keys, loading, error };
 }

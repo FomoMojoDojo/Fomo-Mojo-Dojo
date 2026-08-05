@@ -10,6 +10,8 @@
 
 import type { CSSProperties } from "react";
 import { useFirstReadStatedProblem } from "@/hooks/useFirstReadStatedProblem";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import SignalQuote from "@/components/evidence/SignalQuote";
 
@@ -22,35 +24,44 @@ const HONEST_EMPTY = "We couldn't find a problem stated on this company's own pu
 const verbatimStyle: CSSProperties = { whiteSpace: "pre-wrap" };
 
 export default function StatedProblemAct({ companyId }: { companyId?: string }) {
-  const { data, loading } = useFirstReadStatedProblem(companyId);
+  // GATE C-2 — useFirstReadStatedProblem now exposes `error`; useReadState adds the 10s
+  // deadline. A failed / never-returning read renders the signed error via <ActData> instead
+  // of "We couldn't find a problem stated on this company's own public site yet." (reachable
+  // ONLY on a successful read with no declared brief and no signed fallback — byte-identical).
+  const { data, loading, error } = useFirstReadStatedProblem(companyId);
+  const state = useReadState<typeof data>(loading, error, data, companyId);
 
-  if (loading) return <p className="cvs-support cvs-fr-statedproblem">Loading…</p>;
-  if (!data) return <p className="cvs-support cvs-fr-statedproblem">{HONEST_EMPTY}</p>;
-
-  const label = statedProblemLabel(data.register, data.descriptive_fallback);
-
-  // ── DECLARED (verbatim): the client's own words, rendered exactly ──────────────
-  if (data.verbatim) {
-    return (
-      <div className="cvs-fr-statedproblem">
-        <p className="cvs-fr-statedproblem-text cvs-fr-statedproblem-verbatim" style={verbatimStyle}>{data.statement}</p>
-        <p className="cvs-fr-statedproblem-source">{label}</p>
-      </div>
-    );
-  }
-
-  // ── FALLBACK (site-inferred): the model distillation, render-guarded ───────────
-  if (!admitStatedProblem(data.statement)) {
-    return <p className="cvs-support cvs-fr-statedproblem">{HONEST_EMPTY}</p>;
-  }
   return (
-    <div className="cvs-fr-statedproblem">
-      <p className="cvs-fr-statedproblem-text">{data.statement}</p>
-      {/* provenance label — which source/register fired */}
-      <p className="cvs-fr-statedproblem-source">{label}</p>
-      {/* verbatim own-domain anchor when one exists; SignalQuote renders nothing if null.
-          Spacing between the statement and the quote (no vertical bar). */}
-      <SignalQuote quote={data.quote} />
-    </div>
+    <ActData state={state} loading={<p className="cvs-support cvs-fr-statedproblem">Loading…</p>}>
+      {(data) => {
+        if (!data) return <p className="cvs-support cvs-fr-statedproblem">{HONEST_EMPTY}</p>;
+
+        const label = statedProblemLabel(data.register, data.descriptive_fallback);
+
+        // ── DECLARED (verbatim): the client's own words, rendered exactly ──────────
+        if (data.verbatim) {
+          return (
+            <div className="cvs-fr-statedproblem">
+              <p className="cvs-fr-statedproblem-text cvs-fr-statedproblem-verbatim" style={verbatimStyle}>{data.statement}</p>
+              <p className="cvs-fr-statedproblem-source">{label}</p>
+            </div>
+          );
+        }
+
+        // ── FALLBACK (site-inferred): the model distillation, render-guarded ───────
+        if (!admitStatedProblem(data.statement)) {
+          return <p className="cvs-support cvs-fr-statedproblem">{HONEST_EMPTY}</p>;
+        }
+        return (
+          <div className="cvs-fr-statedproblem">
+            <p className="cvs-fr-statedproblem-text">{data.statement}</p>
+            {/* provenance label — which source/register fired */}
+            <p className="cvs-fr-statedproblem-source">{label}</p>
+            {/* verbatim own-domain anchor when one exists; SignalQuote renders nothing if null. */}
+            <SignalQuote quote={data.quote} />
+          </div>
+        );
+      }}
+    </ActData>
   );
 }

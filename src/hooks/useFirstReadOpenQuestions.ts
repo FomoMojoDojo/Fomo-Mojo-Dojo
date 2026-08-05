@@ -17,16 +17,22 @@ export interface OpenQuestionListRow {
 export function useFirstReadOpenQuestions(companyId?: string) {
   const [rows, setRows] = useState<OpenQuestionListRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // GATE C-2 — `error` is ADDITIVE. A returning query error is exposed (instead of the old
+  // swallow to []), so OutsideQuestionAct / GapAct can render the signed error via <ActData>
+  // rather than their honest-empty line on a failed read. `rows` / `questions` / `loading`
+  // are byte-identical for every existing consumer in every case (error still leaves rows []).
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       if (!companyId) {
         if (!cancelled) { setRows([]); setLoading(false); }
         return;
       }
-      const { data } = await supabase
+      const { data, error: qErr } = await supabase
         .from("first_read_open_questions")
         .select("question_text, source_kind, finding_identity, anchor_identity")
         .eq("company_id", companyId)
@@ -34,6 +40,7 @@ export function useFirstReadOpenQuestions(companyId?: string) {
         .order("created_at", { ascending: true })
         .order("question_identity", { ascending: true }); // deterministic tie-break
       if (!cancelled) {
+        if (qErr) setError(qErr.message);
         setRows(((data as OpenQuestionListRow[] | null) ?? []).filter((r) => r.question_text?.trim()));
         setLoading(false);
       }
@@ -41,5 +48,5 @@ export function useFirstReadOpenQuestions(companyId?: string) {
     return () => { cancelled = true; };
   }, [companyId]);
 
-  return { rows, questions: rows.map((r) => r.question_text.trim()), loading };
+  return { rows, questions: rows.map((r) => r.question_text.trim()), loading, error };
 }
