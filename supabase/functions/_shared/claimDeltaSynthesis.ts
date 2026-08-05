@@ -198,12 +198,18 @@ export function sharedTokenCount(a: string, b: string): number {
 
 // ── Local Ollama call (native /api/chat, JSON) — sibling-module pattern ───────
 
+// Determinism knob for the authoritative judge call (temperature 0 + fixed seed):
+// a re-judge of the same pair under the same criterion returns the same verdict.
+// The proposer stays at its default sampling (this is opt-in per call).
+const JUDGE_DETERMINISM = { temperature: 0, seed: 42 } as const;
+
 async function callOllamaJson(
   ollamaUrl: string,
   model: string,
   system: string,
   user: string,
   timeoutMs: number,
+  optionOverrides?: { temperature?: number; seed?: number },
 ): Promise<string> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
   const ctrl = new AbortController();
@@ -216,7 +222,7 @@ async function callOllamaJson(
         model,
         format: "json",
         stream: false,
-        options: { num_ctx: 8192, temperature: 0.2 },
+        options: { num_ctx: 8192, temperature: 0.2, ...optionOverrides },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -239,27 +245,60 @@ async function callOllamaJson(
 
 const PROPOSE_SYSTEM =
   "You compare ONE internally-DECLARED strategy statement with ONE publicly-OBSERVED statement about the same company. " +
-  "Decide whether they are genuinely about the SAME SUBJECT (the same specific aspect of the business — shared buzzwords are NOT the same subject), " +
-  "and if so whether the public statement ECHOES the declared intent (consistent with it) or DIVERGES from it (contradicts or materially mis-states it). " +
+  "Decide whether the OBSERVED statement speaks to the SPECIFIC assertion the declared statement makes — not merely the shared topic. " +
+  "Shared subject matter, shared buzzwords, or general theme overlap are NOT sufficient: an observed statement that would equally confirm many unrelated declared claims is NOT an echo of any of them. " +
+  "If (and only if) it speaks to the specific assertion, decide whether the public statement ECHOES the declared intent (consistent with it) or DIVERGES from it (contradicts or materially mis-states it). " +
   "Never invent facts. Never force a match. " +
   'JSON only: {"same_subject":true|false,"relation":"echo"|"divergent"|null,"reason":"<one short clause citing words from BOTH statements when same_subject>"}.';
 
 // ── Stage 2b: 70b judge (judge-only law) ──────────────────────────────────────
 
+// SPAN GATE (design gate CLOSED): the loose criterion returned echo on mere
+// shared subject matter — generic observed lines confirmed everything, and those
+// verdicts freeze by content identity. The judge must now cite a VERBATIM span of
+// the OBSERVED statement that carries the specific confirmation/contradiction, and
+// verifyObservedSpan() checks in CODE that the span is a real substring of the
+// observed text and clears the minimum. No valid span ⇒ NOT a pairing, whatever
+// the judge concluded. Prompt wording alone is not the fix; the structural check is.
 const JUDGE_SYSTEM =
   "You are a strict reviewer of a proposed pairing between an internally-DECLARED strategy statement and a publicly-OBSERVED statement. " +
-  "Criteria: (i) SAME SUBJECT — the two statements must concern the same specific aspect of the business; shared buzzwords or general theme overlap are NOT sufficient; " +
-  "(ii) RELATION — 'echo' means the public statement is consistent with the declared intent; 'divergent' means it contradicts or materially mis-states it; your reason must quote or closely reference evidence from BOTH statements; " +
-  "(iii) CONFIDENT — true only when the subject match and relation are unambiguous. " +
+  "Criteria: (i) SPECIFIC — the OBSERVED statement must speak to the SPECIFIC assertion the declared statement makes, not merely a shared topic; shared buzzwords or general theme overlap are NOT sufficient; an observed statement that would equally confirm many unrelated declared claims is NOT an echo of any of them; " +
+  "(ii) RELATION — 'echo' means the public statement is consistent with the declared intent; 'divergent' means it contradicts or materially mis-states it; " +
+  "(iii) SPAN — you MUST copy, VERBATIM, a span of words FROM THE OBSERVED STATEMENT that carries the confirmation or contradiction; the span must be text that actually appears in the OBSERVED statement (not the declared one, not a paraphrase). If no such specific span exists, there is no pairing: return relation null; " +
+  "(iv) CONFIDENT — true only when the subject match and relation are unambiguous. " +
   "Reject vibes-pairings. Never force a match. " +
-  'JSON only: {"same_subject":true|false,"relation":"echo"|"divergent"|null,"confident":true|false,"reason":"<one short clause>"}.';
+  'JSON only: {"same_subject":true|false,"relation":"echo"|"divergent"|null,"confident":true|false,"span":"<verbatim words copied from the OBSERVED statement>","reason":"<one short clause>"}.';
+
+// STRUCTURAL SPAN VERIFICATION (in code, not the prompt). The judge's span must be
+// a real substring of the OBSERVED text. Normalization: lowercase (case-fold ON —
+// the model may re-case sentence-initial words when copying) + collapse internal
+// whitespace + trim, applied to BOTH sides; then a plain substring test. The
+// observed text is byte-identical at judge time and verify time (same in-memory
+// claims.statement passed to buildPairUser and to this check), so this is an exact
+// containment test modulo trivial reformatting — never a fuzzy/semantic match.
+// MINIMUM: a span of "the" or "care" verifies structurally and proves nothing, so a
+// span must be >= MIN_SPAN_CHARS characters AND >= MIN_SPAN_TOKENS whitespace tokens
+// (after normalization). Chosen so the specific "crisis stabilization" echo clears
+// it (20 chars / 2 tokens) while single generic words cannot.
+export const MIN_SPAN_CHARS = 8;
+export const MIN_SPAN_TOKENS = 2;
+
+const normalizeSpan = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+export function verifyObservedSpan(span: string | undefined, observed: string): boolean {
+  if (!span) return false;
+  const nSpan = normalizeSpan(span);
+  if (nSpan.length < MIN_SPAN_CHARS) return false;
+  if (nSpan.split(" ").filter(Boolean).length < MIN_SPAN_TOKENS) return false;
+  return normalizeSpan(observed).includes(nSpan);
+}
 
 function buildPairUser(declared: string, publicStmt: string): string {
   return `DECLARED (internal, authoritative about intent): ${declared}\nOBSERVED (public): ${publicStmt}\nAre these the same subject, and if so does the public statement echo or diverge from the declared intent?`;
 }
 
 // require_model parsing: unparseable output throws — no defaults, no fallback.
-function parseVerdict(raw: string, who: string): { same_subject: boolean; relation: "echo" | "divergent" | null; confident?: boolean; reason: string } {
+function parseVerdict(raw: string, who: string): { same_subject: boolean; relation: "echo" | "divergent" | null; confident?: boolean; span?: string; reason: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -275,6 +314,10 @@ function parseVerdict(raw: string, who: string): { same_subject: boolean; relati
     same_subject: p.same_subject,
     relation,
     confident: typeof p.confident === "boolean" ? p.confident : undefined,
+    // The judge's verbatim OBSERVED span (structurally verified before a pair is
+    // banked). Optional in the parser so the proposer output — which carries no
+    // span — parses unchanged; the gate below enforces it on the judge stage.
+    span: typeof p.span === "string" ? p.span : undefined,
     reason: String(p.reason ?? "").trim(),
   };
 }
@@ -486,12 +529,29 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         continue;
       }
 
-      // Stage 2b: 70b judges.
-      const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d.statement, p.statement), JUDGE_TIMEOUT_MS);
+      // Stage 2b: 70b judges. Deterministic (temperature 0, fixed seed) so a
+      // re-judge of the same pair is reproducible — the proposer keeps its own
+      // options, only the authoritative judge call is pinned.
+      const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d.statement, p.statement), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM);
       const judged = parseVerdict(judgedRaw, "judge");
       if (!judged.same_subject || !judged.relation) {
         totals.pairs_rejected++;
         await bankRejection(d, p, identity, "judge", judgeModel, judged.reason);
+        continue;
+      }
+
+      // SPAN GATE: the judge must ground the pairing in a VERBATIM span of the
+      // OBSERVED statement, verified in code (real substring + minimum). No valid
+      // span ⇒ NOT a pairing, whatever the judge concluded — this is what stops a
+      // generic observed line from confirming a specific declared claim. The pair
+      // falls to the silence rails (declared → publicly_silent open question),
+      // exactly as a relation-null rejection would leave it.
+      if (!verifyObservedSpan(judged.span, p.statement)) {
+        totals.pairs_rejected++;
+        await bankRejection(
+          d, p, identity, "judge", judgeModel,
+          `span gate: ${judged.span ? `span not verifiable in observed text / below minimum ("${judged.span.slice(0, 60)}")` : "no observed span returned"} — ${judged.reason}`.slice(0, 400),
+        );
         continue;
       }
 

@@ -9,6 +9,9 @@ import {
   pairIdentity,
   silenceIdentity,
   sharedTokenCount,
+  verifyObservedSpan,
+  MIN_SPAN_CHARS,
+  MIN_SPAN_TOKENS,
 } from "../../supabase/functions/_shared/claimDeltaSynthesis.ts";
 
 const CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc"; // frozen fixture
@@ -62,6 +65,20 @@ function stubOllama(script: (model: string, user: string) => unknown) {
     const user = String(body?.messages?.[1]?.content ?? "");
     calls.push({ model: body.model, user });
     const verdict = script(body.model, user);
+    // Span-gate contract: the real 70b judge now returns a VERBATIM span of the
+    // OBSERVED statement, structurally verified. These banking/identity/sweep
+    // tests care about the verdict, not the span, so model a well-behaved judge:
+    // when a judge echo/divergent verdict omits span, inject the whole observed
+    // line (a guaranteed-valid substring). A test that wants to exercise the gate
+    // itself sets span explicitly (see the span-gate describe block).
+    if (
+      body.model === "llama3:70b" && verdict && typeof verdict === "object" &&
+      ((verdict as { relation?: unknown }).relation === "echo" || (verdict as { relation?: unknown }).relation === "divergent") &&
+      (verdict as { span?: unknown }).span === undefined
+    ) {
+      const observed = user.match(/OBSERVED \(public\): ([\s\S]*?)\nAre these/)?.[1]?.trim();
+      if (observed) (verdict as { span?: string }).span = observed;
+    }
     if (verdict === "HTTP_FAIL") return { ok: false, status: 500, json: async () => ({}) } as Response;
     if (verdict === "GARBAGE") return { ok: true, json: async () => ({ message: { content: "not json {" } }) } as unknown as Response;
     return { ok: true, json: async () => ({ message: { content: JSON.stringify(verdict) } }) } as unknown as Response;
@@ -107,6 +124,74 @@ describe("delta identities", () => {
   it("silenceIdentity differs by type", async () => {
     expect(await silenceIdentity("publicly_silent", "same text"))
       .not.toBe(await silenceIdentity("internally_silent", "same text"));
+  });
+});
+
+// ── Span gate (structural verification) ──────────────────────────────────────
+describe("verifyObservedSpan", () => {
+  const OBS = "Edgewood CSU is the only crisis stabilization unit serving youth under 12.";
+  it("accepts a real substring of the observed text meeting the minimum", () => {
+    expect(verifyObservedSpan("crisis stabilization", OBS)).toBe(true);
+    expect(verifyObservedSpan("crisis stabilization unit", OBS)).toBe(true);
+  });
+  it("case-folds and collapses whitespace (a re-cased/re-spaced copy still verifies)", () => {
+    expect(verifyObservedSpan("Crisis   Stabilization", OBS)).toBe(true);
+  });
+  it("rejects a span that is not in the observed text (hallucinated grounding)", () => {
+    expect(verifyObservedSpan("early detection and intervention", OBS)).toBe(false);
+  });
+  it("rejects a span that appears only in the DECLARED wording, not the observed", () => {
+    expect(verifyObservedSpan("cohesive pathway of care", OBS)).toBe(false);
+  });
+  it("rejects sub-minimum spans (single generic word proves nothing)", () => {
+    expect(verifyObservedSpan("only", OBS)).toBe(false); // 1 token
+    expect(verifyObservedSpan("the", OBS)).toBe(false); // < MIN_SPAN_CHARS and 1 token
+    expect(verifyObservedSpan(undefined, OBS)).toBe(false);
+    expect(verifyObservedSpan("", OBS)).toBe(false);
+  });
+  it("minimum thresholds are as reported (8 chars / 2 tokens)", () => {
+    expect(MIN_SPAN_CHARS).toBe(8);
+    expect(MIN_SPAN_TOKENS).toBe(2);
+  });
+});
+
+// The gate inside the compute flow: a judged echo whose span does NOT verify is
+// rejected (falls to the silence rails), whatever the judge concluded — the
+// echo-machinery's failure mode is a generic observed line confirming everything.
+describe("span gate rejects an unverifiable judged echo", () => {
+  it("echo verdict + bad span ⇒ no echoed pair, declared falls to publicly_silent", async () => {
+    // Judge insists on echo but cites a span absent from the observed text.
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, span: "not present in observed", reason: "vibes" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+      ],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((d) => d.delta_type === "echoed")).toBe(false);
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+  });
+  it("echo verdict + a real observed span ⇒ echoed pair survives", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, span: "score visible", reason: "specific" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({
+      claims: [
+        declared("d1", "evidence score visible always"),
+        publicClaim("p1", "score visible on the site"),
+      ],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d1")).toBe(true);
   });
 });
 
