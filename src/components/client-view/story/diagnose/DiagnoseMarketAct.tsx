@@ -1,7 +1,9 @@
 import { useCompany } from "@/hooks/useCompany";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "../ActData";
 import { deriveDiagnoseModel, type DiagnosePair, type FanOutFinding } from "@/lib/marketPortfolio/diagnosePairs";
-import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfolio";
+import type { ResolvedMarket, ResolvedPortfolio } from "@/lib/marketPortfolio/resolveMarketPortfolio";
 import ActRecap from "../ActRecap";
 import { GAP_RECAP } from "../recapCopy";
 
@@ -132,30 +134,29 @@ function GapCard({ m, kind }: { m: ResolvedMarket; kind: "said" | "shown" }) {
 
 export default function DiagnoseMarketAct() {
   const { activeCompany } = useCompany();
-  const { loading, portfolio } = useMarketPortfolio(activeCompany?.id, "diagnose");
-
-  if (loading) {
-    return (
-      <section className="cvs-act cvs-dg" aria-label="Diagnose — markets said next to seen">
-        <p className="cvs-act-eyebrow">{ACT_EYEBROW}</p>
-        <p className="cvs-hero-empty">Reading your markets…</p>
-      </section>
-    );
-  }
-
-  const model = deriveDiagnoseModel(portfolio?.active ?? [], portfolio?.deferred ?? []);
+  // GATE C — useMarketPortfolio already exposes `error`; useReadState adds the 10s deadline.
+  // A failed / never-returning read renders the signed error via <ActData> instead of the
+  // NOT_READY "There's nothing to compare yet." line (which is now reachable ONLY on a
+  // successful read where one side is genuinely unread — byte-identical to before). This is
+  // the act a co-founder hit: hung → "Reading your markets…" forever; error → false empty.
+  const { loading, portfolio, error } = useMarketPortfolio(activeCompany?.id, "diagnose");
+  const state = useReadState<ResolvedPortfolio | null>(loading, error, portfolio, activeCompany?.id);
 
   return (
     <section className="cvs-act cvs-dg" aria-label="Diagnose — markets said next to seen">
       <p className="cvs-act-eyebrow">{ACT_EYEBROW}</p>
-
-      {!model.ready ? (
-        <div className="cvs-dg-notready">
-          <p className="cvs-dg-notready-headline">{NOT_READY_HEADLINE}</p>
-          <p className="cvs-dg-notready-prompt">{NOT_READY_PROMPT}</p>
-        </div>
-      ) : (
-        <>
+      <ActData state={state} loading={<p className="cvs-hero-empty">Reading your markets…</p>}>
+        {(portfolio) => {
+          const model = deriveDiagnoseModel(portfolio?.active ?? [], portfolio?.deferred ?? []);
+          return (
+            <>
+              {!model.ready ? (
+                <div className="cvs-dg-notready">
+                  <p className="cvs-dg-notready-headline">{NOT_READY_HEADLINE}</p>
+                  <p className="cvs-dg-notready-prompt">{NOT_READY_PROMPT}</p>
+                </div>
+              ) : (
+                <>
           {model.declaredPairs.length > 0 ? (
             <div className="cvs-dg-block">
               <p className="cvs-dg-heading">{DECLARED_HEADING}</p>
@@ -211,11 +212,15 @@ export default function DiagnoseMarketAct() {
             </div>
           ) : null}
 
-          <p className="cvs-dg-question">{CLOSING_QUESTION}</p>
-        </>
-      )}
-      {/* Name-the-moves recap — suppressed on the honest-empty state (!model.ready). */}
-      <ActRecap recap={GAP_RECAP} hasContent={model.ready} />
+                  <p className="cvs-dg-question">{CLOSING_QUESTION}</p>
+                </>
+              )}
+              {/* Name-the-moves recap — suppressed on the honest-empty state (!model.ready). */}
+              <ActRecap recap={GAP_RECAP} hasContent={model.ready} />
+            </>
+          );
+        }}
+      </ActData>
     </section>
   );
 }

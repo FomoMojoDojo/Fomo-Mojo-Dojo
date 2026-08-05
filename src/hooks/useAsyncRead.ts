@@ -86,3 +86,35 @@ export function useAsyncRead<T>(
 
   return state;
 }
+
+// ── GATE C — adapter for hooks that expose {loading, error?, data} ────────────
+// Most client-view hooks already own their fetch (useState/useEffect or react-query)
+// and cannot all be rewritten onto useAsyncRead without disturbing their many other
+// consumers. useReadState converts a hook's existing {loading, error?, data} into the
+// discriminated AsyncState an act feeds to <ActData>, AND adds the 10s deadline at the
+// ACT boundary (mode i): if the read is still loading after the deadline it becomes an
+// error. The hook's own loading is NOT bounded — only this act-side view flips — so a
+// hook shared with ExportButton keeps its exact loading behaviour (Gate D's blocked-
+// export invariant is preserved). `error` (mode ii) still comes FROM the hook: a hook
+// that swallows a query error to empty must additively expose it, or a returning error
+// is indistinguishable from a genuine empty here.
+export function useReadState<T>(
+  loading: boolean,
+  error: string | null | undefined,
+  data: T,
+  resetKey: unknown,
+  deadlineMs: number = ASYNC_READ_DEADLINE_MS,
+): AsyncState<T> {
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    setExpired(false);
+    if (!loading) return;
+    const t = setTimeout(() => setExpired(true), deadlineMs);
+    return () => clearTimeout(t);
+  }, [loading, resetKey, deadlineMs]);
+
+  if (error != null) return { status: "error", error };
+  if (loading && expired) return { status: "error", error: `async-read deadline exceeded (${deadlineMs}ms)` };
+  if (loading) return { status: "loading" };
+  return { status: "ready", data };
+}

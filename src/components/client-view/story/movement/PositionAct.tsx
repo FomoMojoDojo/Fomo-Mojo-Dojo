@@ -1,5 +1,7 @@
 import { useCompany } from "@/hooks/useCompany";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import type { PositioningItem } from "@/lib/types";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
 
@@ -71,46 +73,52 @@ function AttrGroup({ group }: { group: Group }) {
 // V2-5 — `bare` suppresses this act's own eyebrow when it renders INSIDE an Act 3 band.
 export default function PositionAct({ bare = false }: { bare?: boolean } = {}) {
   const { activeCompany } = useCompany();
-  const { loading, item } = usePositioningCanvas(activeCompany?.id);
-
-  const attrs = item?.unique_attributes ?? [];
-  // Leak guard: ONLY an exact 'corroborated' verdict may read as outside-backed.
-  // Everything that is neither corroborated nor self_reported (undefined/absent,
-  // or any unexpected value) falls to "not yet checked" — never to yours-to-prove.
-  const groups: Group[] = [
-    { key: "corroborated", head: CORROBORATED_HEAD, sub: CORROBORATED_SUB, items: attrs.filter((a) => a.evidence_status === "corroborated") },
-    { key: "self_reported", head: SELF_REPORTED_HEAD, sub: SELF_REPORTED_SUB, items: attrs.filter((a) => a.evidence_status === "self_reported") },
-    { key: "not_checked", head: NOT_CHECKED_HEAD, sub: NOT_CHECKED_SUB, items: attrs.filter((a) => a.evidence_status !== "corroborated" && a.evidence_status !== "self_reported") },
-  ];
+  // GATE C — usePositioningCanvas already exposes `error`; useReadState adds the 10s deadline.
+  // A failed / never-returning read renders the signed error via <ActData> instead of
+  // "We haven't read your positioning yet." (reachable ONLY on a successful no-canvas /
+  // zero-differentiator read — byte-identical to before). The signed per-group subs
+  // (7be523a) render only when items exist, inside the ready branch.
+  const { loading, item, error } = usePositioningCanvas(activeCompany?.id);
+  const canvasState = useReadState<typeof item>(loading, error, item, activeCompany?.id);
 
   return (
     <section className="cvs-act" aria-label="Act B — positioning (inferred register)">
       {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
-      {/* Content-gated: no canvas, zero differentiators, or still loading →
-          no definition. Mirrors the render condition of the branch below. */}
-      <ActDefinition
-        definition={DEFINITION}
-        hasContent={!loading && item !== null && attrs.length > 0}
-      />
-
-      {loading ? (
-        <p className="cvs-hero-empty">Reading your positioning…</p>
-      ) : item === null || attrs.length === 0 ? (
-        <div className="cvs-mv-empty">
-          <p className="cvs-mv-empty-headline">{EMPTY_HEADLINE}</p>
-          {/* Operator-directed, NOT a client-clickable run affordance. */}
-          <p className="cvs-mv-empty-prompt">{EMPTY_SUB}</p>
-        </div>
-      ) : (
-        <>
-          <p className="cvs-support" style={{ marginTop: 0 }}>{HEADLINE}</p>
-          <div className="cvs-mv-posgroups">
-            {groups.map((g) => (
-              <AttrGroup group={g} key={g.key} />
-            ))}
-          </div>
-        </>
-      )}
+      <ActData state={canvasState} loading={<p className="cvs-hero-empty">Reading your positioning…</p>}>
+        {(item) => {
+          const attrs = item?.unique_attributes ?? [];
+          // Leak guard: ONLY an exact 'corroborated' verdict may read as outside-backed.
+          // Everything that is neither corroborated nor self_reported (undefined/absent,
+          // or any unexpected value) falls to "not yet checked" — never to yours-to-prove.
+          const groups: Group[] = [
+            { key: "corroborated", head: CORROBORATED_HEAD, sub: CORROBORATED_SUB, items: attrs.filter((a) => a.evidence_status === "corroborated") },
+            { key: "self_reported", head: SELF_REPORTED_HEAD, sub: SELF_REPORTED_SUB, items: attrs.filter((a) => a.evidence_status === "self_reported") },
+            { key: "not_checked", head: NOT_CHECKED_HEAD, sub: NOT_CHECKED_SUB, items: attrs.filter((a) => a.evidence_status !== "corroborated" && a.evidence_status !== "self_reported") },
+          ];
+          return (
+            <>
+              {/* Content-gated: no canvas or zero differentiators → no definition. */}
+              <ActDefinition definition={DEFINITION} hasContent={item !== null && attrs.length > 0} />
+              {item === null || attrs.length === 0 ? (
+                <div className="cvs-mv-empty">
+                  <p className="cvs-mv-empty-headline">{EMPTY_HEADLINE}</p>
+                  {/* Operator-directed, NOT a client-clickable run affordance. */}
+                  <p className="cvs-mv-empty-prompt">{EMPTY_SUB}</p>
+                </div>
+              ) : (
+                <>
+                  <p className="cvs-support" style={{ marginTop: 0 }}>{HEADLINE}</p>
+                  <div className="cvs-mv-posgroups">
+                    {groups.map((g) => (
+                      <AttrGroup group={g} key={g.key} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          );
+        }}
+      </ActData>
     </section>
   );
 }

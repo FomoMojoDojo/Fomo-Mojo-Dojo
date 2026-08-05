@@ -3,8 +3,10 @@ import { useCompany } from "@/hooks/useCompany";
 import { admitForSurface } from "@/lib/registerGuard";
 import { useMarketPortfolio } from "@/hooks/useMarketPortfolio";
 import { useMarketOptions } from "@/hooks/useMarketOptions";
+import { useReadState } from "@/hooks/useAsyncRead";
+import { ActData } from "@/components/client-view/story/ActData";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
-import type { ResolvedMarket } from "@/lib/marketPortfolio/resolveMarketPortfolio";
+import type { ResolvedMarket, ResolvedPortfolio } from "@/lib/marketPortfolio/resolveMarketPortfolio";
 import { collapseMarketsByWho, normalizeForContainment } from "@/lib/firstRead/outsideCollapse";
 
 /*
@@ -104,8 +106,14 @@ function OptionKindChip({ kind }: { kind: string }) {
 // (the band supplies the signed heading). Default false = standalone, unchanged.
 export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
   const { activeCompany } = useCompany();
-  const { loading, portfolio, hasInternalDeclared } = useMarketPortfolio(activeCompany?.id);
+  const { loading, portfolio, hasInternalDeclared, error } = useMarketPortfolio(activeCompany?.id);
   const { loading: optionsLoading, options: rawOptions } = useMarketOptions(activeCompany?.id);
+  // GATE C — gate the blended-def path on the PORTFOLIO read (the read whose failure produces
+  // "We haven't read your public markets yet."). useMarketPortfolio already exposes `error`;
+  // useReadState adds the 10s deadline. The options path (useMarketOptions) is a SECONDARY read
+  // whose failure degrades to options=[] → the blended path, which shows the real portfolio —
+  // never a false empty — so it needs no separate gate (reported in the gate notes).
+  const portfolioState = useReadState<ResolvedPortfolio | null>(loading, error, portfolio, activeCompany?.id);
 
   // RG-1 + RG-2b: the MO-1 options path is routed through the register guard —
   // every option is admit-checked on the 'outside' surface before it renders,
@@ -118,9 +126,6 @@ export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
     () => rawOptions.filter((o) => admitForSurface(o, "outside")),
     [rawOptions],
   );
-
-  const active = portfolio?.active ?? [];
-  const deferred = portfolio?.deferred ?? [];
 
   // RENDER SWAP: options present ⇒ options render, blended-def cards stand down.
   const showOptions = !optionsLoading && options.length > 0;
@@ -212,44 +217,48 @@ export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
     <section className="cvs-act" aria-label="Act A — market portfolio (public register)">
       {!bare && <p className="cvs-act-eyebrow">{EYEBROW}</p>}
 
-      {loading ? (
-        <p className="cvs-hero-empty">Reading the public markets…</p>
-      ) : active.length === 0 && deferred.length === 0 ? (
-        <div className="cvs-mv-empty">
-          <p className="cvs-mv-empty-headline">{EMPTY_HEADLINE}</p>
-          {/* Operator-directed prompt, NOT a client-clickable run affordance. */}
-          <p className="cvs-mv-empty-prompt">{EMPTY_PROMPT}</p>
-        </div>
-      ) : (
-        <>
-          <p className="cvs-support" style={{ marginTop: 0 }}>{BREADTH_LINE(active.length)}</p>
+      <ActData state={portfolioState} loading={<p className="cvs-hero-empty">Reading the public markets…</p>}>
+        {(portfolio) => {
+          const active = portfolio?.active ?? [];
+          const deferred = portfolio?.deferred ?? [];
+          return active.length === 0 && deferred.length === 0 ? (
+            <div className="cvs-mv-empty">
+              <p className="cvs-mv-empty-headline">{EMPTY_HEADLINE}</p>
+              {/* Operator-directed prompt, NOT a client-clickable run affordance. */}
+              <p className="cvs-mv-empty-prompt">{EMPTY_PROMPT}</p>
+            </div>
+          ) : (
+            <>
+              <p className="cvs-support" style={{ marginTop: 0 }}>{BREADTH_LINE(active.length)}</p>
 
-          <div className="cvs-mv-grid">
-            {active.map((m) => (
-              <article className="cvs-mv-market" key={m.journey_key}>
-                <KindChip market={m} />
-                <h3 className="cvs-mv-executor">{m.job_executor}</h3>
-                {m.jtbd ? <p className="cvs-mv-jtbd">{m.jtbd}</p> : null}
-                {m.relationship_kind && m.relationship_basis ? (
-                  <p className="cvs-mv-basis">
-                    {KIND_WHY_PREFIX} {m.relationship_kind}: {m.relationship_basis}
-                  </p>
-                ) : null}
-              </article>
-            ))}
-          </div>
+              <div className="cvs-mv-grid">
+                {active.map((m) => (
+                  <article className="cvs-mv-market" key={m.journey_key}>
+                    <KindChip market={m} />
+                    <h3 className="cvs-mv-executor">{m.job_executor}</h3>
+                    {m.jtbd ? <p className="cvs-mv-jtbd">{m.jtbd}</p> : null}
+                    {m.relationship_kind && m.relationship_basis ? (
+                      <p className="cvs-mv-basis">
+                        {KIND_WHY_PREFIX} {m.relationship_kind}: {m.relationship_basis}
+                      </p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
 
-          {deferred.length > 0 ? (
-            <p className="cvs-mv-deferred">
-              {DEFERRED_PREFIX}{" "}
-              {deferred.map((m) => m.job_executor).join(" · ")}
-            </p>
-          ) : null}
+              {deferred.length > 0 ? (
+                <p className="cvs-mv-deferred">
+                  {DEFERRED_PREFIX}{" "}
+                  {deferred.map((m) => m.job_executor).join(" · ")}
+                </p>
+              ) : null}
 
-          <p className="cvs-mv-invite">{CLOSING_INVITE}</p>
-          {hasInternalDeclared ? <p className="cvs-mv-handoff">{DIAGNOSE_HANDOFF}</p> : null}
-        </>
-      )}
+              <p className="cvs-mv-invite">{CLOSING_INVITE}</p>
+              {hasInternalDeclared ? <p className="cvs-mv-handoff">{DIAGNOSE_HANDOFF}</p> : null}
+            </>
+          );
+        }}
+      </ActData>
     </section>
   );
 }
