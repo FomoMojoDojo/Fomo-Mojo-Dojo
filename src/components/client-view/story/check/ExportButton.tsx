@@ -58,20 +58,23 @@ export default function ExportButton({
   proposal: Proposal | null;
 }) {
   const { activeCompany } = useCompany();
-  const { score, loading: scoreLoading } = useMojoScore(companyId);
-  const { data: findingsData, isLoading: findingsLoading } = useStandingFindings(companyId);
-  const { preferredRun, loading: baselineLoading } = usePublicBaseline(companyId);
-  const { maps, loading: mapsLoading } = useIndustryReferenceMaps();
-  const { items, tally, loading: captureLoading } = useFirstReadCapture(companyId, sessionId);
-  const { data: statedProblem, loading: statedProblemLoading } = useFirstReadStatedProblem(companyId);
+  // GATE D — read the `error` each hook now exposes (Gates B/C), including useFirstReadCapture's
+  // AGGREGATE `readError`. These feed the REFUSAL below; loading is NOT bounded (a hang must keep
+  // export disabled, never flip to a false success).
+  const { score, loading: scoreLoading, error: scoreError } = useMojoScore(companyId);
+  const { data: findingsData, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
+  const { preferredRun, loading: baselineLoading, error: baselineError } = usePublicBaseline(companyId);
+  const { maps, loading: mapsLoading, error: mapsError } = useIndustryReferenceMaps();
+  const { items, tally, loading: captureLoading, readError: captureError } = useFirstReadCapture(companyId, sessionId);
+  const { data: statedProblem, loading: statedProblemLoading, error: statedProblemError } = useFirstReadStatedProblem(companyId);
   // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
   // so the leave-behind can never diverge from the meeting.
-  const { rows: openQuestionRows, loading: openQuestionsLoading } = useFirstReadOpenQuestions(companyId);
+  const { rows: openQuestionRows, loading: openQuestionsLoading, error: openQuestionsError } = useFirstReadOpenQuestions(companyId);
   // V2-8 — the leave-behind reflects the issuance-time shrink: set-aside questions are
   // demoted (never dropped), via the SAME partition the screen (GapAct) uses.
   const { identities: setAsideIdentities } = useSetAsideIdentities(sessionId);
   // V2-5 — the Act 3 "Message" band: register-locked at the source (public_observed only).
-  const { claims: perceptionClaims, loading: perceptionLoading } = useOutsidePerception(companyId);
+  const { claims: perceptionClaims, loading: perceptionLoading, error: perceptionError } = useOutsidePerception(companyId);
   const [session, setSession] = useState<{ started_at: string | null; presenter: string | null } | null>(null);
 
   // The export must match the meeting exactly — never capture a not-yet-loaded
@@ -85,9 +88,26 @@ export default function ExportButton({
     else if (sawScoreLoading.current) setScoreSettled(true);
   }, [scoreLoading]);
 
+  // GATE D — REFUSE while ANY consumed read has failed (operator ruling: the export is the one
+  // artifact where nothing beats something wrong). Every section-feeding read is covered — an
+  // omitted read would let its section reach the permanent leave-behind. Labels are the
+  // OPERATOR-facing section names (never client copy; never reach the document). Loading is NOT
+  // in this list — bounding it would flip a hang into a false success (Gate B invariant).
+  const failedSections: string[] = ([
+    ["Stated problem", statedProblemError],
+    ["Standard job map", mapsError],
+    ["Mojo Score", scoreError],
+    ["Outside findings", findingsError],
+    ["Outside signals", baselineError],
+    ["The Check", captureError],
+    ["The Gap", openQuestionsError],
+    ["How the outside describes you", perceptionError],
+  ] as Array<[string, string | null]>).filter(([, e]) => e).map(([label]) => label);
+
   const dataReady =
     !captureLoading && scoreSettled && !findingsLoading && !baselineLoading && !mapsLoading &&
-    !statedProblemLoading && !openQuestionsLoading && !perceptionLoading && session !== null;
+    !statedProblemLoading && !openQuestionsLoading && !perceptionLoading && session !== null &&
+    failedSections.length === 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -158,13 +178,24 @@ export default function ExportButton({
   };
 
   return (
-    <button
-      type="button"
-      className="cvs-pill-ghost cvs-fr-export-btn"
-      onClick={onExport}
-      disabled={!dataReady}
-    >
-      {EXPORT_LABEL}
-    </button>
+    <>
+      <button
+        type="button"
+        className="cvs-pill-ghost cvs-fr-export-btn"
+        onClick={onExport}
+        disabled={!dataReady}
+      >
+        {EXPORT_LABEL}
+      </button>
+      {/* GATE D — OPERATOR-facing reason (a disabled button with no reason is its own defect;
+          the operator must know which read failed rather than click a dead button mid-meeting).
+          NEVER reaches the leave-behind or any client surface. Straight ASCII apostrophe +
+          em-dash U+2014 space-padded, matching the neighbouring signed strings' house style. */}
+      {failedSections.length > 0 && (
+        <p className="cvs-fr-export-reason" role="alert">
+          Export unavailable — couldn't load: {failedSections.join(", ")}. Reload and try again.
+        </p>
+      )}
+    </>
   );
 }
