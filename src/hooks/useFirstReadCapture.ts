@@ -84,15 +84,21 @@ export function useFirstReadCapture(
   // mint one (single-flight, owned by the rail) and record against the new id.
   ensureSessionId?: () => Promise<string>,
 ) {
-  const { data: findingsData } = useStandingFindings(companyId);
-  const { options: markets } = useMarketOptions(companyId);
-  const { item: canvas } = usePositioningCanvas(companyId);
+  // GATE C-2b — the sub-reads' loading/error are captured for the aggregate `readError` /
+  // `readLoading` (HeardAct, Option 1). `findingsData` / `markets` / `canvas` are read exactly
+  // as before; the extra fields are additive and change no existing consumer.
+  const { data: findingsData, isLoading: findingsLoading, error: findingsError } = useStandingFindings(companyId);
+  const { options: markets, loading: optionsLoading, error: optionsError } = useMarketOptions(companyId);
+  const { item: canvas, loading: canvasLoading, error: canvasError } = usePositioningCanvas(companyId);
 
   const [base, setBase] = useState<Array<RawCheckItem & { identity: string }>>([]);
   const [responses, setResponses] = useState<Record<string, ResponseRow>>({});
   const [loading, setLoading] = useState(true);
   const [frozen, setFrozen] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+  // GATE C-2b — the verdict-responses read's own loading/error, so the aggregate covers it too.
+  const [responsesLoading, setResponsesLoading] = useState(true);
+  const [responsesError, setResponsesError] = useState<string | null>(null);
   const identSeq = useRef(0);
 
   const raw = useMemo(
@@ -198,21 +204,30 @@ export function useFirstReadCapture(
     if (!sessionId) {
       setResponses({});
       setSessionStatus(null);
+      setResponsesLoading(false);
+      setResponsesError(null);
       return;
     }
-    const [{ data: rows }, { data: sess }] = await Promise.all([
+    setResponsesLoading(true);
+    setResponsesError(null);
+    const [{ data: rows, error: rowsErr }, { data: sess, error: sessErr }] = await Promise.all([
       supabase
         .from("first_read_responses")
         .select("item_identity, verdict, correction_text, captured_at")
         .eq("session_id", sessionId),
       supabase.from("first_read_sessions").select("status").eq("id", sessionId).maybeSingle(),
     ]);
+    // GATE C-2b — a returning error on either read is exposed for the aggregate (responses is
+    // the read HEARD_EMPTY most depends on). `responses` / `frozen` / `sessionStatus` are set
+    // exactly as before, so items/tally/frozen stay byte-identical for TheCheckAct/ExportButton.
+    if (rowsErr || sessErr) setResponsesError((rowsErr ?? sessErr)!.message);
     const map: Record<string, ResponseRow> = {};
     for (const r of ((rows ?? []) as unknown as ResponseRow[])) map[r.item_identity] = r;
     setResponses(map);
     const status = (sess as { status?: string } | null)?.status ?? null;
     setSessionStatus(status);
     setFrozen(!!status && status !== "open");
+    setResponsesLoading(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -307,10 +322,22 @@ export function useFirstReadCapture(
     [sessionId, companyId, refetchResponses, ensureSessionId],
   );
 
+  // GATE C-2b — AGGREGATE read-error / read-loading (Option 1, operator-signed) for HeardAct.
+  // Covers EVERY sub-read this hook performs — the base sub-hooks (findings / markets / canvas),
+  // the say-vs-see delta read, AND the verdict-responses read — so it can never report healthy
+  // while a read it depends on has failed. Both are ADDITIVE: TheCheckAct (reads deltaState +
+  // items/tally/loading/frozen) and ExportButton (reads items/tally/loading) do NOT read them,
+  // so their behaviour — including ExportButton's hung-read-keeps-export-DISABLED invariant — is
+  // byte-identical. HeardAct gates its render on these via useReadState + <ActData>.
+  const deltaError = deltaState.status === "error" ? deltaState.error : null;
+  const readError = findingsError ?? optionsError ?? canvasError ?? deltaError ?? responsesError ?? null;
+  const readLoading =
+    loading || findingsLoading || optionsLoading || canvasLoading || deltaState.status === "loading" || responsesLoading;
+
   // `deltaState` is ADDITIVE — the say-vs-see read's honest outcome for TheCheckAct to
   // gate its exhibit through <ActData>. Existing consumers (HeardAct, ExportButton) do not
   // read it and see byte-identical items/tally/loading.
-  return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses, deltaState };
+  return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses, deltaState, readError, readLoading };
 }
 
 export type { AsyncState };

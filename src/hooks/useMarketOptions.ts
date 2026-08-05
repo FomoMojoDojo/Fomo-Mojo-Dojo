@@ -48,10 +48,15 @@ export type MarketOption = {
 export function useMarketOptions(companyId?: string) {
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<MarketOption[]>([]);
+  // GATE C-2b — `error` is ADDITIVE (feeds useFirstReadCapture's aggregate read-error for
+  // HeardAct). `options` / `loading` are byte-identical for every existing consumer in every
+  // case (error still leaves options []).
+  const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     const mySeq = ++seq.current;
+    setError(null);
     if (!companyId) {
       setOptions([]);
       setLoading(false);
@@ -59,7 +64,7 @@ export function useMarketOptions(companyId?: string) {
     }
     setLoading(true);
     (async () => {
-      const { data, error } = await supabase
+      const { data, error: qErr } = await supabase
         .from("market_options")
         .select("id, executor_statement, job_statement, basis, relationship_kind, market_register")
         .eq("company_id", companyId)
@@ -68,10 +73,11 @@ export function useMarketOptions(companyId?: string) {
         .order("created_at", { ascending: true });
       // Stale-response guard: a company switch mid-flight must not paint.
       if (mySeq !== seq.current) return;
-      setOptions(error || !data ? [] : (data as MarketOption[]));
+      if (qErr) setError(qErr.message);
+      setOptions(qErr || !data ? [] : (data as MarketOption[]));
       setLoading(false);
     })();
   }, [companyId]);
 
-  return { loading, options };
+  return { loading, options, error };
 }
