@@ -111,6 +111,10 @@ export type DeltaRunResult =
         // NEG-CACHE: candidates skipped via a banked rejection (no model call),
         // and orphaned rejection rows deleted by this finalize (0 when scoped).
         rejections_cached: number; rejections_pruned: number;
+        // SPAN GATE: pairs left UNJUDGED because the judge's span was not in the OBSERVED
+        // text (or absent) — a mechanical failure, NOT a verdict. NEVER written (no rejection,
+        // no pair), so the pair stays revisitable and asserts neither echo nor no-echo.
+        spans_unjudged: number;
       };
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
@@ -285,12 +289,27 @@ export const MIN_SPAN_TOKENS = 2;
 
 const normalizeSpan = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
 
-export function verifyObservedSpan(span: string | undefined, observed: string): boolean {
-  if (!span) return false;
+// The span check has TWO distinct failure modes, and collapsing them was the defect this
+// gate corrects:
+//   • not_in_observed / no_span — the judge concluded a relation but cited text that is NOT in
+//     the OBSERVED statement (typically copied from the DECLARED side) or cited nothing. This is
+//     a MECHANICAL FAILURE: the machine did not answer the question we asked. It is NOT evidence
+//     of "no echo" and must never be banked as a rejection (which freezes by content identity).
+//   • below_minimum — the judge cited a REAL observed span that is too short/generic to ground a
+//     specific echo (< MIN_SPAN_CHARS or < MIN_SPAN_TOKENS). This IS a substantive not-an-echo
+//     verdict — the genericness threshold — and is banked exactly as before.
+export type SpanVerdict = "valid" | "below_minimum" | "not_in_observed" | "no_span";
+
+export function classifyObservedSpan(span: string | undefined, observed: string): SpanVerdict {
+  if (!span) return "no_span";
   const nSpan = normalizeSpan(span);
-  if (nSpan.length < MIN_SPAN_CHARS) return false;
-  if (nSpan.split(" ").filter(Boolean).length < MIN_SPAN_TOKENS) return false;
-  return normalizeSpan(observed).includes(nSpan);
+  if (nSpan.length < MIN_SPAN_CHARS || nSpan.split(" ").filter(Boolean).length < MIN_SPAN_TOKENS) return "below_minimum";
+  return normalizeSpan(observed).includes(nSpan) ? "valid" : "not_in_observed";
+}
+
+// Kept as the boolean predicate for callers that only need admit/reject (e.g. a harness).
+export function verifyObservedSpan(span: string | undefined, observed: string): boolean {
+  return classifyObservedSpan(span, observed) === "valid";
 }
 
 function buildPairUser(declared: string, publicStmt: string): string {
@@ -443,6 +462,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     publicly_silent: 0, internally_silent: 0,
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
     rejections_cached: 0, rejections_pruned: 0,
+    spans_unjudged: 0,
   };
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
@@ -540,20 +560,33 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         continue;
       }
 
-      // SPAN GATE: the judge must ground the pairing in a VERBATIM span of the
-      // OBSERVED statement, verified in code (real substring + minimum). No valid
-      // span ⇒ NOT a pairing, whatever the judge concluded — this is what stops a
-      // generic observed line from confirming a specific declared claim. The pair
-      // falls to the silence rails (declared → publicly_silent open question),
-      // exactly as a relation-null rejection would leave it.
-      if (!verifyObservedSpan(judged.span, p.statement)) {
+      // SPAN GATE: the judge must ground the pairing in a VERBATIM span of the OBSERVED
+      // statement, verified in code. Its two failure modes are NOT the same event:
+      const spanVerdict = classifyObservedSpan(judged.span, p.statement);
+      if (spanVerdict === "not_in_observed" || spanVerdict === "no_span") {
+        // MECHANICAL FAILURE — the judge cited text not in the OBSERVED statement (or nothing).
+        // We cannot verify the answer, so we record NOTHING: no rejection (which would freeze a
+        // not-an-echo by content identity and be respected forever), no pair. The pair stays
+        // UNJUDGED and revisitable, asserting neither echo nor no-echo. Deliberately does NOT add
+        // to pairedDeclared/pairedPublic — the claims fall to their silence rails as an OPEN
+        // QUESTION, which is honest (we have not confirmed an echo), and is recomputed fresh each
+        // run rather than frozen. A deterministic re-ask (temp 0, seed 42) returns the identical
+        // wrong span, so a plain retry is pointless — recording it unjudged is the only honest move.
+        totals.spans_unjudged++;
+        continue;
+      }
+      if (spanVerdict === "below_minimum") {
+        // SUBSTANTIVE — the judge cited a REAL observed span too short/generic to ground a
+        // specific echo (the genericness threshold). This is a not-an-echo verdict, banked as
+        // before (frozen), exactly as a relation-null rejection would be.
         totals.pairs_rejected++;
         await bankRejection(
           d, p, identity, "judge", judgeModel,
-          `span gate: ${judged.span ? `span not verifiable in observed text / below minimum ("${judged.span.slice(0, 60)}")` : "no observed span returned"} — ${judged.reason}`.slice(0, 400),
+          `span gate: span below minimum ("${judged.span?.slice(0, 60) ?? ""}") — ${judged.reason}`.slice(0, 400),
         );
         continue;
       }
+      // spanVerdict === "valid" — the span is a real substring of the OBSERVED statement.
 
       const basis: ComputedDelta["pairing_basis"] = judged.confident === true ? "judge_confirmed" : "inferred";
       if (basis === "judge_confirmed") totals.pairs_confirmed++; else totals.pairs_inferred++;

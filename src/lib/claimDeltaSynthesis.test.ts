@@ -10,6 +10,7 @@ import {
   silenceIdentity,
   sharedTokenCount,
   verifyObservedSpan,
+  classifyObservedSpan,
   MIN_SPAN_CHARS,
   MIN_SPAN_TOKENS,
 } from "../../supabase/functions/_shared/claimDeltaSynthesis.ts";
@@ -192,6 +193,78 @@ describe("span gate rejects an unverifiable judged echo", () => {
     const r = await computeDeltasForCompany(baseArgs(db, CO, false));
     if (!r.ok) throw new Error("expected ok");
     expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d1")).toBe(true);
+  });
+});
+
+// GATE B-fix — an UNVERIFIABLE span (cited from the wrong text / absent) is a MECHANICAL
+// FAILURE, not a not-an-echo verdict. classifyObservedSpan splits it from the substantive
+// below-minimum case, and the compute flow records it UNJUDGED (no rejection banked) rather
+// than freezing a false not-an-echo.
+describe("classifyObservedSpan", () => {
+  const OBS = "Kaiser Permanente lists Edgewood as an affiliated provider for residential treatment and mental health services; referral required.";
+  it("a real substring meeting the minimum ⇒ valid", () => {
+    expect(classifyObservedSpan("residential treatment", OBS)).toBe("valid");
+  });
+  it("a span cited from the DECLARED side (not in observed) ⇒ not_in_observed (mechanical)", () => {
+    expect(classifyObservedSpan("integrated services", OBS)).toBe("not_in_observed");
+    expect(classifyObservedSpan("youth mental health care landscape", OBS)).toBe("not_in_observed");
+  });
+  it("no span returned ⇒ no_span (mechanical)", () => {
+    expect(classifyObservedSpan(undefined, OBS)).toBe("no_span");
+    expect(classifyObservedSpan("", OBS)).toBe("no_span");
+  });
+  it("a real observed span below the minimum ⇒ below_minimum (substantive genericness)", () => {
+    expect(classifyObservedSpan("required", OBS)).toBe("below_minimum"); // real substring, 1 token
+  });
+  it("verifyObservedSpan is exactly (status === valid)", () => {
+    expect(verifyObservedSpan("residential treatment", OBS)).toBe(true);
+    expect(verifyObservedSpan("integrated services", OBS)).toBe(false);
+  });
+});
+
+describe("compute flow — unverifiable span is UNJUDGED, never banked as a rejection", () => {
+  it("echo + span from the wrong text ⇒ spans_unjudged, NO rejection row, declared publicly_silent, no pair", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, span: "cited from the declared side", reason: "wrong text" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true)); // write=true — prove NOTHING is banked
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.spans_unjudged).toBe(1);
+    expect(r.totals.pairs_rejected).toBe(0);
+    expect(db.tables.claim_delta_rejections.length).toBe(0); // NOT frozen — revisitable
+    expect(r.deltas.some((d) => d.delta_type === "echoed")).toBe(false);
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+  });
+
+  it("distinguishable downstream: a real-but-below-minimum span STILL banks a rejection", async () => {
+    // "score" is a real substring of the observed but 1 token → below_minimum → substantive reject.
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: "echo", confident: true, span: "score", reason: "too generic" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.spans_unjudged).toBe(0);
+    expect(r.totals.pairs_rejected).toBe(1);
+    expect(db.tables.claim_delta_rejections.length).toBe(1); // frozen not-an-echo (genericness)
+  });
+
+  it("a genuine no-echo (relation null) STILL banks a rejection — unchanged", async () => {
+    stubOllama((model) =>
+      model === "llama3:70b"
+        ? { same_subject: true, relation: null, confident: false, reason: "no specific echo" }
+        : { same_subject: true, relation: "echo", reason: "same subject" },
+    );
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), publicClaim("p1", "score visible on the site")] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.spans_unjudged).toBe(0);
+    expect(db.tables.claim_delta_rejections.length).toBe(1);
   });
 });
 
