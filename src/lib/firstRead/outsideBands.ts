@@ -22,19 +22,19 @@ export const OUTSIDE_BANDS: readonly OutsideBandCopy[] = [
     key: "strategy",
     heading: "Strategy",
     framing: "Where the public record shows you're playing — before you told us anything.",
-    empty: "The public record isn't showing where you play yet.",
+    empty: "We haven't found where you play in what we've read.",
   },
   {
     key: "positioning",
     heading: "Positioning",
     framing: "What you claim only you offer — and where the outside echoes it back.",
-    empty: "The public record isn't showing a distinct position yet.",
+    empty: "We haven't found a distinct position in what we've read.",
   },
   {
     key: "message",
     heading: "Message",
     framing: "How the world describes you — in its words, not yours.",
-    empty: "The public record isn't describing this company in its own words yet.",
+    empty: "We haven't found this company described in its own words.",
   },
 ] as const;
 

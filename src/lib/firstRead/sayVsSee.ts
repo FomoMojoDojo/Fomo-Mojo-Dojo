@@ -18,11 +18,11 @@ export interface SayVsSeeGroupCopy {
 
 export const SAY_VS_SEE_GROUPS: readonly SayVsSeeGroupCopy[] = [
   { key: "echoed", heading: "Where the outside echoes you",
-    empty: "The outside record hasn't echoed your declarations yet." },
+    empty: "Nothing we've read so far repeats back what you've told us." },
   { key: "divergent", heading: "Where the outside disagrees",
-    empty: "Nothing you've told us is contradicted by the outside record yet." },
-  { key: "publicly_silent", heading: "What you say that the outside doesn't mention yet",
-    empty: "Everything you've told us shows up somewhere in the public record." },
+    empty: "Nothing we've read so far contradicts what you've told us." },
+  { key: "publicly_silent", heading: "What we haven't found yet",
+    empty: "Everything you've told us turned up somewhere in what we've read." },
 ] as const;
 
 export const sayVsSeeGroup = (key: SayVsSeeGroupKey): SayVsSeeGroupCopy =>
@@ -34,7 +34,7 @@ export const SAY_LABEL = "You say";
 export const SEE_LABEL = "The record shows";
 
 // The per-item see-side line for a publicly_silent item (no public claim exists). PENDING.
-export const SILENT_SEE_LINE = "The public record doesn't mention this yet.";
+export const SILENT_SEE_LINE = "Nothing we've read so far speaks to this.";
 
 // publicly_silent items double as the open-question bridge (V2-4). A LIGHT connective
 // line — no duplicate list. PENDING SIGNATURE.
