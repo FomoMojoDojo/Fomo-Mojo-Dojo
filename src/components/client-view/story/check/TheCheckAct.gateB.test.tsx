@@ -122,6 +122,39 @@ describe("TheCheckAct — Option B internally_silent section", () => {
     expect(container.textContent).toContain("Reported Jul 2025 · read by us Jul 2026");
   });
 
+  it("SOURCE HOST: dated item shows host+date; undated shows bare host; no source_url dated = a986cda string; anchor-free", () => {
+    // dated + host → "{host} · Reported … · read by us …"
+    const hostDated = {
+      ...iSilentItem(), identity: "is-host-dated",
+      delta: { ...iSilentItem().delta, reportedEventDate: "2025-07-18", reportedPrecision: "day" as const, capturedAt: "2026-07-24T00:00:00+00", sourceUrl: "https://www.glassdoor.com/Reviews/x-E145192.htm" },
+    };
+    cap.ret = withItems({ status: "ready", data: [hostDated] }, [hostDated]);
+    const r1 = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(r1.container.querySelector(".cvs-outside-raised-reported")!.textContent).toBe("glassdoor.com · Reported Jul 2025 · read by us Jul 2026");
+    expect(r1.container.querySelector(".cvs-outside-raised a")).toBeNull(); // anchor-free
+    r1.unmount();
+
+    // undated + host → the bare domain (the 11 Edgewood undated-with-host items)
+    const hostOnly = {
+      ...iSilentItem(), identity: "is-host-only",
+      delta: { ...iSilentItem().delta, sourceUrl: "https://www.yelp.com/biz/edgewood-san-francisco-2" },
+    };
+    cap.ret = withItems({ status: "ready", data: [hostOnly] }, [hostOnly]);
+    const r2 = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(r2.container.querySelector(".cvs-outside-raised-reported")!.textContent).toBe("yelp.com");
+    expect(r2.container.textContent).not.toContain("Reported ");
+    r2.unmount();
+
+    // dated but NO source_url → the a986cda string, byte-unchanged (degrade)
+    const dateNoHost = {
+      ...iSilentItem(), identity: "is-date-nohost",
+      delta: { ...iSilentItem().delta, reportedEventDate: "2025-07-18", reportedPrecision: "day" as const, capturedAt: "2026-07-24T00:00:00+00" },
+    };
+    cap.ret = withItems({ status: "ready", data: [dateNoHost] }, [dateNoHost]);
+    const r3 = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(r3.container.querySelector(".cvs-outside-raised-reported")!.textContent).toBe("Reported Jul 2025 · read by us Jul 2026");
+  });
+
   it("undated item: the Reported line is provably ABSENT from the rendered tree", () => {
     cap.ret = withItems({ status: "ready", data: [iSilentItem()] }, [iSilentItem()]); // no reported fields
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);

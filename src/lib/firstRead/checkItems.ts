@@ -34,6 +34,10 @@ export interface DeltaRender {
   reportedEventDate?: string | null;
   reportedPrecision?: "day" | "month" | null;
   capturedAt?: string | null;
+  // Source host: the raw source_url of the SAME backing signal the date came from. The
+  // attribution formatter derives the registrable domain (sourceHost) and composes host/date.
+  // Optional so a fixture may omit it (absent → no host). Never a link.
+  sourceUrl?: string | null;
 }
 
 export interface RawCheckItem {

@@ -153,11 +153,17 @@ export function useFirstReadCapture(
     // mis-stamped; internally_silent admits an item only if this set contains its claim, so
     // an unbacked observed statement can never render under "The record says:". ANY
     // relationship counts (the outside signals on these claims are typically 'qualifies').
-    // Same query also supplies the Reported-line date (event_date + precision + created_at)
-    // for a date-bearing outside signal — INDEPENDENT of any quote. dateByClaim keeps the
-    // first outside signal that carries an event_date per claim.
+    //
+    // The SAME query resolves the attribution each item shows — source host AND Reported date,
+    // both read off ONE backing signal per claim (the SAME-SIGNAL invariant: a host is never
+    // paired with a date from a different signal). resolvedByClaim holds that one signal's
+    // { source_url, event_date, precision, captured }. Resolution rule, preserving a986cda's
+    // date exactly: the FIRST outside signal that carries an event_date, else the first outside
+    // signal (undated → host present, date null). Once a dated signal is chosen it is never
+    // superseded (a986cda "never overwrite the date"), so host follows to that same dated
+    // signal. All of this is INDEPENDENT of any quote.
     const outsideBackedClaims = new Set<string>();
-    const dateByClaim = new Map<string, { event_date: string; precision: string; captured: string | null }>();
+    const resolvedByClaim = new Map<string, { source_url: string | null; event_date: string | null; precision: string; captured: string | null }>();
     if (publicClaimIds.length) {
       const { data: bRefs } = await supabase
         .from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).abortSignal(signal);
@@ -165,16 +171,25 @@ export function useFirstReadCapture(
       const bSigIds = [...new Set(bRefRows.map((r) => r.signal_id))];
       if (bSigIds.length) {
         const { data: bSigs } = await supabase
-          .from("signals").select("id, event_date, event_date_precision, created_at").in("id", bSigIds).eq("signal_band", "outside").abortSignal(signal);
+          .from("signals").select("id, source_url, event_date, event_date_precision, created_at").in("id", bSigIds).eq("signal_band", "outside").abortSignal(signal);
         const outsideSig = new Map(
-          ((bSigs ?? []) as Array<{ id: string; event_date: string | null; event_date_precision: string | null; created_at: string | null }>).map((s) => [s.id, s]),
+          ((bSigs ?? []) as Array<{ id: string; source_url: string | null; event_date: string | null; event_date_precision: string | null; created_at: string | null }>).map((s) => [s.id, s]),
         );
         for (const r of bRefRows) {
           const s = outsideSig.get(r.signal_id);
           if (!s) continue;
           outsideBackedClaims.add(r.claim_id);
-          if (s.event_date && !dateByClaim.has(r.claim_id)) {
-            dateByClaim.set(r.claim_id, { event_date: s.event_date, precision: s.event_date_precision ?? "day", captured: s.created_at });
+          const cur = resolvedByClaim.get(r.claim_id);
+          // First outside signal seeds the resolution; a first DATED signal supersedes an
+          // earlier UNDATED one (so host+date land on the dated signal together). A dated
+          // resolution is never superseded again — first-dated wins, matching a986cda.
+          if (!cur || (!cur.event_date && s.event_date)) {
+            resolvedByClaim.set(r.claim_id, {
+              source_url: s.source_url ?? null,
+              event_date: s.event_date ?? null,
+              precision: s.event_date_precision ?? "day",
+              captured: s.created_at ?? null,
+            });
           }
         }
       }
@@ -200,17 +215,18 @@ export function useFirstReadCapture(
       const decl = d.declared_claim_id ? claimById.get(d.declared_claim_id) : null;
       const pub = d.public_claim_id ? claimById.get(d.public_claim_id) : null;
       const q = d.public_claim_id ? quoteByClaim.get(d.public_claim_id) : null;
-      const dt = d.public_claim_id ? dateByClaim.get(d.public_claim_id) : null;
+      const rs = d.public_claim_id ? resolvedByClaim.get(d.public_claim_id) : null;
       return {
         id: d.id, delta_type: d.delta_type, content_identity: d.content_identity,
         declared_statement: decl?.statement ?? null, public_statement: pub?.statement ?? null,
         public_provenance: pub?.provenance ?? null,
         quote: q?.quote ?? null, quote_source_text: q?.quote_source_text ?? null, event_date: q?.event_date ?? null,
         has_outside_signal: d.public_claim_id ? outsideBackedClaims.has(d.public_claim_id) : false,
-        // Reported-line date (quote-independent): the backing outside signal's date + capture.
-        reported_event_date: dt?.event_date ?? null,
-        reported_precision: (dt?.precision as "day" | "month" | undefined) ?? null,
-        captured_at: dt?.captured ?? null,
+        // Attribution — host AND date from the SAME resolved backing signal (same-signal rule).
+        reported_event_date: rs?.event_date ?? null,
+        reported_precision: (rs?.precision as "day" | "month" | undefined) ?? null,
+        captured_at: rs?.captured ?? null,
+        source_url: rs?.source_url ?? null,
       };
     });
     return assembleDeltaItems(inputs);

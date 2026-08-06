@@ -23,7 +23,7 @@ import { WHY_OUTSIDE_RATIONALE, JOURNEY_VISUAL_LABELS } from "@/lib/firstRead/wh
 import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedProblem";
 import { outsideBand } from "@/lib/firstRead/outsideBands";
 import { SAY_VS_SEE_GROUPS, SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, SILENT_BRIDGE_NOTE } from "@/lib/firstRead/sayVsSee";
-import { formatReportedLine } from "@/lib/firstRead/reportedDate";
+import { formatSourceAttribution } from "@/lib/firstRead/reportedDate";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
@@ -215,9 +215,9 @@ function sectionCheck(d: FirstReadExportData): string {
       const quoteHtml = dd.quote
         ? `<figure class="ann notimportant"><blockquote>“${esc(dd.quote)}”</blockquote><figcaption>${esc(AS_CAPTURED_LABEL)}${dd.eventDate ? ` · ${esc(dd.eventDate)}` : ""}</figcaption></figure>`
         : "";
-      // Reported line — follows the screen constant-for-constant (single-sourced formatter).
-      // Overlap rule mirrored: only when there is no quote.
-      const reported = dd.quote ? null : formatReportedLine(dd.reportedEventDate, dd.capturedAt);
+      // Attribution line — follows the screen constant-for-constant (single-sourced formatter,
+      // host+date from the same resolved signal). Overlap rule mirrored: only when no quote.
+      const reported = dd.quote ? null : formatSourceAttribution(dd.sourceUrl, dd.reportedEventDate, dd.capturedAt);
       const reportedHtml = reported ? `<p class="ss-reported">${esc(reported)}</p>` : "";
       return `<div class="ss-item">`
         + `<div class="ss-side"><p class="kind">${esc(SAY_LABEL)}</p><p>${esc(dd.say)}</p></div>`

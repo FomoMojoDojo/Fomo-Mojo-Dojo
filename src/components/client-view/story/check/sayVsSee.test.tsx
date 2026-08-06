@@ -66,6 +66,13 @@ describe("Option B — assembleDeltaItems (internally_silent, observed-anchored 
     expect(items[0].identity).toBe("ci-1"); // content_identity, not text-hash
   });
 
+  it("source_url threads onto the render payload (both anchored + observed groups)", () => {
+    const obs = assembleDeltaItems([iSilent({ source_url: "https://www.glassdoor.com/x" })]);
+    expect(obs[0].delta!.sourceUrl).toBe("https://www.glassdoor.com/x");
+    const anchored = assembleDeltaItems([delta({ source_url: "https://www.yelp.com/biz/y" })]);
+    expect(anchored[0].delta!.sourceUrl).toBe("https://www.yelp.com/biz/y");
+  });
+
   it("BACKING GUARD can fail: no outside-band signal → excluded (mis-stamped analysis)", () => {
     expect(assembleDeltaItems([iSilent({ has_outside_signal: false })])).toHaveLength(0);
     expect(assembleDeltaItems([iSilent({ has_outside_signal: undefined })])).toHaveLength(0);
@@ -127,6 +134,27 @@ describe("V2-7 — DeltaItemRow: registers labeled, receipt only via the quote f
     expect(r2.container.querySelector(".cvs-delta-reported")).toBeNull(); // Reported line SUPPRESSED
     expect(r2.container.textContent).not.toContain("Reported Jul 2025");
   });
+
+  it("SOURCE HOST: host+date, host-only, quote-bearing has NO host, and no <a> anchor", () => {
+    // host + date → "{host} · Reported … · read by us …"
+    const hostDated = item({ delta: { deltaType: "divergent", say: "s", see: "the record", quote: null, quoteSourceText: null, eventDate: null, reportedEventDate: "2025-07-18", reportedPrecision: "day", capturedAt: "2026-07-24T00:00:00+00", sourceUrl: "https://www.glassdoor.com/Reviews/x-E145192.htm" } });
+    const r1 = render(<DeltaItemRow item={hostDated} onSet={vi.fn()} />);
+    expect(r1.container.querySelector(".cvs-delta-reported")!.textContent).toBe("glassdoor.com · Reported Jul 2025 · read by us Jul 2026");
+    expect(r1.container.querySelector("a")).toBeNull(); // anchor-free — host is plain text
+
+    // host only (undated) → the bare domain, no "Reported"
+    const hostOnly = item({ delta: { deltaType: "internally_silent", say: "", see: "the record", quote: null, quoteSourceText: null, eventDate: null, reportedEventDate: null, capturedAt: null, sourceUrl: "https://www.yelp.com/biz/edgewood-san-francisco-2" } });
+    const r2 = render(<DeltaItemRow item={hostOnly} onSet={vi.fn()} />);
+    expect(r2.container.querySelector(".cvs-delta-reported")!.textContent).toBe("yelp.com");
+    expect(r2.container.textContent).not.toContain("Reported");
+
+    // quote-bearing → "As captured" shows, NO host, NO attribution line (unchanged treatment)
+    const quoted = item({ delta: { deltaType: "echoed", say: "s", see: "the record", quote: "leading nonprofit provider", quoteSourceText: "x", eventDate: "2024-05-01", reportedEventDate: "2025-07-18", capturedAt: "2026-07-24", sourceUrl: "https://www.glassdoor.com/Reviews/x-E145192.htm" } });
+    const r3 = render(<DeltaItemRow item={quoted} onSet={vi.fn()} />);
+    expect(r3.container.querySelector("figure.cvs-signal-quote")).toBeTruthy();
+    expect(r3.container.querySelector(".cvs-delta-reported")).toBeNull();
+    expect(r3.container.textContent).not.toContain("glassdoor.com"); // host NOT added to As-captured
+  });
 });
 
 describe("V2-7 — SayVsSeeExhibit: three groups + honest-absence per empty group", () => {
@@ -159,5 +187,11 @@ describe("V2-7 — export byte-follows the exhibit", () => {
     expect(html).toContain(SEE_LABEL);
     expect(html).toContain("We close gaps.");
     expect(html).toContain(SAY_VS_SEE_GROUPS[1].empty); // divergent empty
+  });
+
+  it("export follows the screen: host+date attribution line renders; host is plain text, no anchor", () => {
+    const html = buildFirstReadExportHtml(data([item({ delta: { deltaType: "divergent", say: "s", see: "the record", quote: null, quoteSourceText: null, eventDate: null, reportedEventDate: "2025-07-18", capturedAt: "2026-07-24T00:00:00+00", sourceUrl: "https://www.glassdoor.com/Reviews/x-E145192.htm" } })]));
+    expect(html).toContain(`<p class="ss-reported">glassdoor.com · Reported Jul 2025 · read by us Jul 2026</p>`);
+    expect(html).not.toContain("<a "); // anchor-free — host never a link
   });
 });

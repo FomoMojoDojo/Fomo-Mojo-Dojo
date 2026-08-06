@@ -36,6 +36,8 @@ export interface DeltaInput {
   reported_event_date?: string | null;
   reported_precision?: "day" | "month" | null;
   captured_at?: string | null;
+  // source_url of the SAME backing signal the reported date came from (same-signal invariant).
+  source_url?: string | null;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -77,6 +79,7 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
           reportedEventDate: d.reported_event_date ?? null,
           reportedPrecision: d.reported_precision ?? null,
           capturedAt: d.captured_at ?? null,
+          sourceUrl: d.source_url ?? null,
         },
       });
       continue;
@@ -110,6 +113,7 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
         reportedEventDate: d.reported_event_date ?? null,
         reportedPrecision: d.reported_precision ?? null,
         capturedAt: d.captured_at ?? null,
+        sourceUrl: d.source_url ?? null,
       },
     });
   }
