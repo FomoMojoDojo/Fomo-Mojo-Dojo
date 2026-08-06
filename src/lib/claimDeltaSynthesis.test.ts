@@ -21,11 +21,19 @@ const CO = "11111111-1111-1111-1111-111111111111";
 type Row = Record<string, unknown>;
 
 // ── In-memory supabase fake (claims + claim_deltas + claim_delta_rejections) ──
-function fakeDb(seed: { claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[] }) {
+// SELF-VOICE EXCLUSION also reads signals + claim_signal_refs (voice_class join).
+// Both default empty, so a test that seeds neither exercises the pre-exclusion
+// behaviour byte-identically (empty self-voice set → nothing excluded).
+function fakeDb(seed: {
+  claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[];
+  signals?: Row[]; claim_signal_refs?: Row[];
+}) {
   const tables: Record<string, Row[]> = {
     claims: [...seed.claims],
     claim_deltas: [...(seed.claim_deltas ?? [])],
     claim_delta_rejections: [...(seed.claim_delta_rejections ?? [])],
+    signals: [...(seed.signals ?? [])],
+    claim_signal_refs: [...(seed.claim_signal_refs ?? [])],
   };
   let nextId = 1;
   const db = {
@@ -37,7 +45,7 @@ function fakeDb(seed: { claims: Row[]; claim_deltas?: Row[]; claim_delta_rejecti
         eq(col: string, v: unknown) { this._filters.push((r: Row) => r[col] === v); return this; },
         order() { return this; },
         then(resolve: (v: { data: Row[]; error: null }) => void) {
-          resolve({ data: tables[table].filter((r) => chain._filters.every((f) => f(r))), error: null });
+          resolve({ data: (tables[table] ?? []).filter((r) => chain._filters.every((f) => f(r))), error: null });
         },
         insert(payload: Row) {
           tables[table].push({ id: `row-${nextId++}`, ...payload });
@@ -99,6 +107,13 @@ const baseArgs = (db: ReturnType<typeof fakeDb>, companyId = CO, write = true) =
 
 const declared = (id: string, statement: string): Row => ({ id, company_id: CO, statement, topic: null, provenance: "internal_declared" });
 const publicClaim = (id: string, statement: string): Row => ({ id, company_id: CO, statement, topic: null, provenance: "public_observed" });
+// A public_observed claim wired to ONE signal of a given voice, via a signal + ref row.
+// voice=null models an unclassified signal (the NULL policy: NOT excluded).
+const voicedPublic = (id: string, statement: string, voice: string | null): { claim: Row; signal: Row; ref: Row } => ({
+  claim: publicClaim(id, statement),
+  signal: { id: `sig-${id}`, company_id: CO, voice_class: voice },
+  ref: { claim_id: id, signal_id: `sig-${id}`, company_id: CO },
+});
 
 // ── Stage 1 ───────────────────────────────────────────────────────────────────
 describe("sharedTokenCount prefilter", () => {
@@ -819,5 +834,91 @@ describe("negative cache (freeze-on-reject)", () => {
     expect(c.candidates_fresh).toBe(1);
     expect(r.fresh_total).toBe(1);
     expect(r.rejected_total).toBe(1);
+  });
+});
+
+// SELF-VOICE EXCLUSION — a public_observed claim sourced from the company's OWN voice
+// (signal voice_class='client_voice') must not count as the market confirming the company.
+// It is removed from the observed side: no echo, no divergence, no internally_silent; the
+// declared claim it would have matched lands publicly_silent ("not-found-repeated", now TRUE).
+// The exclusion targets ONLY the positively-identified client_voice — NULL/unknown and other
+// voices (outside/market/competitor) still participate. Nothing is deleted, pruned or
+// tombstoned; the claim row and its signal/ref rows stay fully queryable.
+describe("self-voice exclusion at the echo seam", () => {
+  // A judge that echoes anything it is handed (valid span auto-injected by stubOllama).
+  const alwaysEcho = () => stubOllama((model) =>
+    model === "llama3:70b"
+      ? { same_subject: true, relation: "echo", confident: true, reason: "match" }
+      : { same_subject: true, relation: "echo", reason: "same subject" },
+  );
+  const DECL = "evidence score visible always";
+  const OBS = "score visible on the site"; // shares score+visible ⇒ candidate
+
+  it("(a) self-voice observed + would-echo ⇒ NO echo; declared lands publicly_silent, not rejection/divergence", async () => {
+    alwaysEcho();
+    const p = voicedPublic("p1", OBS, "client_voice");
+    const db = fakeDb({ claims: [declared("d1", DECL), p.claim], signals: [p.signal], claim_signal_refs: [p.ref] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true)); // write=true — prove nothing banked
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.self_voice_excluded).toBe(1);
+    expect(r.totals.public).toBe(0); // the only observed claim was self-voice → market pool empty
+    // declared → publicly_silent (not-found-repeated), NOT a rejection, NOT a divergence
+    expect(r.deltas.some((d) => d.delta_type === "echoed")).toBe(false);
+    expect(r.deltas.some((d) => d.delta_type === "divergent")).toBe(false);
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d1")).toBe(true);
+    expect(db.tables.claim_delta_rejections.length).toBe(0); // no freeze — revisitable
+    // the self-voice claim produced NO delta of any kind (it is not the market)
+    expect(r.deltas.some((d) => d.public_claim_id === "p1")).toBe(false);
+  });
+
+  it("(a-red) SAME text + SAME judge, but signal is UNCLASSIFIED (voice null) ⇒ echo IS produced", async () => {
+    // Identical declared/observed/judge to (a); the ONLY difference is the source voice.
+    // Proves the exclusion is the sole suppressor AND the NULL policy = include (not excluded).
+    alwaysEcho();
+    const p = voicedPublic("p1", OBS, null);
+    const db = fakeDb({ claims: [declared("d1", DECL), p.claim], signals: [p.signal], claim_signal_refs: [p.ref] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.self_voice_excluded).toBe(0); // null is NOT self-voice
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d1" && d.public_claim_id === "p1")).toBe(true);
+  });
+
+  it("(b) outside_voice_about_client (Kaiser, CSU) STILL echoes — the genuine market voice is untouched", async () => {
+    alwaysEcho();
+    const kaiser = voicedPublic("obs-kaiser", "Kaiser Permanente lists Edgewood CSU crisis stabilization unit for youth", "outside_voice_about_client");
+    const csu = voicedPublic("obs-csu", "GuideStar profile: Edgewood CSU crisis stabilization unit serving youth", "outside_voice_about_client");
+    const db = fakeDb({
+      claims: [declared("d1", "Edgewood runs the only youth crisis stabilization unit CSU"), kaiser.claim, csu.claim],
+      signals: [kaiser.signal, csu.signal],
+      claim_signal_refs: [kaiser.ref, csu.ref],
+    });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.self_voice_excluded).toBe(0);
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.public_claim_id === "obs-kaiser")).toBe(true);
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.public_claim_id === "obs-csu")).toBe(true);
+  });
+
+  it("(c) self-voice with NO declared match is NOT surfaced as internally_silent (it is not the market speaking)", async () => {
+    alwaysEcho();
+    // p1 is self-voice and shares no tokens with d1 → would normally be internally_silent.
+    const p = voicedPublic("p1", "our own homepage tagline about compassionate care", "client_voice");
+    const db = fakeDb({ claims: [declared("d1", "evidence score visible always"), p.claim], signals: [p.signal], claim_signal_refs: [p.ref] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.self_voice_excluded).toBe(1);
+    expect(r.deltas.some((d) => d.delta_type === "internally_silent" && d.public_claim_id === "p1")).toBe(false);
+    expect(r.deltas.some((d) => d.public_claim_id === "p1")).toBe(false);
+  });
+
+  it("(d) NON-DELETION: the excluded self-voice claim and its signal/ref rows remain fully queryable after a write run", async () => {
+    alwaysEcho();
+    const p = voicedPublic("p1", OBS, "client_voice");
+    const db = fakeDb({ claims: [declared("d1", DECL), p.claim], signals: [p.signal], claim_signal_refs: [p.ref] });
+    await computeDeltasForCompany(baseArgs(db, CO, true)); // write=true
+    // exclusion filters an in-memory array; it must never touch a stored row.
+    expect(db.tables.claims.some((c) => c.id === "p1")).toBe(true);
+    expect(db.tables.signals.some((s) => s.id === "sig-p1")).toBe(true);
+    expect(db.tables.claim_signal_refs.some((rf) => rf.claim_id === "p1")).toBe(true);
   });
 });

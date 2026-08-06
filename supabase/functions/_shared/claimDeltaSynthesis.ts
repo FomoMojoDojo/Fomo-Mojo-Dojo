@@ -115,6 +115,11 @@ export type DeltaRunResult =
         // text (or absent) — a mechanical failure, NOT a verdict. NEVER written (no rejection,
         // no pair), so the pair stays revisitable and asserts neither echo nor no-echo.
         spans_unjudged: number;
+        // SELF-VOICE EXCLUSION: public_observed claims dropped from the observed side because
+        // their source signal is the company's own voice (voice_class='client_voice') — the
+        // company's own words cannot count as the market confirming it. The claim ROW is
+        // untouched; only its participation in this run's pairing is removed.
+        self_voice_excluded: number;
       };
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
@@ -371,8 +376,39 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const declared = claims.filter(
     (c) => c.provenance === "internal_declared" || c.provenance === "client_attested",
   );
-  const publics = claims.filter((c) => c.provenance === "public_observed");
+  const publicsAll = claims.filter((c) => c.provenance === "public_observed");
   if (declared.length === 0) return { ok: false, skipped: "no_declared_claims" };
+
+  // ── SELF-VOICE EXCLUSION (operator ruling, Stage 1) ───────────────────────────
+  // A public_observed claim whose SOURCE signal is the company's own voice
+  // (voice_class='client_voice') is the company's own website/marketing returning as a
+  // "public" claim — NOT the market. Echo-matching it against the company's DECLARATIONS
+  // scored the same voice on both sides as market confirmation (all six Edgewood false
+  // echoes were client_voice from edgewood.org; both genuine echoes were outside_voice).
+  // Exclude it from the observed side entirely: it produces NO echo, NO divergence, and NO
+  // internally_silent (it is not the market speaking). A declared claim whose only candidate
+  // was self-voice therefore falls to publicly_silent — "we haven't found this repeated",
+  // which is now TRUE. The claim ROW and any existing deltas are UNTOUCHED and fully
+  // queryable; only its participation in THIS run's pairing is removed (future compute only).
+  // NULL/unknown voice is NOT excluded — only the positively-identified 'client_voice'; a NULL
+  // row that is actually self-voice would keep a false echo (surfaced to the operator; Stage-2
+  // review catches it) rather than convert an unclassified row into a false absence.
+  const { data: sigRows } = await args.supabase
+    .from("signals").select("id, voice_class").eq("company_id", args.companyId);
+  const selfSignalIds = new Set(
+    ((sigRows ?? []) as Array<{ id: string; voice_class: string | null }>)
+      .filter((s) => s.voice_class === "client_voice").map((s) => s.id),
+  );
+  const selfVoiceClaimIds = new Set<string>();
+  if (selfSignalIds.size > 0) {
+    const { data: refRows } = await args.supabase
+      .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", args.companyId);
+    for (const r of ((refRows ?? []) as Array<{ claim_id: string; signal_id: string }>)) {
+      if (selfSignalIds.has(r.signal_id)) selfVoiceClaimIds.add(r.claim_id);
+    }
+  }
+  const publics = publicsAll.filter((c) => !selfVoiceClaimIds.has(c.id));
+  const selfVoiceExcluded = publicsAll.length - publics.length;
 
   // Existing rows: identity → row. Tombstones ('rejected_pairing') are never
   // re-proposed; all other existing identities are kept verbatim (no re-roll).
@@ -463,6 +499,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     rows_new: 0, rows_kept: 0, rows_deleted: 0, tombstones_respected: 0,
     rejections_cached: 0, rejections_pruned: 0,
     spans_unjudged: 0,
+    self_voice_excluded: selfVoiceExcluded,
   };
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
