@@ -20,7 +20,9 @@ export type CheckItemKind = "finding" | "market" | "differentiator" | "delta";
 // client's declared statement; the SEE side is the outside record's reading; the receipt
 // is a verbatim quote on the SEE side (CV-2e) or null (honest absence).
 export interface DeltaRender {
-  deltaType: "echoed" | "divergent" | "publicly_silent";
+  // internally_silent (Option B): the outside raised something the client hasn't spoken to.
+  // Observed-anchored — its `say` is empty and its item text is the OBSERVED statement.
+  deltaType: "echoed" | "divergent" | "publicly_silent" | "internally_silent";
   say: string;
   see: string;
   quote: string | null;

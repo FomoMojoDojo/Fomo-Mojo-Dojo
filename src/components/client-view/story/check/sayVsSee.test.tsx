@@ -44,6 +44,40 @@ describe("V2-7 — assembleDeltaItems (say-anchored groups + register lock on th
   });
 });
 
+// Option B — internally_silent is OBSERVED-anchored: item text is the OBSERVED statement (no
+// say), and the BACKING GUARD (has_outside_signal) keeps our own mis-stamped analysis out of
+// the outside's voice. FALSIFICATION: same delta shape, only the guard inputs differ.
+describe("Option B — assembleDeltaItems (internally_silent, observed-anchored + backing guard)", () => {
+  const iSilent = (over: Partial<DeltaInput> = {}): DeltaInput =>
+    delta({
+      id: "is", delta_type: "internally_silent",
+      declared_statement: null, // no say side
+      public_statement: "City froze placements after 2019 staff misconduct and child abuse allegations.",
+      public_provenance: "public_observed", has_outside_signal: true, ...over,
+    });
+
+  it("public_observed + outside-backed → ONE item, text is the OBSERVED statement, say is empty", () => {
+    const items = assembleDeltaItems([iSilent()]);
+    expect(items).toHaveLength(1);
+    expect(items[0].delta!.deltaType).toBe("internally_silent");
+    expect(items[0].text).toBe("City froze placements after 2019 staff misconduct and child abuse allegations.");
+    expect(items[0].delta!.see).toBe(items[0].text);
+    expect(items[0].delta!.say).toBe("");
+    expect(items[0].identity).toBe("ci-1"); // content_identity, not text-hash
+  });
+
+  it("BACKING GUARD can fail: no outside-band signal → excluded (mis-stamped analysis)", () => {
+    expect(assembleDeltaItems([iSilent({ has_outside_signal: false })])).toHaveLength(0);
+    expect(assembleDeltaItems([iSilent({ has_outside_signal: undefined })])).toHaveLength(0);
+  });
+
+  it("provenance + register guards still bite: analytic/internal see or framework-token text → excluded", () => {
+    expect(assembleDeltaItems([iSilent({ public_provenance: "analytic" })])).toHaveLength(0);
+    expect(assembleDeltaItems([iSilent({ public_provenance: "internal_declared" })])).toHaveLength(0);
+    expect(assembleDeltaItems([iSilent({ public_statement: "Product claims without customer validation in ODI." })])).toHaveLength(0);
+  });
+});
+
 describe("V2-7 — dropCollidingDeltas (no tally double-count)", () => {
   it("drops a delta whose identity collides with a finding identity; keeps non-colliding", () => {
     const deltas = [{ identity: "shared" }, { identity: "unique" }];

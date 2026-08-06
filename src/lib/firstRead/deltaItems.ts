@@ -27,6 +27,11 @@ export interface DeltaInput {
   quote: string | null; // verbatim receipt on the SEE side (CV-2e), or null
   quote_source_text: string | null;
   event_date: string | null;
+  // Option B BACKING GUARD (read-side): true iff the observed claim has >=1 supporting
+  // signal in the OUTSIDE band. A public_observed claim with no outside-band signal is our
+  // own analysis mis-stamped; it must never render in the outside's voice. Only consulted
+  // for internally_silent (the say-anchored groups already carry a public_observed see side).
+  has_outside_signal?: boolean;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -43,6 +48,33 @@ const GROUP_TYPES = new Set(["echoed", "divergent", "publicly_silent"]);
 export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
   const items: RawCheckItem[] = [];
   for (const d of deltas) {
+    // Option B — internally_silent is OBSERVED-anchored (no say side). Its item text is the
+    // OBSERVED statement, register-locked exactly like a see side, plus the backing guard:
+    // the observed claim must carry >=1 outside-band signal, or it is our own analysis
+    // mis-stamped as the record and must not render in the outside's voice.
+    if (d.delta_type === "internally_silent") {
+      const observed = (d.public_statement ?? "").trim();
+      if (!observed) continue; // no observed statement → nothing to render
+      if (!isPublicProvenance(d.public_provenance)) continue; // analytic / internal see → excluded
+      if (!admitPublicPerception(observed)) continue; // framework token / analytic voice → excluded
+      if (!d.has_outside_signal) continue; // BACKING GUARD — no outside-band signal → excluded
+      items.push({
+        kind: "delta",
+        ref: d.id,
+        text: observed, // item_text frozen at capture = the OBSERVED statement being verdicted
+        identity: d.content_identity,
+        delta: {
+          deltaType: "internally_silent",
+          say: "", // no declared side
+          see: observed,
+          quote: d.quote,
+          quoteSourceText: d.quote_source_text,
+          eventDate: d.event_date,
+        },
+      });
+      continue;
+    }
+
     if (!GROUP_TYPES.has(d.delta_type)) continue; // say-anchored groups only
     const say = (d.declared_statement ?? "").trim();
     if (!say) continue; // no declared side → not a say-vs-see item

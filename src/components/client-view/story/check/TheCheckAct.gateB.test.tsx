@@ -15,6 +15,11 @@ vi.mock("@/hooks/useFirstReadCapture", async (orig) => {
 import TheCheckAct from "./TheCheckAct";
 import { ACT_DATA_ERROR } from "../ActData";
 import { SAY_VS_SEE_GROUPS } from "@/lib/firstRead/sayVsSee";
+import {
+  OUTSIDE_RAISED_HEADING, OUTSIDE_RAISED_FRAMING, OUTSIDE_RAISED_LABEL,
+  OUTSIDE_RAISED_COVERAGE, OUTSIDE_RAISED_PROMPT, OUTSIDE_RAISED_EMPTY,
+} from "./OutsideRaisedSection";
+import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 // The 4 signed strings reachable via the exhibit on a swallowed delta error, by name.
 const ECHOED_EMPTY = SAY_VS_SEE_GROUPS.find((g) => g.key === "echoed")!.empty;
@@ -62,5 +67,56 @@ describe("TheCheckAct exhibit — Gate B failure handling", () => {
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
     expect(container.textContent).not.toContain(ACT_DATA_ERROR);
     expect(container.textContent).not.toContain(PUB_SILENT_EMPTY);
+  });
+});
+
+// Option B — the observed-anchored section renders inside the SAME <ActData> ready branch.
+const iSilentItem = () => ({
+  kind: "delta" as const, ref: "d-is", identity: "is-1",
+  text: "City froze placements after 2019 staff misconduct and child abuse allegations.",
+  verdict: null, correctionText: null, capturedAt: null,
+  delta: {
+    deltaType: "internally_silent" as const, say: "",
+    see: "City froze placements after 2019 staff misconduct and child abuse allegations.",
+    quote: null, quoteSourceText: null, eventDate: null,
+  },
+});
+const withItems = (deltaState: unknown, items: unknown[]) => ({ ...baseCapture(deltaState), items });
+
+describe("TheCheckAct — Option B internally_silent section", () => {
+  it("items present (ready) → heading + framing + statement + coverage + prompt; NOT the empty string", () => {
+    cap.ret = withItems({ status: "ready", data: [iSilentItem()] }, [iSilentItem()]);
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_HEADING);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_FRAMING);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_LABEL);
+    expect(container.textContent).toContain("City froze placements after 2019 staff misconduct");
+    expect(container.textContent).toContain(OUTSIDE_RAISED_COVERAGE);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_PROMPT);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
+  });
+
+  it("ready with zero internally_silent items → heading + the honest-empty string", () => {
+    cap.ret = withItems({ status: "ready", data: [] }, []);
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_HEADING);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_EMPTY);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_FRAMING);
+  });
+
+  it("delta read ERROR → the section (heading + empty) does NOT render; the signed error does", () => {
+    cap.ret = withItems({ status: "error", error: "PostgREST 500" }, [iSilentItem()]);
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain(ACT_DATA_ERROR);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_HEADING);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
+  });
+
+  it("receipt renders where a quote resolves (Edgewood's live items carry none — this proves the wiring)", () => {
+    const withQuote = { ...iSilentItem(), delta: { ...iSilentItem().delta, quote: "SF provided a $350K emergency grant." } };
+    cap.ret = withItems({ status: "ready", data: [withQuote] }, [withQuote]);
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain(AS_CAPTURED_LABEL); // "As captured"
+    expect(container.textContent).toContain("SF provided a $350K emergency grant.");
   });
 });

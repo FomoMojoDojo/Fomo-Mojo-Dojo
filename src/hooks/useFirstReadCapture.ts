@@ -133,7 +133,9 @@ export function useFirstReadCapture(
       .from("claim_deltas")
       .select("id, delta_type, content_identity, declared_claim_id, public_claim_id")
       .eq("company_id", companyId)
-      .in("delta_type", ["echoed", "divergent", "publicly_silent"])
+      // Option B — internally_silent joins the read (rendered in its own observed-anchored
+      // section; the say-anchored exhibit still filters to its three groups).
+      .in("delta_type", ["echoed", "divergent", "publicly_silent", "internally_silent"])
       .abortSignal(signal);
     if (dErr) throw new Error(dErr.message);
     const dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
@@ -145,6 +147,26 @@ export function useFirstReadCapture(
 
     // Verbatim receipt on the SEE (public) claim: claim_signal_refs(supports) → signals.quote.
     const publicClaimIds = [...new Set(dRows.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
+
+    // Option B BACKING GUARD (read-side): which observed claims carry >=1 signal in the
+    // OUTSIDE band. A public_observed claim with no outside-band signal is our own analysis
+    // mis-stamped; internally_silent admits an item only if this set contains its claim, so
+    // an unbacked observed statement can never render under "The record says:". ANY
+    // relationship counts (the outside signals on these claims are typically 'qualifies').
+    const outsideBackedClaims = new Set<string>();
+    if (publicClaimIds.length) {
+      const { data: bRefs } = await supabase
+        .from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).abortSignal(signal);
+      const bRefRows = (bRefs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+      const bSigIds = [...new Set(bRefRows.map((r) => r.signal_id))];
+      if (bSigIds.length) {
+        const { data: bSigs } = await supabase
+          .from("signals").select("id").in("id", bSigIds).eq("signal_band", "outside").abortSignal(signal);
+        const outsideSigIds = new Set(((bSigs ?? []) as Array<{ id: string }>).map((s) => s.id));
+        for (const r of bRefRows) if (outsideSigIds.has(r.signal_id)) outsideBackedClaims.add(r.claim_id);
+      }
+    }
+
     const quoteByClaim = new Map<string, { quote: string; quote_source_text: string | null; event_date: string | null }>();
     if (publicClaimIds.length) {
       const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", publicClaimIds).eq("relationship", "supports").abortSignal(signal);
@@ -170,6 +192,7 @@ export function useFirstReadCapture(
         declared_statement: decl?.statement ?? null, public_statement: pub?.statement ?? null,
         public_provenance: pub?.provenance ?? null,
         quote: q?.quote ?? null, quote_source_text: q?.quote_source_text ?? null, event_date: q?.event_date ?? null,
+        has_outside_signal: d.public_claim_id ? outsideBackedClaims.has(d.public_claim_id) : false,
       };
     });
     return assembleDeltaItems(inputs);

@@ -13,6 +13,7 @@ import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFi
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
+import OutsideRaisedSection from "./OutsideRaisedSection";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
 import { CHECK_RECAP } from "../recapCopy";
@@ -48,6 +49,16 @@ export default function TheCheckAct({
   // V2-7 — the say-vs-see delta items render in the exhibit ABOVE; the non-delta findings/
   // markets/differentiators render in the Check list below. Same session/verdict/tally.
   const deltaItems = useMemo(() => items.filter((i) => i.kind === "delta"), [items]);
+  // Option B — the internally_silent items partition OUT of the say-vs-see exhibit (which is
+  // say-anchored, three groups) into their own observed-anchored section below it.
+  const sayVsSeeItems = useMemo(
+    () => deltaItems.filter((i) => i.delta?.deltaType !== "internally_silent"),
+    [deltaItems],
+  );
+  const outsideRaisedItems = useMemo(
+    () => deltaItems.filter((i) => i.delta?.deltaType === "internally_silent"),
+    [deltaItems],
+  );
   const checkItems = useMemo(() => items.filter((i) => i.kind !== "delta"), [items]);
 
   return (
@@ -69,7 +80,14 @@ export default function TheCheckAct({
               group-empty lines / heading, which are only reachable in the ready branch
               (a genuine zero-delta read). deltaItems carry the verdict join from `items`. */}
           <ActData state={deltaState} loading={null}>
-            {() => <SayVsSeeExhibit items={deltaItems} onSet={onSet} disabled={frozen} />}
+            {() => (
+              <>
+                <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />
+                {/* Option B — observed-anchored section. Inside the SAME ready branch, so its
+                    honest-empty string is unreachable on a failed or pending delta read. */}
+                <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} />
+              </>
+            )}
           </ActData>
 
           {checkItems.length === 0 ? (
