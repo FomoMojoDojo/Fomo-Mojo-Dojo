@@ -1720,6 +1720,15 @@
   color: var(--mm-muted);
   font-style: italic;
 }
+/* Reported line — the date-only receipt for a quote-less outside item. A quiet metadata
+   line (no emphasis, no staleness cue), mounted where SignalQuote's caption would sit. */
+.cvs-delta-reported,
+.cvs-outside-raised-reported {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+}
 
 /* Option B — "What the outside raised that you haven't spoken to": the observed-anchored
    section below the say-vs-see exhibit. One column (no say side), each item verdicted with

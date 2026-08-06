@@ -4067,6 +4067,7 @@ export type Database = {
           created_at: string
           directness: string
           event_date: string | null
+          event_date_precision: string
           evidence_excerpt: string
           evidence_type: string
           framework: string | null
@@ -4097,6 +4098,7 @@ export type Database = {
           created_at?: string
           directness?: string
           event_date?: string | null
+          event_date_precision?: string
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null
@@ -4127,6 +4129,7 @@ export type Database = {
           created_at?: string
           directness?: string
           event_date?: string | null
+          event_date_precision?: string
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null

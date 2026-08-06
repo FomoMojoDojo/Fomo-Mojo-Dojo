@@ -9,6 +9,7 @@ import { checkItemAnnotation, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkIt
 import { SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE } from "@/lib/firstRead/sayVsSee";
 import CheckControl from "./CheckControl";
 import SignalQuote from "@/components/evidence/SignalQuote";
+import { formatReportedLine } from "@/lib/firstRead/reportedDate";
 
 export default function DeltaItemRow({
   item,
@@ -25,6 +26,8 @@ export default function DeltaItemRow({
   const rejected = item.verdict === "rejected";
   const notImportant = item.verdict === "not_important";
   const silent = d.deltaType === "publicly_silent" || !d.see;
+  // Overlap rule: Reported line only when there is no quote (no double-date with "As captured").
+  const reported = d.quote ? null : formatReportedLine(d.reportedEventDate, d.capturedAt);
 
   return (
     <div className={`cvs-delta-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}${notImportant ? " is-notimportant" : ""}`}>
@@ -42,6 +45,7 @@ export default function DeltaItemRow({
           )}
           {/* verbatim receipt on the see side; SignalQuote renders nothing when quote is null */}
           <SignalQuote quote={d.quote} eventDate={d.eventDate} />
+          {reported && <p className="cvs-delta-reported">{reported}</p>}
         </div>
       </div>
 

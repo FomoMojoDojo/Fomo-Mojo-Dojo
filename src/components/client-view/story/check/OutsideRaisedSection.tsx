@@ -17,6 +17,7 @@
 import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
 import CheckControl from "./CheckControl";
 import SignalQuote from "@/components/evidence/SignalQuote";
+import { formatReportedLine } from "@/lib/firstRead/reportedDate";
 
 // ── Client-facing copy — OPERATOR-SIGNED (Option B design gate, 2026-08-05) ──────────
 // Byte-for-byte per the ruling. String 2 carries a literal em-dash (U+2014); apostrophes
@@ -51,6 +52,9 @@ export default function OutsideRaisedSection({
           <div className="cvs-outside-raised-list">
             {items.map((item) => {
               const d = item.delta!;
+              // Overlap rule: the Reported line renders ONLY when there is no quote — a
+              // quote-bearing signal already shows its date via "As captured" (no double-date).
+              const reported = d.quote ? null : formatReportedLine(d.reportedEventDate, d.capturedAt);
               const confirmed = item.verdict === "confirmed";
               const rejected = item.verdict === "rejected";
               const notImportant = item.verdict === "not_important";
@@ -63,6 +67,7 @@ export default function OutsideRaisedSection({
                   <p className="cvs-outside-raised-item-text">{d.see}</p>
                   {/* verbatim receipt where one resolves; SignalQuote renders nothing when quote is null */}
                   <SignalQuote quote={d.quote} eventDate={d.eventDate} />
+                  {reported && <p className="cvs-outside-raised-reported">{reported}</p>}
                   <p className="cvs-outside-raised-coverage">{OUTSIDE_RAISED_COVERAGE}</p>
                   <p className="cvs-outside-raised-prompt">{OUTSIDE_RAISED_PROMPT}</p>
                   <CheckControl

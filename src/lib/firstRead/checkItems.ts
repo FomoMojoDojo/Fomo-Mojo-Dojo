@@ -28,6 +28,12 @@ export interface DeltaRender {
   quote: string | null;
   quoteSourceText: string | null;
   eventDate: string | null;
+  // Reported-line date (quote-independent). The line renders only when there is NO quote
+  // (no double-date with "As captured") and reportedEventDate is present. Optional so a
+  // fixture may omit them (absent → formatReportedLine returns null → no line).
+  reportedEventDate?: string | null;
+  reportedPrecision?: "day" | "month" | null;
+  capturedAt?: string | null;
 }
 
 export interface RawCheckItem {

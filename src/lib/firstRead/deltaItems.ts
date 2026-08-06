@@ -32,6 +32,10 @@ export interface DeltaInput {
   // own analysis mis-stamped; it must never render in the outside's voice. Only consulted
   // for internally_silent (the say-anchored groups already carry a public_observed see side).
   has_outside_signal?: boolean;
+  // Reported-line date, quote-independent (the backing outside signal's date + capture).
+  reported_event_date?: string | null;
+  reported_precision?: "day" | "month" | null;
+  captured_at?: string | null;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -70,6 +74,9 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
           quote: d.quote,
           quoteSourceText: d.quote_source_text,
           eventDate: d.event_date,
+          reportedEventDate: d.reported_event_date ?? null,
+          reportedPrecision: d.reported_precision ?? null,
+          capturedAt: d.captured_at ?? null,
         },
       });
       continue;
@@ -100,6 +107,9 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
         quote: d.quote,
         quoteSourceText: d.quote_source_text,
         eventDate: d.event_date,
+        reportedEventDate: d.reported_event_date ?? null,
+        reportedPrecision: d.reported_precision ?? null,
+        capturedAt: d.captured_at ?? null,
       },
     });
   }

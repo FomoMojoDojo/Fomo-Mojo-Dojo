@@ -112,6 +112,24 @@ describe("TheCheckAct — Option B internally_silent section", () => {
     expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
   });
 
+  it("dated item renders the Reported line (byte-exact, U+00B7); an undated item renders no line", () => {
+    const dated = {
+      ...iSilentItem(), identity: "is-dated",
+      delta: { ...iSilentItem().delta, reportedEventDate: "2025-07-18", reportedPrecision: "day" as const, capturedAt: "2026-07-24T00:00:00+00" },
+    };
+    cap.ret = withItems({ status: "ready", data: [dated] }, [dated]);
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain("Reported Jul 2025 · read by us Jul 2026");
+  });
+
+  it("undated item: the Reported line is provably ABSENT from the rendered tree", () => {
+    cap.ret = withItems({ status: "ready", data: [iSilentItem()] }, [iSilentItem()]); // no reported fields
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.textContent).toContain(OUTSIDE_RAISED_HEADING); // section IS shown
+    expect(container.querySelector(".cvs-outside-raised-reported")).toBeNull(); // but no Reported line node
+    expect(container.textContent).not.toContain("Reported "); // nor its text
+  });
+
   it("receipt renders where a quote resolves (Edgewood's live items carry none — this proves the wiring)", () => {
     const withQuote = { ...iSilentItem(), delta: { ...iSilentItem().delta, quote: "SF provided a $350K emergency grant." } };
     cap.ret = withItems({ status: "ready", data: [withQuote] }, [withQuote]);

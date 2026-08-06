@@ -114,6 +114,19 @@ describe("V2-7 — DeltaItemRow: registers labeled, receipt only via the quote f
     expect(r2.container.querySelector("figure.cvs-signal-quote")).toBeTruthy();
     expect(r2.container.textContent).toContain("leading nonprofit provider");
   });
+
+  it("Reported line: renders on a dated NO-quote see side; SUPPRESSED when a quote is present (no double-date)", () => {
+    const dated = item({ delta: { deltaType: "divergent", say: "s", see: "the record", quote: null, quoteSourceText: null, eventDate: null, reportedEventDate: "2025-07-18", reportedPrecision: "day", capturedAt: "2026-07-24T00:00:00+00" } });
+    const r1 = render(<DeltaItemRow item={dated} onSet={vi.fn()} />);
+    expect(r1.container.textContent).toContain("Reported Jul 2025 · read by us Jul 2026");
+
+    // quote present → "As captured" shows and the Reported line is SUPPRESSED (overlap rule)
+    const quotedDated = item({ delta: { deltaType: "echoed", say: "s", see: "the record", quote: "leading nonprofit provider", quoteSourceText: "x", eventDate: "2024-05-01", reportedEventDate: "2025-07-18", reportedPrecision: "day", capturedAt: "2026-07-24" } });
+    const r2 = render(<DeltaItemRow item={quotedDated} onSet={vi.fn()} />);
+    expect(r2.container.querySelector("figure.cvs-signal-quote")).toBeTruthy(); // As captured present
+    expect(r2.container.querySelector(".cvs-delta-reported")).toBeNull(); // Reported line SUPPRESSED
+    expect(r2.container.textContent).not.toContain("Reported Jul 2025");
+  });
 });
 
 describe("V2-7 — SayVsSeeExhibit: three groups + honest-absence per empty group", () => {
