@@ -28,6 +28,7 @@ export interface LiftOutcome {
   quote?: string;
   quote_source_text?: string;
   event_date?: string | null;
+  event_date_precision?: "day" | "month" | null; // rides with event_date (self-describing)
 }
 
 /**
@@ -53,6 +54,7 @@ export function liftQuoteFromFetch(
     quote: produced.quote,
     quote_source_text: produced.quote_source_text,
     event_date: produced.event_date,
+    event_date_precision: produced.event_date_precision,
   };
 }
 
@@ -61,6 +63,7 @@ export interface SignalQuoteUpdate {
   quote: string;
   quote_source_text: string;
   event_date: string | null;
+  event_date_precision: "day" | "month" | null;
 }
 
 /**
@@ -76,6 +79,7 @@ export function signalQuoteUpdate(outcome: LiftOutcome): SignalQuoteUpdate | nul
     quote: outcome.quote,
     quote_source_text: outcome.quote_source_text,
     event_date: outcome.event_date ?? null,
+    event_date_precision: outcome.event_date ? (outcome.event_date_precision ?? "day") : null,
   };
 }
 

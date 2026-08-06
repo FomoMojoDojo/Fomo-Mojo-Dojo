@@ -97,9 +97,12 @@ export type Signal = {
   // the fetched source (a byte-exact substring of `quote_source_text`, DB-enforced) —
   // never model output; NULL when the signal has no quotable line (honest absence).
   // `event_date` is the source's visible publication/event date, NULL when none.
+  // `event_date_precision` makes the date self-describing: 'day' (full date) or 'month'
+  // (a YYYY-MM source stored as YYYY-MM-01). Column defaults to 'day'; NULL-date rows carry 'day'.
   quote?: string | null;
   quote_source_text?: string | null;
   event_date?: string | null;
+  event_date_precision?: "day" | "month" | null;
   topic: string | null;
   framework: string | null;
   directness: Directness;

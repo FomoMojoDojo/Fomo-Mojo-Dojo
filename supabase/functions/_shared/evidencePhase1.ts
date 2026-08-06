@@ -86,6 +86,10 @@ function normalizeSignalInsert(signal: SignalDraft) {
   // substring, so it returns null (and the DB CHECK is the backstop). event_date is
   // taken only when the source carried a real date — never inferred.
   const lifted = liftVerbatimQuote(signal.quote_source_text, signal.quote);
+  // event_date is validated here; precision comes from the draft (set by the decouple /
+  // quote-producer), falling back to the validated form's own precision. A NULL date is
+  // stored with precision 'day' (the column default; never NULL).
+  const picked = pickEventDate(signal.event_date);
   return {
     company_id: signal.company_id,
     source_id: signal.source_id,
@@ -98,7 +102,8 @@ function normalizeSignalInsert(signal: SignalDraft) {
     evidence_excerpt: signal.evidence_excerpt,
     quote: lifted?.quote ?? null,
     quote_source_text: lifted?.quote_source_text ?? null,
-    event_date: pickEventDate(signal.event_date),
+    event_date: picked?.date ?? null,
+    event_date_precision: picked ? (signal.event_date_precision ?? picked.precision) : "day",
     topic: signal.topic,
     framework: signal.framework,
     directness: signal.directness,
@@ -608,6 +613,23 @@ export async function ingestPublicBaselineSignals(args: {
     resultJson: args.resultJson,
   });
 
+  // DECOUPLE (date supply) — promote the model-extracted date (raw_payload.date) onto
+  // event_date INDEPENDENTLY of whether a verbatim quote lifts. Previously event_date rode
+  // ONLY with a lifted quote (see the producer below), so ~99% of model dates were dropped.
+  // Precision is recorded ('day' | 'month') so the (event_date, event_date_precision) pair is
+  // self-describing. EXCLUSION: a full-day date equal to the capture day is a crawl/last-seen
+  // artifact (delta-0) — dropped, never shown as CURRENT. Month-precision is never delta-0.
+  // The quote producer below still sets a lifted quote's date (additive; it wins when present).
+  const captureDay = new Date().toISOString().slice(0, 10);
+  for (const draft of signals) {
+    const rawDate = (draft.raw_payload as { date?: unknown } | undefined)?.date;
+    const picked = pickEventDate(typeof rawDate === "string" ? rawDate : null);
+    if (!picked) continue;
+    if (picked.precision === "day" && picked.date === captureDay) continue; // delta-0 crawl artifact
+    draft.event_date = picked.date;
+    draft.event_date_precision = picked.precision;
+  }
+
   // V2-6 — VERBATIM QUOTE PRODUCER. Signals are minted from the model's result_json
   // (paraphrases), so the candidate CANNOT come from claim_text. It is selected from the
   // REAL retained source text (crawl `extracted`, joined by URL) — the source's own words.
@@ -627,7 +649,11 @@ export async function ingestPublicBaselineSignals(args: {
       if (!produced) continue;
       draft.quote = produced.quote;
       draft.quote_source_text = produced.quote_source_text;
-      draft.event_date = produced.event_date ?? draft.event_date ?? null;
+      // A quote's own date wins when present (additive); otherwise the decoupled date stands.
+      if (produced.event_date) {
+        draft.event_date = produced.event_date;
+        draft.event_date_precision = produced.event_date_precision ?? "day";
+      }
       quoted++;
       if (produced.event_date) dated++;
     }

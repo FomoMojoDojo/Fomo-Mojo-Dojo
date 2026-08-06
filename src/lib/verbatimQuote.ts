@@ -30,21 +30,41 @@ export function liftVerbatimQuote(
   return { quote: q, quote_source_text: src };
 }
 
+/** A validated source date + its precision. The `date` is always a full YYYY-MM-DD (the
+ *  column type is `date`); `precision` records whether the source carried a full day or only
+ *  a month — so the (event_date, event_date_precision) pair is SELF-DESCRIBING and no consumer
+ *  needs raw_payload to render it honestly ("Apr 2026" vs "1 Apr 2026"). */
+export interface PickedDate {
+  date: string; // YYYY-MM-DD (month-precision stored as YYYY-MM-01)
+  precision: "day" | "month";
+}
+
 /**
- * A source's visible date → an ISO date string (YYYY-MM-DD), or null. Absence-isn't-
- * a-verdict: an unparseable / missing date returns null, NEVER an inferred one. Only
- * a genuinely date-shaped value the source carried is accepted.
+ * A source's visible date → { date, precision } or null. Absence-isn't-a-verdict: an
+ * unparseable / missing date returns null, NEVER an inferred one. Accepted forms:
+ *   - full ISO date or timestamp (YYYY-MM-DD[T…]) → precision 'day'
+ *   - month precision (YYYY-MM)                   → date YYYY-MM-01, precision 'month'
+ * Rejected: bare year, prose, "Captured", anything else (no inference).
  */
-export function pickEventDate(candidate: string | null | undefined): string | null {
+export function pickEventDate(candidate: string | null | undefined): PickedDate | null {
   if (typeof candidate !== "string") return null;
   const s = candidate.trim();
   if (!s) return null;
-  // Accept a bare ISO date, or a full ISO timestamp — take its date part. Reject
-  // anything else (a bare year, prose, "Captured", etc. — no inference).
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/);
-  if (!iso) return null;
-  const [, y, m, d] = iso;
-  const year = Number(y), month = Number(m), day = Number(d);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return `${y}-${m}-${d}`;
+  if (iso) {
+    const [, y, m, d] = iso;
+    const month = Number(m), day = Number(d);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { date: `${y}-${m}-${d}`, precision: "day" };
+  }
+  // Month precision: YYYY-MM → first of month, flagged 'month' so the day is never
+  // mistaken for a genuine first-of-month publication date.
+  const ym = s.match(/^(\d{4})-(\d{2})$/);
+  if (ym) {
+    const [, y, m] = ym;
+    const month = Number(m);
+    if (month < 1 || month > 12) return null;
+    return { date: `${y}-${m}-01`, precision: "month" };
+  }
+  return null;
 }

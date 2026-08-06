@@ -25,9 +25,12 @@ describe("CV-2e GOAL 1 — verbatim quote guard (code mirror of the DB CHECK)", 
     expect(liftVerbatimQuote(SRC, "   ")).toBeNull();
   });
 
-  it("event date: accepts a real ISO date, never infers one", () => {
-    expect(pickEventDate("2016-05-01")).toBe("2016-05-01");
-    expect(pickEventDate("2016-05-01T09:00:00Z")).toBe("2016-05-01");
+  it("event date: accepts a real ISO date (day) or a month, never infers one", () => {
+    expect(pickEventDate("2016-05-01")).toEqual({ date: "2016-05-01", precision: "day" });
+    expect(pickEventDate("2016-05-01T09:00:00Z")).toEqual({ date: "2016-05-01", precision: "day" });
+    // month precision → first of month, flagged 'month' (self-describing)
+    expect(pickEventDate("2026-04")).toEqual({ date: "2026-04-01", precision: "month" });
+    expect(pickEventDate("2026-13")).toBeNull(); // invalid month
     // absence-isn't-a-verdict — a bare year / prose / 'Captured' → NULL, never inferred
     expect(pickEventDate("2016")).toBeNull();
     expect(pickEventDate("Captured")).toBeNull();

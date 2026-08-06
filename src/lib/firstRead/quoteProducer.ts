@@ -124,6 +124,7 @@ export interface ProducedQuote {
   quote: string;
   quote_source_text: string;
   event_date: string | null;
+  event_date_precision: "day" | "month" | null; // null iff event_date is null
 }
 
 /**
@@ -142,5 +143,11 @@ export function produceQuote(
   if (!candidate) return null;
   const lifted = liftVerbatimQuote(sourceText, candidate); // AUTHORITY: byte-exact substring
   if (!lifted) return null;
-  return { quote: lifted.quote, quote_source_text: lifted.quote_source_text, event_date: pickEventDate(dateCandidate ?? null) };
+  const picked = pickEventDate(dateCandidate ?? null);
+  return {
+    quote: lifted.quote,
+    quote_source_text: lifted.quote_source_text,
+    event_date: picked?.date ?? null,
+    event_date_precision: picked?.precision ?? null,
+  };
 }

@@ -72,14 +72,15 @@ describe("V2-6d — liftQuoteFromFetch (honest disposition)", () => {
   });
 });
 
-describe("V2-6d — signalQuoteUpdate (write-scope law: exactly three render columns)", () => {
-  it("a lifted outcome writes ONLY quote / quote_source_text / event_date", () => {
+describe("V2-6d — signalQuoteUpdate (write-scope law: exactly the quote/date render columns)", () => {
+  it("a lifted outcome writes ONLY quote / quote_source_text / event_date / event_date_precision", () => {
     const out = liftQuoteFromFetch(fetchResult(), "2024-05-01", "crisis stabilization unit");
     const update = signalQuoteUpdate(out)!;
     // FALSIFICATION guard: any claim/identity/verdict column added here fails this set.
-    expect(new Set(Object.keys(update))).toEqual(new Set(["quote", "quote_source_text", "event_date"]));
+    expect(new Set(Object.keys(update))).toEqual(new Set(["quote", "quote_source_text", "event_date", "event_date_precision"]));
     expect(update.quote).toBe(out.quote);
     expect(update.event_date).toBe("2024-05-01");
+    expect(update.event_date_precision).toBe("day");
   });
   it("a non-lifted outcome produces no write (nothing to update)", () => {
     expect(signalQuoteUpdate(liftQuoteFromFetch(fetchResult({ ok: false, text: "" }), null, "x"))).toBeNull();
