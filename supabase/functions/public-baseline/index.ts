@@ -2046,7 +2046,11 @@ Deno.serve(async (req) => {
     // FAILURE the parent row is marked failed so deltas never compute over a bad baseline.
     // parent_run_id links this baseline's ledger row + the delta stepper to the parent.
     const chain = body?.chain === true;
-    const parent_run_id = body?.parent_run_id != null ? String(body.parent_run_id) : null;
+    // The parent full_refresh row is LEDGER — machine truth, written server-side (service-role),
+    // NEVER by a browser (long_runner_runs is SELECT-only under RLS for authenticated). A scheduled
+    // trigger may PASS an existing parent id; a client passes only {chain:true} and public-baseline
+    // OPENS the parent below. Mutable so the opened id flows to the child stamp / tail / finally.
+    let parentRunId: string | null = body?.parent_run_id != null ? String(body.parent_run_id) : null;
     // OE-2: claude_websearch is the DEFAULT engine (council 2026-06-10 — searx discovery
     // produced 0 independent items across 3 companies; claude_websearch produced 7 on the
     // same company the same day). The searx→crawl→OpenAI path stays reachable by explicit
@@ -2145,11 +2149,29 @@ Deno.serve(async (req) => {
     // callers (the 5 direct client callers and both wrappers) get a durable terminal
     // state even when the 150s wall cut the browser and the isolate landed its write
     // behind the cut. Non-fatal: a ledger write failure never breaks a paid baseline run.
+    // FULL REFRESH — OPEN THE PARENT (server-side, service-role). Written BEFORE the baseline's
+    // own work so every stage is in the ledger and a silent skip is impossible. Only when chain
+    // and no parent was passed (a scheduled trigger supplies its own). A parent-open failure is
+    // non-fatal: the baseline still runs; the chain just isn't linked/closed by us (the stale
+    // sweep bounds any orphan).
+    if (chain && !parentRunId) {
+      const { data: parentRow, error: parentErr } = await supabase
+        .from("long_runner_runs")
+        .insert({ run_kind: "full_refresh", company_id, status: "running" })
+        .select("id")
+        .single();
+      if (parentErr) {
+        console.log("[baseline] full_refresh parent open error", parentErr.message);
+      } else {
+        parentRunId = (parentRow as { id?: unknown } | null)?.id ? String((parentRow as { id: unknown }).id) : null;
+      }
+    }
+
     let ledgerRowId: string | null = null;
     {
       const { data: ledgerRow, error: ledgerStartErr } = await supabase
         .from("long_runner_runs")
-        .insert({ run_kind: "public_baseline", company_id, status: "running", target_count: 1, ...(parent_run_id ? { parent_run_id } : {}) })
+        .insert({ run_kind: "public_baseline", company_id, status: "running", target_count: 1, ...(parentRunId ? { parent_run_id: parentRunId } : {}) })
         .select("id")
         .single();
       if (ledgerStartErr) {
@@ -3129,7 +3151,7 @@ Deno.serve(async (req) => {
     if (chain) {
       waitUntil(triggerRefreshDeltas(
         company_id,
-        parent_run_id,
+        parentRunId,
         Deno.env.get("SUPABASE_URL") ?? "",
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       ));
@@ -3174,12 +3196,12 @@ Deno.serve(async (req) => {
       // FULL REFRESH G2 — HALT: a failed baseline fails the parent full_refresh row so the chain
       // is visibly stopped and stage 2 (deltas) is never reached. (On success the delta stepper
       // closes the parent when it finishes.)
-      if (ledgerOutcome === "failed" && chain && parent_run_id) {
+      if (ledgerOutcome === "failed" && chain && parentRunId) {
         await supabase.from("long_runner_runs").update({
           status: "failed",
           error_text: ledgerErrText ?? "baseline failed — deltas not run",
           finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        }).eq("id", parent_run_id);
+        }).eq("id", parentRunId);
       }
     }
   } catch (err) {

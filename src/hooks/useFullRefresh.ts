@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
-export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "baseline_failed" | "deltas_failed";
+export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "baseline_failed" | "deltas_failed" | "invoke_failed";
 
 // OPERATOR-SIGNED strings (2026-08-08). The chain-error is the stale-sweep's ledger text (G3).
 export const FR_BUTTON_IDLE = "Full refresh";
@@ -20,17 +20,25 @@ export const FR_DONE = "Full refresh complete.";
 export const FR_HALT = "Outside-signal refresh failed — deltas were not run.";
 export const FR_DELTAS_FAILED = "Outside signals updated; delta compute failed.";
 export const FR_RESUME = "Outside signals are fresh; deltas pending — run it again to finish.";
+// The refresh never STARTED — the invoke didn't reach/run the server, so no ledger row exists.
+// This is a DIFFERENT failure from a baseline that ran and failed (FR_HALT); it must not borrow
+// the halt string, which would falsely claim the baseline ran.
+export const FR_INVOKE_FAILED = "The refresh couldn't start — nothing was run or changed. Check the connection and try again.";
 
 export type FullRefreshState = { stage: FullRefreshStage; message: string; running: boolean };
 
 const IDLE: FullRefreshState = { stage: "idle", message: "", running: false };
 const WINDOW_MS = 35 * 60_000; // covers a full baseline (~4-5min) + delta loop with headroom.
+// If no parent full_refresh row appears within this grace of firing, the invoke never reached
+// the server (public-baseline opens the parent BEFORE its work) → INVOKE_FAILED, not a halt.
+const INVOKE_GRACE_MS = 30_000;
 
 export function useFullRefresh(companyId?: string, companyName?: string, website?: string | null) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<FullRefreshState>(IDLE);
   const pollRef = useRef<number | null>(null);
   const parentRef = useRef<string | null>(null);
+  const firedAtRef = useRef<number | null>(null); // set on start(); gates the INVOKE_FAILED grace.
 
   const stopPoll = useCallback(() => {
     if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -77,7 +85,18 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
     stopPoll();
     pollRef.current = setInterval(async () => {
       const s = await readChain(parentRef.current);
-      if (!s) return;
+      if (!s) {
+        // No parent row yet. After a start(), if the grace elapses with still no row, the invoke
+        // never reached the server (it opens the parent before its work) → INVOKE_FAILED, distinct
+        // from a baseline that ran and failed. Before the grace, keep showing "step 1" (starting).
+        if (firedAtRef.current !== null && Date.now() - firedAtRef.current > INVOKE_GRACE_MS) {
+          firedAtRef.current = null;
+          setState({ stage: "invoke_failed", message: FR_INVOKE_FAILED, running: false });
+          stopPoll();
+        }
+        return;
+      }
+      firedAtRef.current = null; // a row exists → the refresh started; grace no longer applies.
       setState(s);
       if (!s.running) {
         stopPoll();
@@ -103,16 +122,13 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
   const start = useCallback(async () => {
     if (!companyId || !companyName || !website?.trim() || state.running) return;
     setState({ stage: "baseline", message: FR_STEP_BASELINE, running: true });
-    const { data: parent, error } = await supabase
-      .from("long_runner_runs")
-      .insert({ run_kind: "full_refresh", company_id: companyId, status: "running" })
-      .select("id").single();
-    if (error || !parent) { setState({ stage: "baseline_failed", message: FR_HALT, running: false }); return; }
-    const parentId = String((parent as { id: string }).id);
-    parentRef.current = parentId;
-    // Fire stage 1 with the chain flag; the baseline tail fires stage 2 on success. Not awaited.
+    // NO client ledger write — long_runner_runs is SELECT-only under RLS for the browser. The
+    // client passes ONLY {chain:true}; public-baseline opens the parent full_refresh row
+    // (service-role) before its work. The client discovers that row by polling (readChain).
+    parentRef.current = null;
+    firedAtRef.current = Date.now();
     void supabase.functions.invoke("public-baseline", {
-      body: { company_id: companyId, company_name: companyName, website, chain: true, parent_run_id: parentId },
+      body: { company_id: companyId, company_name: companyName, website, chain: true },
     });
     startPolling();
   }, [companyId, companyName, website, state.running, startPolling]);
