@@ -94,6 +94,13 @@ export function useFirstReadCapture(
   const [base, setBase] = useState<Array<RawCheckItem & { identity: string }>>([]);
   const [responses, setResponses] = useState<Record<string, ResponseRow>>({});
   const [loading, setLoading] = useState(true);
+  // Identity-compute failure (Gate: honest identity-compute). contentIdentity() hashes via
+  // crypto.subtle, which is UNDEFINED on insecure origins (http over a non-localhost host, e.g. a
+  // Tailscale peer). Before this state existed the hash threw with no catch, `loading` stayed true
+  // forever, and TheCheckAct rendered "Loading items…" eternally — an unbounded loading state with
+  // no error path (BSL-1 violation). The effect now records the failure here so every consumer can
+  // terminate into the signed error instead of hanging or (post-loading-clear) claiming absence.
+  const [identityError, setIdentityError] = useState<string | null>(null);
   const [frozen, setFrozen] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
   // GATE C-2b — the verdict-responses read's own loading/error, so the aggregate covers it too.
@@ -242,14 +249,31 @@ export function useFirstReadCapture(
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const hashed = await Promise.all(
-        raw.map(async (r) => ({ ...r, identity: r.identity ?? (await contentIdentity(r.text)) })),
-      );
-      const nonDeltaIds = new Set(hashed.map((h) => h.identity));
-      const deltas = dropCollidingDeltas(deltaRaw, nonDeltaIds) as Array<RawCheckItem & { identity: string }>;
-      if (!cancelled && mySeq === identSeq.current) {
-        setBase([...hashed, ...deltas]);
-        setLoading(false);
+      // Clear any prior identity failure at the START of a fresh run — a new attempt is not
+      // yet a failure, and a recovered origin (secure context) must be able to succeed.
+      if (!cancelled && mySeq === identSeq.current) setIdentityError(null);
+      try {
+        const hashed = await Promise.all(
+          raw.map(async (r) => ({ ...r, identity: r.identity ?? (await contentIdentity(r.text)) })),
+        );
+        const nonDeltaIds = new Set(hashed.map((h) => h.identity));
+        const deltas = dropCollidingDeltas(deltaRaw, nonDeltaIds) as Array<RawCheckItem & { identity: string }>;
+        if (!cancelled && mySeq === identSeq.current) {
+          setBase([...hashed, ...deltas]);
+        }
+      } catch (e) {
+        // crypto.subtle undefined (insecure origin) or any hash failure: record it so the render
+        // terminates into the signed ACT_DATA_ERROR instead of hanging on the loading string.
+        if (!cancelled && mySeq === identSeq.current) {
+          setIdentityError(String((e as Error)?.message ?? e));
+        }
+      } finally {
+        // finally GUARANTEES loading clears even when the hash throws — the crux of the fix.
+        // Guarded by the staleness check exactly as the success path was, so a superseded run
+        // never flips the current run's loading.
+        if (!cancelled && mySeq === identSeq.current) {
+          setLoading(false);
+        }
       }
     })();
     return () => {
@@ -387,14 +411,17 @@ export function useFirstReadCapture(
   // so their behaviour — including ExportButton's hung-read-keeps-export-DISABLED invariant — is
   // byte-identical. HeardAct gates its render on these via useReadState + <ActData>.
   const deltaError = deltaState.status === "error" ? deltaState.error : null;
-  const readError = findingsError ?? optionsError ?? canvasError ?? deltaError ?? responsesError ?? null;
+  // identityError is folded in so the AGGREGATE covers the identity compute too: otherwise clearing
+  // `loading` in the effect's finally would flip HeardAct (useReadState) and ExportButton (GATE D)
+  // from their bounded error state to a FALSE absence / enabled export on an identity failure.
+  const readError = findingsError ?? optionsError ?? canvasError ?? deltaError ?? responsesError ?? identityError ?? null;
   const readLoading =
     loading || findingsLoading || optionsLoading || canvasLoading || deltaState.status === "loading" || responsesLoading;
 
   // `deltaState` is ADDITIVE — the say-vs-see read's honest outcome for TheCheckAct to
   // gate its exhibit through <ActData>. Existing consumers (HeardAct, ExportButton) do not
   // read it and see byte-identical items/tally/loading.
-  return { items, tally, loading, frozen, sessionStatus, setVerdict, refetchResponses, deltaState, readError, readLoading };
+  return { items, tally, loading, identityError, frozen, sessionStatus, setVerdict, refetchResponses, deltaState, readError, readLoading };
 }
 
 export type { AsyncState };

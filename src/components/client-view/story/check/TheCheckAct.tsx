@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from "react";
 import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFirstReadCapture";
+import type { AsyncState } from "@/hooks/useAsyncRead";
 import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
@@ -37,11 +38,21 @@ export default function TheCheckAct({
 }) {
   const [error, setError] = useState<string | null>(null);
 
-  const { items, tally, loading, frozen, setVerdict, deltaState } = useFirstReadCapture(
+  const { items, tally, loading, identityError, frozen, setVerdict, deltaState } = useFirstReadCapture(
     companyId,
     sessionId || undefined,
     ensureSession,
   );
+
+  // The item area is gated by the identity compute (contentIdentity → crypto.subtle). On an
+  // insecure origin that throws and the effect now records `identityError`; routing the area
+  // through <ActData> terminates it into the signed ACT_DATA_ERROR instead of the eternal
+  // "Loading items…". loading → the loading line; ready → the exhibit + check list.
+  const itemArea: AsyncState<true> = identityError
+    ? { status: "error", error: identityError }
+    : loading
+      ? { status: "loading" }
+      : { status: "ready", data: true };
 
   const onSet = async (item: CheckItem, v: Verdict, correction?: string) => {
     setError(await setVerdict(item, v, correction));
@@ -75,38 +86,41 @@ export default function TheCheckAct({
       {frozen && <p className="cvs-check-frozen">{FROZEN_MSG}</p>}
       {error && !frozen && <p className="cvs-check-refusal">{error}</p>}
 
-      {loading ? (
-        <p className="cvs-support">Loading items…</p>
-      ) : (
-        <>
-          {/* V2-7 say-vs-see exhibit — always renders its three groups (honest-absence
-              per empty group), so the contrast frame is present even before deltas exist.
-              GATE B: gated on the delta read's honest state. A FAILED or never-returning
-              delta read renders the signed error via <ActData> — NOT the three signed
-              group-empty lines / heading, which are only reachable in the ready branch
-              (a genuine zero-delta read). deltaItems carry the verdict join from `items`. */}
-          <ActData state={deltaState} loading={null}>
-            {() => (
-              <>
-                <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />
-                {/* Option B — observed-anchored section. Inside the SAME ready branch, so its
-                    honest-empty string is unreachable on a failed or pending delta read. */}
-                <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} />
-              </>
-            )}
-          </ActData>
+      {/* GATE (honest identity-compute): the item area terminates into the signed error on an
+          identity-compute failure (crypto.subtle undefined on an insecure origin), never an
+          eternal loading string. loading → "Loading items…"; error → ACT_DATA_ERROR. */}
+      <ActData state={itemArea} loading={<p className="cvs-support">Loading items…</p>}>
+        {() => (
+          <>
+            {/* V2-7 say-vs-see exhibit — always renders its three groups (honest-absence
+                per empty group), so the contrast frame is present even before deltas exist.
+                GATE B: gated on the delta read's honest state. A FAILED or never-returning
+                delta read renders the signed error via <ActData> — NOT the three signed
+                group-empty lines / heading, which are only reachable in the ready branch
+                (a genuine zero-delta read). deltaItems carry the verdict join from `items`. */}
+            <ActData state={deltaState} loading={null}>
+              {() => (
+                <>
+                  <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />
+                  {/* Option B — observed-anchored section. Inside the SAME ready branch, so its
+                      honest-empty string is unreachable on a failed or pending delta read. */}
+                  <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} />
+                </>
+              )}
+            </ActData>
 
-          {checkItems.length === 0 ? (
-            <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
-          ) : (
-            <div className="cvs-check-list">
-              {checkItems.map((item) => (
-                <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
-              ))}
-            </div>
-          )}
-        </>
-      )}
+            {checkItems.length === 0 ? (
+              <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
+            ) : (
+              <div className="cvs-check-list">
+                {checkItems.map((item) => (
+                  <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </ActData>
       {/* Name-the-moves recap — suppressed when there is nothing to check (items === 0). */}
       <ActRecap recap={CHECK_RECAP} hasContent={items.length > 0} />
     </div>
