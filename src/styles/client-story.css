@@ -2200,3 +2200,34 @@
   cursor: pointer;
 }
 .cvs-feature-this:hover { color: var(--mm-secondary); border-color: var(--mm-label); }
+
+/* ------------------------------------------------------------------ */
+/* First Read ROLLUP (Gate 2.5) — auto-default: neutral lead + ratify. */
+/* ------------------------------------------------------------------ */
+.cvs-theme-ratify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+/* Presenter-only origin note + judge reason (never client-facing — gated on isAdmin at render). */
+.cvs-theme-origin-note {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--mm-label-dim);
+}
+.cvs-theme-judge-reason {
+  font-size: 12px;
+  color: var(--mm-muted);
+}
+.cvs-ratify {
+  font-size: 12px;
+  color: var(--mm-text);
+  background: none;
+  border: 1px solid var(--mm-label);
+  border-radius: 3px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.cvs-ratify:hover { border-color: var(--mm-soft); color: var(--mm-soft); }

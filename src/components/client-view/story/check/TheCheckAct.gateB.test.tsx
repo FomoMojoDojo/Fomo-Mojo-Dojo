@@ -15,7 +15,7 @@ vi.mock("@/hooks/useFirstReadCapture", async (orig) => {
 // themes render in their Gate-1 shape (no featured card, no picker, no internal prompt).
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: false }) }));
 vi.mock("@/hooks/useFeaturedItems", () => ({
-  useFeaturedItems: () => ({ featured: {}, feature: async () => null, unfeature: async () => null, loading: false, error: null, refetch: async () => {} }),
+  useFeaturedItems: () => ({ featured: {}, feature: async () => null, unfeature: async () => null, ratify: async () => null, ensureDefaults: async () => {}, loading: false, error: null, refetch: async () => {} }),
 }));
 
 import TheCheckAct from "./TheCheckAct";

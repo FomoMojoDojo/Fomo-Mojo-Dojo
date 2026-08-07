@@ -8,7 +8,7 @@
  * issuance (open → proposal_issued) is the Proposal.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFirstReadCapture, type CheckItem, type Verdict } from "@/hooks/useFirstReadCapture";
 import type { AsyncState } from "@/hooks/useAsyncRead";
 import CheckItemRow from "./CheckItemRow";
@@ -20,9 +20,11 @@ import FeaturedExhibitCard from "./FeaturedExhibitCard";
 import { ThemeHeadline, ThemeMore } from "./ThemeSection";
 import {
   THEME_1_HEADLINE, THEME_2_HEADLINE, THEME_3_HEADLINE,
-  theme2Lead, THEME_3_LEAD, NO_FEATURED_PROMPT, FEATURED_MISSING_PROMPT,
+  THEME_1_LEAD, theme2Lead, THEME_3_LEAD, NO_FEATURED_PROMPT, FEATURED_MISSING_PROMPT,
+  THEME_AUTO_LEAD,
 } from "@/lib/firstRead/themeCopy";
-import { useFeaturedItems } from "@/hooks/useFeaturedItems";
+import { useFeaturedItems, type FeaturedPointer } from "@/hooks/useFeaturedItems";
+import { useCuratedTensions } from "@/hooks/useCuratedTensions";
 import { useAuth } from "@/hooks/useAuth";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
@@ -87,8 +89,20 @@ export default function TheCheckAct({
   // re-worded / rebuilt) renders NOTHING for the slot and flags the internal surface — never a
   // stale ghost.
   const { isAdmin } = useAuth();
-  const { featured, feature } = useFeaturedItems(companyId);
+  // AMENDMENT 1: ratify-in-place stays in the hook but renders NO control — featuring another item
+  // is the only visible action, so `ratify` is intentionally not destructured here.
+  const { featured, feature, ensureDefaults } = useFeaturedItems(companyId);
+  // Theme-1 ordering: a live curated tension WINS over a say-vs-see featured pointer.
+  const { render: curatedRender } = useCuratedTensions(companyId);
 
+  // Gate 2.5 — rail-open lazy: the presenter (admin) triggers the auto-default compute once. The
+  // edge function writes origin='auto'/'auto_judged' pointers ONLY where none live (never operator).
+  useEffect(() => { if (isAdmin) void ensureDefaults(); }, [isAdmin, ensureDefaults]);
+
+  const featuredSayVsSee = useMemo(() => {
+    const id = featured.say_vs_see?.itemIdentity;
+    return id ? sayVsSeeItems.find((i) => i.identity === id) ?? null : null;
+  }, [featured, sayVsSeeItems]);
   const featuredOutside = useMemo(() => {
     const id = featured.outside_raised?.itemIdentity;
     return id ? outsideRaisedItems.find((i) => i.identity === id) ?? null : null;
@@ -101,6 +115,10 @@ export default function TheCheckAct({
   const outsideMissing = !!featured.outside_raised && !featuredOutside;
   const findingsMissing = !!featured.findings && !featuredFinding;
   // The tail excludes the featured item, so "…and N more" counts the rest.
+  const sayVsSeeRest = useMemo(
+    () => (featuredSayVsSee && !curatedRender ? sayVsSeeItems.filter((i) => i.identity !== featuredSayVsSee.identity) : sayVsSeeItems),
+    [sayVsSeeItems, featuredSayVsSee, curatedRender],
+  );
   const outsideRest = useMemo(
     () => (featuredOutside ? outsideRaisedItems.filter((i) => i.identity !== featuredOutside.identity) : outsideRaisedItems),
     [outsideRaisedItems, featuredOutside],
@@ -109,6 +127,26 @@ export default function TheCheckAct({
     () => (featuredFinding ? checkItems.filter((i) => i.identity !== featuredFinding.identity) : checkItems),
     [checkItems, featuredFinding],
   );
+
+  // Render a theme's featured lead + card. Choice-language lead renders ONLY for origin='operator';
+  // an auto/auto_judged default renders the NEUTRAL THEME_AUTO_LEAD. AMENDMENT 1/2: no meta-line, no
+  // ratify button — the default renders quietly; the judge's one-line reason (auto_judged) still
+  // shows to the presenter in the italic meta style. signedLead is optional.
+  const renderFeatured = (
+    pointer: FeaturedPointer | undefined,
+    item: CheckItem | null,
+    signedLead: string | undefined,
+  ) => {
+    if (!pointer || !item) return null;
+    const lead = pointer.origin === "operator" ? signedLead : THEME_AUTO_LEAD;
+    return (
+      <>
+        {lead && <p className="cvs-theme-lead">{lead}</p>}
+        <FeaturedExhibitCard item={item} />
+        {isAdmin && pointer.judgeReason && <p className="cvs-theme-origin-note">{pointer.judgeReason}</p>}
+      </>
+    );
+  };
 
   return (
     <div className="cvs-fr-check">
@@ -133,13 +171,17 @@ export default function TheCheckAct({
       <ActData state={itemArea} loading={<p className="cvs-support">Loading items…</p>}>
         {() => (
           <>
+            {/* THEME 1 fallback (Gate 2.5): when NO live curated tension, a say-vs-see featured
+                pointer (auto or operator) leads instead. Curated wins when present. */}
+            {!curatedRender && renderFeatured(featured.say_vs_see, featuredSayVsSee, THEME_1_LEAD)}
+
             {/* THEME 1 tail — say-vs-see, collapsed behind "…and N more like this". GATE B: gated
                 on the delta read's honest state. A FAILED or never-returning delta read renders the
                 signed error via <ActData>, NOT the three signed group-empty lines, which are only
                 reachable in the ready branch. deltaItems carry the verdict join from `items`. */}
-            <ThemeMore count={sayVsSeeItems.length}>
+            <ThemeMore count={sayVsSeeRest.length}>
               <ActData state={deltaState} loading={null}>
-                {() => <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />}
+                {() => <SayVsSeeExhibit items={sayVsSeeRest} onSet={onSet} disabled={frozen} />}
               </ActData>
             </ThemeMore>
 
@@ -147,12 +189,7 @@ export default function TheCheckAct({
                 + lead line; the rest collapse behind "…and N more". The section is INSIDE the delta
                 ready branch, so its honest-empty string is unreachable on a failed/pending read. */}
             <ThemeHeadline>{THEME_2_HEADLINE}</ThemeHeadline>
-            {featuredOutside && (
-              <>
-                <p className="cvs-theme-lead">{theme2Lead(outsideRaisedItems.length)}</p>
-                <FeaturedExhibitCard item={featuredOutside} />
-              </>
-            )}
+            {renderFeatured(featured.outside_raised, featuredOutside, theme2Lead(outsideRaisedItems.length))}
             {isAdmin && !featuredOutside && (
               <p className="cvs-theme-internal-prompt">{outsideMissing ? FEATURED_MISSING_PROMPT : NO_FEATURED_PROMPT}</p>
             )}
@@ -173,12 +210,7 @@ export default function TheCheckAct({
             {/* THEME 3 — what we found (findings; differentiators fold in as the closing list).
                 Leads with the operator-picked featured finding (Gate 2) + lead line. */}
             <ThemeHeadline>{THEME_3_HEADLINE}</ThemeHeadline>
-            {featuredFinding && (
-              <>
-                <p className="cvs-theme-lead">{THEME_3_LEAD}</p>
-                <FeaturedExhibitCard item={featuredFinding} />
-              </>
-            )}
+            {renderFeatured(featured.findings, featuredFinding, THEME_3_LEAD)}
             {isAdmin && !featuredFinding && (
               <p className="cvs-theme-internal-prompt">{findingsMissing ? FEATURED_MISSING_PROMPT : NO_FEATURED_PROMPT}</p>
             )}

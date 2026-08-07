@@ -25,6 +25,9 @@ export const ASK_MOMENT_PROMPT = "Where do you land on this?";
 // A theme with a featured item leads with its lead line + the featured exhibit card. Theme 1
 // (say-vs-see) leads with the curated tension and needs no lead line here. THEME_2 carries {N}
 // (the count of outside-raised items); THEME_3 is fixed.
+// THEME 1's operator-chosen/ratified FALLBACK lead (say-vs-see pointer only; the curated tension
+// keeps its own curation language). Operator-signed 2026-08-08, byte-exact.
+export const THEME_1_LEAD = "Of everything you say and the record says back, start here:";
 const THEME_2_LEAD_TEMPLATE =
   "The public record raised {N} things you haven't yet spoken to. This is the one worth starting with:";
 export const THEME_3_LEAD = "From everything we read, this is what stood up. The one that matters most:";
@@ -38,6 +41,14 @@ export function theme2Lead(count: number): string {
 export const NO_FEATURED_PROMPT = "No featured item picked for this theme yet — expand the list and choose one.";
 export const FEATURED_MISSING_PROMPT = "The featured item for this theme no longer exists — pick a new one.";
 export const FEATURE_THIS_LABEL = "Feature this";
+
+// ── ROLLUP Gate 2.5 — auto-default framing (operator-signed 2026-08-08, byte-exact) ──────────
+// An AUTO default renders QUIETLY under this NEUTRAL line — never the operator-choice leads
+// (THEME_1/2/3_LEAD). It carries NO meta-line and NO ratify button (AMENDMENT 1, 2026-08-08):
+// featuring another item is the only visible action; origin flips to 'operator' (+ its signed
+// choice lead) only then. The honesty hinge stays: the system says "where we'd start", never
+// "we chose". (The judge's one-line reason still renders, in the italic meta style — AMENDMENT 2.)
+export const THEME_AUTO_LEAD = "Where we'd start:";
 
 /** The "…and N more like this" toggle label for a given count. One home for the substitution so
  *  the label can never drift between the screen and any future leave-behind. */
