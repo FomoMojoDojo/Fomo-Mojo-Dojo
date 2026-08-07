@@ -1710,11 +1710,11 @@ export default function InputsTab({
           {/* Admin-only: outside signals refresh */}
           {isAdmin && (
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20, marginBottom: 4 }}>
-              <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: "rgba(246,246,244,0.35)" }}>
+              <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: D.inkFaint }}>
                 Outside signals
               </span>
               {baselineRun?.created_at && (
-                <span style={{ fontFamily: D.mono, fontSize: 9, color: "rgba(246,246,244,0.25)" }}>
+                <span style={{ fontFamily: D.mono, fontSize: 9, color: D.inkFaint }}>
                   Last run {new Date(baselineRun.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                 </span>
               )}
@@ -1724,7 +1724,7 @@ export default function InputsTab({
                 title={!canRefresh ? "Refreshing outside signals requires the refresh-baseline capability" : undefined}
                 onClick={() => void fullRefresh.start()}
                 style={{
-                  fontFamily: D.mono, fontSize: 9, color: fullRefreshBusy || !canRefresh ? "rgba(246,246,244,0.25)" : "#7a9e90",
+                  fontFamily: D.mono, fontSize: 9, color: fullRefreshBusy || !canRefresh ? D.inkFaint : "#7a9e90",
                   background: "none", border: "none", padding: 0,
                   cursor: fullRefreshBusy || !canRefresh ? "default" : "pointer",
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
@@ -1733,7 +1733,7 @@ export default function InputsTab({
                 {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} →`}
               </button>
               {fullRefresh.state.message && (
-                <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : "rgba(246,246,244,0.4)" }}>
+                <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
@@ -1799,7 +1799,7 @@ export default function InputsTab({
                 onClick={() => void fullRefresh.start()}
                 style={{
                   fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em",
-                  color: baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline ? "#bbb" : "#2f6b3a",
+                  color: baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline ? D.inkFaint : "#2f6b3a",
                   background: "none", border: "none", padding: 0,
                   cursor: baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline ? "default" : "pointer",
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
@@ -1808,7 +1808,7 @@ export default function InputsTab({
                 {fullRefreshBusy ? "Refreshing…" : outsideSignalsLabel}
               </button>
               {fullRefresh.state.message && (
-                <span style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : "#aaa" }}>
+                <span style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
