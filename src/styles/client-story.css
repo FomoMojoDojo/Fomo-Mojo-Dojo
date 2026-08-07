@@ -2116,3 +2116,38 @@
 .cvs-fr-feed-result { margin: 10px 0 0; font-size: 14px; color: #3c3327; }
 .cvs-fr-feed-result.is-error { color: #c0451a; }
 .cvs-fr-feed-pruned { margin: 4px 0 0; font-size: 13px; color: #6b5f4f; font-style: italic; }
+
+/* ------------------------------------------------------------------ */
+/* First Read ROLLUP (Gate 1) — themed overviews in the Check act.     */
+/* Headline + featured exhibit + a collapsed "…and N more" tail.       */
+/* ------------------------------------------------------------------ */
+.cvs-theme-headline {
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1.3;
+  color: var(--mm-text);
+  max-width: 40ch;
+  margin: 56px 0 18px;
+}
+.cvs-theme-more {
+  margin: 18px 0 0;
+}
+.cvs-theme-more-summary {
+  font-size: 14px;
+  color: var(--mm-label);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 4px 0;
+}
+.cvs-theme-more-summary:hover { color: var(--mm-secondary); }
+.cvs-theme-more-summary::-webkit-details-marker { display: none; }
+.cvs-theme-more-summary::before { content: "▸ "; color: var(--mm-faint); }
+.cvs-theme-more[open] .cvs-theme-more-summary::before { content: "▾ "; }
+.cvs-theme-more-framing {
+  font-size: 14px;
+  color: var(--mm-muted);
+  font-style: italic;
+  margin: 8px 0 16px;
+  max-width: 52ch;
+}

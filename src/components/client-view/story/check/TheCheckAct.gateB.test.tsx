@@ -104,12 +104,17 @@ describe("TheCheckAct — Option B internally_silent section", () => {
     expect(container.textContent).not.toContain(OUTSIDE_RAISED_FRAMING);
   });
 
-  it("delta read ERROR → the section (heading + empty) does NOT render; the signed error does", () => {
+  it("delta read ERROR → the section DETAIL (empty/framing) does NOT render; the signed error does", () => {
     cap.ret = withItems({ status: "error", error: "PostgREST 500" }, [iSilentItem()]);
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
     expect(container.textContent).toContain(ACT_DATA_ERROR);
-    expect(container.textContent).not.toContain(OUTSIDE_RAISED_HEADING);
+    // The load-bearing invariant: no false honest-empty copy on a failed read.
     expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_FRAMING);
+    // ROLLUP (Gate 1): the THEME headline (byte-identical to OUTSIDE_RAISED_HEADING) is the
+    // always-on overview label; the section's own heading is suppressed (showHeading=false), and
+    // only the gated DETAIL is replaced by the signed error. So the heading text is expected here.
+    expect(container.textContent).toContain(OUTSIDE_RAISED_HEADING);
   });
 
   it("dated item renders the Reported line (byte-exact, U+00B7); an undated item renders no line", () => {

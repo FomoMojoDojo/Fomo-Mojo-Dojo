@@ -16,6 +16,8 @@ import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
 import OutsideRaisedSection from "./OutsideRaisedSection";
 import CuratedTensionSection from "./CuratedTensionSection";
+import { ThemeHeadline, ThemeMore } from "./ThemeSection";
+import { THEME_1_HEADLINE, THEME_2_HEADLINE, THEME_3_HEADLINE } from "@/lib/firstRead/themeCopy";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
 import { CHECK_RECAP } from "../recapCopy";
@@ -78,9 +80,13 @@ export default function TheCheckAct({
       {/* V2-9 SWEEP: the raw session-id/status bar (machinery) is removed from room copy. */}
       <CheckTally tally={tally} />
 
-      {/* SELF-CONSISTENCY — the curated single-instance exhibit, ABOVE say-vs-see. Its own
-          read (useCuratedTensions), independent of the verdict machinery; renders nothing
-          when there is no live curated row. A curation, not a verdict — no response buttons. */}
+      {/* ROLLUP (Gate 1): three themed overviews, not a wall of per-item batteries. THEME 1's
+          featured exhibit is the curated single-instance tension — its own read
+          (useCuratedTensions), independent of the verdict machinery; renders nothing when there is
+          no live curated row. Kept ABOVE the item-area gate so it stays resilient (it needs no item
+          identities), exactly as before. Featured pickers for themes 2/3 arrive in Gate 2; the
+          batteries inside the tails come off in Gate 3. */}
+      <ThemeHeadline>{THEME_1_HEADLINE}</ThemeHeadline>
       <CuratedTensionSection companyId={companyId} />
 
       {frozen && <p className="cvs-check-frozen">{FROZEN_MSG}</p>}
@@ -92,32 +98,38 @@ export default function TheCheckAct({
       <ActData state={itemArea} loading={<p className="cvs-support">Loading items…</p>}>
         {() => (
           <>
-            {/* V2-7 say-vs-see exhibit — always renders its three groups (honest-absence
-                per empty group), so the contrast frame is present even before deltas exist.
-                GATE B: gated on the delta read's honest state. A FAILED or never-returning
-                delta read renders the signed error via <ActData> — NOT the three signed
-                group-empty lines / heading, which are only reachable in the ready branch
-                (a genuine zero-delta read). deltaItems carry the verdict join from `items`. */}
-            <ActData state={deltaState} loading={null}>
-              {() => (
-                <>
-                  <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />
-                  {/* Option B — observed-anchored section. Inside the SAME ready branch, so its
-                      honest-empty string is unreachable on a failed or pending delta read. */}
-                  <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} />
-                </>
-              )}
-            </ActData>
+            {/* THEME 1 tail — say-vs-see, collapsed behind "…and N more like this". GATE B: gated
+                on the delta read's honest state. A FAILED or never-returning delta read renders the
+                signed error via <ActData>, NOT the three signed group-empty lines, which are only
+                reachable in the ready branch. deltaItems carry the verdict join from `items`. */}
+            <ThemeMore count={sayVsSeeItems.length}>
+              <ActData state={deltaState} loading={null}>
+                {() => <SayVsSeeExhibit items={sayVsSeeItems} onSet={onSet} disabled={frozen} />}
+              </ActData>
+            </ThemeMore>
 
-            {checkItems.length === 0 ? (
-              <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
-            ) : (
-              <div className="cvs-check-list">
-                {checkItems.map((item) => (
-                  <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
-                ))}
-              </div>
-            )}
+            {/* THEME 2 — outside-raised (internally_silent). Inside the SAME delta ready branch, so
+                its honest-empty string is unreachable on a failed or pending delta read. */}
+            <ThemeHeadline>{THEME_2_HEADLINE}</ThemeHeadline>
+            <ThemeMore count={outsideRaisedItems.length}>
+              <ActData state={deltaState} loading={null}>
+                {() => <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} showHeading={false} />}
+              </ActData>
+            </ThemeMore>
+
+            {/* THEME 3 — what we found (findings; differentiators fold in as the closing list). */}
+            <ThemeHeadline>{THEME_3_HEADLINE}</ThemeHeadline>
+            <ThemeMore count={checkItems.length}>
+              {checkItems.length === 0 ? (
+                <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
+              ) : (
+                <div className="cvs-check-list">
+                  {checkItems.map((item) => (
+                    <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
+                  ))}
+                </div>
+              )}
+            </ThemeMore>
           </>
         )}
       </ActData>

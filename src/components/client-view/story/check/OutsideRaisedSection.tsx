@@ -36,14 +36,19 @@ export default function OutsideRaisedSection({
   items,
   onSet,
   disabled,
+  // ROLLUP (Gate 1): the Check act promotes this heading to the THEME headline (THEME_2_HEADLINE,
+  // byte-identical), so it suppresses the in-section one to avoid rendering it twice. Defaults true
+  // so any other caller (and the export) is byte-unchanged. The aria-label is retained either way.
+  showHeading = true,
 }: {
   items: CheckItem[];
   onSet: (item: CheckItem, v: Verdict, correction?: string) => void;
   disabled?: boolean;
+  showHeading?: boolean;
 }) {
   return (
     <section className="cvs-outside-raised" aria-label={OUTSIDE_RAISED_HEADING}>
-      <h3 className="cvs-outside-raised-heading">{OUTSIDE_RAISED_HEADING}</h3>
+      {showHeading && <h3 className="cvs-outside-raised-heading">{OUTSIDE_RAISED_HEADING}</h3>}
       {items.length === 0 ? (
         <p className="cvs-outside-raised-empty cvs-support">{OUTSIDE_RAISED_EMPTY}</p>
       ) : (
