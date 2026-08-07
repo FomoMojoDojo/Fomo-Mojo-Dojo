@@ -18,6 +18,7 @@ import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
 import CheckControl from "./CheckControl";
 import SignalQuote from "@/components/evidence/SignalQuote";
 import { formatSourceAttribution } from "@/lib/firstRead/reportedDate";
+import { FEATURE_THIS_LABEL } from "@/lib/firstRead/themeCopy";
 
 // ── Client-facing copy — OPERATOR-SIGNED (Option B design gate, 2026-08-05) ──────────
 // Byte-for-byte per the ruling. String 2 carries a literal em-dash (U+2014); apostrophes
@@ -40,11 +41,14 @@ export default function OutsideRaisedSection({
   // byte-identical), so it suppresses the in-section one to avoid rendering it twice. Defaults true
   // so any other caller (and the export) is byte-unchanged. The aria-label is retained either way.
   showHeading = true,
+  // ROLLUP (Gate 2): presenter-only "Feature this" per row. Undefined (client) → no button.
+  onFeature,
 }: {
   items: CheckItem[];
   onSet: (item: CheckItem, v: Verdict, correction?: string) => void;
   disabled?: boolean;
   showHeading?: boolean;
+  onFeature?: (item: CheckItem) => void;
 }) {
   return (
     <section className="cvs-outside-raised" aria-label={OUTSIDE_RAISED_HEADING}>
@@ -82,6 +86,11 @@ export default function OutsideRaisedSection({
                     onSet={(v, c) => onSet(item, v, c)}
                     disabled={disabled}
                   />
+                  {onFeature && (
+                    <button type="button" className="cvs-feature-this" onClick={() => onFeature(item)}>
+                      {FEATURE_THIS_LABEL}
+                    </button>
+                  )}
                 </div>
               );
             })}

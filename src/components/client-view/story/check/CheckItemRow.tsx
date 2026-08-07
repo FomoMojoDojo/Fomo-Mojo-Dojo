@@ -11,16 +11,21 @@
 
 import type { CheckItem, Verdict } from "@/hooks/useFirstReadCapture";
 import { CHECK_KIND_LABEL, checkItemAnnotation, NOT_IMPORTANT_NOTE } from "@/lib/firstRead/checkItemView";
+import { FEATURE_THIS_LABEL } from "@/lib/firstRead/themeCopy";
 import CheckControl from "./CheckControl";
 
 export default function CheckItemRow({
   item,
   onSet,
   disabled,
+  // ROLLUP Gate 2 — presenter-only "Feature this" affordance. Provided ONLY for an admin on the
+  // internal surface; undefined (client) renders no button. Picks this item as the theme flagship.
+  onFeature,
 }: {
   item: CheckItem;
   onSet: (item: CheckItem, v: Verdict, correction?: string) => void;
   disabled?: boolean;
+  onFeature?: () => void;
 }) {
   const confirmed = item.verdict === "confirmed";
   const rejected = item.verdict === "rejected";
@@ -42,6 +47,12 @@ export default function CheckItemRow({
         onSet={(v, c) => onSet(item, v, c)}
         disabled={disabled}
       />
+
+      {onFeature && (
+        <button type="button" className="cvs-feature-this" onClick={onFeature}>
+          {FEATURE_THIS_LABEL}
+        </button>
+      )}
 
       {ann?.kind === "confirmed" && ann.bandLabel && (
         <p className="cvs-check-lift">

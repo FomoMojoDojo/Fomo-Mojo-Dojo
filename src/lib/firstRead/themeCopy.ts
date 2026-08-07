@@ -21,6 +21,24 @@ export const EXPANSION_FRAMING =
 // Read theme copy has one home).
 export const ASK_MOMENT_PROMPT = "Where do you land on this?";
 
+// ── ROLLUP Gate 2 — theme LEAD lines (operator-signed 2026-08-08, byte-exact) ────────────────
+// A theme with a featured item leads with its lead line + the featured exhibit card. Theme 1
+// (say-vs-see) leads with the curated tension and needs no lead line here. THEME_2 carries {N}
+// (the count of outside-raised items); THEME_3 is fixed.
+const THEME_2_LEAD_TEMPLATE =
+  "The public record raised {N} things you haven't yet spoken to. This is the one worth starting with:";
+export const THEME_3_LEAD = "From everything we read, this is what stood up. The one that matters most:";
+
+/** THEME_2 lead line with the count substituted. One home for the substitution. */
+export function theme2Lead(count: number): string {
+  return THEME_2_LEAD_TEMPLATE.replace("{N}", String(count));
+}
+
+// INTERNAL / PRESENTER-ONLY (never client-facing). Operator-signed 2026-08-08, byte-exact.
+export const NO_FEATURED_PROMPT = "No featured item picked for this theme yet — expand the list and choose one.";
+export const FEATURED_MISSING_PROMPT = "The featured item for this theme no longer exists — pick a new one.";
+export const FEATURE_THIS_LABEL = "Feature this";
+
 /** The "…and N more like this" toggle label for a given count. One home for the substitution so
  *  the label can never drift between the screen and any future leave-behind. */
 export function moreLabel(count: number): string {

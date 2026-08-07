@@ -2151,3 +2151,52 @@
   margin: 8px 0 16px;
   max-width: 52ch;
 }
+
+/* ------------------------------------------------------------------ */
+/* First Read ROLLUP (Gate 2) — featured exhibit + lead + picker.      */
+/* ------------------------------------------------------------------ */
+.cvs-theme-lead {
+  font-weight: 300;
+  font-size: 20px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  max-width: 46ch;
+  margin: 0 0 16px;
+}
+.cvs-theme-featured {
+  /* Flagship treatment WITHOUT a vertical rail (client-story bar-law): padding + a faint tint. */
+  padding: 16px 20px;
+  margin: 0 0 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+}
+.cvs-theme-featured .cvs-check-text,
+.cvs-theme-featured .cvs-outside-raised-item-text {
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.4;
+  color: var(--mm-text);
+  margin: 4px 0;
+}
+/* Internal/presenter-only — never shown to a client (admin-gated at render). */
+.cvs-theme-internal-prompt {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--mm-label-dim);
+  border: 1px dashed var(--mm-tab-disabled);
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 0 0 12px;
+}
+/* Presenter-only "Feature this" affordance on each expanded item. */
+.cvs-feature-this {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mm-label);
+  background: none;
+  border: 1px solid var(--mm-tab-disabled);
+  border-radius: 3px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.cvs-feature-this:hover { color: var(--mm-secondary); border-color: var(--mm-label); }

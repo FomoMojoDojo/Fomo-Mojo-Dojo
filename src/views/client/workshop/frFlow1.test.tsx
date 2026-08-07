@@ -24,6 +24,11 @@ vi.mock("@/integrations/supabase/client", () => ({
     },
   },
 }));
+// ROLLUP Gate 2: TheCheckAct reads auth + featured pointers — stub both (non-admin, none featured).
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: false }) }));
+vi.mock("@/hooks/useFeaturedItems", () => ({
+  useFeaturedItems: () => ({ featured: {}, feature: async () => null, unfeature: async () => null, loading: false, error: null, refetch: async () => {} }),
+}));
 // TheCheckAct calls the real hook — stub it so the no-session branch renders cleanly.
 vi.mock("@/hooks/useFirstReadCapture", () => ({
   useFirstReadCapture: () => ({

@@ -16,8 +16,14 @@ import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
 import OutsideRaisedSection from "./OutsideRaisedSection";
 import CuratedTensionSection from "./CuratedTensionSection";
+import FeaturedExhibitCard from "./FeaturedExhibitCard";
 import { ThemeHeadline, ThemeMore } from "./ThemeSection";
-import { THEME_1_HEADLINE, THEME_2_HEADLINE, THEME_3_HEADLINE } from "@/lib/firstRead/themeCopy";
+import {
+  THEME_1_HEADLINE, THEME_2_HEADLINE, THEME_3_HEADLINE,
+  theme2Lead, THEME_3_LEAD, NO_FEATURED_PROMPT, FEATURED_MISSING_PROMPT,
+} from "@/lib/firstRead/themeCopy";
+import { useFeaturedItems } from "@/hooks/useFeaturedItems";
+import { useAuth } from "@/hooks/useAuth";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
 import { CHECK_RECAP } from "../recapCopy";
@@ -75,6 +81,35 @@ export default function TheCheckAct({
   );
   const checkItems = useMemo(() => items.filter((i) => i.kind !== "delta"), [items]);
 
+  // ROLLUP Gate 2 — per-theme featured item (operator-picked, content-identity anchored). The
+  // picker + absent/missing prompts are ADMIN-only (presenter surface); a client sees only the
+  // featured card + the "…and N more" tail. A pointer that no longer resolves (item struck /
+  // re-worded / rebuilt) renders NOTHING for the slot and flags the internal surface — never a
+  // stale ghost.
+  const { isAdmin } = useAuth();
+  const { featured, feature } = useFeaturedItems(companyId);
+
+  const featuredOutside = useMemo(() => {
+    const id = featured.outside_raised?.itemIdentity;
+    return id ? outsideRaisedItems.find((i) => i.identity === id) ?? null : null;
+  }, [featured, outsideRaisedItems]);
+  const featuredFinding = useMemo(() => {
+    const id = featured.findings?.itemIdentity;
+    return id ? checkItems.find((i) => i.identity === id) ?? null : null;
+  }, [featured, checkItems]);
+  // Pointer set but unresolved → the item vanished (internal flag, never a client ghost).
+  const outsideMissing = !!featured.outside_raised && !featuredOutside;
+  const findingsMissing = !!featured.findings && !featuredFinding;
+  // The tail excludes the featured item, so "…and N more" counts the rest.
+  const outsideRest = useMemo(
+    () => (featuredOutside ? outsideRaisedItems.filter((i) => i.identity !== featuredOutside.identity) : outsideRaisedItems),
+    [outsideRaisedItems, featuredOutside],
+  );
+  const checkRest = useMemo(
+    () => (featuredFinding ? checkItems.filter((i) => i.identity !== featuredFinding.identity) : checkItems),
+    [checkItems, featuredFinding],
+  );
+
   return (
     <div className="cvs-fr-check">
       {/* V2-9 SWEEP: the raw session-id/status bar (machinery) is removed from room copy. */}
@@ -108,24 +143,58 @@ export default function TheCheckAct({
               </ActData>
             </ThemeMore>
 
-            {/* THEME 2 — outside-raised (internally_silent). Inside the SAME delta ready branch, so
-                its honest-empty string is unreachable on a failed or pending delta read. */}
+            {/* THEME 2 — outside-raised. Leads with the operator-picked featured exhibit (Gate 2)
+                + lead line; the rest collapse behind "…and N more". The section is INSIDE the delta
+                ready branch, so its honest-empty string is unreachable on a failed/pending read. */}
             <ThemeHeadline>{THEME_2_HEADLINE}</ThemeHeadline>
-            <ThemeMore count={outsideRaisedItems.length}>
+            {featuredOutside && (
+              <>
+                <p className="cvs-theme-lead">{theme2Lead(outsideRaisedItems.length)}</p>
+                <FeaturedExhibitCard item={featuredOutside} />
+              </>
+            )}
+            {isAdmin && !featuredOutside && (
+              <p className="cvs-theme-internal-prompt">{outsideMissing ? FEATURED_MISSING_PROMPT : NO_FEATURED_PROMPT}</p>
+            )}
+            <ThemeMore count={outsideRest.length}>
               <ActData state={deltaState} loading={null}>
-                {() => <OutsideRaisedSection items={outsideRaisedItems} onSet={onSet} disabled={frozen} showHeading={false} />}
+                {() => (
+                  <OutsideRaisedSection
+                    items={outsideRest}
+                    onSet={onSet}
+                    disabled={frozen}
+                    showHeading={false}
+                    onFeature={isAdmin ? (it) => void feature("outside_raised", it.identity) : undefined}
+                  />
+                )}
               </ActData>
             </ThemeMore>
 
-            {/* THEME 3 — what we found (findings; differentiators fold in as the closing list). */}
+            {/* THEME 3 — what we found (findings; differentiators fold in as the closing list).
+                Leads with the operator-picked featured finding (Gate 2) + lead line. */}
             <ThemeHeadline>{THEME_3_HEADLINE}</ThemeHeadline>
-            <ThemeMore count={checkItems.length}>
-              {checkItems.length === 0 ? (
+            {featuredFinding && (
+              <>
+                <p className="cvs-theme-lead">{THEME_3_LEAD}</p>
+                <FeaturedExhibitCard item={featuredFinding} />
+              </>
+            )}
+            {isAdmin && !featuredFinding && (
+              <p className="cvs-theme-internal-prompt">{findingsMissing ? FEATURED_MISSING_PROMPT : NO_FEATURED_PROMPT}</p>
+            )}
+            <ThemeMore count={checkRest.length}>
+              {checkRest.length === 0 ? (
                 <p className="cvs-support">No other checkable items surfaced for this company yet.</p>
               ) : (
                 <div className="cvs-check-list">
-                  {checkItems.map((item) => (
-                    <CheckItemRow key={item.identity} item={item} onSet={onSet} disabled={frozen} />
+                  {checkRest.map((item) => (
+                    <CheckItemRow
+                      key={item.identity}
+                      item={item}
+                      onSet={onSet}
+                      disabled={frozen}
+                      onFeature={isAdmin ? () => void feature("findings", item.identity) : undefined}
+                    />
                   ))}
                 </div>
               )}
