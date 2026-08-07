@@ -159,10 +159,25 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   const allSignals = Array.isArray(signalRows) ? signalRows : [];
   // B2.1: competitor_voice signals are evidence about OTHER companies — they must never
-  // become claim candidates in the CLIENT's claim layer. Only this class is excluded;
+  // become claim candidates in the CLIENT's claim layer. D1 (generator root-cause) extends
+  // this to 'analysis' — OUR reading of the record is not the client's claim either.
   // market_context keeps its pre-existing rebuild behavior.
-  const signals = allSignals.filter((row) => (row as { voice_class?: string | null })?.voice_class !== "competitor_voice");
-  const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>);
+  const signals = allSignals.filter((row) => {
+    const vc = (row as { voice_class?: string | null })?.voice_class;
+    return vc !== "competitor_voice" && vc !== "analysis";
+  });
+
+  // D3 anchor gate — load the company's operator-editable entity anchors (name / domain /
+  // partner / address). Outside-band signals mint a client claim only if they reference one.
+  // Empty/absent → the gate is inert (unseeded companies mint exactly as before).
+  const { data: companyRow } = await supabase
+    .from("companies").select("entity_anchors_json").eq("id", companyId).maybeSingle();
+  const anchorsRaw = (companyRow as { entity_anchors_json?: unknown } | null)?.entity_anchors_json;
+  const anchors = Array.isArray(anchorsRaw)
+    ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean)
+    : [];
+
+  const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>, anchors);
 
   // Compute deterministic stable IDs for every candidate.
   const stableIds = await Promise.all(

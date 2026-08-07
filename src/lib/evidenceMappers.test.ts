@@ -400,3 +400,80 @@ describe("claim statement stability — key pinning", () => {
     }
   });
 });
+
+// ── Generator root-cause fixes (D1/D2/D3), falsified against the REAL historical artifacts ──
+import { signalMatchesAnchor, looksLikeContextIncompleteClaim } from "./evidenceMappers";
+
+describe("D1 — top_hypotheses born voice_class='analysis' (not client-facing evidence)", () => {
+  it("every top_hypotheses signal is minted voice_class='analysis' with the analysis marker", () => {
+    const signals = mapPublicBaselineOutputToSignals({
+      companyId: "c", sourceId: "r", sourceUrl: "https://cafebarra.com",
+      resultJson: { top_hypotheses: [
+        "Cafe Barra's online DTC channel is structurally underdeveloped.",
+        "The company likely positions itself in a premium niche.",
+      ] },
+    });
+    expect(signals).toHaveLength(2);
+    expect(signals.every((s) => s.voice_class === "analysis")).toBe(true);
+    expect(signals.every((s) => (s.raw_payload as { source_type?: string }).source_type === "analysis")).toBe(true);
+    // and none reads as client_voice — the exact D1 harm (our analysis under the client's voice)
+    expect(signals.some((s) => s.voice_class === "client_voice")).toBe(false);
+  });
+});
+
+describe("D2 — declared-band full-passage distillation (no lead-clause truncation)", () => {
+  // Full-pipeline: the roasters source distills to the WHOLE passage (topic-safe, so the
+  // pre-existing positioning/strategy filter does not confound it).
+  it("KEEPS the client's own claim — 'built to support it' is no longer dropped (2201926b source)", () => {
+    const c = mapSignalsToClaimCandidates("c", [makeSignal({
+      signal_band: "organization", source_type: "uploaded_file", structure_level: "extracted",
+      claim_text: "Most roasters leave that system to the owner. Cafe Barra is built to support it.",
+      evidence_excerpt: "Most roasters leave that system to the owner. Cafe Barra is built to support it.",
+      topic: "operations",
+    })]);
+    expect(c).toHaveLength(1);
+    expect(c[0].claim.statement).toBe("Most roasters leave that system to the owner. Cafe Barra is built to support it.");
+  });
+  // The reject guard in isolation (falsified against the exact historical shapes).
+  it("guard REFUSES the lone dangling-demonstrative fragment (struck 91f118ef shape)", () => {
+    expect(looksLikeContextIncompleteClaim("Most suppliers leave that system to the owner.")).toBe(true);
+  });
+  it("guard REFUSES the lone inverted-thesis negation (truncated e8326a6c shape)", () => {
+    expect(looksLikeContextIncompleteClaim("Cafe Barra is not a brand yet.")).toBe(true);
+  });
+  it("guard PASSES the full 2-sentence passage — the inversion is resolved (not truncated)", () => {
+    expect(looksLikeContextIncompleteClaim("Cafe Barra is not a brand yet. A brand-led strategy only works if the brand has earned the right to lead.")).toBe(false);
+    expect(looksLikeContextIncompleteClaim("Most roasters leave that system to the owner. Cafe Barra is built to support it.")).toBe(false);
+  });
+});
+
+describe("D3 — anchor gate: unanchored outside signals never mint client claims", () => {
+  const ANCHORS = ["Cafe Barra", "cafebarra.com", "Le French Rooster", "lefrenchrooster.com", "2221 W Olive"];
+  const outside = (text: string, url = "https://joe.coffee/x") => makeSignal({
+    signal_band: "outside", source_type: "public_baseline_run", structure_level: "extracted",
+    directness: "direct", claim_text: text, evidence_excerpt: text, source_url: url, topic: "market",
+  });
+  it("REFUSES the 5 wrong-entity signals from minting a client claim", () => {
+    const bad = [
+      "Izote coffee brought their coffee cart for my baby shower today.",
+      "If you are at Providence St. Joseph's in Burbank, stop by Belli Fratelli Roasters.",
+      "TAKE OUT + MAIL ORDER + LOCAL LA DELIVERY. BUY OUR BEANS. Italian Roast.",
+      "Hand crafted Organic coffee roasters have opened their first cafe in lobby of Burbank Medical Center.",
+      "Specializing in Hand Packed Fair Trade Certified Ultra Micro Roasted Organic Coffee.",
+    ].map((t) => outside(t));
+    expect(mapSignalsToClaimCandidates("c", bad, ANCHORS)).toHaveLength(0);
+  });
+  it("ADMITS an anchored outside signal (names Cafe Barra & Le French Rooster)", () => {
+    const good = outside("joe.coffee lists Cafe Barra & Le French Rooster with 4.6 stars from 576 reviews.");
+    expect(mapSignalsToClaimCandidates("c", [good], ANCHORS).length).toBeGreaterThan(0);
+  });
+  it("INERT when no anchors configured — back-compat (unseeded company mints as before)", () => {
+    const s = outside("Izote coffee brought their coffee cart for my baby shower today.");
+    expect(mapSignalsToClaimCandidates("c", [s]).length).toBeGreaterThan(0); // no anchors → not gated
+  });
+  it("signalMatchesAnchor: matches by name/domain/address, rejects a different business", () => {
+    expect(signalMatchesAnchor({ claim_text: "Cafe Barra roasts small batch", source_url: null }, ANCHORS)).toBe(true);
+    expect(signalMatchesAnchor({ claim_text: "review", source_url: "https://cafebarra.com/x" }, ANCHORS)).toBe(true);
+    expect(signalMatchesAnchor({ claim_text: "Belli Fratelli Roasters, 191 S Buena Vista", source_url: "https://yelp.com" }, ANCHORS)).toBe(false);
+  });
+});

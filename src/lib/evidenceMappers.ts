@@ -191,6 +191,32 @@ function takeLeadClause(text: string) {
     .filter(Boolean)[0] || normalizeStatement(text);
 }
 
+// D2 (generator root-cause): a claim must be intelligible standing ALONE. Two deterministic
+// context-incomplete shapes, both born from lead-clause truncation, are REFUSED (not minted):
+//   (1) a SINGLE-sentence claim carrying a dangling demonstrative — "that/this/these/those
+//       <noun>" whose referent noun does not appear earlier in the claim (e.g. the struck
+//       "Most suppliers leave that system to the owner."); and
+//   (2) a SINGLE-sentence inverted-thesis negation — "... is not a/an ... yet" — whose point
+//       lives in the sentence that truncation dropped (e.g. the re-minted "Cafe Barra is not
+//       a brand yet.").
+// A MULTI-sentence claim that carries its own resolution passes (both re-mints do): the fix
+// is full-passage retention below; this guard only catches the residual lone fragments.
+export function looksLikeContextIncompleteClaim(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  const sentences = t.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const single = sentences.length <= 1;
+  if (!single) return false;
+  const dem = t.match(/\b(that|this|these|those)\s+([a-z]+)/i);
+  if (dem) {
+    const stem = dem[2].toLowerCase().replace(/s$/, "");
+    const before = t.slice(0, dem.index).toLowerCase();
+    if (stem.length >= 3 && !before.includes(stem)) return true; // dangling referent
+  }
+  if (/\bis not (a|an)\b[^.?!]*\byet\b/i.test(t)) return true; // inverted-thesis fragment
+  return false;
+}
+
 // Fabrication-removal (ecc4bd5 family, 07-09): the Cafe Barra-era vocabulary
 // substitutions ("teams"/"operators" → "Cafe operators", "roasters" →
 // "suppliers") are GONE — they rewrote every company's claim statements at
@@ -220,7 +246,13 @@ function summarizeOrganizationEvidence(claimText: string, evidenceText: string) 
     return null;
   }
   if (looksLikeFeatureList(claimText) || looksLikeFeatureList(evidenceText)) return null;
-  return compactStatement(takeLeadClause(claimText || evidenceText));
+  // D2: the DECLARED band keeps the FULL passage — lead-clause truncation inverted theses
+  // ("Cafe Barra is not a brand yet.") and dropped the client's own claim (the "…built to
+  // support it" half). A context-incomplete fragment (dangling demonstrative / inverted
+  // negation) is refused rather than minted unintelligible.
+  const full = compactStatement(claimText || evidenceText);
+  if (looksLikeContextIncompleteClaim(full)) return null;
+  return full;
 }
 
 function summarizeOutsideEvidence(text: string) {
@@ -279,7 +311,10 @@ function canonicalizeClaimStatement(signal: SignalDraft & { id?: string }) {
 
   if (signal.structure_level !== "interpreted" && looksLikeQuotedExcerpt(text)) return null;
   if (/(codi ed|co ff ee|coî|coé)/i.test(text)) return null;
-  if (text.length > 160) return null;
+  // D2: the declared (organization) band keeps FULL multi-sentence passages (thesis +
+  // resolution), so its length ceiling is higher than the single-clause outside/customer cap.
+  const maxLen = signal.signal_band === "organization" ? 320 : 160;
+  if (text.length > maxLen) return null;
   if (text.length < 32 && GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(text))) return null;
   if (text.split(" ").length < 4) return null;
 
@@ -657,6 +692,12 @@ export function mapPublicBaselineOutputToSignals(args: {
       structure_level: "interpreted",
       validation_status: "unvalidated",
       confidence_to_use: "medium",
+      // D1 (generator root-cause): top_hypotheses are the model's SYNTHESIS reads — our
+      // analysis, not captured evidence. Born voice_class='analysis' at the mint site
+      // (marker-driven: the same branch that stamps raw_payload.source_type='analysis'),
+      // so an analysis read can never inherit the company-URL→client_voice overlay and
+      // render as the client's own voice. Every consumer excludes 'analysis' (f1f94d8).
+      voice_class: "analysis",
       // Findings layer: hypotheses are synthesis reads (no voice source type). Stamp
       // 'analysis' as the terminal fallback so ingest auto-captures them as findings;
       // render bucketing maps 'analysis' to the bucket blank used (net-zero visible).
@@ -864,11 +905,33 @@ export function deriveClaimProvenance(
     : "public_observed";
 }
 
-export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>): ClaimCandidate[] {
+// D3 (generator root-cause): the ANCHOR GATE. An OUTSIDE-band signal may mint a
+// public_observed CLIENT claim only if its own text or source_url references a client entity
+// anchor (name / domain host / partner name / street address — the operator-editable
+// companies.entity_anchors_json). Unanchored outside signals stay signals (their
+// market_context/competitor home), never client claims — closing D3 (Izote / Belli Fratelli
+// etc. minting claims in the client's name). Org/customer bands are exempt (the client's own
+// uploaded material). BACK-COMPAT: an EMPTY anchor set leaves the gate inert — a company that
+// has not been seeded behaves exactly as before, so the gate rolls out per-company on seed.
+// KNOWN false-positive (named at the design gate): a genuine location review that names no
+// anchor ("Adorable little French Bakery…") is refused and stays a signal.
+export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null }, anchors: string[]): boolean {
+  if (!anchors.length) return true;
+  const hay = `${signal.claim_text ?? ""} ${signal.evidence_excerpt ?? ""} ${signal.source_url ?? ""}`.toLowerCase();
+  return anchors.some((a) => {
+    const needle = String(a || "").trim().toLowerCase();
+    return needle.length > 0 && hay.includes(needle);
+  });
+}
+
+export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = []): ClaimCandidate[] {
   const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string }> }>();
 
   signals.forEach((signal, index) => {
     if (!isSignalProvenanceWorthy(signal)) return;
+    // D3 anchor gate — outside-band signals must reference a client anchor to mint a client
+    // claim (inert when no anchors are configured for the company).
+    if (signal.signal_band === "outside" && !signalMatchesAnchor(signal, anchors)) return;
     const statement = canonicalizeClaimStatement(signal);
     if (!statement) return;
     const topic = inferTopicFromText(statement, signal.framework || null, signal.topic || null);

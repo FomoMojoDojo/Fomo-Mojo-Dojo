@@ -705,6 +705,7 @@ export type Database = {
         Row: {
           archetype: string
           area_scores_json: Json | null
+          entity_anchors_json: Json
           created_at: string
           created_by: string
           engagement_started_at: string | null
@@ -737,6 +738,7 @@ export type Database = {
         Insert: {
           archetype?: string
           area_scores_json?: Json | null
+          entity_anchors_json?: Json
           created_at?: string
           created_by: string
           engagement_started_at?: string | null
@@ -769,6 +771,7 @@ export type Database = {
         Update: {
           archetype?: string
           area_scores_json?: Json | null
+          entity_anchors_json?: Json
           created_at?: string
           created_by?: string
           engagement_started_at?: string | null
