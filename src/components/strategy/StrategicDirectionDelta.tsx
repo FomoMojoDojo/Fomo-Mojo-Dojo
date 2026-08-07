@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStrategicDelta, type ClaimDeltaRow, type DeltaSignal, type PublicTheme, type DispositionValue, type PublicVoiceDelta, type StruckClaim } from "@/hooks/useStrategicDelta";
-import { useClaimDeltaRecompute } from "@/hooks/useClaimDeltaRecompute";
+import { useDeltaStepRun } from "@/hooks/useDeltaStepRun";
 import OpenQuestionRecomputeControl from "@/components/strategy/OpenQuestionRecomputeControl";
 import { D } from "@/components/design-system/tokens";
 import { sourceHost, sourceLinkTitle } from "@/lib/sourceHost";
@@ -883,13 +883,13 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
 // response only; the finalize alone may fall back to a row-change poll. All
 // client-facing strings below are DRAFTS pending operator signature.
 
+// FULL REFRESH · Gate 1 — Extracts stage-level re-run, wired to the SERVER-SIDE stepper
+// (useDeltaStepRun). The client plan→chunks→finalize loop is RETIRED; progress is read from
+// the child claim_deltas ledger row, so this panel shows the true state even on a fresh load.
 function DeltaRecomputeControl({ companyId }: { companyId: string }) {
-  const { running, progress, start } = useClaimDeltaRecompute(companyId);
-
-  const failedChunks = progress?.results.filter((r) => !r.ok).length ?? 0;
-  const priorIncomplete = !running && progress?.stage === "done" &&
-    (failedChunks > 0 || (progress.finalize !== null && !progress.finalize.ok));
-  const buttonLabel = running ? "Recomputing…" : priorIncomplete ? "Resume recompute" : "Recompute deltas";
+  const { state, start } = useDeltaStepRun(companyId);
+  const running = state.status === "running";
+  const buttonLabel = running ? "Recomputing…" : state.status === "failed" ? "Resume recompute" : "Recompute deltas";
 
   const line: React.CSSProperties = { fontFamily: D.mono, fontSize: 9.5, letterSpacing: "0.04em", color: D.inkFaint, margin: "4px 0 0", lineHeight: 1.6 };
 
@@ -909,58 +909,31 @@ function DeltaRecomputeControl({ companyId }: { companyId: string }) {
         {buttonLabel}
       </button>
 
-      {progress && (
+      {state.status !== "idle" && (
         <div style={{ marginTop: 8 }}>
-          {progress.error && (
-            <p style={{ ...line, color: "#8a3b1f" }}>Could not recompute: {progress.error}</p>
-          )}
-
-          {!progress.error && progress.stage === "plan" && <p style={line}>Sizing the work…</p>}
-
-          {/* NEG-CACHE: frozen rejections the plan skipped — hidden at zero. DRAFT copy, unsigned. */}
-          {!progress.error && progress.stage !== "plan" && progress.rejectedTotal > 0 && (
-            <p style={line}>{progress.rejectedTotal} previously rejected — skipped.</p>
-          )}
-
-          {!progress.error && progress.stage !== "plan" && progress.totalChunks === 0 && (
-            <p style={line}>Nothing new to compare — running the wrap-up only.</p>
-          )}
-
-          {progress.results.map((r, i) => (
-            <p key={i} style={{ ...line, color: r.ok ? D.inkFaint : "#8a3b1f" }}>
-              {r.ok
-                ? `✓ Batch ${i + 1} — ${r.claims} claim${r.claims === 1 ? "" : "s"}, ${r.fresh} fresh comparison${r.fresh === 1 ? "" : "s"} (${r.seconds}s)`
-                : `✗ Batch ${i + 1} — ${r.reason} (verdicts reached so far are kept)`}
-            </p>
-          ))}
-
-          {!progress.error && progress.stage === "chunks" && progress.currentChunk > progress.results.length && (
-            <p style={line}>Comparing batch {progress.currentChunk} of {progress.totalChunks}…</p>
-          )}
-
-          {!progress.error && progress.stage === "finalize" && (
-            <p style={line}>Wrap-up: settling silences and clearing stale rows…</p>
-          )}
-
-          {progress.finalize && (
-            <p style={{ ...line, color: progress.finalize.ok ? D.inkFaint : "#8a3b1f" }}>
-              {progress.finalize.ok
-                ? `✓ Wrap-up complete (${progress.finalize.seconds}s)${progress.finalize.polled ? " — landed after the response was cut" : ""}`
-                : `✗ Wrap-up — ${progress.finalize.reason} — click again to re-run it (banked verdicts are kept).`}
+          {state.status === "frozen" && <p style={line}>{state.error}</p>}
+          {state.status === "failed" && (
+            <p style={{ ...line, color: "#8a3b1f" }}>
+              {state.error ?? "Recompute did not finish."} — click again to resume (banked verdicts are kept).
             </p>
           )}
-
-          {!progress.error && progress.stage === "done" && (
-            <p style={{ ...line, color: D.inkSoft }}>
-              {failedChunks === 0 && progress.finalize?.ok
-                ? "Recompute complete."
-                : `${progress.results.filter((r) => r.ok).length} of ${progress.totalChunks} batches completed — click again to resume (finished verdicts are kept).`}
+          {/* Progress read FROM the ledger: chunks banked / total. Copy is DRAFT, unsigned. */}
+          {running && (
+            <p style={line}>
+              {state.target == null
+                ? "Sizing the work…"
+                : state.target === 0
+                  ? "Nothing new to compare — running the wrap-up only…"
+                  : `Comparing — ${state.done} of ${state.target} batches banked…`}
             </p>
           )}
-
+          {state.status === "completed" && (
+            <p style={{ ...line, color: D.inkSoft }}>Recompute complete.</p>
+          )}
           {running && (
             <p style={{ ...line, fontSize: 8.5 }}>
-              Pair verdicts bank the moment they land; silences settle in the wrap-up.
+              Pair verdicts bank the moment they land; silences settle in the wrap-up. Runs on the
+              server — safe to leave this page.
             </p>
           )}
         </div>
