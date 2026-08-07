@@ -9,8 +9,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { isFrozenCompany } from "@/lib/frozenCompanies";
 
-export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "baseline_failed" | "deltas_failed" | "invoke_failed";
+export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "baseline_failed" | "deltas_failed" | "invoke_failed" | "frozen";
 
 // OPERATOR-SIGNED strings (2026-08-08). The chain-error is the stale-sweep's ledger text (G3).
 export const FR_BUTTON_IDLE = "Full refresh";
@@ -24,6 +25,10 @@ export const FR_RESUME = "Outside signals are fresh; deltas pending — run it a
 // This is a DIFFERENT failure from a baseline that ran and failed (FR_HALT); it must not borrow
 // the halt string, which would falsely claim the baseline ran.
 export const FR_INVOKE_FAILED = "The refresh couldn't start — nothing was run or changed. Check the connection and try again.";
+// FROZEN reference fixture (CB1). A courtesy refusal shown BEFORE any invoke, so a full refresh
+// aimed at a frozen company never even fires the chain. The server enforces this authoritatively
+// (public-baseline refuses before any write); this is the fast, honest client-side message.
+export const FR_FROZEN = "This is a frozen reference company — outside signals aren't refreshed for it.";
 
 export type FullRefreshState = { stage: FullRefreshStage; message: string; running: boolean };
 
@@ -121,6 +126,13 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
 
   const start = useCallback(async () => {
     if (!companyId || !companyName || !website?.trim() || state.running) return;
+    // FREEZE courtesy gate: a frozen reference fixture (CB1) is never refreshed. Refuse BEFORE any
+    // invoke so the chain never fires — no ledger row, no baseline write. (The server refuses
+    // authoritatively too; this just spares the round-trip and shows an honest message.)
+    if (isFrozenCompany(companyId)) {
+      setState({ stage: "frozen", message: FR_FROZEN, running: false });
+      return;
+    }
     setState({ stage: "baseline", message: FR_STEP_BASELINE, running: true });
     // NO client ledger write — long_runner_runs is SELECT-only under RLS for the browser. The
     // client passes ONLY {chain:true}; public-baseline opens the parent full_refresh row

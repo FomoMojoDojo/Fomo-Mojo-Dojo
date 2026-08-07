@@ -1651,13 +1651,15 @@ export default function InputsTab({
   // rather than guessing.
   const hasWebsiteForBaseline = Boolean(companyWebsite?.trim());
   const hasBaselineRun = !baselineLoading && !!baselineRun;
+  // Ruling C (switcher fix): the else-branch refresh control also NAMES its target company, so a
+  // full refresh can never be fired at the wrong same-name company. DRAFT string pending signature.
   const outsideSignalsLabel = baselineLoading
     ? "Checking…"
     : baselineRunning
       ? (hasBaselineRun ? "Refreshing…" : "Running…")
       : hasBaselineRun
-        ? "Refresh outside signals →"
-        : "Run outside signals →";
+        ? `Refresh outside signals — ${companyName} →`
+        : `Run outside signals — ${companyName} →`;
   const outsideSignalsBlockedReason = !canRefresh
     ? "Running outside signals requires the refresh-baseline capability"
     : !hasWebsiteForBaseline
@@ -1730,7 +1732,10 @@ export default function InputsTab({
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
                 }}
               >
-                {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} →`}
+                {/* Ruling C (switcher fix): the control NAMES its target company, so a full refresh
+                    can never be fired at the wrong same-name company (the 2026-08-07 frozen-CB1
+                    misfire). DRAFT string pending operator signature. */}
+                {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} — ${companyName} →`}
               </button>
               {fullRefresh.state.message && (
                 <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>

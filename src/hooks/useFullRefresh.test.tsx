@@ -34,7 +34,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: () => {} }),
 }));
 
-import { useFullRefresh } from "./useFullRefresh";
+import { useFullRefresh, FR_FROZEN } from "./useFullRefresh";
 
 describe("useFullRefresh — no client ledger write; correct invoke contract", () => {
   beforeEach(() => { invokeSpy.mockClear(); ledgerWrites.length = 0; });
@@ -61,6 +61,23 @@ describe("useFullRefresh — no client ledger write; correct invoke contract", (
     await act(async () => { await result.current.start(); });
     expect(invokeSpy).not.toHaveBeenCalled();
     expect(ledgerWrites).toEqual([]);
+    unmount();
+  });
+
+  // FREEZE GATE (Ruling B, gate-before-artifact). A full refresh aimed at the frozen reference
+  // fixture CB1 must refuse BEFORE the chain fires — no invoke, no ledger write — the exact escaped
+  // defect on 2026-08-07 when a misfired chain wrote 25 signals + 26 claims onto frozen CB1.
+  // FALSIFICATION: without the isFrozenCompany guard in start(), CB1 would invoke public-baseline
+  // exactly like any other company (proven by the CB2 case above) and this expectation would fail.
+  it("refuses a FROZEN company (CB1) before any invoke or ledger write; surfaces the frozen state", async () => {
+    const CB1 = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
+    const { result, unmount } = renderHook(() => useFullRefresh(CB1, "Cafe Barra", "https://cafebarra.com"));
+    await act(async () => { await result.current.start(); });
+    expect(invokeSpy).not.toHaveBeenCalled(); // the chain never fired
+    expect(ledgerWrites).toEqual([]);         // nothing written
+    expect(result.current.state.stage).toBe("frozen");
+    expect(result.current.state.running).toBe(false);
+    expect(result.current.state.message).toBe(FR_FROZEN);
     unmount();
   });
 });

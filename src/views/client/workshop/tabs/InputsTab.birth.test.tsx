@@ -84,8 +84,9 @@ describe("BRT-1 — birth trigger renders (TDZ regression)", () => {
     expect(text).toContain("Builds this company's routes, job map and market definition from the outside read.");
 
     // BSL-1's control still renders alongside it, in its has-baseline form.
-    expect(text).toContain("Refresh outside signals →");
-    expect(text).not.toContain("Run outside signals →");
+    // Ruling C (switcher fix): the label now NAMES its target company (companyName="Sonos").
+    expect(text).toContain("Refresh outside signals — Sonos →");
+    expect(text).not.toContain("Run outside signals — Sonos →");
   });
 
   it("already-spined: control is disabled and names why — never silently hidden-by-crash", () => {
@@ -108,7 +109,7 @@ describe("BRT-1 — birth trigger renders (TDZ regression)", () => {
     const { container } = render(<InputsTab {...sonosProps} />);
     const text = container.textContent || "";
 
-    expect(text).toContain("Run outside signals →");                 // BSL-1 first-run label
+    expect(text).toContain("Run outside signals — Sonos →");          // BSL-1 first-run label, named (Ruling C)
     expect(text).toContain("Run outside signals first — the spine is built from that evidence.");
 
     const birthBtn = Array.from(container.querySelectorAll("button"))

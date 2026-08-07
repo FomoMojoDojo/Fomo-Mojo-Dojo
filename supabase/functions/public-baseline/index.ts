@@ -3,6 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
+// FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
+// claimDeltaSynthesis). CB1 is a SELECT-only reference fixture; this function INGESTS signals/
+// claims from scratch, so it must refuse a frozen company before any write.
+import { FROZEN_COMPANY_IDS } from "../_shared/stepConditionsSynthesis.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2023,6 +2027,16 @@ Deno.serve(async (req) => {
     const company_id = String(body?.company_id || "").trim();
     if (!company_id) {
       return json({ error: "company_id required" }, 400);
+    }
+
+    // FREEZE GATE (gate-before-artifact). CB1 is a frozen reference fixture — SELECT-only. This
+    // function writes signals/claims from scratch, so it refuses a frozen company HERE, before the
+    // run-lock, the parent full_refresh row, and any signal insert. The downstream delta stage also
+    // refuses frozen companies, but it fired too late: on 2026-08-07 a full-refresh chain misfired
+    // at CB1 and this baseline wrote 25 signals + 26 claims and removed 14 before the delta stage
+    // caught it. This is the authoritative refusal; the client courtesy check is advisory only.
+    if (FROZEN_COMPANY_IDS.has(company_id)) {
+      return json({ error: "This is a frozen reference company — outside signals aren't refreshed for it." }, 403);
     }
 
     const { data: companyRow, error: companyFetchError } = await supabase
