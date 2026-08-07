@@ -105,6 +105,22 @@ async function triggerRebuildClaims(companyId: string, supabaseUrl: string, serv
   }
 }
 
+// FULL REFRESH G2 — fire stage 2 (the delta stepper) from the baseline success tail. Placed
+// AFTER triggerRebuildClaims (the delta stepper's plan must see the reconciled claims), only
+// when the run was invoked with chain:true. The stepper self-chains + owns the child ledger row.
+async function triggerRefreshDeltas(companyId: string, parentRunId: string | null, supabaseUrl: string, serviceRoleKey: string) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/refresh-deltas-step`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRoleKey}` },
+      body: JSON.stringify({ company_id: companyId, parent_run_id: parentRunId }),
+    });
+    console.log("[baseline] triggered refresh-deltas-step (chain), status:", res.status);
+  } catch (err) {
+    console.error("[baseline] failed to trigger refresh-deltas-step:", err);
+  }
+}
+
 function startCompanyRunLockHeartbeat(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
@@ -2025,6 +2041,12 @@ Deno.serve(async (req) => {
     // run-mojo-analysis (which would delete+regenerate the 'customer' journey).
     // Default false → cold-start/bootstrap callers still chain as before.
     const skip_mojo_analysis = body?.skip_mojo_analysis === true;
+    // FULL REFRESH G2 (chain trigger, minimal tail touch): when chain=true this baseline is
+    // stage 1 of a full_refresh; on SUCCESS its tail fires the delta stepper (stage 2), and on
+    // FAILURE the parent row is marked failed so deltas never compute over a bad baseline.
+    // parent_run_id links this baseline's ledger row + the delta stepper to the parent.
+    const chain = body?.chain === true;
+    const parent_run_id = body?.parent_run_id != null ? String(body.parent_run_id) : null;
     // OE-2: claude_websearch is the DEFAULT engine (council 2026-06-10 — searx discovery
     // produced 0 independent items across 3 companies; claude_websearch produced 7 on the
     // same company the same day). The searx→crawl→OpenAI path stays reachable by explicit
@@ -2127,7 +2149,7 @@ Deno.serve(async (req) => {
     {
       const { data: ledgerRow, error: ledgerStartErr } = await supabase
         .from("long_runner_runs")
-        .insert({ run_kind: "public_baseline", company_id, status: "running", target_count: 1 })
+        .insert({ run_kind: "public_baseline", company_id, status: "running", target_count: 1, ...(parent_run_id ? { parent_run_id } : {}) })
         .select("id")
         .single();
       if (ledgerStartErr) {
@@ -3100,6 +3122,19 @@ Deno.serve(async (req) => {
       ));
     }
 
+    // FULL REFRESH G2 — stage 2. This runs ONLY on a fully-successful baseline body (a failure
+    // throws before here, so deltas never compute over a bad baseline = halt-on-failure). Fired
+    // AFTER the internal chains; the delta stepper self-chains + writes the child claim_deltas
+    // ledger row linked to the parent.
+    if (chain) {
+      waitUntil(triggerRefreshDeltas(
+        company_id,
+        parent_run_id,
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      ));
+    }
+
     return json({
       message: "Public baseline complete",
       status: "ok",
@@ -3135,6 +3170,16 @@ Deno.serve(async (req) => {
           })
           .eq("id", ledgerRowId);
         if (ledgerFinErr) console.log("[baseline] long_runner_runs terminal update error", ledgerFinErr.message);
+      }
+      // FULL REFRESH G2 — HALT: a failed baseline fails the parent full_refresh row so the chain
+      // is visibly stopped and stage 2 (deltas) is never reached. (On success the delta stepper
+      // closes the parent when it finishes.)
+      if (ledgerOutcome === "failed" && chain && parent_run_id) {
+        await supabase.from("long_runner_runs").update({
+          status: "failed",
+          error_text: ledgerErrText ?? "baseline failed — deltas not run",
+          finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", parent_run_id);
       }
     }
   } catch (err) {

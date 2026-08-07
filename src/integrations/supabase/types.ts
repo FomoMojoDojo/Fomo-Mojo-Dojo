@@ -2212,6 +2212,7 @@ export type Database = {
           company_id: string
           done_count: number
           error_text: string | null
+          parent_run_id: string | null
           finished_at: string | null
           id: string
           request_id: string | null
@@ -2225,6 +2226,7 @@ export type Database = {
           company_id: string
           done_count?: number
           error_text?: string | null
+          parent_run_id?: string | null
           finished_at?: string | null
           id?: string
           request_id?: string | null
@@ -2238,6 +2240,7 @@ export type Database = {
           company_id?: string
           done_count?: number
           error_text?: string | null
+          parent_run_id?: string | null
           finished_at?: string | null
           id?: string
           request_id?: string | null

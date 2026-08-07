@@ -23,7 +23,7 @@ import { visibleFileTags, readAreaSupportTags, makeAreaSupportTag, isInternalFil
 import { mapInputToAreaKey, inferAreaHintsFromFileName } from "@/lib/areaMapping";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { supabase } from "@/integrations/supabase/client";
-import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
+import { useFullRefresh, FR_BUTTON_IDLE } from "@/hooks/useFullRefresh";
 
 import { Eyebrow } from "@/components/design-system/Eyebrow";
 import { D } from "@/components/design-system/tokens";
@@ -1219,41 +1219,14 @@ export default function InputsTab({
   });
   const baselineRunning = !!runLock && new Date(runLock.expires_at) > new Date();
 
-  const handleRefreshBaseline = useCallback(async () => {
-    if (!companyId || !companyName) return;
-    if (!canRefresh) return; // evidence.refreshBaseline
-    if (!companyWebsite?.trim()) {
-      toast.error("Add a website for this company before refreshing outside signals.");
-      return;
-    }
-    toast.loading("Refreshing outside signals…", { id: "refresh-baseline" });
-    const startedAt = new Date().toISOString();
-    // DEF-1b: pollPublicBaselineTerminal can throw, which would exit past every
-    // handled branch below and strand the duration:Infinity loading toast.
-    try {
-      const { error } = await supabase.functions.invoke("public-baseline", {
-        body: { company_id: companyId, company_name: companyName, website: companyWebsite },
-      });
-      if (error) {
-        // The 150s wall may have cut the browser after the isolate already succeeded.
-        // Poll the durable run-status row instead of trusting the failed invoke.
-        const terminal = await pollPublicBaselineTerminal({ companyId, sinceIso: startedAt });
-        if (terminal === "completed") {
-          toast.success("Outside signals updated.", { id: "refresh-baseline" });
-          void refetchBaseline();
-        } else if (terminal === "running") {
-          toast.message("Outside signals still running in the background — refresh shortly.", { id: "refresh-baseline" });
-        } else {
-          toast.error(error.message || "Outside signal refresh failed.", { id: "refresh-baseline" });
-        }
-      } else {
-        toast.success("Outside signals updated.", { id: "refresh-baseline" });
-        void refetchBaseline();
-      }
-    } catch (err) {
-      toast.error(`Outside signal refresh failed — ${err instanceof Error ? err.message : String(err)}`, { id: "refresh-baseline" });
-    }
-  }, [companyId, companyName, companyWebsite, canRefresh, refetchBaseline]);
+  // FULL REFRESH G2 — the one-click server-driven chain (baseline → deltas), watched via the
+  // ledger. Replaces the bare baseline invoke: the button now fires the whole refresh and the
+  // delta stage runs server-side even if this tab closes.
+  const fullRefresh = useFullRefresh(companyId ?? undefined, companyName ?? undefined, companyWebsite);
+  const fullRefreshBusy = baselineRunning || fullRefresh.state.running;
+
+  // handleRefreshBaseline (bare baseline invoke + toast) RETIRED — the button now drives the
+  // one-click server chain via useFullRefresh; progress is read from the ledger.
 
   const archiveFileMutation = useArchiveInputFile();
   const restoreFileMutation = useRestoreInputFile();
@@ -1747,18 +1720,23 @@ export default function InputsTab({
               )}
               <button
                 type="button"
-                disabled={baselineRunning || !canRefresh}
+                disabled={fullRefreshBusy || !canRefresh}
                 title={!canRefresh ? "Refreshing outside signals requires the refresh-baseline capability" : undefined}
-                onClick={() => void handleRefreshBaseline()}
+                onClick={() => void fullRefresh.start()}
                 style={{
-                  fontFamily: D.mono, fontSize: 9, color: baselineRunning || !canRefresh ? "rgba(246,246,244,0.25)" : "#7a9e90",
+                  fontFamily: D.mono, fontSize: 9, color: fullRefreshBusy || !canRefresh ? "rgba(246,246,244,0.25)" : "#7a9e90",
                   background: "none", border: "none", padding: 0,
-                  cursor: baselineRunning || !canRefresh ? "default" : "pointer",
+                  cursor: fullRefreshBusy || !canRefresh ? "default" : "pointer",
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
                 }}
               >
-                {baselineRunning ? "Refreshing…" : "Refresh outside signals →"}
+                {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} →`}
               </button>
+              {fullRefresh.state.message && (
+                <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : "rgba(246,246,244,0.4)" }}>
+                  {fullRefresh.state.message}
+                </span>
+              )}
             </div>
           )}
 
@@ -1816,19 +1794,24 @@ export default function InputsTab({
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button
                 type="button"
-                disabled={baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline}
+                disabled={baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline}
                 title={outsideSignalsBlockedReason}
-                onClick={() => void handleRefreshBaseline()}
+                onClick={() => void fullRefresh.start()}
                 style={{
                   fontFamily: "monospace", fontSize: 10, letterSpacing: "0.06em",
-                  color: baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline ? "#bbb" : "#2f6b3a",
+                  color: baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline ? "#bbb" : "#2f6b3a",
                   background: "none", border: "none", padding: 0,
-                  cursor: baselineLoading || baselineRunning || !canRefresh || !hasWebsiteForBaseline ? "default" : "pointer",
+                  cursor: baselineLoading || fullRefreshBusy || !canRefresh || !hasWebsiteForBaseline ? "default" : "pointer",
                   textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
                 }}
               >
-                {outsideSignalsLabel}
+                {fullRefreshBusy ? "Refreshing…" : outsideSignalsLabel}
               </button>
+              {fullRefresh.state.message && (
+                <span style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : "#aaa" }}>
+                  {fullRefresh.state.message}
+                </span>
+              )}
               {!baselineLoading && !hasBaselineRun && (
                 <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
                   No outside signals collected for this company yet.
