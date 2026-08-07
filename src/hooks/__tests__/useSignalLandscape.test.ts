@@ -177,3 +177,24 @@ describe("computeSignalLandscape — unknown band", () => {
     expect(knownTotal).toBe(1);
   });
 });
+
+// ── voice_class='analysis' — OUR reading, excluded from independent/ownVoice ─────
+// (CB2 signal-voice re-label, 2026-08-07): analysis-voiced outside signals must not count
+// as independent evidence NOR as the client's own public voice, and must keep the sum invariant.
+describe("computeSignalLandscape — analysis voice excluded", () => {
+  const signals = [
+    makeSignal("outside", "partial", "direct", { voice_class: "outside_voice_about_client", source_url: "https://news.example.com/x" }),
+    // analysis-voiced, NON-company host → must land in analysisExcluded, not independent
+    makeSignal("outside", "partial", "direct", { voice_class: "analysis", source_url: "https://instagram.com/y" }),
+    makeSignal("outside", "partial", "direct", { voice_class: "analysis", source_url: "https://instagram.com/z" }),
+  ];
+  const b = computeSignalLandscape(signals, "acme.com").publicBreakdown;
+
+  it("analysis rows land in analysisExcluded, not independent or ownVoice", () => {
+    expect(b.analysisExcluded).toBe(2);
+    expect(b.independent).toBe(1);
+    expect(b.ownVoice).toBe(0);
+  });
+  it("six-field sum still equals rawOutsideTotal", () =>
+    expect(b.independent + b.ownVoice + b.competitorsMarket + b.syndicatedExcluded + b.duplicatesMerged + b.analysisExcluded).toBe(b.rawOutsideTotal));
+});

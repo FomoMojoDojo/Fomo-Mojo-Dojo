@@ -75,6 +75,9 @@ export function SignalBasisChip({ publicCount, teamCount, customerCount, publicB
           {publicBreakdown.duplicatesMerged > 0 && (
             <BreakdownRow label="Merged duplicates" n={publicBreakdown.duplicatesMerged} />
           )}
+          {publicBreakdown.analysisExcluded > 0 && (
+            <BreakdownRow label="Our analysis (excluded)" n={publicBreakdown.analysisExcluded} />
+          )}
         </div>
       )}
     </div>

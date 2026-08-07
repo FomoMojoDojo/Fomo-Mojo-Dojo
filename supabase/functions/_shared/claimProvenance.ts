@@ -68,12 +68,19 @@ function isCompanySource(
 // That preserves current behavior for legacy runs, which means legacy NON-client signals
 // (including competitor-adjacent ones) retain corroboration rights until a fresh run
 // reclassifies them. The leak is closed for everything classified going forward.
-type VoiceClass = "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context";
+// 'analysis' — OUR reading of the outside record (the signal-layer analog of claim
+// provenance='analytic'). It is not any external voice: it corroborates NOTHING (only
+// outside_voice_about_client is a corroboration basis) and must NOT be swallowed by the
+// legacy null→outside_voice_about_client fallback. Recognized here so classifyVoice returns
+// it verbatim (→ excluded from corroboration by the ===outside_voice_about_client filter, and
+// from the client corpus by the ===client_voice filter).
+type VoiceClass = "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis";
 const VOICE_CLASSES: ReadonlySet<string> = new Set([
   "client_voice",
   "outside_voice_about_client",
   "competitor_voice",
   "market_context",
+  "analysis",
 ]);
 
 function classifyVoice(

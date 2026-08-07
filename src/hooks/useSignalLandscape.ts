@@ -23,7 +23,8 @@ export type PublicBreakdown = {
   competitorsMarket: number;  // competitor_voice + market_context
   syndicatedExcluded: number; // ovac stamped syndicated_from_client = true
   duplicatesMerged: number;   // ovac non-syndicated rows beyond their first content identity
-  rawOutsideTotal: number;    // = sum of the five above, always
+  analysisExcluded: number;   // voice_class='analysis' — OUR reading, never independent/ownVoice
+  rawOutsideTotal: number;    // = sum of the six above, always
 };
 
 export type SignalLandscape = {
@@ -83,12 +84,14 @@ function isCompanySource(row: SignalRow, companyHost: string): boolean {
 function classifyOutsideRow(
   row: SignalRow,
   companyHost: string,
-): "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" {
+): "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis" {
   // The deterministic company-source guard overrides any label, mirroring the judges.
   if (isCompanySource(row, companyHost)) return "client_voice";
   const labeled = String(row.voice_class || "").trim();
-  if (labeled === "client_voice" || labeled === "competitor_voice" || labeled === "market_context" || labeled === "outside_voice_about_client") {
-    return labeled as "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context";
+  // 'analysis' = OUR reading, not an external voice — recognized so it is NOT swept into the
+  // fallback outside_voice_about_client (which would count our analysis as independent evidence).
+  if (labeled === "client_voice" || labeled === "competitor_voice" || labeled === "market_context" || labeled === "outside_voice_about_client" || labeled === "analysis") {
+    return labeled as "client_voice" | "outside_voice_about_client" | "competitor_voice" | "market_context" | "analysis";
   }
   return "outside_voice_about_client";
 }
@@ -115,6 +118,7 @@ export function computeSignalLandscape(signals: SignalRow[], companyHost = ""): 
     competitorsMarket: 0,
     syndicatedExcluded: 0,
     duplicatesMerged: 0,
+    analysisExcluded: 0,
     rawOutsideTotal: 0,
   };
 
@@ -139,6 +143,11 @@ export function computeSignalLandscape(signals: SignalRow[], companyHost = ""): 
     }
     if (voiceClass === "competitor_voice" || voiceClass === "market_context") {
       breakdown.competitorsMarket++;
+      continue;
+    }
+    if (voiceClass === "analysis") {
+      // OUR reading — never counted as independent evidence or as the client's own voice.
+      breakdown.analysisExcluded++;
       continue;
     }
     // outside_voice_about_client

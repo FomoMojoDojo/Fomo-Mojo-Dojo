@@ -393,11 +393,14 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // NULL/unknown voice is NOT excluded — only the positively-identified 'client_voice'; a NULL
   // row that is actually self-voice would keep a false echo (surfaced to the operator; Stage-2
   // review catches it) rather than convert an unclassified row into a false absence.
+  // 'analysis' (OUR reading of the outside record, not the market speaking) is excluded on the
+  // SAME footing as 'client_voice': it produces no echo/divergence/internally_silent, so our
+  // own analysis can never score as market confirmation in the delta compute.
   const { data: sigRows } = await args.supabase
     .from("signals").select("id, voice_class").eq("company_id", args.companyId);
   const selfSignalIds = new Set(
     ((sigRows ?? []) as Array<{ id: string; voice_class: string | null }>)
-      .filter((s) => s.voice_class === "client_voice").map((s) => s.id),
+      .filter((s) => s.voice_class === "client_voice" || s.voice_class === "analysis").map((s) => s.id),
   );
   const selfVoiceClaimIds = new Set<string>();
   if (selfSignalIds.size > 0) {
