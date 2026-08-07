@@ -24,6 +24,10 @@ import { admitStatedProblem, statedProblemLabel } from "@/lib/firstRead/statedPr
 import { outsideBand } from "@/lib/firstRead/outsideBands";
 import { SAY_VS_SEE_GROUPS, SAY_LABEL, SEE_LABEL, SILENT_SEE_LINE, SILENT_BRIDGE_NOTE } from "@/lib/firstRead/sayVsSee";
 import { formatSourceAttribution } from "@/lib/firstRead/reportedDate";
+import {
+  CURATED_TENSION_HEADING, CURATED_TENSION_FRAMING, CURATED_TENSION_PROMISE_LABEL,
+  CURATED_TENSION_DIFFICULTY_LABEL, CURATED_TENSION_CURATION_LINE, type CuratedTensionRender,
+} from "@/lib/firstRead/curatedTension";
 import { AS_CAPTURED_LABEL } from "@/components/evidence/SignalQuote";
 
 export interface ExportStandardStep { step_number: number; step_label: string; description: string }
@@ -46,6 +50,9 @@ export interface FirstReadExportData {
   // (public_observed claims, register-locked at the source). Empty → honest-absence.
   perception: string[];
   check: { items: CheckItem[]; tally: CaptureTally };
+  // SELF-CONSISTENCY — the curated single-instance exhibit (Act 4, above say-vs-see).
+  // null → the section is simply absent from the leave-behind (row-less / removed).
+  curatedTension?: CuratedTensionRender | null;
   gap: string[]; // the ACTIVE open questions at issuance (V2-8: set-aside ones demoted out)
   gapSetAside?: string[]; // V2-8 — questions the client set aside, at issuance-time state
   proposal: Proposal | null;
@@ -229,7 +236,25 @@ function sectionCheck(d: FirstReadExportData): string {
   }).join("");
   const exhibitHtml = `<div class="ss-exhibit">${exhibit}</div>`;
 
-  if (checkOnly.length === 0) return `${tallyHtml}${exhibitHtml}<p class="empty">${esc(T.checkEmpty)}</p>`;
+  // SELF-CONSISTENCY — the curated exhibit follows the screen constant-for-constant, ABOVE
+  // say-vs-see. Quote-less by nature; the difficulty side's source-host line comes through the
+  // SAME formatter. Absent (empty string) when there is no live curated row.
+  const ct: CuratedTensionRender | null = d.curatedTension ?? null;
+  const ctAttribution = ct ? formatSourceAttribution(ct.difficultySourceUrl, ct.difficultyEventDate, ct.difficultyCapturedAt) : null;
+  const curatedHtml = ct
+    ? `<section class="ct-exhibit">`
+      + `<p class="ct-head">${esc(CURATED_TENSION_HEADING)}</p>`
+      + `<p class="ct-framing">${esc(CURATED_TENSION_FRAMING)}</p>`
+      + `<div class="ct-pair">`
+      + `<div class="ct-side"><p class="kind">${esc(CURATED_TENSION_PROMISE_LABEL)}</p><p>${esc(ct.promiseText)}</p></div>`
+      + `<div class="ct-side"><p class="kind">${esc(CURATED_TENSION_DIFFICULTY_LABEL)}</p><p>${esc(ct.difficultyText)}</p>`
+      + `${ctAttribution ? `<p class="ct-attribution">${esc(ctAttribution)}</p>` : ""}</div>`
+      + `</div>`
+      + `<p class="ct-curation">${esc(CURATED_TENSION_CURATION_LINE)}</p>`
+      + `</section>`
+    : "";
+
+  if (checkOnly.length === 0) return `${tallyHtml}${curatedHtml}${exhibitHtml}<p class="empty">${esc(T.checkEmpty)}</p>`;
   const rows = checkOnly
     .map((item) => {
       const ann = checkItemAnnotation(item);
@@ -251,7 +276,7 @@ function sectionCheck(d: FirstReadExportData): string {
       return `<div class="${cls}"><p class="kind">${esc(CHECK_KIND_LABEL[item.kind])}</p><p class="item-text">${esc(item.text)}</p>${annHtml}</div>`;
     })
     .join("");
-  return `${tallyHtml}${exhibitHtml}<div class="check-list">${rows}</div>`;
+  return `${tallyHtml}${curatedHtml}${exhibitHtml}<div class="check-list">${rows}</div>`;
 }
 
 function sectionGap(d: FirstReadExportData): string {
@@ -363,6 +388,14 @@ h1.sec{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.1
 .ss-side p:last-child{margin:4px 0 0}
 .ss-bridge{font-family:ui-monospace,Menlo,monospace;font-size:10px;opacity:.55;margin:8px 0 0}
 .ss-reported{color:#5f5443;font-size:12px;margin:6px 0 0}
+.ct-exhibit{margin:0 0 22px;padding:14px 16px;border:1px solid rgba(17,17,17,.12);border-radius:8px}
+.ct-head{font-weight:600;font-size:16px;margin:0 0 4px}
+.ct-framing{color:#5f5443;font-size:13px;margin:0 0 14px}
+.ct-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ct-side .kind{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;opacity:.6;margin:0 0 4px}
+.ct-side p:last-child{margin:4px 0 0}
+.ct-attribution{color:#5f5443;font-size:12px;margin:6px 0 0}
+.ct-curation{color:#5f5443;font-size:12px;font-style:italic;margin:12px 0 0}
 .ob-band{margin:24px 0 0;padding-top:18px;border-top:1px solid rgba(17,17,17,.08)}
 .ob-heading{font-weight:600;font-size:16px;margin:0 0 3px}
 .ob-framing{color:#5f5443;font-size:13px;margin:0 0 12px}

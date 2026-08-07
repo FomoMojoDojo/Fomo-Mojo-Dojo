@@ -14,6 +14,7 @@ import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
 import OutsideRaisedSection from "./OutsideRaisedSection";
+import CuratedTensionSection from "./CuratedTensionSection";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
 import { CHECK_RECAP } from "../recapCopy";
@@ -65,6 +66,11 @@ export default function TheCheckAct({
     <div className="cvs-fr-check">
       {/* V2-9 SWEEP: the raw session-id/status bar (machinery) is removed from room copy. */}
       <CheckTally tally={tally} />
+
+      {/* SELF-CONSISTENCY — the curated single-instance exhibit, ABOVE say-vs-see. Its own
+          read (useCuratedTensions), independent of the verdict machinery; renders nothing
+          when there is no live curated row. A curation, not a verdict — no response buttons. */}
+      <CuratedTensionSection companyId={companyId} />
 
       {frozen && <p className="cvs-check-frozen">{FROZEN_MSG}</p>}
       {error && !frozen && <p className="cvs-check-refusal">{error}</p>}

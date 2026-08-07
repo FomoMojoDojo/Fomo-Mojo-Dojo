@@ -1793,6 +1793,68 @@
   margin: 14px 0 8px;
 }
 
+/* SELF-CONSISTENCY — the curated single-instance exhibit, ABOVE say-vs-see. A boxed
+   observation (distinct from the verdict items around it), two register-labeled sides, no
+   response buttons. Difficulty side carries the source-host attribution line. */
+.cvs-curated-tension {
+  margin: 4px 0 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--mm-line);
+  border-radius: 10px;
+}
+.cvs-curated-tension-heading {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mm-text);
+  margin: 0 0 6px;
+}
+.cvs-curated-tension-framing {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mm-muted);
+  margin: 0 0 16px;
+  max-width: 640px;
+}
+.cvs-curated-tension-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 640px) {
+  .cvs-curated-tension-pair { grid-template-columns: 1fr; }
+}
+.cvs-curated-tension-label {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin: 0 0 5px;
+}
+.cvs-curated-tension-text {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--mm-secondary);
+  margin: 0;
+}
+.cvs-curated-tension-attribution {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mm-muted);
+}
+.cvs-curated-tension-curation {
+  font-size: 13px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--mm-muted);
+  margin: 16px 0 0;
+}
+
 /* V2-5 — Act 3 "What the Outside Shows": the three register-locked bands (strategy /
    positioning / message). Signed heading + framing line above each band's public read,
    breathing room, NO vertical accent bar. */

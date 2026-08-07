@@ -2534,6 +2534,67 @@ export type Database = {
           },
         ]
       }
+      curated_tensions: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          difficulty_claim_id: string
+          id: string
+          operator_note: string | null
+          promise_claim_id: string
+          removed_at: string | null
+          removed_by: string | null
+          removed_reason: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          difficulty_claim_id: string
+          id?: string
+          operator_note?: string | null
+          promise_claim_id: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          difficulty_claim_id?: string
+          id?: string
+          operator_note?: string | null
+          promise_claim_id?: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curated_tensions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curated_tensions_promise_claim_id_fkey"
+            columns: ["promise_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curated_tensions_difficulty_claim_id_fkey"
+            columns: ["difficulty_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       market_options: {
         Row: {
           attempt: number
