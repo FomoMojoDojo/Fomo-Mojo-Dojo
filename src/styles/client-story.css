@@ -2231,3 +2231,13 @@
   cursor: pointer;
 }
 .cvs-ratify:hover { border-color: var(--mm-soft); color: var(--mm-soft); }
+
+/* First Read outside-only (provenance gate) — the one framing line at the Check act opening. */
+.cvs-outside-framing {
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--mm-secondary);
+  max-width: 60ch;
+  margin: 12px 0 28px;
+}

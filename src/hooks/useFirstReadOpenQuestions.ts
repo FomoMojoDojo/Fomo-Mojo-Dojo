@@ -6,6 +6,7 @@
 // Provenance is carried per row (finding-derived vs silent-delta-derived) — ONE list.
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { documentDerivedClaimIds } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 
 export interface OpenQuestionListRow {
   question_text: string;
@@ -39,9 +40,46 @@ export function useFirstReadOpenQuestions(companyId?: string) {
         .eq("status", "live") // live set only; superseded is history, never rendered
         .order("created_at", { ascending: true })
         .order("question_identity", { ascending: true }); // deterministic tie-break
+      let live = ((data as OpenQuestionListRow[] | null) ?? []).filter((r) => r.question_text?.trim());
+
+      // PROVENANCE GATE — First Read is OUTSIDE-ONLY. A silent_delta question is BORN from a declared
+      // publicly-silent claim; if that claim is uploaded-document-derived, the question is document
+      // content and must not render on the rail (GapAct) or in the export. The generator no longer
+      // mints such questions, but rows minted before the gate persist — so the read filters them too.
+      // Display + export scope only: rows stay in the table (never deleted). Same shared predicate the
+      // rail read and the auto-selectors use — one authority, no second implementation.
+      if (!qErr && live.length) {
+        const anchorIds = [...new Set(
+          live.filter((r) => r.source_kind === "silent_delta" && r.anchor_identity).map((r) => r.anchor_identity as string),
+        )];
+        if (anchorIds.length) {
+          const { data: dRows } = await supabase
+            .from("claim_deltas").select("content_identity, declared_claim_id, public_claim_id")
+            .eq("company_id", companyId).in("content_identity", anchorIds);
+          const deltas = (dRows ?? []) as Array<{ content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
+          const claimIds = [...new Set(deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
+          if (claimIds.length) {
+            const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", claimIds);
+            const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+            const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+            const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
+            const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
+            const excluded = documentDerivedClaimIds(refRows, srcBySig);
+            if (excluded.size) {
+              const excludedAnchors = new Set(
+                deltas
+                  .filter((d) => (d.declared_claim_id && excluded.has(d.declared_claim_id)) || (d.public_claim_id && excluded.has(d.public_claim_id)))
+                  .map((d) => d.content_identity),
+              );
+              live = live.filter((r) => !(r.source_kind === "silent_delta" && r.anchor_identity && excludedAnchors.has(r.anchor_identity)));
+            }
+          }
+        }
+      }
+
       if (!cancelled) {
         if (qErr) setError(qErr.message);
-        setRows(((data as OpenQuestionListRow[] | null) ?? []).filter((r) => r.question_text?.trim()));
+        setRows(live);
         setLoading(false);
       }
     })();

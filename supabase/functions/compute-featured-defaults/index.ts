@@ -13,6 +13,7 @@ import {
   selectSayVsSeeDefault, selectFindingDefault,
   type SayVsSeeCandidate, type FindingCandidate,
 } from "../_shared/featuredDefaults.ts";
+import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,35 +38,69 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const written: Record<string, unknown> = {};
 
-    // Which themes already have a LIVE pointer → never touched here.
+    // Which themes already have a LIVE pointer (with origin + identity, so we can replace an 'auto'
+    // pointer that provenance now excludes — never an 'operator' one).
     const { data: liveRows } = await supabase
-      .from("first_read_featured_items").select("theme_key").eq("company_id", company_id).is("removed_at", null);
-    const hasLive = new Set(((liveRows ?? []) as Array<{ theme_key: string }>).map((r) => r.theme_key));
+      .from("first_read_featured_items").select("theme_key, origin, item_identity").eq("company_id", company_id).is("removed_at", null);
+    const live = new Map(((liveRows ?? []) as Array<{ theme_key: string; origin: string; item_identity: string }>).map((r) => [r.theme_key, r]));
+    const hasLive = new Set(live.keys());
 
     const insertPointer = async (theme_key: string, item_identity: string, origin: string, judge_reason: string | null) => {
       const { error } = await supabase.from("first_read_featured_items")
         .insert({ company_id, theme_key, item_identity, origin, judge_reason });
       if (error) throw new Error(`insert ${theme_key} failed: ${error.message}`);
     };
+    const softRemove = async (theme_key: string, reason: string) => {
+      await supabase.from("first_read_featured_items")
+        .update({ removed_at: new Date().toISOString(), removed_reason: reason })
+        .eq("company_id", company_id).eq("theme_key", theme_key).is("removed_at", null);
+    };
 
     // ── THEME 1 (say_vs_see) — deterministic; skipped when a live curated tension exists ────────
-    if (!hasLive.has("say_vs_see")) {
+    // PROVENANCE: only NON-document-derived declared deltas are eligible; a live 'auto' pointer at a
+    // now-excluded (uploaded-file-derived) item is REPLACED, an 'operator' one is left (it renders
+    // the honest MISSING state via the rail's filter).
+    {
       const { data: curated } = await supabase
         .from("curated_tensions").select("id").eq("company_id", company_id).is("removed_at", null).limit(1);
-      if (!curated || curated.length === 0) {
-        const { data: dRows } = await supabase
-          .from("claim_deltas").select("content_identity, delta_type, declared_claim_id")
-          .eq("company_id", company_id).in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (dRows ?? []) as Array<{ content_identity: string; delta_type: string; declared_claim_id: string | null }>;
-        const declIds = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
-        const { data: cRows } = declIds.length
-          ? await supabase.from("claims").select("id, topic, confidence").in("id", declIds)
-          : { data: [] };
-        const byId = new Map(((cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null }>).map((c) => [c.id, c]));
-        const candidates: SayVsSeeCandidate[] = deltas.map((d) => {
+      const hasCurated = !!curated && curated.length > 0;
+
+      const { data: dRows } = await supabase
+        .from("claim_deltas").select("content_identity, delta_type, declared_claim_id")
+        .eq("company_id", company_id).in("delta_type", ["echoed", "divergent", "publicly_silent"]);
+      const deltas = (dRows ?? []) as Array<{ content_identity: string; delta_type: string; declared_claim_id: string | null }>;
+      const declIds = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
+      const { data: cRows } = declIds.length
+        ? await supabase.from("claims").select("id, topic, confidence").in("id", declIds)
+        : { data: [] };
+      const byId = new Map(((cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null }>).map((c) => [c.id, c]));
+      // Document-derived declared claims are ineligible (First Read is outside-only).
+      let excludedDecl = new Set<string>();
+      if (declIds.length) {
+        const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", declIds);
+        const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+        const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+        const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
+        const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
+        excludedDecl = documentDerivedClaimIds(refRows, srcBySig);
+      }
+      const candidates: SayVsSeeCandidate[] = deltas
+        .filter((d) => !(d.declared_claim_id && excludedDecl.has(d.declared_claim_id))) // outside-only
+        .map((d) => {
           const c = d.declared_claim_id ? byId.get(d.declared_claim_id) : null;
           return { contentIdentity: d.content_identity, deltaType: d.delta_type, declaredTopic: c?.topic ?? null, declaredConfidence: c?.confidence ?? null };
         });
+      const eligibleIds = new Set(candidates.map((c) => c.contentIdentity));
+
+      // Replace a live 'auto'/'auto_judged' say_vs_see pointer that provenance now excludes.
+      const liveSV = live.get("say_vs_see");
+      if (liveSV && liveSV.origin !== "operator" && !eligibleIds.has(liveSV.item_identity)) {
+        await softRemove("say_vs_see", "provenance_excluded");
+        hasLive.delete("say_vs_see");
+        written.say_vs_see_replaced = liveSV.item_identity;
+      }
+
+      if (!hasLive.has("say_vs_see") && !hasCurated) {
         const pick = selectSayVsSeeDefault(candidates);
         if (pick) { await insertPointer("say_vs_see", pick, "auto", null); written.say_vs_see = pick; }
       }

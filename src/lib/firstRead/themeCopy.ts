@@ -50,6 +50,11 @@ export const FEATURE_THIS_LABEL = "Feature this";
 // "we chose". (The judge's one-line reason still renders, in the italic meta style — AMENDMENT 2.)
 export const THEME_AUTO_LEAD = "Where we'd start:";
 
+// PROVENANCE GATE — the one framing line that says the First Read is the outside view (renders once,
+// near the Check act's opening). Operator-signed 2026-08-08, byte-exact.
+export const FIRST_READ_OUTSIDE_FRAMING =
+  "Everything in this read comes from the outside — your public presence and what the world says — plus what you've told us directly. We haven't opened a single document. That comes later, if we work together.";
+
 /** The "…and N more like this" toggle label for a given count. One home for the substitution so
  *  the label can never drift between the screen and any future leave-behind. */
 export function moreLabel(count: number): string {

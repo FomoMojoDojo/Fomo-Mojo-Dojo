@@ -21,7 +21,7 @@ import { ThemeHeadline, ThemeMore } from "./ThemeSection";
 import {
   THEME_1_HEADLINE, THEME_2_HEADLINE, THEME_3_HEADLINE,
   THEME_1_LEAD, theme2Lead, THEME_3_LEAD, NO_FEATURED_PROMPT, FEATURED_MISSING_PROMPT,
-  THEME_AUTO_LEAD,
+  THEME_AUTO_LEAD, FIRST_READ_OUTSIDE_FRAMING,
 } from "@/lib/firstRead/themeCopy";
 import { useFeaturedItems, type FeaturedPointer } from "@/hooks/useFeaturedItems";
 import { useCuratedTensions } from "@/hooks/useCuratedTensions";
@@ -152,6 +152,9 @@ export default function TheCheckAct({
     <div className="cvs-fr-check">
       {/* V2-9 SWEEP: the raw session-id/status bar (machinery) is removed from room copy. */}
       <CheckTally tally={tally} />
+
+      {/* PROVENANCE GATE — the First Read is the outside view; renders once, at the opening. */}
+      <p className="cvs-outside-framing">{FIRST_READ_OUTSIDE_FRAMING}</p>
 
       {/* ROLLUP (Gate 1): three themed overviews, not a wall of per-item batteries. THEME 1's
           featured exhibit is the curated single-instance tension — its own read

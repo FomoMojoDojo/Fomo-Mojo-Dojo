@@ -16,6 +16,7 @@
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { contentIdentity } from "../_shared/contentIdentity.ts";
+import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
 import { deriveAnchoredRows, type QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 
@@ -59,7 +60,21 @@ async function loadAnchors(supabase: SupabaseClient, companyId: string, runId: s
       if (c.statement) claimById.set(c.id, c.statement.trim());
     }
   }
+  // PROVENANCE GATE — First Read is OUTSIDE-ONLY. Skip any publicly_silent anchor whose declared
+  // claim is uploaded-document-derived (a backing signal with source_type='uploaded_file'). Uploaded
+  // docs power the deeper engagement only; a doc-derived open question must never be BORN. Same
+  // shared predicate the rail read and the auto-selectors use — one authority, no second impl.
+  let excludedDecl = new Set<string>();
+  if (claimIds.length) {
+    const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", claimIds);
+    const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+    const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+    const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
+    const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
+    excludedDecl = documentDerivedClaimIds(refRows, srcBySig);
+  }
   for (const d of deltas) {
+    if (d.declared_claim_id && excludedDecl.has(d.declared_claim_id)) continue; // outside-only: doc-derived never born
     const text = (d.declared_claim_id && claimById.get(d.declared_claim_id)) || "";
     // anchor identity = the delta's own content identity (stable provenance link)
     if (text.trim() && d.content_identity) anchors.push({ kind: "silent_delta", text: text.trim(), identity: d.content_identity });

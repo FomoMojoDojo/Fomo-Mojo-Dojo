@@ -187,6 +187,18 @@ describe("TheCheckAct — Gate 2 featured items", () => {
   });
 });
 
+describe("Provenance gate — the outside-only framing renders once at the opening", () => {
+  it("FIRST_READ_OUTSIDE_FRAMING is byte-exact and renders in the Check act", async () => {
+    const { FIRST_READ_OUTSIDE_FRAMING } = await import("@/lib/firstRead/themeCopy");
+    expect(FIRST_READ_OUTSIDE_FRAMING).toBe(
+      "Everything in this read comes from the outside — your public presence and what the world says — plus what you've told us directly. We haven't opened a single document. That comes later, if we work together.",
+    );
+    cap.ret = { ...baseCap };
+    const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
+    expect(container.querySelector(".cvs-outside-framing")?.textContent).toBe(FIRST_READ_OUTSIDE_FRAMING);
+  });
+});
+
 describe("Gate 2 lead strings — byte-exact", () => {
   it("theme2Lead + THEME_3_LEAD", () => {
     expect(theme2Lead(5)).toBe("The public record raised 5 things you haven't yet spoken to. This is the one worth starting with:");
