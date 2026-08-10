@@ -6,7 +6,7 @@ import { extractCitationSourceText, mergeCitationSourceText } from "../../../src
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
 // claimDeltaSynthesis). CB1 is a SELECT-only reference fixture; this function INGESTS signals/
 // claims from scratch, so it must refuse a frozen company before any write.
-import { FROZEN_COMPANY_IDS } from "../_shared/stepConditionsSynthesis.ts";
+import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

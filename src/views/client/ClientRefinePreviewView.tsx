@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { engagementDayFrom } from "@/lib/engagementDay";
+import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
@@ -354,6 +355,13 @@ export default function ClientRefinePreviewView() {
   const analysisRunning = fileProposals.some(
     (p) => p.processing_state === "queued" || p.processing_state === "running",
   );
+  // FROZEN FIXTURE (cosmetic pre-check; the DB trigger enforce_company_freeze is the real guard).
+  // A frozen reference company (CB1) is preserved SELECT-only — the destructive rerun controls are
+  // disabled with the named reason (named-control + no-invisible-state laws).
+  const companyFrozen = isFrozenCompany(activeCompany?.id);
+  const frozenReason = companyFrozen
+    ? `${activeCompany?.name ?? "This company"} is a frozen reference fixture — its record is preserved and can't be regenerated.`
+    : null;
   const unresolvedAssumptionsCount = useMemo(
     () => strategicAssumptions.filter((a) => a.status === "untested" || a.status === "validating").length,
     [strategicAssumptions],
@@ -4514,7 +4522,10 @@ export default function ClientRefinePreviewView() {
                       <div className="crpv-tweaks-note">
                         Scoped reruns are preferred here. Only the full analysis button rebuilds the broader diagnostic layer.
                       </div>
-                      <button type="button" className="btn" onClick={() => void runOutsideSignals()}>
+                      {frozenReason && (
+                        <div className="crpv-tweaks-note" role="status">{frozenReason}</div>
+                      )}
+                      <button type="button" className="btn" onClick={() => void runOutsideSignals()} disabled={companyFrozen}>
                         Refresh outside evidence
                       </button>
                       {/* Deprecated: "Rebuild foundation + routes" re-ran research-company (cold-start)
@@ -4522,11 +4533,11 @@ export default function ClientRefinePreviewView() {
                           Removed so no on-screen control triggers a guaranteed 409. To start fresh,
                           create a new company via + Add Client. (run-mojo-analysis / job-map / outside
                           refresh below are re-score/refresh, NOT birth — kept.) */}
-                      <button type="button" className="btn" onClick={() => void rerunOdiJobMapScope()}>
+                      <button type="button" className="btn" onClick={() => void rerunOdiJobMapScope()} disabled={companyFrozen}>
                         Regenerate job map
                       </button>
-                      <button type="button" className="btn" onClick={() => void runAnalysis()} disabled={analysisRunning}>
-                        {analysisRunning ? "Full analysis running…" : "Run full analysis"}
+                      <button type="button" className="btn" onClick={() => void runAnalysis()} disabled={analysisRunning || companyFrozen}>
+                        {companyFrozen ? "Frozen — analysis disabled" : analysisRunning ? "Full analysis running…" : "Run full analysis"}
                       </button>
                       <button type="button" className="btn" onClick={() => void cancelAnalysis()} disabled={!analysisRunning}>
                         Cancel running analysis

@@ -1386,6 +1386,11 @@ export default function ClientRefinePreviewWorkshopView() {
       toast.error("Select a company before generating the job map.");
       return;
     }
+    // FROZEN FIXTURE courtesy fast-fail (the DB trigger enforce_company_freeze is the real guard).
+    if (isFrozenCompany(companyId)) {
+      toast.error("This is a frozen reference company — its record is preserved and is not modified.");
+      return;
+    }
 
     const journeyKey = viewedSetKey || "customer";
 
@@ -2649,9 +2654,10 @@ export default function ClientRefinePreviewWorkshopView() {
                   type="button"
                   className="btn ghost"
                   onClick={() => void rerunLocalJobMapSynthesis()}
-                  disabled={regeneratingJobMap || jobStepsLoading}
+                  disabled={regeneratingJobMap || jobStepsLoading || isFrozenCompany(companyId)}
+                  title={isFrozenCompany(companyId) ? "Frozen reference company — its record is preserved and is not modified." : undefined}
                 >
-                  {regeneratingJobMap ? "Generating…" : "Generate Job Map"}
+                  {regeneratingJobMap ? "Generating…" : isFrozenCompany(companyId) ? "Frozen — job map preserved" : "Generate Job Map"}
                 </button>
               </div>
             }

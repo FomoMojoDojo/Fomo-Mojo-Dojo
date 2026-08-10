@@ -13,7 +13,7 @@ import { callOpenAIJSON } from "../_shared/openaiClient.ts";
 import { gateStrategyArtifactForExternal } from "../_shared/strategyArtifactGate.ts";
 import { gateSubjectForExternal, gateSubjectForLocal } from "../_shared/driftExternalGate.ts";
 import { judgeRouteAlignmentLocal } from "../_shared/localRouteAlignmentJudge.ts";
-import { FROZEN_COMPANY_IDS } from "../_shared/stepConditionsSynthesis.ts";
+import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",

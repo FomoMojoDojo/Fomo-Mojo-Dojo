@@ -332,10 +332,11 @@ export async function synthesizeStepConditions(args: {
 
 // Frozen reference fixtures — SELECT-only, never written. Mirror of the frontend
 // guard (src/lib/frozenCompanies.ts). Remove when CB1/CB2 are retired.
-export const FROZEN_COMPANY_IDS = new Set<string>([
-  "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc", // Cafe Barra (CB1)
-  // CB2 (Cafe Barra 2, fd3f7f63…) UNFROZEN — now a normal writable, regenerable fixture.
-]);
+// FROZEN_COMPANY_IDS now lives in the single edge authority (_shared/frozenCompanies.ts). Imported
+// for this module's own courtesy check AND re-exported so the many modules that import it from here
+// keep resolving. The DB trigger enforce_company_freeze is the real guard (migration 20260810120000).
+import { FROZEN_COMPANY_IDS } from "./frozenCompanies.ts";
+export { FROZEN_COMPANY_IDS };
 
 // Conditions are an internal-layer artifact — generated only for system-authored/
 // derived sets (mirrors PROTECTED_PROVENANCE_TYPES in journeyProtection.ts).
