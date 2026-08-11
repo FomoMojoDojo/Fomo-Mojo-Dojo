@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-intake-token",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
@@ -490,11 +490,22 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
   try {
-    const expectedToken = String(Deno.env.get("MOJOMAP_AUTORUN_WEBHOOK_TOKEN") || "").trim();
+    // SHARED-TOKEN GATE (2026-08-10 ruling). This function stays verify_jwt=false so the public
+    // marketing-site form (no user account) can reach it — but it is authorized here, before any
+    // parse or write, by a shared secret. Primary gate: the dedicated `x-intake-token` header vs the
+    // INTAKE_SHARED_TOKEN secret. Backward-compat: the pre-existing `Authorization: Bearer
+    // <MOJOMAP_AUTORUN_WEBHOOK_TOKEN>` webhook token is still accepted so a live caller isn't broken
+    // (operator TODO: migrate the form to send x-intake-token, then retire the legacy path). A request
+    // is authorized iff it presents a non-empty, correct value for at least one configured secret.
+    const intakeToken = String(Deno.env.get("INTAKE_SHARED_TOKEN") || "").trim();
+    const legacyToken = String(Deno.env.get("MOJOMAP_AUTORUN_WEBHOOK_TOKEN") || "").trim();
+    const receivedIntake = String(req.headers.get("x-intake-token") || "").trim();
     const authHeader = String(req.headers.get("Authorization") || "").trim();
-    const receivedToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    if (!expectedToken || receivedToken !== expectedToken) {
-      return json({ error: "Unauthorized webhook request." }, 401);
+    const receivedLegacy = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const intakeOk = intakeToken.length > 0 && receivedIntake === intakeToken;
+    const legacyOk = legacyToken.length > 0 && receivedLegacy === legacyToken;
+    if (!intakeOk && !legacyOk) {
+      return json({ error: "Unauthorized intake request." }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
