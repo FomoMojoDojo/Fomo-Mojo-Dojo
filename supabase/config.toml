@@ -33,11 +33,10 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.launch-site-intake]
-# PUBLIC INTAKE (2026-08-10 ruling): external website visitors have no account, so this stays anon.
-# It is NOT unguarded — it requires the shared x-intake-token header (INTAKE_SHARED_TOKEN secret),
-# validated server-side before any parse or write. Every other former-anon fn was flipped to
-# verify_jwt=true; this is the sole intentional exception.
-verify_jwt = false
+# 2026-08-12 AMENDED RULING: there is no hosted Supabase project, so the public marketing site cannot
+# reach this (local) function — it has no public caller. Flipped to require a JWT with the rest of the
+# former-anon set; no exceptions remain. A public-intake path and its own gate are a separate future item.
+verify_jwt = true
 
 [functions.run-agent-flow]
 verify_jwt = true
