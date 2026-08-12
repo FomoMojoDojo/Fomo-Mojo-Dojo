@@ -66,4 +66,11 @@ describe("Evidence Memory — INTAKE vs FILE (Gate M)", () => {
     expect(texts).toContain("intake");
     expect(texts).not.toContain("file");
   });
+
+  it("intake rows get a 'View intake →' link to the page; plain uploads do not", () => {
+    const { container } = render(<InputsTab {...props} />);
+    const intakeLinks = Array.from(container.querySelectorAll("a")).filter((a) => (a.textContent || "").includes("View intake"));
+    expect(intakeLinks.length).toBe(1); // only the 'Intake'-tagged row
+    expect(intakeLinks[0].getAttribute("href")).toBe(`/intake/${props.companyId}`);
+  });
 });

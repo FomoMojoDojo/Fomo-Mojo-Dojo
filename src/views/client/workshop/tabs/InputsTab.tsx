@@ -2115,6 +2115,18 @@ export default function InputsTab({
                               {openingFileId === row.id ? "Opening file…" : "View file →"}
                             </button>
                           )}
+                          {/* Gate S — intake rows also link to the Intake page (the view); View file stays (the record). */}
+                          {row.type === "intake" && companyId && (
+                            <a
+                              href={`/intake/${companyId}`}
+                              style={{
+                                ...MONO, fontSize: 9, color: "#7a9e90", display: "block", marginTop: 4,
+                                textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
+                              }}
+                            >
+                              View intake →
+                            </a>
+                          )}
                         </td>
                         <td style={{ ...TD, color: "#aaa", whiteSpace: "nowrap" }}>{row.source || "—"}</td>
                         <td style={{ ...TD, color: "#ccc", whiteSpace: "nowrap" }}>{row.date}</td>

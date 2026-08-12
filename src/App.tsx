@@ -20,6 +20,7 @@ import RoutesView from "./views/Routes";
 import MovementView from "./views/Movement";
 import FMDStrategicField from "./views/FMDStrategicField";
 import FirstReadView from "./views/FirstReadView";
+import IntakeView from "./views/IntakeView";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminCompanies from "./pages/AdminCompanies";
@@ -273,6 +274,7 @@ const App = () => (
                 <Route path="/legacy/fmd" element={<AdminModeRoute><FMDStrategicField /></AdminModeRoute>} />
                 {/* First Read — presenter-driven five-act first-meeting rail. Admin-gated (presenter-driven; client never logs in). */}
                 <Route path="/first-read/:companyId" element={<AdminModeRoute><FirstReadView /></AdminModeRoute>} />
+                <Route path="/intake/:companyId" element={<AdminModeRoute><IntakeView /></AdminModeRoute>} />
                 <Route path="/legacy/inputs" element={<InternalViewOnlyRoute><InputsView /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/files" element={<InternalViewOnlyRoute><FilesRepository /></InternalViewOnlyRoute>} />
                 <Route path="/legacy/job-steps" element={<InternalViewOnlyRoute><JobStepsView /></InternalViewOnlyRoute>} />
