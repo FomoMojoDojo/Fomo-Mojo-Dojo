@@ -268,8 +268,11 @@ async function createIntakeFile(args: {
 }) {
   const safeCompany = slugify(args.companyName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const fileName = `${timestamp}-launch-site-intake.md`;
-  const filePath = `${args.userId}/${safeCompany}/customer-research/${args.inputId}/${fileName}`;
+  const intakeDate = new Date().toISOString().slice(0, 10);
+  // Human-readable DISPLAY name (Evidence Memory renders this); storage key stays ASCII-safe.
+  const fileName = `Client Intake — ${args.companyName} — ${intakeDate}.md`;
+  const storageName = `${timestamp}-client-intake.md`;
+  const filePath = `${args.userId}/${safeCompany}/customer-research/${args.inputId}/${storageName}`;
   const markdown = buildIntakeMarkdown(
     args.payload,
     args.companyName,

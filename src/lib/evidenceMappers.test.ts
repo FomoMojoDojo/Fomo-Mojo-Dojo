@@ -294,6 +294,30 @@ describe("deriveClaimProvenance", () => {
     expect(deriveClaimProvenance([{ sourceType: "uploaded_file", band: "customer" }])).toBe("public_observed");
   });
 
+  it("R4: all-intake org signals ⇒ internal_declared (client's own declared answers)", () => {
+    expect(deriveClaimProvenance([{ sourceType: "intake", band: "organization" }])).toBe("internal_declared");
+    // intake mixed with uploaded org material is still all-declared
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "intake", band: "organization" },
+        { sourceType: "uploaded_file", band: "organization" },
+      ]),
+    ).toBe("internal_declared");
+  });
+
+  it("R4: intake mixed with a public signal keeps public_observed (no laundering)", () => {
+    expect(
+      deriveClaimProvenance([
+        { sourceType: "intake", band: "organization" },
+        { sourceType: "public_baseline", band: "outside" },
+      ]),
+    ).toBe("public_observed");
+  });
+
+  it("R4: intake in a non-organization band stays public_observed", () => {
+    expect(deriveClaimProvenance([{ sourceType: "intake", band: "customer" }])).toBe("public_observed");
+  });
+
   it("empty backing fails safe to public_observed", () => {
     expect(deriveClaimProvenance([])).toBe("public_observed");
   });

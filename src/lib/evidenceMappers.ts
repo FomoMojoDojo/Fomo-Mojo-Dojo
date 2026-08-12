@@ -900,7 +900,14 @@ export function deriveClaimProvenance(
   // backing keeps public_observed, so an analytic-flavored line CAN reach a public
   // surface if its public backing is thin — the V2-5b render guard is the backstop there.
   if (backing.every((b) => b.sourceType === "mojo_analysis")) return "analytic";
-  return backing.every((b) => b.sourceType === "uploaded_file" && b.band === "organization")
+  // R4 (intake gate, 2026-08-12): intake-derived signals (source_type='intake') are the client's
+  // OWN declared quiz answers — the same standing as their uploaded org material — so an all-intake
+  // (or all-upload) organization-band group is internal_declared, never public_observed. This is
+  // orthogonal to the First Read provenance gate, which still ADMITS intake (it excludes
+  // 'uploaded_file' specifically); only true uploads stay excluded there.
+  return backing.every(
+    (b) => (b.sourceType === "uploaded_file" || b.sourceType === "intake") && b.band === "organization",
+  )
     ? "internal_declared"
     : "public_observed";
 }

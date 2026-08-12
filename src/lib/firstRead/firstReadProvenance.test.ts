@@ -35,4 +35,21 @@ describe("firstReadProvenance", () => {
     const refs = [{ claim_id: "x", signal_id: "s" }];
     expect(documentDerivedClaimIds(refs, new Map([["s", "public_baseline_run"]])).size).toBe(0);
   });
+
+  it("R3 (intake gate): intake-derived claims are ADMITTED while true uploads stay excluded", () => {
+    const refs = [
+      { claim_id: "upload", signal_id: "u" },
+      { claim_id: "intake", signal_id: "i" },
+    ];
+    const src = new Map<string, string | null>([["u", "uploaded_file"], ["i", "intake"]]);
+    const out = documentDerivedClaimIds(refs, src);
+    expect(out.has("upload")).toBe(true);   // the gate still bites true uploads
+    expect(out.has("intake")).toBe(false);  // intake (source_type='intake') is admitted
+    expect(isDocumentDerivedSourceTypes(["intake"])).toBe(false);
+    // a claim backed by BOTH intake and an upload is still excluded (any document-touch)
+    const mixed = documentDerivedClaimIds(
+      [{ claim_id: "m", signal_id: "i" }, { claim_id: "m", signal_id: "u" }], src,
+    );
+    expect(mixed.has("m")).toBe(true);
+  });
 });

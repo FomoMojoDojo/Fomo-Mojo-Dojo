@@ -163,7 +163,7 @@ function applyWorkshopTag(existingTags: string[] | null | undefined, newTag: Wor
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type ProcessingStatus = "processed" | "uploading" | "uploaded";
-type TypeFilter       = "all" | "social" | "interview" | "survey" | "file" | "note";
+type TypeFilter       = "all" | "social" | "interview" | "survey" | "file" | "note" | "intake";
 type FoundationFilter = "all" | "yes" | "no";
 
 // Minimal input shape needed to call analyze-file and derive __area:* tags.
@@ -177,7 +177,7 @@ type MinimalInput = {
 
 interface SourceRow {
   id:                string;
-  type:              "social" | "interview" | "survey" | "file" | "note";
+  type:              "social" | "interview" | "survey" | "file" | "note" | "intake";
   title:             string;
   source:            string;
   date:              string;
@@ -194,6 +194,13 @@ interface SourceRow {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+// Intake rows are FILE-BACKED (analyzable / archivable / area-taggable) but carry a distinct
+// row.type so Evidence Memory renders INTAKE and analysis stamps source_type='intake' (which the
+// First Read provenance gate ADMITS; true uploads, source_type='uploaded_file', stay excluded).
+// Behavior gates use this helper; only the Type-column display and the analyze source_type mapping
+// (row.type === "file" ? "uploaded_file" : row.type) read the raw type.
+const isFileBacked = (t: SourceRow["type"]) => t === "file" || t === "intake";
 
 const SOCIAL_SOURCE_LABELS: Record<string, string> = {
   social_reddit:   "Reddit",
@@ -469,7 +476,7 @@ function UseThisPanel({
     });
   }
 
-  const isFile   = row.type === "file";
+  const isFile   = isFileBacked(row.type);
   const canSave  = isFile ? selectedAreas.size > 0 : !!journeyKey;
 
   function handleSave() {
@@ -1569,7 +1576,7 @@ export default function InputsTab({
   async function handleUseThis(row: SourceRow, { areas, journeyKey }: { areas?: FoundationArea[]; journeyKey?: string }) {
     if (!canEvidence) return; // evidence.manage
     setUseThisId(null);
-    if (row.type === "file" && areas && areas.length > 0) {
+    if (isFileBacked(row.type) && areas && areas.length > 0) {
       // Write __area:* tags so areasFromFileTags picks them up on next render
       updateFileTags.mutate({ id: row.id, tags: applyAreaTags(row.rawTags, areas) });
     } else if (row.type === "social" && journeyKey) {
@@ -1591,7 +1598,9 @@ export default function InputsTab({
       .filter((t) => !(WORKSHOP_TAGS as readonly string[]).includes(t));
     return {
       id:               f.id,
-      type:             "file",
+      // R6: reuse the existing 'Intake' tag (written by both intake writers) as the discriminator —
+      // no new column/migration. INTAKE render + source_type='intake' flow from this one distinction.
+      type:             (f.tags ?? []).includes("Intake") ? "intake" : "file",
       title:            f.file_name,
       source:           userTags[0] ?? (f.file_type ? f.file_type.toUpperCase() : "—"),
       date:             relativeTime(f.uploaded_at),
@@ -2032,6 +2041,7 @@ export default function InputsTab({
               >
                 <option value="all">All types</option>
                 <option value="file">File</option>
+                <option value="intake">Intake</option>
                 <option value="social">Social</option>
                 <option value="interview">Interview</option>
                 <option value="survey">Survey</option>
@@ -2089,7 +2099,7 @@ export default function InputsTab({
                           <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }} title={row.title}>
                             {row.title || "—"}
                           </span>
-                          {row.type === "file" && row.filePath && (
+                          {isFileBacked(row.type) && row.filePath && (
                             <button
                               type="button"
                               onClick={() => handleOpenFile(row)}
@@ -2120,7 +2130,7 @@ export default function InputsTab({
                         {/* Analysis column — Dify proposal state (file rows only) */}
                         <td style={{ ...TD, whiteSpace: "nowrap" }}>
                           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                            {row.type !== "file" ? (
+                            {!isFileBacked(row.type) ? (
                               <span style={{ ...MONO, fontSize: 9, color: "#e0dcd8" }}>—</span>
                             ) : (() => {
                               const proposal = proposalByFileId.get(row.id);
@@ -2222,7 +2232,7 @@ export default function InputsTab({
                             })()}
                           </div>
                         </td>
-                        {row.type === "file" ? (
+                        {isFileBacked(row.type) ? (
                           <td style={{ ...TD, paddingRight: 0, width: 24, textAlign: "center" }}>
                             <button
                               type="button"
