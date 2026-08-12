@@ -78,6 +78,11 @@ INTERNAL_AI_DEEP_DIVE_ENABLED = "env(INTERNAL_AI_DEEP_DIVE_ENABLED)"
 # the VALUE lives in the shell env / gitignored .env locally and `supabase secrets set` on hosted;
 # never committed. (Legacy MOJOMAP_AUTORUN_WEBHOOK_TOKEN is still accepted for backward compat.)
 INTAKE_SHARED_TOKEN = "env(INTAKE_SHARED_TOKEN)"
+# LOCAL importer (import-intake-submissions) reads the HOSTED "dumb mailbox" project. URL is not
+# secret; the service-role key is (env() -> gitignored supabase/.env, or the operator's start shell).
+# The hosted project itself is never linked here — these only let the local importer read its mailbox.
+HOSTED_INTAKE_URL = "env(HOSTED_INTAKE_URL)"
+HOSTED_INTAKE_SERVICE_KEY = "env(HOSTED_INTAKE_SERVICE_KEY)"
 
 [auth]
 jwt_secret = "GuctHgcw5y9L50rere9wZAGfbDQpjDu8S4hNMsTjwJIJfU/nymbI47u3gS40YdSl"

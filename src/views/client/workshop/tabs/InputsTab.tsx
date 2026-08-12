@@ -33,6 +33,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import OpenFirstReadControl from "../OpenFirstReadControl";
 import ReopenFirstReadControl from "../ReopenFirstReadControl";
+import ImportIntakeControl from "../ImportIntakeControl";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -1867,6 +1868,9 @@ export default function InputsTab({
       {/* FR-REOPEN-3: operator Reopen — only shows for an issued session; disabled-with-
           reason while contests are unresolved. Beside "Open First Read →" (R6). */}
       {isAdmin && <ReopenFirstReadControl companyId={companyId} dark={hasHierarchy} />}
+      {/* Fix B — admin-only import of pending hosted intake submissions (imports only;
+          allow_pipeline=false, so no run-agent-flow). Company-agnostic: matching is local. */}
+      {isAdmin && <ImportIntakeControl dark={hasHierarchy} />}
 
       {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
       {evidenceStatus && (
