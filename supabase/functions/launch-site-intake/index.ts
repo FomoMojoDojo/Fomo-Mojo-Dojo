@@ -30,6 +30,9 @@ type IntakeRequest = {
     customer_truth_signal?: string;
     top_focus_areas?: string[];
   };
+  // Gate DH populates this from the DreamHost POST (Option B: what the client saw on finishing).
+  // Absent/null-tolerant — the Cafe Barra backfill has none and the results page may be simplified.
+  completion_view?: Record<string, unknown> | null;
 };
 
 type AutomationResult = {
@@ -418,6 +421,72 @@ async function upsertStrategicProblem(args: {
   }
 }
 
+// Gate S — store the quiz answers as structured data (one row per submission). Upsert on
+// (company_id, submission_key) so a re-import is idempotent; a NULL submission_key is distinct in
+// the UNIQUE, so multiple NULL-keyed submissions coexist. completion_view is stored when present.
+async function insertIntakeResponse(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  userId: string;
+  submissionKey: string | null;
+  payload: IntakeRequest;
+}) {
+  const p = args.payload;
+  const { error } = await args.supabase.from("intake_responses").upsert(
+    {
+      company_id: args.companyId,
+      user_id: args.userId,
+      submission_key: args.submissionKey,
+      source: "intake",
+      submitted_at: p.submitted_at || null,
+      where_stuck: p.where_stuck || null,
+      where_stuck_other: p.where_stuck_other || null,
+      decision_slowdowns: (p.decision_slowdowns || []).filter(Boolean),
+      customer_confidence: p.customer_confidence || null,
+      last_customer_input: p.last_customer_input || null,
+      momentum_drag: p.momentum_drag || null,
+      momentum_drag_other: p.momentum_drag_other || null,
+      explicit_strategic_problem: p.explicit_strategic_problem || null,
+      desired_outcome: p.desired_outcome || null,
+      desired_outcome_other: p.desired_outcome_other || null,
+      success_definition: p.success_definition || null,
+      notes: p.notes || null,
+      run_initial_public_signal_pass:
+        typeof p.run_initial_public_signal_pass === "boolean" ? p.run_initial_public_signal_pass : null,
+      mojo_snapshot: p.mojo_snapshot ?? null,
+      completion_view: p.completion_view ?? null,
+    },
+    { onConflict: "company_id,submission_key", ignoreDuplicates: true },
+  );
+  if (error) throw new Error(error.message || "Failed to store intake response.");
+}
+
+// R5 (Act-1 seam): seed companies.strategic_problem_brief from the intake's stated problem, but
+// NEVER clobber an existing value — operator edits win forever. The reader
+// (generate-first-read-stated-problem) is untouched; this only fills an empty field.
+async function stampStrategicProblemBrief(args: {
+  supabase: ReturnType<typeof createClient>;
+  companyId: string;
+  problem: string;
+}) {
+  const problem = String(args.problem || "").trim();
+  if (!problem) return;
+  const { data } = await args.supabase
+    .from("companies")
+    .select("strategic_problem_brief")
+    .eq("id", args.companyId)
+    .single();
+  const existing = String(
+    (data as { strategic_problem_brief?: string | null } | null)?.strategic_problem_brief || "",
+  ).trim();
+  if (existing) return; // clobber guard — do not overwrite an operator edit
+  const { error } = await args.supabase
+    .from("companies")
+    .update({ strategic_problem_brief: problem })
+    .eq("id", args.companyId);
+  if (error) throw new Error(error.message || "Failed to stamp strategic problem brief.");
+}
+
 async function invokeRunAgentFlow(args: {
   supabaseUrl: string;
   anonKey: string;
@@ -561,6 +630,19 @@ Deno.serve(async (req) => {
         companyId: company.companyId,
         userId: actingUser.userId,
         statement: String(payload.explicit_strategic_problem || ""),
+      });
+
+      await insertIntakeResponse({
+        supabase,
+        companyId: company.companyId,
+        userId: actingUser.userId,
+        submissionKey: null,
+        payload,
+      });
+      await stampStrategicProblemBrief({
+        supabase,
+        companyId: company.companyId,
+        problem: String(payload.explicit_strategic_problem || ""),
       });
     }
 

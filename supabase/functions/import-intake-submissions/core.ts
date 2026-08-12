@@ -14,8 +14,10 @@ import {
   createIntakeFile,
   deriveCompanyName,
   ensureIntakeInput,
+  insertIntakeResponse,
   invokeRunAgentFlow,
   normalizeWebsite,
+  stampStrategicProblemBrief,
   upsertStrategicProblem,
   type IntakeRequest,
 } from "../_shared/intakeWrites.ts";
@@ -184,6 +186,21 @@ export async function processPendingRows(args: {
         companyId,
         userId: actingUser.userId,
         statement: String(payload.explicit_strategic_problem || ""),
+      });
+
+      // Gate S — structured capture (keyed to the hosted submission id, idempotent on re-import)
+      await insertIntakeResponse({
+        supabase: local,
+        companyId,
+        userId: actingUser.userId,
+        submissionKey: rowId,
+        payload,
+      });
+      // R5 — seed Act-1's stated problem, empty-only (never clobber an operator edit)
+      await stampStrategicProblemBrief({
+        supabase: local,
+        companyId,
+        problem: String(payload.explicit_strategic_problem || ""),
       });
 
       // pipeline ONLY when requested by payload AND explicitly allowed by caller

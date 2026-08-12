@@ -2601,6 +2601,89 @@ export type Database = {
           },
         ]
       }
+      intake_responses: {
+        Row: {
+          company_id: string
+          completion_view: Json | null
+          created_at: string
+          customer_confidence: string | null
+          decision_slowdowns: string[]
+          desired_outcome: string | null
+          desired_outcome_other: string | null
+          explicit_strategic_problem: string | null
+          id: string
+          last_customer_input: string | null
+          mojo_snapshot: Json | null
+          momentum_drag: string | null
+          momentum_drag_other: string | null
+          notes: string | null
+          run_initial_public_signal_pass: boolean | null
+          source: string
+          submission_key: string | null
+          submitted_at: string | null
+          success_definition: string | null
+          user_id: string
+          where_stuck: string | null
+          where_stuck_other: string | null
+        }
+        Insert: {
+          company_id: string
+          completion_view?: Json | null
+          created_at?: string
+          customer_confidence?: string | null
+          decision_slowdowns?: string[]
+          desired_outcome?: string | null
+          desired_outcome_other?: string | null
+          explicit_strategic_problem?: string | null
+          id?: string
+          last_customer_input?: string | null
+          mojo_snapshot?: Json | null
+          momentum_drag?: string | null
+          momentum_drag_other?: string | null
+          notes?: string | null
+          run_initial_public_signal_pass?: boolean | null
+          source?: string
+          submission_key?: string | null
+          submitted_at?: string | null
+          success_definition?: string | null
+          user_id: string
+          where_stuck?: string | null
+          where_stuck_other?: string | null
+        }
+        Update: {
+          company_id?: string
+          completion_view?: Json | null
+          created_at?: string
+          customer_confidence?: string | null
+          decision_slowdowns?: string[]
+          desired_outcome?: string | null
+          desired_outcome_other?: string | null
+          explicit_strategic_problem?: string | null
+          id?: string
+          last_customer_input?: string | null
+          mojo_snapshot?: Json | null
+          momentum_drag?: string | null
+          momentum_drag_other?: string | null
+          notes?: string | null
+          run_initial_public_signal_pass?: boolean | null
+          source?: string
+          submission_key?: string | null
+          submitted_at?: string | null
+          success_definition?: string | null
+          user_id?: string
+          where_stuck?: string | null
+          where_stuck_other?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intake_responses_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       market_options: {
         Row: {
           attempt: number
