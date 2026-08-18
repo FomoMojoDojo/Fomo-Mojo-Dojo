@@ -1318,16 +1318,21 @@ export default function ClientRefinePreviewCompanyView() {
               <p style={{ fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.13em", color: C.inkFaint, margin: "0 0 8px" }}>
                 Company · Operator view
               </p>
-              {/* Edit-company-name (operator screenshot ruling 2026-08-18): icon-only
-                  pencil inline beside the <h1>; edit/confirm UI opens in its place.
-                  Admin gating is route-level (AdminModeRoute); frozen refusal comes
-                  from the DB trigger, verbatim. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
-                <h1 style={{ margin: 0, fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}>
-                  {activeCompany?.name ?? "—"}
-                </h1>
-                {activeCompany?.id && activeCompany?.name && (
-                  <CompanyRenameControl companyId={activeCompany.id} companyName={activeCompany.name} />
+              {/* Edit-company-name (in-place ruling 2026-08-18): the control renders
+                  the identity <h1> itself — pencil swaps it for a matching input,
+                  committing the edit IS the confirmation. Admin gating is route-level
+                  (AdminModeRoute); frozen refusal comes from the DB trigger, verbatim. */}
+              <div style={{ margin: "0 0 10px" }}>
+                {activeCompany?.id && activeCompany?.name ? (
+                  <CompanyRenameControl
+                    companyId={activeCompany.id}
+                    companyName={activeCompany.name}
+                    headerStyle={{ fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}
+                  />
+                ) : (
+                  <h1 style={{ margin: 0, fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}>
+                    {activeCompany?.name ?? "—"}
+                  </h1>
                 )}
               </div>
               <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
