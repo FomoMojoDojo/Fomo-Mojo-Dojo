@@ -1,6 +1,7 @@
 // supabase/functions/public-baseline/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ingestPublicBaselineSignals } from "../_shared/evidencePhase1.ts";
+import { mintSiteCrawlSignals, parseSitemapUrls, type SiteReadLedger } from "../../../src/lib/siteCrawl/mint.ts";
 import { normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
 import { extractCitationSourceText, mergeCitationSourceText } from "../../../src/lib/firstRead/citationSource.ts";
 // FREEZE GATE — authoritative server-side frozen set (same source the delta guard uses via
@@ -850,8 +851,24 @@ async function crawlWebsiteEvidence(args: {
     { url: args.startUrl, depth: 0 },
     ...seededUrls.filter((url) => url !== args.startUrl).map((url) => ({ url, depth: 1 })),
   ];
+  // Sitemap seed (design gate 2026-08-18, ruling 4): one fetch; discovered pages
+  // join the queue at depth 1 and compete under the SAME maxPages cap — the
+  // sitemap widens discovery (unlinked pages), it never widens the budget.
+  try {
+    const sitemapUrl = new URL("/sitemap.xml", start).toString();
+    const smResp = await fetchWithTimeout(sitemapUrl, 6_000);
+    if (smResp.ok) {
+      const smUrls = parseSitemapUrls(await smResp.text(), args.baseDomain, 20);
+      const queued = new Set(queue.map((q) => q.url));
+      for (const u of smUrls) {
+        if (!queued.has(u)) queue.push({ url: u, depth: 1 });
+      }
+    }
+  } catch {
+    // no sitemap — discovery proceeds on seeds + links alone
+  }
   const visited = new Set<string>();
-  const evidence: Array<{ url: string; title: string; snippet: string; extracted: string; source_type: string }> = [];
+  const evidence: Array<{ url: string; title: string; snippet: string; extracted: string; source_type: string; meta?: string }> = [];
   const socialSources: Array<{ url: string; title: string; snippet: string; source_type: string; discovered_from: string }> = [];
   const seenSocial = new Set<string>();
 
@@ -937,6 +954,7 @@ async function crawlWebsiteEvidence(args: {
           snippet: `Site crawl (${path})`,
           extracted: capped,
           source_type: "public_web",
+          meta: metaDescription || "",
         });
       }
 
@@ -3138,6 +3156,34 @@ Deno.serve(async (req) => {
       ),
       sourceTextByUrl,
     });
+
+    // OWN-DOMAIN DETERMINISTIC MINT (design gate 2026-08-18): the crawl's pages
+    // become client_voice signals directly — no model mediation. Runs AFTER
+    // ingest (which clears this run's source_id rows before inserting), so the
+    // minted rows survive. Failures are reported on the run row, never fatal
+    // to a paid baseline.
+    let siteRead: SiteReadLedger | null = null;
+    try {
+      siteRead = await mintSiteCrawlSignals({
+        supabase,
+        companyId: company_id,
+        runId: inserted?.id ?? null,
+        pages: directEvidence.map((e) => ({ url: e.url, title: e.title, meta: (e as { meta?: string }).meta ?? "", extracted: e.extracted })),
+        excludeHosts: sourceFilters.exclude_domains,
+      });
+      console.log("[site-mint] site_read", siteRead);
+    } catch (mintError) {
+      console.warn("[site-mint] failed — baseline result stands, site_read records the failure", mintError);
+      siteRead = null;
+    }
+    {
+      const siteReadPatch = siteRead ?? { pages_read: 0, kept: 0, added: 0, superseded: 0, changes: [], failed: true };
+      const { error: siteReadErr } = await supabase
+        .from("public_baseline_runs")
+        .update({ result_json: { ...withRunLedger(resultWithDiscoveredSources, runLedger), site_read: siteReadPatch } })
+        .eq("id", inserted?.id);
+      if (siteReadErr) console.warn("[site-mint] site_read ledger write failed:", siteReadErr.message);
+    }
 
     console.log("[baseline] DONE", { run_id: inserted?.id, sources: filteredAnnotated.length, raw_sources: annotated.length });
 

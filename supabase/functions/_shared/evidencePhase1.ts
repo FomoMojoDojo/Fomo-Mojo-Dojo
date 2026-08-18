@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
+import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
@@ -164,6 +165,10 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // market_context keeps its pre-existing rebuild behavior.
   const signals = allSignals.filter((row) => {
     const vc = (row as { voice_class?: string | null })?.voice_class;
+    // Receipts-only (design gate 2026-08-18, ruling 2): site_crawl-minted rows
+    // are retained page text + receipts, never claim candidates — read the
+    // structural raw_payload flag, not a naming convention.
+    if (isSiteCrawlReceiptRow(row as { raw_payload?: unknown })) return false;
     return vc !== "competitor_voice" && vc !== "analysis";
   });
 
