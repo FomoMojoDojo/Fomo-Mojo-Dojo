@@ -262,3 +262,9 @@ export function useCompany() {
   if (!ctx) throw new Error('useCompany must be used within CompanyProvider');
   return ctx;
 }
+
+// Non-throwing variant for controls that can mount outside CompanyProvider
+// (e.g. in isolated tests): returns undefined instead of throwing.
+export function useCompanyIfAvailable() {
+  return useContext(CompanyContext);
+}
