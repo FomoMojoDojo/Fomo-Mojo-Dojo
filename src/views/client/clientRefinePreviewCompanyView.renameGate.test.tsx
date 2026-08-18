@@ -65,13 +65,13 @@ describe("Company page — rename control mount (relocated per operator ruling)"
   it("renders the rename control beside the identity header for the active company", () => {
     activeCompanyRef.value = { ...activeCompanyRef.value! };
     const { container } = render(<ClientRefinePreviewCompanyView />);
-    expect(container.textContent).toContain(RENAME_LABEL);
+    expect(container.querySelector(`[aria-label="${RENAME_LABEL}"]`)).toBeTruthy();
     expect(container.textContent).toContain("Acme");
   });
 
   it("does not render the control when no company is active", () => {
     activeCompanyRef.value = null;
     const { container } = render(<ClientRefinePreviewCompanyView />);
-    expect(container.textContent).not.toContain(RENAME_LABEL);
+    expect(container.querySelector(`[aria-label="${RENAME_LABEL}"]`)).toBeNull();
   });
 });

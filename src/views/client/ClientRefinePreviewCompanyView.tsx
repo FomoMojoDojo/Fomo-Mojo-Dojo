@@ -1318,9 +1318,18 @@ export default function ClientRefinePreviewCompanyView() {
               <p style={{ fontFamily: C.mono, fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.13em", color: C.inkFaint, margin: "0 0 8px" }}>
                 Company · Operator view
               </p>
-              <h1 style={{ margin: "0 0 10px", fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}>
-                {activeCompany?.name ?? "—"}
-              </h1>
+              {/* Edit-company-name (operator screenshot ruling 2026-08-18): icon-only
+                  pencil inline beside the <h1>; edit/confirm UI opens in its place.
+                  Admin gating is route-level (AdminModeRoute); frozen refusal comes
+                  from the DB trigger, verbatim. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
+                <h1 style={{ margin: 0, fontFamily: C.inter, fontSize: 28, fontWeight: 700, color: C.ink, lineHeight: 1.2 }}>
+                  {activeCompany?.name ?? "—"}
+                </h1>
+                {activeCompany?.id && activeCompany?.name && (
+                  <CompanyRenameControl companyId={activeCompany.id} companyName={activeCompany.name} />
+                )}
+              </div>
               <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
                 {activeCompany?.website && (
                   <a
@@ -1339,12 +1348,6 @@ export default function ClientRefinePreviewCompanyView() {
                   </span>
                 )}
               </div>
-              {/* Edit-company-name (design gate 2026-08-18; relocated here per operator
-                  ruling — identity surface, not evidence). Admin gating is route-level
-                  (AdminModeRoute); frozen refusal comes from the DB trigger, verbatim. */}
-              {activeCompany?.id && activeCompany?.name && (
-                <CompanyRenameControl companyId={activeCompany.id} companyName={activeCompany.name} />
-              )}
             </section>
 
             {/* ── Engagement start date ── */}

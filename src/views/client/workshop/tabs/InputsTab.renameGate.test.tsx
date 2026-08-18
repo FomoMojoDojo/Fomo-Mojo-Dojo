@@ -40,6 +40,6 @@ const props = {
 describe("InputsTab — rename control relocated away", () => {
   it("no longer renders the rename control, even for an admin", () => {
     const { container } = render(<InputsTab {...props} />);
-    expect(container.textContent).not.toContain(RENAME_LABEL);
+    expect(container.querySelector(`[aria-label="${RENAME_LABEL}"]`)).toBeNull();
   });
 });

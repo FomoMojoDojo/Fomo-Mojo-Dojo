@@ -156,26 +156,26 @@ export function CompanyRenameControlBase({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: dark ? 16 : 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {!editing && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ ...mono, color: subColor }}>{companyName}</span>
-          <a
-            href="#rename-company"
-            onClick={startEdit}
-            style={{
-              ...mono,
-              letterSpacing: "0.06em",
-              color: linkColor,
-              textDecoration: "underline",
-              textDecorationStyle: "dashed",
-              textUnderlineOffset: 3,
-              cursor: "pointer",
-            }}
-          >
-            ✎ {RENAME_LABEL}
-          </a>
-        </div>
+        // Icon-only trigger (operator screenshot ruling 2026-08-18): the pencil
+        // sits inline beside the identity <h1>; signed string 1 lives in the
+        // accessible label, not visible text. No name repetition.
+        <a
+          href="#rename-company"
+          onClick={startEdit}
+          aria-label={RENAME_LABEL}
+          title={RENAME_LABEL}
+          style={{
+            color: linkColor,
+            fontSize: 15,
+            lineHeight: 1,
+            textDecoration: "none",
+            cursor: "pointer",
+          }}
+        >
+          ✎
+        </a>
       )}
 
       {editing && !confirming && (

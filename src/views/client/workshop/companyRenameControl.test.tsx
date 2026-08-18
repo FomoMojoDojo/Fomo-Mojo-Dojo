@@ -30,7 +30,7 @@ function makeDeps(overrides: Partial<Parameters<typeof CompanyRenameControlBase>
 }
 
 async function driveToConfirm(newName: string) {
-  fireEvent.click(screen.getByText(`✎ ${RENAME_LABEL}`));
+  fireEvent.click(screen.getByLabelText(RENAME_LABEL));
   const input = screen.getByLabelText("New company name");
   fireEvent.change(input, { target: { value: newName } });
   fireEvent.click(screen.getByText("Save"));
@@ -147,7 +147,7 @@ describe("CompanyRenameControl", () => {
     render(
       <CompanyRenameControlBase companyId={COMPANY_ID} companyName="Edgewood" actorId={ACTOR_ID} deps={deps} />,
     );
-    fireEvent.click(screen.getByText(`✎ ${RENAME_LABEL}`));
+    fireEvent.click(screen.getByLabelText(RENAME_LABEL));
     fireEvent.change(screen.getByLabelText("New company name"), { target: { value: "   " } });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(screen.getByText("Company name cannot be empty.")).toBeTruthy());
