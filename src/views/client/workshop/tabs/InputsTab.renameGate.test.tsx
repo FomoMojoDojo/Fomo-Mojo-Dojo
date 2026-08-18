@@ -1,5 +1,6 @@
-// Edit-company-name (design gate 2026-08-18) — mount gating: the rename control
-// renders on InputsTab for an admin and is absent for a non-admin.
+// Edit-company-name relocation (operator ruling 2026-08-18) — the rename
+// control moved to the Company page (identity surface). InputsTab (evidence
+// surface) must no longer render it, even for an admin.
 
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
@@ -28,11 +29,7 @@ vi.mock("@/hooks/useFullRefresh", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
   return { ...actual, useFullRefresh: () => ({ state: { stage: "idle", message: "", running: false }, start: async () => {} }) };
 });
-// wrapper deps of the rename control (the control itself is exercised in its own test file)
-vi.mock("@/hooks/useCompany", () => ({ useCompanyIfAvailable: () => ({ refetch: async () => {} }) }));
-
-const isAdminRef = { value: true };
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: isAdminRef.value, user: { id: "u-1" } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ isAdmin: true, user: { id: "u-1" } }) }));
 
 const props = {
   companyId: "e55ac325-2897-4d06-9fbd-d9ddd776be3b", companyName: "Acme", companyWebsite: "https://acme.com",
@@ -40,15 +37,8 @@ const props = {
   hasHierarchy: false,
 };
 
-describe("InputsTab — rename control gating", () => {
-  it("renders the rename control for an admin", () => {
-    isAdminRef.value = true;
-    const { container } = render(<InputsTab {...props} />);
-    expect(container.textContent).toContain(RENAME_LABEL);
-  });
-
-  it("does not render the rename control for a non-admin", () => {
-    isAdminRef.value = false;
+describe("InputsTab — rename control relocated away", () => {
+  it("no longer renders the rename control, even for an admin", () => {
     const { container } = render(<InputsTab {...props} />);
     expect(container.textContent).not.toContain(RENAME_LABEL);
   });

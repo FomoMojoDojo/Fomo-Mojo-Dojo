@@ -9,6 +9,7 @@ import { useSignalLandscape } from "@/hooks/useSignalLandscape";
 import { useDirectionEvidence } from "@/hooks/useDirectionEvidence";
 import { useFoundationStatus, type FoundationStatus } from "@/hooks/useFoundationStatus";
 import { WorkshopSidebar, type SidebarTabKey } from "@/components/client/WorkshopSidebar";
+import CompanyRenameControl from "@/views/client/workshop/CompanyRenameControl";
 import { getPhaseDefinition, type EngagementPhase } from "@/lib/engagementPhase";
 import { relativeTime } from "@/views/client/workshop/helpers";
 import {
@@ -1338,6 +1339,12 @@ export default function ClientRefinePreviewCompanyView() {
                   </span>
                 )}
               </div>
+              {/* Edit-company-name (design gate 2026-08-18; relocated here per operator
+                  ruling — identity surface, not evidence). Admin gating is route-level
+                  (AdminModeRoute); frozen refusal comes from the DB trigger, verbatim. */}
+              {activeCompany?.id && activeCompany?.name && (
+                <CompanyRenameControl companyId={activeCompany.id} companyName={activeCompany.name} />
+              )}
             </section>
 
             {/* ── Engagement start date ── */}

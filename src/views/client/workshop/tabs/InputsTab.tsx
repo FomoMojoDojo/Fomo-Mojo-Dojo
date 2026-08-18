@@ -34,7 +34,6 @@ import { toast } from "sonner";
 import OpenFirstReadControl from "../OpenFirstReadControl";
 import ReopenFirstReadControl from "../ReopenFirstReadControl";
 import ImportIntakeControl from "../ImportIntakeControl";
-import CompanyRenameControl from "../CompanyRenameControl";
 
 // ── Proposal accept payload types ────────────────────────────────────────────
 
@@ -1881,12 +1880,6 @@ export default function InputsTab({
       {/* Fix B — admin-only import of pending hosted intake submissions (imports only;
           allow_pipeline=false, so no run-agent-flow). Company-agnostic: matching is local. */}
       {isAdmin && <ImportIntakeControl dark={hasHierarchy} />}
-
-      {/* Edit-company-name (design gate 2026-08-18) — admin-only inline rename;
-          frozen refusal comes from the DB trigger, rendered verbatim. */}
-      {isAdmin && companyId && companyName && (
-        <CompanyRenameControl companyId={companyId} companyName={companyName} dark={hasHierarchy} />
-      )}
 
       {/* ── EVIDENCE SOURCE STATUS ────────────────────────────────────────── */}
       {evidenceStatus && (
