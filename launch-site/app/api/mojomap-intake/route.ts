@@ -135,6 +135,7 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
   }
 
   const webhookToken = process.env.MOJOMAP_AUTORUN_WEBHOOK_TOKEN?.trim();
+  const intakeToken = process.env.INTAKE_SHARED_TOKEN?.trim();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), AUTORUN_TIMEOUT_MS);
 
@@ -145,6 +146,7 @@ const triggerMojoMapAutorun = async (payload: IntakeRequest): Promise<AutorunRes
       headers: {
         "Content-Type": "application/json",
         ...(webhookToken ? { Authorization: `Bearer ${webhookToken}` } : {}),
+        ...(intakeToken ? { "x-intake-token": intakeToken } : {}),
       },
       body: JSON.stringify({
         source: "launch-site-mojomap-intake",
