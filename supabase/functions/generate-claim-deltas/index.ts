@@ -90,7 +90,16 @@ serve(async (req) => {
 
     if (result.ok) {
       if ("plan" in result) return json(result);
-      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, deltas: result.deltas });
+      // PROOF GUARD: the exclusion ledger (count in totals + ids here) rides every
+      // run result — a silent guard would be an invisible decision.
+      return json({
+        ok: true,
+        dry_run: !doWrite,
+        scoped: result.scoped,
+        totals: result.totals,
+        proof_guard_excluded_ids: result.proof_guard_excluded_ids,
+        deltas: result.deltas,
+      });
     }
     if ("skipped" in result) {
       if (result.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — deltas aren't computed for it." }, 403);

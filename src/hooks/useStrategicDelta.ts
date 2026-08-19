@@ -113,6 +113,11 @@ export type StrategicDeltaData = {
   struckClaims: StruckClaim[];
   // Claim id → status for per-row render/control decisions.
   claimStatusById: Map<string, "active" | "minimized" | "struck">;
+  // PROOF GUARD (signed 2026-08-19): count of non-struck declared claims typed
+  // proof_category='research_required' — the SAME formula the compute's guard
+  // applies, so this equals totals.proof_guard_excluded of a full run on the
+  // current corpus. Drives the signed held-out ledger line (rendered only >= 1).
+  proofGuardHeldOut: number;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -211,6 +216,7 @@ export function useStrategicDelta(companyId?: string) {
         claimDeltas: [],
         struckClaims: [],
         claimStatusById: new Map(),
+        proofGuardHeldOut: 0,
       };
 
       const [internalRes, publicRes, dispRes, runsRes, deltaRes, claimRes] = await Promise.all([
@@ -247,7 +253,7 @@ export function useStrategicDelta(companyId?: string) {
           .order("delta_type", { ascending: true }),
         supabase
           .from("claims")
-          .select("id, statement, provenance, status, struck_reason, struck_at, struck_by, raw_payload")
+          .select("id, statement, provenance, status, struck_reason, struck_at, struck_by, raw_payload, proof_category")
           .eq("company_id", companyId),
       ]);
 
@@ -256,8 +262,10 @@ export function useStrategicDelta(companyId?: string) {
         status: "active" | "minimized" | "struck";
         struck_reason: string | null; struck_at: string | null; struck_by: string | null;
         raw_payload: { session_id?: string | null } | null;
+        proof_category?: string | null;
       };
-      const claimRows = (claimRes.data ?? []) as ClaimRow[];
+      // proof_category not yet in generated types (same bypass as delta_dispositions above).
+      const claimRows = (claimRes.data ?? []) as unknown as ClaimRow[];
       const claimStatementById = new Map<string, string>(claimRows.map((c) => [c.id, c.statement]));
       const claimStatusById = new Map<string, ClaimRow["status"]>(claimRows.map((c) => [c.id, c.status]));
       const claimProvenanceById = new Map<string, ClaimRow["provenance"]>(claimRows.map((c) => [c.id, c.provenance]));
@@ -444,7 +452,16 @@ export function useStrategicDelta(companyId?: string) {
         };
       });
 
-      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims, claimStatusById };
+      // PROOF GUARD: mirror of the compute's exclusion formula (non-struck declared
+      // side, positively typed research_required) — equals totals.proof_guard_excluded
+      // of a full run on this corpus.
+      const proofGuardHeldOut = claimRows.filter(
+        (c) => c.status !== "struck" &&
+          (c.provenance === "internal_declared" || c.provenance === "client_attested") &&
+          c.proof_category === "research_required",
+      ).length;
+
+      return { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims, claimStatusById, proofGuardHeldOut };
     },
   });
 

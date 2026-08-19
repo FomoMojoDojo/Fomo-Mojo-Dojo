@@ -82,6 +82,13 @@ export type DeltaClaim = {
   statement: string;
   topic: string | null;
   provenance: "internal_declared" | "public_observed" | "client_attested";
+  // PROOF GUARD (ruling 2026-08-19): proof-ladder class, orthogonal to provenance.
+  // 'research_required' ⇒ excluded from pairing (only research-grade evidence can
+  // answer it); NULL/absent ⇒ untyped, flows exactly as before (fail-direction law).
+  claim_type?: string | null;
+  proof_category?: string | null;
+  // Public-side evidence class (from raw_payload.sample_signal), prompt context only.
+  source_type?: string | null;
 };
 
 export type ComputedDelta = {
@@ -120,7 +127,14 @@ export type DeltaRunResult =
         // company's own words cannot count as the market confirming it. The claim ROW is
         // untouched; only its participation in this run's pairing is removed.
         self_voice_excluded: number;
+        // PROOF GUARD: declared claims excluded from pairing because
+        // proof_category='research_required' — public material can never answer
+        // them, so they fall to publicly_silent (the true statement). A silent
+        // guard is an invisible decision: the count lives here and the claim ids
+        // in proof_guard_excluded_ids on the result.
+        proof_guard_excluded: number;
       };
+      proof_guard_excluded_ids: string[];
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
@@ -148,6 +162,10 @@ export type DeltaPlanResult =
       claims: DeltaPlanClaim[];
       fresh_total: number;
       rejected_total: number;
+      // PROOF GUARD: guarded claims are absent from `claims` (the chunk packer
+      // must never pack them); their exclusion is ledgered here.
+      proof_guard_excluded: number;
+      proof_guard_excluded_ids: string[];
     }
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
@@ -274,7 +292,12 @@ const JUDGE_SYSTEM =
   "Criteria: (i) SPECIFIC — the OBSERVED statement must speak to the SPECIFIC assertion the declared statement makes, not merely a shared topic; shared buzzwords or general theme overlap are NOT sufficient; an observed statement that would equally confirm many unrelated declared claims is NOT an echo of any of them; " +
   "(ii) RELATION — 'echo' means the public statement is consistent with the declared intent; 'divergent' means it contradicts or materially mis-states it; " +
   "(iii) SPAN — you MUST copy, VERBATIM, a span of words FROM THE OBSERVED STATEMENT that carries the confirmation or contradiction; the span must be text that actually appears in the OBSERVED statement (not the declared one, not a paraphrase). If no such specific span exists, there is no pairing: return relation null; " +
-  "(iv) CONFIDENT — true only when the subject match and relation are unambiguous. " +
+  "(iv) CONFIDENT — true only when the subject match and relation are unambiguous; " +
+  // CRITERION REV 2026-08-19 (proof-class, ruling Item c): criterion (v) added. The
+  // structural control is the upstream proof-category guard — this criterion is the
+  // complement, giving the judge the vocabulary to refuse class-mismatched evidence
+  // that reaches it untyped.
+  "(v) PROOF CLASS — the OBSERVED evidence must be of a class capable of ANSWERING the declared claim: a declared claim about missing or insufficient research or customer evidence cannot be echoed by directory listings, star ratings, reviews, or marketing material — such material is not research-grade evidence; when the evidence class cannot answer the claim, return relation null. " +
   "Reject vibes-pairings. Never force a match. " +
   'JSON only: {"same_subject":true|false,"relation":"echo"|"divergent"|null,"confident":true|false,"span":"<verbatim words copied from the OBSERVED statement>","reason":"<one short clause>"}.';
 
@@ -317,8 +340,15 @@ export function verifyObservedSpan(span: string | undefined, observed: string): 
   return classifyObservedSpan(span, observed) === "valid";
 }
 
-function buildPairUser(declared: string, publicStmt: string): string {
-  return `DECLARED (internal, authoritative about intent): ${declared}\nOBSERVED (public): ${publicStmt}\nAre these the same subject, and if so does the public statement echo or diverge from the declared intent?`;
+// PROOF GUARD Item (c) — prompt complement, belt to the guard's suspenders: the
+// pair message now carries the declared claim_type and the observed evidence
+// source_type so the models can weigh proof class. The HARD guard upstream is
+// the sufficient control; this context only improves refusal reasons. Identity
+// is unaffected (pairIdentity hashes statements only).
+function buildPairUser(d: DeltaClaim, p: DeltaClaim): string {
+  const dType = d.claim_type ? ` [claim_type: ${d.claim_type}]` : "";
+  const pSrc = p.source_type ? ` [evidence source_type: ${p.source_type}]` : "";
+  return `DECLARED (internal, authoritative about intent)${dType}: ${d.statement}\nOBSERVED (public)${pSrc}: ${p.statement}\nAre these the same subject, and if so does the public statement echo or diverge from the declared intent?`;
 }
 
 // require_model parsing: unparseable output throws — no defaults, no fallback.
@@ -359,7 +389,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
   const { data: claimRows, error: claimsErr } = await args.supabase
     .from("claims")
-    .select("id, statement, topic, provenance, status")
+    .select("id, statement, topic, provenance, status, claim_type, proof_category, raw_payload")
     .eq("company_id", args.companyId);
   if (claimsErr) return { ok: false, error: String(claimsErr.message ?? claimsErr) };
 
@@ -367,9 +397,11 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // their existing pair/silence rows go stale and the write phase deletes them
   // (rejected_pairing tombstones persist by design). Minimized claims keep
   // participating. JS-side filter so the fake-db unit tests can exercise it.
-  const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string }>).filter(
-    (c) => c.status !== "struck",
-  );
+  const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string; raw_payload?: { sample_signal?: { source_type?: unknown } } | null }>)
+    .filter((c) => c.status !== "struck")
+    // Evidence class for prompt context (Item c): the sample signal's source_type.
+    // Extracted here so raw_payload itself never travels further.
+    .map((c) => ({ ...c, source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null, raw_payload: undefined }));
   // Declared side = the client-side corpus: operator-uploaded (internal_declared)
   // PLUS room-attested First Read corrections (client_attested, FR-D1). Both are
   // "things the client declared"; the observed side stays public_observed only.
@@ -450,7 +482,28 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // cannot select a struck claim.
   const scoped = Array.isArray(args.declaredIds) && args.declaredIds.length > 0;
   const declaredIdSet = scoped ? new Set(args.declaredIds) : null;
-  const declaredScope = declaredIdSet ? declared.filter((d) => declaredIdSet.has(d.id)) : declared;
+
+  // ── PROOF-CATEGORY GUARD (operator ruling 2026-08-19) ────────────────────────
+  // Provenance and proof are orthogonal axes. A claim typed research_required sits
+  // on the proof ladder — only research-grade evidence (e.g. an ODI survey) can
+  // answer it; public-site material can never echo OR contradict it (the Chamber
+  // directory "echo" of "insufficient customer evidence" was the founding category
+  // error). Guarded claims never reach the prefilter, the proposer, or the plan
+  // manifest; the unscoped silence loop below still iterates the FULL declared
+  // list, so a guarded claim lands publicly_silent — "we haven't found this in
+  // public reading", which for a research question is exactly true. Fail-direction
+  // law: only POSITIVELY-typed claims are guarded — NULL/untyped flows exactly as
+  // before, so a mistyping can only cause normal flow, never a wrong silence.
+  // A silent guard is an invisible decision: count + ids are ledgered on every
+  // result (run totals + plan manifest).
+  const preGuardScope = declaredIdSet ? declared.filter((d) => declaredIdSet.has(d.id)) : declared;
+  // Ledger exactly what THIS run excluded (scoped runs report scope-local exclusions).
+  const proofGuardExcludedIds = preGuardScope
+    .filter((c) => c.proof_category === "research_required")
+    .map((c) => c.id)
+    .sort();
+  const proofGuarded = new Set(proofGuardExcludedIds);
+  const declaredScope = preGuardScope.filter((d) => !proofGuarded.has(d.id));
 
   // CH-2b-1 PLAN MODE: prefilter + identity classification only — the manifest
   // the client packs chunks from. Returns HERE, before the model stage: zero
@@ -492,6 +545,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       claims: planClaims,
       fresh_total: freshTotal,
       rejected_total: rejectedTotal,
+      proof_guard_excluded: proofGuardExcludedIds.length,
+      proof_guard_excluded_ids: proofGuardExcludedIds,
     };
   }
 
@@ -503,6 +558,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     rejections_cached: 0, rejections_pruned: 0,
     spans_unjudged: 0,
     self_voice_excluded: selfVoiceExcluded,
+    proof_guard_excluded: proofGuardExcludedIds.length,
   };
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
@@ -581,7 +637,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       }
 
       // Stage 2a: 14b proposes.
-      const proposedRaw = await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d.statement, p.statement), GEN_TIMEOUT_MS);
+      const proposedRaw = await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d, p), GEN_TIMEOUT_MS);
       const proposed = parseVerdict(proposedRaw, "proposer");
       if (!proposed.same_subject || !proposed.relation) {
         totals.pairs_rejected++;
@@ -592,7 +648,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       // Stage 2b: 70b judges. Deterministic (temperature 0, fixed seed) so a
       // re-judge of the same pair is reproducible — the proposer keeps its own
       // options, only the authoritative judge call is pinned.
-      const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d.statement, p.statement), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM);
+      const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d, p), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM);
       const judged = parseVerdict(judgedRaw, "judge");
       if (!judged.same_subject || !judged.relation) {
         totals.pairs_rejected++;
@@ -761,5 +817,5 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     }
   }
 
-  return { ok: true, scoped, deltas, totals };
+  return { ok: true, scoped, deltas, totals, proof_guard_excluded_ids: proofGuardExcludedIds };
 }

@@ -922,3 +922,89 @@ describe("self-voice exclusion at the echo seam", () => {
     expect(db.tables.claim_signal_refs.some((rf) => rf.claim_id === "p1")).toBe(true);
   });
 });
+
+// ── PROOF-CATEGORY GUARD (ruling 2026-08-19) ─────────────────────────────────
+// The guard is proven by the run that FAILS: a research_required claim never
+// reaches the proposer, whatever the topical overlap, and lands publicly_silent
+// with its exclusion ledgered. Fail-direction law: only positively-typed claims
+// are guarded — public_answerable and untyped flow exactly as before.
+describe("proof-category guard", () => {
+  const DECL = "We struggle with insufficient customer evidence to understand growth patterns";
+  const OBS = "Directory lists the company with customer evidence from 4.8 stars and 148 reviewers";
+
+  const typedDeclared = (id: string, statement: string, proof: string | null, claimType = "unmet_need"): Row => ({
+    ...declared(id, statement), proof_category: proof, claim_type: claimType,
+  });
+
+  const alwaysEcho = () =>
+    stubOllama(() => ({ same_subject: true, relation: "echo", confident: true, reason: "topical" }));
+
+  it("FAIL SIDE: research_required claim is never proposed, lands publicly_silent, and the exclusion is ledgered (count + ids)", async () => {
+    const calls = alwaysEcho();
+    const db = fakeDb({ claims: [typedDeclared("d-guard", DECL, "research_required"), publicClaim("p1", OBS)] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true));
+    if (!r.ok) throw new Error("expected ok");
+    // proposer/judge never saw the pair — zero model calls despite heavy token overlap
+    expect(calls.length).toBe(0);
+    expect(r.totals.pairs_confirmed + r.totals.pairs_inferred).toBe(0);
+    // falls to publicly_silent — the true statement for a research question
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d-guard")).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.delta_type === "publicly_silent" && row.declared_claim_id === "d-guard")).toBe(true);
+    // ledgered, never silent
+    expect(r.totals.proof_guard_excluded).toBe(1);
+    expect(r.proof_guard_excluded_ids).toEqual(["d-guard"]);
+    // the claim ROW is untouched
+    expect(db.tables.claims.some((c) => c.id === "d-guard")).toBe(true);
+  });
+
+  it("PASS SIDE: public_answerable claim with the same statement pairs normally", async () => {
+    const calls = alwaysEcho();
+    const db = fakeDb({ claims: [typedDeclared("d-open", DECL, "public_answerable"), publicClaim("p1", OBS)] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true));
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(2); // proposer + judge
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d-open")).toBe(true);
+    expect(r.totals.proof_guard_excluded).toBe(0);
+    expect(r.proof_guard_excluded_ids).toEqual([]);
+  });
+
+  it("PASS SIDE (fail-direction): untyped claim (no proof_category) flows exactly as before", async () => {
+    const calls = alwaysEcho();
+    const db = fakeDb({ claims: [declared("d-untyped", DECL), publicClaim("p1", OBS)] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, true));
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(2);
+    expect(r.deltas.some((d) => d.delta_type === "echoed" && d.declared_claim_id === "d-untyped")).toBe(true);
+    expect(r.totals.proof_guard_excluded).toBe(0);
+  });
+
+  it("PLAN MODE: guarded claim is absent from the chunk manifest and ledgered there", async () => {
+    stubOllama(() => { throw new Error("plan mode must make zero model calls"); });
+    const db = fakeDb({ claims: [
+      typedDeclared("d-guard", DECL, "research_required"),
+      declared("d-untyped", DECL + " differently"),
+      publicClaim("p1", OBS),
+    ] });
+    const r = await computeDeltasForCompany({ ...baseArgs(db, CO, true), plan: true });
+    if (!r.ok || !("plan" in r)) throw new Error("expected plan result");
+    expect(r.claims.some((c) => c.declared_claim_id === "d-guard")).toBe(false);
+    expect(r.claims.some((c) => c.declared_claim_id === "d-untyped")).toBe(true);
+    expect(r.proof_guard_excluded).toBe(1);
+    expect(r.proof_guard_excluded_ids).toEqual(["d-guard"]);
+  });
+
+  it("PROMPT COMPLEMENT (c): claim_type and evidence source_type reach the model user message", async () => {
+    const calls = stubOllama(() => ({
+      same_subject: true, relation: "echo", confident: true, span: "customer evidence from 4.8 stars", reason: "topical",
+    }));
+    const db = fakeDb({ claims: [
+      { ...declared("d-open", DECL), claim_type: "problem" },
+      { ...publicClaim("p1", OBS), raw_payload: { sample_signal: { source_type: "review_signal" } } },
+    ] });
+    const r = await computeDeltasForCompany(baseArgs(db, CO, false));
+    if (!r.ok) throw new Error("expected ok");
+    expect(calls.length).toBe(2);
+    expect(calls[0].user).toContain("[claim_type: problem]");
+    expect(calls[0].user).toContain("[evidence source_type: review_signal]");
+  });
+});

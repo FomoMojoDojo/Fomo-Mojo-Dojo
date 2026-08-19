@@ -674,12 +674,22 @@ function StruckResidualSection({ residual, onRestore, busy }: {
   );
 }
 
-function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }: {
+// PROOF GUARD ledger line — SIGNED COPY (operator, 2026-08-19). Verbatim; the
+// N=1 variant is part of the signature. Rendered only when the guard holds
+// at least one claim out (a silent guard is an invisible decision).
+export function proofGuardLedgerLine(n: number): string {
+  return n === 1
+    ? "1 research-question claim held out of pairing — public reading can't answer it."
+    : `${n} research-question claim(s) held out of pairing — public reading can't answer them.`;
+}
+
+function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus, proofGuardHeldOut = 0 }: {
   deltas: ClaimDeltaRow[];
   struckClaims: StruckClaim[];
   companyId: string;
   onSet: (id: string, v: "acknowledged" | "intentional" | "queued" | "rejected_pairing" | null) => void;
   onSetStatus: SetClaimStatusFn;
+  proofGuardHeldOut?: number;
 }) {
   const [pending, setPending] = useState<PendingStatusAction | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
@@ -720,6 +730,13 @@ function ClaimDeltaBlock({ deltas, struckClaims, companyId, onSet, onSetStatus }
       <p style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: D.signal, margin: "0 0 12px" }}>
         Declared vs Observed
       </p>
+
+      {/* PROOF GUARD ledger line (signed 2026-08-19) — only when the guard fired. */}
+      {proofGuardHeldOut >= 1 && (
+        <p style={{ fontFamily: D.mono, fontSize: 9.5, letterSpacing: "0.04em", color: D.inkFaint, margin: "0 0 12px", lineHeight: 1.6 }}>
+          {proofGuardLedgerLine(proofGuardHeldOut)}
+        </p>
+      )}
 
       {/* Passive divergence banner — prominent, never interrupting. */}
       {divergentConfirmed.length > 0 && (
@@ -958,7 +975,7 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
   if (!data) return null;
 
-  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims } = data;
+  const { internal, publicThemes, dispositions, currentRunId, alignmentTrend, publicVoiceDelta, claimDeltas, struckClaims, proofGuardHeldOut } = data;
   const { strategicBet, recommendations, sourceReads } = internal;
 
   // PVT-1: current snapshot's public-vs-internal alignment (minimal surface; rich
@@ -1010,7 +1027,8 @@ export function StrategicDirectionDelta({ companyId }: { companyId: string }) {
 
       {/* ── INT-3: Declared vs Observed — the founding signal, first position ── */}
       <ClaimDeltaBlock deltas={claimDeltas} struckClaims={struckClaims} companyId={companyId}
-        onSet={setClaimDeltaDisposition} onSetStatus={setClaimStatus} />
+        onSet={setClaimDeltaDisposition} onSetStatus={setClaimStatus}
+        proofGuardHeldOut={proofGuardHeldOut} />
 
       {/* ── Internal spine — full width, stacked (two-column grid removed) ── */}
       {hasInternal ? (
