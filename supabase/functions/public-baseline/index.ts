@@ -816,9 +816,17 @@ async function crawlWebsiteEvidence(args: {
   baseDomain: string;
   maxPages?: number;
   maxDepth?: number;
+  /** A2 time guard: stop STARTING new fetches once the crawl has run this long. */
+  maxMs?: number;
 }) {
   const maxPages = Math.max(1, Number(args.maxPages || 8));
   const maxDepth = Math.max(0, Number(args.maxDepth || 2));
+  // A2 (ruling 2026-08-19): 100s keeps the crawl's worst case no larger than the
+  // pre-A2 ceiling (14 × 8s fetch timeouts + 6s sitemap ≈ 118s) while leaving the
+  // rest of the run headroom under the edge runtime's ~150s response cut — a fetch
+  // admitted just before the cutoff still finishes by ~108s (8s per-fetch timeout).
+  const maxMs = Math.max(10_000, Number(args.maxMs || 100_000));
+  const crawlStartedAt = Date.now();
   const start = new URL(args.startUrl);
   const COMMON_PATHS = [
     "/",
@@ -836,7 +844,22 @@ async function crawlWebsiteEvidence(args: {
     "/team",
     "/careers",
   ];
-  const seededUrls = Array.from(
+  // Sitemap seed FIRST (A2 ruling 2026-08-19): when the sitemap yields any URLs,
+  // they REPLACE the COMMON_PATHS guesses — on sites with their own slugs
+  // (Squarespace etc.) the guesses all 404 and, pre-A2, burned the whole page
+  // budget before a single real subpage was dequeued (CB2 1-of-14). Guesses
+  // remain the fallback when the sitemap is missing or empty.
+  let sitemapUrls: string[] = [];
+  try {
+    const sitemapUrl = new URL("/sitemap.xml", start).toString();
+    const smResp = await fetchWithTimeout(sitemapUrl, 6_000);
+    if (smResp.ok) {
+      sitemapUrls = parseSitemapUrls(await smResp.text(), args.baseDomain, 20);
+    }
+  } catch {
+    // no sitemap — discovery proceeds on guesses + links alone
+  }
+  const guessedUrls = Array.from(
     new Set(
       COMMON_PATHS.map((path) => {
         const next = new URL(start.toString());
@@ -847,32 +870,22 @@ async function crawlWebsiteEvidence(args: {
       }),
     ),
   );
+  const seededUrls = sitemapUrls.length > 0 ? Array.from(new Set(sitemapUrls)) : guessedUrls;
   const queue: Array<{ url: string; depth: number }> = [
     { url: args.startUrl, depth: 0 },
     ...seededUrls.filter((url) => url !== args.startUrl).map((url) => ({ url, depth: 1 })),
   ];
-  // Sitemap seed (design gate 2026-08-18, ruling 4): one fetch; discovered pages
-  // join the queue at depth 1 and compete under the SAME maxPages cap — the
-  // sitemap widens discovery (unlinked pages), it never widens the budget.
-  try {
-    const sitemapUrl = new URL("/sitemap.xml", start).toString();
-    const smResp = await fetchWithTimeout(sitemapUrl, 6_000);
-    if (smResp.ok) {
-      const smUrls = parseSitemapUrls(await smResp.text(), args.baseDomain, 20);
-      const queued = new Set(queue.map((q) => q.url));
-      for (const u of smUrls) {
-        if (!queued.has(u)) queue.push({ url: u, depth: 1 });
-      }
-    }
-  } catch {
-    // no sitemap — discovery proceeds on seeds + links alone
-  }
   const visited = new Set<string>();
   const evidence: Array<{ url: string; title: string; snippet: string; extracted: string; source_type: string; meta?: string }> = [];
   const socialSources: Array<{ url: string; title: string; snippet: string; source_type: string; discovered_from: string }> = [];
   const seenSocial = new Set<string>();
 
-  while (queue.length > 0 && visited.size < maxPages) {
+  // A2: the page budget counts only successfully-fetched same-domain HTML pages.
+  // `visited` stays URL-dedup only — a 404/non-HTML/off-domain miss is never
+  // retried, but no longer consumes a maxPages slot.
+  let pagesFetched = 0;
+  while (queue.length > 0 && pagesFetched < maxPages) {
+    if (Date.now() - crawlStartedAt >= maxMs) break; // A2 time guard: stop starting new fetches
     const next = queue.shift();
     if (!next) break;
     if (visited.has(next.url)) continue;
@@ -887,6 +900,7 @@ async function crawlWebsiteEvidence(args: {
       const finalUrl = String(resp.url || next.url);
       const finalHost = getDomain(finalUrl);
       if (!domainMatches(finalHost, args.baseDomain)) continue;
+      pagesFetched++;
 
       const html = await resp.text();
       const text = extractTextBasic(html);
