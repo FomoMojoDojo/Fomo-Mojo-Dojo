@@ -16,6 +16,30 @@ export function extractTextBasic(html: string): string {
     .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, " ")
     .replace(/<\/(p|div|br|li|h1|h2|h3|h4|tr)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
+    // B (ruling 2026-08-19): decode common HTML entities before whitespace collapse,
+    // so retained text carries real characters, not &nbsp;/&mdash; artifacts.
+    // Runs after tag-stripping (decoded </> cannot form tags); &amp; decodes LAST
+    // so escaped entity text like &amp;nbsp; stays the literal string "&nbsp;".
+    .replace(/&#(\d+);/g, (_m, d: string) => {
+      const c = Number(d);
+      return c > 0 && c < 0x110000 && !(c >= 0xd800 && c <= 0xdfff) ? String.fromCodePoint(c) : " ";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => {
+      const c = parseInt(h, 16);
+      return c > 0 && c < 0x110000 && !(c >= 0xd800 && c <= 0xdfff) ? String.fromCodePoint(c) : " ";
+    })
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&mdash;/gi, "—")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&rsquo;/gi, "’")
+    .replace(/&lsquo;/gi, "‘")
+    .replace(/&rdquo;/gi, "”")
+    .replace(/&ldquo;/gi, "“")
+    .replace(/&hellip;/gi, "…")
+    .replace(/&quot;/gi, '"')
+    .replace(/&gt;/gi, ">")
+    .replace(/&lt;/gi, "<")
+    .replace(/&amp;/gi, "&")
     .replace(/\s+\n/g, "\n")
     .replace(/\n\s+/g, "\n")
     .replace(/[ \t]+/g, " ")
