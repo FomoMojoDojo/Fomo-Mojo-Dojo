@@ -10,6 +10,14 @@ export const CLIENT_REFINE_PREVIEW_COMPANY_ROUTE = "/preview/client-refine/compa
 export const CLIENT_REFINE_PREVIEW_INBOX_ROUTE = "/preview/client-refine/inbox";
 export const CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE = "/preview/client-refine/members";
 export const CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE = "/preview/client-refine/extracts";
+// 8-beat client-facing first read, company-parameterized (R3: coexists with
+// the presenter-driven /first-read/:id V2 flow, which stays untouched).
+export const CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE = "/preview/client-refine/first-read";
+export const CLIENT_REFINE_PREVIEW_FIRSTREAD_ROUTE = `${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/:companyId`;
+
+export function clientRefineFirstReadPath(companyId: string) {
+  return `${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/${companyId}`;
+}
 
 export function isClientRefinePreviewPath(pathname: string) {
   return (
@@ -20,7 +28,8 @@ export function isClientRefinePreviewPath(pathname: string) {
     pathname === CLIENT_REFINE_PREVIEW_COMPANY_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_INBOX_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE ||
-    pathname === CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE
+    pathname === CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE ||
+    pathname.startsWith(`${CLIENT_REFINE_PREVIEW_FIRSTREAD_BASE}/`)
   );
 }
 

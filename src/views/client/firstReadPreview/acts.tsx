@@ -1,0 +1,468 @@
+// First Read (8-beat) — the beats, rendering REAL data with persisted-
+// integrity empty states. Ported from mojomap-redesign src/pages/first-read/
+// acts.tsx @ 1f54a56; every fixture-specific string dropped. Signed generic
+// copy (headlines, standfirsts, phases, closing line, base definition, band
+// strings) ported verbatim. New empty-state strings are DRAFTS listed in the
+// commit body pending operator signature.
+
+import { useState } from "react";
+import {
+  Absent,
+  ActHeader,
+  Eyebrow,
+  LedgerRow,
+  RecencyTag,
+  ScoreNow,
+  SourceTag,
+  VerdictChip,
+} from "./primitives";
+import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
+import { SCORE_BANDS, bandForScore } from "./scoreBands";
+import { formatMonthYear } from "./mapping";
+import type { FirstReadPreviewData, FRSignal } from "./types";
+
+const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
+const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
+const NO_MARKETS_NOTE = "No declared markets extracted yet."; // signed (Phase A ruling)
+const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
+const NO_PAIRS_NOTE = "No comparisons computed yet."; // DRAFT
+const NO_QUESTIONS_NOTE = "No open questions generated yet."; // DRAFT
+const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
+const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
+const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // DRAFT
+const STANDINGS_NOTE = "Base standings not yet generated."; // signed (Phase A ruling)
+const DISCUSSION_NOTE = "Discussion items not yet generated."; // signed (Phase A ruling)
+
+const SHOWN_FULL_SIZE = 4;
+
+function signalMeta(signal: FRSignal) {
+  const recency = formatMonthYear(signal.eventDate);
+  return (
+    <>
+      <span
+        className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+        style={{ background: "hsl(215 20% 65% / 0.14)", color: "hsl(var(--fr-muted))" }}
+      >
+        {signal.strength} signal
+      </span>
+      {signal.sourceTitle ? <SourceTag>{signal.sourceTitle}</SourceTag> : null}
+      {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+    </>
+  );
+}
+
+/** Cold open — one outside statement, full screen, before Act 1. */
+export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onContinue: () => void }) {
+  const recency = formatMonthYear(read.coldOpen?.eventDate ?? null);
+  return (
+    <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
+      <div className="fr-stagger flex max-w-2xl flex-col items-center">
+        <Eyebrow>Before we start</Eyebrow>
+        <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
+          Here&rsquo;s what we can <span className="font-semibold">already see.</span>
+        </h1>
+        {read.coldOpen ? (
+          <blockquote className="mt-16 max-w-xl">
+            <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+              &ldquo;{read.coldOpen.text}&rdquo;
+            </p>
+            <footer className="mt-6 flex flex-col items-center gap-2">
+              {read.coldOpen.sourceTitle ? <SourceTag>{read.coldOpen.sourceTitle}</SourceTag> : null}
+              {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+            </footer>
+          </blockquote>
+        ) : (
+          <div className="mt-16 w-full max-w-xl">
+            <Absent>{NO_SIGNALS_NOTE}</Absent>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onContinue}
+          className="fr-link-ink group mt-20 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+        >
+          Now here&rsquo;s what you say{" "}
+          <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ActBase({ read }: { read: FirstReadPreviewData }) {
+  const grouped = read.declared.filter((c) => c.facet !== null);
+  const ungrouped = read.declared.filter((c) => c.facet === null);
+  const marketClaims = grouped.filter((c) => c.facet === "Market");
+  const positioningClaims = grouped.filter((c) => c.facet === "Positioning");
+  return (
+    <>
+      <ActHeader
+        headline="What you say you are."
+        standfirst="Read only from your own words — site, owned channels, and what you told us directly. Nothing here is our interpretation yet."
+      />
+      <main className="fr-stagger">
+        {read.declared.length === 0 ? <Absent>{NO_DECLARED_NOTE}</Absent> : null}
+        {marketClaims.map((claim) => (
+          <LedgerRow
+            key={claim.id}
+            leftLabel="Market"
+            leftBody={claim.statement}
+            meta={<SourceTag>Stated to us directly</SourceTag>}
+          />
+        ))}
+        {/* Declared markets list — accepted options only; chip from the
+            operator's chosen-market fact. */}
+        <div className="border-b py-14" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+          <div className="mb-6">
+            <Eyebrow>Declared markets</Eyebrow>
+          </div>
+          {read.markets.length === 0 ? (
+            <Absent>{NO_MARKETS_NOTE}</Absent>
+          ) : (
+            <div className="flex flex-col gap-8">
+              {read.markets.map((market) => (
+                <div key={market.id} className="flex flex-col gap-3">
+                  <p className="max-w-xl text-2xl font-semibold leading-snug">{market.executorStatement}</p>
+                  {market.chosen ? (
+                    <span
+                      className="inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+                      style={{ background: "hsl(239 84% 57% / 0.08)", color: "hsl(var(--fr-accent))" }}
+                    >
+                      This read follows this market
+                    </span>
+                  ) : null}
+                  {market.jobStatement ? (
+                    <div className="mt-2 flex flex-col">
+                      <Eyebrow>The job they hire you for</Eyebrow>
+                      <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                        {market.jobStatement}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                Companies usually declare more than one. Part of aligning the base is choosing which one strategy actually follows.
+              </p>
+            </div>
+          )}
+        </div>
+        {positioningClaims.map((claim) => (
+          <LedgerRow
+            key={claim.id}
+            leftLabel="Positioning"
+            leftBody={claim.statement}
+            meta={<SourceTag>Stated to us directly</SourceTag>}
+          />
+        ))}
+        {ungrouped.map((claim) => (
+          <LedgerRow
+            key={claim.id}
+            leftLabel={claim.topic || "Declared"}
+            leftBody={claim.statement}
+            meta={<SourceTag>Stated to us directly</SourceTag>}
+          />
+        ))}
+      </main>
+    </>
+  );
+}
+
+export function ActRecord({ read }: { read: FirstReadPreviewData }) {
+  const [open, setOpen] = useState(false);
+  const shown = read.signals.slice(0, SHOWN_FULL_SIZE);
+  const further = read.signals.slice(SHOWN_FULL_SIZE);
+  const counts = {
+    strong: further.filter((s) => s.strength === "strong").length,
+    moderate: further.filter((s) => s.strength === "moderate").length,
+    thin: further.filter((s) => s.strength === "thin").length,
+  };
+  return (
+    <>
+      <ActHeader
+        headline="What the outside says back."
+        standfirst="Reviews, press, employee commentary, and public filings — anything anyone can already see without your permission."
+        right={
+          <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+            <Eyebrow>Why outside first</Eyebrow>
+            <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              We read the outside first because it is neutral ground: not our opinion, not yours. It gives an observable starting point before the internal conversation begins.
+            </p>
+          </div>
+        }
+      />
+      <main className="fr-stagger">
+        {read.signals.length === 0 ? <Absent>{NO_SIGNALS_NOTE}</Absent> : null}
+        {shown.map((signal) => (
+          <LedgerRow
+            key={signal.id}
+            leftLabel={signal.strength === "strong" ? "Outside" : "Outside"}
+            leftBody={signal.text}
+            muted={signal.strength !== "strong"}
+            meta={signalMeta(signal)}
+          />
+        ))}
+      </main>
+      {further.length > 0 ? (
+        <div className="pt-10">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls="fr-further-signals"
+            onClick={() => setOpen((current) => !current)}
+            className="fr-link-ink flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+          >
+            <span
+              aria-hidden
+              className="inline-block transition-transform duration-200"
+              style={{ transform: open ? "rotate(90deg)" : "none" }}
+            >
+              &rsaquo;
+            </span>
+            + {further.length} further signals · {counts.strong} strong · {counts.moderate} moderate · {counts.thin} thin
+          </button>
+          {open ? (
+            <ul id="fr-further-signals" className="mt-6 border-t" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+              {further.map((item) => {
+                const recency = formatMonthYear(item.eventDate);
+                return (
+                  <li
+                    key={item.id}
+                    className="flex items-center gap-4 border-b py-3"
+                    style={{ borderColor: "hsl(var(--fr-hair))" }}
+                  >
+                    <span className="fr-oneline min-w-0 flex-1 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }}>
+                      {item.text}
+                    </span>
+                    <span
+                      className="inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+                      style={{ background: "hsl(215 20% 65% / 0.14)", color: "hsl(var(--fr-muted))" }}
+                    >
+                      {item.strength}
+                    </span>
+                    {item.sourceTitle ? (
+                      <span className="fr-oneline hidden max-w-[180px] shrink-0 md:inline">
+                        <SourceTag>{item.sourceTitle}</SourceTag>
+                      </span>
+                    ) : null}
+                    {recency ? (
+                      <span className="hidden shrink-0 md:inline">
+                        <RecencyTag>{recency}</RecencyTag>
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** Score reveal — the Mojo Score band ladder, between Act 2 and Act 3. */
+export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
+  const score = read.score?.value ?? null;
+  const active = score !== null ? bandForScore(score) : null;
+  const ladder = [...SCORE_BANDS].reverse();
+  return (
+    <>
+      <ActHeader
+        headline="One number, read from the record."
+        standfirst="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
+      />
+      <div className="fr-stagger mx-auto max-w-xl">
+        {score === null ? (
+          <div className="mb-10">
+            <Absent>{NO_SCORE_NOTE}</Absent>
+          </div>
+        ) : null}
+        {ladder.map((band) => {
+          const isActive = active !== null && band.name === active.name;
+          const fraction = score !== null ? (band.max - score) / (band.max - band.min) : 0.5;
+          return (
+            <div
+              key={band.name}
+              className={`fr-band relative flex items-center justify-between gap-10 border-b px-6 ${
+                isActive ? "fr-band-active" : ""
+              }`}
+              style={{ borderColor: "hsl(var(--fr-hair))" }}
+            >
+              <span className="fr-eyebrow shrink-0">{band.min}–{band.max}</span>
+              <span className="flex max-w-md flex-col text-right">
+                <span className={isActive ? "text-lg font-semibold" : "text-lg font-light"} style={isActive ? undefined : { color: "hsl(var(--fr-faint))" }}>
+                  {band.name}
+                </span>
+                <span className={`fr-band-desc mt-1 text-xs font-light leading-relaxed ${isActive ? "" : "fr-band-desc-dim"}`}>
+                  {band.description}
+                </span>
+              </span>
+              {isActive && score !== null ? (
+                <span
+                  className="fr-band-marker"
+                  style={{ top: `${Math.min(Math.max(fraction, 0.12), 0.88) * 100}%` }}
+                >
+                  <span className="fr-band-marker-dot" aria-hidden />
+                  <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>
+                    {read.company?.name ?? ""} · {score}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+export function ActGap({ read }: { read: FirstReadPreviewData }) {
+  return (
+    <>
+      <ActHeader
+        headline="Where the two readings disagree."
+        standfirst="Your words on the left, the record on the right. Neither is automatically wrong — the disagreement is where the strategy is actually being decided."
+        right={
+          read.score ? (
+            <ScoreNow
+              now={read.score.value}
+              explainer="Read from public signals only — the diagnostic is what turns signals into evidence."
+            />
+          ) : undefined
+        }
+      />
+      <main className="fr-stagger">
+        {read.gapPairs.length === 0 ? <Absent>{NO_PAIRS_NOTE}</Absent> : null}
+        {read.gapPairs.map((pair) => {
+          const recency = formatMonthYear(pair.eventDate);
+          return (
+            <LedgerRow
+              key={pair.id}
+              leftLabel="You say"
+              leftBody={pair.declared ?? UNSPOKEN_LEFT}
+              quoted={pair.declared !== null}
+              meta={
+                <>
+                  <VerdictChip verdict={pair.verdict} />
+                  {pair.sourceTitle ? <SourceTag>{pair.sourceTitle}</SourceTag> : null}
+                  {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+                </>
+              }
+              rightBody={pair.record}
+            />
+          );
+        })}
+      </main>
+    </>
+  );
+}
+
+/** Base gate — interstitial beat between Act 3 (Gap) and Act 4. */
+export function BaseGate() {
+  return (
+    <div className="flex flex-col items-center pt-8 text-center">
+      <div className="fr-stagger flex w-full flex-col items-center">
+        <Eyebrow>Before the map</Eyebrow>
+        <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
+          You can&rsquo;t route from a <span className="font-semibold">broken base.</span>
+        </h1>
+        <p className="mt-6 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+          Routes drawn from an unaligned base are guesses. Aligning it is the first move.
+        </p>
+        <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise. Every message, investment, and plan inherits its strength — or its cracks.
+        </p>
+        <BaseAlignment
+          pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
+          caption={PAIRS_UNCOMPUTED_CAPTION}
+          goalCaption="When your base is aligned, you look like one company."
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ActMap({ read }: { read: FirstReadPreviewData }) {
+  const band = read.score ? bandForScore(read.score.value) : null;
+  return (
+    <>
+      <ActHeader
+        headline="Where your base stands."
+        right={read.score && band ? <ScoreNow now={read.score.value} band={band.name} compact /> : undefined}
+      />
+      <main className="fr-stagger">
+        <div className="border-b pb-14" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+          <Absent>{STANDINGS_NOTE}</Absent>
+        </div>
+        <div className="pt-14">
+          <Eyebrow>For discussion</Eyebrow>
+          <div className="mt-8">
+            <Absent>{DISCUSSION_NOTE}</Absent>
+          </div>
+        </div>
+      </main>
+    </>
+  );
+}
+
+export function ActNext({ read }: { read: FirstReadPreviewData }) {
+  const phases = [
+    { name: "Diagnose", body: "Open the inside: documents, numbers, and the people who hold the decisions." },
+    { name: "Focus", body: "Align your base, define your market." },
+    { name: "Flow", body: "Work the chosen route, scored against evidence as it lands." },
+  ];
+  return (
+    <>
+      <ActHeader
+        headline="What we'd do together."
+        standfirst="This read used only what anyone can see, plus what you told us directly. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
+      />
+      <main className="grid gap-16 border-b pb-16 md:grid-cols-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <div className="md:col-span-7">
+          <Eyebrow>Questions this read raises</Eyebrow>
+          {read.questions.length === 0 ? (
+            <div className="mt-8">
+              <Absent>{NO_QUESTIONS_NOTE}</Absent>
+            </div>
+          ) : (
+            <ol className="mt-8 space-y-8">
+              {read.questions.map((question, index) => (
+                <li key={question} className="flex gap-6">
+                  <span className="pt-1 text-[10px] font-bold tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{question}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+        <div className="md:col-span-5">
+          <Eyebrow>How the work unfolds</Eyebrow>
+          <ol className="mt-8 space-y-8">
+            {phases.map((phase) => (
+              <li key={phase.name} className="border-b pb-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+                <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>{phase.name}</span>
+                <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{phase.body}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </main>
+      <div className="border-b py-10" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <p className="text-center text-xs font-bold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-muted))" }}>
+          {phases.map((phase, index) => (
+            <span key={phase.name}>
+              {index > 0 ? <span className="mx-4" style={{ color: "hsl(var(--fr-faint))" }}>·</span> : null}
+              {phase.name}
+            </span>
+          ))}
+        </p>
+      </div>
+      <p className="fr-link-ink pt-12 text-center text-sm font-light leading-relaxed">
+        The next step is a conversation, not a button.
+      </p>
+    </>
+  );
+}

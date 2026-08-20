@@ -1,0 +1,315 @@
+/* First Read — guided screen-by-screen presentation surface.
+   Ported from mojomap-redesign src/styles/first-read.css @ 1f54a56.
+   Color comes from the --fr tokens below (this repo's tailwind config also
+   overrides the default slate/amber scales, so slate-* utilities are dead —
+   never rely on them for color here). */
+
+.first-read {
+  --fr-canvas: 210 40% 98%;
+  --fr-ink: 222 47% 11%;
+  --fr-muted: 215 16% 47%;
+  --fr-faint: 215 20% 65%;
+  --fr-hair: 214 32% 91%;
+  --fr-accent: 239 84% 57%;
+  --fr-good: 160 84% 33%;
+  --fr-bad: 347 77% 50%;
+
+  min-height: 100vh;
+  background: hsl(var(--fr-canvas));
+  color: hsl(var(--fr-ink));
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.first-read-shell {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.fr-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-faint));
+}
+
+.fr-progress-tick {
+  height: 4px;
+  width: 24px;
+  border-radius: 999px;
+  background: hsl(var(--fr-hair));
+  transition: all 220ms ease;
+}
+
+.fr-progress-tick[data-state="current"] {
+  width: 48px;
+  background: hsl(var(--fr-accent));
+}
+
+.fr-progress-tick[data-state="done"] {
+  background: hsl(var(--fr-faint));
+}
+
+.fr-progress-tick:hover {
+  background: hsl(var(--fr-accent) / 0.55);
+}
+
+.fr-progress-tick[data-kind="gate"] {
+  width: 10px;
+}
+
+.fr-progress-tick[data-kind="gate"][data-state="current"] {
+  width: 20px;
+}
+
+/* ---- entrance choreography ---- */
+
+.fr-act-enter {
+  animation: fr-fade-up 420ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes fr-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fr-act-enter > header {
+  animation: fr-fade-up 520ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.fr-stagger > * {
+  animation: fr-fade-up 520ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.fr-stagger > *:nth-child(1) { animation-delay: 90ms; }
+.fr-stagger > *:nth-child(2) { animation-delay: 170ms; }
+.fr-stagger > *:nth-child(3) { animation-delay: 250ms; }
+.fr-stagger > *:nth-child(4) { animation-delay: 330ms; }
+.fr-stagger > *:nth-child(5) { animation-delay: 410ms; }
+.fr-stagger > *:nth-child(6) { animation-delay: 490ms; }
+
+/* ---- ledger row finesse ---- */
+
+.fr-row {
+  position: relative;
+  transition: background 260ms ease, transform 260ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  border-radius: 6px;
+}
+
+.fr-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 -20px;
+  border-radius: 8px;
+  background: hsl(var(--fr-accent) / 0.035);
+  opacity: 0;
+  transition: opacity 260ms ease;
+  pointer-events: none;
+}
+
+.fr-row:hover::before {
+  opacity: 1;
+}
+
+.fr-row-marker {
+  position: absolute;
+  left: -20px;
+  top: 3.6rem;
+  height: 0;
+  width: 2px;
+  background: hsl(var(--fr-accent));
+  transition: height 320ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.fr-row:hover .fr-row-marker {
+  height: 28px;
+}
+
+.fr-row .fr-row-body {
+  transition: transform 320ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.fr-row:hover .fr-row-body {
+  transform: translateX(4px);
+}
+
+/* ---- numerals ---- */
+
+.fr-numeral {
+  font-variant-numeric: tabular-nums;
+  transition: color 260ms ease;
+}
+
+/* ---- links ---- */
+
+.fr-link-ink {
+  color: hsl(var(--fr-ink));
+}
+
+.fr-link-ink:hover {
+  color: hsl(var(--fr-accent));
+}
+
+.fr-link-muted {
+  color: hsl(var(--fr-muted));
+}
+
+.fr-link-muted:hover {
+  color: hsl(var(--fr-ink));
+}
+
+/* ---- signal recency + hierarchy ---- */
+
+.fr-recency {
+  color: hsl(var(--fr-faint));
+}
+
+.fr-quote-muted {
+  color: hsl(var(--fr-muted));
+}
+
+.fr-oneline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- integrity empty states ---- */
+
+.fr-absent {
+  color: hsl(var(--fr-muted));
+  border: 1px dashed hsl(var(--fr-hair));
+  border-radius: 8px;
+  padding: 28px 32px;
+}
+
+/* ---- score band ladder ---- */
+
+.fr-band {
+  height: 104px;
+}
+
+.fr-band:first-child {
+  border-top: 1px solid hsl(var(--fr-hair));
+}
+
+.fr-band-active {
+  background: hsl(var(--fr-accent) / 0.05);
+  border-left: 2px solid hsl(var(--fr-accent));
+}
+
+.fr-band-desc {
+  color: hsl(var(--fr-muted));
+}
+
+.fr-band-desc-dim {
+  color: hsl(var(--fr-faint));
+  opacity: 0.75;
+}
+
+.fr-band-marker {
+  position: absolute;
+  left: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+.fr-band-marker-dot {
+  height: 8px;
+  width: 8px;
+  border-radius: 999px;
+  background: hsl(var(--fr-accent));
+}
+
+@media (max-width: 900px) {
+  .fr-band-marker {
+    left: auto;
+    right: 12px;
+    margin-left: 0;
+  }
+}
+
+/* ---- base-alignment circles (gate beat) ---- */
+
+.fr-align-el {
+  transition: transform 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fr-align-circle {
+  r: var(--fr-align-r);
+  fill: transparent;
+  stroke: hsl(var(--fr-muted));
+  stroke-width: 1.25;
+  transition: r 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Positioning carries anchor weight. */
+.fr-align-circle[data-anchor="true"] {
+  stroke: hsl(var(--fr-accent));
+  stroke-width: 2.5;
+}
+
+.fr-align-label {
+  transition: transform 1200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fr-align-overlay {
+  transition: opacity 500ms ease;
+  pointer-events: none;
+}
+
+.fr-align-sublabel {
+  transition: opacity 500ms ease;
+}
+
+/* Canvas-colored halo so tags and labels stay legible over strokes. */
+.fr-align-tag,
+.fr-align-label text {
+  paint-order: stroke;
+  stroke: hsl(var(--fr-canvas));
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fr-act-enter,
+  .fr-act-enter > header,
+  .fr-stagger > * {
+    animation: none;
+  }
+  .fr-row:hover .fr-row-body { transform: none; }
+  .fr-align-el,
+  .fr-align-circle,
+  .fr-align-label,
+  .fr-align-overlay,
+  .fr-align-sublabel {
+    transition: none;
+  }
+}
+
+.fr-quote-mark {
+  position: absolute;
+  left: -22px;
+  top: -4px;
+  font-size: 30px;
+  line-height: 1;
+  color: hsl(var(--fr-hair));
+}
+
+@media (max-width: 900px) {
+  .fr-quote-mark {
+    display: none;
+  }
+}
