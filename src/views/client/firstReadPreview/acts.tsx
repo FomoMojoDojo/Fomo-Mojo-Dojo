@@ -374,10 +374,10 @@ export function BaseGate() {
       <div className="fr-stagger flex w-full flex-col items-center">
         <Eyebrow>Before the map</Eyebrow>
         <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
-          You can&rsquo;t route from a <span className="font-semibold">broken base.</span>
+          A strong base <span className="font-semibold">changes your odds.</span>
         </h1>
         <p className="mt-6 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-          Routes drawn from an unaligned base are guesses. Aligning it is the first move.
+          Every choice downstream inherits its strength — or its cracks. Aligning it comes first.
         </p>
         <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
           Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise. Every message, investment, and plan inherits its strength — or its cracks.
