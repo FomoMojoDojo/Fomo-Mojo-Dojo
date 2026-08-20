@@ -119,9 +119,10 @@ describe("BRT-1 — birth trigger renders (TDZ regression)", () => {
   });
 });
 
-// OC-2b — the First Read entry point. The control is UNGATED by company-state: it must
-// appear the same for a spine-complete company, a zero-route newborn, and a no-baseline
-// company, always linking to /first-read/<that company's id>.
+// OC-2b (+ FR8-LINK) — the First Read entry point. The control is UNGATED by company-state:
+// it must appear the same for a spine-complete company, a zero-route newborn, and a
+// no-baseline company, always linking the PRIMARY to the 8-beat surface
+// /preview/client-refine/first-read/<that company's id>.
 describe("OC-2b — First Read entry point on the Inputs tab", () => {
   const CID = sonosProps.companyId;
   const firstReadLink = (container: HTMLElement) =>
@@ -129,29 +130,29 @@ describe("OC-2b — First Read entry point on the Inputs tab", () => {
       (a.textContent || "").includes("Open First Read"),
     );
 
-  it("a. spine-complete company (hasHierarchy) → control renders, links to /first-read/<id>", () => {
+  it("a. spine-complete company (hasHierarchy) → control renders, links to the 8-beat surface", () => {
     const { container } = render(<InputsTab {...sonosProps} hasHierarchy={true} companyHasSpine={true} />);
     const link = firstReadLink(container);
     expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/first-read/${CID}`);
+    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
   });
 
-  it("b. zero-route newborn company → control renders, links to /first-read/<id>", () => {
+  it("b. zero-route newborn company → control renders, links to the 8-beat surface", () => {
     const { container } = render(<InputsTab {...sonosProps} hasHierarchy={false} companyHasSpine={false} />);
     const link = firstReadLink(container);
     expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/first-read/${CID}`);
+    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
   });
 
-  it("c. no-baseline company → control still renders, links to /first-read/<id>", () => {
+  it("c. no-baseline company → control still renders, links to the 8-beat surface", () => {
     baselineState = { loading: false, run: null };
     const { container } = render(<InputsTab {...sonosProps} />);
     const link = firstReadLink(container);
     expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/first-read/${CID}`);
+    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
     // the href carries THIS company's id (falsification target): a wrong/empty id fails here
     expect(link!.getAttribute("href")).toContain(CID);
-    expect(link!.getAttribute("href")).not.toBe("/first-read/");
+    expect(link!.getAttribute("href")).not.toBe("/preview/client-refine/first-read/");
   });
 });
 

@@ -58,11 +58,32 @@ describe("FR-V2-1 — the Check renders cold (no session, no honest-empty)", () 
   });
 });
 
-describe("FR-FLOW-1b — Open First Read mints-if-missing (deliberate click)", () => {
-  it("no session → mints exactly ONE open session, then navigates", async () => {
+describe("FR8-LINK — the primary opens the 8-beat surface and NEVER mints", () => {
+  it("primary click → navigates to the 8-beat surface with ZERO session mints", async () => {
     const navigate = vi.fn();
     const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
     fireEvent.click(getByText("Open First Read →"));
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/preview/client-refine/first-read/c1"),
+    );
+    // FALSIFICATION (orphan-session detector): a primary that minted a V2 session
+    // on the way to the 8-beat surface would push insertCount above 0.
+    expect(insertCount).toBe(0);
+  });
+
+  it("keeps the plain href target on the primary (router-less OC-2b contract)", () => {
+    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} />);
+    expect((getByText("Open First Read →") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/preview/client-refine/first-read/c1",
+    );
+  });
+});
+
+describe("FR-FLOW-1b — the LEGACY link keeps mint-if-missing (deliberate click)", () => {
+  it("no session → mints exactly ONE open session, then navigates to the V2 rail", async () => {
+    const navigate = vi.fn();
+    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
+    fireEvent.click(getByText("open legacy first read"));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/first-read/c1"));
     expect(insertCount).toBe(1); // exactly one
     expect(lastInsert).toMatchObject({ company_id: "c1", status: "open" });
@@ -72,16 +93,18 @@ describe("FR-FLOW-1b — Open First Read mints-if-missing (deliberate click)", (
     existingSession = { id: "s-existing" };
     const navigate = vi.fn();
     const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
-    fireEvent.click(getByText("Open First Read →"));
+    fireEvent.click(getByText("open legacy first read"));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/first-read/c1"));
     // FALSIFICATION (double-mint detector): a control that minted despite an existing
     // session would push insertCount above 0 — this catches it.
     expect(insertCount).toBe(0);
   });
 
-  it("keeps the plain href target (router-less OC-2b contract)", () => {
+  it("legacy href stays the V2 rail (route retained, demoted)", () => {
     const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} />);
-    expect((getByText("Open First Read →") as HTMLAnchorElement).getAttribute("href")).toBe("/first-read/c1");
+    expect((getByText("open legacy first read") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/first-read/c1",
+    );
   });
 });
 
