@@ -65,6 +65,17 @@ describe("beat order — ruled sequence", () => {
     }
   });
 
+  it("beat 4 'The gap' shows NO score — even for a company WITH a score", () => {
+    // `read` carries score 16; the gap must not surface it (score is introduced at beat 7).
+    const { container } = render(<ActGap read={read} />);
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("Mojo now"); // FALSIFICATION target: restoring the ScoreNow prop re-adds this
+    expect(text).not.toContain("/ 100");
+    expect(text).not.toContain("16"); // the score value
+    // the gap still renders its own content (not-yet integrity note)
+    expect(text).toContain("Where the two readings disagree.");
+  });
+
   it("no 'What we see' group label remains in the rendered beats", () => {
     const text = renderSequence(RULED);
     expect(text).not.toContain("What we see.");

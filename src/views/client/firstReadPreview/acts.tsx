@@ -630,18 +630,12 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
 export function ActGap({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
+      {/* No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
+          beat (beat 7). The gap renders only its integrity note or the pairs. */}
       <ActHeader
         headline="Where the two readings disagree."
         // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen.
         standfirst="What you tell the world on your own channels, next to what the world says back. Neither is automatically wrong — the disagreement is where the strategy is actually being decided."
-        right={
-          read.score ? (
-            <ScoreNow
-              now={read.score.value}
-              explainer="Read from public signals only — the diagnostic is what turns signals into evidence."
-            />
-          ) : undefined
-        }
       />
       <main className="fr-stagger">
         {read.gapPairs.length === 0 ? (
