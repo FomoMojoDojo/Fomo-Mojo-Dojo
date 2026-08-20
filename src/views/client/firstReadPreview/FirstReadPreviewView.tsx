@@ -11,26 +11,33 @@ import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
 import {
+  ActFindings,
   ActGap,
   ActNext,
   ActQuestions,
   ActRecord,
   ActWhatWeSee,
+  BaseGate,
   ColdOpen,
+  ScoreReveal,
 } from "./acts";
 
 /**
- * Public-beats order (2026-08-20): cold open → what we see → record → gap →
- * questions → next move. No "what you say" beat (R2 — own-words extraction is a
- * separate gate). Digits 1–5 jump to the acts.
+ * Public-beats order (S6, 2026-08-20): cold open → what we see → findings → record →
+ * MOJO SCORE (S1: always mounted, product law) → gap → base gate (S3, restored at its
+ * d2ba1a1 slot after gap) → questions → next move. No "what you say" beat (R2). Digits
+ * 1–5 jump to the content acts.
  */
 const BEATS = [
   { key: "cold", label: "Before we start", act: undefined },
   { key: "see", label: "What we see", act: 1 },
-  { key: "record", label: "The Record", act: 2 },
-  { key: "gap", label: "The Gap", act: 3 },
-  { key: "questions", label: "Questions", act: 4 },
-  { key: "next", label: "Next move", act: 5 },
+  { key: "findings", label: "What stands out", act: 2 },
+  { key: "record", label: "The Record", act: 3 },
+  { key: "score", label: "The Mojo Score", act: undefined },
+  { key: "gap", label: "The Gap", act: 4 },
+  { key: "basegate", label: "Your base", act: undefined },
+  { key: "questions", label: "Questions", act: 5 },
+  { key: "next", label: "Next move", act: undefined },
 ] as const;
 
 export default function FirstReadPreviewView() {
@@ -116,10 +123,16 @@ export default function FirstReadPreviewView() {
         return <ColdOpen read={data} onContinue={() => go(1)} />;
       case "see":
         return <ActWhatWeSee read={data} />;
+      case "findings":
+        return <ActFindings read={data} />;
       case "record":
         return <ActRecord read={data} />;
+      case "score":
+        return <ScoreReveal read={data} />;
       case "gap":
         return <ActGap read={data} />;
+      case "basegate":
+        return <BaseGate />;
       case "questions":
         return <ActQuestions read={data} />;
       default:

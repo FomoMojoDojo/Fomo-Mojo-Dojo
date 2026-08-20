@@ -27,6 +27,7 @@ import { bandForScore } from "./scoreBands";
 import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
+  FRFinding,
   FRGapPair,
   FRMarketDef,
   FRSignal,
@@ -516,6 +517,37 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             }
           : null;
 
+        // Findings (S4): public_inferred open findings, ranked by recurrence breadth
+        // (finding_recurrence.distinct_host_count) desc, then recency. No verdict language.
+        const { data: fRows } = await supabase
+          .from("findings")
+          .select("id, body, created_at")
+          .eq("company_id", companyId)
+          .eq("status", "open")
+          .eq("register", "public_inferred");
+        const { data: frRows } = await loose()
+          .from("finding_recurrence")
+          .select("finding_id, distinct_host_count")
+          .eq("company_id", companyId);
+        const recByFinding = new Map(
+          ((frRows ?? []) as Array<{ finding_id: string; distinct_host_count: number | null }>)
+            .map((r) => [r.finding_id, r.distinct_host_count ?? 0]),
+        );
+        const findings: FRFinding[] = ((fRows ?? []) as Array<{ id: string; body: string | null; created_at: string | null }>)
+          .filter((f) => (f.body ?? "").trim())
+          .map((f) => ({
+            id: f.id,
+            body: (f.body ?? "").trim(),
+            recurrence: recByFinding.get(f.id) ?? 0,
+            sourceTag: syntheticTag(f.created_at),
+            createdAt: f.created_at ?? "",
+          }))
+          .sort((a, b) => b.recurrence - a.recurrence || b.createdAt.localeCompare(a.createdAt))
+          .map(({ createdAt: _ca, ...f }) => f);
+
+        // S1: the outside read was LOOKED iff a public_baseline_run exists (persisted).
+        const scoreLooked = runDates.size > 0;
+
         // Questions (beat 7) come from useFirstReadOpenQuestions in the view —
         // the ONE authority that applies the outside-only provenance gate.
         if (!cancelled) {
@@ -530,6 +562,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             promise,
             strategy,
             whereYouStand,
+            findings,
+            scoreLooked,
             signals,
             score,
             gapPairs,

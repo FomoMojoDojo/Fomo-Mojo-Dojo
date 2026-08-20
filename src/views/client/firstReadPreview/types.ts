@@ -99,6 +99,15 @@ export type FRStrategy = {
   sourceTag: SourceTagResult;
 } | null;
 
+/** Observed finding (S4) — public_inferred, ranked by recurrence breadth then recency. */
+export type FRFinding = {
+  id: string;
+  body: string;
+  /** finding_recurrence.distinct_host_count (independent corroborating hosts), 0 if none. */
+  recurrence: number;
+  sourceTag: SourceTagResult;
+};
+
 /** Inferred base reading (R-B) — persisted numbers only, no unearned adjectives. */
 export type FRWhereYouStand = {
   scoreValue: number;
@@ -132,6 +141,14 @@ export type FirstReadPreviewData = {
   promise: FRPromise;
   strategy: FRStrategy;
   whereYouStand: FRWhereYouStand;
+  /** S4: observed findings (public_inferred, open), recurrence-ranked. */
+  findings: FRFinding[];
+  /**
+   * S1: whether the outside read was LOOKED (a public_baseline_run exists) — grounds the
+   * always-mounted Mojo Score beat's honest empty state in a persisted record, not array
+   * emptiness. Score present → ladder; looked but no score → not-enough-signal; else not-yet.
+   */
+  scoreLooked: boolean;
   questions: string[];
 };
 
@@ -150,5 +167,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   promise: null,
   strategy: null,
   whereYouStand: null,
+  findings: [],
+  scoreLooked: false,
   questions: [],
 };

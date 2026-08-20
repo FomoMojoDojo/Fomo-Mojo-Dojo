@@ -49,6 +49,11 @@ const LABEL_STRATEGY = "Strategy"; // DRAFT
 const LABEL_PROMISE = "Promise"; // DRAFT
 const LABEL_BASE = "Where you stand (inferred)"; // DRAFT
 const BASE_INFERRED_LABEL = "Inferred from your public record."; // DRAFT
+// ── Findings beat (S4) — DRAFTS ──
+const FINDINGS_STANDFIRST =
+  "What stands out in the public record — ranked by how widely it's corroborated across independent sources."; // DRAFT
+const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // DRAFT
+const FINDINGS_SHOWN = 5;
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
 const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // DRAFT
@@ -273,6 +278,60 @@ export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+/**
+ * Findings beat (S4) — public_inferred open findings, recurrence-ranked (breadth desc, then
+ * recency, done in the hook). First 5 expanded; the rest under "show all N". Each row tags its
+ * public read + date and shows its corroboration count. No verdict language (UNDERSERVED etc.
+ * never appears — findings carry no such field).
+ */
+export function ActFindings({ read }: { read: FirstReadPreviewData }) {
+  const [showAll, setShowAll] = useState(false);
+  const total = read.findings.length;
+  const shown = showAll ? read.findings : read.findings.slice(0, FINDINGS_SHOWN);
+  return (
+    <>
+      <ActHeader
+        headline="What stands out."
+        standfirst={FINDINGS_STANDFIRST}
+        right={
+          total > 0 ? (
+            <div className="max-w-xs border-l pl-6 text-right" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+              <Eyebrow>Findings</Eyebrow>
+              <p className="mt-2 text-3xl font-light">{total}</p>
+            </div>
+          ) : undefined
+        }
+      />
+      <main className="fr-stagger">
+        {total === 0 ? <Absent>{NO_FINDINGS_NOTE}</Absent> : null}
+        {shown.map((f) => (
+          <LedgerRow
+            key={f.id}
+            leftLabel={f.recurrence > 0 ? `${f.recurrence} source${f.recurrence === 1 ? "" : "s"}` : "Outside"}
+            leftBody={f.body}
+            meta={f.sourceTag ? <SourceTag>{f.sourceTag.label}</SourceTag> : null}
+          />
+        ))}
+      </main>
+      {total > FINDINGS_SHOWN ? (
+        <div className="pt-10">
+          <button
+            type="button"
+            aria-expanded={showAll}
+            onClick={() => setShowAll((v) => !v)}
+            className="fr-link-ink flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+          >
+            <span aria-hidden className="inline-block transition-transform duration-200" style={{ transform: showAll ? "rotate(90deg)" : "none" }}>
+              &rsaquo;
+            </span>
+            {showAll ? "Show fewer" : `Show all ${total}`}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function ActRecord({ read }: { read: FirstReadPreviewData }) {
   const [open, setOpen] = useState(false);
   const shown = read.signals.slice(0, SHOWN_FULL_SIZE);
@@ -371,8 +430,10 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
   const score = read.score?.value ?? null;
   const active = score !== null ? bandForScore(score) : null;
   const ladder = [...SCORE_BANDS].reverse();
-  const emptyNote =
-    read.signals.length < OUTSIDE_MIN_SIGNALS ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
+  // S1: the empty state is grounded in a PERSISTED record — scoreLooked (a public_baseline_run
+  // exists) → the read ran but didn't clear the scoring threshold; else no read yet. Never
+  // absent-by-omission: the Mojo Score beat is always mounted (product law).
+  const emptyNote = read.scoreLooked ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
       <ActHeader
