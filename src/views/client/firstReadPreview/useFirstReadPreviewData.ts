@@ -16,6 +16,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { documentDerivedClaimIds } from "../../../../supabase/functions/_shared/firstReadProvenance";
+import { deriveSourceTag } from "./deriveSourceTag";
 import { facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type { FirstReadPreviewData, FRGapPair, FRSignal } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
@@ -31,14 +32,40 @@ type SignalRow = {
   evidence_excerpt: string | null;
   source_title: string | null;
   source_url: string | null;
+  source_id: string | null;
   event_date: string | null;
   confidence_to_use: string | null;
 };
 
-async function loadSignals(companyId: string): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
+/** Baseline-run read dates keyed by String(public_baseline_runs.id). */
+async function loadRunDates(companyId: string): Promise<Map<string, string>> {
+  const { data: runRows } = await supabase
+    .from("public_baseline_runs")
+    .select("id, created_at")
+    .eq("company_id", companyId);
+  return new Map(
+    ((runRows ?? []) as Array<{ id: number; created_at: string }>).map((r) => [String(r.id), r.created_at]),
+  );
+}
+
+/** Source tag for a public signal row (source-honesty ruling). */
+function publicSignalTag(sig: SignalRow, runDates: Map<string, string>) {
+  return deriveSourceTag({
+    kind: "public_signal",
+    sourceUrl: sig.source_url,
+    sourceTitle: sig.source_title,
+    runDate: sig.source_id ? runDates.get(sig.source_id) ?? null : null,
+    eventDate: sig.event_date,
+  });
+}
+
+async function loadSignals(
+  companyId: string,
+  runDates: Map<string, string>,
+): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
   const { data: sigRows } = await supabase
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, event_date, confidence_to_use")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use")
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     .eq("voice_class", "outside_voice_about_client")
@@ -62,8 +89,7 @@ async function loadSignals(companyId: string): Promise<{ signals: FRSignal[]; ne
     .map((r) => ({
       id: r.id,
       text: (r.evidence_excerpt ?? "").trim(),
-      sourceTitle: r.source_title,
-      sourceUrl: r.source_url,
+      sourceTag: publicSignalTag(r, runDates),
       eventDate: r.event_date,
       strength: strengthForSignal(r.confidence_to_use, confirmed.has(r.id)),
     }));
@@ -90,7 +116,7 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   if (!sigIds.length) return out;
   const { data: sigs } = await supabase
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, event_date, confidence_to_use")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use")
     .in("id", sigIds);
   const byId = new Map(((sigs ?? []) as SignalRow[]).map((s) => [s.id, s]));
   for (const r of refRows) {
@@ -142,21 +168,69 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           .eq("id", companyId)
           .maybeSingle();
 
+        // ── Baseline-run read dates (source-honesty ruling) ────────────────
+        const runDates = await loadRunDates(companyId);
+
         // ── Outside-voice signals + strength (beats 0 fallback + 2) ────────
-        const { signals } = await loadSignals(companyId);
+        const { signals } = await loadSignals(companyId, runDates);
 
         // ── Declared side (beat 1) — struck excluded, doc-derived excluded ──
         const { data: declRows } = await supabase
           .from("claims")
-          .select("id, topic, statement, status")
+          .select("id, topic, statement, status, raw_payload, created_at")
           .eq("company_id", companyId)
           .eq("provenance", "internal_declared");
-        const declaredAll = ((declRows ?? []) as Array<{ id: string; topic: string | null; statement: string; status: string | null }>)
-          .filter((c) => c.status !== "struck");
+        const declaredAll = ((declRows ?? []) as Array<{
+          id: string;
+          topic: string | null;
+          statement: string;
+          status: string | null;
+          raw_payload: unknown;
+          created_at: string | null;
+        }>).filter((c) => c.status !== "struck");
         const declDocExcluded = await documentDerivedFor(declaredAll.map((c) => c.id));
-        const declared = declaredAll
-          .filter((c) => !declDocExcluded.has(c.id))
-          .map((c) => ({ id: c.id, topic: c.topic, facet: facetForTopic(c.topic), statement: c.statement }));
+        const declaredSurviving = declaredAll.filter((c) => !declDocExcluded.has(c.id));
+
+        // Canvas updated dates for canvas-minted birth records.
+        const canvasIds = [
+          ...new Set(
+            declaredSurviving
+              .map((c) => {
+                const p = c.raw_payload as Record<string, unknown> | null;
+                const v = p && typeof p === "object" ? p["source_canvas_id"] : null;
+                return typeof v === "string" && v ? v : null;
+              })
+              .filter((x): x is string => !!x),
+          ),
+        ];
+        const { data: canvasRows } = canvasIds.length
+          ? await supabase.from("positioning_canvases").select("id, updated_at").in("id", canvasIds)
+          : { data: [] };
+        const canvasUpdatedById = new Map(
+          ((canvasRows ?? []) as Array<{ id: string; updated_at: string | null }>).map((r) => [r.id, r.updated_at]),
+        );
+
+        const declared = declaredSurviving.map((c) => {
+          const p = c.raw_payload as Record<string, unknown> | null;
+          const canvasId = p && typeof p === "object" && typeof p["source_canvas_id"] === "string" ? (p["source_canvas_id"] as string) : null;
+          return {
+            id: c.id,
+            topic: c.topic,
+            facet: facetForTopic(c.topic),
+            statement: c.statement,
+            sourceTag: deriveSourceTag({
+              kind: "declared_claim",
+              rawPayload: c.raw_payload,
+              // Surviving rows structurally have no uploaded_file refs (the
+              // provenance gate excluded those above); no-ref rows resolve
+              // through raw_payload/basis here — the bypass close.
+              refUpload: null,
+              canvasUpdatedAt: canvasId ? canvasUpdatedById.get(canvasId) ?? null : null,
+              intakeSubmittedAt: null,
+              claimCreatedAt: c.created_at,
+            }),
+          };
+        });
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -211,7 +285,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
               const sig = newest.get(claim.id) ?? null;
               coldOpen = {
                 text: claim.statement,
-                sourceTitle: sig?.source_title ?? null,
+                sourceTag: sig ? publicSignalTag(sig, runDates) : null,
                 eventDate: sig?.event_date ?? null,
               };
             }
@@ -220,7 +294,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         if (!coldOpen) {
           const fallback = signals.find((s) => s.strength === "strong") ?? null;
           if (fallback) {
-            coldOpen = { text: fallback.text, sourceTitle: fallback.sourceTitle, eventDate: fallback.eventDate };
+            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate };
           }
         }
 
@@ -275,7 +349,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             verdict,
             declared: declaredClaim?.statement ?? null,
             record: publicClaim.statement,
-            sourceTitle: sig?.source_title ?? null,
+            sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
           });
         }

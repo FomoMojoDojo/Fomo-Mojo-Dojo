@@ -5,14 +5,16 @@
 // from the Lovable build's FirstRead contract (mojomap-redesign sampleRead.ts
 // @ 1f54a56) with fixture-only fields dropped.
 
+import type { SourceTagResult } from "./deriveSourceTag";
+
 export type SignalStrength = "strong" | "moderate" | "thin";
 
 export type FRSignal = {
   id: string;
   /** Verbatim outside excerpt (signals.evidence_excerpt). */
   text: string;
-  sourceTitle: string | null;
-  sourceUrl: string | null;
+  /** Derived source tag (source-honesty ruling) — null hides the tag. */
+  sourceTag: SourceTagResult;
   /** ISO date of the newest instance, or null — null omits MOST RECENT. */
   eventDate: string | null;
   strength: SignalStrength;
@@ -21,7 +23,7 @@ export type FRSignal = {
 export type FRColdOpen = {
   /** The featured outside statement (public claim) or a verbatim excerpt. */
   text: string;
-  sourceTitle: string | null;
+  sourceTag: SourceTagResult;
   eventDate: string | null;
 };
 
@@ -31,6 +33,8 @@ export type FRDeclared = {
   /** R2: trivially mapped base element, or null = ungrouped. */
   facet: "Market" | "Positioning" | null;
   statement: string;
+  /** Birth-record source tag — null hides the tag (never fixed copy). */
+  sourceTag: SourceTagResult;
 };
 
 export type FRMarket = {
@@ -49,7 +53,7 @@ export type FRGapPair = {
   declared: string | null;
   /** Public-record side statement. */
   record: string;
-  sourceTitle: string | null;
+  sourceTag: SourceTagResult;
   eventDate: string | null;
 };
 

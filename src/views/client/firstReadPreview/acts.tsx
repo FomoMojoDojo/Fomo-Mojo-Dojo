@@ -51,7 +51,7 @@ function signalMeta(signal: FRSignal) {
       >
         {signal.strength} signal
       </span>
-      {signal.sourceTitle ? <SourceTag>{signal.sourceTitle}</SourceTag> : null}
+      {signal.sourceTag ? <SourceTag>{signal.sourceTag.label}</SourceTag> : null}
       {recency ? <RecencyTag>{recency}</RecencyTag> : null}
     </>
   );
@@ -73,7 +73,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
               &ldquo;{read.coldOpen.text}&rdquo;
             </p>
             <footer className="mt-6 flex flex-col items-center gap-2">
-              {read.coldOpen.sourceTitle ? <SourceTag>{read.coldOpen.sourceTitle}</SourceTag> : null}
+              {read.coldOpen.sourceTag ? <SourceTag>{read.coldOpen.sourceTag.label}</SourceTag> : null}
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
             </footer>
           </blockquote>
@@ -113,7 +113,7 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
             key={claim.id}
             leftLabel="Market"
             leftBody={claim.statement}
-            meta={<SourceTag>Stated to us directly</SourceTag>}
+            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
           />
         ))}
         {/* Declared markets list — accepted options only; chip from the
@@ -158,7 +158,7 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
             key={claim.id}
             leftLabel="Positioning"
             leftBody={claim.statement}
-            meta={<SourceTag>Stated to us directly</SourceTag>}
+            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
           />
         ))}
         {ungrouped.map((claim) => (
@@ -166,7 +166,7 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
             key={claim.id}
             leftLabel={claim.topic || "Declared"}
             leftBody={claim.statement}
-            meta={<SourceTag>Stated to us directly</SourceTag>}
+            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
           />
         ))}
       </main>
@@ -246,9 +246,9 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
                     >
                       {item.strength}
                     </span>
-                    {item.sourceTitle ? (
+                    {item.sourceTag ? (
                       <span className="fr-oneline hidden max-w-[180px] shrink-0 md:inline">
-                        <SourceTag>{item.sourceTitle}</SourceTag>
+                        <SourceTag>{item.sourceTag.label}</SourceTag>
                       </span>
                     ) : null}
                     {recency ? (
@@ -354,7 +354,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
               meta={
                 <>
                   <VerdictChip verdict={pair.verdict} />
-                  {pair.sourceTitle ? <SourceTag>{pair.sourceTitle}</SourceTag> : null}
+                  {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
                   {recency ? <RecencyTag>{recency}</RecencyTag> : null}
                 </>
               }
