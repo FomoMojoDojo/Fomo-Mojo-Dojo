@@ -14,29 +14,34 @@ import {
   ActFindings,
   ActGap,
   ActNext,
+  ActOurRead,
   ActQuestions,
   ActRecord,
-  ActWhatWeSee,
-  BaseGate,
+  ActWhatYouSay,
+  ActWhereYouStand,
+  ActWhoYouServe,
   ColdOpen,
   ScoreReveal,
 } from "./acts";
 
 /**
- * Public-beats order (S6, 2026-08-20): cold open → what we see → findings → record →
- * MOJO SCORE (S1: always mounted, product law) → gap → base gate (S3, restored at its
- * d2ba1a1 slot after gap) → questions → next move. No "what you say" beat (R2). Digits
- * 1–5 jump to the content acts.
+ * Council-ruled beat order (2026-08-20): the "what we see" group is dissolved into
+ * standalone beats. cold → what the world says → what you say → the gap → who you serve
+ * → findings → MOJO SCORE (always mounted, product law) → where you stand → our read
+ * (positioning/strategy/promise, opened by the four-commitments frame) → questions →
+ * next move. Digits 1–5 jump to the first five content acts.
  */
 const BEATS = [
   { key: "cold", label: "Before we start", act: undefined },
-  { key: "see", label: "What we see", act: 1 },
-  { key: "findings", label: "What stands out", act: 2 },
-  { key: "record", label: "The Record", act: 3 },
-  { key: "score", label: "The Mojo Score", act: undefined },
-  { key: "gap", label: "The Gap", act: 4 },
-  { key: "basegate", label: "Your base", act: undefined },
-  { key: "questions", label: "Questions", act: 5 },
+  { key: "record", label: "What the world says", act: 1 },
+  { key: "yousay", label: "What you say", act: 2 },
+  { key: "gap", label: "The gap", act: 3 },
+  { key: "serve", label: "Who you serve", act: 4 },
+  { key: "findings", label: "Findings", act: 5 },
+  { key: "score", label: "Mojo Score", act: undefined },
+  { key: "where", label: "Where you stand", act: undefined },
+  { key: "ourread", label: "Our read", act: undefined },
+  { key: "questions", label: "Questions", act: undefined },
   { key: "next", label: "Next move", act: undefined },
 ] as const;
 
@@ -121,18 +126,22 @@ export default function FirstReadPreviewView() {
     switch (BEATS[index].key) {
       case "cold":
         return <ColdOpen read={data} onContinue={() => go(1)} />;
-      case "see":
-        return <ActWhatWeSee read={data} />;
-      case "findings":
-        return <ActFindings read={data} />;
       case "record":
         return <ActRecord read={data} />;
-      case "score":
-        return <ScoreReveal read={data} />;
+      case "yousay":
+        return <ActWhatYouSay read={data} />;
       case "gap":
         return <ActGap read={data} />;
-      case "basegate":
-        return <BaseGate />;
+      case "serve":
+        return <ActWhoYouServe read={data} />;
+      case "findings":
+        return <ActFindings read={data} />;
+      case "score":
+        return <ScoreReveal read={data} />;
+      case "where":
+        return <ActWhereYouStand read={data} />;
+      case "ourread":
+        return <ActOurRead read={data} />;
       case "questions":
         return <ActQuestions read={data} />;
       default:

@@ -49,6 +49,23 @@ const LABEL_STRATEGY = "Strategy"; // DRAFT
 const LABEL_PROMISE = "Promise"; // DRAFT
 const LABEL_BASE = "Where you stand (inferred)"; // DRAFT
 const BASE_INFERRED_LABEL = "Inferred from your public record."; // DRAFT
+// ── Standalone-beat copy (council beat-order ruling, 2026-08-20) — DRAFTS ──
+const WORLD_HEADLINE = "What the world says."; // DRAFT (beat 2, was Record)
+const WORLD_SUB = "From reviews, listings, press and the places people talk about you."; // DRAFT
+const YOUSAY_HEADLINE = "What you say."; // DRAFT (beat 3, was channels)
+const YOUSAY_SUB = "Read from your own channels — your site, your socials, your listings."; // DRAFT
+const SERVE_HEADLINE = "Who you serve."; // DRAFT (beat 5, was Markets)
+const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // DRAFT
+const OURREAD_HEADLINE = "Our read."; // DRAFT (beat 9)
+const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // DRAFT
+// BaseGate four-commitments frame that OPENS beat 9 (S3, carried from BaseGate copy).
+const OURREAD_BASE_FRAME =
+  "Your base is the four commitments everything else stands on — what you're doing, who it's for, why you win, what you promise. Here is what the public record lets us posit about them."; // DRAFT
+const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
+const NO_WHERE_NOTE = "Not enough public signal to place your base yet."; // DRAFT
+const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
+const NO_SERVE_NOTE = "No public markets read yet."; // DRAFT
+const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // DRAFT
 // ── Findings beat (S4) — DRAFTS ──
 const FINDINGS_STANDFIRST =
   "What stands out in the public record — ranked by how widely it's corroborated across independent sources."; // DRAFT
@@ -108,7 +125,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
           onClick={onContinue}
           className="fr-link-ink group mt-20 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
         >
-          Now here&rsquo;s what we see{" "}
+          Now here&rsquo;s what the world says{" "}
           <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
         </button>
       </div>
@@ -332,6 +349,135 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+// ── Standalone beats (council beat-order ruling, 2026-08-20) ──────────────────
+// The "What we see" group is dissolved: channels, markets, where-you-stand, and the
+// positioning/strategy/promise "our read" each become their own beat. Every row keeps
+// its OUR READ label + source tag; empties are honest (no false absence).
+
+/** Beat 3 — "What you say": read from your own channels (the client-voice reads). */
+export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
+  return (
+    <>
+      <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} />
+      <main className="fr-stagger">
+        {read.declared.length === 0 ? <Absent>{NO_CHANNELS_NOTE}</Absent> : null}
+        {read.declared.map((claim) => (
+          <LedgerRow
+            key={claim.id}
+            leftLabel="Our read"
+            leftBody={claim.statement}
+            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
+          />
+        ))}
+      </main>
+    </>
+  );
+}
+
+/** Beat 5 — "Who you serve": the ODI market rows (people + the job). */
+export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
+  return (
+    <>
+      <ActHeader headline={SERVE_HEADLINE} standfirst={SERVE_SUB} />
+      <main className="fr-stagger">
+        {read.observedMarkets.length === 0 ? <Absent>{NO_SERVE_NOTE}</Absent> : null}
+        <div className="flex flex-col gap-10">
+          {read.observedMarkets.map((m) => (
+            <div key={m.id} className="flex flex-col gap-2">
+              <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
+              {m.job ? (
+                <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{m.job}</p>
+              ) : null}
+              {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
+            </div>
+          ))}
+        </div>
+      </main>
+    </>
+  );
+}
+
+/** Beat 8 — "Where you stand": inferred base reading (R-B), persisted numbers only. */
+export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
+  const b = read.whereYouStand;
+  return (
+    <>
+      <ActHeader headline={WHERE_HEADLINE} />
+      <main className="fr-stagger">
+        {b ? (
+          <>
+            <p className="max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+              Mojo Score {b.scoreValue} of 100 ({b.band}) · {b.activeFronts} market front{b.activeFronts === 1 ? "" : "s"} read · {b.strongSignals} strong outside signal{b.strongSignals === 1 ? "" : "s"}.
+            </p>
+            <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+              {BASE_INFERRED_LABEL}
+            </p>
+            {b.sourceTag ? <div className="mt-3"><SourceTag>{b.sourceTag.label}</SourceTag></div> : null}
+          </>
+        ) : (
+          <Absent>{NO_WHERE_NOTE}</Absent>
+        )}
+      </main>
+    </>
+  );
+}
+
+/** Beat 9 — "Our read": positioning / strategy / promise as hypotheses; opens with the
+ *  BaseGate four-commitments frame (S3). */
+export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
+  const p = read.positioning;
+  const st = read.strategy;
+  const pr = read.promise;
+  const anything = !!(p || st || pr);
+  return (
+    <>
+      <ActHeader headline={OURREAD_HEADLINE} standfirst={OURREAD_SUB} />
+      <main className="fr-stagger">
+        {/* BaseGate four-commitments frame opens the beat. */}
+        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          {OURREAD_BASE_FRAME}
+        </p>
+        {!anything ? <div className="mt-8"><Absent>{NO_OURREAD_NOTE}</Absent></div> : null}
+        <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
+          {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
+          {p?.value ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
+          ) : null}
+          {p && p.differentiators.length > 0 ? (
+            <ul className="mt-4 flex flex-col gap-2">
+              {p.differentiators.map((d, i) => (
+                <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
+              ))}
+            </ul>
+          ) : null}
+          {p?.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+        <WeSeeSection label={LABEL_STRATEGY} show={!!st}>
+          {st?.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
+          {st?.whereToPlay ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
+            </p>
+          ) : null}
+          {st?.howToWin ? (
+            <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              <span className="fr-eyebrow">How to win</span> — {st.howToWin}
+            </p>
+          ) : null}
+          {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+        <WeSeeSection label={LABEL_PROMISE} show={!!pr}>
+          {pr?.tagline ? <p className="text-2xl font-semibold leading-snug">{pr.tagline}</p> : null}
+          {pr?.value ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{pr.value}</p>
+          ) : null}
+          {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+      </main>
+    </>
+  );
+}
+
 export function ActRecord({ read }: { read: FirstReadPreviewData }) {
   const [open, setOpen] = useState(false);
   const shown = read.signals.slice(0, SHOWN_FULL_SIZE);
@@ -344,8 +490,8 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
       <ActHeader
-        headline="What the outside says back."
-        standfirst="Reviews, press, employee commentary, and public filings — anything anyone can already see without your permission."
+        headline={WORLD_HEADLINE}
+        standfirst={WORLD_SUB}
         right={
           <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
             <Eyebrow>Why outside first</Eyebrow>
