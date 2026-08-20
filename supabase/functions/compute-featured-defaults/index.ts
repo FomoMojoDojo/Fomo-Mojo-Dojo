@@ -13,7 +13,7 @@ import {
   selectSayVsSeeDefault, selectFindingDefault,
   type SayVsSeeCandidate, type FindingCandidate,
 } from "../_shared/featuredDefaults.ts";
-import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
+import { featuredEligibleDeltas } from "../_shared/firstReadProvenance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,21 +71,22 @@ Deno.serve(async (req) => {
       const deltas = (dRows ?? []) as Array<{ content_identity: string; delta_type: string; declared_claim_id: string | null }>;
       const declIds = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
       const { data: cRows } = declIds.length
-        ? await supabase.from("claims").select("id, topic, confidence").in("id", declIds)
+        ? await supabase.from("claims").select("id, topic, confidence, raw_payload").in("id", declIds)
         : { data: [] };
-      const byId = new Map(((cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null }>).map((c) => [c.id, c]));
-      // Document-derived declared claims are ineligible (First Read is outside-only).
-      let excludedDecl = new Set<string>();
+      const claimRows = (cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null; raw_payload?: unknown }>;
+      const byId = new Map(claimRows.map((c) => [c.id, c]));
+      // Upload-derived declared claims are ineligible (R1, 2026-08-20): backing uploaded_file
+      // signal OR a birth record citing an uploaded document — no-ref claims are never assumed clean.
+      let refRows: Array<{ claim_id: string; signal_id: string }> = [];
+      let srcBySig = new Map<string, string | null>();
       if (declIds.length) {
         const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", declIds);
-        const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+        refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
         const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
         const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
-        const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
-        excludedDecl = documentDerivedClaimIds(refRows, srcBySig);
+        srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
       }
-      const candidates: SayVsSeeCandidate[] = deltas
-        .filter((d) => !(d.declared_claim_id && excludedDecl.has(d.declared_claim_id))) // outside-only
+      const candidates: SayVsSeeCandidate[] = featuredEligibleDeltas(deltas, refRows, srcBySig, claimRows)
         .map((d) => {
           const c = d.declared_claim_id ? byId.get(d.declared_claim_id) : null;
           return { contentIdentity: d.content_identity, deltaType: d.delta_type, declaredTopic: c?.topic ?? null, declaredConfidence: c?.confidence ?? null };

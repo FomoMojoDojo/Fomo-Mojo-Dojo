@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadDerivedClaimIds } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 import type { CuratedTensionRender } from "@/lib/firstRead/curatedTension";
 
 export function useCuratedTensions(companyId?: string) {
@@ -37,16 +38,36 @@ export function useCuratedTensions(companyId?: string) {
       // Both sides' verbatim statements. A missing/struck claim → honest absence (no render).
       const { data: claimRows } = await supabase
         .from("claims")
-        .select("id, statement, status")
+        .select("id, statement, status, raw_payload")
         .in("id", [row.promise_claim_id, row.difficulty_claim_id]);
+      const rows = (claimRows ?? []) as Array<{ id: string; statement: string | null; status: string | null; raw_payload?: unknown }>;
       const byId = new Map(
-        ((claimRows ?? []) as Array<{ id: string; statement: string | null; status: string | null }>)
+        rows
           .filter((c) => (c.statement ?? "").trim() && c.status !== "struck")
           .map((c) => [c.id, (c.statement ?? "").trim()]),
       );
       const promiseText = byId.get(row.promise_claim_id);
       const difficultyText = byId.get(row.difficulty_claim_id);
       if (!promiseText || !difficultyText) { if (!cancelled) { setRender(null); setLoading(false); } return; }
+
+      // PROVENANCE GATE (R1, 2026-08-20) — First Read is OUTSIDE-ONLY. The promise side is a
+      // declared claim; if it is upload-derived (backing uploaded_file signal OR a birth record
+      // citing an uploaded document), the tension is document content → honest absence.
+      {
+        const { data: pRefs } = await supabase
+          .from("claim_signal_refs").select("claim_id, signal_id").eq("claim_id", row.promise_claim_id);
+        const refRows = (pRefs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+        const pSigIds = [...new Set(refRows.map((r) => r.signal_id))];
+        const { data: pSigs } = pSigIds.length
+          ? await supabase.from("signals").select("id, source_type").in("id", pSigIds)
+          : { data: [] };
+        const srcBySig = new Map(((pSigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
+        const excluded = uploadDerivedClaimIds(refRows, srcBySig, rows.filter((c) => c.id === row.promise_claim_id));
+        if (excluded.has(row.promise_claim_id)) {
+          if (!cancelled) { setRender(null); setLoading(false); }
+          return;
+        }
+      }
 
       // Difficulty side's backing OUTSIDE signal — host + date from ONE signal (same-signal
       // rule). Quote-less by nature (no byte-exact quote on this pair), so no quote fields.

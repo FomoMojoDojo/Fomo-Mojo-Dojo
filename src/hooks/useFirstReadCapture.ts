@@ -17,7 +17,7 @@ import { useMarketOptions } from "@/hooks/useMarketOptions";
 import { usePositioningCanvas } from "@/hooks/usePositioningCanvas";
 // The one identity authority. Same cross-runtime import the market portfolio uses.
 import { contentIdentity } from "../../supabase/functions/_shared/contentIdentity.ts";
-import { documentDerivedClaimIds } from "../../supabase/functions/_shared/firstReadProvenance.ts";
+import { gateCheckRailDeltas } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 import { assembleCheckItems, type RawCheckItem } from "@/lib/firstRead/checkItems";
 import { assembleDeltaItems, dropCollidingDeltas, type DeltaInput } from "@/lib/firstRead/deltaItems";
 
@@ -149,28 +149,28 @@ export function useFirstReadCapture(
     let dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
     if (dRows.length === 0) return EMPTY_DELTA;
 
-    // PROVENANCE GATE — First Read is OUTSIDE-ONLY. Drop any delta whose declared OR public claim is
-    // uploaded-document-derived (a backing signal with source_type='uploaded_file'). Uploaded docs
-    // power the deeper engagement only; here they must be structurally incapable of rendering — and
-    // because this hook is the SOLE item source for both the rail (TheCheckAct) and the export
-    // (ExportButton), one filter covers both. Shared predicate, inferred by the marker (no reclassify).
+    // PROVENANCE GATE (R1, 2026-08-20) — First Read is OUTSIDE-ONLY. Drop any delta whose declared
+    // OR public claim is upload-derived: a backing uploaded_file signal (tier a) OR a birth record
+    // citing an uploaded document (tier b) — a no-ref claim is resolved by its raw_payload, never
+    // assumed clean. Because this hook is the SOLE item source for both the rail (TheCheckAct) and
+    // the export (ExportButton), one filter covers both. Shared site gate — no local drift.
     {
       const provClaimIds = [...new Set(dRows.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
       if (provClaimIds.length) {
         const { data: provRefs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", provClaimIds).abortSignal(signal);
         const refRows = (provRefs ?? []) as Array<{ claim_id: string; signal_id: string }>;
         const provSigIds = [...new Set(refRows.map((r) => r.signal_id))];
-        if (provSigIds.length) {
-          const { data: provSigs } = await supabase.from("signals").select("id, source_type").in("id", provSigIds).abortSignal(signal);
-          const srcBySig = new Map(((provSigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
-          const excluded = documentDerivedClaimIds(refRows, srcBySig);
-          if (excluded.size) {
-            dRows = dRows.filter((d) =>
-              !(d.declared_claim_id && excluded.has(d.declared_claim_id)) &&
-              !(d.public_claim_id && excluded.has(d.public_claim_id)),
-            );
-          }
-        }
+        const { data: provSigs } = provSigIds.length
+          ? await supabase.from("signals").select("id, source_type").in("id", provSigIds).abortSignal(signal)
+          : { data: [] };
+        const srcBySig = new Map(((provSigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
+        const { data: provClaims } = await supabase.from("claims").select("id, raw_payload").in("id", provClaimIds).abortSignal(signal);
+        dRows = gateCheckRailDeltas(
+          dRows,
+          refRows,
+          srcBySig,
+          (provClaims ?? []) as Array<{ id: string; raw_payload?: unknown }>,
+        );
       }
     }
     if (dRows.length === 0) return EMPTY_DELTA;

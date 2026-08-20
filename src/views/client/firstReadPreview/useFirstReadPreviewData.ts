@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { documentDerivedClaimIds } from "../../../../supabase/functions/_shared/firstReadProvenance";
+import { uploadDerivedClaimIds } from "../../../../supabase/functions/_shared/firstReadProvenance";
 import { deriveSourceTag } from "./deriveSourceTag";
 import { facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type { FirstReadPreviewData, FRGapPair, FRSignal } from "./types";
@@ -117,7 +117,10 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   const { data: sigs } = await supabase
     .from("signals")
     .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use")
-    .in("id", sigIds);
+    .in("id", sigIds)
+    // R1: outside band only — an organization-band (e.g. uploaded) signal must never
+    // supply the source tag for a public-record row.
+    .eq("signal_band", "outside");
   const byId = new Map(((sigs ?? []) as SignalRow[]).map((s) => [s.id, s]));
   for (const r of refRows) {
     const s = byId.get(r.signal_id);
@@ -128,21 +131,26 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   return out;
 }
 
-/** Shared provenance gate: claims backed by uploaded_file signals are excluded. */
-async function documentDerivedFor(claimIds: string[]): Promise<Set<string>> {
-  if (!claimIds.length) return new Set();
+/**
+ * Shared provenance gate (R1): a claim is excluded if any backing signal is an uploaded
+ * file (tier a) OR its own birth record cites an uploaded document (tier b) — so a
+ * no-ref claim is resolved by its raw_payload, never assumed clean.
+ */
+async function uploadDerivedFor(claimRows: Array<{ id: string; raw_payload?: unknown }>): Promise<Set<string>> {
+  if (!claimRows.length) return new Set();
   const { data: refs } = await supabase
     .from("claim_signal_refs")
     .select("claim_id, signal_id")
-    .in("claim_id", claimIds);
+    .in("claim_id", claimRows.map((c) => c.id));
   const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
   const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
-  if (!sigIds.length) return new Set();
-  const { data: sigs } = await supabase.from("signals").select("id, source_type").in("id", sigIds);
+  const { data: sigs } = sigIds.length
+    ? await supabase.from("signals").select("id, source_type").in("id", sigIds)
+    : { data: [] };
   const srcBySig = new Map(
     ((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]),
   );
-  return documentDerivedClaimIds(refRows, srcBySig);
+  return uploadDerivedClaimIds(refRows, srcBySig, claimRows);
 }
 
 export function useFirstReadPreviewData(companyId: string | undefined) {
@@ -188,7 +196,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           raw_payload: unknown;
           created_at: string | null;
         }>).filter((c) => c.status !== "struck");
-        const declDocExcluded = await documentDerivedFor(declaredAll.map((c) => c.id));
+        const declDocExcluded = await uploadDerivedFor(declaredAll);
         const declaredSurviving = declaredAll.filter((c) => !declDocExcluded.has(c.id));
 
         // Canvas updated dates for canvas-minted birth records.
@@ -324,13 +332,17 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ),
         ];
         const { data: gapClaims } = gapClaimIds.length
-          ? await supabase.from("claims").select("id, statement, status").in("id", gapClaimIds)
+          ? await supabase.from("claims").select("id, statement, status, raw_payload").in("id", gapClaimIds)
           : { data: [] };
         const gapClaimById = new Map(
-          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null }>).map((c) => [c.id, c]),
+          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null; raw_payload?: unknown }>).map((c) => [c.id, c]),
         );
-        const declaredIdsInPairs = deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x);
-        const pairDocExcluded = await documentDerivedFor(declaredIdsInPairs);
+        const declaredIdsInPairs = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
+        // Every declared id goes through the gate — with its fetched payload when the claim
+        // row resolved, bare otherwise (tier a still applies via refs either way).
+        const pairDocExcluded = await uploadDerivedFor(
+          declaredIdsInPairs.map((id) => gapClaimById.get(id) ?? { id }),
+        );
         const publicNewest = await newestSignalByClaim(
           deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x),
         );

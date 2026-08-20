@@ -6,6 +6,12 @@
 // Pure and I/O-free so every branch is testable. The data hook resolves the
 // persisted lookups (run dates, canvas dates, ref'd upload signals) and passes
 // them in; this module only classifies and formats.
+//
+// R1 (2026-08-20): the document-filename pattern is THE shared one from
+// firstReadProvenance — the source tag and the provenance gate can never
+// disagree about what counts as a document citation.
+
+import { citedDocumentName } from "../../../../supabase/functions/_shared/firstReadProvenance";
 
 export type SourceTagResult = { label: string; href?: string } | null;
 
@@ -76,21 +82,6 @@ function isUninformativeTitle(title: string): boolean {
   return /public baseline$/i.test(t) || /^public research$/i.test(t);
 }
 
-/** First document filename cited in a birth-record string, or null. */
-const DOC_NAME_RE = /([\w&()'’\-. ]+\.(?:pdf|docx?|pptx?|xlsx?|md|txt|csv|rtf))/i;
-
-function docNameFromPayload(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  for (const key of ["basis", "source", "source_file", "file_name"]) {
-    const v = p[key];
-    if (typeof v !== "string") continue;
-    const m = DOC_NAME_RE.exec(v);
-    if (m) return m[1].trim();
-  }
-  return null;
-}
-
 function payloadCanvasId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const v = (payload as Record<string, unknown>).source_canvas_id;
@@ -128,7 +119,7 @@ export function deriveSourceTag(row: SourceTagInput): SourceTagResult {
   if (row.refUpload?.fileName) {
     return { label: withDate(row.refUpload.fileName, row.refUpload.date) };
   }
-  const docName = docNameFromPayload(row.rawPayload);
+  const docName = citedDocumentName(row.rawPayload);
   if (docName) {
     return { label: withDate(docName, row.claimCreatedAt) };
   }

@@ -104,7 +104,8 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader
         headline="What you say you are."
-        standfirst="Read only from your own words — site, owned channels, and what you told us directly. Nothing here is our interpretation yet."
+        // R4 draft (2026-08-20) — operator signs on screen.
+        standfirst="What you’ve put on the record about who you are. Each line names where it came from. Nothing here is our interpretation yet."
       />
       <main className="fr-stagger">
         {read.declared.length === 0 ? <Absent>{NO_DECLARED_NOTE}</Absent> : null}
