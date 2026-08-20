@@ -380,7 +380,7 @@ export function BaseGate() {
           Every choice downstream inherits its strength — or its cracks. Aligning it comes first.
         </p>
         <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-          Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise. Every message, investment, and plan inherits its strength — or its cracks.
+          Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.
         </p>
         <BaseAlignment
           pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
@@ -419,7 +419,7 @@ export function ActNext({ read }: { read: FirstReadPreviewData }) {
   const phases = [
     { name: "Diagnose", body: "Open the inside: documents, numbers, and the people who hold the decisions." },
     { name: "Focus", body: "Align your base, define your market." },
-    { name: "Flow", body: "Work the chosen route, scored against evidence as it lands." },
+    { name: "Flow", body: "Implement the best path — monitored and measured as evidence lands." },
   ];
   return (
     <>
