@@ -164,12 +164,15 @@ export function useFirstReadCapture(
           ? await supabase.from("signals").select("id, source_type").in("id", provSigIds).abortSignal(signal)
           : { data: [] };
         const srcBySig = new Map(((provSigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
-        const { data: provClaims } = await supabase.from("claims").select("id, raw_payload").in("id", provClaimIds).abortSignal(signal);
+        // PUBLIC-ONLY ruling (2026-08-20): provenance joins the gate — a delta anchored on
+        // any non-public claim (internal_declared / client_attested / analytic) never
+        // renders; say-anchored items return after the Gate-B recompute re-bases them.
+        const { data: provClaims } = await supabase.from("claims").select("id, raw_payload, provenance").in("id", provClaimIds).abortSignal(signal);
         dRows = gateCheckRailDeltas(
           dRows,
           refRows,
           srcBySig,
-          (provClaims ?? []) as Array<{ id: string; raw_payload?: unknown }>,
+          (provClaims ?? []) as Array<{ id: string; raw_payload?: unknown; provenance?: string | null }>,
         );
       }
     }

@@ -69,24 +69,33 @@ import {
 } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 import { deriveSourceTag } from "@/views/client/firstReadPreview/deriveSourceTag";
 
+// PUBLIC-ONLY update (2026-08-20): Act 1 now sources client-voice PUBLIC claims, so the
+// R1 fixtures are public_observed — the planted row still cites planted.pdf in its birth
+// record (tier b applies to public claims too), and the clean row is client-voice-backed
+// so it renders in Act 1.
+const OWN_SIG = "sig-own";
 const claimsFixture: Row[] = [
-  { id: PLANTED, company_id: CO, provenance: "internal_declared", status: "active", topic: "positioning", statement: "Planted doc statement.", raw_payload: PLANTED_PAYLOAD, created_at: "2026-08-01T00:00:00Z" },
-  { id: CLEAN, company_id: CO, provenance: "internal_declared", status: "active", topic: "positioning", statement: "Clean declared statement.", raw_payload: {}, created_at: "2026-08-01T00:00:00Z" },
+  { id: PLANTED, company_id: CO, provenance: "public_observed", status: "active", topic: "positioning", statement: "Planted doc statement.", raw_payload: PLANTED_PAYLOAD, created_at: "2026-08-01T00:00:00Z" },
+  { id: CLEAN, company_id: CO, provenance: "public_observed", status: "active", topic: "positioning", statement: "Clean declared statement.", raw_payload: {}, created_at: "2026-08-01T00:00:00Z" },
   { id: PUB, company_id: CO, provenance: "public_observed", status: "active", topic: null, statement: "Public record statement.", raw_payload: {}, created_at: "2026-08-01T00:00:00Z" },
+];
+const ownVoiceRefs: Row[] = [{ claim_id: CLEAN, signal_id: OWN_SIG }];
+const ownVoiceSignals: Row[] = [
+  { id: OWN_SIG, company_id: CO, voice_class: "client_voice", source_type: "public_baseline_run", source_url: "https://co-1.com/about", source_title: null, source_id: null, event_date: "2026-08-01", evidence_excerpt: "own words", confidence_to_use: "medium", signal_band: "outside", superseded_at: null },
 ];
 
 // ── SITE 1+2: preview declared (Act 1) + preview gap (beat 4) ─────────────────
 describe("R1 site: useFirstReadPreviewData", () => {
   it("declared: planted no-ref claim is excluded; clean no-ref claim passes", async () => {
     db = fakeSupabase({
-      companies: [{ id: CO, name: "Co", website: null }],
+      companies: [{ id: CO, name: "Co", website: "https://co-1.com" }],
       claims: claimsFixture,
       claim_deltas: [
         { id: "d1", company_id: CO, delta_type: "echoed", declared_claim_id: PLANTED, public_claim_id: PUB, content_identity: "ci-1" },
         { id: "d2", company_id: CO, delta_type: "echoed", declared_claim_id: CLEAN, public_claim_id: PUB, content_identity: "ci-2" },
       ],
-      claim_signal_refs: [],
-      signals: [],
+      claim_signal_refs: ownVoiceRefs,
+      signals: ownVoiceSignals,
       public_baseline_runs: [],
       signal_recurrence_verdicts: [],
       market_options: [],

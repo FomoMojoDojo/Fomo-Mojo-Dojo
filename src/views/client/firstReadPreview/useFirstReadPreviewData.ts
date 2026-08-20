@@ -15,9 +15,14 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadDerivedClaimIds } from "../../../../supabase/functions/_shared/firstReadProvenance";
+import {
+  clientVoiceClaimIds,
+  isOwnDomainUrl,
+  PUBLIC_PROVENANCE,
+  uploadDerivedClaimIds,
+} from "../../../../supabase/functions/_shared/firstReadProvenance";
 import { deriveSourceTag } from "./deriveSourceTag";
-import { facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type { FirstReadPreviewData, FRGapPair, FRSignal } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
 
@@ -182,63 +187,70 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Outside-voice signals + strength (beats 0 fallback + 2) ────────
         const { signals } = await loadSignals(companyId, runDates);
 
-        // ── Declared side (beat 1) — struck excluded, doc-derived excluded ──
+        // ── Act 1 (beat 1) — PUBLIC-ONLY ruling (2026-08-20): the company's own
+        // PUBLIC voice. Rows are client-voice public claims: provenance =
+        // 'public_observed' with a backing client_voice signal (or a legacy
+        // NULL-voice signal on an own-domain URL — same shared rule the baseline
+        // stamping guard uses). internal_declared/canvas/intake never render.
+        // The R1 upload gate stays underneath as defense in depth.
+        const companyHost = bareHost((co as { website?: string | null } | null)?.website ?? null);
         const { data: declRows } = await supabase
           .from("claims")
-          .select("id, topic, statement, status, raw_payload, created_at")
+          .select("id, topic, statement, status, raw_payload, provenance, created_at")
           .eq("company_id", companyId)
-          .eq("provenance", "internal_declared");
+          .eq("provenance", PUBLIC_PROVENANCE);
         const declaredAll = ((declRows ?? []) as Array<{
           id: string;
           topic: string | null;
           statement: string;
           status: string | null;
           raw_payload: unknown;
+          provenance: string;
           created_at: string | null;
-        }>).filter((c) => c.status !== "struck");
+        }>).filter((c) => c.status === "active");
         const declDocExcluded = await uploadDerivedFor(declaredAll);
-        const declaredSurviving = declaredAll.filter((c) => !declDocExcluded.has(c.id));
 
-        // Canvas updated dates for canvas-minted birth records.
-        const canvasIds = [
-          ...new Set(
-            declaredSurviving
-              .map((c) => {
-                const p = c.raw_payload as Record<string, unknown> | null;
-                const v = p && typeof p === "object" ? p["source_canvas_id"] : null;
-                return typeof v === "string" && v ? v : null;
-              })
-              .filter((x): x is string => !!x),
-          ),
-        ];
-        const { data: canvasRows } = canvasIds.length
-          ? await supabase.from("positioning_canvases").select("id, updated_at").in("id", canvasIds)
+        // Voice classification + per-claim newest own-voice signal (its source tag).
+        const { data: dRefs } = declaredAll.length
+          ? await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", declaredAll.map((c) => c.id))
           : { data: [] };
-        const canvasUpdatedById = new Map(
-          ((canvasRows ?? []) as Array<{ id: string; updated_at: string | null }>).map((r) => [r.id, r.updated_at]),
+        const dRefRows = (dRefs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+        const dSigIds = [...new Set(dRefRows.map((r) => r.signal_id))];
+        const { data: dSigs } = dSigIds.length
+          ? await supabase
+              .from("signals")
+              .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, voice_class")
+              .in("id", dSigIds)
+          : { data: [] };
+        const dSigById = new Map(
+          ((dSigs ?? []) as Array<SignalRow & { voice_class: string | null }>).map((s) => [s.id, s]),
         );
+        const ownVoiceIds = clientVoiceClaimIds(dRefRows, dSigById, companyHost);
+        const ownSigByClaim = new Map<string, SignalRow>();
+        for (const r of dRefRows) {
+          const s = dSigById.get(r.signal_id);
+          if (!s) continue;
+          const vc = s.voice_class ?? null;
+          const own =
+            vc === "client_voice" || (vc === null && !!s.source_url && isOwnDomainUrl(s.source_url, companyHost));
+          if (!own) continue;
+          const prior = ownSigByClaim.get(r.claim_id);
+          if (!prior || (s.event_date ?? "") > (prior.event_date ?? "")) ownSigByClaim.set(r.claim_id, s);
+        }
 
-        const declared = declaredSurviving.map((c) => {
-          const p = c.raw_payload as Record<string, unknown> | null;
-          const canvasId = p && typeof p === "object" && typeof p["source_canvas_id"] === "string" ? (p["source_canvas_id"] as string) : null;
-          return {
-            id: c.id,
-            topic: c.topic,
-            facet: facetForTopic(c.topic),
-            statement: c.statement,
-            sourceTag: deriveSourceTag({
-              kind: "declared_claim",
-              rawPayload: c.raw_payload,
-              // Surviving rows structurally have no uploaded_file refs (the
-              // provenance gate excluded those above); no-ref rows resolve
-              // through raw_payload/basis here — the bypass close.
-              refUpload: null,
-              canvasUpdatedAt: canvasId ? canvasUpdatedById.get(canvasId) ?? null : null,
-              intakeSubmittedAt: null,
-              claimCreatedAt: c.created_at,
-            }),
-          };
-        });
+        const declared = declaredAll
+          .filter((c) => !declDocExcluded.has(c.id) && ownVoiceIds.has(c.id))
+          .map((c) => {
+            const sig = ownSigByClaim.get(c.id) ?? null;
+            return {
+              id: c.id,
+              topic: c.topic,
+              facet: facetForTopic(c.topic),
+              statement: c.statement,
+              // Public branch: the page it came from + the run read date.
+              sourceTag: sig ? publicSignalTag(sig, runDates) : null,
+            };
+          });
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -332,10 +344,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ),
         ];
         const { data: gapClaims } = gapClaimIds.length
-          ? await supabase.from("claims").select("id, statement, status, raw_payload").in("id", gapClaimIds)
+          ? await supabase.from("claims").select("id, statement, status, raw_payload, provenance").in("id", gapClaimIds)
           : { data: [] };
         const gapClaimById = new Map(
-          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null; raw_payload?: unknown }>).map((c) => [c.id, c]),
+          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null; raw_payload?: unknown; provenance?: string | null }>).map((c) => [c.id, c]),
         );
         const declaredIdsInPairs = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
         // Every declared id goes through the gate — with its fetched payload when the claim
@@ -351,6 +363,13 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           const verdict = verdictForDeltaType(d.delta_type);
           if (!verdict) continue;
           if (d.declared_claim_id && pairDocExcluded.has(d.declared_claim_id)) continue;
+          // PUBLIC-ONLY: a pair whose declared side is not a public claim never renders
+          // (say-anchored pairs re-appear after the Gate-B recompute re-bases them on
+          // client-voice public claims).
+          if (d.declared_claim_id) {
+            const dc = gapClaimById.get(d.declared_claim_id);
+            if (!dc || dc.provenance !== PUBLIC_PROVENANCE) continue;
+          }
           const declaredClaim = d.declared_claim_id ? gapClaimById.get(d.declared_claim_id) : null;
           const publicClaim = d.public_claim_id ? gapClaimById.get(d.public_claim_id) : null;
           if (declaredClaim?.status === "struck" || publicClaim?.status === "struck") continue;

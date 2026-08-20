@@ -6,7 +6,7 @@
 // Provenance is carried per row (finding-derived vs silent-delta-derived) — ONE list.
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadDerivedClaimIds } from "../../supabase/functions/_shared/firstReadProvenance.ts";
+import { firstReadExcludedClaimIds } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 
 export interface OpenQuestionListRow {
   question_text: string;
@@ -64,12 +64,13 @@ export function useFirstReadOpenQuestions(companyId?: string) {
             const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
             const { data: sigs } = sigIds.length ? await supabase.from("signals").select("id, source_type").in("id", sigIds) : { data: [] };
             const srcBySig = new Map(((sigs ?? []) as Array<{ id: string; source_type: string | null }>).map((s) => [s.id, s.source_type]));
-            // R1: birth records join the test — a no-ref anchor claim is resolved by payload.
-            const { data: payloadRows } = await supabase.from("claims").select("id, raw_payload").in("id", claimIds);
-            const excluded = uploadDerivedClaimIds(
+            // R1 + PUBLIC-ONLY: birth records and provenance join the test — a no-ref
+            // anchor claim is resolved by payload, and any non-public anchor is excluded.
+            const { data: payloadRows } = await supabase.from("claims").select("id, raw_payload, provenance").in("id", claimIds);
+            const excluded = firstReadExcludedClaimIds(
               refRows,
               srcBySig,
-              (payloadRows ?? []) as Array<{ id: string; raw_payload?: unknown }>,
+              (payloadRows ?? []) as Array<{ id: string; raw_payload?: unknown; provenance?: string | null }>,
             );
             if (excluded.size) {
               const excludedAnchors = new Set(

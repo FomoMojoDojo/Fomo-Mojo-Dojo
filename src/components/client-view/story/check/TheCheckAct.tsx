@@ -15,7 +15,7 @@ import CheckItemRow from "./CheckItemRow";
 import CheckTally from "./CheckTally";
 import SayVsSeeExhibit from "./SayVsSeeExhibit";
 import OutsideRaisedSection from "./OutsideRaisedSection";
-import CuratedTensionSection from "./CuratedTensionSection";
+// CuratedTensionSection import removed — unmounted from First Read (public-only ruling, 2026-08-20).
 import FeaturedExhibitCard from "./FeaturedExhibitCard";
 import { ThemeHeadline, ThemeMore } from "./ThemeSection";
 import {
@@ -24,7 +24,6 @@ import {
   THEME_AUTO_LEAD, FIRST_READ_OUTSIDE_FRAMING,
 } from "@/lib/firstRead/themeCopy";
 import { useFeaturedItems, type FeaturedPointer } from "@/hooks/useFeaturedItems";
-import { useCuratedTensions } from "@/hooks/useCuratedTensions";
 import { useAuth } from "@/hooks/useAuth";
 import { ActData } from "../ActData";
 import ActRecap from "../ActRecap";
@@ -92,8 +91,10 @@ export default function TheCheckAct({
   // AMENDMENT 1: ratify-in-place stays in the hook but renders NO control — featuring another item
   // is the only visible action, so `ratify` is intentionally not destructured here.
   const { featured, feature, ensureDefaults } = useFeaturedItems(companyId);
-  // Theme-1 ordering: a live curated tension WINS over a say-vs-see featured pointer.
-  const { render: curatedRender } = useCuratedTensions(companyId);
+  // PUBLIC-ONLY ruling (2026-08-20): the curated tension is UNMOUNTED from First Read —
+  // its promise side is a declared (canvas-minted) claim. The hook lives on for other
+  // surfaces; re-curation from client-voice public claims is a separate question.
+  const curatedRender = null;
 
   // Gate 2.5 — rail-open lazy: the presenter (admin) triggers the auto-default compute once. The
   // edge function writes origin='auto'/'auto_judged' pointers ONLY where none live (never operator).
@@ -163,7 +164,7 @@ export default function TheCheckAct({
           identities), exactly as before. Featured pickers for themes 2/3 arrive in Gate 2; the
           batteries inside the tails come off in Gate 3. */}
       <ThemeHeadline>{THEME_1_HEADLINE}</ThemeHeadline>
-      <CuratedTensionSection companyId={companyId} />
+      {/* CuratedTensionSection UNMOUNTED (public-only ruling, 2026-08-20). */}
 
       {frozen && <p className="cvs-check-frozen">{FROZEN_MSG}</p>}
       {error && !frozen && <p className="cvs-check-refusal">{error}</p>}

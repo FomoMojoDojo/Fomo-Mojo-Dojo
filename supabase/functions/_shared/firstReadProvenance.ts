@@ -20,6 +20,58 @@
 
 export const UPLOADED_FILE_SOURCE_TYPE = "uploaded_file";
 
+// ── PUBLIC-ONLY (operator ruling 2026-08-20, supersedes 08-08 "OUTSIDE-ONLY + INTAKE") ──
+// First Read renders PUBLIC content only. Act 1 = the company's own public channels
+// (client-voice public claims); the record = third-party public; NO internal_declared,
+// canvas-minted, intake, or uploaded content renders at any First Read site. The upload
+// gate (R1, above) stays as defense in depth — the boundary is two-deep.
+
+export const PUBLIC_PROVENANCE = "public_observed";
+
+/** Lowercased, www-stripped hostname. */
+export function normalizeHost(host: string): string {
+  return host.replace(/^www\./, "").toLowerCase();
+}
+
+/**
+ * THE own-domain rule — one definition, shared by the public-baseline stamping guard and
+ * clientVoiceClaimIds: the URL's host equals the company host or is a subdomain of it
+ * (both www-stripped, case-insensitive).
+ */
+export function isOwnDomainUrl(url: string, companyHost: string | null | undefined): boolean {
+  if (!companyHost) return false;
+  const ch = normalizeHost(companyHost);
+  if (!ch) return false;
+  try {
+    const h = normalizeHost(new URL(url).hostname);
+    return h === ch || h.endsWith(`.${ch}`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Act-1 sourcing: claim ids whose backing signals carry the company's own public voice —
+ * voice_class='client_voice', or a legacy NULL voice_class on an own-domain URL (the
+ * same rule the stamping guard would have applied).
+ */
+export function clientVoiceClaimIds(
+  refs: Array<{ claim_id: string; signal_id: string }>,
+  signalById: Map<string, { voice_class?: string | null; source_url?: string | null }>,
+  companyHost: string | null | undefined,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const r of refs) {
+    const s = signalById.get(r.signal_id);
+    if (!s) continue;
+    const vc = s.voice_class ?? null;
+    if (vc === "client_voice" || (vc === null && s.source_url && isOwnDomainUrl(s.source_url, companyHost))) {
+      ids.add(r.claim_id);
+    }
+  }
+  return ids;
+}
+
 /**
  * THE document-filename pattern — the single definition shared by the provenance gate (tier b)
  * and deriveSourceTag's doc branch. First match names the cited document.
@@ -87,16 +139,35 @@ export function uploadDerivedClaimIds(
 }
 
 /**
+ * THE First Read exclusion set: upload-derived (R1: tier a ∪ tier b) UNION non-public
+ * provenance (public-only ruling: anything other than public_observed — internal_declared,
+ * client_attested, analytic — never renders). A claim row without a provenance field only
+ * goes through the upload tests; every First Read call site fetches provenance.
+ */
+export function firstReadExcludedClaimIds(
+  refs: Array<{ claim_id: string; signal_id: string }>,
+  sourceTypeBySignal: Map<string, string | null | undefined>,
+  claimRows: Array<{ id: string; raw_payload?: unknown; provenance?: string | null }>,
+): Set<string> {
+  const excluded = uploadDerivedClaimIds(refs, sourceTypeBySignal, claimRows);
+  for (const c of claimRows) {
+    if (c.provenance !== undefined && c.provenance !== PUBLIC_PROVENANCE) excluded.add(c.id);
+  }
+  return excluded;
+}
+
+/**
  * Check-rail site gate (useFirstReadCapture): drop every delta whose declared OR public claim is
- * upload-derived. Exported so the site's falsification test exercises the exact production filter.
+ * First-Read-excluded (upload-derived or non-public). Exported so the site's falsification test
+ * exercises the exact production filter.
  */
 export function gateCheckRailDeltas<T extends { declared_claim_id: string | null; public_claim_id: string | null }>(
   dRows: T[],
   refs: Array<{ claim_id: string; signal_id: string }>,
   sourceTypeBySignal: Map<string, string | null | undefined>,
-  claimRows: Array<{ id: string; raw_payload?: unknown }>,
+  claimRows: Array<{ id: string; raw_payload?: unknown; provenance?: string | null }>,
 ): T[] {
-  const excluded = uploadDerivedClaimIds(refs, sourceTypeBySignal, claimRows);
+  const excluded = firstReadExcludedClaimIds(refs, sourceTypeBySignal, claimRows);
   if (!excluded.size) return dRows;
   return dRows.filter(
     (d) =>
@@ -107,14 +178,14 @@ export function gateCheckRailDeltas<T extends { declared_claim_id: string | null
 
 /**
  * Featured-defaults site gate (compute-featured-defaults): a delta is say-vs-see-eligible only if
- * its declared claim is not upload-derived. Exported for the site's falsification test.
+ * its declared claim is not First-Read-excluded. Exported for the site's falsification test.
  */
 export function featuredEligibleDeltas<T extends { declared_claim_id: string | null }>(
   deltas: T[],
   refs: Array<{ claim_id: string; signal_id: string }>,
   sourceTypeBySignal: Map<string, string | null | undefined>,
-  claimRows: Array<{ id: string; raw_payload?: unknown }>,
+  claimRows: Array<{ id: string; raw_payload?: unknown; provenance?: string | null }>,
 ): T[] {
-  const excluded = uploadDerivedClaimIds(refs, sourceTypeBySignal, claimRows);
+  const excluded = firstReadExcludedClaimIds(refs, sourceTypeBySignal, claimRows);
   return deltas.filter((d) => !(d.declared_claim_id && excluded.has(d.declared_claim_id)));
 }

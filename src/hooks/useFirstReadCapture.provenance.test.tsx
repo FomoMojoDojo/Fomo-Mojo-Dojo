@@ -20,7 +20,9 @@ const SIGNALS_SRC = [
 ];
 const CLAIMS = [
   { id: "doc-claim", statement: "doc declared", provenance: "internal_declared" },
-  { id: "ok-claim", statement: "ok declared", provenance: "internal_declared" },
+  // PUBLIC-ONLY ruling (2026-08-20): the kept delta's declared side must be a PUBLIC
+  // claim — internal_declared no longer renders anywhere in First Read.
+  { id: "ok-claim", statement: "ok declared", provenance: "public_observed" },
   { id: "pubA", statement: "public A", provenance: "public_observed" },
   { id: "pubB", statement: "public B", provenance: "public_observed" },
 ];

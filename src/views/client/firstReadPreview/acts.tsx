@@ -23,7 +23,7 @@ import type { FirstReadPreviewData, FRSignal } from "./types";
 
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
 const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
-const NO_MARKETS_NOTE = "No declared markets extracted yet."; // signed (Phase A ruling)
+// NO_MARKETS_NOTE removed with the Declared-markets section (public-only ruling, 2026-08-20).
 const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
 const NOT_ENOUGH_SIGNAL_NOTE = "Not enough public signal to score yet."; // signed (outside-v1.0.0 ruling)
 // Signed anchor line (outside-v1.0.0 ruling) — renders under the reveal support.
@@ -104,8 +104,8 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader
         headline="What you say you are."
-        // R4 draft (2026-08-20) — operator signs on screen.
-        standfirst="What you’ve put on the record about who you are. Each line names where it came from. Nothing here is our interpretation yet."
+        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen.
+        standfirst="Your public voice: what you tell the world on the channels you run. Each line names the page it came from. Nothing here is our interpretation yet."
       />
       <main className="fr-stagger">
         {read.declared.length === 0 ? <Absent>{NO_DECLARED_NOTE}</Absent> : null}
@@ -117,43 +117,9 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
             meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
           />
         ))}
-        {/* Declared markets list — accepted options only; chip from the
-            operator's chosen-market fact. */}
-        <div className="border-b py-14" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-          <div className="mb-6">
-            <Eyebrow>Declared markets</Eyebrow>
-          </div>
-          {read.markets.length === 0 ? (
-            <Absent>{NO_MARKETS_NOTE}</Absent>
-          ) : (
-            <div className="flex flex-col gap-8">
-              {read.markets.map((market) => (
-                <div key={market.id} className="flex flex-col gap-3">
-                  <p className="max-w-xl text-2xl font-semibold leading-snug">{market.executorStatement}</p>
-                  {market.chosen ? (
-                    <span
-                      className="inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-                      style={{ background: "hsl(239 84% 57% / 0.08)", color: "hsl(var(--fr-accent))" }}
-                    >
-                      This read follows this market
-                    </span>
-                  ) : null}
-                  {market.jobStatement ? (
-                    <div className="mt-2 flex flex-col">
-                      <Eyebrow>The job they hire you for</Eyebrow>
-                      <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                        {market.jobStatement}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-              <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                Companies usually declare more than one. Part of aligning the base is choosing which one strategy actually follows.
-              </p>
-            </div>
-          )}
-        </div>
+        {/* Declared-markets section REMOVED (public-only ruling, 2026-08-20):
+            market_options derive from the declared corpus and may not render on
+            First Read. The data hook and FRMarket type stay for other surfaces. */}
         {positioningClaims.map((claim) => (
           <LedgerRow
             key={claim.id}
@@ -332,7 +298,8 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader
         headline="Where the two readings disagree."
-        standfirst="Your words on the left, the record on the right. Neither is automatically wrong — the disagreement is where the strategy is actually being decided."
+        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen.
+        standfirst="What you tell the world on your own channels, next to what the world says back. Neither is automatically wrong — the disagreement is where the strategy is actually being decided."
         right={
           read.score ? (
             <ScoreNow

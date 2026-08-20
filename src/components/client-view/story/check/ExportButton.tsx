@@ -15,7 +15,6 @@ import { useStandingFindings } from "@/hooks/useStandingFindings";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useIndustryReferenceMaps } from "@/hooks/useIndustryReferenceMaps";
 import { useFirstReadCapture } from "@/hooks/useFirstReadCapture";
-import { useCuratedTensions } from "@/hooks/useCuratedTensions";
 import { useFirstReadStatedProblem } from "@/hooks/useFirstReadStatedProblem";
 import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitForSurface } from "@/lib/registerGuard";
@@ -67,8 +66,9 @@ export default function ExportButton({
   const { preferredRun, loading: baselineLoading, error: baselineError } = usePublicBaseline(companyId);
   const { maps, loading: mapsLoading, error: mapsError } = useIndustryReferenceMaps();
   const { items, tally, loading: captureLoading, readError: captureError } = useFirstReadCapture(companyId, sessionId);
-  // SELF-CONSISTENCY — the curated exhibit for the leave-behind (follows the screen).
-  const { render: curatedTension } = useCuratedTensions(companyId);
+  // PUBLIC-ONLY ruling (2026-08-20): curated tension UNMOUNTED from the First Read
+  // export (follows the screen — the exhibit no longer renders on the rail).
+  const curatedTension = null;
   const { data: statedProblem, loading: statedProblemLoading, error: statedProblemError } = useFirstReadStatedProblem(companyId);
   // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
   // so the leave-behind can never diverge from the meeting.

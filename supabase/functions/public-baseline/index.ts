@@ -8,6 +8,7 @@ import { extractCitationSourceText, mergeCitationSourceText } from "../../../src
 // claimDeltaSynthesis). CB1 is a SELECT-only reference fixture; this function INGESTS signals/
 // claims from scratch, so it must refuse a frozen company before any write.
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
+import { isOwnDomainUrl, normalizeHost } from "../_shared/firstReadProvenance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1803,19 +1804,14 @@ async function callClaudeWebSearch(opts: {
   const VOICE_CLASSES = new Set(["client_voice", "outside_voice_about_client", "competitor_voice", "market_context"]);
   const companyHostForGuard = (() => {
     try {
-      return new URL(opts.website || `https://${opts.domain}`).hostname.replace(/^www\./, "").toLowerCase();
+      return normalizeHost(new URL(opts.website || `https://${opts.domain}`).hostname);
     } catch {
-      return String(opts.domain || "").replace(/^www\./, "").toLowerCase();
+      return normalizeHost(String(opts.domain || ""));
     }
   })();
-  const isCompanyHostUrl = (url: string) => {
-    try {
-      const h = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-      return !!companyHostForGuard && (h === companyHostForGuard || h.endsWith(`.${companyHostForGuard}`));
-    } catch {
-      return false;
-    }
-  };
+  // ONE own-domain rule (shared with clientVoiceClaimIds) — the guard and the Act-1
+  // voice classifier can never disagree about what counts as the company's own host.
+  const isCompanyHostUrl = (url: string) => isOwnDomainUrl(url, companyHostForGuard);
   const reclassify = (arr: unknown) =>
     (Array.isArray(arr) ? arr : []).map((e: any) => {
       const url = String(e?.url || "").trim();

@@ -71,9 +71,9 @@ Deno.serve(async (req) => {
       const deltas = (dRows ?? []) as Array<{ content_identity: string; delta_type: string; declared_claim_id: string | null }>;
       const declIds = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
       const { data: cRows } = declIds.length
-        ? await supabase.from("claims").select("id, topic, confidence, raw_payload").in("id", declIds)
+        ? await supabase.from("claims").select("id, topic, confidence, raw_payload, provenance").in("id", declIds)
         : { data: [] };
-      const claimRows = (cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null; raw_payload?: unknown }>;
+      const claimRows = (cRows ?? []) as Array<{ id: string; topic: string | null; confidence: string | null; raw_payload?: unknown; provenance?: string | null }>;
       const byId = new Map(claimRows.map((c) => [c.id, c]));
       // Upload-derived declared claims are ineligible (R1, 2026-08-20): backing uploaded_file
       // signal OR a birth record citing an uploaded document — no-ref claims are never assumed clean.
