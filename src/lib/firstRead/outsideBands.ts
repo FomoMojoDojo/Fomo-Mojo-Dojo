@@ -21,7 +21,8 @@ export const OUTSIDE_BANDS: readonly OutsideBandCopy[] = [
   {
     key: "strategy",
     heading: "Strategy",
-    framing: "Where the public record shows you're playing — before you told us anything.",
+    // PUBLIC-ONLY reword (2026-08-20, DRAFT): told-us reference removed.
+    framing: "Where the public record shows you're playing — read from the outside alone.",
     empty: "We haven't found where you play in what we've read.",
   },
   {

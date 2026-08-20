@@ -30,7 +30,7 @@ import TheCheckAct from "@/components/client-view/story/check/TheCheckAct";
 import HeardAct from "@/components/client-view/story/check/HeardAct";
 import ProposalAct from "@/components/client-view/story/check/ProposalAct";
 import WhyOutsideAct from "@/components/client-view/story/WhyOutsideAct";
-import StatedProblemAct from "@/components/client-view/story/StatedProblemAct";
+// StatedProblemAct import removed — unmounted from First Read (public-only ruling, 2026-08-20).
 import FirstReadNav from "./FirstReadNav";
 import { FR_ACTS } from "@/lib/firstRead/acts";
 import { createSessionEnsurer } from "@/lib/firstRead/lazyMint";
@@ -149,9 +149,11 @@ export default function FirstReadView() {
 
   const renderAct = () => {
     switch (act.key) {
-      // Act 1 — the client's stated problem (V2-2).
+      // Act 1 — PUBLIC-ONLY ruling (2026-08-20): the stated-problem panel is told-us
+      // (intake) content and is UNMOUNTED from First Read. Hook/data untouched; the
+      // panel lives on for other surfaces.
       case "say":
-        return <StatedProblemAct companyId={companyId} />;
+        return null;
       // Act 2 — the journey exhibit + signed rationale (V2-3). No longer a placeholder.
       case "why_outside":
         return <WhyOutsideAct />;

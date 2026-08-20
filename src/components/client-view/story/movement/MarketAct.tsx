@@ -254,7 +254,9 @@ export default function MarketAct({ bare = false }: { bare?: boolean } = {}) {
               ) : null}
 
               <p className="cvs-mv-invite">{CLOSING_INVITE}</p>
-              {hasInternalDeclared ? <p className="cvs-mv-handoff">{DIAGNOSE_HANDOFF}</p> : null}
+              {/* PUBLIC-ONLY (2026-08-20): the told-us handoff line never renders inside
+                  First Read (bare = the Act-3 band); it stays for the story surface. */}
+              {hasInternalDeclared && !bare ? <p className="cvs-mv-handoff">{DIAGNOSE_HANDOFF}</p> : null}
             </>
           );
         }}

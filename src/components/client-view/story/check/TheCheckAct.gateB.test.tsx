@@ -58,13 +58,16 @@ describe("TheCheckAct exhibit — Gate B failure handling", () => {
     expect(container.textContent).not.toContain(PUB_SILENT_HEADING);
   });
 
-  it("(c) delta read READY with zero deltas → the three group empties + heading render (byte-identical)", () => {
+  it("(c) delta read READY with zero deltas → PUBLIC-ONLY interim: groups render NOTHING (no absence lines)", () => {
+    // Until the Gate-B recompute, zero say-anchored deltas is a NOT-COMPUTED state —
+    // the absence lines ("Everything you've told us turned up somewhere…") would be
+    // false statements, so nothing renders for the empty groups.
     cap.ret = baseCapture({ status: "ready", data: [] });
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
-    expect(container.textContent).toContain(ECHOED_EMPTY);
-    expect(container.textContent).toContain(DIVERGENT_EMPTY);
-    expect(container.textContent).toContain(PUB_SILENT_EMPTY);
-    expect(container.textContent).toContain(PUB_SILENT_HEADING);
+    expect(container.textContent).not.toContain(ECHOED_EMPTY);
+    expect(container.textContent).not.toContain(DIVERGENT_EMPTY);
+    expect(container.textContent).not.toContain(PUB_SILENT_EMPTY);
+    expect(container.textContent).not.toContain(PUB_SILENT_HEADING);
     expect(container.textContent).not.toContain(ACT_DATA_ERROR);
   });
 

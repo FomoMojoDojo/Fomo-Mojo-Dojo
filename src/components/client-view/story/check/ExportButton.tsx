@@ -15,7 +15,6 @@ import { useStandingFindings } from "@/hooks/useStandingFindings";
 import { usePublicBaseline } from "@/hooks/usePublicBaseline";
 import { useIndustryReferenceMaps } from "@/hooks/useIndustryReferenceMaps";
 import { useFirstReadCapture } from "@/hooks/useFirstReadCapture";
-import { useFirstReadStatedProblem } from "@/hooks/useFirstReadStatedProblem";
 import type { Proposal } from "@/hooks/useFirstReadProposal";
 import { admitForSurface } from "@/lib/registerGuard";
 import { KIND_LABEL } from "@/components/client-view/story/OutsideHeroAct";
@@ -69,7 +68,10 @@ export default function ExportButton({
   // PUBLIC-ONLY ruling (2026-08-20): curated tension UNMOUNTED from the First Read
   // export (follows the screen — the exhibit no longer renders on the rail).
   const curatedTension = null;
-  const { data: statedProblem, loading: statedProblemLoading, error: statedProblemError } = useFirstReadStatedProblem(companyId);
+  // PUBLIC-ONLY ruling (2026-08-20): stated problem UNMOUNTED from the First Read
+  // export (told-us content; follows the screen). Hook/data untouched elsewhere.
+  const statedProblemLoading = false;
+  const statedProblemError = null;
   // V2-4 — the Gap section reads the SAME open-question table the on-screen Gap does,
   // so the leave-behind can never diverge from the meeting.
   const { rows: openQuestionRows, loading: openQuestionsLoading, error: openQuestionsError } = useFirstReadOpenQuestions(companyId);
@@ -157,9 +159,7 @@ export default function ExportButton({
     const data: FirstReadExportData = {
       company: { name: activeCompany?.name ?? "Company" },
       session: { id: sessionId, date: sessionDate, presenter: session?.presenter ?? null },
-      statedProblem: statedProblem
-        ? { statement: statedProblem.statement, verbatim: statedProblem.verbatim, quote: statedProblem.quote, register: statedProblem.register, descriptive_fallback: statedProblem.descriptive_fallback }
-        : null,
+      statedProblem: null, // PUBLIC-ONLY (2026-08-20): unmounted from the leave-behind.
       standard: map
         ? { label: map.industry_label, taxonomyVersion: map.taxonomy_version, steps: map.steps }
         : null,

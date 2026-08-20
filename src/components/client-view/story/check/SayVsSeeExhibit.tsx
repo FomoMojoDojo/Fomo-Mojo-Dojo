@@ -20,19 +20,20 @@ export default function SayVsSeeExhibit({
     <div className="cvs-saysee">
       {SAY_VS_SEE_GROUPS.map((g) => {
         const groupItems = items.filter((i) => i.delta?.deltaType === g.key);
+        // PUBLIC-ONLY interim (2026-08-20): until the Gate-B recompute re-bases the
+        // say side on client-voice public claims, an empty say-anchored group is a
+        // NOT-COMPUTED state, not an all-found state — the honest-absence lines
+        // ("Everything you've told us turned up somewhere…", "Nothing we've read so
+        // far repeats back…") would be false statements. An empty group renders
+        // NOTHING (no placeholder) until Gate B restores computed absences.
+        if (groupItems.length === 0) return null;
         return (
           <section className="cvs-saysee-group" key={g.key} aria-label={g.heading}>
             <p className="cvs-saysee-heading">{g.heading}</p>
-            {groupItems.length === 0 ? (
-              <p className="cvs-support cvs-saysee-empty">{g.empty}</p>
-            ) : (
-              <>
-                {groupItems.map((i) => (
-                  <DeltaItemRow key={i.identity} item={i} onSet={onSet} disabled={disabled} />
-                ))}
-                {g.key === "publicly_silent" && <p className="cvs-saysee-bridge">{SILENT_BRIDGE_NOTE}</p>}
-              </>
-            )}
+            {groupItems.map((i) => (
+              <DeltaItemRow key={i.identity} item={i} onSet={onSet} disabled={disabled} />
+            ))}
+            {g.key === "publicly_silent" && <p className="cvs-saysee-bridge">{SILENT_BRIDGE_NOTE}</p>}
           </section>
         );
       })}

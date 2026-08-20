@@ -215,7 +215,9 @@ function sectionCheck(d: FirstReadExportData): string {
   };
   const exhibit = SAY_VS_SEE_GROUPS.map((g) => {
     const gi = deltaItems.filter((i) => i.delta!.deltaType === g.key);
-    if (gi.length === 0) return `<div class="ss-group"><p class="ss-head">${esc(g.heading)}</p><p class="empty">${esc(g.empty)}</p></div>`;
+    // PUBLIC-ONLY interim (2026-08-20, follows the screen): an empty say-anchored group
+    // is NOT-COMPUTED until Gate B — no heading, no absence line, nothing.
+    if (gi.length === 0) return "";
     const rowsHtml = gi.map((i) => {
       const dd = i.delta!;
       const silent = g.key === "publicly_silent" || !dd.see;

@@ -61,7 +61,8 @@ export default function OutsideHeroAct({ preferredRun }: { preferredRun?: unknow
 
   return (
     <section className="cvs-act" aria-label="Outside · Act 1 — Hero and Mojo Score">
-      <p className="cvs-act-eyebrow">Outside View · Before you told us anything</p>
+      {/* PUBLIC-ONLY reword (2026-08-20, DRAFT): the told-us reference is removed. */}
+      <p className="cvs-act-eyebrow">Outside View · From the public record alone</p>
 
       <div className="cvs-hero">
         <div className="cvs-hero-copy">

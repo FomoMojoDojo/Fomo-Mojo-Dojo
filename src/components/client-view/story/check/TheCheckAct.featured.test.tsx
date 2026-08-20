@@ -190,8 +190,9 @@ describe("TheCheckAct — Gate 2 featured items", () => {
 describe("Provenance gate — the outside-only framing renders once at the opening", () => {
   it("FIRST_READ_OUTSIDE_FRAMING is byte-exact and renders in the Check act", async () => {
     const { FIRST_READ_OUTSIDE_FRAMING } = await import("@/lib/firstRead/themeCopy");
+    // PUBLIC-ONLY draft (2026-08-20) — told-us clause removed; pending re-sign.
     expect(FIRST_READ_OUTSIDE_FRAMING).toBe(
-      "Everything in this read comes from the outside — your public presence and what the world says — plus what you've told us directly. We haven't opened a single document. That comes later, if we work together.",
+      "Everything in this read comes from the outside — your public presence and what the world says. We haven't opened a single document. That comes later, if we work together.",
     );
     cap.ret = { ...baseCap };
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);

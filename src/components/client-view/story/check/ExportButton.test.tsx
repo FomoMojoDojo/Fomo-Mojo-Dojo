@@ -76,7 +76,8 @@ const SECTIONS: Array<{ name: string; set: () => void; label: string; leak: stri
   { name: "findings", set: () => { h.findings.error = "boom"; }, label: "Outside findings", leak: "Nothing else stood out from the outside read." },
   { name: "baseline", set: () => { h.baseline.error = "boom"; }, label: "Outside signals", leak: "" },
   { name: "maps", set: () => { h.maps.error = "boom"; }, label: "Standard job map", leak: "No industry-standard map matched this company's industry." },
-  { name: "statedProblem", set: () => { h.statedProblem.error = "boom"; }, label: "Stated problem", leak: "No problem is stated on this company's own public site." },
+  // statedProblem scenario removed — PUBLIC-ONLY ruling (2026-08-20): the stated problem
+  // is unmounted from the First Read export, so its read can no longer gate the document.
   { name: "openQuestions", set: () => { h.openQuestions.error = "boom"; }, label: "The Gap", leak: "The outside read left no open questions for this company." },
 ];
 

@@ -157,12 +157,14 @@ describe("V2-7 — DeltaItemRow: registers labeled, receipt only via the quote f
   });
 });
 
-describe("V2-7 — SayVsSeeExhibit: three groups + honest-absence per empty group", () => {
-  it("renders all three group headings; an empty group shows its honest-absence line", () => {
+describe("V2-7 — SayVsSeeExhibit: three groups; empty groups render NOTHING (public-only interim)", () => {
+  it("PUBLIC-ONLY (2026-08-20): an empty group renders neither heading nor absence line", () => {
+    // Until the Gate-B recompute re-bases the say side, an empty say-anchored group is a
+    // NOT-COMPUTED state — the honest-absence lines would be false statements.
     const { container } = render(<SayVsSeeExhibit items={[]} onSet={vi.fn()} />);
     for (const g of SAY_VS_SEE_GROUPS) {
-      expect(container.textContent).toContain(g.heading);
-      expect(container.textContent).toContain(g.empty); // honest-absence, never filler
+      expect(container.textContent).not.toContain(g.heading);
+      expect(container.textContent).not.toContain(g.empty);
     }
   });
 
@@ -180,13 +182,15 @@ describe("V2-7 — export byte-follows the exhibit", () => {
     check: { items, tally: { confirmed: 0, corrected: 0, rejected: 0, not_important: 0 } },
     gap: [], proposal: null, exportedAt: "2026-07-23T00:00:00Z",
   });
-  it("renders group headings, SAY/SEE labels, the delta text, and honest-absence for empty groups", () => {
+  it("renders group headings, SAY/SEE labels, the delta text; empty groups render NOTHING", () => {
     const html = buildFirstReadExportHtml(data([item({ delta: { deltaType: "echoed", say: "We close gaps.", see: "Leading provider.", quote: null, quoteSourceText: null, eventDate: null } })]));
     expect(html).toContain(SAY_VS_SEE_GROUPS[0].heading);
     expect(html).toContain(SAY_LABEL);
     expect(html).toContain(SEE_LABEL);
     expect(html).toContain("We close gaps.");
-    expect(html).toContain(SAY_VS_SEE_GROUPS[1].empty); // divergent empty
+    // PUBLIC-ONLY (2026-08-20): the export follows the screen — empty group suppressed.
+    expect(html).not.toContain(SAY_VS_SEE_GROUPS[1].heading);
+    expect(html).not.toContain(SAY_VS_SEE_GROUPS[1].empty);
   });
 
   it("export follows the screen: host+date attribution line renders; host is plain text, no anchor", () => {

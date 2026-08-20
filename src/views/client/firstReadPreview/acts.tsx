@@ -393,7 +393,8 @@ export function ActNext({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader
         headline="What we'd do together."
-        standfirst="This read used only what anyone can see, plus what you told us directly. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
+        // PUBLIC-ONLY reword (2026-08-20, DRAFT): told-us clause removed.
+        standfirst="This read used only what anyone can see. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
       />
       <main className="grid gap-16 border-b pb-16 md:grid-cols-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
         <div className="md:col-span-7">

@@ -51,9 +51,10 @@ export const FEATURE_THIS_LABEL = "Feature this";
 export const THEME_AUTO_LEAD = "Where we'd start:";
 
 // PROVENANCE GATE — the one framing line that says the First Read is the outside view (renders once,
-// near the Check act's opening). Operator-signed 2026-08-08, byte-exact.
+// near the Check act's opening). PUBLIC-ONLY ruling (2026-08-20): the told-us clause is removed —
+// DRAFT superseding the 2026-08-08 signature, pending re-sign.
 export const FIRST_READ_OUTSIDE_FRAMING =
-  "Everything in this read comes from the outside — your public presence and what the world says — plus what you've told us directly. We haven't opened a single document. That comes later, if we work together.";
+  "Everything in this read comes from the outside — your public presence and what the world says. We haven't opened a single document. That comes later, if we work together.";
 
 /** The "…and N more like this" toggle label for a given count. One home for the substitution so
  *  the label can never drift between the screen and any future leave-behind. */
