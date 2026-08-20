@@ -53,3 +53,17 @@ export function bandForScore(score: number): ScoreBand {
     SCORE_BANDS[SCORE_BANDS.length - 1]
   );
 }
+
+// W1 (2026-08-20): the five persisted micro-moves of the outside score, in canonical
+// order. `key` matches mojo_scores.component_scores / .explanation; `label` is the
+// client-facing name. Single source for both the data hook (labels) and beat 8 (the
+// headroom-sort tie-break). Render order is ALWAYS headroom (max − value) desc — this
+// array only settles ties deterministically.
+export type ScoreLeverDef = { key: string; label: string };
+export const SCORE_LEVERS: ReadonlyArray<ScoreLeverDef> = [
+  { key: "echo_integrity", label: "Echo integrity" },
+  { key: "record_strength", label: "Record strength" },
+  { key: "differentiation_echo", label: "Differentiation echo" },
+  { key: "coverage_breadth", label: "Coverage breadth" },
+  { key: "freshness", label: "Freshness" },
+];

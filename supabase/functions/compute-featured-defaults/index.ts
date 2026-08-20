@@ -103,7 +103,9 @@ Deno.serve(async (req) => {
       }
 
       if (!hasLive.has("say_vs_see") && !hasCurated) {
-        const pick = selectSayVsSeeDefault(candidates);
+        // W2 (2026-08-20): First Read say-vs-see pointers are the public pairing — the topic
+        // allowlist does not apply; pick divergent first, then echoed (no pointer at zero pairs).
+        const pick = selectSayVsSeeDefault(candidates, "public_vs_public");
         if (pick) { await insertPointer("say_vs_see", pick, "auto", null); written.say_vs_see = pick; }
       }
     }

@@ -58,6 +58,30 @@ describe("selectSayVsSeeDefault — divergent > publicly_silent > echoed within 
   });
 });
 
+describe("selectSayVsSeeDefault — W2 public_vs_public branch (topic allowlist does not apply)", () => {
+  it("public: picks divergent first, then echoed — regardless of declared topic", () => {
+    const out = selectSayVsSeeDefault([
+      sv("echo", "echoed", "market"),
+      sv("div", "divergent", "distribution channel"),
+    ], "public_vs_public");
+    expect(out).toBe("div");
+  });
+
+  it("public: an operational-topic echoed pair IS eligible (would be null under internal)", () => {
+    const cands = [sv("echo", "echoed", "company owned web")];
+    expect(selectSayVsSeeDefault(cands, "public_vs_public")).toBe("echo");
+    expect(selectSayVsSeeDefault(cands)).toBeNull(); // internal default: topic not in allowlist
+  });
+
+  it("public: publicly_silent is NOT a say-vs-see pair (needs both sides) → excluded", () => {
+    expect(selectSayVsSeeDefault([sv("sil", "publicly_silent", "market")], "public_vs_public")).toBeNull();
+  });
+
+  it("public: zero divergent/echoed pairs → no pointer (null)", () => {
+    expect(selectSayVsSeeDefault([], "public_vs_public")).toBeNull();
+  });
+});
+
 const fc = (id: string, kind: string, createdAtMs: number): FindingCandidate => ({ identity: id, kind, createdAtMs });
 
 describe("selectFindingDefault — frontier wins, else most-recent (neutral)", () => {

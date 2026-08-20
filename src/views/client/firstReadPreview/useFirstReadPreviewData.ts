@@ -23,7 +23,7 @@ import {
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
-import { bandForScore } from "./scoreBands";
+import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
@@ -343,12 +343,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Score (beat 3) — R1: OUTSIDE methodology rows only, never v1.1.0 ─
         const { data: scoreRows } = await supabase
           .from("mojo_scores")
-          .select("total_score, computed_at, methodology_version")
+          .select("total_score, computed_at, methodology_version, component_scores, explanation")
           .eq("company_id", companyId)
           .like("methodology_version", `${OUTSIDE_METHODOLOGY_PREFIX}%`)
           .order("computed_at", { ascending: false })
           .limit(1);
-        const scoreRow = ((scoreRows ?? []) as Array<{ total_score: number; computed_at: string; methodology_version: string }>)[0] ?? null;
+        const scoreRow = ((scoreRows ?? []) as Array<{ total_score: number; computed_at: string; methodology_version: string; component_scores?: unknown; explanation?: unknown }>)[0] ?? null;
         const score = scoreRow
           ? { value: Math.round(Number(scoreRow.total_score)), computedAt: scoreRow.computed_at, methodologyVersion: scoreRow.methodology_version }
           : null;
@@ -503,18 +503,34 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             }
           : null;
 
-        // Where you stand (R-B): inferred from the outside score + active market fronts +
-        // strong signal count. Persisted numbers only — the band is a deterministic label
-        // of the score, no adjective the data didn't earn. Hidden when no outside score.
-        const strongSignals = signals.filter((s) => s.strength === "strong").length;
+        // Where you stand (W1, 2026-08-20): the interpretation of the beat-7 score, read
+        // ONLY from the persisted mojo_scores snapshot — band + band meaning + the five
+        // micro-moves (component_scores[key].value/max paired with explanation[key]). No
+        // live recompute, no adjective the data didn't earn. The component orders the
+        // levers by headroom (max − value) desc. Hidden when no outside score → the beat
+        // falls back to the SAME empty state as beat 7 (scoreLooked-grounded).
         const whereYouStand = score
-          ? {
-              scoreValue: score.value,
-              band: bandForScore(score.value).name,
-              activeFronts: activeKeys.size,
-              strongSignals,
-              sourceTag: { label: `Public read · ${formatFullDate(score.computedAt) ?? ""}`.trim().replace(/·\s*$/, "").trim() },
-            }
+          ? (() => {
+              const comp = (scoreRow?.component_scores ?? {}) as Record<string, { value?: number; max?: number }>;
+              const expl = (scoreRow?.explanation ?? {}) as Record<string, unknown>;
+              const band = bandForScore(score.value);
+              const levers = SCORE_LEVERS
+                .filter(({ key }) => comp[key] && typeof comp[key].value === "number" && typeof comp[key].max === "number")
+                .map(({ key, label }) => ({
+                  key,
+                  label,
+                  value: Number(comp[key].value),
+                  max: Number(comp[key].max),
+                  explanation: typeof expl[key] === "string" ? (expl[key] as string) : "",
+                }));
+              return {
+                scoreValue: score.value,
+                band: band.name,
+                bandMeaning: band.description,
+                levers,
+                sourceTag: { label: `Public read · ${formatFullDate(score.computedAt) ?? ""}`.trim().replace(/·\s*$/, "").trim() },
+              };
+            })()
           : null;
 
         // Findings (S4): public_inferred open findings, ranked by recurrence breadth

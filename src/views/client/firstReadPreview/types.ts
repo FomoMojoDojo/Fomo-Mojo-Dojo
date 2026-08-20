@@ -108,12 +108,25 @@ export type FRFinding = {
   sourceTag: SourceTagResult;
 };
 
-/** Inferred base reading (R-B) — persisted numbers only, no unearned adjectives. */
+/** One persisted micro-move of the outside score (W1, 2026-08-20): value / max with
+ *  its persisted explanation. No live recompute — every field is read from the
+ *  mojo_scores snapshot (component_scores[key] + explanation[key]). */
+export type FRScoreLever = {
+  key: string;
+  label: string;
+  value: number;
+  max: number;
+  explanation: string;
+};
+
+/** Inferred base reading (R-B / W1) — the interpretation of the beat-7 score: band name +
+ *  band meaning + the five micro-moves, all from the persisted snapshot. No unearned
+ *  adjectives. The component orders the levers by headroom (max − value) desc. */
 export type FRWhereYouStand = {
   scoreValue: number;
   band: string;
-  activeFronts: number;
-  strongSignals: number;
+  bandMeaning: string;
+  levers: FRScoreLever[];
   sourceTag: SourceTagResult;
 } | null;
 

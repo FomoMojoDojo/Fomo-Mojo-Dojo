@@ -37,19 +37,32 @@ export interface SayVsSeeCandidate {
   declaredConfidence: string | null; // claims.confidence of the declared side
 }
 
+export type FeaturedPairingKind = "internal_vs_public" | "public_vs_public";
+
 /**
  * Pick the default say-vs-see item (theme 1 fallback, used only when no live curated tension).
- * Only items whose declared side is in the declared-direction topic set are eligible — if none
- * qualify, returns null (honest: no confident default rather than a forced pick).
  * Deterministic total order: delta_type rank → topic priority → confidence → contentIdentity.
+ *
+ * W2 (2026-08-20) — eligibility branches by pairing_kind:
+ *  • internal_vs_public: only declared-direction topics qualify (the founding claims speak to
+ *    the declared direction); none qualify → null.
+ *  • public_vs_public: the declared side is a client-voice PUBLIC claim (operational topics —
+ *    market / channel / web), so the topic allowlist does NOT apply. A say-vs-see pointer needs
+ *    BOTH sides, so only divergent (contradicted) and echoed (confirmed) qualify — divergent
+ *    first (sharpest evidence). Zero pairs → null (no pointer).
  */
-export function selectSayVsSeeDefault(candidates: SayVsSeeCandidate[]): string | null {
-  const eligible = candidates.filter((c) => c.declaredTopic && DECLARED_DIRECTION_TOPICS.has(c.declaredTopic));
+export function selectSayVsSeeDefault(
+  candidates: SayVsSeeCandidate[],
+  pairingKind: FeaturedPairingKind = "internal_vs_public",
+): string | null {
+  const eligible = pairingKind === "public_vs_public"
+    ? candidates.filter((c) => c.deltaType === "divergent" || c.deltaType === "echoed")
+    : candidates.filter((c) => c.declaredTopic && DECLARED_DIRECTION_TOPICS.has(c.declaredTopic));
   if (eligible.length === 0) return null;
   const sorted = [...eligible].sort((a, b) => {
     const dt = (DELTA_TYPE_RANK[a.deltaType] ?? 9) - (DELTA_TYPE_RANK[b.deltaType] ?? 9);
     if (dt !== 0) return dt;
-    const tp = (TOPIC_PRIORITY[a.declaredTopic!] ?? 9) - (TOPIC_PRIORITY[b.declaredTopic!] ?? 9);
+    const tp = (TOPIC_PRIORITY[a.declaredTopic ?? ""] ?? 9) - (TOPIC_PRIORITY[b.declaredTopic ?? ""] ?? 9);
     if (tp !== 0) return tp;
     const cf = (CONFIDENCE_RANK[a.declaredConfidence ?? ""] ?? 9) - (CONFIDENCE_RANK[b.declaredConfidence ?? ""] ?? 9);
     if (cf !== 0) return cf;

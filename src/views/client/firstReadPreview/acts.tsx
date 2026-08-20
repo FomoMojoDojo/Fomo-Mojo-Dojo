@@ -17,7 +17,7 @@ import {
   VerdictChip,
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
-import { SCORE_BANDS, bandForScore } from "./scoreBands";
+import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { formatMonthYear } from "./mapping";
 import type { FirstReadPreviewData, FRSignal } from "./types";
 
@@ -61,7 +61,6 @@ const OURREAD_SUB = "What we'd posit about your positioning, strategy and promis
 // Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
 const MARKET_POINTER_NOTE = "Who you serve — see above"; // DRAFT (beat 9 base diagram)
 const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
-const NO_WHERE_NOTE = "Not enough public signal to place your base yet."; // DRAFT
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
 const NO_SERVE_NOTE = "No public markets read yet."; // DRAFT
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // DRAFT
@@ -280,7 +279,7 @@ export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
           {b ? (
             <>
               <p className="max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-                Mojo Score {b.scoreValue} of 100 ({b.band}) · {b.activeFronts} market front{b.activeFronts === 1 ? "" : "s"} read · {b.strongSignals} strong outside signal{b.strongSignals === 1 ? "" : "s"}.
+                {b.band} · {b.scoreValue} of 100 — {b.bandMeaning}
               </p>
               <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
                 {BASE_INFERRED_LABEL}
@@ -397,24 +396,74 @@ export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
 }
 
 /** Beat 8 — "Where you stand": inferred base reading (R-B), persisted numbers only. */
+/** Order the levers by headroom (max − value) desc; ties settle by canonical order
+ *  (SCORE_LEVERS index) so a shuffled input still renders deterministically (W1). */
+const CANONICAL_LEVER_INDEX = new Map(SCORE_LEVERS.map((l, i) => [l.key, i]));
+function orderByHeadroom<T extends { key: string; value: number; max: number }>(levers: T[]): T[] {
+  return [...levers].sort((a, z) => {
+    const h = (z.max - z.value) - (a.max - a.value); // headroom desc
+    if (Math.abs(h) > 1e-9) return h;
+    return (CANONICAL_LEVER_INDEX.get(a.key) ?? 99) - (CANONICAL_LEVER_INDEX.get(z.key) ?? 99);
+  });
+}
+
+/** value / max, value trimmed to at most one decimal (whole numbers stay whole). */
+function fmtLeverValue(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/**
+ * Beat 8 — "Where you stand" (W1, 2026-08-20): the interpretation of the beat-7 score.
+ * Band name + band meaning (ladder copy) + the five micro-moves, each value / max with its
+ * persisted explanation, ordered by headroom desc. Rendered ONLY from the mojo_scores
+ * snapshot — no live recompute, no unearned adjectives. No score → the SAME honest empty
+ * state as beat 7 (grounded in scoreLooked, never array emptiness).
+ */
 export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
   const b = read.whereYouStand;
+  const emptyNote = read.scoreLooked ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
       <ActHeader headline={WHERE_HEADLINE} />
       <main className="fr-stagger">
         {b ? (
           <>
-            <p className="max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-              Mojo Score {b.scoreValue} of 100 ({b.band}) · {b.activeFronts} market front{b.activeFronts === 1 ? "" : "s"} read · {b.strongSignals} strong outside signal{b.strongSignals === 1 ? "" : "s"}.
-            </p>
-            <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+            <div className="max-w-xl">
+              <p className="text-2xl font-semibold leading-snug">
+                {b.band} · {b.scoreValue} of 100
+              </p>
+              <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                {b.bandMeaning}
+              </p>
+            </div>
+            <p className="mt-6 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
               {BASE_INFERRED_LABEL}
             </p>
-            {b.sourceTag ? <div className="mt-3"><SourceTag>{b.sourceTag.label}</SourceTag></div> : null}
+            <ul className="mt-6 flex max-w-xl flex-col">
+              {orderByHeadroom(b.levers).map((lever) => (
+                <li
+                  key={lever.key}
+                  className="flex flex-col gap-1 border-b py-4"
+                  style={{ borderColor: "hsl(var(--fr-hair))" }}
+                >
+                  <div className="flex items-baseline justify-between gap-6">
+                    <span className="text-sm font-semibold">{lever.label}</span>
+                    <span className="shrink-0 text-sm font-light tabular-nums" style={{ color: "hsl(222 47% 25%)" }}>
+                      {fmtLeverValue(lever.value)} / {lever.max}
+                    </span>
+                  </div>
+                  {lever.explanation ? (
+                    <p className="text-xs font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                      {lever.explanation}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            {b.sourceTag ? <div className="mt-4"><SourceTag>{b.sourceTag.label}</SourceTag></div> : null}
           </>
         ) : (
-          <Absent>{NO_WHERE_NOTE}</Absent>
+          <Absent>{emptyNote}</Absent>
         )}
       </main>
     </>
