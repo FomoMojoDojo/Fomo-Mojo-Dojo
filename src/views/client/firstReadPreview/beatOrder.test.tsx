@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import {
   ActRecord, ActWhatYouSay, ActGap, ActWhoYouServe, ActFindings,
-  ScoreReveal, ActWhereYouStand, ActOurRead, ActQuestions, ActNext,
+  ScoreReveal, ActWhereYouStand, ActOurRead, ActQuestions, ActNext, BaseGate,
 } from "./acts";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData } from "./types";
 
@@ -26,6 +26,7 @@ const RULED: Array<[string, string]> = [
   ["score", "One number, read from the record."],
   ["where", "Where you stand."],
   ["ourread", "Our read."],
+  ["base", "A strong base"],
   ["questions", "Questions this read raises."],
   ["next", "What we'd do together."],
 ];
@@ -40,6 +41,7 @@ const renderBeat = (key: string) => {
     case "score": return <ScoreReveal read={read} />;
     case "where": return <ActWhereYouStand read={read} />;
     case "ourread": return <ActOurRead read={read} />;
+    case "base": return <BaseGate />;
     case "questions": return <ActQuestions read={read} />;
     default: return <ActNext />;
   }
@@ -75,41 +77,29 @@ describe("beat order — ruled sequence", () => {
     promise: { value: "PromiseVal", tagline: "Tag", sourceTag: { label: "Public read · June 11, 2026" } },
   };
 
-  it("beat 9 'Our read': rows first (positioning → strategy → promise), then the base illustration CLOSES", () => {
+  it("beat 9 'Our read' = the three rows ONLY (positioning → strategy → promise), NO base", () => {
     const { container } = render(<ActOurRead read={ourReadRead} />);
     const text = container.textContent ?? "";
-    const iPos = text.indexOf("Positioning"); // section eyebrow (mixed case; diagram is UPPERCASE)
+    const iPos = text.indexOf("Positioning");
     const iStrat = text.indexOf("Strategy");
     const iProm = text.indexOf("Promise");
-    const iBase = text.indexOf("A strong base"); // BaseGate headline — closes the beat
     expect(iPos).toBeGreaterThan(-1);
     expect(iPos).toBeLessThan(iStrat);
     expect(iStrat).toBeLessThan(iProm);
-    expect(iProm).toBeLessThan(iBase); // FALSIFICATION target: base must come AFTER the rows
-    // the illustration + its market pointer render
-    expect(container.querySelector("svg"), "BaseAlignment illustration present").not.toBeNull();
-    expect(text).toContain("Who you serve — see above");
+    // FALSIFICATION (collapse-back): the base is its OWN beat now — it must NOT be inside Our read.
+    expect(text).not.toContain("A strong base");
+    expect(container.querySelector("svg"), "no base diagram inside Our read").toBeNull();
   });
 
-  it("base explanation renders for a company WITH a score AND without", () => {
-    for (const scoreState of [
-      { score: { value: 16, computedAt: "2026-08-20T00:00:00Z", methodologyVersion: "outside-v1.0.0" }, scoreLooked: true },
-      { score: null, scoreLooked: false },
-    ] as Array<Partial<FirstReadPreviewData>>) {
-      const { container } = render(<ActOurRead read={{ ...read, ...scoreState }} />);
-      expect(container.textContent).toContain("A strong base");
-      expect(container.querySelector("svg")).not.toBeNull();
+  it("beat 10 'The Base' is a standalone beat: complete base explanation + illustration + pointer", () => {
+    const { container } = render(<BaseGate />);
+    expect(container.textContent).toContain("A strong base"); // headline
+    expect(container.textContent).toContain("Your base is the four commitments"); // framing
+    expect(container.textContent).toContain("Who you serve — see above"); // market pointer
+    for (const el of ["STRATEGY", "MARKET", "POSITIONING", "PROMISE"]) {
+      expect(container.textContent).toContain(el);
     }
-  });
-
-  it("FALSIFICATION: base BEFORE the rows fails the within-beat order", () => {
-    // Simulate the opener layout: base headline text placed before the row labels.
-    const swapped = "A strong base changes your odds. ... Positioning ... Strategy ... Promise";
-    const iBase = swapped.indexOf("A strong base");
-    const iProm = swapped.indexOf("Promise");
-    // The ruled within-beat order requires Promise BEFORE the base headline (iProm < iBase);
-    // in this base-first layout that does NOT hold.
-    expect(iProm < iBase).toBe(false);
+    expect(container.querySelector("svg"), "BaseAlignment illustration present").not.toBeNull();
   });
 
   it("FALSIFICATION: swapping two beats breaks the monotonic order", () => {

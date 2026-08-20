@@ -20,6 +20,7 @@ import {
   ActWhatYouSay,
   ActWhereYouStand,
   ActWhoYouServe,
+  BaseGate,
   ColdOpen,
   ScoreReveal,
 } from "./acts";
@@ -41,6 +42,7 @@ const BEATS = [
   { key: "score", label: "Mojo Score", act: undefined },
   { key: "where", label: "Where you stand", act: undefined },
   { key: "ourread", label: "Our read", act: undefined },
+  { key: "base", label: "The Base", act: undefined },
   { key: "questions", label: "Questions", act: undefined },
   { key: "next", label: "Next move", act: undefined },
 ] as const;
@@ -142,6 +144,8 @@ export default function FirstReadPreviewView() {
         return <ActWhereYouStand read={data} />;
       case "ourread":
         return <ActOurRead read={data} />;
+      case "base":
+        return <BaseGate />;
       case "questions":
         return <ActQuestions read={data} />;
       default:

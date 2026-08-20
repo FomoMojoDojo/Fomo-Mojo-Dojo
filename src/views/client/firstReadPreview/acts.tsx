@@ -468,10 +468,6 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
           ) : null}
           {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
         </WeSeeSection>
-        {/* The COMPLETE base explanation CLOSES the beat (Option A, 2026-08-20): the
-            positioning/strategy/promise hypotheses first, then the base frame + BaseAlignment
-            four-circle diagram (Market circle points back to beat 5 "Who you serve"). */}
-        <div className="pt-8"><BaseGate /></div>
       </main>
     </>
   );
