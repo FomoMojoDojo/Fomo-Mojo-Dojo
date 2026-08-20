@@ -109,10 +109,13 @@ export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
 export function ActHeader({
   headline,
   standfirst,
+  subline,
   right,
 }: {
   headline: string;
   standfirst?: string;
+  /** Optional second signed paragraph, rendered directly under the standfirst. */
+  subline?: string;
   right?: ReactNode;
 }) {
   const words = headline.split(" ");
@@ -131,6 +134,11 @@ export function ActHeader({
           {standfirst ? (
             <p className="mt-4 text-lg leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
               {standfirst}
+            </p>
+          ) : null}
+          {subline ? (
+            <p className="mt-4 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              {subline}
             </p>
           ) : null}
         </div>

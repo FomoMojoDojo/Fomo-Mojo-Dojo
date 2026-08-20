@@ -25,6 +25,12 @@ const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
 const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
 const NO_MARKETS_NOTE = "No declared markets extracted yet."; // signed (Phase A ruling)
 const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
+const NOT_ENOUGH_SIGNAL_NOTE = "Not enough public signal to score yet."; // signed (outside-v1.0.0 ruling)
+// Signed anchor line (outside-v1.0.0 ruling) — renders under the reveal support.
+const ANCHOR_LINE =
+  "Most strategy efforts don't succeed — the research base rate is under 20 in 100. This read starts there and moves only on what the public record shows. The bands above are reached with evidence, not optimism.";
+// Eligibility mirror of the compute: fewer than 10 outside-voice signals → no score row by rule.
+const OUTSIDE_MIN_SIGNALS = 10;
 const NO_PAIRS_NOTE = "No comparisons computed yet."; // DRAFT
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // DRAFT
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
@@ -266,16 +272,19 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
   const score = read.score?.value ?? null;
   const active = score !== null ? bandForScore(score) : null;
   const ladder = [...SCORE_BANDS].reverse();
+  const emptyNote =
+    read.signals.length < OUTSIDE_MIN_SIGNALS ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
       <ActHeader
         headline="One number, read from the record."
         standfirst="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
+        subline={ANCHOR_LINE}
       />
       <div className="fr-stagger mx-auto max-w-xl">
         {score === null ? (
           <div className="mb-10">
-            <Absent>{NO_SCORE_NOTE}</Absent>
+            <Absent>{emptyNote}</Absent>
           </div>
         ) : null}
         {ladder.map((band) => {
