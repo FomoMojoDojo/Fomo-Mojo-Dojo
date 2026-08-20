@@ -44,14 +44,17 @@ describe("strike Gate B — score preview", () => {
   it("computes before/after with the target claim excluded, matching computeMojoScore", async () => {
     const claims = [claim("c1"), claim("c2"), claim("c3")];
     const db = fakeDb({ claims, routes: [], odi_needs: [] });
-    const p = await previewStrikeScoreDelta(db as never, "co-1", "c2");
+    // Pin the clock so the evidence-freshness contributor is deterministic:
+    // preview.before must match a computeMojoScore over the same instant.
+    const computedAt = "2026-07-09T00:00:00Z";
+    const p = await previewStrikeScoreDelta(db as never, "co-1", "c2", computedAt);
 
     const inputs = (rows: Row[]) => ({
       companyId: "co-1",
       claims: rows as unknown as ClaimInput[],
       routes: [],
       needs: [],
-      computedAt: "2026-07-09T00:00:00Z",
+      computedAt,
     });
     expect(p.before).toBe(computeMojoScore(inputs(claims)).total_score);
     expect(p.after).toBe(computeMojoScore(inputs(claims.filter((c) => c.id !== "c2"))).total_score);

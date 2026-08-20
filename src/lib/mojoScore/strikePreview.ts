@@ -26,6 +26,10 @@ export async function previewStrikeScoreDelta(
   db: Db,
   companyId: string,
   claimId: string,
+  // Injectable clock. Defaults to now — the same instant the snapshot writer
+  // stamps — so before/after are faithful to a live snapshot. Pinned in tests
+  // to keep the (clock-sensitive) evidence-freshness contributor deterministic.
+  computedAt: string = new Date().toISOString(),
 ): Promise<StrikeScorePreview> {
   const [claimsRes, routesRes, needsRes] = await Promise.all([
     db.from("claims")
@@ -45,7 +49,6 @@ export async function previewStrikeScoreDelta(
   const claims = (claimsRes.data ?? []) as ClaimInput[];
   const routes = (routesRes.data ?? []) as RouteInput[];
   const needs = (needsRes.data ?? []) as NeedInput[];
-  const computedAt = new Date().toISOString();
   const before = computeMojoScore({ companyId, claims, routes, needs, computedAt }).total_score;
   const after = computeMojoScore({
     companyId,
