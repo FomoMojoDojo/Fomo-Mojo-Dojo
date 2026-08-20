@@ -62,6 +62,7 @@
 // template fallback, no synthesized verdicts, no silent degradation.
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
+import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
@@ -170,6 +171,16 @@ export type DeltaPlanResult =
   | { ok: false; skipped: "frozen_company" | "no_declared_claims" }
   | { ok: false; error: string };
 
+// GATE B-1 (operator ruling 2026-08-20, option a): the two delta reads live in ONE
+// table, separated by pairing_kind. internal_vs_public = the founding Diagnose signal
+// (declared side: internal_declared + client_attested — byte-identical behavior).
+// public_vs_public = the First Read gap (declared side: the company's own PUBLIC voice —
+// client-voice public claims; observed side: the market). Every state load, write,
+// silence, sweep, and negative-cache row is kind-scoped, so a run of one kind is
+// structurally incapable of touching the other's rows.
+export type PairingKind = "internal_vs_public" | "public_vs_public";
+export const PAIRING_KINDS: readonly PairingKind[] = ["internal_vs_public", "public_vs_public"];
+
 export type DeltaComputeArgs = {
   supabase: { from: (t: string) => any };
   companyId: string;
@@ -184,9 +195,46 @@ export type DeltaComputeArgs = {
   declaredIds?: string[];
   // CH-2b-1: plan mode — return the packing manifest before the model stage.
   plan?: boolean;
+  // GATE B-1: which read this run computes. Default internal_vs_public.
+  pairingKind?: PairingKind;
 };
 
 // ── Identity keys (evidence law) ──────────────────────────────────────────────
+
+// GATE B-1: the First Read gap's persisted integrity record. Written by the
+// public_vs_public FINALIZE after the work (success with counts), and by the
+// orchestrator's catch on a failed/skipped public finalize — so the gap beat can
+// distinguish looked / not-yet / couldn't-check from a persisted row, never from
+// an empty array. Reuses the existing integrity_runs pattern (useIntegrityRecord).
+export const GAP_PAIRS_INTEGRITY_COMPONENT = "first_read_gap_pairs";
+
+export async function writeGapPairsIntegrity(
+  supabase: { from: (t: string) => any },
+  companyId: string,
+  outcome: {
+    status: "completed" | "failed" | "skipped_empty_input";
+    ranAtIso: string;
+    examined?: number | null;
+    admitted?: number | null;
+    error?: string | null;
+    runRef?: string | null;
+  },
+): Promise<void> {
+  const { error } = await supabase.from("integrity_runs").insert({
+    company_id: companyId,
+    component: GAP_PAIRS_INTEGRITY_COMPONENT,
+    surface_type: null,
+    surface_id: null,
+    ran_at: outcome.ranAtIso,
+    status: outcome.status,
+    examined: outcome.examined ?? null,
+    admitted: outcome.admitted ?? null,
+    excluded_by_rule: null,
+    error: outcome.error ?? null,
+    run_ref: outcome.runRef ?? null,
+  });
+  if (error) throw new Error(`gap-pairs integrity insert failed: ${error.message}`);
+}
 
 export async function pairIdentity(declaredStatement: string, publicStatement: string): Promise<string> {
   return await sha256Hex(`pair|${normalizeForHash(declaredStatement)}|${normalizeForHash(publicStatement)}`);
@@ -402,13 +450,58 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // Evidence class for prompt context (Item c): the sample signal's source_type.
     // Extracted here so raw_payload itself never travels further.
     .map((c) => ({ ...c, source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null, raw_payload: undefined }));
-  // Declared side = the client-side corpus: operator-uploaded (internal_declared)
-  // PLUS room-attested First Read corrections (client_attested, FR-D1). Both are
-  // "things the client declared"; the observed side stays public_observed only.
-  const declared = claims.filter(
-    (c) => c.provenance === "internal_declared" || c.provenance === "client_attested",
-  );
+  const pairingKind: PairingKind = args.pairingKind ?? "internal_vs_public";
   const publicsAll = claims.filter((c) => c.provenance === "public_observed");
+
+  // Declared side by kind (GATE B-1):
+  //   internal_vs_public — the client-side corpus: operator-uploaded (internal_declared)
+  //   PLUS room-attested First Read corrections (client_attested, FR-D1). Byte-identical
+  //   to the pre-B1 behavior.
+  //   public_vs_public — the company's own PUBLIC voice: public_observed claims backed by
+  //   a client_voice signal (or a legacy NULL-voice signal on the company's own domain,
+  //   same shared isOwnDomainUrl rule the stamping guard uses). 'analysis'-backed claims
+  //   are EXCLUDED (our reading of the record is not the company speaking). Both sides of
+  //   a public run are public_observed text, so no internal/upload/canvas content can
+  //   reach the models on this path (privacy Option B holds by construction).
+  let declared: typeof claims;
+  let publicVoiceDeclaredIds: Set<string> | null = null;
+  if (pairingKind === "public_vs_public") {
+    const { data: coRow } = await args.supabase
+      .from("companies").select("website").eq("id", args.companyId).maybeSingle();
+    const website = (coRow as { website?: string | null } | null)?.website ?? null;
+    let companyHost: string | null = null;
+    if (website) {
+      try {
+        companyHost = normalizeHost(new URL(website.includes("://") ? website : `https://${website}`).hostname);
+      } catch {
+        companyHost = null;
+      }
+    }
+    const { data: vSigRows } = await args.supabase
+      .from("signals").select("id, voice_class, source_url").eq("company_id", args.companyId);
+    const vSigs = (vSigRows ?? []) as Array<{ id: string; voice_class: string | null; source_url: string | null }>;
+    const ownVoiceSigIds = new Set(
+      vSigs.filter((s) =>
+        s.voice_class === "client_voice" ||
+        (s.voice_class === null && !!s.source_url && isOwnDomainUrl(s.source_url, companyHost)),
+      ).map((s) => s.id),
+    );
+    const analysisSigIds = new Set(vSigs.filter((s) => s.voice_class === "analysis").map((s) => s.id));
+    const { data: vRefRows } = await args.supabase
+      .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", args.companyId);
+    const ownVoiceClaims = new Set<string>();
+    const analysisClaims = new Set<string>();
+    for (const r of ((vRefRows ?? []) as Array<{ claim_id: string; signal_id: string }>)) {
+      if (ownVoiceSigIds.has(r.signal_id)) ownVoiceClaims.add(r.claim_id);
+      if (analysisSigIds.has(r.signal_id)) analysisClaims.add(r.claim_id);
+    }
+    declared = publicsAll.filter((c) => ownVoiceClaims.has(c.id) && !analysisClaims.has(c.id));
+    publicVoiceDeclaredIds = new Set(declared.map((c) => c.id));
+  } else {
+    declared = claims.filter(
+      (c) => c.provenance === "internal_declared" || c.provenance === "client_attested",
+    );
+  }
   if (declared.length === 0) return { ok: false, skipped: "no_declared_claims" };
 
   // ── SELF-VOICE EXCLUSION (operator ruling, Stage 1) ───────────────────────────
@@ -442,7 +535,13 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       if (selfSignalIds.has(r.signal_id)) selfVoiceClaimIds.add(r.claim_id);
     }
   }
-  const publics = publicsAll.filter((c) => !selfVoiceClaimIds.has(c.id));
+  // GATE B-1: in a public_vs_public run the declared set is carved OUT of the observed
+  // side — a claim can never sit on both sides of its own pairing. (Self-voice exclusion
+  // already removes client_voice/analysis-backed claims; this additionally removes the
+  // NULL-voice own-domain declared rows the positive-only self-voice test leaves in.)
+  const publics = publicsAll.filter(
+    (c) => !selfVoiceClaimIds.has(c.id) && !(publicVoiceDeclaredIds?.has(c.id) ?? false),
+  );
   const selfVoiceExcluded = publicsAll.length - publics.length;
 
   // Existing rows: identity → row. Tombstones ('rejected_pairing') are never
@@ -450,7 +549,10 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const { data: existingRows } = await args.supabase
     .from("claim_deltas")
     .select("id, content_identity, delta_type, operator_disposition")
-    .eq("company_id", args.companyId);
+    .eq("company_id", args.companyId)
+    // GATE B-1: kind-scoped — the sweep below operates on `existing`, so a run of one
+    // kind is structurally incapable of deleting (or even seeing) the other kind's rows.
+    .eq("pairing_kind", pairingKind);
   type ExistingRow = { id: string; content_identity: string; delta_type: string; operator_disposition: string | null };
   const existing = new Map<string, ExistingRow>(
     ((existingRows ?? []) as ExistingRow[]).map((r) => [r.content_identity, r]),
@@ -467,7 +569,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const { data: rejRows } = await args.supabase
     .from("claim_delta_rejections")
     .select("id, content_identity")
-    .eq("company_id", args.companyId);
+    .eq("company_id", args.companyId)
+    .eq("pairing_kind", pairingKind); // GATE B-1: cache and its orphan-prune are per-kind
   type RejRow = { id: string; content_identity: string };
   const loadedRejections = (rejRows ?? []) as RejRow[];
   const rejectionByIdentity = new Map<string, string>(loadedRejections.map((r) => [r.content_identity, r.id]));
@@ -587,6 +690,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       judge_model: judgeModelUsed,
       reject_reason: reason || null,
       computed_at: args.nowIso,
+      pairing_kind: pairingKind,
     });
     if (rejErr) throw new Error(`claim-delta rejection insert failed: ${rejErr.message}`);
     rejectionByIdentity.set(identity, "");
@@ -720,6 +824,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           judge_reason: pairRow.judge_reason,
           content_identity: pairRow.content_identity,
           computed_at: args.nowIso,
+          pairing_kind: pairingKind,
         });
         if (insErr) throw new Error(`claim-delta inline insert failed: ${insErr.message}`);
         insertedThisRun.add(identity);
@@ -779,6 +884,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         judge_reason: row.judge_reason,
         content_identity: row.content_identity,
         computed_at: args.nowIso,
+        pairing_kind: pairingKind,
       });
       if (insErr) throw new Error(`claim-delta insert failed: ${insErr.message}`);
       totals.rows_new++;
@@ -814,6 +920,19 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         .in("id", orphanRejections.map((r) => r.id));
       if (pruneErr) throw new Error(`claim-delta rejection prune failed: ${pruneErr.message}`);
       totals.rejections_pruned = orphanRejections.length;
+    }
+
+    // GATE B-1: the public-kind finalize records that the gap comparison was LOOKED at —
+    // written AFTER the work so a died run leaves no false "looked" row (the orchestrator's
+    // catch writes the failed row instead).
+    if (pairingKind === "public_vs_public") {
+      await writeGapPairsIntegrity(args.supabase, args.companyId, {
+        status: "completed",
+        ranAtIso: args.nowIso,
+        examined: totals.candidates,
+        admitted: totals.pairs_confirmed + totals.pairs_inferred,
+        runRef: args.nowIso,
+      });
     }
   }
 

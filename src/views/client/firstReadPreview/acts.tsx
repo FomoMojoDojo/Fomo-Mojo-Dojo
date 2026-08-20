@@ -31,7 +31,13 @@ const ANCHOR_LINE =
   "Most strategy efforts don't succeed — the research base rate is under 20 in 100. This read starts there and moves only on what the public record shows. The bands above are reached with evidence, not optimism.";
 // Eligibility mirror of the compute: fewer than 10 outside-voice signals → no score row by rule.
 const OUTSIDE_MIN_SIGNALS = 10;
-const NO_PAIRS_NOTE = "No comparisons computed yet."; // DRAFT
+const NO_PAIRS_NOTE = "No comparisons computed yet."; // DRAFT (S-sheet: not-yet state)
+// GATE B-1 — the empty gap line derives from the PERSISTED integrity record, never
+// from array emptiness alone. Both DRAFTs pending the Gate-B signature sheet.
+const GAP_LOOKED_NONE_NOTE =
+  "We compared your public voice with the record — no disagreements stand right now."; // DRAFT (S7)
+const GAP_COULDNT_CHECK_NOTE =
+  "This comparison didn't complete — it will run again on the next refresh."; // DRAFT (S8)
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // DRAFT
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
@@ -310,7 +316,15 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         }
       />
       <main className="fr-stagger">
-        {read.gapPairs.length === 0 ? <Absent>{NO_PAIRS_NOTE}</Absent> : null}
+        {read.gapPairs.length === 0 ? (
+          <Absent>
+            {read.gapIntegrity === "couldnt_check"
+              ? GAP_COULDNT_CHECK_NOTE
+              : read.gapIntegrity === "looked_none"
+                ? GAP_LOOKED_NONE_NOTE
+                : NO_PAIRS_NOTE}
+          </Absent>
+        ) : null}
         {read.gapPairs.map((pair) => {
           const recency = formatMonthYear(pair.eventDate);
           return (

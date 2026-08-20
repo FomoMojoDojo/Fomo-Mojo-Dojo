@@ -250,6 +250,8 @@ export function useStrategicDelta(companyId?: string) {
           .from("claim_deltas")
           .select("id, delta_type, pairing_basis, judge_reason, operator_disposition, declared_claim_id, public_claim_id")
           .eq("company_id", companyId)
+          // GATE B-1: Extracts is the Diagnose surface — internal-vs-public rows only.
+          .eq("pairing_kind", "internal_vs_public")
           .order("delta_type", { ascending: true }),
         supabase
           .from("claims")

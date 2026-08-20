@@ -326,6 +326,7 @@ export type Database = {
           gen_model: string
           id: string
           judge_model: string | null
+          pairing_kind: string
           public_claim_id: string
           reject_reason: string | null
           rejected_by: string
@@ -338,6 +339,7 @@ export type Database = {
           gen_model: string
           id?: string
           judge_model?: string | null
+          pairing_kind?: string
           public_claim_id: string
           reject_reason?: string | null
           rejected_by: string
@@ -350,6 +352,7 @@ export type Database = {
           gen_model?: string
           id?: string
           judge_model?: string | null
+          pairing_kind?: string
           public_claim_id?: string
           reject_reason?: string | null
           rejected_by?: string
@@ -390,6 +393,7 @@ export type Database = {
           operator_disposition: string | null
           operator_seen_at: string | null
           pairing_basis: string
+          pairing_kind: string
           public_claim_id: string | null
         }
         Insert: {
@@ -403,6 +407,7 @@ export type Database = {
           operator_disposition?: string | null
           operator_seen_at?: string | null
           pairing_basis?: string
+          pairing_kind?: string
           public_claim_id?: string | null
         }
         Update: {
@@ -416,6 +421,7 @@ export type Database = {
           operator_disposition?: string | null
           operator_seen_at?: string | null
           pairing_basis?: string
+          pairing_kind?: string
           public_claim_id?: string | null
         }
         Relationships: [

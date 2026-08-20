@@ -28,10 +28,18 @@ function fakeDb(seed: {
   claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[];
   signals?: Row[]; claim_signal_refs?: Row[];
 }) {
+  // GATE B-1 (harness fidelity, not an assertion change): the migrated schema gives
+  // claim_deltas / claim_delta_rejections a pairing_kind column with DB default
+  // 'internal_vs_public'. The fake applies the same default on seed AND insert, so
+  // pre-B1 tests exercise the internal path byte-identically.
+  const kindDefault = (t: string, r: Row): Row =>
+    (t === "claim_deltas" || t === "claim_delta_rejections") && r["pairing_kind"] === undefined
+      ? { ...r, pairing_kind: "internal_vs_public" }
+      : r;
   const tables: Record<string, Row[]> = {
     claims: [...seed.claims],
-    claim_deltas: [...(seed.claim_deltas ?? [])],
-    claim_delta_rejections: [...(seed.claim_delta_rejections ?? [])],
+    claim_deltas: (seed.claim_deltas ?? []).map((r) => kindDefault("claim_deltas", r)),
+    claim_delta_rejections: (seed.claim_delta_rejections ?? []).map((r) => kindDefault("claim_delta_rejections", r)),
     signals: [...(seed.signals ?? [])],
     claim_signal_refs: [...(seed.claim_signal_refs ?? [])],
   };
@@ -48,7 +56,7 @@ function fakeDb(seed: {
           resolve({ data: (tables[table] ?? []).filter((r) => chain._filters.every((f) => f(r))), error: null });
         },
         insert(payload: Row) {
-          tables[table].push({ id: `row-${nextId++}`, ...payload });
+          tables[table].push(kindDefault(table, { id: `row-${nextId++}`, ...payload }));
           return Promise.resolve({ error: null });
         },
         delete() {

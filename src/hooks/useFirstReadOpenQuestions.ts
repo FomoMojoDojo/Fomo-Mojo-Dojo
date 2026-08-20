@@ -55,7 +55,9 @@ export function useFirstReadOpenQuestions(companyId?: string) {
         if (anchorIds.length) {
           const { data: dRows } = await supabase
             .from("claim_deltas").select("content_identity, declared_claim_id, public_claim_id")
-            .eq("company_id", companyId).in("content_identity", anchorIds);
+            .eq("company_id", companyId)
+            .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
+            .in("content_identity", anchorIds);
           const deltas = (dRows ?? []) as Array<{ content_identity: string; declared_claim_id: string | null; public_claim_id: string | null }>;
           const claimIds = [...new Set(deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x))];
           if (claimIds.length) {

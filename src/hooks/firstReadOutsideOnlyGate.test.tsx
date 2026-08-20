@@ -91,8 +91,8 @@ describe("R1 site: useFirstReadPreviewData", () => {
       companies: [{ id: CO, name: "Co", website: "https://co-1.com" }],
       claims: claimsFixture,
       claim_deltas: [
-        { id: "d1", company_id: CO, delta_type: "echoed", declared_claim_id: PLANTED, public_claim_id: PUB, content_identity: "ci-1" },
-        { id: "d2", company_id: CO, delta_type: "echoed", declared_claim_id: CLEAN, public_claim_id: PUB, content_identity: "ci-2" },
+        { id: "d1", company_id: CO, delta_type: "echoed", declared_claim_id: PLANTED, public_claim_id: PUB, content_identity: "ci-1", pairing_kind: "public_vs_public" },
+        { id: "d2", company_id: CO, delta_type: "echoed", declared_claim_id: CLEAN, public_claim_id: PUB, content_identity: "ci-2", pairing_kind: "public_vs_public" },
       ],
       claim_signal_refs: ownVoiceRefs,
       signals: ownVoiceSignals,
@@ -151,8 +151,8 @@ describe("R1 site: useFirstReadOpenQuestions", () => {
         { company_id: CO, status: "live", question_text: "Clean question?", source_kind: "silent_delta", finding_identity: null, anchor_identity: "anch-clean" },
       ],
       claim_deltas: [
-        { company_id: CO, content_identity: "anch-planted", declared_claim_id: PLANTED, public_claim_id: null },
-        { company_id: CO, content_identity: "anch-clean", declared_claim_id: CLEAN, public_claim_id: null },
+        { company_id: CO, content_identity: "anch-planted", declared_claim_id: PLANTED, public_claim_id: null, pairing_kind: "public_vs_public" },
+        { company_id: CO, content_identity: "anch-clean", declared_claim_id: CLEAN, public_claim_id: null, pairing_kind: "public_vs_public" },
       ],
       claim_signal_refs: [],
       signals: [],

@@ -67,7 +67,8 @@ Deno.serve(async (req) => {
 
       const { data: dRows } = await supabase
         .from("claim_deltas").select("content_identity, delta_type, declared_claim_id")
-        .eq("company_id", company_id).in("delta_type", ["echoed", "divergent", "publicly_silent"]);
+        .eq("company_id", company_id).eq("pairing_kind", "public_vs_public") // GATE B-1: First Read pointers = public pairing
+        .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
       const deltas = (dRows ?? []) as Array<{ content_identity: string; delta_type: string; declared_claim_id: string | null }>;
       const declIds = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
       const { data: cRows } = declIds.length
@@ -130,7 +131,8 @@ Deno.serve(async (req) => {
 
         const { data: dRows } = await supabase
           .from("claim_deltas").select("content_identity, public_claim_id")
-          .eq("company_id", company_id).eq("delta_type", "internally_silent");
+          .eq("company_id", company_id).eq("pairing_kind", "public_vs_public") // GATE B-1
+          .eq("delta_type", "internally_silent");
         const deltas = (dRows ?? []) as Array<{ content_identity: string; public_claim_id: string | null }>;
         const pubIds = [...new Set(deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
         const { data: pubRows } = pubIds.length

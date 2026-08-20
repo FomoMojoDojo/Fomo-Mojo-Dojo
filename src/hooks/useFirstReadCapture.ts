@@ -141,6 +141,8 @@ export function useFirstReadCapture(
       .from("claim_deltas")
       .select("id, delta_type, content_identity, declared_claim_id, public_claim_id")
       .eq("company_id", companyId)
+      // GATE B-1: First Read reads the PUBLIC pairing only (client-voice vs market).
+      .eq("pairing_kind", "public_vs_public")
       // Option B — internally_silent joins the read (rendered in its own observed-anchored
       // section; the say-anchored exhibit still filters to its three groups).
       .in("delta_type", ["echoed", "divergent", "publicly_silent", "internally_silent"])

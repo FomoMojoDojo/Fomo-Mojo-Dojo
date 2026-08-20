@@ -50,7 +50,8 @@ async function loadAnchors(supabase: SupabaseClient, companyId: string, runId: s
 
   const { data: deltaRows } = await supabase
     .from("claim_deltas").select("content_identity, declared_claim_id")
-    .eq("company_id", companyId).eq("delta_type", "publicly_silent");
+    .eq("company_id", companyId).eq("pairing_kind", "public_vs_public") // GATE B-1: First Read questions anchor the public pairing
+    .eq("delta_type", "publicly_silent");
   const deltas = (deltaRows ?? []) as Array<{ content_identity: string; declared_claim_id: string | null }>;
   const claimIds = deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x);
   const claimById = new Map<string, string>();

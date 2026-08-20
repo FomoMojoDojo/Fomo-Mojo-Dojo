@@ -91,8 +91,8 @@ function previewFixture() {
     claim_signal_refs: refs,
     signals,
     claim_deltas: [
-      { id: "d-int", company_id: CO, delta_type: "echoed", declared_claim_id: INTERNAL, public_claim_id: PUB, content_identity: "ci-int" },
-      { id: "d-pub", company_id: CO, delta_type: "echoed", declared_claim_id: PUBVOICE, public_claim_id: PUB, content_identity: "ci-pub" },
+      { id: "d-int", company_id: CO, delta_type: "echoed", declared_claim_id: INTERNAL, public_claim_id: PUB, content_identity: "ci-int", pairing_kind: "public_vs_public" },
+      { id: "d-pub", company_id: CO, delta_type: "echoed", declared_claim_id: PUBVOICE, public_claim_id: PUB, content_identity: "ci-pub", pairing_kind: "public_vs_public" },
     ],
     public_baseline_runs: [],
     signal_recurrence_verdicts: [],
@@ -154,8 +154,8 @@ describe("PUBLIC-ONLY site: useFirstReadOpenQuestions", () => {
         { company_id: CO, status: "live", question_text: "Public-anchored question?", source_kind: "silent_delta", finding_identity: null, anchor_identity: "anch-pub" },
       ],
       claim_deltas: [
-        { company_id: CO, content_identity: "anch-int", declared_claim_id: INTERNAL, public_claim_id: null },
-        { company_id: CO, content_identity: "anch-pub", declared_claim_id: PUBVOICE, public_claim_id: null },
+        { company_id: CO, content_identity: "anch-int", declared_claim_id: INTERNAL, public_claim_id: null, pairing_kind: "public_vs_public" },
+        { company_id: CO, content_identity: "anch-pub", declared_claim_id: PUBVOICE, public_claim_id: null, pairing_kind: "public_vs_public" },
       ],
       claim_signal_refs: [],
       signals: [],

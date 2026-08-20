@@ -39,7 +39,10 @@ function waitUntil(promise: Promise<unknown>) {
   if (edge?.waitUntil) edge.waitUntil(promise); else void promise;
 }
 
-const RUN_KIND = "claim_deltas";
+// GATE B-1: run kind follows the pairing kind — internal runs keep the historic
+// "claim_deltas" ledger identity; public runs get their own progress chain.
+const RUN_KIND_INTERNAL = "claim_deltas";
+const RUN_KIND_PUBLIC = "claim_deltas_public";
 // A chain is "this company's claim_deltas row still running, started recently". 25 min is
 // comfortably longer than the observed ~4-min loop and shorter than the 30-min lock TTL.
 const CHAIN_WINDOW_MS = 25 * 60_000;
@@ -78,12 +81,15 @@ Deno.serve(async (req) => {
 
   let company_id = "";
   let parent_run_id: string | null = null;
+  let pairingKind: "internal_vs_public" | "public_vs_public" = "internal_vs_public";
   try {
     const body = await req.json();
     company_id = String(body.company_id ?? "");
     parent_run_id = body.parent_run_id != null ? String(body.parent_run_id) : null;
+    if (body.pairing_kind === "public_vs_public") pairingKind = "public_vs_public";
   } catch { /* fall through to the 400 below */ }
   if (!company_id) return json({ ok: false, error: "company_id required" }, 400);
+  const RUN_KIND = pairingKind === "public_vs_public" ? RUN_KIND_PUBLIC : RUN_KIND_INTERNAL;
 
   // ── 1) find-or-create the child ledger row (chain identity) ─────────────────────────
   const sinceIso = new Date(Date.now() - CHAIN_WINDOW_MS).toISOString();
@@ -123,7 +129,7 @@ Deno.serve(async (req) => {
   };
 
   // ── 2) PLAN (resume truth) ──────────────────────────────────────────────────────────
-  const planRes = await callDeltas(url, key, { company_id, plan: true });
+  const planRes = await callDeltas(url, key, { company_id, plan: true, pairing_kind: pairingKind });
   if (!planRes.ok) {
     // A plan that errors deterministically (frozen/no-claims) is a legitimate terminal, not a stall.
     await finish("failed", 0, `plan failed: ${planRes.reason}`);
@@ -140,7 +146,7 @@ Deno.serve(async (req) => {
   // ── 3) one chunk, then self-chain ───────────────────────────────────────────────────
   if (chunks.length > 0) {
     const chunk = chunks[0];
-    const res = await callDeltas(url, key, { company_id, write: true, declared_ids: chunk.map((c) => c.declared_claim_id) });
+    const res = await callDeltas(url, key, { company_id, write: true, declared_ids: chunk.map((c) => c.declared_claim_id), pairing_kind: pairingKind });
     if (!res.ok && isDeterministicWorkerError(res.status)) {
       await finish("failed", Math.max(0, (targetCount ?? chunks.length) - chunks.length), `chunk failed: ${res.reason}`);
       return json({ ok: false, error: `chunk failed: ${res.reason}` }, 200);
@@ -150,19 +156,19 @@ Deno.serve(async (req) => {
     const remainingAfter = res.ok ? Math.max(0, chunks.length - 1) : chunks.length;
     const done = Math.max(0, (targetCount ?? chunks.length) - remainingAfter);
     await supabase.from("long_runner_runs").update({ done_count: done, updated_at: new Date().toISOString() }).eq("id", childId);
-    waitUntil(callDeltas(url, key, { company_id, plan: true }).then(() =>
+    waitUntil(callDeltas(url, key, { company_id, plan: true, pairing_kind: pairingKind }).then(() =>
       fetch(`${url}/functions/v1/refresh-deltas-step`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-        body: JSON.stringify({ company_id, parent_run_id }),
+        body: JSON.stringify({ company_id, parent_run_id, pairing_kind: pairingKind }),
       }).catch(() => {})
     ));
     return json({ ok: true, stepped: true, remaining: remainingAfter, target: targetCount });
   }
 
   // ── 4) plan dry → the ONE unscoped finalize (silences + stale-sweep) ────────────────
-  const { count: preCount } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id);
-  const finRes = await callDeltas(url, key, { company_id, write: true });
+  const { count: preCount } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id).eq("pairing_kind", pairingKind);
+  const finRes = await callDeltas(url, key, { company_id, write: true, pairing_kind: pairingKind });
   if (finRes.ok) {
     await finish("completed", targetCount ?? 0);
     return json({ ok: true, finalized: true });
@@ -175,7 +181,7 @@ Deno.serve(async (req) => {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5000));
-    const { count } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id);
+    const { count } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id).eq("pairing_kind", pairingKind);
     if ((count ?? 0) !== (preCount ?? 0)) { await finish("completed", targetCount ?? 0); return json({ ok: true, finalized: true, polled: true }); }
   }
   // Couldn't confirm within the poll — re-fire once more (finalize is idempotent); the sweep bounds the tail.

@@ -105,11 +105,13 @@ describe("TheCheckAct — Option B internally_silent section", () => {
     expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
   });
 
-  it("ready with zero internally_silent items → heading + the honest-empty string", () => {
+  it("ready with zero internally_silent items → PUBLIC-ONLY interim: NO absence line renders", () => {
+    // GATE B-1: until the public-kind recompute, zero items is a NOT-COMPUTED state —
+    // the honest-empty string would be a false statement (rows are kind-hidden).
     cap.ret = withItems({ status: "ready", data: [] }, []);
     const { container } = render(<TheCheckAct companyId="co-1" sessionId="s-1" />);
     expect(container.textContent).toContain(OUTSIDE_RAISED_HEADING);
-    expect(container.textContent).toContain(OUTSIDE_RAISED_EMPTY);
+    expect(container.textContent).not.toContain(OUTSIDE_RAISED_EMPTY);
     expect(container.textContent).not.toContain(OUTSIDE_RAISED_FRAMING);
   });
 

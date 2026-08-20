@@ -54,7 +54,12 @@ export default function OutsideRaisedSection({
     <section className="cvs-outside-raised" aria-label={OUTSIDE_RAISED_HEADING}>
       {showHeading && <h3 className="cvs-outside-raised-heading">{OUTSIDE_RAISED_HEADING}</h3>}
       {items.length === 0 ? (
-        <p className="cvs-outside-raised-empty cvs-support">{OUTSIDE_RAISED_EMPTY}</p>
+        // GATE B-1 interim: until the public-kind recompute (Gate B-2), an empty
+        // item set is a NOT-COMPUTED state — the absence line would be a false
+        // statement (rows are kind-hidden, not absent). Render nothing, same
+        // treatment as the say-vs-see empties; the line returns with B-2's
+        // computed absences (string re-sign in the S-sheet).
+        null
       ) : (
         <>
           <p className="cvs-outside-raised-framing">{OUTSIDE_RAISED_FRAMING}</p>

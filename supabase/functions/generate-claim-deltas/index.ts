@@ -20,7 +20,12 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { computeDeltasForCompany } from "../_shared/claimDeltaSynthesis.ts";
+import {
+  computeDeltasForCompany,
+  PAIRING_KINDS,
+  type PairingKind,
+  writeGapPairsIntegrity,
+} from "../_shared/claimDeltaSynthesis.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,11 +49,19 @@ function json(body: unknown, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  let integrityCtx: { supabase: { from: (t: string) => any }; companyId: string; nowIso: string } | null = null;
   try {
-    const { company_id, write, declared_ids, plan } = await req.json();
+    const { company_id, write, declared_ids, plan, pairing_kind } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
+
+    // GATE B-1: which read this run computes. Default = the founding internal read.
+    const pairingKind: PairingKind =
+      pairing_kind === undefined || pairing_kind === null ? "internal_vs_public" : pairing_kind;
+    if (!PAIRING_KINDS.includes(pairingKind)) {
+      return json({ ok: false, error: `pairing_kind must be one of ${PAIRING_KINDS.join(" | ")}` }, 422);
+    }
 
     // CH-2b-1: presence-gated scoping. Present-but-empty (after dropping
     // non-strings) is a CALLER ERROR — a scoped intent must never be silently
@@ -74,15 +87,23 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     ) as unknown as { from: (t: string) => any };
 
+    const nowIso = new Date().toISOString();
+    // GATE B-1: a failed/skipped PUBLIC FINALIZE must still leave a persisted integrity
+    // record (couldn't-check / looked-and-empty) — arm the catch below for exactly that
+    // case: public kind, write-mode, unscoped, not a plan.
+    if (pairingKind === "public_vs_public" && doWrite && !doPlan && !declaredIds) {
+      integrityCtx = { supabase, companyId: company_id, nowIso };
+    }
     const baseArgs = {
       supabase,
       companyId: company_id,
       ollamaUrl,
-      nowIso: new Date().toISOString(),
+      nowIso,
       genModel: Deno.env.get("OLLAMA_MODEL") ?? undefined,
       judgeModel: Deno.env.get("OLLAMA_JUDGE_MODEL") ?? undefined,
       write: doWrite,
       declaredIds,
+      pairingKind,
     };
     const result = doPlan
       ? await computeDeltasForCompany({ ...baseArgs, plan: true })
@@ -103,11 +124,26 @@ serve(async (req) => {
     }
     if ("skipped" in result) {
       if (result.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — deltas aren't computed for it." }, 403);
-      if (result.skipped === "no_declared_claims") return json({ ok: false, error: "no internal_declared claims for this company" }, 404);
+      if (result.skipped === "no_declared_claims") {
+        // GATE B-1: an empty public declared side is a LOOKED outcome, not silence.
+        if (integrityCtx) {
+          await writeGapPairsIntegrity(integrityCtx.supabase, integrityCtx.companyId, {
+            status: "skipped_empty_input", ranAtIso: integrityCtx.nowIso, runRef: integrityCtx.nowIso,
+          }).catch((e) => console.error("[generate-claim-deltas] integrity skip-write failed:", String(e)));
+        }
+        return json({ ok: false, error: "no declared-side claims for this company" }, 404);
+      }
     }
     return json({ ok: false, error: (result as { error: string }).error }, 500);
   } catch (err) {
     console.error("[generate-claim-deltas] error:", String((err as Error)?.message ?? err));
+    // GATE B-1: failure-settable integrity — the gap beat renders couldn't-check.
+    if (integrityCtx) {
+      await writeGapPairsIntegrity(integrityCtx.supabase, integrityCtx.companyId, {
+        status: "failed", ranAtIso: integrityCtx.nowIso,
+        error: String((err as Error)?.message ?? err).slice(0, 500), runRef: integrityCtx.nowIso,
+      }).catch((e) => console.error("[generate-claim-deltas] integrity fail-write failed:", String(e)));
+    }
     return json({ ok: false, error: String((err as Error)?.message ?? err) }, 500);
   }
 });

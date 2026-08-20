@@ -290,6 +290,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             .from("claim_deltas")
             .select("public_claim_id")
             .eq("company_id", companyId)
+            .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
             .eq("content_identity", pointer.item_identity)
             .maybeSingle();
           const pubId = (deltaRow as { public_claim_id: string | null } | null)?.public_claim_id ?? null;
@@ -336,6 +337,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           .from("claim_deltas")
           .select("id, delta_type, declared_claim_id, public_claim_id")
           .eq("company_id", companyId)
+          .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           .in("delta_type", ["echoed", "divergent", "internally_silent"]);
         const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null }>;
         const gapClaimIds = [
@@ -387,6 +389,22 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const verdictOrder = { contradicted: 0, confirmed: 1, unspoken: 2 } as const;
         gapPairs.sort((a, b) => verdictOrder[a.verdict] - verdictOrder[b.verdict]);
 
+        // ── GATE B-1: the gap's PERSISTED integrity state ───────────────────
+        // Written by the public-kind delta finalize (integrity_runs, component
+        // 'first_read_gap_pairs'). No row → not-yet; completed/skipped → looked;
+        // failed → couldn't-check. The empty-beat line derives from THIS record,
+        // never from array emptiness alone.
+        let gapIntegrity: FirstReadPreviewData["gapIntegrity"] = "not_yet";
+        const { data: intRows } = await loose()
+          .from("integrity_runs")
+          .select("status")
+          .eq("company_id", companyId)
+          .eq("component", "first_read_gap_pairs")
+          .order("ran_at", { ascending: false })
+          .limit(1);
+        const intRow = ((intRows ?? []) as Array<{ status: string }>)[0] ?? null;
+        if (intRow) gapIntegrity = intRow.status === "failed" ? "couldnt_check" : "looked_none";
+
         // Questions (beat 7) come from useFirstReadOpenQuestions in the view —
         // the ONE authority that applies the outside-only provenance gate.
         if (!cancelled) {
@@ -398,6 +416,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             signals,
             score,
             gapPairs,
+            gapIntegrity,
             questions: [],
           });
           setLoading(false);

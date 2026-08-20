@@ -220,6 +220,7 @@ Deno.serve(async (req) => {
             declared_claim_id: claimId,
             public_claim_id: match.id,
             delta_type: "divergent",
+            pairing_kind: "internal_vs_public", // GATE B-1: attested corrections are the internal pairing
             pairing_basis: "operator", // operator-attested, not model-judged
             judge_reason: `Client correction attested in First Read session ${session_id}`,
             content_identity: identity,
@@ -239,6 +240,7 @@ Deno.serve(async (req) => {
             declared_claim_id: claimId,
             public_claim_id: null,
             delta_type: "publicly_silent",
+            pairing_kind: "internal_vs_public", // GATE B-1
             pairing_basis: "operator",
             judge_reason: `Client correction attested in First Read session ${session_id}`,
             content_identity: identity,

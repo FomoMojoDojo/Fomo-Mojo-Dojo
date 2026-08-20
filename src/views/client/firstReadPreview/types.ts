@@ -73,6 +73,12 @@ export type FirstReadPreviewData = {
   /** Outside-methodology score rows ONLY (R1) — v1.1.0 never renders here. */
   score: FRScore | null;
   gapPairs: FRGapPair[];
+  /**
+   * GATE B-1: the gap's persisted integrity state (integrity_runs, component
+   * 'first_read_gap_pairs'): not-yet (no record), looked-and-none, couldn't-check.
+   * Governs the empty-beat line — never derived from array emptiness alone.
+   */
+  gapIntegrity: "not_yet" | "looked_none" | "couldnt_check";
   questions: string[];
 };
 
@@ -84,5 +90,6 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   signals: [],
   score: null,
   gapPairs: [],
+  gapIntegrity: "not_yet",
   questions: [],
 };
