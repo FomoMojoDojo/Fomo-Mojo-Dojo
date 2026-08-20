@@ -581,6 +581,9 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
         headline="One number, read from the record."
         standfirst="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
         subline={ANCHOR_LINE}
+        // The Mojo Score number lives here, beside the title (moved from the gap header,
+        // ruling 2026-08-20) — so it appears exactly once, in its own beat.
+        right={read.score ? <ScoreNow now={read.score.value} band={active?.name} /> : undefined}
       />
       <div className="fr-stagger mx-auto max-w-xl">
         {score === null ? (

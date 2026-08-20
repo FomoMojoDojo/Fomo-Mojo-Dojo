@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
             content_identity: identity,
             computed_at: nowIso,
           },
-          { onConflict: "company_id,content_identity", ignoreDuplicates: true },
+          { onConflict: "company_id,content_identity,pairing_kind", ignoreDuplicates: true },
         );
         if (dErr) throw new Error(`divergent delta upsert failed: ${dErr.message}`);
         paired++;
@@ -246,7 +246,7 @@ Deno.serve(async (req) => {
             content_identity: identity,
             computed_at: nowIso,
           },
-          { onConflict: "company_id,content_identity", ignoreDuplicates: true },
+          { onConflict: "company_id,content_identity,pairing_kind", ignoreDuplicates: true },
         );
         if (dErr) throw new Error(`publicly_silent delta upsert failed: ${dErr.message}`);
         silent++;

@@ -76,6 +76,17 @@ describe("beat order — ruled sequence", () => {
     expect(text).toContain("Where the two readings disagree.");
   });
 
+  it("the 'Mojo now' score panel appears EXACTLY ONCE across all beats — inside beat 7", () => {
+    // Render every beat; count "Mojo now" occurrences. ScoreReveal (beat 7) is the only home.
+    const seqText = renderSequence(RULED);
+    const occurrences = seqText.split("Mojo now").length - 1;
+    expect(occurrences).toBe(1);
+    // and it is the score beat that carries it
+    const { container } = render(<ScoreReveal read={read} />);
+    expect(container.textContent).toContain("Mojo now");
+    expect(container.textContent).toContain("One number, read from the record.");
+  });
+
   it("no 'What we see' group label remains in the rendered beats", () => {
     const text = renderSequence(RULED);
     expect(text).not.toContain("What we see.");
