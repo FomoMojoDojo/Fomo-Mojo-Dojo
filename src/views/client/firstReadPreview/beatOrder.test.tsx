@@ -68,6 +68,22 @@ describe("beat order — ruled sequence", () => {
     expect(text).not.toContain("What we see.");
   });
 
+  it("beat 9 'Our read' opens with the COMPLETE base explanation + illustration (score AND no-score)", () => {
+    for (const scoreState of [
+      { score: { value: 16, computedAt: "2026-08-20T00:00:00Z", methodologyVersion: "outside-v1.0.0" }, scoreLooked: true },
+      { score: null, scoreLooked: false },
+    ] as Array<Partial<FirstReadPreviewData>>) {
+      const { container } = render(<ActOurRead read={{ ...read, ...scoreState }} />);
+      expect(container.textContent).toContain("A strong base"); // BaseGate headline
+      expect(container.textContent).toContain("Your base is the four commitments"); // framing
+      // BaseAlignment illustration: the four base circles + the SVG.
+      for (const el of ["STRATEGY", "MARKET", "POSITIONING", "PROMISE"]) {
+        expect(container.textContent).toContain(el);
+      }
+      expect(container.querySelector("svg"), "BaseAlignment illustration present").not.toBeNull();
+    }
+  });
+
   it("FALSIFICATION: swapping two beats breaks the monotonic order", () => {
     const swapped = [...RULED];
     [swapped[1], swapped[4]] = [swapped[4], swapped[1]]; // yousay <-> findings

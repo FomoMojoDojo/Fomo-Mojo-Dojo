@@ -58,9 +58,7 @@ const SERVE_HEADLINE = "Who you serve."; // DRAFT (beat 5, was Markets)
 const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // DRAFT
 const OURREAD_HEADLINE = "Our read."; // DRAFT (beat 9)
 const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // DRAFT
-// BaseGate four-commitments frame that OPENS beat 9 (S3, carried from BaseGate copy).
-const OURREAD_BASE_FRAME =
-  "Your base is the four commitments everything else stands on — what you're doing, who it's for, why you win, what you promise. Here is what the public record lets us posit about them."; // DRAFT
+// Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
 const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
 const NO_WHERE_NOTE = "Not enough public signal to place your base yet."; // DRAFT
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
@@ -433,10 +431,10 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader headline={OURREAD_HEADLINE} standfirst={OURREAD_SUB} />
       <main className="fr-stagger">
-        {/* BaseGate four-commitments frame opens the beat. */}
-        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-          {OURREAD_BASE_FRAME}
-        </p>
+        {/* The COMPLETE base explanation opens the beat (council ruling 2026-08-20):
+            headline + both framing paragraphs + the BaseAlignment four-circle illustration
+            + goal caption. Edges render untested (honest placeholder). */}
+        <BaseGate />
         {!anything ? <div className="mt-8"><Absent>{NO_OURREAD_NOTE}</Absent></div> : null}
         <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
           {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
