@@ -59,6 +59,7 @@ const SERVE_SUB = "Groups of people trying to get something done — and the job
 const OURREAD_HEADLINE = "Our read."; // DRAFT (beat 9)
 const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // DRAFT
 // Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
+const MARKET_POINTER_NOTE = "Who you serve — see above"; // DRAFT (beat 9 base diagram)
 const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
 const NO_WHERE_NOTE = "Not enough public signal to place your base yet."; // DRAFT
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
@@ -431,11 +432,7 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader headline={OURREAD_HEADLINE} standfirst={OURREAD_SUB} />
       <main className="fr-stagger">
-        {/* The COMPLETE base explanation opens the beat (council ruling 2026-08-20):
-            headline + both framing paragraphs + the BaseAlignment four-circle illustration
-            + goal caption. Edges render untested (honest placeholder). */}
-        <BaseGate />
-        {!anything ? <div className="mt-8"><Absent>{NO_OURREAD_NOTE}</Absent></div> : null}
+        {!anything ? <div className="mb-8"><Absent>{NO_OURREAD_NOTE}</Absent></div> : null}
         <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
           {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
           {p?.value ? (
@@ -471,6 +468,10 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
           ) : null}
           {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
         </WeSeeSection>
+        {/* The COMPLETE base explanation CLOSES the beat (Option A, 2026-08-20): the
+            positioning/strategy/promise hypotheses first, then the base frame + BaseAlignment
+            four-circle diagram (Market circle points back to beat 5 "Who you serve"). */}
+        <div className="pt-8"><BaseGate /></div>
       </main>
     </>
   );
@@ -699,6 +700,7 @@ export function BaseGate() {
           pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
           caption={PAIRS_UNCOMPUTED_CAPTION}
           goalCaption="When your base is aligned, you look like one company."
+          marketNote={MARKET_POINTER_NOTE}
         />
       </div>
     </div>

@@ -101,11 +101,14 @@ export default function BaseAlignment({
   pairs,
   caption,
   goalCaption,
+  marketNote,
 }: {
   pairs: BasePairInput[];
   /** Today-state caption — must be true of the pair states actually shown. */
   caption: string;
   goalCaption: string;
+  /** Optional pointer under the Market circle (today state only). */
+  marketNote?: string;
 }) {
   // Default is always TODAY — the goal state is a preview, never the landing view.
   const [aligned, setAligned] = useState(false);
@@ -219,6 +222,21 @@ export default function BaseAlignment({
                 >
                   {el.sub}
                 </text>
+                {/* Market pointer (today only) — links the circle back to the "Who you
+                    serve" beat. DRAFT, operator signs. */}
+                {el.key === "market" && marketNote && !aligned ? (
+                  <text
+                    className="fr-align-sublabel"
+                    y={26}
+                    textAnchor="middle"
+                    fontSize={7}
+                    fontWeight={700}
+                    letterSpacing="0.08em"
+                    fill="hsl(239 84% 57%)"
+                  >
+                    {marketNote}
+                  </text>
+                ) : null}
               </g>
             </g>
           );
