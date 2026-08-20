@@ -5,7 +5,7 @@
 // strings) ported verbatim. New empty-state strings are DRAFTS listed in the
 // commit body pending operator signature.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Absent,
   ActHeader,
@@ -39,6 +39,16 @@ const GAP_LOOKED_NONE_NOTE =
 const GAP_COULDNT_CHECK_NOTE =
   "This comparison didn't complete — it will run again on the next refresh."; // DRAFT (S8)
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // DRAFT
+// ── "What we see" public-beats group (public-beats gate, 2026-08-20) — DRAFTS ──
+const WHAT_WE_SEE_STANDFIRST =
+  "What we see: our read of your public record — your own channels, the market you're in, and how you position. Every line says where it came from."; // DRAFT
+const LABEL_CHANNELS = "Your channels, as we read them"; // DRAFT
+const LABEL_MARKETS = "Markets"; // DRAFT
+const LABEL_POSITIONING = "Positioning"; // DRAFT
+const LABEL_STRATEGY = "Strategy"; // DRAFT
+const LABEL_PROMISE = "Promise"; // DRAFT
+const LABEL_BASE = "Where you stand (inferred)"; // DRAFT
+const BASE_INFERRED_LABEL = "Inferred from your public record."; // DRAFT
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
 const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // DRAFT
@@ -93,7 +103,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
           onClick={onContinue}
           className="fr-link-ink group mt-20 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
         >
-          Now here&rsquo;s what you say{" "}
+          Now here&rsquo;s what we see{" "}
           <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
         </button>
       </div>
@@ -142,6 +152,122 @@ export function ActBase({ read }: { read: FirstReadPreviewData }) {
             meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
           />
         ))}
+      </main>
+    </>
+  );
+}
+
+/** A "what we see" sub-section: label + children. Unmounts when it has no content
+ *  (R7: no array-length empty strings — an absent public object is simply not shown). */
+function WeSeeSection({ label, show, children }: { label: string; show: boolean; children: ReactNode }) {
+  if (!show) return null;
+  return (
+    <section className="border-b py-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+      <Eyebrow>{label}</Eyebrow>
+      <div className="mt-6">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * "What we see" — the public-register group (public-beats gate, 2026-08-20). Every
+ * sub-section is public provenance and labelled OUR READ; each carries a source tag and
+ * unmounts when its object is absent. There is NO "what you say" beat (R2): own-words
+ * extraction ships in a separate gate.
+ */
+export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
+  const p = read.positioning;
+  const st = read.strategy;
+  const pr = read.promise;
+  const b = read.whereYouStand;
+  return (
+    <>
+      <ActHeader headline="What we see." standfirst={WHAT_WE_SEE_STANDFIRST} />
+      <main className="fr-stagger">
+        {/* Your channels, as we read them (R3: junk hidden in the hook) */}
+        <WeSeeSection label={LABEL_CHANNELS} show={read.declared.length > 0}>
+          {read.declared.map((claim) => (
+            <LedgerRow
+              key={claim.id}
+              leftLabel="Our read"
+              leftBody={claim.statement}
+              meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
+            />
+          ))}
+        </WeSeeSection>
+
+        {/* Markets — ODI form: people getting a job done (never a quote) */}
+        <WeSeeSection label={LABEL_MARKETS} show={read.observedMarkets.length > 0}>
+          <div className="flex flex-col gap-8">
+            {read.observedMarkets.map((m) => (
+              <div key={m.id} className="flex flex-col gap-2">
+                <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
+                {m.job ? (
+                  <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                    {m.job}
+                  </p>
+                ) : null}
+                {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
+              </div>
+            ))}
+          </div>
+        </WeSeeSection>
+
+        {/* Positioning — the market_read canvas */}
+        <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
+          {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
+          {p?.value ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
+          ) : null}
+          {p && p.differentiators.length > 0 ? (
+            <ul className="mt-4 flex flex-col gap-2">
+              {p.differentiators.map((d, i) => (
+                <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
+              ))}
+            </ul>
+          ) : null}
+          {p?.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+
+        {/* Strategy — the market_read cascade */}
+        <WeSeeSection label={LABEL_STRATEGY} show={!!st}>
+          {st?.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
+          {st?.whereToPlay ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
+            </p>
+          ) : null}
+          {st?.howToWin ? (
+            <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              <span className="fr-eyebrow">How to win</span> — {st.howToWin}
+            </p>
+          ) : null}
+          {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+
+        {/* Promise — canvas value + tagline */}
+        <WeSeeSection label={LABEL_PROMISE} show={!!pr}>
+          {pr?.tagline ? <p className="text-2xl font-semibold leading-snug">{pr.tagline}</p> : null}
+          {pr?.value ? (
+            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{pr.value}</p>
+          ) : null}
+          {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+        </WeSeeSection>
+
+        {/* Where you stand — inferred (R-B): persisted numbers only */}
+        <WeSeeSection label={LABEL_BASE} show={!!b}>
+          {b ? (
+            <>
+              <p className="max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+                Mojo Score {b.scoreValue} of 100 ({b.band}) · {b.activeFronts} market front{b.activeFronts === 1 ? "" : "s"} read · {b.strongSignals} strong outside signal{b.strongSignals === 1 ? "" : "s"}.
+              </p>
+              <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+                {BASE_INFERRED_LABEL}
+              </p>
+              {b.sourceTag ? <div className="mt-3"><SourceTag>{b.sourceTag.label}</SourceTag></div> : null}
+            </>
+          ) : null}
+        </WeSeeSection>
       </main>
     </>
   );
@@ -397,7 +523,35 @@ export function ActMap({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
-export function ActNext({ read }: { read: FirstReadPreviewData }) {
+/** Questions beat — the open questions this read raises (own beat per the beat order). */
+export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
+  return (
+    <>
+      <ActHeader
+        headline="Questions this read raises."
+        standfirst="Open questions from the public record — the threads worth taking a position on."
+      />
+      <main className="fr-stagger">
+        {read.questions.length === 0 ? (
+          <Absent>{NO_QUESTIONS_NOTE}</Absent>
+        ) : (
+          <ol className="space-y-8">
+            {read.questions.map((question, index) => (
+              <li key={question} className="flex gap-6">
+                <span className="pt-1 text-[10px] font-bold tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{question}</p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </main>
+    </>
+  );
+}
+
+export function ActNext() {
   const phases = [
     { name: "Diagnose", body: "Open the inside: documents, numbers, and the people who hold the decisions." },
     { name: "Focus", body: "Align your base, define your market." },
@@ -410,48 +564,17 @@ export function ActNext({ read }: { read: FirstReadPreviewData }) {
         // PUBLIC-ONLY reword (2026-08-20, DRAFT): told-us clause removed.
         standfirst="This read used only what anyone can see. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
       />
-      <main className="grid gap-16 border-b pb-16 md:grid-cols-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <div className="md:col-span-7">
-          <Eyebrow>Questions this read raises</Eyebrow>
-          {read.questions.length === 0 ? (
-            <div className="mt-8">
-              <Absent>{NO_QUESTIONS_NOTE}</Absent>
-            </div>
-          ) : (
-            <ol className="mt-8 space-y-8">
-              {read.questions.map((question, index) => (
-                <li key={question} className="flex gap-6">
-                  <span className="pt-1 text-[10px] font-bold tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{question}</p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-        <div className="md:col-span-5">
-          <Eyebrow>How the work unfolds</Eyebrow>
-          <ol className="mt-8 space-y-8">
-            {phases.map((phase) => (
-              <li key={phase.name} className="border-b pb-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-                <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>{phase.name}</span>
-                <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{phase.body}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </main>
-      <div className="border-b py-10" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <p className="text-center text-xs font-bold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-muted))" }}>
-          {phases.map((phase, index) => (
-            <span key={phase.name}>
-              {index > 0 ? <span className="mx-4" style={{ color: "hsl(var(--fr-faint))" }}>·</span> : null}
-              {phase.name}
-            </span>
+      <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <Eyebrow>How the work unfolds</Eyebrow>
+        <ol className="mt-8 grid gap-8 md:grid-cols-3">
+          {phases.map((phase) => (
+            <li key={phase.name} className="border-b pb-6 md:border-b-0" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+              <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>{phase.name}</span>
+              <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{phase.body}</p>
+            </li>
           ))}
-        </p>
-      </div>
+        </ol>
+      </main>
       <p className="fr-link-ink pt-12 text-center text-sm font-light leading-relaxed">
         The next step is a conversation, not a button.
       </p>

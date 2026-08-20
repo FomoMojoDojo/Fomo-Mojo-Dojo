@@ -21,10 +21,24 @@ import {
   PUBLIC_PROVENANCE,
   uploadDerivedClaimIds,
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
-import { deriveSourceTag } from "./deriveSourceTag";
+import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
+import { isChannelJunk } from "./channelJunk";
+import { bandForScore } from "./scoreBands";
 import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
-import type { FirstReadPreviewData, FRGapPair, FRSignal } from "./types";
+import type {
+  FirstReadPreviewData,
+  FRGapPair,
+  FRMarketDef,
+  FRSignal,
+} from "./types";
 import { EMPTY_FIRST_READ } from "./types";
+
+// A synthesized "what we see" object (canvas/cascade/market) tags as our public read
+// plus the artifact's date — never a page URL (it is our synthesis, not a scraped page).
+function syntheticTag(date: string | null): { label: string } | null {
+  const d = formatFullDate(date);
+  return d ? { label: `Public read · ${d}` } : { label: "Public read" };
+}
 
 // Tables not yet in the generated Database types use the established
 // loose-typing bypass, scoped to this module.
@@ -238,7 +252,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           if (!prior || (s.event_date ?? "") > (prior.event_date ?? "")) ownSigByClaim.set(r.claim_id, s);
         }
 
-        const declared = declaredAll
+        const channelRowsAll = declaredAll
           .filter((c) => !declDocExcluded.has(c.id) && ownVoiceIds.has(c.id))
           .map((c) => {
             const sig = ownSigByClaim.get(c.id) ?? null;
@@ -249,8 +263,14 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
               statement: c.statement,
               // Public branch: the page it came from + the run read date.
               sourceTag: sig ? publicSignalTag(sig, runDates) : null,
+              junk: isChannelJunk(c.statement, sig?.source_title ?? null),
             };
           });
+        // R3: junk rows (page titles / no-content notes) are hidden but their ids reported.
+        const channelJunkIds = channelRowsAll.filter((c) => c.junk).map((c) => c.id);
+        const declared = channelRowsAll
+          .filter((c) => !c.junk)
+          .map(({ junk: _junk, ...row }) => row);
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -405,6 +425,97 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const intRow = ((intRows ?? []) as Array<{ status: string }>)[0] ?? null;
         if (intRow) gapIntegrity = intRow.status === "failed" ? "couldnt_check" : "looked_none";
 
+        // ── "What we see" — public register only (public-beats gate, 2026-08-20) ──
+        // Every object here is provenance public (public_inferred / public_research /
+        // market_read), rendered labelled OUR READ. No internal/declared content.
+
+        // Observed markets (R-A): odi_market_definitions in the public register, ODI form
+        // (WHO + job). market_lens active fronts render first.
+        const { data: mdRows } = await supabase
+          .from("odi_market_definitions")
+          .select("id, journey_key, job_executor, jtbd, market_register, created_at, updated_at")
+          .eq("company_id", companyId)
+          .in("market_register", ["public_inferred", "publicly_declared"]);
+        const mdAll = (mdRows ?? []) as Array<{
+          id: string; journey_key: string | null; job_executor: string | null; jtbd: string | null;
+          market_register: string; created_at: string | null; updated_at: string | null;
+        }>;
+        const { data: lensRows } = await loose()
+          .from("market_lens")
+          .select("journey_key, portfolio_state")
+          .eq("company_id", companyId)
+          .eq("portfolio_state", "active");
+        const activeKeys = new Set(
+          ((lensRows ?? []) as Array<{ journey_key: string | null }>).map((r) => r.journey_key),
+        );
+        const observedMarkets: FRMarketDef[] = mdAll
+          .filter((m) => (m.job_executor ?? "").trim())
+          .sort((a, b) => Number(activeKeys.has(b.journey_key)) - Number(activeKeys.has(a.journey_key)))
+          .map((m) => ({
+            id: m.id,
+            who: (m.job_executor ?? "").trim(),
+            job: (m.jtbd ?? "").trim() || null,
+            sourceTag: syntheticTag(m.updated_at ?? m.created_at),
+          }));
+
+        // Observed positioning + promise (R-C): the market_read canvas.
+        const { data: canvasRow } = await supabase
+          .from("positioning_canvases")
+          .select("market_category, value_for_customer, proposed_tagline, unique_attributes_json, updated_at")
+          .eq("company_id", companyId)
+          .eq("artifact_role", "market_read")
+          .maybeSingle();
+        const canvas = canvasRow as {
+          market_category: string | null; value_for_customer: string | null; proposed_tagline: string | null;
+          unique_attributes_json: unknown; updated_at: string | null;
+        } | null;
+        const canvasTag = canvas ? syntheticTag(canvas.updated_at) : null;
+        const differentiators = Array.isArray(canvas?.unique_attributes_json)
+          ? (canvas!.unique_attributes_json as unknown[])
+              .map((d) => (typeof d === "string" ? d : (d as { name?: string; text?: string })?.name ?? (d as { text?: string })?.text ?? ""))
+              .map((s) => String(s).trim())
+              .filter(Boolean)
+          : [];
+        const positioning = canvas && (canvas.market_category || canvas.value_for_customer || differentiators.length)
+          ? { category: canvas.market_category, value: canvas.value_for_customer, differentiators, sourceTag: canvasTag }
+          : null;
+        const promise = canvas && (canvas.value_for_customer || canvas.proposed_tagline)
+          ? { value: canvas.value_for_customer, tagline: canvas.proposed_tagline, sourceTag: canvasTag }
+          : null;
+
+        // Observed strategy (R-C): the market_read strategy cascade.
+        const { data: cascadeRow } = await supabase
+          .from("strategy_cascades")
+          .select("winning_aspiration, where_to_play, how_to_win, updated_at")
+          .eq("company_id", companyId)
+          .eq("artifact_role", "market_read")
+          .maybeSingle();
+        const cascade = cascadeRow as {
+          winning_aspiration: string | null; where_to_play: string | null; how_to_win: string | null; updated_at: string | null;
+        } | null;
+        const strategy = cascade && (cascade.winning_aspiration || cascade.where_to_play || cascade.how_to_win)
+          ? {
+              aspiration: cascade.winning_aspiration,
+              whereToPlay: cascade.where_to_play,
+              howToWin: cascade.how_to_win,
+              sourceTag: syntheticTag(cascade.updated_at),
+            }
+          : null;
+
+        // Where you stand (R-B): inferred from the outside score + active market fronts +
+        // strong signal count. Persisted numbers only — the band is a deterministic label
+        // of the score, no adjective the data didn't earn. Hidden when no outside score.
+        const strongSignals = signals.filter((s) => s.strength === "strong").length;
+        const whereYouStand = score
+          ? {
+              scoreValue: score.value,
+              band: bandForScore(score.value).name,
+              activeFronts: activeKeys.size,
+              strongSignals,
+              sourceTag: { label: `Public read · ${formatFullDate(score.computedAt) ?? ""}`.trim().replace(/·\s*$/, "").trim() },
+            }
+          : null;
+
         // Questions (beat 7) come from useFirstReadOpenQuestions in the view —
         // the ONE authority that applies the outside-only provenance gate.
         if (!cancelled) {
@@ -412,7 +523,13 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             company: co ? { name: (co as { name: string }).name, website: (co as { website: string | null }).website } : null,
             coldOpen,
             declared,
+            channelJunkIds,
             markets,
+            observedMarkets,
+            positioning,
+            promise,
+            strategy,
+            whereYouStand,
             signals,
             score,
             gapPairs,

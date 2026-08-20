@@ -11,29 +11,26 @@ import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
 import {
-  ActBase,
   ActGap,
-  ActMap,
   ActNext,
+  ActQuestions,
   ActRecord,
-  BaseGate,
+  ActWhatWeSee,
   ColdOpen,
-  ScoreReveal,
 } from "./acts";
 
 /**
- * Eight beats: cold open → Acts 1–2 → score reveal → Act 3 → base gate →
- * Acts 4–5. Digits 1–5 jump to the acts.
+ * Public-beats order (2026-08-20): cold open → what we see → record → gap →
+ * questions → next move. No "what you say" beat (R2 — own-words extraction is a
+ * separate gate). Digits 1–5 jump to the acts.
  */
 const BEATS = [
   { key: "cold", label: "Before we start", act: undefined },
-  { key: "base", label: "The Base", act: 1 },
+  { key: "see", label: "What we see", act: 1 },
   { key: "record", label: "The Record", act: 2 },
-  { key: "reveal", label: "The Mojo Score", act: undefined },
   { key: "gap", label: "The Gap", act: 3 },
-  { key: "basegate", label: "The Base Gate", act: undefined },
-  { key: "map", label: "The Map", act: 4 },
-  { key: "next", label: "The Next Move", act: 5 },
+  { key: "questions", label: "Questions", act: 4 },
+  { key: "next", label: "Next move", act: 5 },
 ] as const;
 
 export default function FirstReadPreviewView() {
@@ -117,20 +114,16 @@ export default function FirstReadPreviewView() {
     switch (BEATS[index].key) {
       case "cold":
         return <ColdOpen read={data} onContinue={() => go(1)} />;
-      case "base":
-        return <ActBase read={data} />;
+      case "see":
+        return <ActWhatWeSee read={data} />;
       case "record":
         return <ActRecord read={data} />;
-      case "reveal":
-        return <ScoreReveal read={data} />;
       case "gap":
         return <ActGap read={data} />;
-      case "basegate":
-        return <BaseGate />;
-      case "map":
-        return <ActMap read={data} />;
+      case "questions":
+        return <ActQuestions read={data} />;
       default:
-        return <ActNext read={data} />;
+        return <ActNext />;
     }
   }, [data, go, index]);
 

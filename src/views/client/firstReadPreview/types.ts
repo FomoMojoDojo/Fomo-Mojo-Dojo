@@ -63,6 +63,51 @@ export type FRScore = {
   methodologyVersion: string;
 };
 
+// ── "What we see" public-register objects (public-beats gate, 2026-08-20) ──────
+// Every row is labelled OUR READ and carries a source tag. Synthesized objects
+// (markets/positioning/strategy) tag as "Public read · <date>"; channel rows tag
+// as page + read date.
+
+/** Observed market (odi_market_definitions, public register): people + the job. */
+export type FRMarketDef = {
+  id: string;
+  who: string;
+  job: string | null;
+  sourceTag: SourceTagResult;
+};
+
+/** Observed positioning (positioning_canvases market_read). */
+export type FRPositioning = {
+  category: string | null;
+  value: string | null;
+  differentiators: string[];
+  sourceTag: SourceTagResult;
+} | null;
+
+/** Observed promise (market_read canvas value_for_customer + proposed_tagline). */
+export type FRPromise = {
+  value: string | null;
+  tagline: string | null;
+  sourceTag: SourceTagResult;
+} | null;
+
+/** Observed strategy (strategy_cascades market_read). */
+export type FRStrategy = {
+  aspiration: string | null;
+  whereToPlay: string | null;
+  howToWin: string | null;
+  sourceTag: SourceTagResult;
+} | null;
+
+/** Inferred base reading (R-B) — persisted numbers only, no unearned adjectives. */
+export type FRWhereYouStand = {
+  scoreValue: number;
+  band: string;
+  activeFronts: number;
+  strongSignals: number;
+  sourceTag: SourceTagResult;
+} | null;
+
 export type FirstReadPreviewData = {
   company: { name: string; website: string | null } | null;
   coldOpen: FRColdOpen | null;
@@ -79,6 +124,14 @@ export type FirstReadPreviewData = {
    * Governs the empty-beat line — never derived from array emptiness alone.
    */
   gapIntegrity: "not_yet" | "looked_none" | "couldnt_check";
+  // ── "What we see" public register (public-beats gate, 2026-08-20) ──
+  /** R3: ids of channel rows hidden by the junk filter (reported, never silent). */
+  channelJunkIds: string[];
+  observedMarkets: FRMarketDef[];
+  positioning: FRPositioning;
+  promise: FRPromise;
+  strategy: FRStrategy;
+  whereYouStand: FRWhereYouStand;
   questions: string[];
 };
 
@@ -91,5 +144,11 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   score: null,
   gapPairs: [],
   gapIntegrity: "not_yet",
+  channelJunkIds: [],
+  observedMarkets: [],
+  positioning: null,
+  promise: null,
+  strategy: null,
+  whereYouStand: null,
   questions: [],
 };
