@@ -19,7 +19,49 @@ import {
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { formatMonthYear } from "./mapping";
-import type { FirstReadPreviewData, FRGapCounts, FRSignal } from "./types";
+import type { FirstReadPreviewData, FRGapCounts, FRSignal, FRStatusConflict } from "./types";
+
+// S5 — a small chip marking a row whose backing references a location with a live status conflict.
+function StatusDisputedChip() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+      style={{ background: "hsl(347 77% 50% / 0.10)", color: "hsl(347 77% 42%)" }}
+    >
+      Status disputed
+    </span>
+  );
+}
+
+// S4 — the pinned status-conflict banner (top of Questions + Findings). Both source sets, no verdict.
+function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) {
+  if (conflicts.length === 0) return null;
+  return (
+    <div className="mb-12 flex flex-col gap-6">
+      {conflicts.map((c) => (
+        <div key={c.location} className="rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(347 77% 50%)", background: "hsl(347 77% 50% / 0.04)" }}>
+          <div className="mb-3"><StatusDisputedChip /></div>
+          <p className="max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
+          <div className="mt-5 grid gap-6 text-xs md:grid-cols-2" style={{ color: "hsl(var(--fr-muted))" }}>
+            <div>
+              <p className="fr-eyebrow mb-2">Reported closed</p>
+              {c.closed.map((s, i) => (
+                <p key={i}>{s.host}{s.date ? ` · ${s.date}` : ""}</p>
+              ))}
+            </div>
+            <div>
+              <p className="fr-eyebrow mb-2">Still listed open</p>
+              {c.open.slice(0, 6).map((s, i) => (
+                <p key={i}>{s.host}{s.date ? ` · ${s.date}` : ""}</p>
+              ))}
+              {c.open.length > 6 ? <p>+{c.open.length - 6} more</p> : null}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
 const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
@@ -119,6 +161,8 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
               &ldquo;{read.coldOpen.text}&rdquo;
             </p>
             <footer className="mt-6 flex flex-col items-center gap-2">
+              {/* S5 — the featured cold-open item carries the disputed marker too. */}
+              {read.coldOpen.statusDisputed ? <StatusDisputedChip /> : null}
               {read.coldOpen.sourceTag ? <SourceTag>{read.coldOpen.sourceTag.label}</SourceTag> : null}
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
             </footer>
@@ -328,7 +372,9 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
         }
       />
       <main className="fr-stagger">
-        {total === 0 ? <Absent>{NO_FINDINGS_NOTE}</Absent> : null}
+        {/* S4: status conflicts pinned ABOVE findings (above recurrence). */}
+        <StatusConflictBanner conflicts={read.statusConflicts} />
+        {total === 0 && read.statusConflicts.length === 0 ? <Absent>{NO_FINDINGS_NOTE}</Absent> : null}
         {shown.map((f) => (
           <LedgerRow
             key={f.id}
@@ -336,6 +382,8 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
             leftBody={f.body}
             meta={
               <>
+                {/* S5 — disputed marker when the finding references a conflicted location. */}
+                {f.statusDisputed ? <StatusDisputedChip /> : null}
                 {f.sourceTag ? <SourceTag>{f.sourceTag.label}</SourceTag> : null}
                 {/* R4 age marker — a stale (old-dated or undated) finding is never hidden, only marked. */}
                 {f.ageMarker ? (
@@ -785,6 +833,8 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
               meta={
                 <>
                   <VerdictChip verdict={pair.verdict} />
+                  {/* S5 — disputed marker next to the verdict; the pair is NOT hidden. */}
+                  {pair.statusDisputed ? <StatusDisputedChip /> : null}
                   {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
                   {recency ? <RecencyTag>{recency}</RecencyTag> : null}
                 </>
@@ -856,8 +906,10 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
         standfirst="Open questions from the public record — the threads worth taking a position on."
       />
       <main className="fr-stagger">
+        {/* S4: status conflicts pinned ABOVE all questions. */}
+        <StatusConflictBanner conflicts={read.statusConflicts} />
         {read.questions.length === 0 ? (
-          <Absent>{NO_QUESTIONS_NOTE}</Absent>
+          read.statusConflicts.length === 0 ? <Absent>{NO_QUESTIONS_NOTE}</Absent> : null
         ) : (
           <ol className="space-y-8">
             {read.questions.map((question, index) => (

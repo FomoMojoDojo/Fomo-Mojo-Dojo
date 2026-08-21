@@ -40,7 +40,10 @@ export function useFirstReadOpenQuestions(companyId?: string) {
         .eq("status", "live") // live set only; superseded is history, never rendered
         .order("created_at", { ascending: true })
         .order("question_identity", { ascending: true }); // deterministic tie-break
-      let live = ((data as OpenQuestionListRow[] | null) ?? []).filter((r) => r.question_text?.trim());
+      // S4: status_conflict rows render as a PINNED banner (read.statusConflicts), not in this
+      // plain list — exclude them here so they aren't double-rendered.
+      let live = ((data as OpenQuestionListRow[] | null) ?? [])
+        .filter((r) => r.question_text?.trim() && r.source_kind !== "status_conflict");
 
       // PROVENANCE GATE — First Read is OUTSIDE-ONLY. A silent_delta question is BORN from a declared
       // publicly-silent claim; if that claim is uploaded-document-derived, the question is document

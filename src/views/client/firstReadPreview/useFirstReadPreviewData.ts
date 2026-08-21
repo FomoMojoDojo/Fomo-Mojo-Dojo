@@ -33,6 +33,7 @@ import type {
   FRMarketDef,
   FROwnWord,
   FRSignal,
+  FRStatusSource,
 } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
 
@@ -333,6 +334,29 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             chosen: m.id === chosenId,
           }));
 
+        // ── S3/S5: live status conflicts — pinned atop Questions + Findings, and the match
+        // key marks disputed rows (gap pairs / findings / cold open). Loaded early so every
+        // consumer below can flag itself.
+        const { data: scRows } = await loose()
+          .from("first_read_open_questions")
+          .select("question_text, conflict_location, conflict_sources")
+          .eq("company_id", companyId).eq("source_kind", "status_conflict").eq("status", "live");
+        type SCRow = { question_text: string; conflict_location: string | null; conflict_sources: { closed?: FRStatusSource[]; open?: FRStatusSource[] } | null };
+        const statusConflicts = ((scRows ?? []) as SCRow[]).map((r) => {
+          const location = r.conflict_location ?? "";
+          return {
+            location,
+            matchKey: location.split(/\s[&(]/)[0].trim().toLowerCase(),
+            question: r.question_text,
+            closed: r.conflict_sources?.closed ?? [],
+            open: r.conflict_sources?.open ?? [],
+          };
+        }).filter((c) => c.matchKey.length > 2);
+        const disputes = (text: string | null | undefined): boolean => {
+          const t = (text ?? "").toLowerCase();
+          return statusConflicts.some((c) => t.includes(c.matchKey));
+        };
+
         // ── Cold open (beat 0) — R6 authority chain ─────────────────────────
         let coldOpen: FirstReadPreviewData["coldOpen"] = null;
         const { data: featRows } = await loose()
@@ -366,6 +390,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
                 text: claim.statement,
                 sourceTag: sig ? publicSignalTag(sig, runDates) : null,
                 eventDate: sig?.event_date ?? null,
+                statusDisputed: disputes(claim.statement),
               };
             }
           }
@@ -373,7 +398,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         if (!coldOpen) {
           const fallback = signals.find((s) => s.strength === "strong") ?? null;
           if (fallback) {
-            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate };
+            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate, statusDisputed: disputes(fallback.text) };
           }
         }
 
@@ -447,6 +472,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
             evidenceRank,
+            statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
           });
         }
         // A1 order — by discussability: contradicted → unechoed → confirmed; strength desc within.
@@ -625,6 +651,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             recurrence: recByFinding.get(f.id) ?? 0,
             sourceTag: readFmt ? { label } : null,
             stale, ageMarker,
+            statusDisputed: disputes(f.body),
             recencyKey: eventDate ?? f.created_at ?? "",
           };
         });
@@ -657,6 +684,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             score,
             gapPairs: orderedGapPairs,
             gapCounts,
+            statusConflicts,
             gapIntegrity,
             questions: [],
           });

@@ -25,6 +25,8 @@ export type FRColdOpen = {
   text: string;
   sourceTag: SourceTagResult;
   eventDate: string | null;
+  /** S5: the featured item references a location with a live status conflict. */
+  statusDisputed?: boolean;
 };
 
 export type FRDeclared = {
@@ -72,11 +74,26 @@ export type FRGapPair = {
   eventDate: string | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
+  /** S5: backing references a location with a live status conflict. */
+  statusDisputed?: boolean;
 };
 
 /** A1: persisted type counts that pick beat 4's headline (never a disagreement headline over
  *  zero disagreements). Derived from the rendered pairs. */
 export type FRGapCounts = { contradicted: number; unechoed: number; confirmed: number };
+
+/** S3/S5: a live status conflict — an authoritative source reports {location} closed while others
+ *  list it open. Pinned atop Questions + Findings; rows whose backing references {location} carry
+ *  a STATUS DISPUTED chip. Never a verdict. */
+export type FRStatusSource = { host: string; date: string | null; quote: string };
+export type FRStatusConflict = {
+  location: string;
+  /** lowercased match key (the partner name) used to mark disputed rows. */
+  matchKey: string;
+  question: string;
+  closed: FRStatusSource[];
+  open: FRStatusSource[];
+};
 
 export type FRScore = {
   value: number;
@@ -132,6 +149,8 @@ export type FRFinding = {
    *  never hidden. The marker distinguishes an old-but-dated finding from an undated one. */
   stale: boolean;
   ageMarker: "dated" | "undated" | null;
+  /** S5: backing references a location with a live status conflict. */
+  statusDisputed?: boolean;
 };
 
 /** One persisted micro-move of the outside score (W1, 2026-08-20): value / max with
@@ -175,6 +194,8 @@ export type FirstReadPreviewData = {
   gapPairs: FRGapPair[];
   /** A1: type counts driving the gap headline/standfirst. */
   gapCounts: FRGapCounts;
+  /** S3/S5: live status conflicts (pinned atop Questions + Findings; mark disputed rows). */
+  statusConflicts: FRStatusConflict[];
   /**
    * GATE B-1: the gap's persisted integrity state (integrity_runs, component
    * 'first_read_gap_pairs'): not-yet (no record), looked-and-none, couldn't-check.
@@ -212,6 +233,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   score: null,
   gapPairs: [],
   gapCounts: { contradicted: 0, unechoed: 0, confirmed: 0 },
+  statusConflicts: [],
   gapIntegrity: "not_yet",
   channelJunkIds: [],
   observedMarkets: [],
