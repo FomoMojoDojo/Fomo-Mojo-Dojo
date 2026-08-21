@@ -14,12 +14,23 @@ function sig(over: Partial<OutsideSignalInput> = {}, i = 0): OutsideSignalInput 
   return {
     id: `s${i}`,
     sourceType: "public_baseline_run",
+    sourceUrl: null, // default: no host → categorized "Other" → does not count toward breadth
     eventDate: null,
     confidence: "medium",
     recurrenceConfirmed: false,
     ...over,
   };
 }
+
+// One host per OUTSIDE kind (signed categories) — for coverage_breadth fixtures.
+const KIND_HOST: Record<string, string> = {
+  reviews: "https://www.yelp.com/biz/x",
+  social: "https://www.instagram.com/x/",
+  press: "https://www.mordorintelligence.com/x",
+  directories: "https://www.chamberofcommerce.com/x",
+  own: "https://www.cafebarra.com/", // excluded (Your own site)
+  other: "https://www.lefrenchrooster.com/about-us/", // excluded (Other)
+};
 
 function base(n: number, over: Partial<OutsideScoreInput> = {}): OutsideScoreInput {
   return {
@@ -65,8 +76,9 @@ describe("outside-v1.0.0 — anchor and bounds by construction", () => {
     expect(r.totalScore).toBe(11);
   });
   it("best case → ceiling 25", () => {
+    const hosts = [KIND_HOST.reviews, KIND_HOST.social, KIND_HOST.press, KIND_HOST.directories];
     const signals = Array.from({ length: 10 }, (_, i) =>
-      sig({ recurrenceConfirmed: true, eventDate: "2026-06-01", sourceType: `type${i % 4}` }, i),
+      sig({ recurrenceConfirmed: true, eventDate: "2026-06-01", sourceUrl: hosts[i % 4] }, i),
     );
     const deltas = [
       ...Array.from({ length: 6 }, (_, i) => ({
@@ -144,18 +156,37 @@ describe("outside-v1.0.0 — individual moves", () => {
     expect(r.moves.find((m) => m.key === "differentiation_echo")!.value).toBe(2); // 3 distinct, capped
   });
 
-  it("coverage_breadth: 1 type → 0; 4+ types → 1; linear between", () => {
-    const one = computeOutsideScore(base(10));
+  it("coverage_breadth: signed OUTSIDE kinds only; own-site & Other excluded (1/2/4-kind)", () => {
+    // 1 kind → 0
+    const one = computeOutsideScore(
+      base(10, { signals: Array.from({ length: 10 }, (_, i) => sig({ sourceUrl: KIND_HOST.reviews }, i)) }),
+    );
     if (!one.eligible) throw new Error("expected eligible");
     expect(one.moves.find((m) => m.key === "coverage_breadth")!.value).toBe(0);
 
-    const three = computeOutsideScore(
-      base(10, {
-        signals: Array.from({ length: 10 }, (_, i) => sig({ sourceType: `t${i % 3}` }, i)),
-      }),
+    // 2 kinds (Reviews + Social); own-site, Other, and unmatched signals must NOT count → 1/3
+    const twoSignals = [
+      ...Array.from({ length: 4 }, (_, i) => sig({ sourceUrl: KIND_HOST.reviews }, i)),
+      ...Array.from({ length: 3 }, (_, i) => sig({ sourceUrl: KIND_HOST.social }, i + 4)),
+      sig({ sourceUrl: KIND_HOST.own }, 7), // Your own site — excluded
+      sig({ sourceUrl: KIND_HOST.other }, 8), // Other — excluded
+      sig({ sourceUrl: null }, 9), // unmatched → Other — excluded
+    ];
+    const two = computeOutsideScore(base(10, { signals: twoSignals }));
+    if (!two.eligible) throw new Error("expected eligible");
+    expect(two.moves.find((m) => m.key === "coverage_breadth")!.value).toBeCloseTo(1 / 3, 10);
+    expect(two.inputLedger.coverage_breadth.kinds_present).toEqual(["Reviews & listings", "Social"]);
+
+    // 4 kinds → 1
+    const hosts = [KIND_HOST.reviews, KIND_HOST.social, KIND_HOST.press, KIND_HOST.directories];
+    const four = computeOutsideScore(
+      base(10, { signals: Array.from({ length: 10 }, (_, i) => sig({ sourceUrl: hosts[i % 4] }, i)) }),
     );
-    if (!three.eligible) throw new Error("expected eligible");
-    expect(three.moves.find((m) => m.key === "coverage_breadth")!.value).toBeCloseTo(2 / 3, 10);
+    if (!four.eligible) throw new Error("expected eligible");
+    expect(four.moves.find((m) => m.key === "coverage_breadth")!.value).toBe(1);
+    expect(four.inputLedger.coverage_breadth.kinds_present).toEqual([
+      "Reviews & listings", "Social", "Press & articles", "Directories",
+    ]);
   });
 
   it("freshness: undated counts NOT fresh (stated rule); 18-month window", () => {

@@ -1,9 +1,12 @@
-// ── Outside-only Mojo Score — methodology 'outside-v1.0.0' ───────────────────
+// ── Outside-only Mojo Score — methodology 'outside-v1.1.0' ───────────────────
 //
 // OPERATOR-SIGNED (resolves the Phase A design-gate 3b stop via option (a)).
-// Anchor + micro-moves, computed from OUTSIDE-VOICE material only. v1.1.0 is
-// untouched — this is a separate, insert-only reading stored in mojo_scores
-// under methodology_version 'outside-v1.0.0'.
+// Anchor + micro-moves, computed from OUTSIDE-VOICE material only. The INSIDE
+// score (snapshotMojoScore, v1.1.0) is a separate methodology and is untouched;
+// this reading is insert-only in mojo_scores under methodology_version
+// 'outside-v1.1.0'. v1.0.0 → v1.1.0: coverage_breadth now reads the SIGNED
+// source categories (sourceCategories.ts) instead of the crawl-run source_type.
+// Older outside-v1.0.0 snapshots keep their stamp.
 //
 // Deterministic. No LLM calls. Pure function — no I/O.
 //
@@ -29,9 +32,13 @@
 //                           'positioning' or 'market' (R2 trivial facets)
 //                           that has a confirmed ('echoed') outside pair,
 //                           capped at +2.
-//   coverage_breadth 0…+1   min(distinctSourceTypes − 1, 3) ÷ 3 over
-//                           eligible outside-voice signals (1 type → 0,
-//                           4+ types → 1).
+//   coverage_breadth 0…+1   min(outsideKindsPresent − 1, 3) ÷ 3 over the
+//                           SIGNED source categories (sourceCategories.ts) of
+//                           eligible outside-voice signals. Breadth counts the
+//                           four OUTSIDE kinds only — Reviews & listings,
+//                           Social, Press & articles, Directories; "Your own
+//                           site" (client voice) and "Other" never count.
+//                           (1 kind → 0, 4 kinds → 1.)
 //   freshness        0…+1   share of eligible outside-voice signals whose
 //                           event_date is within 18 months of computedAt.
 //                           STATED RULE: undated signals count NOT fresh.
@@ -44,7 +51,9 @@
 // PRECISION: intermediate math is fractional; the stored total_score rounds
 // HALF-UP to an integer; each component is stored UNROUNDED.
 
-export const OUTSIDE_METHODOLOGY_VERSION = "outside-v1.0.0";
+export const OUTSIDE_METHODOLOGY_VERSION = "outside-v1.1.0";
+import { categorizeHost, coverageSubline, hostFromUrl, OUTSIDE_KINDS, type SourceCategory } from "./sourceCategories";
+
 export const OUTSIDE_ANCHOR = 15;
 export const OUTSIDE_MIN_SIGNALS = 10;
 export const FRESHNESS_WINDOW_MONTHS = 18;
@@ -52,6 +61,7 @@ export const FRESHNESS_WINDOW_MONTHS = 18;
 export type OutsideSignalInput = {
   id: string;
   sourceType: string | null;
+  sourceUrl: string | null; // the source's URL — categorized via the signed source-category map
   eventDate: string | null; // ISO date or null (null = NOT fresh, stated rule)
   confidence: string | null; // confidence_to_use
   recurrenceConfirmed: boolean; // participates in an ACCEPTED recurrence pair
@@ -81,7 +91,11 @@ export type OutsideScoreLedger = {
   };
   record_strength: { strong_signal_ids: string[]; signal_count: number };
   differentiation_echo: { delta_ids: string[] };
-  coverage_breadth: { signal_ids: string[]; distinct_source_types: string[] };
+  coverage_breadth: {
+    signal_ids: string[];
+    kinds_present: SourceCategory[]; // OUTSIDE kinds counted (canonical order)
+    kind_hosts: Record<string, string[]>; // per-kind distinct hosts that contributed
+  };
   freshness: { fresh_signal_ids: string[] };
 };
 
@@ -175,11 +189,20 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
   );
   const differentiationEcho = Math.min(diffClaims.size, 2);
 
-  // coverage_breadth: min(distinctTypes − 1, 3) / 3.
-  const distinctTypes = new Set(
-    input.signals.map((s) => (s.sourceType ?? "").trim()).filter((t) => t.length > 0),
-  ).size;
-  const coverageBreadth = Math.min(Math.max(distinctTypes - 1, 0), 3) / 3;
+  // coverage_breadth: distinct OUTSIDE source kinds present (signed categories). "Your own site"
+  // (client voice) and "Other" never count. min(kindsPresent − 1, 3) / 3.
+  const kindHosts = new Map<SourceCategory, string[]>();
+  for (const s of input.signals) {
+    const cat = categorizeHost(s.sourceUrl);
+    if (!OUTSIDE_KINDS.includes(cat)) continue;
+    const host = hostFromUrl(s.sourceUrl);
+    if (!host) continue;
+    const arr = kindHosts.get(cat) ?? [];
+    arr.push(host);
+    kindHosts.set(cat, arr);
+  }
+  const presentKinds = OUTSIDE_KINDS.filter((k) => kindHosts.has(k)); // canonical order
+  const coverageBreadth = Math.min(Math.max(presentKinds.length - 1, 0), 3) / 3;
 
   // freshness: share with event_date within 18 months of computedAt; undated NOT fresh.
   const freshCount = input.signals.filter(
@@ -214,7 +237,7 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
       value: coverageBreadth,
       min: 0,
       max: 1,
-      explanation: `${distinctTypes} distinct public source type(s) represented.`,
+      explanation: coverageSubline(presentKinds),
     },
     {
       key: "freshness",
@@ -247,7 +270,10 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
     },
     coverage_breadth: {
       signal_ids: input.signals.map((s) => s.id),
-      distinct_source_types: [...new Set(input.signals.map((s) => (s.sourceType ?? "").trim()).filter((t) => t.length > 0))],
+      kinds_present: presentKinds, // the OUTSIDE kinds that counted, canonical order
+      kind_hosts: Object.fromEntries(
+        [...kindHosts.entries()].map(([k, v]) => [k, [...new Set(v)]]),
+      ),
     },
     freshness: {
       fresh_signal_ids: input.signals

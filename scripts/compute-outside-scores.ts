@@ -1,10 +1,12 @@
-// ── outside-v1.0.0 runner (local dev) ─────────────────────────────────────────
+// ── outside-v1.1.0 runner (local dev) ─────────────────────────────────────────
 //
 // Computes the OPERATOR-SIGNED outside-only Mojo Score (anchor + micro-moves;
-// formulas live ONCE in src/lib/outsideScore/computeOutsideScore.ts) for every
-// company EXCEPT the frozen CB1, and inserts one row per eligible company into
-// mojo_scores under methodology_version 'outside-v1.0.0' (insert-only; the DB
-// freeze trigger independently protects CB1).
+// formulas live ONCE in src/lib/outsideScore/computeOutsideScore.ts, source
+// categories ONCE in src/lib/outsideScore/sourceCategories.ts) for every company
+// EXCEPT the frozen CB1, and inserts one row per eligible company into
+// mojo_scores under the version stamped by OUTSIDE_METHODOLOGY_VERSION
+// (currently 'outside-v1.1.0'; insert-only; the DB freeze trigger independently
+// protects CB1).
 //
 // I/O goes through the local supabase db container via `docker exec psql`
 // (superuser — the same channel every audited local data act uses); the
@@ -29,6 +31,7 @@ import {
   type OutsideDeltaInput,
   type OutsideSignalInput,
 } from "../src/lib/outsideScore/computeOutsideScore";
+import { categorizeHost } from "../src/lib/outsideScore/sourceCategories";
 
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
 const CB1_FROZEN_ID = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc"; // NEVER written
@@ -41,6 +44,9 @@ const excludeSignal = process.argv.find((a) => a.startsWith("--exclude-signal=")
 // Vacuous-proof hook: drop every delta whose declared statement (own-words id) matches, so the
 // echo ledger's statement-id diff can be checked against exactly one planted statement.
 const excludeStatement = process.argv.find((a) => a.startsWith("--exclude-statement="))?.split("=")[1] ?? null;
+// Vacuous-proof hook: drop every signal whose SIGNED source category matches one whole kind, so
+// the coverage ledger's kinds_present diff can be checked against exactly that kind.
+const excludeKind = process.argv.find((a) => a.startsWith("--exclude-kind="))?.split("=")[1] ?? null;
 
 function psqlJson<T>(sql: string): T {
   const out = execFileSync(
@@ -70,6 +76,7 @@ type CompanyRow = { id: string; name: string };
 type SignalRow = {
   id: string;
   source_type: string | null;
+  source_url: string | null;
   event_date: string | null;
   confidence_to_use: string | null;
 };
@@ -96,7 +103,7 @@ console.log(`CB1 (${CB1_FROZEN_ID}) excluded from compute by rule.\n`);
 for (const company of companies) {
   const signalsRaw =
     psqlJson<SignalRow[]>(
-      `SELECT coalesce(json_agg(json_build_object('id', id, 'source_type', source_type, 'event_date', event_date, 'confidence_to_use', confidence_to_use)), '[]'::json)
+      `SELECT coalesce(json_agg(json_build_object('id', id, 'source_type', source_type, 'source_url', source_url, 'event_date', event_date, 'confidence_to_use', confidence_to_use)), '[]'::json)
        FROM signals
        WHERE company_id='${company.id}' AND signal_band='outside'
          AND voice_class='outside_voice_about_client' AND superseded_at IS NULL
@@ -131,11 +138,14 @@ for (const company of companies) {
     ) ?? [];
 
   const signals: OutsideSignalInput[] = signalsRaw
-    // Vacuous-proof hook: drop one signal id from the scored input (proof, never a real run).
+    // Vacuous-proof hooks: drop one signal id, or one whole source kind, from the scored input
+    // (proof, never a real run).
     .filter((s) => s.id !== excludeSignal)
+    .filter((s) => !excludeKind || categorizeHost(s.source_url) !== excludeKind)
     .map((s) => ({
       id: s.id,
       sourceType: s.source_type,
+      sourceUrl: s.source_url,
       eventDate: s.event_date,
       confidence: s.confidence_to_use,
       recurrenceConfirmed: confirmedIds.has(s.id),

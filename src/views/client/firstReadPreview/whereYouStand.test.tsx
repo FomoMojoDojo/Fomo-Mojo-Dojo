@@ -13,7 +13,7 @@ const LEVERS: FRScoreLever[] = [
   { key: "echo_integrity", label: "Echo integrity", value: 1, max: 4, explanation: "1 confirmed vs 0 contradicted outside pairs." }, // headroom 3
   { key: "record_strength", label: "Record strength", value: 0.115, max: 2, explanation: "12 of 208 outside signals are strong." }, // headroom 1.885
   { key: "differentiation_echo", label: "Differentiation echo", value: 0, max: 2, explanation: "0 positioning/market statements confirmed." }, // headroom 2
-  { key: "coverage_breadth", label: "Coverage breadth", value: 0, max: 1, explanation: "1 distinct public source type." }, // headroom 1
+  { key: "coverage_breadth", label: "Coverage breadth", value: 0, max: 1, explanation: "3 of 4 outside source kinds represented: Reviews & listings, Social, Directories. Missing: Press & articles." }, // headroom 1
   { key: "freshness", label: "Freshness", value: 0.26, max: 1, explanation: "54 of 208 signals dated within 18 months." }, // headroom 0.74
 ];
 
