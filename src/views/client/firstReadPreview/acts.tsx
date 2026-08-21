@@ -116,9 +116,9 @@ const IN_YOUR_WORDS_LABEL = "In your words"; // signed
 const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // signed
 const NO_SERVE_NOTE = "No public markets read yet."; // signed
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // signed
-// ── Findings beat (S4) — standfirst HELD (clustering fix, later step) ──
-const FINDINGS_STANDFIRST =
-  "What stands out in the public record — ranked by how widely it's corroborated across independent sources."; // DRAFT
+// ── Findings beat (S4) — standfirst SIGNED (2026-08-21). Source counts hidden until per-finding
+// corroboration is real (gate 5a, clusterer repair); claim nothing about ordering. ──
+const FINDINGS_STANDFIRST = "What we read from the public record."; // signed
 const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // signed
 const FINDINGS_SHOWN = 5;
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // signed
@@ -308,9 +308,9 @@ export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
 }
 
 /**
- * Findings beat (S4) — public_inferred open findings, recurrence-ranked (breadth desc, then
- * recency, done in the hook). First 5 expanded; the rest under "show all N". Each row tags its
- * public read + date and shows its corroboration count. No verdict language (UNDERSERVED etc.
+ * Findings beat (S4) — public_inferred open findings in stored order. First 5 expanded; the rest
+ * under "show all N". Each row tags its public read + date. NO source-count label: counts are
+ * unearned until per-finding corroboration is real (gate 5a). No verdict language (UNDERSERVED etc.
  * never appears — findings carry no such field).
  */
 export function ActFindings({ read }: { read: FirstReadPreviewData }) {
@@ -336,9 +336,10 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
         <StatusConflictBanner conflicts={read.statusConflicts} />
         {total === 0 && read.statusConflicts.length === 0 ? <Absent>{NO_FINDINGS_NOTE}</Absent> : null}
         {shown.map((f) => (
+          // No source-count label: counts are unearned until gate 5a (clusterer repair). The
+          // `f.recurrence` plumbing stays for 5a but nothing reads from it here.
           <LedgerRow
             key={f.id}
-            leftLabel={f.recurrence > 0 ? `${f.recurrence} source${f.recurrence === 1 ? "" : "s"}` : "Outside"}
             leftBody={f.body}
             meta={
               <>

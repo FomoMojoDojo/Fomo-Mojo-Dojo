@@ -163,7 +163,8 @@ export function LedgerRow({
   quoted = true,
   muted = false,
 }: {
-  leftLabel: string;
+  /** Eyebrow above the quote. Omit to render no eyebrow (e.g. findings carry no earned label). */
+  leftLabel?: string;
   leftBody: ReactNode;
   leftExtra?: ReactNode;
   meta: ReactNode;
@@ -182,9 +183,11 @@ export function LedgerRow({
     >
       <span className="fr-row-marker" aria-hidden />
       <div className="fr-row-body md:col-span-5">
-        <div className="mb-6">
-          <Eyebrow>{leftLabel}</Eyebrow>
-        </div>
+        {leftLabel ? (
+          <div className="mb-6">
+            <Eyebrow>{leftLabel}</Eyebrow>
+          </div>
+        ) : null}
         <div className="relative">
           {quoted ? <span className="fr-quote-mark">&ldquo;</span> : null}
           <h3

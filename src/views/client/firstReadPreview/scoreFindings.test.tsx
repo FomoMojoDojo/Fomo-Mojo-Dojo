@@ -38,8 +38,8 @@ const finding = (id: string, body: string, recurrence: number): FRFinding => ({
   id, body, recurrence, sourceTag: { label: "Public read · August 19, 2026" }, stale: false, ageMarker: null,
 });
 
-describe("S4 — Findings beat: recurrence rank, first-5/show-all, counts, junk-free", () => {
-  // Hook ranks (breadth desc, recency); this fixture is pre-ranked to assert render order + gating.
+describe("S4 — Findings beat: stored order, first-5/show-all, NO source count, junk-free", () => {
+  // Fixture in stored order; the render preserves it and claims nothing about ranking.
   const many: FRFinding[] = [
     finding("f1", "Widely corroborated finding.", 5),
     finding("f2", "Second finding.", 3),
@@ -52,18 +52,27 @@ describe("S4 — Findings beat: recurrence rank, first-5/show-all, counts, junk-
 
   it("shows the total count, the first 5, and hides the rest until 'show all'", () => {
     const { container, getByRole } = render(<ActFindings read={read({ findings: many })} />);
-    expect(container.textContent).toContain("7"); // count visible (header)
+    expect(container.textContent).toContain("7"); // findings total visible (header)
     expect(container.textContent).toContain("Widely corroborated finding.");
     expect(container.textContent).toContain("Fifth finding.");
     expect(container.textContent).not.toContain("Sixth finding"); // FALSIFICATION: hidden until expanded
-    // recurrence count is shown as a row label, no verdict language
-    expect(container.textContent).toContain("5 sources");
     expect(container.textContent).not.toMatch(/UNDERSERVED|underserved/);
     // expand
     getByRole("button", { name: /show all 7/i }).click();
   });
 
-  it("recurrence rank: a higher-breadth finding renders above a lower one (order preserved)", () => {
+  it("2026-08-21: NO source-count label; signed subtitle verbatim", () => {
+    const { container } = render(<ActFindings read={read({ findings: many })} />);
+    const text = container.textContent ?? "";
+    // no "{n} source(s)" and no "Outside" eyebrow anywhere on the beat (counts unearned until 5a)
+    expect(text).not.toMatch(/\d+\s+sources?/i);
+    expect(text).not.toContain("Outside");
+    // signed subtitle, exact
+    expect(text).toContain("What we read from the public record.");
+    expect(text).not.toContain("ranked by how widely"); // the retired DRAFT claim is gone
+  });
+
+  it("stored order preserved: fixture order renders top-to-bottom (no reordering)", () => {
     const { container } = render(<ActFindings read={read({ findings: many })} />);
     const text = container.textContent ?? "";
     expect(text.indexOf("Widely corroborated finding.")).toBeLessThan(text.indexOf("Second finding."));
