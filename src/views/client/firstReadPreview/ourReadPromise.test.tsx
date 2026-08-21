@@ -46,12 +46,14 @@ describe("beat 9 Promise — ruling 1", () => {
     expect(text).not.toContain(SIGNED);
   });
 
-  it("no canvas at all (promise null, no positioning/strategy): honest empty, no signed promise line", () => {
+  it("all gated (positioning/strategy/promise null): the three signed lines render, all three eyebrows present", () => {
     const { container } = render(
       <ActOurRead read={{ ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, positioning: null, strategy: null, promise: null }} />,
     );
     const text = container.textContent ?? "";
-    expect(text).toContain("No public positioning, strategy or promise read yet.");
-    expect(text).not.toContain(SIGNED);
+    expect(text).toContain("Not enough public information to read positioning.");
+    expect(text).toContain("Not enough public information to read strategy.");
+    expect(text).toContain(SIGNED); // promise line
+    for (const eyebrow of ["Positioning", "Strategy", "Promise"]) expect(text).toContain(eyebrow);
   });
 });

@@ -50,6 +50,14 @@ const loose = () => supabase as unknown as { from: (t: string) => any }; // esli
 
 const OUTSIDE_METHODOLOGY_PREFIX = "outside-";
 
+// GATE (2026-08-21): the "Our read" positioning + strategy render on the PUBLIC-ONLY First Read
+// only when their source row carries CONFIRMED public-only provenance. Today NO market_read row can:
+// canvas 2486e31f + cascade 1e9d2da3 came from run 6f41ff10 (evidence_status 'baseline_plus_artifacts',
+// 9 internal PDFs in the pool) — UNRESOLVED provenance. Until gate 6a lands a public-only generator
+// whose row carries an input-ledger proof (public signals/claims only, no upload/intake/internal),
+// this stays false and beat 9 shows the signed not-enough-public-information lines. Flip per-row then.
+const FIRST_READ_OUR_READ_PROVENANCE_GATE = false;
+
 type SignalRow = {
   id: string;
   evidence_excerpt: string | null;
@@ -553,9 +561,11 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
               .map((s) => String(s).trim())
               .filter(Boolean)
           : [];
-        const positioning = canvas && (canvas.market_category || canvas.value_for_customer || differentiators.length)
+        const positioningSubstance = canvas && (canvas.market_category || canvas.value_for_customer || differentiators.length)
           ? { category: canvas.market_category, value: canvas.value_for_customer, differentiators, sourceTag: canvasTag }
           : null;
+        // Gated: unresolved-provenance positioning never renders on the public First Read (signed line instead).
+        const positioning = FIRST_READ_OUR_READ_PROVENANCE_GATE ? positioningSubstance : null;
         // Promise (ruling 1, 2026-08-21): NEVER reuse value_for_customer. The schema has no distinct
         // promise field, so text is null and the beat renders the signed not-enough-information line.
         // (When/if a real promise field exists, map it here with its own source tag.)
@@ -571,7 +581,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const cascade = cascadeRow as {
           winning_aspiration: string | null; where_to_play: string | null; how_to_win: string | null; updated_at: string | null;
         } | null;
-        const strategy = cascade && (cascade.winning_aspiration || cascade.where_to_play || cascade.how_to_win)
+        const strategySubstance = cascade && (cascade.winning_aspiration || cascade.where_to_play || cascade.how_to_win)
           ? {
               aspiration: cascade.winning_aspiration,
               whereToPlay: cascade.where_to_play,
@@ -579,6 +589,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
               sourceTag: syntheticTag(cascade.updated_at),
             }
           : null;
+        // Gated: unresolved-provenance strategy never renders on the public First Read (signed line instead).
+        const strategy = FIRST_READ_OUR_READ_PROVENANCE_GATE ? strategySubstance : null;
 
         // Where you stand (W1, 2026-08-20): the interpretation of the beat-7 score, read
         // ONLY from the persisted mojo_scores snapshot — band + band meaning + the five

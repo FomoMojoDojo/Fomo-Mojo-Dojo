@@ -97,6 +97,10 @@ const LABEL_STRATEGY = "Strategy"; // signed
 const LABEL_PROMISE = "Promise"; // signed
 // Ruling 1 (2026-08-21): no distinct promise field in the canvas → render this verbatim, no source tag.
 const PROMISE_NOT_ENOUGH = "Not enough information to create promise."; // signed
+// GATE (2026-08-21): positioning + strategy render only from a CONFIRMED public-only row (gate 6a).
+// Until then beat 9 shows these signed lines verbatim, no source tag, no body.
+const POSITIONING_NOT_ENOUGH = "Not enough public information to read positioning."; // signed
+const STRATEGY_NOT_ENOUGH = "Not enough public information to read strategy."; // signed
 const LABEL_BASE = "Where you stand (inferred)"; // signed
 const BASE_INFERRED_LABEL = "Inferred from your public record."; // signed
 // ── Standalone-beat copy (council beat-order ruling) — SIGNED ──
@@ -541,54 +545,71 @@ export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
 
 /** Beat 9 — "Our read": positioning / strategy / promise as hypotheses; opens with the
  *  BaseGate four-commitments frame (S3). */
+// Signed not-enough line (muted, no source tag) — the shared shape for all three gated Our-read rows.
+function GatedLine({ children }: { children: ReactNode }) {
+  return <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{children}</p>;
+}
+
 export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
+  // GATE (2026-08-21): positioning/strategy render substance ONLY from a confirmed public-only row
+  // (the data hook gates them to null today, gate 6a). Otherwise each renders its signed line. The
+  // three eyebrows (POSITIONING / STRATEGY / PROMISE) always show. Promise = own field or signed line.
   const p = read.positioning;
   const st = read.strategy;
   const pr = read.promise;
-  // Promise contributes to "anything" only via a real own field; the signed line alone is not content.
-  const anything = !!(p || st || pr?.text);
   return (
     <>
       <ActHeader headline={OURREAD_HEADLINE} standfirst={OURREAD_SUB} />
       <main className="fr-stagger">
-        {!anything ? <div className="mb-8"><Absent>{NO_OURREAD_NOTE}</Absent></div> : null}
-        <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
-          {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
-          {p?.value ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
-          ) : null}
-          {p && p.differentiators.length > 0 ? (
-            <ul className="mt-4 flex flex-col gap-2">
-              {p.differentiators.map((d, i) => (
-                <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
-              ))}
-            </ul>
-          ) : null}
-          {p?.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
+        <WeSeeSection label={LABEL_POSITIONING} show>
+          {p ? (
+            <>
+              {p.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
+              {p.value ? (
+                <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
+              ) : null}
+              {p.differentiators.length > 0 ? (
+                <ul className="mt-4 flex flex-col gap-2">
+                  {p.differentiators.map((d, i) => (
+                    <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {p.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
+            </>
+          ) : (
+            <GatedLine>{POSITIONING_NOT_ENOUGH}</GatedLine>
+          )}
         </WeSeeSection>
-        <WeSeeSection label={LABEL_STRATEGY} show={!!st}>
-          {st?.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
-          {st?.whereToPlay ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
-            </p>
-          ) : null}
-          {st?.howToWin ? (
-            <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              <span className="fr-eyebrow">How to win</span> — {st.howToWin}
-            </p>
-          ) : null}
-          {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
+        <WeSeeSection label={LABEL_STRATEGY} show>
+          {st ? (
+            <>
+              {st.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
+              {st.whereToPlay ? (
+                <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                  <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
+                </p>
+              ) : null}
+              {st.howToWin ? (
+                <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                  <span className="fr-eyebrow">How to win</span> — {st.howToWin}
+                </p>
+              ) : null}
+              {st.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
+            </>
+          ) : (
+            <GatedLine>{STRATEGY_NOT_ENOUGH}</GatedLine>
+          )}
         </WeSeeSection>
         {/* Promise (ruling 1): own field when present; otherwise the signed line, no source tag. */}
-        <WeSeeSection label={LABEL_PROMISE} show={!!(p || st) || !!pr?.text}>
+        <WeSeeSection label={LABEL_PROMISE} show>
           {pr?.text ? (
             <>
               <p className="text-2xl font-semibold leading-snug">{pr.text}</p>
               {pr.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
             </>
           ) : (
-            <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{PROMISE_NOT_ENOUGH}</p>
+            <GatedLine>{PROMISE_NOT_ENOUGH}</GatedLine>
           )}
         </WeSeeSection>
       </main>
