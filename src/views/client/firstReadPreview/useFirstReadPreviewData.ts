@@ -25,7 +25,7 @@ import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
-import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, facetForTopic, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
@@ -396,7 +396,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           .select("id, delta_type, declared_claim_id, public_claim_id")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
-          .in("delta_type", ["echoed", "divergent", "internally_silent"]);
+          // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
+          .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
         const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null }>;
         const gapClaimIds = [
           ...new Set(
@@ -404,10 +405,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ),
         ];
         const { data: gapClaims } = gapClaimIds.length
-          ? await supabase.from("claims").select("id, statement, status, raw_payload, provenance").in("id", gapClaimIds)
+          ? await supabase.from("claims").select("id, statement, status, raw_payload, provenance, confidence").in("id", gapClaimIds)
           : { data: [] };
         const gapClaimById = new Map(
-          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null; raw_payload?: unknown; provenance?: string | null }>).map((c) => [c.id, c]),
+          ((gapClaims ?? []) as Array<{ id: string; statement: string; status: string | null; raw_payload?: unknown; provenance?: string | null; confidence?: string | null }>).map((c) => [c.id, c]),
         );
         const declaredIdsInPairs = [...new Set(deltas.map((d) => d.declared_claim_id).filter((x): x is string => !!x))];
         // Every declared id goes through the gate — with its fetched payload when the claim
@@ -418,34 +419,43 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const publicNewest = await newestSignalByClaim(
           deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x),
         );
+        const confidenceRank = (c: string | null | undefined) =>
+          ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[(c ?? "").toLowerCase()] ?? 1;
         const gapPairs: FRGapPair[] = [];
         for (const d of deltas) {
           const verdict = verdictForDeltaType(d.delta_type);
           if (!verdict) continue;
-          if (d.declared_claim_id && pairDocExcluded.has(d.declared_claim_id)) continue;
-          // PUBLIC-ONLY: a pair whose declared side is not a public claim never renders
-          // (say-anchored pairs re-appear after the Gate-B recompute re-bases them on
-          // client-voice public claims).
-          if (d.declared_claim_id) {
-            const dc = gapClaimById.get(d.declared_claim_id);
-            if (!dc || dc.provenance !== PUBLIC_PROVENANCE) continue;
-          }
-          const declaredClaim = d.declared_claim_id ? gapClaimById.get(d.declared_claim_id) : null;
+          // A1: every beat-4 row is DECLARED-anchored — a public client-voice claim.
+          if (!d.declared_claim_id || pairDocExcluded.has(d.declared_claim_id)) continue;
+          const declaredClaim = gapClaimById.get(d.declared_claim_id);
+          if (!declaredClaim || declaredClaim.provenance !== PUBLIC_PROVENANCE) continue;
           const publicClaim = d.public_claim_id ? gapClaimById.get(d.public_claim_id) : null;
-          if (declaredClaim?.status === "struck" || publicClaim?.status === "struck") continue;
-          if (!publicClaim) continue; // every rendered pair carries a record side
+          if (declaredClaim.status === "struck" || publicClaim?.status === "struck") continue;
+          // unechoed (publicly_silent) has NO record side; confirmed/contradicted must carry one.
+          if (verdict !== "unechoed" && !publicClaim) continue;
           const sig = d.public_claim_id ? publicNewest.get(d.public_claim_id) ?? null : null;
+          // Evidence strength: from the record signal for confirmed/contradicted; from the
+          // declared claim's confidence for the unechoed (record-silent) rows.
+          const evidenceRank = verdict === "unechoed"
+            ? confidenceRank(declaredClaim.confidence)
+            : confidenceRank(sig?.confidence_to_use);
           gapPairs.push({
             id: d.id,
             verdict,
-            declared: declaredClaim?.statement ?? null,
-            record: publicClaim.statement,
+            declared: declaredClaim.statement,
+            record: publicClaim?.statement ?? null,
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
+            evidenceRank,
           });
         }
-        const verdictOrder = { contradicted: 0, confirmed: 1, unspoken: 2 } as const;
-        gapPairs.sort((a, b) => verdictOrder[a.verdict] - verdictOrder[b.verdict]);
+        // A1 order — by discussability: contradicted → unechoed → confirmed; strength desc within.
+        const orderedGapPairs = orderGapPairs(gapPairs);
+        const gapCounts = {
+          contradicted: gapPairs.filter((p) => p.verdict === "contradicted").length,
+          unechoed: gapPairs.filter((p) => p.verdict === "unechoed").length,
+          confirmed: gapPairs.filter((p) => p.verdict === "confirmed").length,
+        };
 
         // ── GATE B-1: the gap's PERSISTED integrity state ───────────────────
         // Written by the public-kind delta finalize (integrity_runs, component
@@ -645,7 +655,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             scoreLooked,
             signals,
             score,
-            gapPairs,
+            gapPairs: orderedGapPairs,
+            gapCounts,
             gapIntegrity,
             questions: [],
           });

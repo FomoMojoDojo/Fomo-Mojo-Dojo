@@ -18,9 +18,19 @@ export function strengthForSignal(
   return "moderate";
 }
 
+// A1: beat-4 order by discussability — contradicted → unechoed → confirmed (unspoken last,
+// though it is off-surface). Ties break by evidence strength desc.
+export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, unechoed: 1, confirmed: 2, unspoken: 3 };
+export function orderGapPairs<T extends { verdict: string; evidenceRank: number }>(pairs: T[]): T[] {
+  return [...pairs].sort((a, b) =>
+    (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9) || b.evidenceRank - a.evidenceRank);
+}
+
 /**
- * R5 (signed): echoed→CONFIRMED, divergent→CONTRADICTED,
- * internally_silent→UNSPOKEN. publicly_silent stays OFF this surface (null).
+ * A1 (2026-08-20): beat 4 is the DECLARED-anchored say-vs-see. echoed→CONFIRMED,
+ * divergent→CONTRADICTED, publicly_silent→UNECHOED (we say it, the record is silent).
+ * internally_silent (record-only) is OFF this surface now (null) — it lives in the outside-raised
+ * cold open, not the gap. (Prior R5 kept publicly_silent off and internally_silent on; reversed.)
  */
 export function verdictForDeltaType(deltaType: string): FRGapVerdict | null {
   switch (deltaType) {
@@ -28,8 +38,8 @@ export function verdictForDeltaType(deltaType: string): FRGapVerdict | null {
       return "confirmed";
     case "divergent":
       return "contradicted";
-    case "internally_silent":
-      return "unspoken";
+    case "publicly_silent":
+      return "unechoed";
     default:
       return null;
   }

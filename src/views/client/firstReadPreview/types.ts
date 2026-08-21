@@ -56,18 +56,27 @@ export type FRMarket = {
   chosen: boolean;
 };
 
-export type FRGapVerdict = "confirmed" | "contradicted" | "unspoken";
+// A1 (2026-08-20): beat 4 surfaces the DECLARED-anchored say-vs-see — contradicted (divergent),
+// unechoed (publicly_silent: we say it, the record is silent), confirmed (echoed). 'unspoken'
+// (internally_silent, record-only) is off this surface; the type keeps it for the mapper.
+export type FRGapVerdict = "confirmed" | "contradicted" | "unechoed" | "unspoken";
 
 export type FRGapPair = {
   id: string;
   verdict: FRGapVerdict;
-  /** Declared-side statement; null for unspoken (company silent). */
+  /** Declared-side statement; null only for a record-only row. */
   declared: string | null;
-  /** Public-record side statement. */
-  record: string;
+  /** Public-record side statement; null for `unechoed` (the record is silent). */
+  record: string | null;
   sourceTag: SourceTagResult;
   eventDate: string | null;
+  /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
+  evidenceRank: number;
 };
+
+/** A1: persisted type counts that pick beat 4's headline (never a disagreement headline over
+ *  zero disagreements). Derived from the rendered pairs. */
+export type FRGapCounts = { contradicted: number; unechoed: number; confirmed: number };
 
 export type FRScore = {
   value: number;
@@ -164,6 +173,8 @@ export type FirstReadPreviewData = {
   /** Outside-methodology score rows ONLY (R1) — v1.1.0 never renders here. */
   score: FRScore | null;
   gapPairs: FRGapPair[];
+  /** A1: type counts driving the gap headline/standfirst. */
+  gapCounts: FRGapCounts;
   /**
    * GATE B-1: the gap's persisted integrity state (integrity_runs, component
    * 'first_read_gap_pairs'): not-yet (no record), looked-and-none, couldn't-check.
@@ -200,6 +211,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   signals: [],
   score: null,
   gapPairs: [],
+  gapCounts: { contradicted: 0, unechoed: 0, confirmed: 0 },
   gapIntegrity: "not_yet",
   channelJunkIds: [],
   observedMarkets: [],

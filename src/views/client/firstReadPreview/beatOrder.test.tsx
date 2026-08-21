@@ -14,6 +14,8 @@ const read: FirstReadPreviewData = {
   company: { name: "Co", website: "https://co.com" },
   score: { value: 16, computedAt: "2026-08-20T00:00:00Z", methodologyVersion: "outside-v1.0.0" },
   scoreLooked: true,
+  // A1: a contradicted count so the gap headline is the disagreement headline (RULED below).
+  gapCounts: { contradicted: 1, unechoed: 0, confirmed: 0 },
 };
 
 // The ruled order: [beat key, headline the beat renders].

@@ -90,9 +90,13 @@ export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
       label: "Contradicted",
       style: { background: "hsl(347 77% 50% / 0.08)", color: "hsl(347 77% 44%)" },
     },
+    unechoed: {
+      label: "Not echoed",
+      style: { background: "hsl(38 92% 50% / 0.10)", color: "hsl(30 80% 36%)" },
+    },
     unspoken: {
       label: "Unspoken",
-      style: { background: "hsl(38 92% 50% / 0.10)", color: "hsl(30 80% 36%)" },
+      style: { background: "hsl(215 20% 65% / 0.12)", color: "hsl(215 16% 40%)" },
     },
   };
   const tone = map[verdict];

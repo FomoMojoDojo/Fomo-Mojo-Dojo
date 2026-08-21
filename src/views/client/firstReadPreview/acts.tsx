@@ -19,7 +19,7 @@ import {
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { formatMonthYear } from "./mapping";
-import type { FirstReadPreviewData, FRSignal } from "./types";
+import type { FirstReadPreviewData, FRGapCounts, FRSignal } from "./types";
 
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
 const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
@@ -74,6 +74,12 @@ const FINDINGS_STANDFIRST =
 const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // DRAFT
 const FINDINGS_SHOWN = 5;
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
+// A1/A3 (2026-08-20) — beat 4 headline follows the persisted type counts. DRAFTs; sheet grows.
+const GAP_HEADLINE_DISAGREE = "Where the two readings disagree."; // contradicted > 0
+const GAP_HEADLINE_UNECHOED = "What you say that the record doesn't echo."; // contradicted 0, unechoed > 0
+const GAP_HEADLINE_BACKED = "Where the record backs you."; // only confirmed
+const GAP_HEADLINE_NEUTRAL = "Your words next to the record."; // nothing yet
+const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // DRAFT (unechoed right side)
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
 const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // DRAFT
 const STANDINGS_NOTE = "Base standings not yet generated."; // signed (Phase A ruling)
@@ -728,15 +734,34 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+/** A3: the headline follows the persisted type counts — NEVER a disagreement headline over
+ *  zero disagreements. contradicted > 0 → disagree; else unechoed > 0 → "record doesn't echo";
+ *  else confirmed > 0 → "record backs you"; else neutral. */
+function gapHeadline(c: FRGapCounts): string {
+  if (c.contradicted > 0) return GAP_HEADLINE_DISAGREE;
+  if (c.unechoed > 0) return GAP_HEADLINE_UNECHOED;
+  if (c.confirmed > 0) return GAP_HEADLINE_BACKED;
+  return GAP_HEADLINE_NEUTRAL;
+}
+/** A3: standfirst NAMES the counts (only the non-zero categories). */
+function gapStandfirst(c: FRGapCounts): string {
+  const parts: string[] = [];
+  if (c.contradicted) parts.push(`${c.contradicted} contradicted`);
+  if (c.unechoed) parts.push(`${c.unechoed} not echoed`);
+  if (c.confirmed) parts.push(`${c.confirmed} confirmed`);
+  const tally = parts.length ? ` ${parts.join(" · ")}.` : "";
+  return `What you tell the world on your own channels, next to what the world says back.${tally}`;
+}
+
 export function ActGap({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
       {/* No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
           beat (beat 7). The gap renders only its integrity note or the pairs. */}
       <ActHeader
-        headline="Where the two readings disagree."
-        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen.
-        standfirst="What you tell the world on your own channels, next to what the world says back. Neither is automatically wrong — the disagreement is where the strategy is actually being decided."
+        headline={gapHeadline(read.gapCounts)}
+        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen. Standfirst NAMES the counts.
+        standfirst={gapStandfirst(read.gapCounts)}
       />
       <main className="fr-stagger">
         {read.gapPairs.length === 0 ? (
@@ -756,6 +781,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
               leftLabel="You say"
               leftBody={pair.declared ?? UNSPOKEN_LEFT}
               quoted={pair.declared !== null}
+              muted={pair.verdict === "unechoed" && pair.record === null}
               meta={
                 <>
                   <VerdictChip verdict={pair.verdict} />
@@ -763,7 +789,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
                   {recency ? <RecencyTag>{recency}</RecencyTag> : null}
                 </>
               }
-              rightBody={pair.record}
+              rightBody={pair.record ?? RECORD_SILENT_NOTE}
             />
           );
         })}

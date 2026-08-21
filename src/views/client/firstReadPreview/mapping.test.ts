@@ -17,14 +17,14 @@ describe("firstReadPreview mapping — R4 strength", () => {
   });
 });
 
-describe("firstReadPreview mapping — R5 gap vocabulary", () => {
-  it("echoed→confirmed, divergent→contradicted, internally_silent→unspoken", () => {
+describe("firstReadPreview mapping — A1 gap vocabulary (declared-anchored)", () => {
+  it("echoed→confirmed, divergent→contradicted, publicly_silent→unechoed", () => {
     expect(verdictForDeltaType("echoed")).toBe("confirmed");
     expect(verdictForDeltaType("divergent")).toBe("contradicted");
-    expect(verdictForDeltaType("internally_silent")).toBe("unspoken");
+    expect(verdictForDeltaType("publicly_silent")).toBe("unechoed");
   });
-  it("publicly_silent stays off this surface", () => {
-    expect(verdictForDeltaType("publicly_silent")).toBeNull();
+  it("internally_silent (record-only) stays OFF this surface now", () => {
+    expect(verdictForDeltaType("internally_silent")).toBeNull();
   });
   it("unknown types render nothing (never fabricate)", () => {
     expect(verdictForDeltaType("whatever")).toBeNull();
