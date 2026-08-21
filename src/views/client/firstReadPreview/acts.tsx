@@ -2,8 +2,8 @@
 // integrity empty states. Ported from mojomap-redesign src/pages/first-read/
 // acts.tsx @ 1f54a56; every fixture-specific string dropped. Signed generic
 // copy (headlines, standfirsts, phases, closing line, base definition, band
-// strings) ported verbatim. New empty-state strings are DRAFTS listed in the
-// commit body pending operator signature.
+// strings) ported verbatim. Empty-state strings signed per the operator string
+// sheet (2026-08-21); the findings standfirst is the sole HELD string.
 
 import { useState, type ReactNode } from "react";
 import {
@@ -63,8 +63,7 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
   );
 }
 
-const NO_SIGNALS_NOTE = "No outside signals collected yet."; // DRAFT
-const NO_DECLARED_NOTE = "No declared statements captured yet."; // DRAFT
+const NO_SIGNALS_NOTE = "No outside signals collected yet."; // signed
 // NO_MARKETS_NOTE removed with the Declared-markets section (public-only ruling, 2026-08-20).
 const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
 const NOT_ENOUGH_SIGNAL_NOTE = "Not enough public signal to score yet."; // signed (outside-v1.0.0 ruling)
@@ -73,57 +72,57 @@ const ANCHOR_LINE =
   "Most strategy efforts don't succeed — the research base rate is under 20 in 100. This read starts there and moves only on what the public record shows. The bands above are reached with evidence, not optimism.";
 // Eligibility mirror of the compute: fewer than 10 outside-voice signals → no score row by rule.
 const OUTSIDE_MIN_SIGNALS = 10;
-const NO_PAIRS_NOTE = "No comparisons computed yet."; // DRAFT (S-sheet: not-yet state)
+const NO_PAIRS_NOTE = "No comparisons computed yet."; // signed
 // GATE B-1 — the empty gap line derives from the PERSISTED integrity record, never
-// from array emptiness alone. Both DRAFTs pending the Gate-B signature sheet.
+// from array emptiness alone. Both SIGNED (string sheet).
 const GAP_LOOKED_NONE_NOTE =
-  "We compared your public voice with the record — no disagreements stand right now."; // DRAFT (S7)
+  "We compared your public voice with the record — no disagreements stand right now."; // signed
 const GAP_COULDNT_CHECK_NOTE =
-  "This comparison didn't complete — it will run again on the next refresh."; // DRAFT (S8)
-const NO_QUESTIONS_NOTE = "No open questions generated yet."; // DRAFT
-// ── "What we see" public-beats group (public-beats gate, 2026-08-20) — DRAFTS ──
+  "This comparison didn't complete — it will run again on the next refresh."; // signed
+const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed
+// ── "What we see" public-beats group (public-beats gate) — SIGNED ──
 const WHAT_WE_SEE_STANDFIRST =
-  "What we see: our read of your public record — your own channels, the market you're in, and how you position. Every line says where it came from."; // DRAFT
-const LABEL_CHANNELS = "Your channels, as we read them"; // DRAFT
-const LABEL_MARKETS = "Markets"; // DRAFT
-const LABEL_POSITIONING = "Positioning"; // DRAFT
-const LABEL_STRATEGY = "Strategy"; // DRAFT
-const LABEL_PROMISE = "Promise"; // DRAFT
-const LABEL_BASE = "Where you stand (inferred)"; // DRAFT
-const BASE_INFERRED_LABEL = "Inferred from your public record."; // DRAFT
-// ── Standalone-beat copy (council beat-order ruling, 2026-08-20) — DRAFTS ──
-const WORLD_HEADLINE = "What the world says."; // DRAFT (beat 2, was Record)
-const WORLD_SUB = "From reviews, listings, press and the places people talk about you."; // DRAFT
-const YOUSAY_HEADLINE = "What you say."; // DRAFT (beat 3, was channels)
-const YOUSAY_SUB = "Read from your own channels — your site, your socials, your listings."; // DRAFT
-const SERVE_HEADLINE = "Who you serve."; // DRAFT (beat 5, was Markets)
-const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // DRAFT
-const OURREAD_HEADLINE = "Our read."; // DRAFT (beat 9)
-const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // DRAFT
+  "What we see: our read of your public record — your own channels, the market you're in, and how you position. Every line says where it came from."; // signed
+const LABEL_CHANNELS = "Your channels, as we read them"; // signed
+const LABEL_MARKETS = "Markets"; // signed
+const LABEL_POSITIONING = "Positioning"; // signed
+const LABEL_STRATEGY = "Strategy"; // signed
+const LABEL_PROMISE = "Promise"; // signed
+const LABEL_BASE = "Where you stand (inferred)"; // signed
+const BASE_INFERRED_LABEL = "Inferred from your public record."; // signed
+// ── Standalone-beat copy (council beat-order ruling) — SIGNED ──
+const WORLD_HEADLINE = "What the world says."; // signed
+const WORLD_SUB = "From reviews, listings, press and the places people talk about you."; // signed
+const YOUSAY_HEADLINE = "What you say."; // signed
+const YOUSAY_SUB = "Read from your own channels — your site, your socials, your listings."; // signed
+const SERVE_HEADLINE = "Who you serve."; // signed
+const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // signed
+const OURREAD_HEADLINE = "Our read."; // signed
+const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // signed
 // Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
-const MARKET_POINTER_NOTE = "Who you serve — see above"; // DRAFT (beat 9 base diagram)
-const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
-const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
-// OW-3 (2026-08-20) — beat 3 own-words. DRAFTs; sheet grows.
-const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-descriptions to quote yet."; // DRAFT
-const IN_YOUR_WORDS_LABEL = "In your words"; // DRAFT
-const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // DRAFT
-const NO_SERVE_NOTE = "No public markets read yet."; // DRAFT
-const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // DRAFT
-// ── Findings beat (S4) — DRAFTS ──
+const MARKET_POINTER_NOTE = "Who you serve — see above"; // signed
+const WHERE_HEADLINE = "Where you stand."; // signed
+const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // signed
+// OW-3 (2026-08-20) — beat 3 own-words. SIGNED.
+const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-descriptions to quote yet."; // signed
+const IN_YOUR_WORDS_LABEL = "In your words"; // signed
+const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // signed
+const NO_SERVE_NOTE = "No public markets read yet."; // signed
+const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // signed
+// ── Findings beat (S4) — standfirst HELD (clustering fix, later step) ──
 const FINDINGS_STANDFIRST =
   "What stands out in the public record — ranked by how widely it's corroborated across independent sources."; // DRAFT
-const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // DRAFT
+const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // signed
 const FINDINGS_SHOWN = 5;
-const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // DRAFT
-// A1/A3 (2026-08-20) — beat 4 headline follows the persisted type counts. DRAFTs; sheet grows.
+const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // signed
+// A1/A3 (2026-08-20) — beat 4 headline follows the persisted type counts. SIGNED.
 const GAP_HEADLINE_DISAGREE = "Where the two readings disagree."; // contradicted > 0
 const GAP_HEADLINE_UNECHOED = "What you say that the record doesn't echo."; // contradicted 0, unechoed > 0
 const GAP_HEADLINE_BACKED = "Where the record backs you."; // only confirmed
 const GAP_HEADLINE_NEUTRAL = "Your words next to the record."; // nothing yet
-const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // DRAFT (unechoed right side)
-const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // DRAFT
-const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // DRAFT
+const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // signed
+const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // signed
+const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // signed
 const STANDINGS_NOTE = "Base standings not yet generated."; // signed (Phase A ruling)
 const DISCUSSION_NOTE = "Discussion items not yet generated."; // signed (Phase A ruling)
 
@@ -182,52 +181,6 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         </button>
       </div>
     </div>
-  );
-}
-
-export function ActBase({ read }: { read: FirstReadPreviewData }) {
-  const grouped = read.declared.filter((c) => c.facet !== null);
-  const ungrouped = read.declared.filter((c) => c.facet === null);
-  const marketClaims = grouped.filter((c) => c.facet === "Market");
-  const positioningClaims = grouped.filter((c) => c.facet === "Positioning");
-  return (
-    <>
-      <ActHeader
-        headline="What you say you are."
-        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen.
-        standfirst="Your public voice: what you tell the world on the channels you run. Each line names the page it came from. Nothing here is our interpretation yet."
-      />
-      <main className="fr-stagger">
-        {read.declared.length === 0 ? <Absent>{NO_DECLARED_NOTE}</Absent> : null}
-        {marketClaims.map((claim) => (
-          <LedgerRow
-            key={claim.id}
-            leftLabel="Market"
-            leftBody={claim.statement}
-            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
-          />
-        ))}
-        {/* Declared-markets section REMOVED (public-only ruling, 2026-08-20):
-            market_options derive from the declared corpus and may not render on
-            First Read. The data hook and FRMarket type stay for other surfaces. */}
-        {positioningClaims.map((claim) => (
-          <LedgerRow
-            key={claim.id}
-            leftLabel="Positioning"
-            leftBody={claim.statement}
-            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
-          />
-        ))}
-        {ungrouped.map((claim) => (
-          <LedgerRow
-            key={claim.id}
-            leftLabel={claim.topic || "Declared"}
-            leftBody={claim.statement}
-            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
-          />
-        ))}
-      </main>
-    </>
   );
 }
 
@@ -808,7 +761,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
           beat (beat 7). The gap renders only its integrity note or the pairs. */}
       <ActHeader
         headline={gapHeadline(read.gapCounts)}
-        // PUBLIC-ONLY draft (2026-08-20) — operator signs on screen. Standfirst NAMES the counts.
+        // Signed (string sheet, 2026-08-21). Standfirst NAMES the counts.
         standfirst={gapStandfirst(read.gapCounts)}
       />
       <main className="fr-stagger">
@@ -937,7 +890,7 @@ export function ActNext() {
     <>
       <ActHeader
         headline="What we'd do together."
-        // PUBLIC-ONLY reword (2026-08-20, DRAFT): told-us clause removed.
+        // PUBLIC-ONLY reword (signed, string sheet): told-us clause removed.
         standfirst="This read used only what anyone can see. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
       />
       <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>

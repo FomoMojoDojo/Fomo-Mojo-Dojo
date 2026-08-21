@@ -15,7 +15,7 @@ export const SCORE_BANDS: ScoreBand[] = [
     max: 20,
     name: "Running on guesses",
     description:
-      "Base not aligned; definitions unclear; decisions made without support.",
+      "Base untested; definitions unclear; decisions made without support.",
   },
   {
     min: 20,

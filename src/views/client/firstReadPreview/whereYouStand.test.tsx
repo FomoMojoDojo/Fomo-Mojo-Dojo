@@ -33,7 +33,7 @@ const scored = (levers: FRScoreLever[]): FirstReadPreviewData => ({
   whereYouStand: {
     scoreValue: 16,
     band: "Running on guesses",
-    bandMeaning: "Base not aligned; definitions unclear; decisions made without support.",
+    bandMeaning: "Base untested; definitions unclear; decisions made without support.",
     levers,
     sourceTag: { label: "Public read · August 20, 2026" },
   },
@@ -51,7 +51,7 @@ describe("beat 8 — Where you stand (W1)", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Running on guesses");
     expect(text).toContain("16 of 100");
-    expect(text).toContain("Base not aligned"); // band meaning (ladder copy)
+    expect(text).toContain("Base untested"); // band meaning (ladder copy)
     expect(text).toContain("Inferred from your public record."); // W1 label
     for (const l of LEVERS) {
       expect(text, `${l.label} present`).toContain(l.label);
