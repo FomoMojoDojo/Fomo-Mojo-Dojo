@@ -1,20 +1,11 @@
-// OC-2b + FR-FLOW-1b + FR8-LINK — the SINGLE First Read entry point on the workshop
-// Inputs tab. ALWAYS rendered for every company (the rail owns its own empty/dead-id
-// states); deliberately NOT gated on hasHierarchy/spine/baseline (the state-proxy
-// defect class). `dark` only themes it to the intro branch it renders under.
-//
-// FR8-LINK (operator ruling): the PRIMARY link now opens the 8-beat client surface
-// (/preview/client-refine/first-read/:companyId) — a plain navigation, NO session
-// mint (the 8-beat surface has no session; minting here would orphan V2 sessions).
-// The V2 presenter flow stays reachable through the quiet legacy link, which keeps
-// the FR-FLOW-1b mint-if-missing semantics exactly: reuse an existing
-// open|proposal_issued session, else create one, then navigate to the rail. The
-// rail itself still never auto-mints on load (orphan-session law).
+// FR-FLOW-1b — the LEGACY (V2 presenter) First Read link on the workshop Inputs tab.
+// The PRIMARY 8-beat entry point moved to the side nav ("First read" under Inputs, 2026-08-21);
+// only the quiet legacy link + its sub-line remain here, UNCHANGED. The legacy link keeps the
+// FR-FLOW-1b mint-if-missing semantics exactly: reuse an existing open|proposal_issued session,
+// else create one, then navigate to the V2 rail. The rail never auto-mints on load (orphan law).
 
 import { supabase } from "@/integrations/supabase/client";
-import { clientRefineFirstReadPath } from "@/lib/clientRefinePreview";
 
-export const OPEN_FIRST_READ_LABEL = "Open First Read →"; // operator-signed (OC-2b brief)
 export const OPEN_LEGACY_FIRST_READ_LABEL = "open legacy first read"; // FR8-LINK ruling
 
 export default function OpenFirstReadControl({
@@ -28,15 +19,7 @@ export default function OpenFirstReadControl({
   navigate?: (url: string) => void;
 }) {
   const disabled = !companyId;
-  const href = companyId ? clientRefineFirstReadPath(companyId) : undefined;
   const legacyHref = companyId ? `/first-read/${companyId}` : undefined;
-
-  // PRIMARY — the 8-beat surface. Plain navigation, never mints.
-  const onOpen = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!companyId) return;
-    e.preventDefault();
-    navigate(clientRefineFirstReadPath(companyId));
-  };
 
   // LEGACY — V2 presenter rail, FR-FLOW-1b mint-if-missing preserved verbatim.
   const onOpenLegacy = async (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -58,20 +41,6 @@ export default function OpenFirstReadControl({
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: dark ? 16 : 12, flexWrap: "wrap" }}>
-      <a
-        href={href}
-        aria-disabled={disabled}
-        onClick={onOpen}
-        style={{
-          fontFamily: "monospace", fontSize: dark ? 9 : 10, letterSpacing: "0.06em",
-          color: disabled ? (dark ? "rgba(246,246,244,0.25)" : "#bbb") : (dark ? "#7a9e90" : "#2f6b3a"),
-          background: "none", padding: 0,
-          textDecoration: "underline", textDecorationStyle: "dashed", textUnderlineOffset: 3,
-          pointerEvents: disabled ? "none" : "auto", cursor: disabled ? "default" : "pointer",
-        }}
-      >
-        {OPEN_FIRST_READ_LABEL}
-      </a>
       <a
         href={legacyHref}
         aria-disabled={disabled}

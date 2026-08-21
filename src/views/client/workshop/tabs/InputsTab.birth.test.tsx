@@ -123,49 +123,38 @@ describe("BRT-1 — birth trigger renders (TDZ regression)", () => {
 // it must appear the same for a spine-complete company, a zero-route newborn, and a
 // no-baseline company, always linking the PRIMARY to the 8-beat surface
 // /preview/client-refine/first-read/<that company's id>.
-describe("OC-2b — First Read entry point on the Inputs tab", () => {
-  const CID = sonosProps.companyId;
-  const firstReadLink = (container: HTMLElement) =>
-    Array.from(container.querySelectorAll("a")).find((a) =>
-      (a.textContent || "").includes("Open First Read"),
-    );
+// OC-2b (updated 2026-08-21): the PRIMARY 8-beat "Open First Read →" entry MOVED OFF the Inputs
+// tab into the side nav ("First read" under Inputs). The Inputs tab now carries ONLY the quiet
+// legacy V2 link. This proves the old entry location is removed (not duplicated).
+describe("OC-2b — First Read entry point moved off the Inputs tab", () => {
+  const primaryLink = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("a")).find((a) => (a.textContent || "").includes("Open First Read"));
+  const legacyLink = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("a")).find((a) => (a.textContent || "").includes("open legacy first read"));
 
-  it("a. spine-complete company (hasHierarchy) → control renders, links to the 8-beat surface", () => {
+  it("the primary 'Open First Read →' link is GONE from the Inputs tab", () => {
     const { container } = render(<InputsTab {...sonosProps} hasHierarchy={true} companyHasSpine={true} />);
-    const link = firstReadLink(container);
-    expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
+    expect(primaryLink(container)).toBeFalsy();
   });
 
-  it("b. zero-route newborn company → control renders, links to the 8-beat surface", () => {
-    const { container } = render(<InputsTab {...sonosProps} hasHierarchy={false} companyHasSpine={false} />);
-    const link = firstReadLink(container);
-    expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
-  });
-
-  it("c. no-baseline company → control still renders, links to the 8-beat surface", () => {
+  it("the legacy V2 link stays on the Inputs tab (untouched)", () => {
     baselineState = { loading: false, run: null };
     const { container } = render(<InputsTab {...sonosProps} />);
-    const link = firstReadLink(container);
-    expect(link).toBeTruthy();
-    expect(link!.getAttribute("href")).toBe(`/preview/client-refine/first-read/${CID}`);
-    // the href carries THIS company's id (falsification target): a wrong/empty id fails here
-    expect(link!.getAttribute("href")).toContain(CID);
-    expect(link!.getAttribute("href")).not.toBe("/preview/client-refine/first-read/");
+    const legacy = legacyLink(container);
+    expect(legacy).toBeTruthy();
+    expect(legacy!.getAttribute("href")).toBe(`/first-read/${sonosProps.companyId}`);
   });
 });
 
-// FR-FLOW-1b — the intake form + Prepare control are GONE; "Open First Read →" is the
-// single control (rendered-tree absence proof over the real mounted Inputs tab).
-describe("FR-FLOW-1b — no intake form, single Open control", () => {
-  it("the mounted Inputs tab has NO intake form and NO Prepare control", () => {
+// FR-FLOW-1b — the intake form + Prepare control are GONE; only the quiet legacy link remains
+// (the primary moved to the nav). Rendered-tree absence proof over the real mounted Inputs tab.
+describe("FR-FLOW-1b — no intake form; primary moved to nav, legacy remains", () => {
+  it("the mounted Inputs tab has NO intake form, NO Prepare control, and NO primary Open link", () => {
     const { container } = render(<InputsTab {...sonosProps} />);
     const text = container.textContent || "";
     expect(text).not.toContain("Before the meeting"); // intake form gone
     expect(text).not.toContain("Prepare First Read");  // retired control gone
-    // exactly one First Read entry point remains
-    const opens = Array.from(container.querySelectorAll("a")).filter((a) => (a.textContent || "").includes("Open First Read"));
-    expect(opens).toHaveLength(1);
+    const primary = Array.from(container.querySelectorAll("a")).filter((a) => (a.textContent || "").includes("Open First Read"));
+    expect(primary).toHaveLength(0); // primary entry moved to the side nav
   });
 });

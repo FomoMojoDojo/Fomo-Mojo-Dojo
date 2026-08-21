@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
+import { useCompany } from "@/hooks/useCompany";
+import { clientRefineFirstReadPath } from "@/lib/clientRefinePreview";
 import { CLIENT_VIEW_ROUTE } from "@/lib/clientStoryView";
 
 const SIDEBAR_TABS = [
@@ -46,6 +48,11 @@ export function WorkshopSidebar({
   const [collapsed, setCollapsed] = useState(false);
   const { enabled: teachingMode, toggle: toggleTeaching } = useSurfaceTeachingMode();
   const navigate = useNavigate();
+  // "First read" — the single 8-beat First Read entry point, moved here from the Inputs tab
+  // (2026-08-21). Routes to the existing preview surface for the active company; a plain
+  // navigation (the surface owns its own empty/dead-id states, never mints a session).
+  const { activeCompany } = useCompany();
+  const firstReadHref = activeCompany?.id ? clientRefineFirstReadPath(activeCompany.id) : null;
 
   return (
     <nav
@@ -88,6 +95,19 @@ export function WorkshopSidebar({
               {tab.label}
             </button>
           ))}
+
+          {/* First read — last item under the Inputs group; opens the 8-beat First Read surface. */}
+          {firstReadHref && (
+            <button
+              type="button"
+              data-first-read
+              className="crpv-ws-tab"
+              onClick={() => navigate(firstReadHref)}
+              title="Open the First Read for this company"
+            >
+              First read
+            </button>
+          )}
 
           <div className="crpv-ws-tab-divider crpv-ws-tab-divider-push" />
 

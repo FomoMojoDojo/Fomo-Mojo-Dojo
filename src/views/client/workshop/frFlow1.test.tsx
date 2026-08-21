@@ -58,24 +58,12 @@ describe("FR-V2-1 — the Check renders cold (no session, no honest-empty)", () 
   });
 });
 
-describe("FR8-LINK — the primary opens the 8-beat surface and NEVER mints", () => {
-  it("primary click → navigates to the 8-beat surface with ZERO session mints", async () => {
-    const navigate = vi.fn();
-    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} navigate={navigate} />);
-    fireEvent.click(getByText("Open First Read →"));
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith("/preview/client-refine/first-read/c1"),
-    );
-    // FALSIFICATION (orphan-session detector): a primary that minted a V2 session
-    // on the way to the 8-beat surface would push insertCount above 0.
-    expect(insertCount).toBe(0);
-  });
-
-  it("keeps the plain href target on the primary (router-less OC-2b contract)", () => {
-    const { getByText } = render(<OpenFirstReadControl companyId="c1" dark={false} />);
-    expect((getByText("Open First Read →") as HTMLAnchorElement).getAttribute("href")).toBe(
-      "/preview/client-refine/first-read/c1",
-    );
+describe("FR8-LINK (2026-08-21) — the PRIMARY 8-beat entry moved to the side nav; only legacy remains here", () => {
+  it("the control no longer renders the primary 'Open First Read →' link", () => {
+    const { queryByText } = render(<OpenFirstReadControl companyId="c1" dark={false} />);
+    expect(queryByText("Open First Read →")).toBeNull();
+    // legacy link stays
+    expect(queryByText("open legacy first read")).toBeTruthy();
   });
 });
 
