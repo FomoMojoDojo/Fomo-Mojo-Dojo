@@ -37,6 +37,18 @@ export type FRDeclared = {
   sourceTag: SourceTagResult;
 };
 
+/** OW-3: a verbatim (or judge-faithful) self-assertion the company makes on its own channels,
+ *  written by the extractor (claim_type='own_words'). Tri-state by fidelity in beat 3. Tag is
+ *  page + read date (own-words are read-dated by nature). */
+export type FROwnWord = {
+  id: string;
+  quote: string;
+  pageUrl: string;
+  pageHost: string;
+  fidelity: "verbatim" | "paraphrased";
+  sourceTag: { label: string } | null;
+};
+
 export type FRMarket = {
   id: string;
   executorStatement: string;
@@ -134,6 +146,13 @@ export type FirstReadPreviewData = {
   company: { name: string; website: string | null } | null;
   coldOpen: FRColdOpen | null;
   declared: FRDeclared[];
+  /** OW-3: the company's own verbatim self-assertions (beat 3 lead). */
+  ownWords: FROwnWord[];
+  /** OW-3: own_words hidden at render (no usable quote) — reported, never silent. */
+  ownWordsHiddenIds: string[];
+  /** OW-3: whether the own-words extraction LOOKED (a first_read_own_words integrity record
+   *  exists) — grounds beat 3's empty state in a persisted record, not array emptiness. */
+  ownWordsLooked: boolean;
   markets: FRMarket[];
   /** Outside-voice signals, strength-mapped (R4), strong-first then newest. */
   signals: FRSignal[];
@@ -169,6 +188,9 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   company: null,
   coldOpen: null,
   declared: [],
+  ownWords: [],
+  ownWordsHiddenIds: [],
+  ownWordsLooked: false,
   markets: [],
   signals: [],
   score: null,

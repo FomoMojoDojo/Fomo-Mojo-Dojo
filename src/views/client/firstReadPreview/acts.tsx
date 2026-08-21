@@ -62,6 +62,10 @@ const OURREAD_SUB = "What we'd posit about your positioning, strategy and promis
 const MARKET_POINTER_NOTE = "Who you serve — see above"; // DRAFT (beat 9 base diagram)
 const WHERE_HEADLINE = "Where you stand."; // DRAFT (beat 8)
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // DRAFT
+// OW-3 (2026-08-20) — beat 3 own-words. DRAFTs; sheet grows.
+const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-descriptions to quote yet."; // DRAFT
+const IN_YOUR_WORDS_LABEL = "In your words"; // DRAFT
+const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // DRAFT
 const NO_SERVE_NOTE = "No public markets read yet."; // DRAFT
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // DRAFT
 // ── Findings beat (S4) — DRAFTS ──
@@ -353,20 +357,57 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
 // its OUR READ label + source tag; empties are honest (no false absence).
 
 /** Beat 3 — "What you say": read from your own channels (the client-voice reads). */
+/**
+ * Beat 3 "What you say" (OW-3, 2026-08-20): LEADS with the company's own verbatim words
+ * (claim_type='own_words') — tri-state: verbatim → quoted; judge-paraphrased → "as stated on
+ * {page}", unquoted; unprovable → hidden (id reported in read.ownWordsHiddenIds, never silent).
+ * The prior inference rows (OUR read of the channels) are DEMOTED to a labelled sub-row below.
+ * The empty state is grounded in the own-words integrity record (ownWordsLooked), not emptiness.
+ */
 export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
+  const verbatim = read.ownWords.filter((w) => w.fidelity === "verbatim");
+  const paraphrased = read.ownWords.filter((w) => w.fidelity === "paraphrased");
+  const hasOwn = read.ownWords.length > 0;
+  const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : NO_CHANNELS_NOTE;
   return (
     <>
       <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} />
       <main className="fr-stagger">
-        {read.declared.length === 0 ? <Absent>{NO_CHANNELS_NOTE}</Absent> : null}
-        {read.declared.map((claim) => (
+        {!hasOwn ? <Absent>{emptyNote}</Absent> : null}
+        {/* Verbatim self-assertions lead — quoted, page + read date. */}
+        {verbatim.map((w) => (
           <LedgerRow
-            key={claim.id}
-            leftLabel="Our read"
-            leftBody={claim.statement}
-            meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
+            key={w.id}
+            leftLabel={IN_YOUR_WORDS_LABEL}
+            leftBody={w.quote}
+            meta={w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
           />
         ))}
+        {/* Judge-faithful paraphrases — NOT quoted; labelled "as stated on {page}". */}
+        {paraphrased.map((w) => (
+          <LedgerRow
+            key={w.id}
+            quoted={false}
+            leftLabel={`As stated on ${w.pageHost}`}
+            leftBody={w.quote}
+            meta={w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
+          />
+        ))}
+        {/* Demoted: our inference read of the channels, below the company's own words. */}
+        {read.declared.length > 0 ? (
+          <div className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+            <div className="mb-8"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></div>
+            {read.declared.map((claim) => (
+              <LedgerRow
+                key={claim.id}
+                muted
+                leftLabel="Our read"
+                leftBody={claim.statement}
+                meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
+              />
+            ))}
+          </div>
+        ) : null}
       </main>
     </>
   );

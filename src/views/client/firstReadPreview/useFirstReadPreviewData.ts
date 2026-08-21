@@ -30,6 +30,7 @@ import type {
   FRFinding,
   FRGapPair,
   FRMarketDef,
+  FROwnWord,
   FRSignal,
 } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
@@ -272,6 +273,41 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const declared = channelRowsAll
           .filter((c) => !c.junk)
           .map(({ junk: _junk, ...row }) => row);
+
+        // ── OW-3: own words (beat 3 lead) — the company's own verbatim self-assertions,
+        // written by the extractor as claim_type='own_words'. Tri-state by fidelity; page +
+        // read-date tag. The demoted inference rows (`declared` above) render below them.
+        const { data: owRows } = await supabase
+          .from("claims")
+          .select("id, statement, raw_payload, created_at")
+          .eq("company_id", companyId)
+          .eq("claim_type", "own_words")
+          .eq("status", "active");
+        type OwRow = { id: string; statement: string | null; raw_payload?: { page_url?: string; fidelity?: string; read_at?: string } | null; created_at: string | null };
+        const ownWordsHiddenIds: string[] = [];
+        const ownWords: FROwnWord[] = [];
+        for (const c of (owRows ?? []) as OwRow[]) {
+          const quote = (c.statement ?? "").trim();
+          if (!quote) { ownWordsHiddenIds.push(c.id); continue; } // hidden bucket — reported, not silent
+          const rp = c.raw_payload ?? {};
+          const pageUrl = String(rp.page_url ?? "");
+          const host = bareHost(pageUrl) || pageUrl;
+          const readDate = formatFullDate(rp.read_at ?? c.created_at);
+          ownWords.push({
+            id: c.id, quote, pageUrl, pageHost: host,
+            fidelity: rp.fidelity === "paraphrased" ? "paraphrased" : "verbatim",
+            sourceTag: { label: `${host}${readDate ? ` · read ${readDate}` : ""}`.trim() },
+          });
+        }
+        // verbatim lead, then paraphrased; stable by page then quote.
+        ownWords.sort((a, b) =>
+          (a.fidelity === b.fidelity ? 0 : a.fidelity === "verbatim" ? -1 : 1) ||
+          a.pageHost.localeCompare(b.pageHost) || a.quote.localeCompare(b.quote));
+        // Integrity: did the own-words extraction LOOK? (grounds the empty state.)
+        const { data: owIntRows } = await loose()
+          .from("integrity_runs").select("id")
+          .eq("company_id", companyId).eq("component", "first_read_own_words").limit(1);
+        const ownWordsLooked = ((owIntRows ?? []) as unknown[]).length > 0;
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -571,6 +607,9 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             company: co ? { name: (co as { name: string }).name, website: (co as { website: string | null }).website } : null,
             coldOpen,
             declared,
+            ownWords,
+            ownWordsHiddenIds,
+            ownWordsLooked,
             channelJunkIds,
             markets,
             observedMarkets,
