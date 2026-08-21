@@ -59,6 +59,19 @@ export type OutsideDeltaInput = {
   deltaType: "echoed" | "divergent" | "internally_silent";
   declaredClaimId: string | null;
   declaredTopic: string | null;
+  id?: string; // claim_deltas.id — recorded in the input ledger (optional for unit fixtures)
+};
+
+/** The exact rows each micro-move counted — persisted with the snapshot, birth-stamped, never
+ *  updated. Signal ids for record_strength/coverage/freshness; delta ids for echo/differentiation;
+ *  the distinct source_type values coverage saw. Makes the score auditable and diffable. */
+export type OutsideScoreLedger = {
+  signal_count: number;
+  echo_integrity: { echoed_delta_ids: string[]; divergent_delta_ids: string[] };
+  record_strength: { strong_signal_ids: string[]; signal_count: number };
+  differentiation_echo: { delta_ids: string[] };
+  coverage_breadth: { signal_ids: string[]; distinct_source_types: string[] };
+  freshness: { fresh_signal_ids: string[] };
 };
 
 export type OutsideScoreInput = {
@@ -88,6 +101,7 @@ export type OutsideScoreResult =
       totalScore: number; // half-up rounded integer
       methodologyVersion: string;
       computedAt: string;
+      inputLedger: OutsideScoreLedger;
     };
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -191,6 +205,35 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
     },
   ];
 
+  // ── INPUT LEDGER — the exact rows each move counted (ids where available). ──────
+  const deltaId = (d: OutsideDeltaInput) => d.id ?? "";
+  const inputLedger: OutsideScoreLedger = {
+    signal_count: signalCount,
+    echo_integrity: {
+      echoed_delta_ids: input.deltas.filter((d) => d.deltaType === "echoed").map(deltaId).filter(Boolean),
+      divergent_delta_ids: input.deltas.filter((d) => d.deltaType === "divergent").map(deltaId).filter(Boolean),
+    },
+    record_strength: {
+      strong_signal_ids: input.signals.filter((s) => strengthOf(s) === "strong").map((s) => s.id),
+      signal_count: signalCount,
+    },
+    differentiation_echo: {
+      delta_ids: input.deltas
+        .filter((d) => d.deltaType === "echoed" && d.declaredClaimId !== null &&
+          ["positioning", "market"].includes((d.declaredTopic ?? "").trim().toLowerCase()))
+        .map(deltaId).filter(Boolean),
+    },
+    coverage_breadth: {
+      signal_ids: input.signals.map((s) => s.id),
+      distinct_source_types: [...new Set(input.signals.map((s) => (s.sourceType ?? "").trim()).filter((t) => t.length > 0))],
+    },
+    freshness: {
+      fresh_signal_ids: input.signals
+        .filter((s) => s.eventDate !== null && monthsBetween(s.eventDate, input.computedAt) <= FRESHNESS_WINDOW_MONTHS)
+        .map((s) => s.id),
+    },
+  };
+
   const totalUnrounded = OUTSIDE_ANCHOR + moves.reduce((sum, m) => sum + m.value, 0);
   return {
     eligible: true,
@@ -202,5 +245,6 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
     totalScore: roundHalfUp(totalUnrounded),
     methodologyVersion: OUTSIDE_METHODOLOGY_VERSION,
     computedAt: input.computedAt,
+    inputLedger,
   };
 }
