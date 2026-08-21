@@ -32,6 +32,30 @@ describe("S4 — status conflict pinned atop Questions + Findings", () => {
     const text = container.textContent ?? "";
     expect(text.indexOf("Which is true today?")).toBeLessThan(text.indexOf("A finding body."));
   });
+
+  it("S4: folds duplicate host+date rows to one ×N row; '+n more' counts GROUPS not raw rows", () => {
+    // Reported closed: two corner.inc · 2026-04-19 (CB2 shape) + one distinct → ONE folded ×2 row.
+    // Still listed open: 8 raw rows but only 3 distinct host+date → folds to 3 groups, NO "+n more".
+    const folding: FRStatusConflict = {
+      ...CONFLICT,
+      closed: [
+        { host: "corner.inc", date: "2026-04-19", quote: "a" },
+        { host: "yelp.com", date: "2026-07-01", quote: "b" },
+        { host: "corner.inc", date: "2026-04-19", quote: "c" },
+      ],
+      open: Array.from({ length: 8 }, (_, i) => ({ host: ["ubereats.com", "doordash.com", "grubhub.com"][i % 3], date: "2026-08-01", quote: `o${i}` })),
+    };
+    const { container } = render(<ActFindings read={base({ statusConflicts: [folding] })} />);
+    const text = container.textContent ?? "";
+    // one folded closed row with the count
+    expect(text).toContain("corner.inc · 2026-04-19 ×2");
+    expect(text).toContain("yelp.com · 2026-07-01"); // distinct → no ×
+    expect(text).not.toContain("corner.inc · 2026-04-19 ×2 corner.inc"); // rendered once, not twice
+    // exactly one occurrence of the folded row
+    expect(text.split("corner.inc · 2026-04-19 ×2").length - 1).toBe(1);
+    // 8 raw open rows fold to 3 groups (< 6) → NO "+n more" (would be "+5 more" if it counted rows)
+    expect(text).not.toContain("more");
+  });
 });
 
 describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () => {

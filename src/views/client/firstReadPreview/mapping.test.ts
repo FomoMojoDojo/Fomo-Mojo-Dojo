@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { strengthForSignal, verdictForDeltaType, facetForTopic, formatMonthYear, bareHost } from "./mapping";
+import { strengthForSignal, verdictForDeltaType, facetForTopic, formatMonthYear, bareHost, foldByHostDate } from "./mapping";
 
 describe("firstReadPreview mapping — R4 strength", () => {
   it("recurrence-confirmed is strong regardless of confidence", () => {
@@ -54,5 +54,34 @@ describe("firstReadPreview mapping — recency + host", () => {
     expect(bareHost("https://www.edgewood.org/about")).toBe("edgewood.org");
     expect(bareHost("cafebarra.com")).toBe("cafebarra.com");
     expect(bareHost(null)).toBeNull();
+  });
+});
+
+describe("firstReadPreview mapping — foldByHostDate (S4 display fold, 2026-08-21)", () => {
+  const src = (host: string, date: string | null, quote = "q") => ({ host, date, quote });
+
+  it("folds identical host+date to one row with a count; distinct rows stay ×1", () => {
+    // CB2 shape: two corner.inc · 2026-04-19 (non-adjacent) + one distinct.
+    const folded = foldByHostDate([
+      src("corner.inc", "2026-04-19"),
+      src("yelp.com", "2026-07-01"),
+      src("corner.inc", "2026-04-19"),
+    ]);
+    expect(folded).toEqual([
+      { host: "corner.inc", date: "2026-04-19", count: 2 }, // ×2, first appearance kept
+      { host: "yelp.com", date: "2026-07-01", count: 1 },
+    ]);
+  });
+
+  it("first-appearance order is preserved; same host different date does not fold", () => {
+    const folded = foldByHostDate([
+      src("corner.inc", "2026-04-19"),
+      src("corner.inc", "2026-08-19"),
+      src("corner.inc", "2026-04-19"),
+    ]);
+    expect(folded.map((g) => `${g.host} ${g.date} x${g.count}`)).toEqual([
+      "corner.inc 2026-04-19 x2",
+      "corner.inc 2026-08-19 x1",
+    ]);
   });
 });

@@ -18,7 +18,7 @@ import {
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
-import { formatMonthYear } from "./mapping";
+import { foldByHostDate, formatMonthYear } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -33,6 +33,11 @@ function StatusDisputedChip() {
   );
 }
 
+// "host · date" once, with " ×N" when N>1 raw signal rows fold into it (display only).
+function foldedSourceLine(g: { host: string; date: string | null; count: number }): string {
+  return `${g.host}${g.date ? ` · ${g.date}` : ""}${g.count > 1 ? ` ×${g.count}` : ""}`;
+}
+
 // S4 — the pinned status-conflict banner (top of Questions + Findings). Both source sets, no verdict.
 function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) {
   if (conflicts.length === 0) return null;
@@ -42,19 +47,21 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
         <div key={c.location} className="rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(347 77% 50%)", background: "hsl(347 77% 50% / 0.04)" }}>
           <div className="mb-3"><StatusDisputedChip /></div>
           <p className="max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
+          {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
+              duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows. */}
           <div className="mt-5 grid gap-6 text-xs md:grid-cols-2" style={{ color: "hsl(var(--fr-muted))" }}>
             <div>
               <p className="fr-eyebrow mb-2">Reported closed</p>
-              {c.closed.map((s, i) => (
-                <p key={i}>{s.host}{s.date ? ` · ${s.date}` : ""}</p>
+              {foldByHostDate(c.closed).map((g, i) => (
+                <p key={i}>{foldedSourceLine(g)}</p>
               ))}
             </div>
             <div>
               <p className="fr-eyebrow mb-2">Still listed open</p>
-              {c.open.slice(0, 6).map((s, i) => (
-                <p key={i}>{s.host}{s.date ? ` · ${s.date}` : ""}</p>
+              {foldByHostDate(c.open).slice(0, 6).map((g, i) => (
+                <p key={i}>{foldedSourceLine(g)}</p>
               ))}
-              {c.open.length > 6 ? <p>+{c.open.length - 6} more</p> : null}
+              {foldByHostDate(c.open).length > 6 ? <p>+{foldByHostDate(c.open).length - 6} more</p> : null}
             </div>
           </div>
         </div>

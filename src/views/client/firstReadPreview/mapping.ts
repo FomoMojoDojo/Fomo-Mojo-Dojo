@@ -1,7 +1,7 @@
 // First Read (8-beat) — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
-import type { FRGapPair, FRGapStatement, FRGapVerdict, SignalStrength } from "./types";
+import type { FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
 
 /**
  * R4 (signed): strong = recurrence-confirmed across independent sources;
@@ -73,6 +73,31 @@ export function verdictForDeltaType(deltaType: string): FRGapVerdict | null {
     default:
       return null;
   }
+}
+
+/** A folded status-conflict source: one host+date, with how many raw signal rows share it. */
+export type FoldedStatusSource = { host: string; date: string | null; count: number };
+
+/**
+ * S4 (2026-08-21): DISPLAY-ONLY fold of status-conflict sources. Identical host+date entries
+ * collapse to one row carrying a count (the underlying duplicate signal rows are untouched —
+ * never deleted or superseded). First-appearance order is preserved. Used by the pinned banner so
+ * two corner.inc · 2026-04-19 signals read as "corner.inc · 2026-04-19 ×2", once.
+ */
+export function foldByHostDate(sources: Pick<FRStatusSource, "host" | "date">[]): FoldedStatusSource[] {
+  const order: string[] = [];
+  const byKey = new Map<string, FoldedStatusSource>();
+  for (const s of sources) {
+    const key = `${s.host} ${s.date ?? ""}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = { host: s.host, date: s.date, count: 0 };
+      byKey.set(key, g);
+      order.push(key);
+    }
+    g.count++;
+  }
+  return order.map((k) => byKey.get(k)!);
 }
 
 /**
