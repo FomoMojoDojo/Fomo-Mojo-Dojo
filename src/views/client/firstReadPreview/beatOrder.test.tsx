@@ -98,7 +98,7 @@ describe("beat order — ruled sequence", () => {
     ...read,
     positioning: { category: "Cat", value: "Val", differentiators: ["d1"], sourceTag: { label: "Public read · June 11, 2026" } },
     strategy: { aspiration: "Asp", whereToPlay: "W2P", howToWin: "H2W", sourceTag: { label: "Public read · June 11, 2026" } },
-    promise: { value: "PromiseVal", tagline: "Tag", sourceTag: { label: "Public read · June 11, 2026" } },
+    promise: { text: "PromiseVal", sourceTag: { label: "Public read · June 11, 2026" } },
   };
 
   it("beat 9 'Our read' = the three rows ONLY (positioning → strategy → promise), NO base", () => {

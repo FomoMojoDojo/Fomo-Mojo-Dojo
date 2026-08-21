@@ -139,12 +139,11 @@ export type FRPositioning = {
   sourceTag: SourceTagResult;
 } | null;
 
-/** Observed promise (market_read canvas value_for_customer + proposed_tagline). */
-export type FRPromise = {
-  value: string | null;
-  tagline: string | null;
-  sourceTag: SourceTagResult;
-} | null;
+/** Observed promise (ruling 1, 2026-08-21): the market_read canvas has NO distinct promise field,
+ *  so Promise NEVER reuses value_for_customer. `text` is the own promise field when the schema has
+ *  one and it is non-empty; otherwise null → the beat renders the signed not-enough-information
+ *  line (no source tag). null = no canvas at all. */
+export type FRPromise = { text: string | null; sourceTag: SourceTagResult } | null;
 
 /** Observed strategy (strategy_cascades market_read). */
 export type FRStrategy = {

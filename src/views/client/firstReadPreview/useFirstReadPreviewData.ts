@@ -538,12 +538,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // Observed positioning + promise (R-C): the market_read canvas.
         const { data: canvasRow } = await supabase
           .from("positioning_canvases")
-          .select("market_category, value_for_customer, proposed_tagline, unique_attributes_json, updated_at")
+          .select("market_category, value_for_customer, unique_attributes_json, updated_at")
           .eq("company_id", companyId)
           .eq("artifact_role", "market_read")
           .maybeSingle();
         const canvas = canvasRow as {
-          market_category: string | null; value_for_customer: string | null; proposed_tagline: string | null;
+          market_category: string | null; value_for_customer: string | null;
           unique_attributes_json: unknown; updated_at: string | null;
         } | null;
         const canvasTag = canvas ? syntheticTag(canvas.updated_at) : null;
@@ -556,9 +556,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const positioning = canvas && (canvas.market_category || canvas.value_for_customer || differentiators.length)
           ? { category: canvas.market_category, value: canvas.value_for_customer, differentiators, sourceTag: canvasTag }
           : null;
-        const promise = canvas && (canvas.value_for_customer || canvas.proposed_tagline)
-          ? { value: canvas.value_for_customer, tagline: canvas.proposed_tagline, sourceTag: canvasTag }
-          : null;
+        // Promise (ruling 1, 2026-08-21): NEVER reuse value_for_customer. The schema has no distinct
+        // promise field, so text is null and the beat renders the signed not-enough-information line.
+        // (When/if a real promise field exists, map it here with its own source tag.)
+        const promise = canvas ? { text: null, sourceTag: null } : null;
 
         // Observed strategy (R-C): the market_read strategy cascade.
         const { data: cascadeRow } = await supabase

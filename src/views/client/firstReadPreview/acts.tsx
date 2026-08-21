@@ -95,6 +95,8 @@ const LABEL_MARKETS = "Markets"; // signed
 const LABEL_POSITIONING = "Positioning"; // signed
 const LABEL_STRATEGY = "Strategy"; // signed
 const LABEL_PROMISE = "Promise"; // signed
+// Ruling 1 (2026-08-21): no distinct promise field in the canvas → render this verbatim, no source tag.
+const PROMISE_NOT_ENOUGH = "Not enough information to create promise."; // signed
 const LABEL_BASE = "Where you stand (inferred)"; // signed
 const BASE_INFERRED_LABEL = "Inferred from your public record."; // signed
 // ── Standalone-beat copy (council beat-order ruling) — SIGNED ──
@@ -279,13 +281,16 @@ export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
           {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
         </WeSeeSection>
 
-        {/* Promise — canvas value + tagline */}
-        <WeSeeSection label={LABEL_PROMISE} show={!!pr}>
-          {pr?.tagline ? <p className="text-2xl font-semibold leading-snug">{pr.tagline}</p> : null}
-          {pr?.value ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{pr.value}</p>
-          ) : null}
-          {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+        {/* Promise (ruling 1): own field when present; otherwise the signed line, no source tag. */}
+        <WeSeeSection label={LABEL_PROMISE} show={!!(p || st) || !!pr?.text}>
+          {pr?.text ? (
+            <>
+              <p className="text-2xl font-semibold leading-snug">{pr.text}</p>
+              {pr.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+            </>
+          ) : (
+            <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{PROMISE_NOT_ENOUGH}</p>
+          )}
         </WeSeeSection>
 
         {/* Where you stand — inferred (R-B): persisted numbers only */}
@@ -540,7 +545,8 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
   const p = read.positioning;
   const st = read.strategy;
   const pr = read.promise;
-  const anything = !!(p || st || pr);
+  // Promise contributes to "anything" only via a real own field; the signed line alone is not content.
+  const anything = !!(p || st || pr?.text);
   return (
     <>
       <ActHeader headline={OURREAD_HEADLINE} standfirst={OURREAD_SUB} />
@@ -574,12 +580,16 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
           ) : null}
           {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
         </WeSeeSection>
-        <WeSeeSection label={LABEL_PROMISE} show={!!pr}>
-          {pr?.tagline ? <p className="text-2xl font-semibold leading-snug">{pr.tagline}</p> : null}
-          {pr?.value ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{pr.value}</p>
-          ) : null}
-          {pr?.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+        {/* Promise (ruling 1): own field when present; otherwise the signed line, no source tag. */}
+        <WeSeeSection label={LABEL_PROMISE} show={!!(p || st) || !!pr?.text}>
+          {pr?.text ? (
+            <>
+              <p className="text-2xl font-semibold leading-snug">{pr.text}</p>
+              {pr.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+            </>
+          ) : (
+            <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{PROMISE_NOT_ENOUGH}</p>
+          )}
         </WeSeeSection>
       </main>
     </>
