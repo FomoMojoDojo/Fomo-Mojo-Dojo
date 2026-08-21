@@ -495,7 +495,15 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       if (ownVoiceSigIds.has(r.signal_id)) ownVoiceClaims.add(r.claim_id);
       if (analysisSigIds.has(r.signal_id)) analysisClaims.add(r.claim_id);
     }
-    declared = publicsAll.filter((c) => ownVoiceClaims.has(c.id) && !analysisClaims.has(c.id));
+    const clientVoicePublics = publicsAll.filter((c) => ownVoiceClaims.has(c.id) && !analysisClaims.has(c.id));
+    // OW-4 (2026-08-20): PREFER the company's OWN WORDS (verbatim self-assertions,
+    // claim_type='own_words') as the declared side when the extractor has produced them; fall
+    // back to the client-voice INFERENCE claims (our read of the channels) when it hasn't. Never
+    // both — own words replace the inference, mirroring beat 3's lead/demote.
+    const ownWordsPublics = clientVoicePublics.filter((c) => c.claim_type === "own_words");
+    declared = ownWordsPublics.length > 0
+      ? ownWordsPublics
+      : clientVoicePublics.filter((c) => c.claim_type !== "own_words");
     publicVoiceDeclaredIds = new Set(declared.map((c) => c.id));
   } else {
     declared = claims.filter(
@@ -692,7 +700,12 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       computed_at: args.nowIso,
       pairing_kind: pairingKind,
     });
-    if (rejErr) throw new Error(`claim-delta rejection insert failed: ${rejErr.message}`);
+    // Idempotent: a rejection already in the cache (a prior run, or a concurrent step of THIS
+    // run) is exactly what the negative cache holds — a duplicate on the kind-scoped unique key
+    // is a no-op, never a fatal throw. Any OTHER error still surfaces loudly.
+    if (rejErr && !/duplicate key|unique constraint/i.test(rejErr.message)) {
+      throw new Error(`claim-delta rejection insert failed: ${rejErr.message}`);
+    }
     rejectionByIdentity.set(identity, "");
   };
 
@@ -874,7 +887,13 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // Pair rows were inserted INLINE at verdict time (CH-2a) and are skipped
     // here; what remains fresh at end-of-run is the silence rows.
     const fresh = deltas.filter((x) => !existing.has(x.content_identity) && !insertedThisRun.has(x.content_identity));
+    // Dedup WITHIN the fresh batch: two publics (or declared) sharing identical statement text
+    // produce the same silence content_identity; insert each identity once (the kind-scoped
+    // unique key would otherwise abort the whole finalize on the duplicate).
+    const seenFresh = new Set<string>();
     for (const row of fresh) {
+      if (seenFresh.has(row.content_identity)) continue;
+      seenFresh.add(row.content_identity);
       const { error: insErr } = await args.supabase.from("claim_deltas").insert({
         company_id: args.companyId,
         declared_claim_id: row.declared_claim_id,
@@ -894,11 +913,12 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       (r) => !producedIdentities.has(r.content_identity) && r.operator_disposition !== "rejected_pairing",
     );
     if (stale.length > 0) {
-      const { error: delErr } = await args.supabase
-        .from("claim_deltas")
-        .delete()
-        .in("id", stale.map((r) => r.id));
-      if (delErr) throw new Error(`claim-delta stale-delete failed: ${delErr.message}`);
+      const staleIds = stale.map((r) => r.id);
+      for (let i = 0; i < staleIds.length; i += 100) {
+        const { error: delErr } = await args.supabase
+          .from("claim_deltas").delete().in("id", staleIds.slice(i, i + 100));
+        if (delErr) throw new Error(`claim-delta stale-delete failed: ${delErr.message}`);
+      }
       totals.rows_deleted = stale.length;
     }
     totals.rows_kept = [...existing.values()].filter(
@@ -914,11 +934,13 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // invalidate (new identity ⇒ cache miss); this is purely hygiene.
     const orphanRejections = loadedRejections.filter((r) => !candidateIdentities.has(r.content_identity));
     if (orphanRejections.length > 0) {
-      const { error: pruneErr } = await args.supabase
-        .from("claim_delta_rejections")
-        .delete()
-        .in("id", orphanRejections.map((r) => r.id));
-      if (pruneErr) throw new Error(`claim-delta rejection prune failed: ${pruneErr.message}`);
+      // Batch the delete — a large id list in a single .in() overruns PostgREST's URI limit.
+      const orphanIds = orphanRejections.map((r) => r.id);
+      for (let i = 0; i < orphanIds.length; i += 100) {
+        const { error: pruneErr } = await args.supabase
+          .from("claim_delta_rejections").delete().in("id", orphanIds.slice(i, i + 100));
+        if (pruneErr) throw new Error(`claim-delta rejection prune failed: ${pruneErr.message}`);
+      }
       totals.rejections_pruned = orphanRejections.length;
     }
 
