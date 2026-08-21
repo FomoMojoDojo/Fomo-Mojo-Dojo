@@ -10,6 +10,10 @@
 // recurrence / deltas / open_questions run on LOCAL Ollama; status_conflict + score are deterministic
 // (no model). Nothing internal/uploaded/intake enters any step (each edge fn enforces its own gate).
 //
+// Deltas are driven DIRECTLY against generate-claim-deltas (plan → cap-3 chunks → finalize, the
+// headless runner sequencing every chunk) — NOT via refresh-deltas-step, whose gateway self-chain +
+// 25-min stall-window watchdog livelocks a large company. generate-claim-deltas is used verbatim.
+//
 //   npx vite-node scripts/first-read-fill.ts -- --company=<id>
 //   npx vite-node scripts/first-read-fill.ts -- --all
 //   npx vite-node scripts/first-read-fill.ts -- --all --dry-run          # plan only, touches nothing
@@ -24,6 +28,7 @@
 import { execFileSync } from "node:child_process";
 import { packPairChunks } from "../src/lib/signalRecurrence/packPairChunks";
 import { packAnchorChunks } from "../src/lib/firstRead/packAnchors";
+import { packDeltaChunks, type DeltaPlanClaim } from "../src/lib/claimDeltas/packChunks";
 import {
   CB1_FROZEN_ID, HELD_FROM_ALL, FILL_STEP_ORDER, stepsFrom, skipReason, refuseReason, ledgerEnabled,
   type FillStep, type FillCounts,
@@ -153,24 +158,37 @@ async function runDeltasPublic(c: Company, counts: FillCounts): Promise<{ before
   const before = q.deltasPublic(c.id);
   const skip = skipReason("deltas_public", counts);
   if (skip) return { before, after: before, outcome: `skipped:${skip}` };
-  // FIRE-AND-FORGET: refresh-deltas-step self-chains server-side and often does NOT respond within
-  // the client window (mirrors useDeltaStepRun's `void invoke`). A fire timeout is NOT a failure —
-  // the stepper runs on regardless; we read the truth from its ledger row.
-  try { await invokeFn("refresh-deltas-step", { company_id: c.id, pairing_kind: "public_vs_public" }, 25_000); }
-  catch { /* dispatched; the stepper self-chains independent of the client response */ }
-  // Poll the stepper's long_runner_runs row (run_kind='claim_deltas_public') until it settles.
-  const deadline = Date.now() + 25 * 60_000;
-  let status = "running";
-  while (Date.now() < deadline) {
-    await sleep(6_000);
-    const row = psql<{ status: string } | null>(
-      `SELECT coalesce((SELECT to_jsonb(x) FROM (SELECT status FROM long_runner_runs WHERE company_id='${c.id}' AND run_kind='claim_deltas_public' ORDER BY started_at DESC LIMIT 1) x), 'null'::jsonb);`,
-    );
-    status = row?.status ?? "running";
-    if (status === "completed" || status === "failed") break;
+  // Drive generate-claim-deltas DIRECTLY (plan → cap-3 chunks → finalize), like recurrence/questions.
+  // The headless runner controls timing, so it avoids refresh-deltas-step's gateway self-chain +
+  // 25-min stall-window watchdog, which livelocks a big company (chunk 1 banks, the waitUntil→fetch
+  // self-chain to chunk 2 is unreliable behind the gateway → the run is swept stale → re-fired →
+  // repeats forever). Re-plan each pass so a cut/failed chunk is returned again (idempotent retry);
+  // packDeltaChunks filters candidates_fresh>0, so each pass shrinks and the loop converges.
+  const pk = "public_vs_public";
+  let passes = 0, totalChunks = 0;
+  let planErr: string | null = null;
+  while (passes++ < 60) {
+    const plan = await invokeFn("generate-claim-deltas", { company_id: c.id, plan: true, pairing_kind: pk }, 120_000).catch(() => null);
+    if (!plan || !plan.ok) { planErr = plan ? `plan_${plan.status}` : "plan_timeout"; break; }
+    const claims: DeltaPlanClaim[] = Array.isArray(plan.data?.claims) ? plan.data.claims : [];
+    const chunks = packDeltaChunks(claims);
+    if (chunks.length === 0) break; // converged — no fresh candidates remain
+    for (const chunk of chunks) {
+      totalChunks++;
+      try {
+        await invokeFn("generate-claim-deltas", {
+          company_id: c.id, write: true, pairing_kind: pk,
+          declared_ids: chunk.map((x) => x.declared_claim_id),
+        }, 420_000);
+      } catch { /* gateway cut / timeout: idempotent — the next re-plan returns unbanked pairs */ }
+    }
   }
-  const outcome = status === "completed" ? "ran" : status === "failed" ? "failed:stepper" : "timeout:stepper_still_running";
-  return { before, after: q.deltasPublic(c.id), outcome };
+  if (planErr) return { before, after: q.deltasPublic(c.id), outcome: `failed:${planErr}` };
+  // FINALIZE — the ONE unscoped run (silences + stale-sweep).
+  const fin = await invokeFn("generate-claim-deltas", { company_id: c.id, write: true, pairing_kind: pk }, 420_000).catch(() => null);
+  const after = q.deltasPublic(c.id);
+  if (!fin || !fin.ok) return { before, after, outcome: `failed:finalize_${fin ? fin.status : "timeout"}` };
+  return { before, after, outcome: `ran:chunks=${totalChunks}` };
 }
 
 async function runOpenQuestions(c: Company, _counts: FillCounts): Promise<{ before: number; after: number; outcome: string }> {
