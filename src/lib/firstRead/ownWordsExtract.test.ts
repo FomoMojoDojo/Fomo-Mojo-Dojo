@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assembleOwnWords, verbatimProvable, assertPublicClientVoice, isChannelJunk,
+  isRecruitingCopy, isProductDescription,
   type Candidate, type JudgeVerdict,
 } from "../../../supabase/functions/_shared/ownWordsExtract";
 
@@ -74,6 +75,74 @@ describe("own-words rails — deterministic verbatim guard: fabricated quote rej
     expect(isChannelJunk(FABRICATED.quote, TITLE)).toBe(false);
     // Without verbatimProvable, nothing else rejects it — hence the deterministic guard is load-bearing.
     expect(verbatimProvable(FABRICATED.quote, PAGE)).toBe(false);
+  });
+});
+
+describe("own-words rails — R1: product/SKU + recruiting rejected, offering-model kept", () => {
+  // Real page text carrying all three shapes.
+  const R1_PAGE =
+    "This medium roast Colombian coffee is fruity, bright, complex and full bodied. " +
+    "We provide crisis stabilization and outpatient care to Bay Area youth and families. " +
+    "As a Family Support Counselor, you'll provide counseling and case management.";
+  const TASTING: Candidate = { quote: "This medium roast Colombian coffee is fruity, bright, complex and full bodied", offset: 0, length: 76 };
+  const OFFERING: Candidate = { quote: "We provide crisis stabilization and outpatient care to Bay Area youth and families", offset: 0, length: 82 };
+  const RECRUIT: Candidate = { quote: "As a Family Support Counselor, you'll provide counseling and case management", offset: 0, length: 75 };
+  const keep: JudgeVerdict = { keep: true, fidelity: "verbatim", selfAssertion: true };
+
+  it("GREEN: a planted tasting note is rejected deterministically (product_description)", async () => {
+    expect(isProductDescription(TASTING.quote)).toBe(true);
+    const { survivors, rejections } = await assembleOwnWords([TASTING], [keep], R1_PAGE, null);
+    expect(survivors).toHaveLength(0);
+    expect(rejections[0].reason).toBe("product_description");
+  });
+
+  it("GREEN: a planted recruiting line is rejected deterministically (recruiting_copy)", async () => {
+    expect(isRecruitingCopy(RECRUIT.quote)).toBe(true);
+    const { survivors, rejections } = await assembleOwnWords([RECRUIT], [keep], R1_PAGE, null);
+    expect(survivors).toHaveLength(0);
+    expect(rejections[0].reason).toBe("recruiting_copy");
+  });
+
+  it("GREEN: an offering-model line ('We provide X to Y') is KEPT (not matched by either heuristic)", async () => {
+    expect(isProductDescription(OFFERING.quote)).toBe(false);
+    expect(isRecruitingCopy(OFFERING.quote)).toBe(false);
+    const { survivors } = await assembleOwnWords([OFFERING], [keep], R1_PAGE, null);
+    expect(survivors.map((s) => s.quote)).toEqual([OFFERING.quote]);
+  });
+
+  it("RED: with the R1 rails off, tasting + recruiting would survive (judge was fooled to keep)", async () => {
+    // The judge keep+selfAssertion is true for all three; only the R1 rails stop the first two.
+    // Demonstrate by checking the heuristics are the sole gate (verbatim guard passes — all in text).
+    expect(verbatimProvable(TASTING.quote, R1_PAGE)).toBe(true);
+    expect(verbatimProvable(RECRUIT.quote, R1_PAGE)).toBe(true);
+  });
+});
+
+describe("own-words rails — write replays frozen candidates deterministically (ruling B)", () => {
+  // Simulate the write path: the same frozen candidates + verdicts, re-assembled, MUST yield the
+  // same survivors every time (no generator involved). Reuses the R1 page/candidates.
+  const PAGE =
+    "This medium roast Colombian coffee is fruity, bright, complex and full bodied. " +
+    "We provide crisis stabilization and outpatient care to Bay Area youth and families. " +
+    "As a Family Support Counselor, you'll provide counseling and case management.";
+  const frozenCands: Candidate[] = [
+    { quote: "This medium roast Colombian coffee is fruity, bright, complex and full bodied", offset: 0, length: 76 },
+    { quote: "We provide crisis stabilization and outpatient care to Bay Area youth and families", offset: 0, length: 82 },
+    { quote: "As a Family Support Counselor, you'll provide counseling and case management", offset: 0, length: 75 },
+  ];
+  const frozenVerdicts: JudgeVerdict[] = frozenCands.map(() => ({ keep: true, fidelity: "verbatim", selfAssertion: true }));
+
+  it("re-assembly is stable across runs (the write never regenerates)", async () => {
+    const a = await assembleOwnWords(frozenCands, frozenVerdicts, PAGE, null);
+    const b = await assembleOwnWords(frozenCands, frozenVerdicts, PAGE, null);
+    expect(a.survivors.map((s) => s.quote)).toEqual(b.survivors.map((s) => s.quote));
+    // only the offering-model line survives the rails, deterministically
+    expect(a.survivors.map((s) => s.quote)).toEqual(["We provide crisis stabilization and outpatient care to Bay Area youth and families"]);
+  });
+
+  it("an EMPTY frozen set yields no survivors (write refuses upstream on empty cache — no regeneration)", async () => {
+    const { survivors } = await assembleOwnWords([], [], PAGE, null);
+    expect(survivors).toHaveLength(0);
   });
 });
 

@@ -26,6 +26,41 @@ export function isChannelJunk(statement: string, sourceTitle: string | null): bo
   return false;
 }
 
+// ── R1 deterministic rejection heuristics (2026-08-20) ───────────────────────
+// The judge carries the full criteria; these catch the UNAMBIGUOUS cases model-free so the
+// rails are testable. Both are intentionally NARROW — an offering-model statement ("we provide
+// X to Y") carries none of this vocabulary and is never matched.
+
+// (ii) recruiting / job copy — hiring calls, benefits lists, role descriptions.
+const RECRUITING_RE: RegExp[] = [
+  /\bwe(?:['’]re| are)\s+(?:looking for|hiring|seeking|recruiting)\b/i,
+  /\bwe['’]d love to meet you\b/i,
+  /\b(?:full[- ]time|per diem)\b.*\b(?:role|position|join|programs?)\b/i,
+  /\bjoin our (?:team|growing|staff)\b/i,
+  /\bcompetitive (?:compensation|pay|benefits|salary)\b/i,
+  /\bpaths? for advancement\b/i,
+  /\bas an?\b[^.?!]{0,60}\byou['’]ll\b/i, // "As a Family Support Counselor, you'll provide…"
+];
+export function isRecruitingCopy(quote: string): boolean {
+  return RECRUITING_RE.some((re) => re.test(quote));
+}
+
+// (i) product / SKU description — tasting notes, roast profiles, format/price copy for a
+// SPECIFIC item. Requires actual tasting/roast vocabulary so offering-breadth statements
+// ("all of our coffees are available in 12oz bags") are NOT matched by shape alone.
+const ROAST_RE = /\b(?:light|medium|medium[- ]dark|dark)\s+roast\b/i;
+const TASTING_RE = /\b(full[- ]bodied|fruity|earthy|nutty|chocolat\w*|floral|aromatic|acidic|caramel\w*|citrus\w*|berr\w*|smoky|silky|velvety|balanced\s+(?:medium|roast|coffee))\b/i;
+const SKU_OPENER_RE = /^\s*this\s+(?:coffee|roast|blend|medium|dark|light|single)\b/i;
+export function isProductDescription(quote: string): boolean {
+  const flavorCount = (quote.match(new RegExp(TASTING_RE, "gi")) || []).length;
+  // roast profile + any flavor descriptor, OR a "This <coffee/roast…>" opener with a flavor note,
+  // OR two-plus flavor descriptors (a tasting note regardless of opener).
+  if (ROAST_RE.test(quote) && TASTING_RE.test(quote)) return true;
+  if (SKU_OPENER_RE.test(quote) && TASTING_RE.test(quote)) return true;
+  if (flavorCount >= 2) return true;
+  return false;
+}
+
 // ── DETERMINISTIC verbatim guard ─────────────────────────────────────────────
 /** normalizeForHash(quote) must be a substring of normalizeForHash(cleanText). Offset-
  *  independent (robust to a model miscounting offsets); the single hash authority normalizes
@@ -77,10 +112,12 @@ export type Rejection = { quote: string; reason: string };
  * Given the generator's candidates and the judge's per-candidate verdicts, apply the honesty
  * rails IN ORDER and return the surviving own-words + the rejections with reasons. Rail order:
  *   1. channelJunk (deterministic) — nav/title/no-content.
- *   2. self-assertion (judge) — the company speaking about itself, not a third party.
- *   3. judge keep — the judge's overall verdict.
- *   4. verbatim guard (DETERMINISTIC, final) — substring-provable against the page, else reject.
- *   5. dedup by content identity.
+ *   2. recruiting_copy (deterministic, R1) — hiring/benefits/role copy.
+ *   3. product_description (deterministic, R1) — tasting-note/roast/SKU copy.
+ *   4. self-assertion (judge) — the company speaking about itself, not a third party.
+ *   5. judge keep — the judge's overall verdict (also carries the R1 criteria for ambiguous cases).
+ *   6. verbatim guard (DETERMINISTIC, final) — substring-provable against the page, else reject.
+ *   7. dedup by content identity.
  * A missing verdict for a candidate is a reject (require_model — no verdict, no keep).
  */
 export async function assembleOwnWords(
@@ -96,6 +133,8 @@ export async function assembleOwnWords(
     const c = candidates[i];
     const v = verdicts[i];
     if (isChannelJunk(c.quote, sourceTitle)) { rejections.push({ quote: c.quote, reason: "channel_junk" }); continue; }
+    if (isRecruitingCopy(c.quote)) { rejections.push({ quote: c.quote, reason: "recruiting_copy" }); continue; }
+    if (isProductDescription(c.quote)) { rejections.push({ quote: c.quote, reason: "product_description" }); continue; }
     if (!v) { rejections.push({ quote: c.quote, reason: "no_verdict" }); continue; }
     if (!v.selfAssertion) { rejections.push({ quote: c.quote, reason: "not_self_assertion" }); continue; }
     if (!v.keep) { rejections.push({ quote: c.quote, reason: v.reason || "judge_reject" }); continue; }
