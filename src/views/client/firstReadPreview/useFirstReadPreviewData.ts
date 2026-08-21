@@ -24,6 +24,7 @@ import {
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
+import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { bareHost, facetForTopic, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
@@ -573,7 +574,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // (finding_recurrence.distinct_host_count) desc, then recency. No verdict language.
         const { data: fRows } = await supabase
           .from("findings")
-          .select("id, body, created_at")
+          .select("id, body, created_at, origin_signal_id")
           .eq("company_id", companyId)
           .eq("status", "open")
           .eq("register", "public_inferred");
@@ -585,17 +586,40 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ((frRows ?? []) as Array<{ finding_id: string; distinct_host_count: number | null }>)
             .map((r) => [r.finding_id, r.distinct_host_count ?? 0]),
         );
-        const findings: FRFinding[] = ((fRows ?? []) as Array<{ id: string; body: string | null; created_at: string | null }>)
-          .filter((f) => (f.body ?? "").trim())
-          .map((f) => ({
+        // R4: the finding's earliest backing signal gives its event_date (when the thing
+        // happened) and read date (the run that read it). Load them for the origin signals.
+        type FRow = { id: string; body: string | null; created_at: string | null; origin_signal_id: string | null };
+        const fRowsT = ((fRows ?? []) as FRow[]).filter((f) => (f.body ?? "").trim());
+        const finSigIds = [...new Set(fRowsT.map((f) => f.origin_signal_id).filter((x): x is string => !!x))];
+        const { data: finSigs } = finSigIds.length
+          ? await supabase.from("signals").select("id, event_date, source_id").in("id", finSigIds)
+          : { data: [] };
+        const finSigById = new Map(
+          ((finSigs ?? []) as Array<{ id: string; event_date: string | null; source_id: string | null }>).map((s) => [s.id, s]),
+        );
+        const findingsRaw = fRowsT.map((f) => {
+          const sig = f.origin_signal_id ? finSigById.get(f.origin_signal_id) : null;
+          const eventDate = sig?.event_date ?? null;
+          const readDate = (sig?.source_id ? runDates.get(sig.source_id) : null) ?? f.created_at ?? null;
+          const readFmt = formatFullDate(readDate);
+          const eventFmt = eventDate ? formatFullDate(eventDate) : null;
+          // R4 tag: "said <event> · read <read>" when a differing event date is known; else "read <read>".
+          const label = eventFmt && eventFmt !== readFmt
+            ? `said ${eventFmt} · read ${readFmt ?? ""}`.trim()
+            : `read ${readFmt ?? ""}`.trim();
+          // R4 age (reuse FRESHNESS_WINDOW_MONTHS + monthsBetween via findingsAge): >18mo/undated = stale.
+          const { stale, ageMarker } = classifyFindingAge(eventDate, readDate);
+          return {
             id: f.id,
             body: (f.body ?? "").trim(),
             recurrence: recByFinding.get(f.id) ?? 0,
-            sourceTag: syntheticTag(f.created_at),
-            createdAt: f.created_at ?? "",
-          }))
-          .sort((a, b) => b.recurrence - a.recurrence || b.createdAt.localeCompare(a.createdAt))
-          .map(({ createdAt: _ca, ...f }) => f);
+            sourceTag: readFmt ? { label } : null,
+            stale, ageMarker,
+            recencyKey: eventDate ?? f.created_at ?? "",
+          };
+        });
+        // R4 order: recurrence desc → fresh before stale (equal recurrence) → recency desc.
+        const findings: FRFinding[] = orderFindings(findingsRaw).map(({ recencyKey: _rk, ...f }) => f);
 
         // S1: the outside read was LOOKED iff a public_baseline_run exists (persisted).
         const scoreLooked = runDates.size > 0;

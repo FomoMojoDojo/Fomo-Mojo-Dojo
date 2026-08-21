@@ -328,7 +328,15 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
             key={f.id}
             leftLabel={f.recurrence > 0 ? `${f.recurrence} source${f.recurrence === 1 ? "" : "s"}` : "Outside"}
             leftBody={f.body}
-            meta={f.sourceTag ? <SourceTag>{f.sourceTag.label}</SourceTag> : null}
+            meta={
+              <>
+                {f.sourceTag ? <SourceTag>{f.sourceTag.label}</SourceTag> : null}
+                {/* R4 age marker — a stale (old-dated or undated) finding is never hidden, only marked. */}
+                {f.ageMarker ? (
+                  <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-faint))" }}>{f.ageMarker}</span>
+                ) : null}
+              </>
+            }
           />
         ))}
       </main>

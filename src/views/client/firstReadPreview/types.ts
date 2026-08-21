@@ -118,6 +118,11 @@ export type FRFinding = {
   /** finding_recurrence.distinct_host_count (independent corroborating hosts), 0 if none. */
   recurrence: number;
   sourceTag: SourceTagResult;
+  /** R4: age of the finding's earliest backing signal. stale = event_date > 18 months old OR
+   *  undated (reuses FRESHNESS_WINDOW_MONTHS). Stale ranks below fresh at equal recurrence;
+   *  never hidden. The marker distinguishes an old-but-dated finding from an undated one. */
+  stale: boolean;
+  ageMarker: "dated" | "undated" | null;
 };
 
 /** One persisted micro-move of the outside score (W1, 2026-08-20): value / max with

@@ -99,7 +99,7 @@ function roundHalfUp(v: number): number {
   return Math.floor(v + 0.5);
 }
 
-function monthsBetween(fromIso: string, toIso: string): number {
+export function monthsBetween(fromIso: string, toIso: string): number {
   const from = new Date(fromIso).getTime();
   const to = new Date(toIso).getTime();
   if (!Number.isFinite(from) || !Number.isFinite(to)) return Number.POSITIVE_INFINITY;
