@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { ActQuestions, ActFindings, ActGap } from "./acts";
+import { groupGapStatements } from "./mapping";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRStatusConflict, type FRFinding, type FRGapPair } from "./types";
 
 const CONFLICT: FRStatusConflict = {
@@ -34,12 +35,17 @@ describe("S4 — status conflict pinned atop Questions + Findings", () => {
 });
 
 describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () => {
-  const disputed: FRGapPair = { id: "d", verdict: "confirmed", declared: "we partner with Le French Rooster", record: "Le French Rooster teaming up", sourceTag: null, eventDate: null, evidenceRank: 3, statusDisputed: true };
-  const clean: FRGapPair = { id: "c", verdict: "confirmed", declared: "we roast to order", record: "great coffee", sourceTag: null, eventDate: null, evidenceRank: 3, statusDisputed: false };
+  const disputed: FRGapPair = { id: "d", statementId: "sd", verdict: "confirmed", declared: "we partner with Le French Rooster", record: "Le French Rooster teaming up", sourceTag: null, eventDate: null, evidenceRank: 3, statusDisputed: true };
+  const clean: FRGapPair = { id: "c", statementId: "sc", verdict: "confirmed", declared: "we roast to order", record: "great coffee", sourceTag: null, eventDate: null, evidenceRank: 3, statusDisputed: false };
+  const withStatements = (p: FRGapPair): Partial<FirstReadPreviewData> => ({
+    gapPairs: [p],
+    gapStatements: groupGapStatements([p]),
+    gapCounts: { contradicted: 0, unechoed: 0, confirmed: 1 },
+  });
 
   it("a disputed gap pair shows the chip; a clean one does not — BOTH still render", () => {
-    const disputedText = render(<ActGap read={base({ gapPairs: [disputed], gapCounts: { contradicted: 0, unechoed: 0, confirmed: 1 } })} />).container.textContent ?? "";
-    const cleanText = render(<ActGap read={base({ gapPairs: [clean], gapCounts: { contradicted: 0, unechoed: 0, confirmed: 1 } })} />).container.textContent ?? "";
+    const disputedText = render(<ActGap read={base(withStatements(disputed))} />).container.textContent ?? "";
+    const cleanText = render(<ActGap read={base(withStatements(clean))} />).container.textContent ?? "";
     expect(disputedText).toContain("Status disputed");
     expect(disputedText).toContain("Le French Rooster teaming up"); // not hidden
     expect(cleanText).not.toContain("Status disputed");

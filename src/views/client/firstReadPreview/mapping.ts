@@ -1,7 +1,7 @@
 // First Read (8-beat) — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
-import type { FRGapVerdict, SignalStrength } from "./types";
+import type { FRGapPair, FRGapStatement, FRGapVerdict, SignalStrength } from "./types";
 
 /**
  * R4 (signed): strong = recurrence-confirmed across independent sources;
@@ -24,6 +24,36 @@ export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, unec
 export function orderGapPairs<T extends { verdict: string; evidenceRank: number }>(pairs: T[]): T[] {
   return [...pairs].sort((a, b) =>
     (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9) || b.evidenceRank - a.evidenceRank);
+}
+
+/**
+ * 2026-08-21: the unit of echo is the STATEMENT, not the pair row. Group the beat-4 pairs by
+ * their own-words id (statementId = declared_claim_id, the single identity authority's key).
+ * Per statement: verdict = contradicted if ANY pair contradicted, else confirmed if ANY echoed,
+ * else not-echoed. Every confirmed/contradicted pair is kept as visible evidence beneath — nothing
+ * is hidden; a not-echoed statement carries no evidence (the record is silent). Statement order
+ * follows the (already discussability-ordered) input's first appearance, so it is deterministic
+ * and independent of within-group shuffling.
+ */
+export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
+  const order: string[] = [];
+  const byId = new Map<string, FRGapStatement>();
+  for (const p of pairs) {
+    let st = byId.get(p.statementId);
+    if (!st) {
+      st = { statementId: p.statementId, declared: p.declared ?? "", verdict: "unechoed", evidence: [] };
+      byId.set(p.statementId, st);
+      order.push(p.statementId);
+    }
+    // Only confirmed/contradicted pairs carry a public-record side — those are the evidence.
+    if (p.verdict === "confirmed" || p.verdict === "contradicted") st.evidence.push(p);
+  }
+  for (const st of byId.values()) {
+    const hasContra = st.evidence.some((e) => e.verdict === "contradicted");
+    const hasEcho = st.evidence.some((e) => e.verdict === "confirmed");
+    st.verdict = hasContra ? "contradicted" : hasEcho ? "confirmed" : "unechoed";
+  }
+  return order.map((k) => byId.get(k)!);
 }
 
 /**

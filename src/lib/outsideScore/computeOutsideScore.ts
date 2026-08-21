@@ -11,12 +11,16 @@
 //
 // MOVES (each linear, documented here; the stated ranges are enforced):
 //   echo_integrity  −4…+4   clamp(confirmed − contradicted, −4, +4), where
-//                           confirmed = R5 'echoed' pairs and contradicted =
-//                           R5 'divergent' pairs among eligible claim_deltas
+//                           the unit is the STATEMENT, not the pair row
+//                           (operator ruling 2026-08-21): confirmed = distinct
+//                           own-words statements (declaredClaimId) with an
+//                           'echoed' pair, contradicted = distinct statements
+//                           with a 'divergent' pair, among eligible claim_deltas
 //                           (struck claims and uploaded-document-derived
 //                           declared sides excluded — the First Read
-//                           outside-only provenance gate). Unspoken pairs
-//                           contribute 0: silence never penalizes.
+//                           outside-only provenance gate). One statement echoed
+//                           by eight sources is ONE confirmation. Unspoken
+//                           statements contribute 0: silence never penalizes.
 //   record_strength  0…+2   2 × (strong ÷ total) over eligible outside-voice
 //                           signals, strength per R4 (strong =
 //                           recurrence-accepted; thin = low confidence;
@@ -67,7 +71,14 @@ export type OutsideDeltaInput = {
  *  the distinct source_type values coverage saw. Makes the score auditable and diffable. */
 export type OutsideScoreLedger = {
   signal_count: number;
-  echo_integrity: { echoed_delta_ids: string[]; divergent_delta_ids: string[] };
+  echo_integrity: {
+    // Statement ids are the SCORED unit (distinct own-words ids); delta ids are the visible pair
+    // rows beneath them (kept for provenance — every echoed pair stays traceable).
+    echoed_statement_ids: string[];
+    divergent_statement_ids: string[];
+    echoed_delta_ids: string[];
+    divergent_delta_ids: string[];
+  };
   record_strength: { strong_signal_ids: string[]; signal_count: number };
   differentiation_echo: { delta_ids: string[] };
   coverage_breadth: { signal_ids: string[]; distinct_source_types: string[] };
@@ -132,9 +143,18 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
     return { eligible: false, companyId: input.companyId, signalCount };
   }
 
-  // echo_integrity: clamp(confirmed − contradicted, −4, +4); unspoken = 0.
-  const confirmed = input.deltas.filter((d) => d.deltaType === "echoed").length;
-  const contradicted = input.deltas.filter((d) => d.deltaType === "divergent").length;
+  // echo_integrity: clamp(distinct echoed statements − distinct contradicted statements, −4, +4).
+  // The unit of echo is the STATEMENT (own-words id = declaredClaimId), not the pair row: one
+  // own-words statement echoed by eight sources is ONE confirmation. Unspoken = 0 (silence never
+  // penalizes). Deltas with no declaredClaimId carry no statement identity and are not counted.
+  const echoedStatementIds = [
+    ...new Set(input.deltas.filter((d) => d.deltaType === "echoed" && d.declaredClaimId).map((d) => d.declaredClaimId as string)),
+  ];
+  const divergentStatementIds = [
+    ...new Set(input.deltas.filter((d) => d.deltaType === "divergent" && d.declaredClaimId).map((d) => d.declaredClaimId as string)),
+  ];
+  const confirmed = echoedStatementIds.length;
+  const contradicted = divergentStatementIds.length;
   const echoIntegrity = clamp(confirmed - contradicted, -4, 4);
 
   // record_strength: 2 × strong-share.
@@ -173,7 +193,7 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
       value: echoIntegrity,
       min: -4,
       max: 4,
-      explanation: `${confirmed} confirmed vs ${contradicted} contradicted outside pairs; unspoken pairs count zero.`,
+      explanation: `${confirmed} confirmed vs ${contradicted} contradicted outside statements; unspoken statements count zero.`,
     },
     {
       key: "record_strength",
@@ -210,6 +230,8 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
   const inputLedger: OutsideScoreLedger = {
     signal_count: signalCount,
     echo_integrity: {
+      echoed_statement_ids: echoedStatementIds,
+      divergent_statement_ids: divergentStatementIds,
       echoed_delta_ids: input.deltas.filter((d) => d.deltaType === "echoed").map(deltaId).filter(Boolean),
       divergent_delta_ids: input.deltas.filter((d) => d.deltaType === "divergent").map(deltaId).filter(Boolean),
     },

@@ -52,9 +52,10 @@ describe("outside-v1.0.0 — anchor and bounds by construction", () => {
   it("worst case → floor 11 (echo −4; silence never penalizes)", () => {
     const r = computeOutsideScore(
       base(10, {
-        deltas: Array.from({ length: 6 }, () => ({
+        // Six DISTINCT contradicted statements (unit = statement): 0 − 6 clamps to −4.
+        deltas: Array.from({ length: 6 }, (_, i) => ({
           deltaType: "divergent" as const,
-          declaredClaimId: "d1",
+          declaredClaimId: `d${i}`,
           declaredTopic: "positioning",
         })),
       }),
@@ -95,6 +96,23 @@ describe("outside-v1.0.0 — individual moves", () => {
     );
     if (!r.eligible) throw new Error("expected eligible");
     expect(r.moves.find((m) => m.key === "echo_integrity")!.value).toBe(1);
+  });
+
+  it("echo_integrity counts distinct STATEMENTS, not pair rows (2026-08-21)", () => {
+    // CB2 shape: many echoed pair rows collapse to a few own-words statements.
+    // 11 echoed rows across 3 declaredClaimIds → 3, NOT 11 (which would clamp to 4).
+    const deltas = [
+      ...Array.from({ length: 7 }, (_, i) => ({ deltaType: "echoed" as const, declaredClaimId: "s1", declaredTopic: "job", id: `r${i}` })),
+      ...Array.from({ length: 3 }, (_, i) => ({ deltaType: "echoed" as const, declaredClaimId: "s2", declaredTopic: "job", id: `r${i + 7}` })),
+      { deltaType: "echoed" as const, declaredClaimId: "s3", declaredTopic: "job", id: "r10" },
+    ];
+    const r = computeOutsideScore(base(10, { deltas }));
+    if (!r.eligible) throw new Error("expected eligible");
+    // 3 distinct echoed statements − 0 contradicted = 3 (row counting would give 11 → clamp 4).
+    expect(r.moves.find((m) => m.key === "echo_integrity")!.value).toBe(3);
+    expect(r.inputLedger.echo_integrity.echoed_statement_ids.sort()).toEqual(["s1", "s2", "s3"]);
+    expect(r.inputLedger.echo_integrity.echoed_delta_ids).toHaveLength(11); // every pair still traced
+    expect(r.inputLedger.echo_integrity.divergent_statement_ids).toEqual([]);
   });
 
   it("record_strength: 2 × strong-share; R4 strength mapping honored", () => {

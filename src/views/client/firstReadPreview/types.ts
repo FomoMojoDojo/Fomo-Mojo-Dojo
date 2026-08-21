@@ -65,6 +65,9 @@ export type FRGapVerdict = "confirmed" | "contradicted" | "unechoed" | "unspoken
 
 export type FRGapPair = {
   id: string;
+  /** Own-words id (declared_claim_id) — the single identity authority's key for the declared
+   *  statement this row belongs to. Beat 4 groups on this: the unit of echo is the STATEMENT. */
+  statementId: string;
   verdict: FRGapVerdict;
   /** Declared-side statement; null only for a record-only row. */
   declared: string | null;
@@ -78,8 +81,22 @@ export type FRGapPair = {
   statusDisputed?: boolean;
 };
 
+/** The unit of echo is the STATEMENT (operator ruling 2026-08-21). A declared own-words
+ *  statement, grouped from its public_vs_public pair rows: verdict = contradicted if ANY pair
+ *  contradicted, else confirmed if ANY echoed, else not-echoed. Every pair stays visible as
+ *  evidence beneath (nothing hidden). `evidence` is empty for a not-echoed statement. */
+export type FRGapStatement = {
+  /** own-words id (declared_claim_id) — the single identity authority's key. */
+  statementId: string;
+  /** the declared (own-words) statement text. */
+  declared: string;
+  verdict: "confirmed" | "contradicted" | "unechoed";
+  /** the public evidence pairs beneath — most-recent per source; empty for `unechoed`. */
+  evidence: FRGapPair[];
+};
+
 /** A1: persisted type counts that pick beat 4's headline (never a disagreement headline over
- *  zero disagreements). Derived from the rendered pairs. */
+ *  zero disagreements). Counted by STATEMENT (2026-08-21), not by pair row. */
 export type FRGapCounts = { contradicted: number; unechoed: number; confirmed: number };
 
 /** S3/S5: a live status conflict — an authoritative source reports {location} closed while others
@@ -192,7 +209,9 @@ export type FirstReadPreviewData = {
   /** Outside-methodology score rows ONLY (R1) — v1.1.0 never renders here. */
   score: FRScore | null;
   gapPairs: FRGapPair[];
-  /** A1: type counts driving the gap headline/standfirst. */
+  /** Beat 4 render unit (2026-08-21): declared statements, each with its evidence pairs beneath. */
+  gapStatements: FRGapStatement[];
+  /** A1: statement counts driving the gap headline/standfirst. */
   gapCounts: FRGapCounts;
   /** S3/S5: live status conflicts (pinned atop Questions + Findings; mark disputed rows). */
   statusConflicts: FRStatusConflict[];
@@ -232,6 +251,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   signals: [],
   score: null,
   gapPairs: [],
+  gapStatements: [],
   gapCounts: { contradicted: 0, unechoed: 0, confirmed: 0 },
   statusConflicts: [],
   gapIntegrity: "not_yet",

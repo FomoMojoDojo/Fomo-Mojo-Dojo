@@ -38,6 +38,9 @@ const dryRun = process.argv.includes("--dry-run");
 // signal id from the scored input so the ledger diff can be checked.
 const onlyCompany = process.argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
 const excludeSignal = process.argv.find((a) => a.startsWith("--exclude-signal="))?.split("=")[1] ?? null;
+// Vacuous-proof hook: drop every delta whose declared statement (own-words id) matches, so the
+// echo ledger's statement-id diff can be checked against exactly one planted statement.
+const excludeStatement = process.argv.find((a) => a.startsWith("--exclude-statement="))?.split("=")[1] ?? null;
 
 function psqlJson<T>(sql: string): T {
   const out = execFileSync(
@@ -140,6 +143,8 @@ for (const company of companies) {
 
   const deltas: OutsideDeltaInput[] = deltasRaw
     .filter((d) => d.declared_status !== "struck" && d.declared_doc_derived !== true)
+    // Vacuous-proof hook: drop one declared statement's deltas from the scored input (proof, never a real run).
+    .filter((d) => d.declared_claim_id !== excludeStatement)
     .map((d) => ({
       id: d.id,
       deltaType: d.delta_type as OutsideDeltaInput["deltaType"],

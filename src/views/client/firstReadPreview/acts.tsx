@@ -19,7 +19,7 @@ import {
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { formatMonthYear } from "./mapping";
-import type { FirstReadPreviewData, FRGapCounts, FRSignal, FRStatusConflict } from "./types";
+import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -754,6 +754,39 @@ function gapStandfirst(c: FRGapCounts): string {
   return `What you tell the world on your own channels, next to what the world says back.${tally}`;
 }
 
+/** Beat 4 right column: a statement's public evidence. Not-echoed → the signed record-silent line
+ *  once. Confirmed/contradicted → every pair listed (source tag + most-recent + STATUS DISPUTED
+ *  chip per pair). Nothing hidden — one visible entry per pair beneath its statement. */
+function StatementEvidence({ statement }: { statement: FRGapStatement }) {
+  if (statement.verdict === "unechoed" || statement.evidence.length === 0) {
+    return (
+      <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-8">
+      {statement.evidence.map((pair) => {
+        const recency = formatMonthYear(pair.eventDate);
+        return (
+          <div key={pair.id}>
+            <div className="mb-3 flex flex-wrap items-center gap-4">
+              {/* S5 — disputed marker per pair; the pair is NOT hidden. */}
+              {pair.statusDisputed ? <StatusDisputedChip /> : null}
+              {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
+              {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+            </div>
+            {pair.record ? (
+              <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                {pair.record}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ActGap({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
@@ -765,7 +798,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         standfirst={gapStandfirst(read.gapCounts)}
       />
       <main className="fr-stagger">
-        {read.gapPairs.length === 0 ? (
+        {read.gapStatements.length === 0 ? (
           <Absent>
             {read.gapIntegrity === "couldnt_check"
               ? GAP_COULDNT_CHECK_NOTE
@@ -774,28 +807,19 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
                 : NO_PAIRS_NOTE}
           </Absent>
         ) : null}
-        {read.gapPairs.map((pair) => {
-          const recency = formatMonthYear(pair.eventDate);
-          return (
-            <LedgerRow
-              key={pair.id}
-              leftLabel="You say"
-              leftBody={pair.declared ?? UNSPOKEN_LEFT}
-              quoted={pair.declared !== null}
-              muted={pair.verdict === "unechoed" && pair.record === null}
-              meta={
-                <>
-                  <VerdictChip verdict={pair.verdict} />
-                  {/* S5 — disputed marker next to the verdict; the pair is NOT hidden. */}
-                  {pair.statusDisputed ? <StatusDisputedChip /> : null}
-                  {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
-                  {recency ? <RecencyTag>{recency}</RecencyTag> : null}
-                </>
-              }
-              rightBody={pair.record ?? RECORD_SILENT_NOTE}
-            />
-          );
-        })}
+        {/* One row per STATEMENT (2026-08-21). Confirmed/contradicted statements list their pair
+            evidence beneath; not-echoed statements carry the signed record-silent line once. */}
+        {read.gapStatements.map((statement) => (
+          <LedgerRow
+            key={statement.statementId}
+            leftLabel="You say"
+            leftBody={statement.declared || UNSPOKEN_LEFT}
+            quoted={statement.declared !== ""}
+            muted={statement.verdict === "unechoed"}
+            meta={<VerdictChip verdict={statement.verdict} />}
+            rightContent={<StatementEvidence statement={statement} />}
+          />
+        ))}
       </main>
     </>
   );

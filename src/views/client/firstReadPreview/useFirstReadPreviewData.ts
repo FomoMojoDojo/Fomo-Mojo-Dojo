@@ -25,7 +25,7 @@ import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
-import { bareHost, facetForTopic, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, facetForTopic, groupGapStatements, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
@@ -466,6 +466,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             : confidenceRank(sig?.confidence_to_use);
           gapPairs.push({
             id: d.id,
+            statementId: d.declared_claim_id, // own-words id — beat 4 groups on this (unit = statement)
             verdict,
             declared: declaredClaim.statement,
             record: publicClaim?.statement ?? null,
@@ -477,10 +478,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         }
         // A1 order — by discussability: contradicted → unechoed → confirmed; strength desc within.
         const orderedGapPairs = orderGapPairs(gapPairs);
+        // 2026-08-21: the unit of echo is the STATEMENT — group the ordered pairs by own-words id.
+        const gapStatements = groupGapStatements(orderedGapPairs);
         const gapCounts = {
-          contradicted: gapPairs.filter((p) => p.verdict === "contradicted").length,
-          unechoed: gapPairs.filter((p) => p.verdict === "unechoed").length,
-          confirmed: gapPairs.filter((p) => p.verdict === "confirmed").length,
+          contradicted: gapStatements.filter((s) => s.verdict === "contradicted").length,
+          unechoed: gapStatements.filter((s) => s.verdict === "unechoed").length,
+          confirmed: gapStatements.filter((s) => s.verdict === "confirmed").length,
         };
 
         // ── GATE B-1: the gap's PERSISTED integrity state ───────────────────
@@ -683,6 +686,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             signals,
             score,
             gapPairs: orderedGapPairs,
+            gapStatements,
             gapCounts,
             statusConflicts,
             gapIntegrity,

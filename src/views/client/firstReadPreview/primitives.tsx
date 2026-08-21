@@ -159,6 +159,7 @@ export function LedgerRow({
   leftExtra,
   meta,
   rightBody,
+  rightContent,
   quoted = true,
   muted = false,
 }: {
@@ -167,6 +168,9 @@ export function LedgerRow({
   leftExtra?: ReactNode;
   meta: ReactNode;
   rightBody?: string | null;
+  /** Rich right column (e.g. a statement's list of evidence pairs). Rendered under `meta`,
+   *  in place of the single `rightBody` paragraph when provided. */
+  rightContent?: ReactNode;
   quoted?: boolean;
   /** De-weighted treatment for moderate/thin signals. */
   muted?: boolean;
@@ -197,7 +201,9 @@ export function LedgerRow({
       </div>
       <div className="fr-row-body flex flex-col justify-center pt-8 md:col-span-7 md:pt-0">
         <div className="mb-4 flex flex-wrap items-center gap-4">{meta}</div>
-        {rightBody ? (
+        {rightContent ? (
+          rightContent
+        ) : rightBody ? (
           <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
             {rightBody}
           </p>
