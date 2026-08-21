@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import {
   FILL_STEP_ORDER, stepsFrom, skipReason, refuseReason, ledgerEnabled, HELD_FROM_ALL, CB1_FROZEN_ID,
-  type FillCounts,
+  parseSkip, type FillCounts,
 } from "./plan";
 
 const FULL: FillCounts = { hasWebsite: true, ownWords: 5, outsideSignals: 100 };
@@ -69,5 +69,19 @@ describe("fill plan — dry-run writes nothing", () => {
   it("ledgerEnabled is false in dry-run, true otherwise", () => {
     expect(ledgerEnabled(true)).toBe(false);
     expect(ledgerEnabled(false)).toBe(true);
+  });
+});
+
+describe("fill plan — --skip parsing", () => {
+  it("empty/absent → empty set", () => {
+    expect(parseSkip(null).size).toBe(0);
+    expect(parseSkip("").size).toBe(0);
+  });
+  it("parses one or many steps (trims whitespace)", () => {
+    expect([...parseSkip("recurrence")]).toEqual(["recurrence"]);
+    expect([...parseSkip("recurrence, score")].sort()).toEqual(["recurrence", "score"]);
+  });
+  it("throws on an unknown step", () => {
+    expect(() => parseSkip("recurrence,bogus")).toThrow(/not a step/);
   });
 });

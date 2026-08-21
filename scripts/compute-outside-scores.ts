@@ -44,6 +44,10 @@ const excludeSignal = process.argv.find((a) => a.startsWith("--exclude-signal=")
 // Vacuous-proof hook: drop every delta whose declared statement (own-words id) matches, so the
 // echo ledger's statement-id diff can be checked against exactly one planted statement.
 const excludeStatement = process.argv.find((a) => a.startsWith("--exclude-statement="))?.split("=")[1] ?? null;
+// --no-recurrence: recurrence was NOT run for this read → record_strength is not computed (honest
+// "not yet computed", excluded from the total) rather than a misleading 0. Set by the fill runner
+// when it skips the recurrence step.
+const noRecurrence = process.argv.includes("--no-recurrence");
 // Vacuous-proof hook: drop every signal whose SIGNED source category matches one whole kind, so
 // the coverage ledger's kinds_present diff can be checked against exactly that kind.
 const excludeKind = process.argv.find((a) => a.startsWith("--exclude-kind="))?.split("=")[1] ?? null;
@@ -162,14 +166,14 @@ for (const company of companies) {
       declaredTopic: d.declared_topic,
     }));
 
-  const result = computeOutsideScore({ companyId: company.id, signals, deltas, computedAt });
+  const result = computeOutsideScore({ companyId: company.id, signals, deltas, computedAt, recurrenceComputed: !noRecurrence });
 
   if (!result.eligible) {
     console.log(`${company.name.padEnd(32)} INELIGIBLE (${result.signalCount} outside-voice signals < 10) — no row`);
     continue;
   }
 
-  const moveStr = result.moves.map((m) => `${m.key}=${m.value.toFixed(3)}`).join("  ");
+  const moveStr = result.moves.map((m) => `${m.key}=${m.value === null ? "—" : m.value.toFixed(3)}`).join("  ");
   console.log(
     `${company.name.padEnd(32)} signals=${String(result.signalCount).padStart(3)}  anchor=${result.anchor}  ${moveStr}  total=${result.totalUnrounded.toFixed(3)} → ${result.totalScore}`,
   );
@@ -187,7 +191,10 @@ for (const company of companies) {
     signal_count: result.signalCount,
   };
   for (const m of result.moves) {
-    component_scores[m.key] = { value: m.value, min: m.min, max: m.max };
+    // A not-computed move persists value null + not_computed:true so beat 8 renders "—" (never a 0).
+    component_scores[m.key] = m.computed === false
+      ? { value: null, min: m.min, max: m.max, not_computed: true }
+      : { value: m.value, min: m.min, max: m.max };
     explanation[m.key] = m.explanation;
   }
 

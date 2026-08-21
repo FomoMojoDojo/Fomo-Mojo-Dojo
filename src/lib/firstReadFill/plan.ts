@@ -19,6 +19,18 @@ export function stepsFrom(fromStep: string | null | undefined): FillStep[] {
   return FILL_STEP_ORDER.slice(i);
 }
 
+/** Parse --skip=<step,…> into a set of steps the operator has held out (ledgered skipped:operator).
+ *  Throws on an unknown step name. */
+export function parseSkip(skipArg: string | null | undefined): Set<FillStep> {
+  const set = new Set<FillStep>();
+  if (!skipArg) return set;
+  for (const s of skipArg.split(",").map((x) => x.trim()).filter(Boolean)) {
+    if ((FILL_STEP_ORDER as readonly string[]).includes(s)) set.add(s as FillStep);
+    else throw new Error(`--skip: '${s}' is not a step (${FILL_STEP_ORDER.join(", ")})`);
+  }
+  return set;
+}
+
 export type FillCounts = { hasWebsite: boolean; ownWords: number; outsideSignals: number };
 
 /**

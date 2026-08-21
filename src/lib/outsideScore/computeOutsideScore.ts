@@ -55,6 +55,9 @@ export const OUTSIDE_METHODOLOGY_VERSION = "outside-v1.1.0";
 import { categorizeHost, coverageSubline, hostFromUrl, OUTSIDE_KINDS, type SourceCategory } from "./sourceCategories";
 
 export const OUTSIDE_ANCHOR = 15;
+// Signed (2026-08-22): record_strength lever sub-line when recurrence has not been run for a company.
+export const RECORD_STRENGTH_NOT_COMPUTED =
+  "Not yet computed — signal recurrence hasn't been run for this company.";
 export const OUTSIDE_MIN_SIGNALS = 10;
 export const FRESHNESS_WINDOW_MONTHS = 18;
 
@@ -89,7 +92,7 @@ export type OutsideScoreLedger = {
     echoed_delta_ids: string[];
     divergent_delta_ids: string[];
   };
-  record_strength: { strong_signal_ids: string[]; signal_count: number };
+  record_strength: { strong_signal_ids: string[]; signal_count: number; not_computed?: boolean };
   differentiation_echo: { delta_ids: string[] };
   coverage_breadth: {
     signal_ids: string[];
@@ -104,14 +107,21 @@ export type OutsideScoreInput = {
   signals: OutsideSignalInput[];
   deltas: OutsideDeltaInput[];
   computedAt: string; // ISO timestamp
+  /** Whether signal recurrence was run for this read. When false, record_strength is NOT computed
+   *  (recurrence establishes signal strength) — it renders "not yet computed" and is excluded from
+   *  the total, rather than storing a misleading 0. Defaults to true (back-compat). */
+  recurrenceComputed?: boolean;
 };
 
 export type OutsideScoreMove = {
   key: string;
-  value: number; // unrounded
+  value: number | null; // unrounded; null when the move was NOT computed (see `computed`)
   min: number;
   max: number;
   explanation: string;
+  /** false ⇒ the move was not computed (e.g. record_strength with no recurrence run). It renders
+   *  "—" and contributes 0 to the total (excluded, not counted as a real 0). Defaults true. */
+  computed?: boolean;
 };
 
 export type OutsideScoreResult =
@@ -171,9 +181,12 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
   const contradicted = divergentStatementIds.length;
   const echoIntegrity = clamp(confirmed - contradicted, -4, 4);
 
-  // record_strength: 2 × strong-share.
+  // record_strength: 2 × strong-share — but ONLY when recurrence was run (recurrence establishes
+  // "strong" = recurrence-accepted). With no recurrence run, it is NOT computed (renders "—",
+  // excluded from the total) rather than a misleading 0.
+  const recurrenceRan = input.recurrenceComputed !== false;
   const strongCount = input.signals.filter((s) => strengthOf(s) === "strong").length;
-  const recordStrength = 2 * (strongCount / signalCount);
+  const recordStrength = recurrenceRan ? 2 * (strongCount / signalCount) : null;
 
   // differentiation_echo: min(#distinct positioning/market declared claims
   // with an echoed pair, 2).
@@ -223,7 +236,10 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
       value: recordStrength,
       min: 0,
       max: 2,
-      explanation: `${strongCount} of ${signalCount} outside signals are strong (repeated across independent sources).`,
+      computed: recurrenceRan,
+      explanation: recurrenceRan
+        ? `${strongCount} of ${signalCount} outside signals are strong (repeated across independent sources).`
+        : RECORD_STRENGTH_NOT_COMPUTED,
     },
     {
       key: "differentiation_echo",
@@ -259,8 +275,9 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
       divergent_delta_ids: input.deltas.filter((d) => d.deltaType === "divergent").map(deltaId).filter(Boolean),
     },
     record_strength: {
-      strong_signal_ids: input.signals.filter((s) => strengthOf(s) === "strong").map((s) => s.id),
+      strong_signal_ids: recurrenceRan ? input.signals.filter((s) => strengthOf(s) === "strong").map((s) => s.id) : [],
       signal_count: signalCount,
+      ...(recurrenceRan ? {} : { not_computed: true }),
     },
     differentiation_echo: {
       delta_ids: input.deltas
@@ -282,7 +299,10 @@ export function computeOutsideScore(input: OutsideScoreInput): OutsideScoreResul
     },
   };
 
-  const totalUnrounded = OUTSIDE_ANCHOR + moves.reduce((sum, m) => sum + m.value, 0);
+  // A not-computed move (value null / computed:false) is EXCLUDED from the total — it contributes 0,
+  // but as an absent lever, never a real 0. (Skipping record_strength lowers the ceiling from 25 to
+  // 23; the floor stays 11. No band copy references the ceiling, so the ladder still holds.)
+  const totalUnrounded = OUTSIDE_ANCHOR + moves.reduce((sum, m) => sum + (m.computed === false || m.value === null ? 0 : m.value), 0);
   return {
     eligible: true,
     companyId: input.companyId,

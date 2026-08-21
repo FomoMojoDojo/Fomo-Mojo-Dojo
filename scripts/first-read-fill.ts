@@ -18,6 +18,11 @@
 //   npx vite-node scripts/first-read-fill.ts -- --all
 //   npx vite-node scripts/first-read-fill.ts -- --all --dry-run          # plan only, touches nothing
 //   npx vite-node scripts/first-read-fill.ts -- --company=<id> --from=deltas_public
+//   npx vite-node scripts/first-read-fill.ts -- --all --skip=recurrence   # hold a step (skipped:operator)
+//
+// --skip=<step,…>: the operator holds a step out; it is ledgered skipped:operator and nothing runs
+// for it. When recurrence is skipped, the score step passes --no-recurrence so record_strength is
+// recorded not_computed (honest — beat 8 shows "—" + the signed line), never a misleading 0.
 //
 // FROZEN: CB1 (58b2b15b) is hard-excluded by id AND by companies.frozen; the empty dup
 // 916ce5f4 is excluded too. --company refuses either. Edge fns independently refuse frozen.
@@ -31,7 +36,7 @@ import { packAnchorChunks } from "../src/lib/firstRead/packAnchors";
 import { packDeltaChunks, type DeltaPlanClaim } from "../src/lib/claimDeltas/packChunks";
 import {
   CB1_FROZEN_ID, HELD_FROM_ALL, FILL_STEP_ORDER, stepsFrom, skipReason, refuseReason, ledgerEnabled,
-  type FillStep, type FillCounts,
+  parseSkip, type FillStep, type FillCounts,
 } from "../src/lib/firstReadFill/plan";
 
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
@@ -46,6 +51,9 @@ const dryRun = argv.includes("--dry-run");
 const all = argv.includes("--all");
 const onlyCompany = argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
 const fromStep = argv.find((a) => a.startsWith("--from="))?.split("=")[1] ?? null;
+const skipArg = argv.find((a) => a.startsWith("--skip="))?.split("=")[1] ?? null;
+let skipSet: Set<FillStep>;
+try { skipSet = parseSkip(skipArg); } catch (e) { console.error((e as Error).message); process.exit(1); }
 type Step = FillStep;
 
 function psql<T = unknown>(sql: string): T {
@@ -122,6 +130,17 @@ function stepsToRun(): Step[] {
 }
 function countsFor(c: Company): FillCounts {
   return { hasWebsite: !!c.website?.trim(), ownWords: q.ownWords(c.id), outsideSignals: q.outsideSignals(c.id) };
+}
+// The row count that a step's before/after reflects (used for a skipped step's ledger line).
+function stepMetric(step: Step, c: Company): number {
+  switch (step) {
+    case "own_words": return q.ownWords(c.id);
+    case "recurrence": return q.recurrenceVerdicts(c.id);
+    case "deltas_public": return q.deltasPublic(c.id);
+    case "open_questions": return q.questions(c.id);
+    case "status_conflict": return q.statusConflicts(c.id);
+    case "score": return q.scoreRows(c.id);
+  }
 }
 
 // ── the six steps ──────────────────────────────────────────────────────────────
@@ -218,8 +237,12 @@ function runScore(c: Company, counts: FillCounts): { before: number; after: numb
   const before = q.scoreRows(c.id);
   const skip = skipReason("score", counts);
   if (skip) return { before, after: before, outcome: `skipped:${skip}` };
-  execFileSync("npx", ["vite-node", "scripts/compute-outside-scores.ts", "--", `--company=${c.id}`], { encoding: "utf8", stdio: "inherit" });
-  return { before, after: q.scoreRows(c.id), outcome: "ran:appended" };
+  // If recurrence was skipped this run, tell the scorer so record_strength is not_computed (honest),
+  // not a misleading 0.
+  const args = ["vite-node", "scripts/compute-outside-scores.ts", "--", `--company=${c.id}`];
+  if (skipSet.has("recurrence")) args.push("--no-recurrence");
+  execFileSync("npx", args, { encoding: "utf8", stdio: "inherit" });
+  return { before, after: q.scoreRows(c.id), outcome: skipSet.has("recurrence") ? "ran:appended(record_strength not_computed)" : "ran:appended" };
 }
 
 const RUNNERS: Record<Step, (c: Company, counts: FillCounts) => Promise<{ before: number; after: number; outcome: string }> | { before: number; after: number; outcome: string }> = {
@@ -244,7 +267,7 @@ function dryPlan(c: Company): void {
   };
   console.log(`\n• ${c.name} [${c.id}]  website=${c.website ?? "—"}`);
   for (const s of stepsToRun()) {
-    const skip = skipReason(s, counts);
+    const skip = skipSet.has(s) ? "operator" : skipReason(s, counts);
     console.log(`    ${s.padEnd(16)} → ${skip ? `SKIP ${skip}` : `RUN`} (${detail[s]})`);
   }
 }
@@ -267,6 +290,13 @@ async function main() {
     const counts = countsFor(c); // step inputs snapshot (skip decisions read from this)
     for (const step of stepsToRun()) {
       const startedAt = new Date().toISOString();
+      // Operator-held step (--skip): ledger skipped:operator, run nothing.
+      if (skipSet.has(step)) {
+        const m = stepMetric(step, c);
+        ledger(c.id, c.name, step, startedAt, new Date().toISOString(), m, m, "skipped:operator");
+        console.log(`  ${step.padEnd(16)} ${String(m).padStart(4)} → ${String(m).padStart(4)}  skipped:operator`);
+        continue;
+      }
       let r: { before: number; after: number; outcome: string };
       try {
         r = await RUNNERS[step](c, counts);

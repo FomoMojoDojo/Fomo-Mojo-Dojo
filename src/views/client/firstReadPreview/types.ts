@@ -175,9 +175,12 @@ export type FRFinding = {
 export type FRScoreLever = {
   key: string;
   label: string;
-  value: number;
+  /** null ⇒ the move was NOT computed (renders "—"); see `notComputed`. */
+  value: number | null;
   max: number;
   explanation: string;
+  /** true ⇒ recurrence hasn't been run, so record_strength is not computed; render "—". */
+  notComputed?: boolean;
 };
 
 /** Inferred base reading (R-B / W1) — the interpretation of the beat-7 score: band name +

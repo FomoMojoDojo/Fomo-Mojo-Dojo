@@ -472,9 +472,10 @@ export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
 /** Order the levers by headroom (max − value) desc; ties settle by canonical order
  *  (SCORE_LEVERS index) so a shuffled input still renders deterministically (W1). */
 const CANONICAL_LEVER_INDEX = new Map(SCORE_LEVERS.map((l, i) => [l.key, i]));
-function orderByHeadroom<T extends { key: string; value: number; max: number }>(levers: T[]): T[] {
+function orderByHeadroom<T extends { key: string; value: number | null; max: number }>(levers: T[]): T[] {
   return [...levers].sort((a, z) => {
-    const h = (z.max - z.value) - (a.max - a.value); // headroom desc
+    // A not-computed lever (value null) sorts by full headroom (value treated as 0).
+    const h = (z.max - (z.value ?? 0)) - (a.max - (a.value ?? 0)); // headroom desc
     if (Math.abs(h) > 1e-9) return h;
     return (CANONICAL_LEVER_INDEX.get(a.key) ?? 99) - (CANONICAL_LEVER_INDEX.get(z.key) ?? 99);
   });
@@ -522,7 +523,7 @@ export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
                   <div className="flex items-baseline justify-between gap-6">
                     <span className="text-sm font-semibold">{lever.label}</span>
                     <span className="shrink-0 text-sm font-light tabular-nums" style={{ color: "hsl(222 47% 25%)" }}>
-                      {fmtLeverValue(lever.value)} / {lever.max}
+                      {lever.notComputed || lever.value == null ? "—" : fmtLeverValue(lever.value)} / {lever.max}
                     </span>
                   </div>
                   {lever.explanation ? (

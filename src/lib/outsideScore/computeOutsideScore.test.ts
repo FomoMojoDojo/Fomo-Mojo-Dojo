@@ -4,6 +4,7 @@ import {
   strengthOf,
   OUTSIDE_ANCHOR,
   OUTSIDE_MIN_SIGNALS,
+  RECORD_STRENGTH_NOT_COMPUTED,
   type OutsideScoreInput,
   type OutsideSignalInput,
 } from "./computeOutsideScore";
@@ -137,6 +138,26 @@ describe("outside-v1.0.0 — individual moves", () => {
     const r = computeOutsideScore(base(10, { signals }));
     if (!r.eligible) throw new Error("expected eligible");
     expect(r.moves.find((m) => m.key === "record_strength")!.value).toBe(1); // 2 × 0.5
+    expect(r.moves.find((m) => m.key === "record_strength")!.computed).not.toBe(false); // computed
+  });
+
+  it("record_strength NOT COMPUTED when recurrence wasn't run (2026-08-22)", () => {
+    const signals = Array.from({ length: 10 }, (_, i) => sig({ recurrenceConfirmed: true }, i)); // would be strong
+    const withRec = computeOutsideScore(base(10, { signals })); // recurrenceComputed default true
+    const noRec = computeOutsideScore(base(10, { signals, recurrenceComputed: false }));
+    if (!withRec.eligible || !noRec.eligible) throw new Error("expected eligible");
+    const rsWith = withRec.moves.find((m) => m.key === "record_strength")!;
+    const rsNo = noRec.moves.find((m) => m.key === "record_strength")!;
+    // with recurrence: strong → value 2, computed
+    expect(rsWith.value).toBe(2);
+    // without recurrence: value null, computed:false, the signed line, ledger not_computed
+    expect(rsNo.value).toBeNull();
+    expect(rsNo.computed).toBe(false);
+    expect(rsNo.explanation).toBe(RECORD_STRENGTH_NOT_COMPUTED);
+    expect(noRec.inputLedger.record_strength.not_computed).toBe(true);
+    expect(noRec.inputLedger.record_strength.strong_signal_ids).toEqual([]); // no 0-strength stored as verdict
+    // total EXCLUDES the not-computed lever: with-rec total = with + 2; no-rec omits that +2.
+    expect(withRec.totalUnrounded - noRec.totalUnrounded).toBeCloseTo(2, 10);
   });
 
   it("differentiation_echo: positioning/market echoed claims only, distinct, capped at 2", () => {

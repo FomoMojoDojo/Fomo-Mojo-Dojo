@@ -76,6 +76,24 @@ describe("beat 8 — Where you stand (W1)", () => {
     expect(renderedLeverOrder(scored(shuffled))).toEqual(HEADROOM_ORDER);
   });
 
+  it("record_strength NOT COMPUTED (no recurrence run) renders '—' + the signed line (2026-08-22)", () => {
+    const notComputedLevers: FRScoreLever[] = [
+      { key: "echo_integrity", label: "Echo integrity", value: 1, max: 4, explanation: "1 confirmed vs 0 contradicted." },
+      { key: "record_strength", label: "Record strength", value: null, max: 2, notComputed: true, explanation: "Not yet computed — signal recurrence hasn't been run for this company." },
+      { key: "coverage_breadth", label: "Coverage breadth", value: 0.333, max: 1, explanation: "1 of 4 kinds." },
+    ];
+    const { container } = render(<ActWhereYouStand read={scored(notComputedLevers)} />);
+    const text = container.textContent ?? "";
+    // record_strength lever present, value shown as "—", NOT "0"
+    expect(text).toContain("Record strength");
+    expect(text).toContain("— / 2");
+    expect(text).toContain("Not yet computed — signal recurrence hasn't been run for this company.");
+    // the computed levers still render their numbers
+    expect(text).toContain("1 / 4"); // echo_integrity
+    // record_strength did NOT render as "0 / 2"
+    expect(text).not.toContain("0 / 2");
+  });
+
   it("no score → the SAME honest empty state as beat 7 (scoreLooked-grounded)", () => {
     const looked: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, scoreLooked: true, whereYouStand: null };
     const notYet: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, scoreLooked: false, whereYouStand: null };

@@ -600,18 +600,24 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // falls back to the SAME empty state as beat 7 (scoreLooked-grounded).
         const whereYouStand = score
           ? (() => {
-              const comp = (scoreRow?.component_scores ?? {}) as Record<string, { value?: number; max?: number }>;
+              const comp = (scoreRow?.component_scores ?? {}) as Record<string, { value?: number | null; max?: number; not_computed?: boolean }>;
               const expl = (scoreRow?.explanation ?? {}) as Record<string, unknown>;
               const band = bandForScore(score.value);
+              // A lever renders when its component has a numeric max; a not_computed lever (value
+              // null) is KEPT and rendered as "—" rather than filtered out.
               const levers = SCORE_LEVERS
-                .filter(({ key }) => comp[key] && typeof comp[key].value === "number" && typeof comp[key].max === "number")
-                .map(({ key, label }) => ({
-                  key,
-                  label,
-                  value: Number(comp[key].value),
-                  max: Number(comp[key].max),
-                  explanation: typeof expl[key] === "string" ? (expl[key] as string) : "",
-                }));
+                .filter(({ key }) => comp[key] && typeof comp[key].max === "number")
+                .map(({ key, label }) => {
+                  const notComputed = comp[key].not_computed === true || comp[key].value == null;
+                  return {
+                    key,
+                    label,
+                    value: notComputed ? null : Number(comp[key].value),
+                    max: Number(comp[key].max),
+                    explanation: typeof expl[key] === "string" ? (expl[key] as string) : "",
+                    notComputed,
+                  };
+                });
               return {
                 scoreValue: score.value,
                 band: band.name,
