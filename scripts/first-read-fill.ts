@@ -287,8 +287,10 @@ async function main() {
 
   for (const c of companies) {
     console.log(`\n═══ ${c.name} [${c.id}] ═══`);
-    const counts = countsFor(c); // step inputs snapshot (skip decisions read from this)
     for (const step of stepsToRun()) {
+      // Re-read step inputs LIVE before each step — own_words changes deltas' inputs within a run, so
+      // a per-company snapshot would wrongly skip deltas for a company that just gained own-words.
+      const counts = countsFor(c);
       const startedAt = new Date().toISOString();
       // Operator-held step (--skip): ledger skipped:operator, run nothing.
       if (skipSet.has(step)) {
