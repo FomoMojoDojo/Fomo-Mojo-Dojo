@@ -19,6 +19,7 @@ import { contentIdentity } from "../_shared/contentIdentity.ts";
 import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
 import { deriveAnchoredRows, type QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
+import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -174,6 +175,30 @@ Deno.serve(async (req) => {
       return JSON.parse(m[0]) as Record<string, unknown>;
     };
 
+    // ── ROUTER: pick the model by the provenance of the anchor(s). All-public → external OpenAI;
+    //    anything non-public/unknown → the local model above (byte-identical local path). Every
+    //    anchor here is public (findings=public_inferred, silent_deltas=public_vs_public), so this
+    //    normally routes external; the guard still checks each anchor's provenance. ────────────────
+    const usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0 };
+    const routed = async (
+      role: "generator" | "judge",
+      provenances: Array<string | null>,
+      system: string, user: string, temperature: number,
+    ): Promise<{ json: Record<string, unknown>; provider: string; model: string }> => {
+      const choice = resolveModel({ role, inputs: provenances.map((p) => ({ provenance: p })) });
+      if (choice.provider === "external_openai") {
+        const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, temperature }));
+        usage.prompt_tokens += r.usage.prompt_tokens; usage.completion_tokens += r.usage.completion_tokens;
+        const mm = r.content.match(/\{[\s\S]*\}/);
+        if (!mm) throw new Error(`openai ${choice.model} returned no JSON: ${r.content.slice(0, 200)}`);
+        return { json: JSON.parse(mm[0]) as Record<string, unknown>, provider: choice.provider, model: choice.model };
+      }
+      return { json: await callModel(choice.model, system, user, temperature), provider: choice.provider, model: choice.model };
+    };
+    // Anchor provenance: findings ride the public_inferred register; publicly-silent deltas are the
+    // public_vs_public pairing → the declared side is public (own-words / public claims).
+    const anchorProvenance = (a: QuestionAnchor): string => (a.kind === "finding" ? "public_inferred" : "public_observed");
+
     const GEN_FINDING = `You read ONE finding from a company's outside read and produce the open question(s) it raises — the strategic unknown a decision-maker must resolve. Ground every question STRICTLY in THIS finding; invent nothing beyond it. Emit 1 question, or 2 only if the finding genuinely raises two distinct unknowns. Each question must be genuinely OPEN — not already answered by the finding itself. Plain English, no jargon, end with "?". Respond with ONLY JSON: {"questions":["..."]}. No other text.
 
 ${US_ENGLISH_RULE}`;
@@ -190,12 +215,15 @@ ${US_ENGLISH_RULE}`;
       try {
         // temp 0 → deterministic wording, so a re-click reconciles to the SAME identities
         // (keep, not churn): idempotent by construction. The judge also runs at 0.
-        const gen = await callModel(GEN_MODEL, anchor.kind === "finding" ? GEN_FINDING : GEN_SILENT, anchor.kind === "finding" ? `Finding:\n${anchor.text}` : `Declared (publicly silent):\n"${anchor.text}"`, 0);
+        const prov = [anchorProvenance(anchor)];
+        const genRes = await routed("generator", prov, anchor.kind === "finding" ? GEN_FINDING : GEN_SILENT, anchor.kind === "finding" ? `Finding:\n${anchor.text}` : `Declared (publicly silent):\n"${anchor.text}"`, 0);
+        const gen = genRes.json;
         const candidates = (Array.isArray(gen.questions) ? gen.questions : [])
           .map((q) => String(q ?? "").trim()).filter((q) => q.endsWith("?")).slice(0, anchor.kind === "finding" ? 2 : 1);
         if (candidates.length === 0) { perAnchor.push({ identity: anchor.identity, kind: anchor.kind, born: 0, rejected: 0 }); totals.anchors_processed++; continue; }
 
-        const verdict = await callModel(JUDGE_MODEL, JUDGE_SYS, `Anchor:\n${anchor.text}\n\nCandidate questions:\n${candidates.map((q) => `- ${q}`).join("\n")}\n\nJudge each.`, 0);
+        const judgeRes = await routed("judge", prov, JUDGE_SYS, `Anchor:\n${anchor.text}\n\nCandidate questions:\n${candidates.map((q) => `- ${q}`).join("\n")}\n\nJudge each.`, 0);
+        const verdict = judgeRes.json;
         const verdicts = (Array.isArray(verdict.verdicts) ? verdict.verdicts : []) as Array<{ question?: string; keep?: boolean }>;
         const keptFor = (q: string) => {
           const v = verdicts.find((x) => String(x.question ?? "").trim() === q);
@@ -205,7 +233,9 @@ ${US_ENGLISH_RULE}`;
         const rejected = candidates.length - accepted.length;
         totals.rejected += rejected;
 
-        const rows = await deriveAnchoredRows({ companyId: company_id, runId, anchor, questions: accepted, findingIdentities });
+        const baseRows = await deriveAnchoredRows({ companyId: company_id, runId, anchor, questions: accepted, findingIdentities });
+        // Stamp each question with the JUDGE model that decided it (verdict provenance).
+        const rows = baseRows.map((r) => ({ ...r, model_provider: judgeRes.provider, model_name: judgeRes.model }));
         if (rows.length) {
           const { error: upErr } = await supabase.from("first_read_open_questions")
             .upsert(rows, { onConflict: "company_id,run_id,question_identity" });
@@ -239,7 +269,9 @@ ${US_ENGLISH_RULE}`;
       await supabase.from("long_runner_runs")
         .update({ done_count: base + totals.anchors_processed, updated_at: new Date().toISOString() }).eq("id", ledgerRowId);
     }
-    return json({ ok: true, scoped: true, run_id: runId, totals, perAnchor, trace });
+    // Router usage/cost for this chunk (external tokens; local calls cost 0) — the fill ledger logs it.
+    const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+    return json({ ok: true, scoped: true, run_id: runId, totals, perAnchor, trace: { ...trace, router: "by_provenance" }, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }

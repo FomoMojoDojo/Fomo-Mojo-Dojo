@@ -67,8 +67,8 @@ import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
-const GEN_TIMEOUT_MS = 180_000;
-const JUDGE_TIMEOUT_MS = 180_000;
+export const GEN_TIMEOUT_MS = 180_000;
+export const JUDGE_TIMEOUT_MS = 180_000;
 
 // Prefilter floor: the prefilter's ONLY job is to skip zero-overlap pairs —
 // subject-match judgment belongs to the models (14b propose + 70b judge), not
@@ -197,6 +197,16 @@ export type DeltaComputeArgs = {
   plan?: boolean;
   // GATE B-1: which read this run computes. Default internal_vs_public.
   pairingKind?: PairingKind;
+  // ROUTER (2026-08-22): injected model caller resolved by input provenance (this file forbids
+  // external imports — the edge fn builds it). Structural type, no import from modelRouter. When
+  // present, the pair's [declared, observed] provenances pick the model (all-public → external;
+  // internal_declared/client_attested → local, so internal_vs_public NEVER leaves the machine).
+  routedCall?: (a: {
+    role: "generator" | "judge";
+    provenances: Array<string | null | undefined>;
+    system: string;
+    user: string;
+  }) => Promise<{ content: string; provider: string; model: string }>;
 };
 
 // ── Identity keys (evidence law) ──────────────────────────────────────────────
@@ -276,9 +286,9 @@ export function sharedTokenCount(a: string, b: string): number {
 // Determinism knob for the authoritative judge call (temperature 0 + fixed seed):
 // a re-judge of the same pair under the same criterion returns the same verdict.
 // The proposer stays at its default sampling (this is opt-in per call).
-const JUDGE_DETERMINISM = { temperature: 0, seed: 42 } as const;
+export const JUDGE_DETERMINISM = { temperature: 0, seed: 42 } as const;
 
-async function callOllamaJson(
+export async function callOllamaJson(
   ollamaUrl: string,
   model: string,
   system: string,
@@ -753,23 +763,27 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         continue;
       }
 
-      // Stage 2a: 14b proposes.
-      const proposedRaw = await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d, p), GEN_TIMEOUT_MS);
-      const proposed = parseVerdict(proposedRaw, "proposer");
+      // Stage 2a: proposer — ROUTER picks qwen14b (local) or gpt-4.1-mini (external) by the pair's
+      // provenances. internal_declared declared side → local (never leaves the machine).
+      const pairProv = [d.provenance, p.provenance];
+      const propRes = args.routedCall
+        ? await args.routedCall({ role: "generator", provenances: pairProv, system: PROPOSE_SYSTEM, user: buildPairUser(d, p) })
+        : { content: await callOllamaJson(args.ollamaUrl, genModel, PROPOSE_SYSTEM, buildPairUser(d, p), GEN_TIMEOUT_MS), provider: "local_ollama", model: genModel };
+      const proposed = parseVerdict(propRes.content, "proposer");
       if (!proposed.same_subject || !proposed.relation) {
         totals.pairs_rejected++;
         await bankRejection(d, p, identity, "proposer", null, proposed.reason);
         continue;
       }
 
-      // Stage 2b: 70b judges. Deterministic (temperature 0, fixed seed) so a
-      // re-judge of the same pair is reproducible — the proposer keeps its own
-      // options, only the authoritative judge call is pinned.
-      const judgedRaw = await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d, p), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM);
-      const judged = parseVerdict(judgedRaw, "judge");
+      // Stage 2b: judge — llama70b (local) or gpt-4.1-mini (external). Deterministic locally.
+      const judgeRes = args.routedCall
+        ? await args.routedCall({ role: "judge", provenances: pairProv, system: JUDGE_SYSTEM, user: buildPairUser(d, p) })
+        : { content: await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, buildPairUser(d, p), JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM), provider: "local_ollama", model: judgeModel };
+      const judged = parseVerdict(judgeRes.content, "judge");
       if (!judged.same_subject || !judged.relation) {
         totals.pairs_rejected++;
-        await bankRejection(d, p, identity, "judge", judgeModel, judged.reason);
+        await bankRejection(d, p, identity, "judge", judgeRes.model, judged.reason);
         continue;
       }
 
@@ -794,7 +808,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         // before (frozen), exactly as a relation-null rejection would be.
         totals.pairs_rejected++;
         await bankRejection(
-          d, p, identity, "judge", judgeModel,
+          d, p, identity, "judge", judgeRes.model,
           `span gate: span below minimum ("${judged.span?.slice(0, 60) ?? ""}") — ${judged.reason}`.slice(0, 400),
         );
         continue;
@@ -838,6 +852,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           content_identity: pairRow.content_identity,
           computed_at: args.nowIso,
           pairing_kind: pairingKind,
+          model_provider: judgeRes.provider,
+          model_name: judgeRes.model,
         });
         if (insErr) throw new Error(`claim-delta inline insert failed: ${insErr.message}`);
         insertedThisRun.add(identity);
@@ -904,6 +920,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         content_identity: row.content_identity,
         computed_at: args.nowIso,
         pairing_kind: pairingKind,
+        // Silences are DERIVED (absence), not judged — no model produced them.
+        model_provider: "none",
+        model_name: "deterministic",
       });
       if (insErr) throw new Error(`claim-delta insert failed: ${insErr.message}`);
       totals.rows_new++;

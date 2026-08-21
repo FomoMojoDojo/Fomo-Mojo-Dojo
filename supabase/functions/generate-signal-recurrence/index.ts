@@ -19,7 +19,8 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { computeRecurrenceForCompany } from "../_shared/signalRecurrence.ts";
+import { computeRecurrenceForCompany, callOllamaJson, JUDGE_TIMEOUT_MS } from "../_shared/signalRecurrence.ts";
+import { makeRoutedJudge, usdCost } from "../_shared/modelRouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -77,6 +78,13 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     ) as unknown as { from: (t: string) => any };
 
+    // ROUTER: pairs of all-public signals judge on the fast external model; any analysis/NULL/internal
+    // input keeps the pair on the local llama3:70b judge (byte-identical local path via callLocal).
+    const usage = { prompt_tokens: 0, completion_tokens: 0 };
+    const routedJudge = makeRoutedJudge({
+      callLocal: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS),
+      onUsage: (uu) => { usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens; },
+    });
     const baseArgs = {
       supabase,
       companyId: company_id,
@@ -85,6 +93,7 @@ serve(async (req) => {
       judgeModel: Deno.env.get("OLLAMA_JUDGE_MODEL") ?? undefined,
       write: doWrite,
       pairs: scopedPairs,
+      routedJudge,
     };
 
     if (doPlan) {
@@ -170,7 +179,7 @@ serve(async (req) => {
     }
 
     if (result.ok) {
-      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, verdicts: result.verdicts });
+      return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, verdicts: result.verdicts, cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) } });
     }
     if ("skipped" in result && result.skipped === "frozen_company") {
       return json({ ok: false, error: "This is a frozen reference company — recurrence isn't computed for it." }, 403);

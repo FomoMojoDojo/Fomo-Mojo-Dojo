@@ -84,18 +84,55 @@ function ledger(companyId: string, companyName: string, step: Step, startedAt: s
   execFileSync("docker", ["exec", "-i", DB_CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql], { encoding: "utf8" });
 }
 
-async function invokeFn(name: string, body: Record<string, unknown>, timeoutMs = 180_000): Promise<{ status: number; ok: boolean; data: any }> {
-  const resp = await fetch(`${SUPA_URL}/functions/v1/${name}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const text = await resp.text();
-  let data: any; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
-  return { status: resp.status, ok: resp.ok, data };
-}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// RESILIENCE (ADDITION 1): the edge runtime crashed under load last sweep. Retry transient edge
+// failures (502/503, network "fetch failed"/ECONNRESET/timeout) with backoff 5s·15s·45s — 3 attempts
+// — before surfacing. A deterministic 4xx (400/403/409/422) is NOT retried (it's a real answer).
+const RETRY_BACKOFF_MS = [5_000, 15_000, 45_000];
+function isTransient(status: number, err?: unknown): boolean {
+  if (status === 502 || status === 503 || status === 504 || status === 0) return true;
+  const m = String((err as Error)?.message ?? "").toLowerCase();
+  return m.includes("fetch failed") || m.includes("econnreset") || m.includes("timeout") || m.includes("aborted") || m.includes("network");
+}
+async function invokeFn(name: string, body: Record<string, unknown>, timeoutMs = 180_000): Promise<{ status: number; ok: boolean; data: any }> {
+  let last: { status: number; ok: boolean; data: any } | null = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
+    try {
+      const resp = await fetch(`${SUPA_URL}/functions/v1/${name}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await resp.text();
+      let data: any; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
+      last = { status: resp.status, ok: resp.ok, data };
+      if (resp.ok || !isTransient(resp.status)) return last;
+    } catch (err) {
+      if (!isTransient(0, err)) throw err;
+      last = { status: 0, ok: false, data: { error: String((err as Error)?.message ?? err) } };
+    }
+    if (attempt < RETRY_BACKOFF_MS.length) { console.log(`    …retry ${name} (attempt ${attempt + 1}) after transient ${last?.status}`); await sleep(RETRY_BACKOFF_MS[attempt]); }
+  }
+  return last!;
+}
+// RESILIENCE (ADDITION 1b): edge health probe — a fast deterministic call. Returns true when the
+// edge answers (any HTTP status), false on network failure (edge down/restarting).
+async function edgeHealthy(): Promise<boolean> {
+  try {
+    const r = await fetch(`${SUPA_URL}/functions/v1/detect-status-conflict`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
+      body: JSON.stringify({ company_id: "00000000-0000-0000-0000-000000000000" }), signal: AbortSignal.timeout(20_000),
+    });
+    return r.status < 500; // 400 (bad id) is a healthy answer; 5xx / no-answer is not
+  } catch { return false; }
+}
+// Wait up to 5 min for the edge to come back (poll every 15s). Returns true if it recovered.
+async function waitForEdge(): Promise<boolean> {
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) { if (await edgeHealthy()) return true; console.log("    …edge down, waiting 15s"); await sleep(15_000); }
+  return false;
+}
 
 // ── per-company counts (skip inputs + before/after) ────────────────────────────
 const q = {
@@ -287,6 +324,19 @@ async function main() {
 
   for (const c of companies) {
     console.log(`\n═══ ${c.name} [${c.id}] ═══`);
+    // RESILIENCE (ADDITION 1b): health-check the edge before each company; wait up to 5 min if it's
+    // down (mid-restart), else ledger the company DEFERRED and move on — never crash the sweep.
+    if (!(await edgeHealthy())) {
+      console.log("  edge is down — waiting up to 5 min…");
+      if (!(await waitForEdge())) {
+        for (const step of stepsToRun()) {
+          const m = stepMetric(step, c);
+          ledger(c.id, c.name, step, new Date().toISOString(), new Date().toISOString(), m, m, "deferred:edge_down");
+        }
+        console.log(`  DEFERRED ${c.name} — edge did not recover in 5 min; ledgered deferred, continuing.`);
+        continue;
+      }
+    }
     for (const step of stepsToRun()) {
       // Re-read step inputs LIVE before each step — own_words changes deltas' inputs within a run, so
       // a per-company snapshot would wrongly skip deltas for a company that just gained own-words.

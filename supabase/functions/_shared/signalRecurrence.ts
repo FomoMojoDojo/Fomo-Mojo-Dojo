@@ -25,9 +25,11 @@
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
+import { signalProvenance } from "../../../src/lib/modelRouter/resolveModel.ts";
+import type { RoutedJudge } from "./modelRouter.ts";
 
 export const DEFAULT_JUDGE_MODEL = "llama3:70b";
-const JUDGE_TIMEOUT_MS = 180_000;
+export const JUDGE_TIMEOUT_MS = 180_000;
 
 // TUNING (measured 2026-07-14 on the two known real clusters, CV-2d-1):
 // genuine cross-host same-fact pairs are heavy paraphrase — Jaccard 0.02–0.08,
@@ -131,7 +133,7 @@ function buildJudgeUser(companyName: string, a: string, b: string): string {
   return `COMPANY: ${companyName}\nSTATEMENT A: ${a}\nSTATEMENT B: ${b}\nDo A and B assert the same underlying fact about ${companyName}?`;
 }
 
-async function callOllamaJson(
+export async function callOllamaJson(
   ollamaUrl: string,
   model: string,
   system: string,
@@ -185,7 +187,7 @@ function parseJudgeVerdict(raw: string): { same_fact: boolean; reason: string } 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type EligibleSignal = { id: string; claim_text: string; url: string; domain: string; identity: string };
+type EligibleSignal = { id: string; claim_text: string; url: string; domain: string; identity: string; provenance: string | null };
 
 export type RecurrenceComputeArgs = {
   supabase: { from: (t: string) => any };
@@ -195,6 +197,9 @@ export type RecurrenceComputeArgs = {
   judgeModel?: string;
   write: boolean;
   pairs?: Array<{ a: string; b: string }>;
+  /** Injected router judge (edge fn builds it). When present, the pair's provenances decide the
+   *  model (all-public → external). When absent, the local judge below runs (back-compat). */
+  routedJudge?: RoutedJudge;
 };
 
 export type RecurrencePlanPair = {
@@ -259,13 +264,13 @@ async function loadEligibleSignals(
 
   const { data, error } = await supabase
     .from("signals")
-    .select("id, claim_text, source_url, syndicated_from_client")
+    .select("id, claim_text, source_url, syndicated_from_client, voice_class")
     .eq("company_id", companyId)
     .eq("signal_band", "outside");
   if (error) throw new Error(`signals load failed: ${error.message}`);
 
   const signals: EligibleSignal[] = [];
-  for (const row of (data ?? []) as Array<{ id: string; claim_text: string; source_url: string | null; syndicated_from_client: boolean | null }>) {
+  for (const row of (data ?? []) as Array<{ id: string; claim_text: string; source_url: string | null; syndicated_from_client: boolean | null; voice_class: string | null }>) {
     if (row.syndicated_from_client === true) continue; // design Q3
     const domain = registrableDomain(row.source_url);
     if (!domain) continue;
@@ -277,6 +282,8 @@ async function loadEligibleSignals(
       url: String(row.source_url),
       domain,
       identity: await sha256Hex(normalizeForHash(row.claim_text)),
+      // Provenance for the model router: outside-band PUBLIC voices are public; analysis/NULL → local.
+      provenance: signalProvenance("outside", row.voice_class),
     });
   }
   return { signals, companyName };
@@ -389,11 +396,12 @@ export async function computeRecurrenceForCompany(
         totals.cached++;
         continue;
       }
-      const raw = await callOllamaJson(
-        args.ollamaUrl, judgeModel, JUDGE_SYSTEM,
-        buildJudgeUser(companyName, a.claim_text, b.claim_text), JUDGE_TIMEOUT_MS,
-      );
-      const v = parseJudgeVerdict(raw);
+      const jUser = buildJudgeUser(companyName, a.claim_text, b.claim_text);
+      // ROUTER: the pair's two signal provenances decide the model — all-public → external judge.
+      const jr = args.routedJudge
+        ? await args.routedJudge({ provenances: [a.provenance, b.provenance], system: JUDGE_SYSTEM, user: jUser })
+        : { content: await callOllamaJson(args.ollamaUrl, judgeModel, JUDGE_SYSTEM, jUser, JUDGE_TIMEOUT_MS), provider: "local_ollama" as const, model: judgeModel };
+      const v = parseJudgeVerdict(jr.content);
       totals.judged++;
       const verdict = v.same_fact ? "accepted" : "rejected";
       if (v.same_fact) totals.accepted++;
@@ -409,9 +417,11 @@ export async function computeRecurrenceForCompany(
           statement_a_identity: a.identity,
           statement_b_identity: b.identity,
           verdict,
-          judge_model: judgeModel,
+          judge_model: jr.model,
           judge_reason: v.reason,
           candidate_basis: `shared_tokens:${sharedTokenCount(a.claim_text, b.claim_text)}`,
+          model_provider: jr.provider,
+          model_name: jr.model,
         });
         // Unique violation ⇒ a concurrent run banked it first — frozen wins.
         if (error && !String(error.message ?? "").includes("duplicate")) {
@@ -590,11 +600,12 @@ export async function computeRecurrenceForCompany(
           }
           continue;
         }
-        const raw = await callOllamaJson(
-          args.ollamaUrl, judgeModel, FINDING_JOIN_SYSTEM,
-          buildFindingJoinUser(companyName, stmt, m.claim_text), JUDGE_TIMEOUT_MS,
-        );
-        const v = parseJudgeVerdict(raw);
+        const fjUser = buildFindingJoinUser(companyName, stmt, m.claim_text);
+        // ROUTER: finding (public_inferred) + signal provenance decide the model.
+        const fjr = args.routedJudge
+          ? await args.routedJudge({ provenances: ["public_inferred", m.provenance], system: FINDING_JOIN_SYSTEM, user: fjUser })
+          : { content: await callOllamaJson(args.ollamaUrl, judgeModel, FINDING_JOIN_SYSTEM, fjUser, JUDGE_TIMEOUT_MS), provider: "local_ollama" as const, model: judgeModel };
+        const v = parseJudgeVerdict(fjr.content);
         totals.finding_judge_calls++;
         const verdict = v.same_fact ? "accepted" : "rejected";
         if (args.write) {
@@ -606,9 +617,11 @@ export async function computeRecurrenceForCompany(
             finding_statement_identity: findingIdentityById.get(f.id),
             signal_statement_identity: m.identity,
             verdict,
-            judge_model: judgeModel,
+            judge_model: fjr.model,
             judge_reason: v.reason,
             candidate_basis: `shared_tokens:${shared}`,
+            model_provider: fjr.provider,
+            model_name: fjr.model,
           });
           if (error && !String(error.message ?? "").includes("duplicate")) {
             throw new Error(`finding_cluster_verdicts insert failed: ${error.message}`);

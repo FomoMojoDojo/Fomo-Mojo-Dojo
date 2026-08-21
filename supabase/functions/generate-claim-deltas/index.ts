@@ -25,7 +25,12 @@ import {
   PAIRING_KINDS,
   type PairingKind,
   writeGapPairsIntegrity,
+  callOllamaJson,
+  GEN_TIMEOUT_MS,
+  JUDGE_TIMEOUT_MS,
+  JUDGE_DETERMINISM,
 } from "../_shared/claimDeltaSynthesis.ts";
+import { makeRoutedModel, usdCost } from "../_shared/modelRouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -94,6 +99,15 @@ serve(async (req) => {
     if (pairingKind === "public_vs_public" && doWrite && !doPlan && !declaredIds) {
       integrityCtx = { supabase, companyId: company_id, nowIso };
     }
+    // ROUTER: each pair's [declared, observed] provenances pick the model. public_vs_public pairs of
+    // public claims → external gpt-4.1-mini (proposer + judge); any internal_declared/client_attested
+    // declared side → local (internal_vs_public NEVER leaves the machine). Local path byte-identical.
+    const usage = { prompt_tokens: 0, completion_tokens: 0 };
+    const routedCall = makeRoutedModel({
+      callLocalGenerator: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, GEN_TIMEOUT_MS),
+      callLocalJudge: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM),
+      onUsage: (uu) => { usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens; },
+    });
     const baseArgs = {
       supabase,
       companyId: company_id,
@@ -104,6 +118,7 @@ serve(async (req) => {
       write: doWrite,
       declaredIds,
       pairingKind,
+      routedCall,
     };
     const result = doPlan
       ? await computeDeltasForCompany({ ...baseArgs, plan: true })
@@ -120,6 +135,7 @@ serve(async (req) => {
         totals: result.totals,
         proof_guard_excluded_ids: result.proof_guard_excluded_ids,
         deltas: result.deltas,
+        cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
       });
     }
     if ("skipped" in result) {
