@@ -20,6 +20,9 @@ const corsHeaders = {
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 const CB1_FROZEN_ID = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
 const DOMAIN_RE = /\b[a-z0-9][a-z0-9-]*\.(?:com|org|net|io|gov|edu|co|us|ai|info|biz)\b/g;
+// Canned generic-valence mood words — banned as the allegation (the gate's explicit list). A pure-
+// valence excerpt must yield the honest sentinel instead, never a hedged "declining in quality".
+const BANNED_VALENCE = /\b(going\s+down\s?hill|down\s?hill|declining|in\s+decline|worse\s+than\s+before|not\s+what\s+it\s+(?:used\s+to\s+be|once\s+was)|going\s+under)\b/i;
 
 function isLocalOllamaUrl(rawUrl: string) {
   try { return LOCAL_HOST_ALLOWLIST.has(String(new URL(rawUrl).hostname || "").trim().toLowerCase()); }
@@ -95,11 +98,28 @@ function citesOnlyPairHosts(explanation: string, pairHosts: Set<string>): boolea
   return cited.every((h) => pairHosts.has(h));
 }
 
-const GEN_SYS = `You are given ONE claim a company makes about itself (DECLARED) and ONE public statement that DIFFERS from it (CONTRA), plus the source host for context. Write ONE sentence, at most ~30 words, that says WHAT DIFFERS between the two — state the company's claim in brief, then what the source alleges that differs. Shape: "You {declared claim in brief}; {these sources} {what they allege that differs}." Plain language. Do NOT use a verdict word (contradicts/disputes/conflicts). Cite NOTHING that is not in the two texts (you may name the source host given). Respond with ONLY JSON: {"explanation":"..."}. No other text.
+// The honest line for a CONTRA excerpt that is pure valence with no concrete claim. Its distinctive
+// tail ("critical without specifics") is the sentinel the render uses to prefer a SPECIFIC pair.
+const NON_SPECIFIC_ALLEGE = "a public review is critical without specifics";
+
+const GEN_SYS = `You are given ONE claim a company makes about itself (DECLARED) and ONE public statement that DIFFERS from it (CONTRA), plus the source host for context. Write ONE sentence, at most ~30 words, that says WHAT DIFFERS — state the company's claim in brief, then what the source SPECIFICALLY alleges that differs.
+
+The "alleges" half MUST name the concrete substance the CONTRA excerpt actually raises — the real topic and claim (e.g. "allege safety concerns for clients and staff", "report a decline in food quality after an ownership change", "list the location as closed"). Stay close to the excerpt's wording; do NOT quote more than 15 words.
+
+FORBIDDEN: a generic-valence summary with no concrete claim. Never use only a mood word — "going downhill", "declining", "worse than before", "not what it used to be", "bad", "terrible" — as the allegation. If the excerpt raises a specific topic, name that topic.
+
+If the CONTRA excerpt GENUINELY contains no specific claim — it is pure valence with no concrete topic (e.g. "1 star, terrible", "going downhill", "not what it used to be") — do NOT invent one and do NOT paraphrase it into "declining in quality" or similar. The alleges half must then be VERBATIM: "${NON_SPECIFIC_ALLEGE}" — nothing added, no hedge.
+
+Shape: "You {declared claim in brief}; {these sources} {specific allegation, OR the honest non-specific line}." Plain language, no verdict word (contradicts/disputes/conflicts). Cite nothing not in the two texts (you may name the given source host). Respond with ONLY JSON: {"explanation":"..."}. No other text.
 
 ${US_ENGLISH_RULE}`;
 
-const JUDGE_SYS = `You judge whether a one-line "what differs" explanation is GROUNDED in a claim pair. You are given DECLARED (the company's claim), CONTRA (the differing public statement), and the EXPLANATION. Accept ONLY if ALL hold: (a) the explanation's account of what the COMPANY claims is supported by DECLARED; (b) its account of what the SOURCES allege is supported by CONTRA; (c) it introduces NO host, entity, number, or claim that is absent from DECLARED or CONTRA. Respond with ONLY JSON: {"declared_supported":true|false,"contra_supported":true|false,"no_new":true|false,"accept":true|false,"reason":"..."}. No other text.`;
+const JUDGE_SYS = `You judge whether a one-line "what differs" explanation is GROUNDED and SPECIFIC. You are given DECLARED (the company's claim), CONTRA (the differing public statement), and the EXPLANATION. Accept ONLY if ALL hold:
+(a) declared_supported — the explanation's account of what the COMPANY claims is supported by DECLARED;
+(b) contra_supported — its account of what the SOURCES allege is supported by CONTRA;
+(c) no_new — it introduces NO host, entity, number, or claim absent from DECLARED or CONTRA;
+(d) specific_ok — SPECIFICITY: if CONTRA contains a concrete, specific allegation (a named topic: safety, staffing, academics, food, closure, pricing, etc.), the explanation's source half MUST name that specific substance. Reject (specific_ok=false) if it instead uses a generic negative ("going downhill", "declining", "bad", "worse") that drops the excerpt's specific topic. If CONTRA is pure valence with NO specific claim, the honest line "${NON_SPECIFIC_ALLEGE}" is CORRECT and passes.
+Respond with ONLY JSON: {"declared_supported":true|false,"contra_supported":true|false,"no_new":true|false,"specific_ok":true|false,"accept":true|false,"reason":"..."}. No other text.`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -144,11 +164,14 @@ Deno.serve(async (req) => {
     const groundCheck = async (p: Pick<Pair, "declaredText" | "contraText" | "declaredProv" | "contraProv" | "declaredHost" | "contraHost">, explanation: string) => {
       const pairHosts = new Set([p.declaredHost, p.contraHost].filter((h): h is string => !!h).map((h) => h.toLowerCase()));
       const hostGuard = citesOnlyPairHosts(explanation, pairHosts);
+      // Deterministic valence guard: a banned mood word anywhere (unless it IS the honest sentinel,
+      // which carries none) → reject. Catches "declining in quality without specifics" the judge lets by.
+      const valenceOk = !BANNED_VALENCE.test(explanation);
       const jr = await routed("judge", [p.declaredProv, p.contraProv], JUDGE_SYS,
         `DECLARED: "${p.declaredText}"\n\nCONTRA: "${p.contraText}"\n\nEXPLANATION: "${explanation}"\n\nJudge grounding.`, 0);
       const v = jr.json;
-      const judgeAccept = v.declared_supported === true && v.contra_supported === true && v.no_new === true && v.accept === true;
-      return { grounded: hostGuard && judgeAccept, hostGuard, judge: v, judgeModel: jr.model };
+      const judgeAccept = v.declared_supported === true && v.contra_supported === true && v.no_new === true && v.specific_ok === true && v.accept === true;
+      return { grounded: hostGuard && valenceOk && judgeAccept, hostGuard, valenceOk, judge: v, judgeModel: jr.model };
     };
 
     // ── VACUOUS PROOF probe: judge a PROVIDED explanation against provided texts; no write. ─────────
@@ -158,37 +181,51 @@ Deno.serve(async (req) => {
         { declaredText: pr.declared, contraText: pr.contra, declaredProv: "public_observed", contraProv: "public_observed", declaredHost: pr.declaredHost ?? null, contraHost: pr.contraHost ?? null },
         pr.explanation,
       );
-      return json({ ok: true, probe: true, grounded: res.grounded, hostGuard: res.hostGuard, judge: res.judge, judge_model: res.judgeModel });
+      return json({ ok: true, probe: true, grounded: res.grounded, hostGuard: res.hostGuard, valenceOk: res.valenceOk, judge: res.judge, judge_model: res.judgeModel });
     }
 
     const pairs = await loadDivergentPairs(supabase, company_id, pairIds);
     if (doPlan) return json({ ok: true, plan: true, count: pairs.length, pairs: pairs.map((p) => ({ id: p.id, declared: p.declaredText.slice(0, 60), contra: p.contraText.slice(0, 60) })) });
     if (pairs.length === 0) return json({ ok: true, status: "empty", reason: "no divergent public_vs_public pairs" });
 
-    const results: Array<{ id: string; explanation: string | null; grounded: boolean; model: string; reason?: string; router_forced_local?: boolean }> = [];
+    const genOnce = async (p: Pair, temperature: number): Promise<string> => {
+      const gen = await routed("generator", [p.declaredProv, p.contraProv], GEN_SYS,
+        `DECLARED: "${p.declaredText}"\n\nCONTRA: "${p.contraText}"\n\nSOURCE HOST (context only): ${p.contraHost ?? "unknown"}\n\nWrite the one-sentence "what differs".`, temperature);
+      return String(gen.json.explanation ?? "").trim();
+    };
+
+    const results: Array<{ id: string; explanation: string | null; grounded: boolean; non_specific: boolean; model: string; reason?: string; router_forced_local?: boolean }> = [];
     for (const p of pairs) {
       try {
-        const provs = [p.declaredProv, p.contraProv];
-        const genChoice = resolveModel({ role: "generator", inputs: provs.map((x) => ({ provenance: x })) });
+        const genChoice = resolveModel({ role: "generator", inputs: [p.declaredProv, p.contraProv].map((x) => ({ provenance: x })) });
         const forcedLocal = genChoice.provider !== "external_openai"; // report if a public_vs_public pair ever routes local
-        const gen = await routed("generator", provs, GEN_SYS,
-          `DECLARED: "${p.declaredText}"\n\nCONTRA: "${p.contraText}"\n\nSOURCE HOST (context only): ${p.contraHost ?? "unknown"}\n\nWrite the one-sentence "what differs".`, 0.2);
-        const explanation = String(gen.json.explanation ?? "").trim();
-        if (!explanation) { results.push({ id: p.id, explanation: null, grounded: false, model: gen.model, reason: "empty generation" }); continue; }
-        const check = await groundCheck(p, explanation);
+        // generate → judge → REGENERATE ONCE on reject (temp bumped) → judge → store or fall back.
+        let explanation = await genOnce(p, 0.2);
+        let check = explanation ? await groundCheck(p, explanation) : { grounded: false, hostGuard: false, judge: { reason: "empty generation" }, judgeModel: genChoice.model };
+        if (!check.grounded) {
+          explanation = await genOnce(p, 0.5);
+          check = explanation ? await groundCheck(p, explanation) : check;
+        }
+        const nonSpecific = check.grounded && explanation.toLowerCase().includes(NON_SPECIFIC_ALLEGE);
         if (check.grounded && doWrite) {
           const { error } = await supabase.from("claim_deltas")
-            .update({ conflict_explanation: explanation, conflict_explanation_model: gen.model, conflict_explanation_grounded: true })
+            .update({ conflict_explanation: explanation, conflict_explanation_model: genChoice.model, conflict_explanation_grounded: true })
             .eq("id", p.id).eq("company_id", company_id);
           if (error) throw new Error(`update failed (${p.id}): ${error.message}`);
+        } else if (!check.grounded && doWrite) {
+          // store nothing — clear any stale explanation so a rejected pair falls back cleanly
+          await supabase.from("claim_deltas")
+            .update({ conflict_explanation: null, conflict_explanation_model: null, conflict_explanation_grounded: false })
+            .eq("id", p.id).eq("company_id", company_id);
         }
-        results.push({ id: p.id, explanation: check.grounded ? explanation : null, grounded: check.grounded, model: gen.model, reason: check.grounded ? undefined : `rejected: ${JSON.stringify(check.judge).slice(0, 160)}`, router_forced_local: forcedLocal });
+        results.push({ id: p.id, explanation: check.grounded ? explanation : null, grounded: check.grounded, non_specific: nonSpecific, model: genChoice.model, reason: check.grounded ? undefined : `rejected: ${JSON.stringify(check.judge).slice(0, 180)}`, router_forced_local: forcedLocal });
       } catch (e) {
-        results.push({ id: p.id, explanation: null, grounded: false, model: "error", reason: (e as Error).message.slice(0, 160) });
+        results.push({ id: p.id, explanation: null, grounded: false, non_specific: false, model: "error", reason: (e as Error).message.slice(0, 160) });
       }
     }
     const accepted = results.filter((r) => r.grounded).length;
-    return json({ ok: true, dry_run: !doWrite, total: pairs.length, accepted, rejected: pairs.length - accepted, results, cost: { ...usage, usd: usdCost(usage) } });
+    const nonSpecificCount = results.filter((r) => r.non_specific).length;
+    return json({ ok: true, dry_run: !doWrite, total: pairs.length, accepted, specific: accepted - nonSpecificCount, honest_non_specific: nonSpecificCount, rejected: pairs.length - accepted, results, cost: { ...usage, usd: usdCost(usage) } });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }

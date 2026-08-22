@@ -3,7 +3,7 @@
 // field. Dates optional (omitted, never guessed). Empty when unconstructible. These pins cover the
 // plural/date variants and the empty cases, against Edgewood-shaped rows.
 import { describe, it, expect } from "vitest";
-import { deriveContradictionWhy, isGroundedReason, judgedContradictionReason } from "./mapping";
+import { conflictExplanationFor, deriveContradictionWhy, isGroundedReason, judgedContradictionReason } from "./mapping";
 import type { FRGapPair, FRGapStatement } from "./types";
 
 const pair = (o: Partial<FRGapPair>): FRGapPair => ({
@@ -118,5 +118,43 @@ describe("judgedContradictionReason — strongest divergent pair, grounded", () 
   it("confirmed / unechoed → null", () => {
     expect(judgedContradictionReason({ verdict: "confirmed", evidence: [] })).toBeNull();
     expect(judgedContradictionReason({ verdict: "unechoed", evidence: [] })).toBeNull();
+  });
+});
+
+describe("conflictExplanationFor — tier 1, prefer SPECIFIC over honest-non-specific", () => {
+  const p = (o: Partial<FRGapPair>): FRGapPair => ({
+    id: o.id ?? "p", statementId: "S", verdict: "contradicted", declared: "We are the best.",
+    record: "x", sourceTag: null, eventDate: null, evidenceRank: 2, ...o,
+  });
+  it("prefers the SPECIFIC pair even when a non-specific pair is stronger", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [
+        p({ id: "strongVague", evidenceRank: 3, conflictExplanation: "You claim X; a public review is critical without specifics." }),
+        p({ id: "weakSpecific", evidenceRank: 1, conflictExplanation: "You claim X; a former employee alleges serious safety concerns for clients and staff." }),
+      ],
+    };
+    expect(conflictExplanationFor(s)).toBe("You claim X; a former employee alleges serious safety concerns for clients and staff.");
+  });
+  it("uses the honest non-specific line only when NO pair is specific", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [p({ id: "a", evidenceRank: 3, conflictExplanation: "You claim X; a public review is critical without specifics." })],
+    };
+    expect(conflictExplanationFor(s)).toBe("You claim X; a public review is critical without specifics.");
+  });
+  it("among specific pairs, returns the strongest (evidenceRank desc)", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [
+        p({ id: "a", evidenceRank: 1, conflictExplanation: "You claim X; sources allege weak thing." }),
+        p({ id: "b", evidenceRank: 3, conflictExplanation: "You claim X; sources allege strong thing." }),
+      ],
+    };
+    expect(conflictExplanationFor(s)).toBe("You claim X; sources allege strong thing.");
+  });
+  it("no pair carries an explanation → null (falls to tier 2)", () => {
+    expect(conflictExplanationFor({ verdict: "contradicted", evidence: [p({})] })).toBeNull();
+    expect(conflictExplanationFor({ verdict: "confirmed", evidence: [] })).toBeNull();
   });
 });

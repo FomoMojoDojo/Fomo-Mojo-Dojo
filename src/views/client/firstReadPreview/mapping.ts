@@ -35,12 +35,23 @@ function strongestDivergentPair(st: Pick<FRGapStatement, "verdict" | "evidence">
   )[0];
 }
 
-/** TIER 1 of the contradiction "why": the freshly generated, grounded "what differs" explanation of
- *  the strongest divergent pair (already grounded-gated in the hook). Null when absent. */
+// Sentinel tail of the honest non-specific explanation (excerpt is pure valence). A pair whose
+// explanation contains it is treated as non-specific and DEFERRED to a specific pair when one exists.
+const NON_SPECIFIC_MARK = "critical without specifics";
+
+/** TIER 1 of the contradiction "why": the freshly generated, grounded "what differs" explanation.
+ *  Among the statement's divergent pairs that carry a grounded explanation, PREFER the strongest one
+ *  whose explanation is SPECIFIC (names the excerpt's concrete allegation) over an honest non-specific
+ *  one; only when NO pair is specific does the honest non-specific line show. Null when none carry one. */
 export function conflictExplanationFor(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
-  const p = strongestDivergentPair(st);
-  const expl = (p?.conflictExplanation ?? "").trim();
-  return expl || null;
+  if (st.verdict !== "contradicted") return null;
+  const withExpl = st.evidence.filter((e) => e.verdict === "contradicted" && (e.conflictExplanation ?? "").trim().length > 0);
+  if (withExpl.length === 0) return null;
+  const byStrength = (a: FRGapPair, b: FRGapPair) =>
+    b.evidenceRank - a.evidenceRank || (b.eventDate ?? "").localeCompare(a.eventDate ?? "");
+  const specific = withExpl.filter((e) => !(e.conflictExplanation ?? "").toLowerCase().includes(NON_SPECIFIC_MARK));
+  const chosen = (specific.length ? specific : withExpl).sort(byStrength)[0];
+  return (chosen.conflictExplanation ?? "").trim() || null;
 }
 
 /** TIER 2: the judged reason to show for a contradicted statement, or null when there is none or it
