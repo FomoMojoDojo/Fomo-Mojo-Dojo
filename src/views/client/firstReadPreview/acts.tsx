@@ -86,6 +86,9 @@ const RATIONALE_NEXT = "Where we'd go from here, and how the method carries forw
 // Coherence note (2026-08-22, signed): a company with a rung-1 status conflict but ZERO contradicted
 // beat-4 statements — the dispute is source-vs-source, not your-words-vs-record. Only shown then.
 const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see the top of this read) is a disagreement between outside sources — not between your words and the record. Nothing you've said publicly is contradicted here."; // signed
+// Signed eyebrow above the derived contradiction "why" line (2026-08-22), so it reads as rationale,
+// not a source row. Hoisted above the pair evidence.
+const WHY_CONFLICT_LABEL = "WHY THIS SEEMS TO CONFLICT"; // signed
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // signed
 // NO_MARKETS_NOTE removed with the Declared-markets section (public-only ruling, 2026-08-20).
 const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
@@ -836,6 +839,16 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
   const contradictionWhy = deriveContradictionWhy(statement);
   return (
     <div className="flex flex-col gap-8">
+      {/* Hoisted (2026-08-22): the derived "why" reads with the statement it explains — above the
+          pair evidence, not buried at the foot of a tall evidence column. Contradicted rows only. */}
+      {contradictionWhy ? (
+        <div>
+          <Eyebrow>{WHY_CONFLICT_LABEL}</Eyebrow>
+          <p className="mt-2 text-sm font-light italic leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+            {contradictionWhy}
+          </p>
+        </div>
+      ) : null}
       {statement.evidence.map((pair) => {
         const recency = formatMonthYear(pair.eventDate);
         return (
@@ -854,11 +867,6 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
           </div>
         );
       })}
-      {contradictionWhy ? (
-        <p className="text-sm font-light italic leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-          {contradictionWhy}
-        </p>
-      ) : null}
     </div>
   );
 }

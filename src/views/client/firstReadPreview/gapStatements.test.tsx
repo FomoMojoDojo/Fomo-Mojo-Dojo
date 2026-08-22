@@ -78,5 +78,43 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     // one statement row per statement (declared text appears once each)
     const declaredRows = [...container.querySelectorAll("h3")].map((h) => h.textContent);
     expect(declaredRows.filter((t) => t?.includes("All coffees ship in 12 oz."))).toHaveLength(1);
+    // confirmed/not-echoed statements never show the contradiction "why" label
+    expect(text).not.toContain("WHY THIS SEEMS TO CONFLICT");
+  });
+
+  it("hoisted why (2026-08-22): label + derived line render ABOVE the pair evidence, contradicted only", () => {
+    const contraRows: FRGapPair[] = [
+      pair({
+        id: "c1", statementId: "C", verdict: "contradicted",
+        declared: "We are the best clinic.", record: "A critical review says otherwise.",
+        recordHost: "indeed.com", eventDate: "2024-07-05", declaredDate: "2024-06-01",
+      }),
+    ];
+    const statements = groupGapStatements(contraRows);
+    const read: FirstReadPreviewData = {
+      ...EMPTY_FIRST_READ,
+      company: { name: "Co", website: null },
+      gapPairs: contraRows,
+      gapStatements: statements,
+      gapCounts: { contradicted: 1, unechoed: 0, confirmed: 0 },
+      gapIntegrity: "looked_none",
+    };
+    const { container } = render(<ActGap read={read} />);
+    const text = container.textContent ?? "";
+    // exact derived line for this fixture (singular): declared date present, no contra-date clause omitted? (dated)
+    const expectedLine = "You say this (stated June 1, 2024); 1 public source (indeed.com) tells a different story, most recently July 5, 2024.";
+    const iLabel = text.indexOf("WHY THIS SEEMS TO CONFLICT");
+    const iLine = text.indexOf(expectedLine);
+    const iPair = text.indexOf("A critical review says otherwise.");
+    expect(iLabel).toBeGreaterThanOrEqual(0); // label present
+    expect(iLine).toBeGreaterThanOrEqual(0); // derived line present, verbatim
+    expect(iPair).toBeGreaterThanOrEqual(0); // pair evidence present
+    // DOM ORDER: why label → why line → pair evidence (the why is a PRECEDING sibling, not trailing)
+    expect(iLabel).toBeLessThan(iLine);
+    expect(iLine).toBeLessThan(iPair);
+    // structural: the why block precedes the first pair block in the DOM
+    const whyP = [...container.querySelectorAll("p")].find((p) => /different story/.test(p.textContent ?? ""))!;
+    const pairP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("A critical review says otherwise."))!;
+    expect(whyP.compareDocumentPosition(pairP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
