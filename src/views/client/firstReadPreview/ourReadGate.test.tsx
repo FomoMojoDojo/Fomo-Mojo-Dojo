@@ -50,4 +50,23 @@ describe("beat 9 Our read — provenance gate", () => {
     expect(text).not.toContain(POS);
     expect(text).not.toContain(STRAT);
   });
+
+  it("PER-KIND: positioning present, strategy + promise absent → positioning substance + the other two signed lines", () => {
+    // GATE 6a: each kind renders from its OWN public_reads row independently. A company can have a
+    // confirmed positioning read while strategy/promise have none — the beat mixes substance + signed.
+    const mixed: FirstReadPreviewData = {
+      ...EMPTY_FIRST_READ,
+      company: { name: "Co", website: null },
+      positioning: { category: "Neighborhood cafe & roaster", value: "Coffee and pastries made on site.", differentiators: ["in-house roasting"], sourceTag: { label: "Public read · June 11, 2026" } },
+      strategy: null,
+      promise: null,
+    };
+    const { container } = render(<ActOurRead read={mixed} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Neighborhood cafe & roaster");
+    expect(text).toContain("Source:"); // positioning's tag
+    expect(text).toContain(STRAT); // strategy still gated
+    expect(text).toContain(PROM); // promise still gated
+    expect(text).not.toContain(POS); // positioning is NOT gated
+  });
 });

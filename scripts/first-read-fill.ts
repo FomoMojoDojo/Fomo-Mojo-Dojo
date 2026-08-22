@@ -144,6 +144,12 @@ const q = {
   questions: (id: string) => count(`SELECT count(*) FROM first_read_open_questions WHERE company_id='${id}' AND status='live' AND coalesce(source_kind,'')<>'status_conflict';`),
   statusConflicts: (id: string) => count(`SELECT count(*) FROM first_read_open_questions WHERE company_id='${id}' AND status='live' AND source_kind='status_conflict';`),
   scoreRows: (id: string) => count(`SELECT count(*) FROM mojo_scores WHERE company_id='${id}' AND methodology_version LIKE 'outside-%';`),
+  publicReads: (id: string) => count(`SELECT count(*) FROM public_reads WHERE company_id='${id}' AND is_current=true;`),
+  // The current positioning row's ledgered input id-set, sorted (idempotency key). Null when absent.
+  publicReadLedgerIds: (id: string): string[] | null => {
+    const raw = psql<string[] | null>(`SELECT coalesce((SELECT jsonb_agg(x ORDER BY x) FROM public_reads, jsonb_array_elements_text(input_ledger->'ids') x WHERE company_id='${id}' AND kind='positioning' AND is_current=true), 'null'::jsonb);`);
+    return Array.isArray(raw) ? raw : null;
+  },
 };
 
 type Company = { id: string; name: string; website: string | null; frozen: boolean };
@@ -177,6 +183,7 @@ function stepMetric(step: Step, c: Company): number {
     case "open_questions": return q.questions(c.id);
     case "status_conflict": return q.statusConflicts(c.id);
     case "score": return q.scoreRows(c.id);
+    case "our_read": return q.publicReads(c.id);
   }
 }
 
@@ -282,6 +289,28 @@ function runScore(c: Company, counts: FillCounts): { before: number; after: numb
   return { before, after: q.scoreRows(c.id), outcome: skipSet.has("recurrence") ? "ran:appended(record_strength not_computed)" : "ran:appended" };
 }
 
+// GATE 6a: the public-only "Our read". Idempotent — regenerates ONLY when the public input id-set
+// changed since the last written row (ledger id-set differs); else skipped:unchanged. The edge does
+// the gather → gen → citation-guard → judge → write; the runner just decides run-vs-skip and reports.
+async function runOurRead(c: Company, _counts: FillCounts): Promise<{ before: number; after: number; outcome: string }> {
+  const before = q.publicReads(c.id);
+  const plan = await invokeFn("generate-public-read", { company_id: c.id, plan: true }, 150_000);
+  if (!plan.ok) return { before, after: before, outcome: `failed:plan_${plan.status}` };
+  const planIds = ((plan.data?.input_ledger?.ids ?? []) as string[]).slice().sort();
+  if (planIds.length === 0) return { before, after: before, outcome: "skipped:no_public_inputs" };
+  const existing = q.publicReadLedgerIds(c.id);
+  if (before >= 3 && existing && existing.length === planIds.length && existing.every((v, i) => v === planIds[i])) {
+    return { before, after: before, outcome: "skipped:unchanged" };
+  }
+  const w = await invokeFn("generate-public-read", { company_id: c.id, write: true }, 420_000);
+  const after = q.publicReads(c.id);
+  if (!w.ok) {
+    const rej = w.data?.rejected;
+    return { before, after, outcome: rej ? `rejected:${rej}` : `failed:write_${w.status}_${w.data?.error ?? ""}`.slice(0, 120) };
+  }
+  return { before, after, outcome: `ran:written=${(w.data?.written ?? []).length}` };
+}
+
 const RUNNERS: Record<Step, (c: Company, counts: FillCounts) => Promise<{ before: number; after: number; outcome: string }> | { before: number; after: number; outcome: string }> = {
   own_words: runOwnWords,
   recurrence: runRecurrence,
@@ -289,6 +318,7 @@ const RUNNERS: Record<Step, (c: Company, counts: FillCounts) => Promise<{ before
   open_questions: runOpenQuestions,
   status_conflict: runStatusConflict,
   score: runScore,
+  our_read: runOurRead,
 };
 
 // ── dry-run plan (read-only) ─────────────────────────────────────────────────────
@@ -301,6 +331,7 @@ function dryPlan(c: Company): void {
     open_questions: `questions=${q.questions(c.id)}`,
     status_conflict: `conflicts=${q.statusConflicts(c.id)}`,
     score: `score_rows=${q.scoreRows(c.id)}`,
+    our_read: `public_reads=${q.publicReads(c.id)}`,
   };
   console.log(`\n• ${c.name} [${c.id}]  website=${c.website ?? "—"}`);
   for (const s of stepsToRun()) {

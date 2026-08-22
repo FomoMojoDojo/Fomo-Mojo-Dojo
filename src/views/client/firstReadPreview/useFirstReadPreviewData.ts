@@ -50,13 +50,9 @@ const loose = () => supabase as unknown as { from: (t: string) => any }; // esli
 
 const OUTSIDE_METHODOLOGY_PREFIX = "outside-";
 
-// GATE (2026-08-21): the "Our read" positioning + strategy render on the PUBLIC-ONLY First Read
-// only when their source row carries CONFIRMED public-only provenance. Today NO market_read row can:
-// canvas 2486e31f + cascade 1e9d2da3 came from run 6f41ff10 (evidence_status 'baseline_plus_artifacts',
-// 9 internal PDFs in the pool) — UNRESOLVED provenance. Until gate 6a lands a public-only generator
-// whose row carries an input-ledger proof (public signals/claims only, no upload/intake/internal),
-// this stays false and beat 9 shows the signed not-enough-public-information lines. Flip per-row then.
-const FIRST_READ_OUR_READ_PROVENANCE_GATE = false;
+// GATE 6a (2026-08-22) LANDED: "Our read" positioning / strategy / promise now render from the
+// public_reads table (public-only, ledgered, judged) — see the beat-9 derivation below. The old
+// FIRST_READ_OUR_READ_PROVENANCE_GATE flag (and the market_read canvas/cascade it gated) is removed.
 
 type SignalRow = {
   id: string;
@@ -543,54 +539,48 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             sourceTag: syntheticTag(m.updated_at ?? m.created_at),
           }));
 
-        // Observed positioning + promise (R-C): the market_read canvas.
-        const { data: canvasRow } = await supabase
-          .from("positioning_canvases")
-          .select("market_category, value_for_customer, unique_attributes_json, updated_at")
+        // GATE 6a (2026-08-22): positioning / strategy / promise render ONLY from a CONFIRMED
+        // public-only public_reads current row (ledgered + judged, computed from public provenance
+        // ONLY — no upload/intake/internal). Absent kind → the signed not-enough line. The legacy
+        // market_read canvas 2486e31f / cascade 1e9d2da3 are NEVER read here (unresolved provenance)
+        // and never deleted. Source tag date = the row's created_at.
+        const { data: prRows } = await loose()
+          .from("public_reads")
+          .select("kind, payload, created_at")
           .eq("company_id", companyId)
-          .eq("artifact_role", "market_read")
-          .maybeSingle();
-        const canvas = canvasRow as {
-          market_category: string | null; value_for_customer: string | null;
-          unique_attributes_json: unknown; updated_at: string | null;
-        } | null;
-        const canvasTag = canvas ? syntheticTag(canvas.updated_at) : null;
-        const differentiators = Array.isArray(canvas?.unique_attributes_json)
-          ? (canvas!.unique_attributes_json as unknown[])
-              .map((d) => (typeof d === "string" ? d : (d as { name?: string; text?: string })?.name ?? (d as { text?: string })?.text ?? ""))
-              .map((s) => String(s).trim())
-              .filter(Boolean)
-          : [];
-        const positioningSubstance = canvas && (canvas.market_category || canvas.value_for_customer || differentiators.length)
-          ? { category: canvas.market_category, value: canvas.value_for_customer, differentiators, sourceTag: canvasTag }
-          : null;
-        // Gated: unresolved-provenance positioning never renders on the public First Read (signed line instead).
-        const positioning = FIRST_READ_OUR_READ_PROVENANCE_GATE ? positioningSubstance : null;
-        // Promise (ruling 1, 2026-08-21): NEVER reuse value_for_customer. The schema has no distinct
-        // promise field, so text is null and the beat renders the signed not-enough-information line.
-        // (When/if a real promise field exists, map it here with its own source tag.)
-        const promise = canvas ? { text: null, sourceTag: null } : null;
+          .eq("is_current", true);
+        const prByKind = new Map<string, { payload: Record<string, unknown>; created_at: string | null }>();
+        for (const r of (prRows ?? []) as Array<{ kind: string; payload: Record<string, unknown>; created_at: string | null }>) {
+          prByKind.set(r.kind, { payload: r.payload ?? {}, created_at: r.created_at });
+        }
+        const publicReadTag = (createdAt: string | null) => ({
+          label: `Public read · ${formatFullDate(createdAt) ?? ""}`.trim().replace(/·\s*$/, "").trim(),
+        });
 
-        // Observed strategy (R-C): the market_read strategy cascade.
-        const { data: cascadeRow } = await supabase
-          .from("strategy_cascades")
-          .select("winning_aspiration, where_to_play, how_to_win, updated_at")
-          .eq("company_id", companyId)
-          .eq("artifact_role", "market_read")
-          .maybeSingle();
-        const cascade = cascadeRow as {
-          winning_aspiration: string | null; where_to_play: string | null; how_to_win: string | null; updated_at: string | null;
-        } | null;
-        const strategySubstance = cascade && (cascade.winning_aspiration || cascade.where_to_play || cascade.how_to_win)
-          ? {
-              aspiration: cascade.winning_aspiration,
-              whereToPlay: cascade.where_to_play,
-              howToWin: cascade.how_to_win,
-              sourceTag: syntheticTag(cascade.updated_at),
-            }
+        const posRow = prByKind.get("positioning");
+        const posPayload = (posRow?.payload ?? null) as
+          | { market_category?: string | null; value_for_customer?: string | null; unique_attributes?: Array<{ text?: string | null }> }
+          | null;
+        const posDiffs = Array.isArray(posPayload?.unique_attributes)
+          ? posPayload!.unique_attributes.map((a) => String(a?.text ?? "").trim()).filter(Boolean)
+          : [];
+        const positioning = posRow && posPayload && (posPayload.market_category || posPayload.value_for_customer || posDiffs.length)
+          ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at) }
           : null;
-        // Gated: unresolved-provenance strategy never renders on the public First Read (signed line instead).
-        const strategy = FIRST_READ_OUR_READ_PROVENANCE_GATE ? strategySubstance : null;
+
+        const strRow = prByKind.get("strategy");
+        const strPayload = (strRow?.payload ?? null) as
+          | { winning_aspiration?: string | null; where_to_play?: string | null; how_to_win?: string | null }
+          | null;
+        const strategy = strRow && strPayload && (strPayload.winning_aspiration || strPayload.where_to_play || strPayload.how_to_win)
+          ? { aspiration: strPayload.winning_aspiration ?? null, whereToPlay: strPayload.where_to_play ?? null, howToWin: strPayload.how_to_win ?? null, sourceTag: publicReadTag(strRow.created_at) }
+          : null;
+
+        const promRow = prByKind.get("promise");
+        const promText = String(((promRow?.payload ?? {}) as { promise?: string | null }).promise ?? "").trim();
+        const promise = promRow && promText
+          ? { text: promText, sourceTag: publicReadTag(promRow.created_at) }
+          : null;
 
         // Where you stand (W1, 2026-08-20): the interpretation of the beat-7 score, read
         // ONLY from the persisted mojo_scores snapshot — band + band meaning + the five

@@ -8,6 +8,7 @@ export const FILL_STEP_ORDER = [
   "open_questions",
   "status_conflict",
   "score",
+  "our_read",
 ] as const;
 export type FillStep = (typeof FILL_STEP_ORDER)[number];
 
@@ -46,6 +47,7 @@ export function skipReason(step: FillStep, c: FillCounts): string | null {
     case "open_questions": return null; // always runs; finalize marks empty when no anchors
     case "status_conflict": return null; // deterministic, always runs
     case "score": return c.outsideSignals >= 10 ? null : "ineligible_lt10_signals";
+    case "our_read": return null; // always eligible; the runner skips:unchanged (ledger id-set) / empty
   }
 }
 
