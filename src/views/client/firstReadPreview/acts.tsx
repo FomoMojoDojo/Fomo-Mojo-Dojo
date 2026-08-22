@@ -19,7 +19,7 @@ import {
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
-import { deriveContradictionWhy, foldByHostDate, formatMonthYear } from "./mapping";
+import { deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -828,27 +828,29 @@ function gapStandfirst(c: FRGapCounts): string {
 /** Beat 4 right column: a statement's public evidence. Not-echoed → the signed record-silent line
  *  once. Confirmed/contradicted → every pair listed (source tag + most-recent + STATUS DISPUTED
  *  chip per pair). Nothing hidden — one visible entry per pair beneath its statement. */
+// The contradiction "why" under a contradicted statement's declared text: signed eyebrow + muted
+// italic line. `text` is the grounded judged reason, or the derived fallback (chosen in ActGap).
+function ContradictionWhy({ text }: { text: string }) {
+  return (
+    <div className="mt-6">
+      <Eyebrow>{WHY_CONFLICT_LABEL}</Eyebrow>
+      <p className="mt-2 max-w-md text-sm font-light italic leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+        {text}
+      </p>
+    </div>
+  );
+}
+
 function StatementEvidence({ statement }: { statement: FRGapStatement }) {
   if (statement.verdict === "unechoed" || statement.evidence.length === 0) {
     return (
       <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
     );
   }
-  // Derived contradiction "why" (2026-08-22): row-sourced, no model. Null (renders nothing) unless
-  // the statement is contradicted with constructible fields — never a fabricated line.
-  const contradictionWhy = deriveContradictionWhy(statement);
+  // The contradiction "why" (judged reason, grounded; derived line as fallback) renders in the LEFT
+  // column under the declared statement (see ActGap's leftExtra) — NOT here in the evidence column.
   return (
     <div className="flex flex-col gap-8">
-      {/* Hoisted (2026-08-22): the derived "why" reads with the statement it explains — above the
-          pair evidence, not buried at the foot of a tall evidence column. Contradicted rows only. */}
-      {contradictionWhy ? (
-        <div>
-          <Eyebrow>{WHY_CONFLICT_LABEL}</Eyebrow>
-          <p className="mt-2 text-sm font-light italic leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-            {contradictionWhy}
-          </p>
-        </div>
-      ) : null}
       {statement.evidence.map((pair) => {
         const recency = formatMonthYear(pair.eventDate);
         return (
@@ -901,17 +903,24 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         ) : null}
         {/* One row per STATEMENT (2026-08-21). Confirmed/contradicted statements list their pair
             evidence beneath; not-echoed statements carry the signed record-silent line once. */}
-        {read.gapStatements.map((statement) => (
-          <LedgerRow
-            key={statement.statementId}
-            leftLabel="You say"
-            leftBody={statement.declared || UNSPOKEN_LEFT}
-            quoted={statement.declared !== ""}
-            muted={statement.verdict === "unechoed"}
-            meta={<VerdictChip verdict={statement.verdict} />}
-            rightContent={<StatementEvidence statement={statement} />}
-          />
-        ))}
+        {read.gapStatements.map((statement) => {
+          // The contradiction "why": the grounded JUDGED reason when it passes the render-time check,
+          // else the derived line as fallback (null for confirmed/not-echoed). Rendered under the
+          // declared text (leftExtra) — DOM order: declared → why label → why line → chip → pairs.
+          const why = judgedContradictionReason(statement) ?? deriveContradictionWhy(statement);
+          return (
+            <LedgerRow
+              key={statement.statementId}
+              leftLabel="You say"
+              leftBody={statement.declared || UNSPOKEN_LEFT}
+              quoted={statement.declared !== ""}
+              muted={statement.verdict === "unechoed"}
+              leftExtra={why ? <ContradictionWhy text={why} /> : null}
+              meta={<VerdictChip verdict={statement.verdict} />}
+              rightContent={<StatementEvidence statement={statement} />}
+            />
+          );
+        })}
       </main>
     </>
   );

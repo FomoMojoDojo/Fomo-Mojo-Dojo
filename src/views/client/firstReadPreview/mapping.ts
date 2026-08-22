@@ -10,6 +10,37 @@ import { formatFullDate } from "./deriveSourceTag";
 // hosts, and the most-recent contra date). NO model, NO stored field. Date slots are OPTIONAL —
 // included only when present, NEVER guessed. Returns null when unconstructible (not contradicted /
 // zero contradicting pairs) so the beat renders nothing rather than a fabricated line.
+// ── Judged contradiction reason (2026-08-22, SIGNED) ─────────────────────────────────────────────
+// The client-facing "why" is now the JUDGED reason stored on the divergent pair at delta-decision
+// time (claim_deltas.judge_reason) — richer than the derived line. Because it is now shown to the
+// client, it passes a deterministic GROUNDING CHECK first (no model): non-empty, and it must not cite
+// a host/domain that is absent from THIS statement's own pair set (guard against a reason referencing
+// evidence that isn't here). Fails the check → the caller falls back to deriveContradictionWhy.
+export function isGroundedReason(reason: string | null | undefined, evidenceHosts: ReadonlySet<string>): boolean {
+  const r = (reason ?? "").trim();
+  if (!r) return false; // non-empty
+  // Any domain-like token the reason cites must be in the statement's evidence hosts.
+  const cited = r.toLowerCase().match(/\b[a-z0-9][a-z0-9-]*\.(?:com|org|net|io|gov|edu|co|us|ai|info|biz)\b/g) ?? [];
+  return cited.every((h) => evidenceHosts.has(h));
+}
+
+/** The judged reason to show for a contradicted statement, or null when there is none or it fails the
+ *  grounding check. RULE: the reason of the STRONGEST divergent pair (highest evidenceRank); on a tie,
+ *  the most recent (eventDate desc). Grounded against the statement's full pair host set. */
+export function judgedContradictionReason(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
+  if (st.verdict !== "contradicted") return null;
+  const contra = st.evidence.filter((e) => e.verdict === "contradicted");
+  if (contra.length === 0) return null;
+  const strongest = [...contra].sort(
+    (a, b) => b.evidenceRank - a.evidenceRank || (b.eventDate ?? "").localeCompare(a.eventDate ?? ""),
+  )[0];
+  const reason = (strongest.judgeReason ?? "").trim();
+  const evidenceHosts = new Set(
+    st.evidence.map((e) => (e.recordHost ?? "").trim().toLowerCase()).filter((h) => h.length > 0),
+  );
+  return isGroundedReason(reason, evidenceHosts) ? reason : null;
+}
+
 export function deriveContradictionWhy(st: Pick<FRGapStatement, "verdict" | "evidence" | "declaredDate">): string | null {
   if (st.verdict !== "contradicted") return null;
   const contra = st.evidence.filter((e) => e.verdict === "contradicted");

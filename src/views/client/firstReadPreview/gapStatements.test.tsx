@@ -82,39 +82,53 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     expect(text).not.toContain("WHY THIS SEEMS TO CONFLICT");
   });
 
-  it("hoisted why (2026-08-22): label + derived line render ABOVE the pair evidence, contradicted only", () => {
-    const contraRows: FRGapPair[] = [
-      pair({
-        id: "c1", statementId: "C", verdict: "contradicted",
-        declared: "We are the best clinic.", record: "A critical review says otherwise.",
-        recordHost: "indeed.com", eventDate: "2024-07-05", declaredDate: "2024-06-01",
-      }),
-    ];
-    const statements = groupGapStatements(contraRows);
-    const read: FirstReadPreviewData = {
-      ...EMPTY_FIRST_READ,
-      company: { name: "Co", website: null },
-      gapPairs: contraRows,
-      gapStatements: statements,
-      gapCounts: { contradicted: 1, unechoed: 0, confirmed: 0 },
-      gapIntegrity: "looked_none",
+  const contraRead = (over: Partial<FRGapPair>): FirstReadPreviewData => {
+    const rows: FRGapPair[] = [pair({
+      id: "c1", statementId: "C", verdict: "contradicted",
+      declared: "We are the best clinic.", record: "A critical review says otherwise.",
+      recordHost: "indeed.com", eventDate: "2024-07-05", declaredDate: "2024-06-01", ...over,
+    })];
+    return {
+      ...EMPTY_FIRST_READ, company: { name: "Co", website: null },
+      gapPairs: rows, gapStatements: groupGapStatements(rows),
+      gapCounts: { contradicted: 1, unechoed: 0, confirmed: 0 }, gapIntegrity: "looked_none",
     };
-    const { container } = render(<ActGap read={read} />);
+  };
+
+  it("judged reason shown (grounded) + placement: declared → why label → why line → chip → pairs", () => {
+    const { container } = render(<ActGap read={contraRead({ judgeReason: "employee review contradicts the declared supportive model" })} />);
     const text = container.textContent ?? "";
-    // exact derived line for this fixture (singular): declared date present, no contra-date clause omitted? (dated)
-    const expectedLine = "You say this (stated June 1, 2024); 1 public source (indeed.com) tells a different story, most recently July 5, 2024.";
+    const iDeclared = text.indexOf("We are the best clinic.");
     const iLabel = text.indexOf("WHY THIS SEEMS TO CONFLICT");
-    const iLine = text.indexOf(expectedLine);
+    const iReason = text.indexOf("employee review contradicts the declared supportive model");
+    const iChip = text.indexOf("Contradicted");
     const iPair = text.indexOf("A critical review says otherwise.");
-    expect(iLabel).toBeGreaterThanOrEqual(0); // label present
-    expect(iLine).toBeGreaterThanOrEqual(0); // derived line present, verbatim
-    expect(iPair).toBeGreaterThanOrEqual(0); // pair evidence present
-    // DOM ORDER: why label → why line → pair evidence (the why is a PRECEDING sibling, not trailing)
-    expect(iLabel).toBeLessThan(iLine);
-    expect(iLine).toBeLessThan(iPair);
-    // structural: the why block precedes the first pair block in the DOM
-    const whyP = [...container.querySelectorAll("p")].find((p) => /different story/.test(p.textContent ?? ""))!;
+    expect(iReason).toBeGreaterThanOrEqual(0); // JUDGED reason shown, not the derived line
+    expect(text).not.toContain("tells a different story"); // derived line retired from render when judged passes
+    // DOM order: declared text → why label → why line → chip → pairs
+    expect(iDeclared).toBeLessThan(iLabel);
+    expect(iLabel).toBeLessThan(iReason);
+    expect(iReason).toBeLessThan(iChip);
+    expect(iChip).toBeLessThan(iPair);
+    // structural: the why block is a PRECEDING sibling of BOTH the chip and the pair list
+    const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("employee review"))!;
+    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Contradicted" && e.children.length === 0)!;
     const pairP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("A critical review says otherwise."))!;
+    expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(whyP.compareDocumentPosition(pairP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("derived fallback when the judged reason is ABSENT (null judgeReason)", () => {
+    const { container } = render(<ActGap read={contraRead({ judgeReason: null })} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("WHY THIS SEEMS TO CONFLICT");
+    expect(text).toContain("You say this (stated June 1, 2024); 1 public source (indeed.com) tells a different story, most recently July 5, 2024.");
+  });
+
+  it("derived fallback when the judged reason FAILS grounding (cites an absent host)", () => {
+    const { container } = render(<ActGap read={contraRead({ judgeReason: "a yelp.com review contradicts it" })} />);
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("yelp.com review contradicts it"); // ungrounded reason suppressed
+    expect(text).toContain("tells a different story"); // fell back to the derived line
   });
 });

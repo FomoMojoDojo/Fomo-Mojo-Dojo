@@ -422,12 +422,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await supabase
           .from("claim_deltas")
-          .select("id, delta_type, declared_claim_id, public_claim_id")
+          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
           .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null }>;
+        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null }>;
         const gapClaimIds = [
           ...new Set(
             deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x),
@@ -480,6 +480,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             eventDate: sig?.event_date ?? null,
             recordHost: sig?.source_url ? bareHost(sig.source_url) : null,
             declaredDate: declaredNewest.get(d.declared_claim_id)?.event_date ?? null,
+            judgeReason: d.judge_reason ?? null,
             evidenceRank,
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
           });

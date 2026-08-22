@@ -3,7 +3,7 @@
 // field. Dates optional (omitted, never guessed). Empty when unconstructible. These pins cover the
 // plural/date variants and the empty cases, against Edgewood-shaped rows.
 import { describe, it, expect } from "vitest";
-import { deriveContradictionWhy } from "./mapping";
+import { deriveContradictionWhy, isGroundedReason, judgedContradictionReason } from "./mapping";
 import type { FRGapPair, FRGapStatement } from "./types";
 
 const pair = (o: Partial<FRGapPair>): FRGapPair => ({
@@ -63,5 +63,60 @@ describe("deriveContradictionWhy — row-sourced, no model", () => {
       ],
     });
     expect(deriveContradictionWhy(s)).toBe("You say this; 1 public source (indeed.com) tells a different story.");
+  });
+});
+
+describe("isGroundedReason — deterministic render-time check (no model)", () => {
+  const hosts = new Set(["indeed.com", "guidestar.org"]);
+  it("clean reason with NO host tokens → grounded (the common case)", () => {
+    expect(isGroundedReason("employee review contradicts the declared supportive model", hosts)).toBe(true);
+  });
+  it("reason citing a host that IS in the evidence set → grounded", () => {
+    expect(isGroundedReason("the indeed.com review contradicts the mission", hosts)).toBe(true);
+  });
+  it("VACUOUS PROOF — reason citing a host ABSENT from the evidence set → rejected", () => {
+    expect(isGroundedReason("a yelp.com review contradicts the mission", hosts)).toBe(false);
+  });
+  it("empty / whitespace reason → rejected (non-empty required)", () => {
+    expect(isGroundedReason("", hosts)).toBe(false);
+    expect(isGroundedReason("   ", hosts)).toBe(false);
+  });
+});
+
+describe("judgedContradictionReason — strongest divergent pair, grounded", () => {
+  const p = (o: Partial<FRGapPair>): FRGapPair => ({
+    id: o.id ?? "p", statementId: "S", verdict: "contradicted", declared: "We are the best.",
+    record: "x", sourceTag: null, eventDate: null, evidenceRank: 2, ...o,
+  });
+  it("returns the strongest divergent pair's reason (highest evidenceRank)", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [
+        p({ id: "a", evidenceRank: 1, recordHost: "indeed.com", judgeReason: "weak reason" }),
+        p({ id: "b", evidenceRank: 3, recordHost: "guidestar.org", judgeReason: "strong reason" }),
+      ],
+    };
+    expect(judgedContradictionReason(s)).toBe("strong reason");
+  });
+  it("tie on evidenceRank → most recent date wins", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [
+        p({ id: "a", evidenceRank: 2, eventDate: "2024-01-01", recordHost: "indeed.com", judgeReason: "older" }),
+        p({ id: "b", evidenceRank: 2, eventDate: "2024-07-05", recordHost: "indeed.com", judgeReason: "newer" }),
+      ],
+    };
+    expect(judgedContradictionReason(s)).toBe("newer");
+  });
+  it("reason cites an absent host → null (caller falls back to the derived line)", () => {
+    const s: Pick<FRGapStatement, "verdict" | "evidence"> = {
+      verdict: "contradicted",
+      evidence: [p({ id: "a", evidenceRank: 3, recordHost: "indeed.com", judgeReason: "a yelp.com review contradicts it" })],
+    };
+    expect(judgedContradictionReason(s)).toBeNull();
+  });
+  it("confirmed / unechoed → null", () => {
+    expect(judgedContradictionReason({ verdict: "confirmed", evidence: [] })).toBeNull();
+    expect(judgedContradictionReason({ verdict: "unechoed", evidence: [] })).toBeNull();
   });
 });
