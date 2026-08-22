@@ -83,9 +83,12 @@ export type FRGapPair = {
   recordHost?: string | null;
   /** The declared (own-words) side's newest-signal date — shared across a statement's pairs. */
   declaredDate?: string | null;
-  /** The judge reason written at delta-decision time (claim_deltas.judge_reason) — the client-facing
-   *  contradiction "why" (grounded before render); the derived line is the fallback. */
+  /** The judge reason written at delta-decision time (claim_deltas.judge_reason) — tier 2 of the
+   *  contradiction "why". */
   judgeReason?: string | null;
+  /** The generated, grounded "what differs" one-liner (claim_deltas.conflict_explanation) — tier 1 of
+   *  the contradiction "why". Null unless present AND grounded. */
+  conflictExplanation?: string | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */

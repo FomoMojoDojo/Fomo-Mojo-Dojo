@@ -420,14 +420,14 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           : null;
 
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
-        const { data: deltaRows } = await supabase
+        const { data: deltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason")
+          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
           .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null }>;
+        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null }>;
         const gapClaimIds = [
           ...new Set(
             deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x),
@@ -481,6 +481,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             recordHost: sig?.source_url ? bareHost(sig.source_url) : null,
             declaredDate: declaredNewest.get(d.declared_claim_id)?.event_date ?? null,
             judgeReason: d.judge_reason ?? null,
+            // Only a GROUNDED fresh explanation reaches the render (tier 1 of the three-tier why).
+            conflictExplanation: d.conflict_explanation_grounded === true ? (d.conflict_explanation ?? null) : null,
             evidenceRank,
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
           });

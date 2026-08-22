@@ -24,16 +24,30 @@ export function isGroundedReason(reason: string | null | undefined, evidenceHost
   return cited.every((h) => evidenceHosts.has(h));
 }
 
-/** The judged reason to show for a contradicted statement, or null when there is none or it fails the
- *  grounding check. RULE: the reason of the STRONGEST divergent pair (highest evidenceRank); on a tie,
- *  the most recent (eventDate desc). Grounded against the statement's full pair host set. */
-export function judgedContradictionReason(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
+/** The strongest divergent pair of a contradicted statement (highest evidenceRank; tie → most recent
+ *  eventDate). Shared selection rule for the fresh explanation and the judged reason. */
+function strongestDivergentPair(st: Pick<FRGapStatement, "verdict" | "evidence">): FRGapPair | null {
   if (st.verdict !== "contradicted") return null;
   const contra = st.evidence.filter((e) => e.verdict === "contradicted");
   if (contra.length === 0) return null;
-  const strongest = [...contra].sort(
+  return [...contra].sort(
     (a, b) => b.evidenceRank - a.evidenceRank || (b.eventDate ?? "").localeCompare(a.eventDate ?? ""),
   )[0];
+}
+
+/** TIER 1 of the contradiction "why": the freshly generated, grounded "what differs" explanation of
+ *  the strongest divergent pair (already grounded-gated in the hook). Null when absent. */
+export function conflictExplanationFor(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
+  const p = strongestDivergentPair(st);
+  const expl = (p?.conflictExplanation ?? "").trim();
+  return expl || null;
+}
+
+/** TIER 2: the judged reason to show for a contradicted statement, or null when there is none or it
+ *  fails the grounding check. Same STRONGEST-divergent-pair rule; grounded against the pair host set. */
+export function judgedContradictionReason(st: Pick<FRGapStatement, "verdict" | "evidence">): string | null {
+  const strongest = strongestDivergentPair(st);
+  if (!strongest) return null;
   const reason = (strongest.judgeReason ?? "").trim();
   const evidenceHosts = new Set(
     st.evidence.map((e) => (e.recordHost ?? "").trim().toLowerCase()).filter((h) => h.length > 0),

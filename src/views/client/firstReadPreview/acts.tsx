@@ -19,7 +19,7 @@ import {
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
-import { deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
+import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -904,10 +904,11 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         {/* One row per STATEMENT (2026-08-21). Confirmed/contradicted statements list their pair
             evidence beneath; not-echoed statements carry the signed record-silent line once. */}
         {read.gapStatements.map((statement) => {
-          // The contradiction "why": the grounded JUDGED reason when it passes the render-time check,
-          // else the derived line as fallback (null for confirmed/not-echoed). Rendered under the
-          // declared text (leftExtra) — DOM order: declared → why label → why line → chip → pairs.
-          const why = judgedContradictionReason(statement) ?? deriveContradictionWhy(statement);
+          // The contradiction "why" — THREE TIERS: (1) the freshly generated grounded "what differs"
+          // explanation; else (2) the stored grounded judged reason; else (3) the derived line. Null
+          // for confirmed/not-echoed. Rendered under the declared text (leftExtra) — DOM order:
+          // declared → why label → why line → chip → pairs.
+          const why = conflictExplanationFor(statement) ?? judgedContradictionReason(statement) ?? deriveContradictionWhy(statement);
           return (
             <LedgerRow
               key={statement.statementId}

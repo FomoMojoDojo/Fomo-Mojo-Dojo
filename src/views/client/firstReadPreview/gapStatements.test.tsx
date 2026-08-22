@@ -95,7 +95,22 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     };
   };
 
-  it("judged reason shown (grounded) + placement: declared → why label → why line → chip → pairs", () => {
+  it("TIER 1: the fresh grounded conflict explanation is shown over judge_reason and the derived line", () => {
+    const { container } = render(<ActGap read={contraRead({
+      conflictExplanation: "You say you provide expert youth care; indeed.com reports a former employee left over safety concerns.",
+      judgeReason: "public statement contradicts declared mission of care",
+    })} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("You say you provide expert youth care; indeed.com reports a former employee left over safety concerns.");
+    expect(text).not.toContain("public statement contradicts declared mission of care"); // tier 2 not used
+    expect(text).not.toContain("tells a different story"); // tier 3 not used
+    // placement unchanged: why precedes the chip and the pairs
+    const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("indeed.com reports a former employee"))!;
+    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Contradicted" && e.children.length === 0)!;
+    expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("TIER 2: judged reason shown when no fresh explanation; placement declared → why label → why line → chip → pairs", () => {
     const { container } = render(<ActGap read={contraRead({ judgeReason: "employee review contradicts the declared supportive model" })} />);
     const text = container.textContent ?? "";
     const iDeclared = text.indexOf("We are the best clinic.");
