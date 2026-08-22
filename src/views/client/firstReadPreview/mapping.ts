@@ -1,7 +1,52 @@
 // First Read (8-beat) — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
-import type { FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
+import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
+
+// ── Cold-open ladder (2026-08-22) — deterministic, FIRST MATCH WINS ─────────────────────────────
+//   rung 1: an active status conflict → the disputed-location line + STATUS DISPUTED chip;
+//   rung 2: own-words statements exist → the echo-gap line (counts are beat 4's STATEMENT counts,
+//           passed in, never recomputed here);
+//   rung 3: else the strongest-signal fallback (already built by the hook), unchanged.
+export type ColdOpenLadderInput = {
+  statusConflict: { location: string; closedCount: number; openCount: number } | null;
+  /** Beat 4's statement counts (from groupGapStatements) — null when there are no gap statements. */
+  gap: { statements: number; confirmed: number; contradicted: number } | null;
+  /** Formatted date of the latest public-vs-public deltas run (rung-2 source tag), or null. */
+  deltasRunDate: string | null;
+  /** The already-built strongest-signal cold open (rung 3). */
+  fallback: FRColdOpen | null;
+};
+export function coldOpenLadder(input: ColdOpenLadderInput): FRColdOpen | null {
+  // rung 1 — status conflict
+  if (input.statusConflict && input.statusConflict.location.trim()) {
+    const c = input.statusConflict;
+    return {
+      text: `Some sources say ${c.location} is closed. Others say it's open. Which is true today?`,
+      sourceTag: { label: `${c.closedCount} reported closed · ${c.openCount} still listed open` },
+      eventDate: null,
+      statusDisputed: true,
+      quoted: false,
+    };
+  }
+  // rung 2 — echo gap (own-words statements exist). n/m/k are beat 4's numbers, verbatim.
+  if (input.gap && input.gap.statements > 0) {
+    const n = input.gap.statements;
+    const m = input.gap.confirmed;
+    const k = input.gap.contradicted;
+    const echoes = m === 0 ? "none of them" : String(m);
+    const contradictClause = k > 0 ? ` and contradicts ${k}` : "";
+    return {
+      text: `You say ${n} things about yourself. The public record echoes ${echoes}${contradictClause}.`,
+      sourceTag: { label: `Public read · ${input.deltasRunDate ?? ""}`.replace(/·\s*$/, "").trim() },
+      eventDate: null,
+      statusDisputed: false,
+      quoted: false,
+    };
+  }
+  // rung 3 — strongest-signal fallback, unchanged
+  return input.fallback;
+}
 
 /**
  * R4 (signed): strong = recurrence-confirmed across independent sources;

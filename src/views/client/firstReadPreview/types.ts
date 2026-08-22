@@ -21,12 +21,16 @@ export type FRSignal = {
 };
 
 export type FRColdOpen = {
-  /** The featured outside statement (public claim) or a verbatim excerpt. */
+  /** The featured outside statement (public claim) or a verbatim excerpt, OR a signed cold-open
+   *  ladder line (status conflict / echo gap). */
   text: string;
   sourceTag: SourceTagResult;
   eventDate: string | null;
   /** S5: the featured item references a location with a live status conflict. */
   statusDisputed?: boolean;
+  /** Cold-open ladder (2026-08-22): the strongest-signal rung is a QUOTE; the conflict + echo-gap
+   *  rungs are signed lines rendered without quotation marks. Defaults to quoted (true) when absent. */
+  quoted?: boolean;
 };
 
 export type FRDeclared = {

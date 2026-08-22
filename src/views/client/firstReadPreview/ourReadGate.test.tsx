@@ -69,4 +69,21 @@ describe("beat 9 Our read — provenance gate", () => {
     expect(text).toContain(PROM); // promise still gated
     expect(text).not.toContain(POS); // positioning is NOT gated
   });
+
+  it("DISPLAY CASING: lower-case-first category + value render sentence-cased (stored payload unchanged)", () => {
+    // GATE (2026-08-22): the generator stores "artisan coffee roaster…" / "we roast…"; beat 9
+    // sentence-cases the FIRST character at render time only.
+    const lower: FirstReadPreviewData = {
+      ...EMPTY_FIRST_READ,
+      company: { name: "Co", website: null },
+      positioning: { category: "artisan coffee roaster and local coffee shop partner", value: "small-batch roasted coffee with unique flavor profiles.", differentiators: [], sourceTag: { label: "Public read · June 11, 2026" } },
+      strategy: null,
+      promise: null,
+    };
+    const { container } = render(<ActOurRead read={lower} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Artisan coffee roaster and local coffee shop partner");
+    expect(text).toContain("Small-batch roasted coffee with unique flavor profiles.");
+    expect(text).not.toContain("artisan coffee roaster"); // the lower-case-first form must not survive to the DOM
+  });
 });

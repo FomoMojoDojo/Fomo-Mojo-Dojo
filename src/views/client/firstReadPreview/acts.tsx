@@ -170,7 +170,8 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         {read.coldOpen ? (
           <blockquote className="mt-16 max-w-xl">
             <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-              &ldquo;{read.coldOpen.text}&rdquo;
+              {/* Ladder: signed lines (conflict / echo gap) render unquoted; the strongest-signal rung is a quote. */}
+              {read.coldOpen.quoted === false ? read.coldOpen.text : <>&ldquo;{read.coldOpen.text}&rdquo;</>}
             </p>
             <footer className="mt-6 flex flex-col items-center gap-2">
               {/* S5 — the featured cold-open item carries the disputed marker too. */}
@@ -551,6 +552,14 @@ function GatedLine({ children }: { children: ReactNode }) {
   return <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{children}</p>;
 }
 
+// DISPLAY casing (2026-08-22): the public-read generator stores market_category / value_for_customer
+// with a lower-case first letter (e.g. "artisan coffee roaster…"). Sentence-case the first character
+// at RENDER time only — the stored payload is never mutated. Rest of the string untouched.
+function sentenceCase(s: string | null | undefined): string {
+  const t = (s ?? "").trimStart();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+}
+
 export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
   // GATE (2026-08-21): positioning/strategy render substance ONLY from a confirmed public-only row
   // (the data hook gates them to null today, gate 6a). Otherwise each renders its signed line. The
@@ -565,9 +574,9 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
         <WeSeeSection label={LABEL_POSITIONING} show>
           {p ? (
             <>
-              {p.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
+              {p.category ? <p className="text-2xl font-semibold leading-snug">{sentenceCase(p.category)}</p> : null}
               {p.value ? (
-                <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
+                <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{sentenceCase(p.value)}</p>
               ) : null}
               {p.differentiators.length > 0 ? (
                 <ul className="mt-4 flex flex-col gap-2">

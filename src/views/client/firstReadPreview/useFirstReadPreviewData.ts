@@ -25,7 +25,7 @@ import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
-import { bareHost, facetForTopic, groupGapStatements, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, coldOpenLadder, facetForTopic, groupGapStatements, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
@@ -489,6 +489,26 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           unechoed: gapStatements.filter((s) => s.verdict === "unechoed").length,
           confirmed: gapStatements.filter((s) => s.verdict === "confirmed").length,
         };
+
+        // ── Cold-open ladder (2026-08-22): conflict → echo gap → strongest signal (first match wins).
+        // Rungs 1/2 override the strongest-signal fallback built above. The echo-gap counts are beat
+        // 4's STATEMENT numbers (gapStatements / gapCounts) — the SAME source, never recomputed here.
+        const { data: latestDeltaRun } = await supabase
+          .from("claim_deltas")
+          .select("computed_at")
+          .eq("company_id", companyId)
+          .eq("pairing_kind", "public_vs_public")
+          .order("computed_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const deltasRunDate = formatFullDate((latestDeltaRun as { computed_at?: string } | null)?.computed_at ?? null);
+        const sc0 = statusConflicts[0] ?? null;
+        coldOpen = coldOpenLadder({
+          statusConflict: sc0 ? { location: sc0.location, closedCount: sc0.closed.length, openCount: sc0.open.length } : null,
+          gap: gapStatements.length > 0 ? { statements: gapStatements.length, confirmed: gapCounts.confirmed, contradicted: gapCounts.contradicted } : null,
+          deltasRunDate,
+          fallback: coldOpen,
+        });
 
         // ── GATE B-1: the gap's PERSISTED integrity state ───────────────────
         // Written by the public-kind delta finalize (integrity_runs, component
