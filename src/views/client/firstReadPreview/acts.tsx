@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 import {
   Absent,
   ActHeader,
+  BeatWhy,
   Eyebrow,
   LedgerRow,
   RecencyTag,
@@ -18,7 +19,7 @@ import {
 } from "./primitives";
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
-import { foldByHostDate, formatMonthYear } from "./mapping";
+import { deriveContradictionWhy, foldByHostDate, formatMonthYear } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -70,6 +71,21 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
   );
 }
 
+// ── Signed per-beat "why this beat" rationale lines (2026-08-22, verbatim). Beat 2 keeps its
+//    existing "Why outside first" note; beat 9 adds nothing (its subtitle already carries the intent). ──
+const RATIONALE_COLD_OPEN = "Before we open anything up, here's the single thing the outside record makes impossible to ignore."; // signed
+const RATIONALE_WHAT_YOU_SAY = "Your own public words, exactly as they appear. This is the claim the rest of the read tests."; // signed
+const RATIONALE_GAP = "Where your words and the record agree, disagree, or don't yet meet. The disagreements are the most useful part."; // signed
+const RATIONALE_SERVE = "The groups the public record suggests you're for. A hypothesis to confirm or correct, not a finding."; // signed
+const RATIONALE_FINDINGS = "What stands out in the record on its own, before we weigh it against your direction."; // signed
+const RATIONALE_SCORE = "One number for the likelihood your strategy succeeds, read only from public signals at this stage. It moves on evidence, not opinion."; // signed
+const RATIONALE_WHERE = "The pieces behind that number, so it's inspectable rather than taken on trust."; // signed
+const RATIONALE_BASE = "The four commitments everything else stands on. Aligning them comes first."; // signed
+const RATIONALE_QUESTIONS = "The threads the record leaves open — worth taking a position on together."; // signed
+const RATIONALE_NEXT = "Where we'd go from here, and how the method carries forward."; // signed
+// Coherence note (2026-08-22, signed): a company with a rung-1 status conflict but ZERO contradicted
+// beat-4 statements — the dispute is source-vs-source, not your-words-vs-record. Only shown then.
+const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see the top of this read) is a disagreement between outside sources — not between your words and the record. Nothing you've said publicly is contradicted here."; // signed
 const NO_SIGNALS_NOTE = "No outside signals collected yet."; // signed
 // NO_MARKETS_NOTE removed with the Declared-markets section (public-only ruling, 2026-08-20).
 const NO_SCORE_NOTE = "No score snapshot yet."; // signed (Phase A ruling)
@@ -167,6 +183,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
           Here&rsquo;s what we can <span className="font-semibold">already see.</span>
         </h1>
+        <div className="mt-8"><BeatWhy>{RATIONALE_COLD_OPEN}</BeatWhy></div>
         {read.coldOpen ? (
           <blockquote className="mt-16 max-w-xl">
             <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
@@ -332,6 +349,7 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
       <ActHeader
         headline="What stands out."
         standfirst={FINDINGS_STANDFIRST}
+        rationale={RATIONALE_FINDINGS}
         right={
           total > 0 ? (
             <div className="max-w-xs border-l pl-6 text-right" style={{ borderColor: "hsl(var(--fr-hair))" }}>
@@ -404,7 +422,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
   const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : NO_CHANNELS_NOTE;
   return (
     <>
-      <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} />
+      <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} rationale={RATIONALE_WHAT_YOU_SAY} />
       <main className="fr-stagger">
         {!hasOwn ? <Absent>{emptyNote}</Absent> : null}
         {/* Verbatim self-assertions lead — quoted, page + read date. */}
@@ -450,7 +468,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
 export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
-      <ActHeader headline={SERVE_HEADLINE} standfirst={SERVE_SUB} />
+      <ActHeader headline={SERVE_HEADLINE} standfirst={SERVE_SUB} rationale={RATIONALE_SERVE} />
       <main className="fr-stagger">
         {read.observedMarkets.length === 0 ? <Absent>{NO_SERVE_NOTE}</Absent> : null}
         <div className="flex flex-col gap-10">
@@ -499,7 +517,7 @@ export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
   const emptyNote = read.scoreLooked ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
-      <ActHeader headline={WHERE_HEADLINE} />
+      <ActHeader headline={WHERE_HEADLINE} rationale={RATIONALE_WHERE} />
       <main className="fr-stagger">
         {b ? (
           <>
@@ -734,6 +752,7 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
       <ActHeader
         headline="One number, read from the record."
         standfirst="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
+        rationale={RATIONALE_SCORE}
         subline={ANCHOR_LINE}
         // The Mojo Score number lives here, beside the title (moved from the gap header,
         // ruling 2026-08-20) — so it appears exactly once, in its own beat.
@@ -812,6 +831,9 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
       <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
     );
   }
+  // Derived contradiction "why" (2026-08-22): row-sourced, no model. Null (renders nothing) unless
+  // the statement is contradicted with constructible fields — never a fabricated line.
+  const contradictionWhy = deriveContradictionWhy(statement);
   return (
     <div className="flex flex-col gap-8">
       {statement.evidence.map((pair) => {
@@ -832,6 +854,11 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
           </div>
         );
       })}
+      {contradictionWhy ? (
+        <p className="text-sm font-light italic leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+          {contradictionWhy}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -845,7 +872,15 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         headline={gapHeadline(read.gapCounts)}
         // Signed (string sheet, 2026-08-21). Standfirst NAMES the counts.
         standfirst={gapStandfirst(read.gapCounts)}
+        rationale={RATIONALE_GAP}
       />
+      {/* Coherence note (2026-08-22): a rung-1 status conflict with ZERO contradicted statements —
+          the dispute is source-vs-source, not your-words-vs-record. Shown ONLY in that case. */}
+      {read.statusConflicts.length > 0 && read.gapCounts.contradicted === 0 ? (
+        <p className="mb-12 max-w-2xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+          {STATUS_VS_GAP_COHERENCE_NOTE}
+        </p>
+      ) : null}
       <main className="fr-stagger">
         {read.gapStatements.length === 0 ? (
           <Absent>
@@ -889,6 +924,7 @@ export function BaseGate() {
         <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
           Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.
         </p>
+        <div className="mt-8"><BeatWhy>{RATIONALE_BASE}</BeatWhy></div>
         <BaseAlignment
           pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
           caption={PAIRS_UNCOMPUTED_CAPTION}
@@ -930,6 +966,7 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
       <ActHeader
         headline="Questions this read raises."
         standfirst="Open questions from the public record — the threads worth taking a position on."
+        rationale={RATIONALE_QUESTIONS}
       />
       <main className="fr-stagger">
         {/* S4: status conflicts pinned ABOVE all questions. */}
@@ -963,6 +1000,7 @@ export function ActNext() {
     <>
       <ActHeader
         headline="What we'd do together."
+        rationale={RATIONALE_NEXT}
         // PUBLIC-ONLY reword (signed, string sheet): told-us clause removed.
         standfirst="This read used only what anyone can see. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
       />

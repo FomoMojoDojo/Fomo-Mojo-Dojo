@@ -2,6 +2,31 @@
 // Kept pure and separate so the rulings are testable without I/O.
 
 import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
+import { formatFullDate } from "./deriveSourceTag";
+
+// ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
+// A plain-language one-liner built ONLY from fields already on the pair/statement rows (both sides'
+// texts are shown above; here we cite the declared date, the contradicting-source count, the deduped
+// hosts, and the most-recent contra date). NO model, NO stored field. Date slots are OPTIONAL —
+// included only when present, NEVER guessed. Returns null when unconstructible (not contradicted /
+// zero contradicting pairs) so the beat renders nothing rather than a fabricated line.
+export function deriveContradictionWhy(st: Pick<FRGapStatement, "verdict" | "evidence" | "declaredDate">): string | null {
+  if (st.verdict !== "contradicted") return null;
+  const contra = st.evidence.filter((e) => e.verdict === "contradicted");
+  const n = contra.length;
+  if (n === 0) return null;
+  const hosts = [...new Set(contra.map((e) => (e.recordHost ?? "").trim()).filter((h) => h.length > 0))];
+  const contraDates = contra.map((e) => e.eventDate).filter((d): d is string => !!d);
+  const latest = contraDates.length ? contraDates.reduce((a, b) => (a > b ? a : b)) : null;
+  const declaredDateStr = formatFullDate(st.declaredDate ?? null);
+  const latestStr = formatFullDate(latest);
+  const declClause = declaredDateStr ? ` (stated ${declaredDateStr})` : "";
+  const hostClause = hosts.length ? ` (${hosts.join(", ")})` : "";
+  const noun = n === 1 ? "source" : "sources";
+  const verb = n === 1 ? "tells" : "tell";
+  const dateClause = latestStr ? `, most recently ${latestStr}` : "";
+  return `You say this${declClause}; ${n} public ${noun}${hostClause} ${verb} a different story${dateClause}.`;
+}
 
 // ── Cold-open ladder (2026-08-22) — deterministic, FIRST MATCH WINS ─────────────────────────────
 //   rung 1: an active status conflict → the disputed-location line + STATUS DISPUTED chip;
@@ -86,7 +111,7 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
   for (const p of pairs) {
     let st = byId.get(p.statementId);
     if (!st) {
-      st = { statementId: p.statementId, declared: p.declared ?? "", verdict: "unechoed", evidence: [] };
+      st = { statementId: p.statementId, declared: p.declared ?? "", declaredDate: p.declaredDate ?? null, verdict: "unechoed", evidence: [] };
       byId.set(p.statementId, st);
       order.push(p.statementId);
     }

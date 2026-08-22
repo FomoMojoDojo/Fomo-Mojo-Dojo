@@ -79,6 +79,10 @@ export type FRGapPair = {
   record: string | null;
   sourceTag: SourceTagResult;
   eventDate: string | null;
+  /** Bare host of the public-record signal (e.g. "indeed.com") — for the derived contradiction "why". */
+  recordHost?: string | null;
+  /** The declared (own-words) side's newest-signal date — shared across a statement's pairs. */
+  declaredDate?: string | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */
@@ -94,6 +98,8 @@ export type FRGapStatement = {
   statementId: string;
   /** the declared (own-words) statement text. */
   declared: string;
+  /** the declared side's newest-signal date (for the derived contradiction "why"); null if undated. */
+  declaredDate?: string | null;
   verdict: "confirmed" | "contradicted" | "unechoed";
   /** the public evidence pairs beneath — most-recent per source; empty for `unechoed`. */
   evidence: FRGapPair[];

@@ -448,6 +448,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const publicNewest = await newestSignalByClaim(
           deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x),
         );
+        // Declared-side newest signal → the declared date for the derived contradiction "why".
+        const declaredNewest = await newestSignalByClaim(declaredIdsInPairs);
         const confidenceRank = (c: string | null | undefined) =>
           ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[(c ?? "").toLowerCase()] ?? 1;
         const gapPairs: FRGapPair[] = [];
@@ -476,6 +478,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             record: publicClaim?.statement ?? null,
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
+            recordHost: sig?.source_url ? bareHost(sig.source_url) : null,
+            declaredDate: declaredNewest.get(d.declared_claim_id)?.event_date ?? null,
             evidenceRank,
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
           });

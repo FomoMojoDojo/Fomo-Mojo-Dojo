@@ -110,17 +110,33 @@ export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
   );
 }
 
+/** Signed "why this beat" rationale note — same muted treatment as beat 2's "Why outside first".
+ *  Rendered in the header's right column (stacks under the headline on mobile). */
+export function BeatWhy({ children }: { children: ReactNode }) {
+  return (
+    <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+      <Eyebrow>Why this beat</Eyebrow>
+      <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+        {children}
+      </p>
+    </div>
+  );
+}
+
 export function ActHeader({
   headline,
   standfirst,
   subline,
   right,
+  rationale,
 }: {
   headline: string;
   standfirst?: string;
   /** Optional second signed paragraph, rendered directly under the standfirst. */
   subline?: string;
   right?: ReactNode;
+  /** Signed "why this beat" line — rendered as a BeatWhy in the right column when no `right` is given. */
+  rationale?: string;
 }) {
   const words = headline.split(" ");
   const lead = words.slice(0, Math.max(words.length - 2, 1)).join(" ");
@@ -146,7 +162,12 @@ export function ActHeader({
             </p>
           ) : null}
         </div>
-        {right ? <div>{right}</div> : null}
+        {right || rationale ? (
+          <div className="flex flex-col gap-8">
+            {right ?? null}
+            {rationale ? <BeatWhy>{rationale}</BeatWhy> : null}
+          </div>
+        ) : null}
       </div>
     </header>
   );
