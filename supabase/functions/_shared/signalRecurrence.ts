@@ -27,6 +27,10 @@ import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { signalProvenance } from "../../../src/lib/modelRouter/resolveModel.ts";
 import type { RoutedJudge } from "./modelRouter.ts";
+// Gate 5a: the ONE tokenizer authority (single source of truth). Re-exported so
+// existing consumers (normativeConsistency.ts) keep importing from here unchanged.
+import { meaningfulTokens, sharedTokenCount, sharedTokens } from "./tokens.ts";
+export { meaningfulTokens, sharedTokenCount, sharedTokens };
 
 export const DEFAULT_JUDGE_MODEL = "llama3:70b";
 export const JUDGE_TIMEOUT_MS = 180_000;
@@ -43,26 +47,15 @@ export const JUDGE_TIMEOUT_MS = 180_000;
 // ("market" covers half the band) and would admit nearly every pair.
 export const RECURRENCE_MIN_SHARED_TOKENS = 1;
 
-const STOP_WORDS = new Set([
-  "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "is",
-  "are", "was", "be", "by", "as", "at", "that", "this", "it", "its", "their",
-  "they", "we", "our", "you", "your", "not", "no", "but", "from", "have", "has",
-]);
-
-function meaningfulTokens(text: string): Set<string> {
-  return new Set(
-    String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
-      .filter((t) => t.length > 2 && !STOP_WORDS.has(t)),
-  );
-}
-
-export function sharedTokenCount(a: string, b: string): number {
-  const ta = meaningfulTokens(a);
-  const tb = meaningfulTokens(b);
-  let n = 0;
-  for (const t of ta) if (tb.has(t)) n++;
-  return n;
-}
+// Gate 5a (clusterer repair): a SEPARATE, stricter floor for FINDING↔cluster
+// MEMBERSHIP. A signal is a member of a finding's recurrence cluster only if it
+// shares ≥ this many meaningful tokens with the finding BODY. This is distinct
+// from RECURRENCE_MIN_SHARED_TOKENS (the signal↔signal candidate prefilter, which
+// MUST stay 1 — raising it drops the FMD solo cluster's only cross-domain pair,
+// and normativeConsistency.ts depends on it). Membership needs a firmer lexical
+// anchor than the prefilter because the union-find components over-merge; the
+// floor keeps a finding's cluster to signals actually about the finding's fact.
+export const FINDING_MEMBERSHIP_MIN_SHARED_TOKENS = 2;
 
 // Registrable domain (independence unit, design Q3). Approximation: last two
 // labels, or three when the TLD is a common two-part suffix. Mirrors the
@@ -318,6 +311,52 @@ async function loadVerdicts(
   return (data ?? []) as Array<{ id: string; pair_identity: string; statement_a_identity: string; statement_b_identity: string; verdict: string }>;
 }
 
+// ── Gate 5a derivation (single authority, shared by finalize + recompute) ───────
+
+export type GatedFindingRow = {
+  cluster_signal_ids: string[];
+  distinct_host_count: number;
+  host_list: string[];
+  verdict_count: number;
+};
+
+/**
+ * Derive ONE finding's finding_recurrence row under the Gate-5a contract, given
+ * the finding BODY and the resolvable members of the judge-accepted union-find
+ * recurrence component the finding is attached to:
+ *   • MEMBERSHIP gate — keep a member only if it shares
+ *     ≥ FINDING_MEMBERSHIP_MIN_SHARED_TOKENS meaningful tokens with the body.
+ *   • HOST-inheritance gate — hosts come only from kept (floor-passing) members.
+ *     Kept members are, by construction, judge-ACCEPTED same-fact: union() runs on
+ *     accepted signal↔signal verdicts only, so unjudged/rejected signals never
+ *     enter a component and contribute no host — fail-closed.
+ *   • verdict_count — accepted signal-pairs among the KEPT members (post-floor).
+ * Returns null when fewer than 2 members survive the floor (no recurrence).
+ * `members` must already be resolvable eligible signals — dangling ids are
+ * excluded upstream and never counted here.
+ */
+export function deriveGatedFindingRow(
+  findingBody: string,
+  members: EligibleSignal[],
+  acceptedPairs: Array<{ statement_a_identity: string; statement_b_identity: string }>,
+): GatedFindingRow | null {
+  const kept = members
+    .filter((m) => sharedTokenCount(findingBody, m.claim_text) >= FINDING_MEMBERSHIP_MIN_SHARED_TOKENS)
+    .slice().sort((a, b) => a.id.localeCompare(b.id));
+  if (kept.length < 2) return null;
+  const hosts = [...new Set(kept.map((m) => m.domain))].sort();
+  const keptIdentities = new Set(kept.map((m) => m.identity));
+  const verdictCount = acceptedPairs.filter((v) =>
+    keptIdentities.has(v.statement_a_identity) && keptIdentities.has(v.statement_b_identity)
+  ).length;
+  return {
+    cluster_signal_ids: kept.map((m) => m.id),
+    distinct_host_count: hosts.length,
+    host_list: hosts,
+    verdict_count: verdictCount,
+  };
+}
+
 // ── Compute ───────────────────────────────────────────────────────────────────
 
 export async function computeRecurrenceForCompany(args: RecurrenceComputeArgs & { plan: true }): Promise<RecurrencePlanResult>;
@@ -508,31 +547,22 @@ export async function computeRecurrenceForCompany(
   const findingStatement = (f: FindingRow) => String(f.beats?.observe ?? f.body ?? "").trim();
 
   const acceptedByPair = liveVerdicts.filter((v) => v.verdict === "accepted");
-  type DesiredRow = { cluster_signal_ids: string[]; distinct_host_count: number; host_list: string[]; verdict_count: number };
+  type DesiredRow = GatedFindingRow;
   const desired = new Map<string, DesiredRow>(); // finding_id → row
 
-  const desiredRowForRoot = (root: string): DesiredRow | null => {
-    const members = (clusters.get(root) ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-    if (members.length < 2) return null;
-    const hosts = [...new Set(members.map((m) => m.domain))].sort();
-    const memberIdentities = new Set(members.map((m) => m.identity));
-    const verdictCount = acceptedByPair.filter((v) =>
-      memberIdentities.has(v.statement_a_identity) && memberIdentities.has(v.statement_b_identity)
-    ).length;
-    return {
-      cluster_signal_ids: members.map((m) => m.id),
-      distinct_host_count: hosts.length,
-      host_list: hosts,
-      verdict_count: verdictCount,
-    };
-  };
+  // Gate 5a: the row is derived per FINDING (membership floor against the finding
+  // body, host inheritance from floor-passing accepted-component members), not
+  // per cluster root — see deriveGatedFindingRow. Dangling ids can't occur here:
+  // `clusters` is built only from resolvable eligible signals.
+  const desiredRowForFinding = (findingBody: string, root: string): DesiredRow | null =>
+    deriveGatedFindingRow(findingBody, clusters.get(root) ?? [], acceptedByPair);
 
   // Pass 1 — PRIMARY join: origin_signal_id.
   for (const f of openFindings) {
     if (!f.origin_signal_id) continue;
     const origin = byId.get(f.origin_signal_id);
     if (!origin || !parent.has(origin.identity)) continue;
-    const row = desiredRowForRoot(find(origin.identity));
+    const row = desiredRowForFinding(f.body, find(origin.identity));
     if (!row) continue;
     desired.set(f.id, row);
     totals.finding_joins_via_origin++;
@@ -581,7 +611,7 @@ export async function computeRecurrenceForCompany(
     let joined = false;
     for (const root of clusterRoots) {
       if (joined) break;
-      const row = desiredRowForRoot(root);
+      const row = desiredRowForFinding(f.body, root);
       if (!row) continue;
       const members = (clusters.get(root) ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
       for (const m of members) {
@@ -688,4 +718,177 @@ export async function computeRecurrenceForCompany(
   }
 
   return { ok: true, scoped: false, totals, verdicts: reported };
+}
+
+// ── Gate 5a deterministic recompute (CB2-only maintenance path) ─────────────────
+//
+// Re-derives finding_recurrence rows for ONE company from ALREADY-PERSISTED state
+// — the union-find recurrence components (as stored in each row's
+// cluster_signal_ids), the eligible signals, and the accepted signal↔signal
+// verdicts — with NO model calls and NO re-clustering. It applies the Gate-5a
+// membership floor + host-inheritance gate (deriveGatedFindingRow) to each
+// existing row and reconciles IN PLACE:
+//   • frozen company → refused before any read/write (defence in depth over the
+//     DB freeze trigger).
+//   • compute FULLY, then write: a per-row write failure leaves that row's prior
+//     value intact and is reported as status "failed"; other rows still reconcile.
+//   • idempotent: an unchanged row is not rewritten (computed_at preserved), so a
+//     second run is byte-identical.
+//   • NO deletes: a finding whose membership falls below the floor keeps its prior
+//     row and is reported "left_intact_below_floor" (stale-row reconciliation is a
+//     separate, out-of-scope concern — logged, never executed here).
+//   • dangling cluster_signal_ids (listed but no longer a resolvable eligible
+//     signal) are excluded from counts and returned for a reconciliation
+//     follow-up — never deleted.
+
+export type GatedRecomputeFindingReport = {
+  finding_id: string;
+  listed: number;
+  resolvable: number;
+  dangling_ids: string[];
+  before: { members: number; distinct_host_count: number; host_list: string[]; verdict_count: number } | null;
+  after: GatedFindingRow;
+  /** true when < 2 members survived the floor — the row is EMPTIED (0/0/[]), not
+   *  deleted (no-delete law). 0 breadth == what the finalize's delete would yield
+   *  for ranking, so a no-recurrence finding never ranks on false host breadth. */
+  emptied: boolean;
+  status: "written" | "unchanged" | "emptied" | "failed";
+  error?: string;
+};
+
+export type GatedRecomputeResult =
+  | { ok: false; skipped: "frozen_company" }
+  | { ok: false; error: string }
+  | {
+    ok: true;
+    write: boolean;
+    company_id: string;
+    findings: GatedRecomputeFindingReport[];
+    dangling_total: string[];
+    rows_written: number;
+    rows_unchanged: number;
+    rows_emptied: number;
+    rows_failed: number;
+  };
+
+export async function recomputeFindingRecurrenceGated(args: {
+  supabase: RecurrenceComputeArgs["supabase"];
+  companyId: string;
+  nowIso: string;
+  write: boolean;
+}): Promise<GatedRecomputeResult> {
+  // 1. Frozen refusal — code guard AND live companies.frozen, before any write.
+  if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
+  {
+    const { data: c, error } = await args.supabase
+      .from("companies").select("frozen").eq("id", args.companyId).maybeSingle();
+    if (error) return { ok: false, error: `companies freeze check failed: ${error.message}` };
+    if ((c as { frozen?: boolean } | null)?.frozen === true) return { ok: false, skipped: "frozen_company" };
+  }
+
+  // 2. Eligible signals (same eligibility as the finalize) → id lookup.
+  const { signals } = await loadEligibleSignals(args.supabase, args.companyId);
+  const byId = new Map(signals.map((s) => [s.id, s]));
+  const currentIdentities = new Set(signals.map((s) => s.identity));
+
+  // 3. Accepted, LIVE signal↔signal pairs (both statement identities present) —
+  //    the basis for post-floor verdict_count.
+  const verdicts = await loadVerdicts(args.supabase, args.companyId);
+  const acceptedPairs = verdicts.filter((v) =>
+    v.verdict === "accepted" &&
+    currentIdentities.has(v.statement_a_identity) && currentIdentities.has(v.statement_b_identity)
+  );
+
+  // 4. Existing rows + their finding bodies.
+  const { data: existingRows, error: eErr } = await args.supabase
+    .from("finding_recurrence")
+    .select("finding_id, cluster_signal_ids, distinct_host_count, host_list, verdict_count")
+    .eq("company_id", args.companyId);
+  if (eErr) return { ok: false, error: `finding_recurrence load failed: ${eErr.message}` };
+  type ExRow = { finding_id: string; cluster_signal_ids: string[]; distinct_host_count: number; host_list: string[]; verdict_count: number };
+  const rows = ((existingRows ?? []) as ExRow[]).slice().sort((a, b) => a.finding_id.localeCompare(b.finding_id));
+
+  const findingIds = rows.map((r) => r.finding_id);
+  const bodyById = new Map<string, string>();
+  if (findingIds.length) {
+    const { data: fRows, error: fErr } = await args.supabase
+      .from("findings").select("id, body").in("id", findingIds);
+    if (fErr) return { ok: false, error: `findings load failed: ${fErr.message}` };
+    for (const f of (fRows ?? []) as Array<{ id: string; body: string }>) bodyById.set(f.id, String(f.body ?? ""));
+  }
+
+  const canon = (cluster: string[], hosts: number, hostList: string[], vc: number) =>
+    JSON.stringify([cluster, hosts, hostList, vc]);
+
+  const EMPTY_ROW: GatedFindingRow = { cluster_signal_ids: [], distinct_host_count: 0, host_list: [], verdict_count: 0 };
+
+  // 5. Compute FULLY (in memory) before any write.
+  type Planned = { report: GatedRecomputeFindingReport; toWrite: GatedFindingRow | null };
+  const planned: Planned[] = [];
+  const danglingTotal = new Set<string>();
+
+  for (const r of rows) {
+    const listed = Array.isArray(r.cluster_signal_ids) ? r.cluster_signal_ids : [];
+    const resolved = listed.map((id) => byId.get(id)).filter((s): s is EligibleSignal => !!s);
+    const dangling = listed.filter((id) => !byId.has(id));
+    dangling.forEach((id) => danglingTotal.add(id));
+    const body = bodyById.get(r.finding_id) ?? "";
+    const before = {
+      members: listed.length,
+      distinct_host_count: r.distinct_host_count,
+      host_list: Array.isArray(r.host_list) ? r.host_list : [],
+      verdict_count: r.verdict_count,
+    };
+    // < 2 members survive the floor ⇒ no legitimate recurrence: EMPTY the row
+    // (0 host breadth) rather than leave the stale pre-repair inheritance. Not a
+    // delete (no-delete law), and 0 breadth matches what the finalize's delete
+    // would yield for the client's breadth-ranking.
+    const derived = deriveGatedFindingRow(body, resolved, acceptedPairs);
+    const after = derived ?? EMPTY_ROW;
+    const emptied = derived === null;
+    const unchanged = canon(after.cluster_signal_ids, after.distinct_host_count, after.host_list, after.verdict_count) ===
+      canon(r.cluster_signal_ids, r.distinct_host_count, before.host_list, r.verdict_count);
+    planned.push({
+      report: {
+        finding_id: r.finding_id, listed: listed.length, resolvable: resolved.length,
+        dangling_ids: dangling, before, after, emptied,
+        status: unchanged ? "unchanged" : (emptied ? "emptied" : "written"),
+      },
+      toWrite: unchanged ? null : after,
+    });
+  }
+
+  // 6. THEN write (only changed rows; a per-row failure leaves that prior row intact).
+  let rows_written = 0, rows_unchanged = 0, rows_emptied = 0, rows_failed = 0;
+  for (const p of planned) {
+    if (p.toWrite === null) { rows_unchanged++; continue; }
+    const isEmptied = p.report.emptied;
+    if (!args.write) { if (isEmptied) rows_emptied++; else rows_written++; continue; }
+    try {
+      const { error } = await args.supabase.from("finding_recurrence").upsert({
+        finding_id: p.report.finding_id,
+        company_id: args.companyId,
+        cluster_signal_ids: p.toWrite.cluster_signal_ids,
+        distinct_host_count: p.toWrite.distinct_host_count,
+        host_list: p.toWrite.host_list,
+        verdict_count: p.toWrite.verdict_count,
+        computed_at: args.nowIso,
+      }, { onConflict: "finding_id" });
+      if (error) throw new Error(error.message);
+      if (isEmptied) rows_emptied++; else rows_written++;
+    } catch (e) {
+      p.report.status = "failed";
+      p.report.error = String((e as Error)?.message ?? e);
+      rows_failed++;
+    }
+  }
+
+  return {
+    ok: true,
+    write: args.write,
+    company_id: args.companyId,
+    findings: planned.map((p) => p.report),
+    dangling_total: [...danglingTotal].sort(),
+    rows_written, rows_unchanged, rows_emptied, rows_failed,
+  };
 }
