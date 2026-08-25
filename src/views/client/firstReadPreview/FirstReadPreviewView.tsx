@@ -1,4 +1,4 @@
-// First Read — 8-beat client-facing surface, company-parameterized.
+// First Read — 11-page client-facing surface, company-parameterized.
 // Shell ported from mojomap-redesign src/pages/first-read/FirstReadPage.tsx
 // @ 1f54a56 (client-facing header, ticks under identity line, quiet footer
 // nav, keyboard). Data comes from useFirstReadPreviewData — real queries
@@ -18,7 +18,9 @@ import {
   ActQuestions,
   ActRecord,
   ActWhatYouSay,
-  ActWhereYouStand,
+  // ActWhereYouStand — component kept in ./acts (still exported/tested); "Where you stand"
+  // is currently hidden (not listed in BEATS). To restore: re-add the import, the BEATS
+  // entry, and the switch case below.
   ActWhoYouServe,
   BaseGate,
   ColdOpen,
@@ -26,23 +28,24 @@ import {
 } from "./acts";
 
 /**
- * Council-ruled beat order (2026-08-20): the "what we see" group is dissolved into
- * standalone beats. cold → what the world says → what you say → the gap → who you serve
- * → findings → MOJO SCORE (always mounted, product law) → where you stand → our read
- * (positioning/strategy/promise, opened by the four-commitments frame) → questions →
- * next move. Digits 1–5 jump to the first five content acts.
+ * Page order (reorder sweep 2026-08-24): cold → what the world sees and says → what you say
+ * → the gap → what stands out → the Base (four-commitments frame, moved up) → who you serve →
+ * where this points (positioning/strategy/promise) → MOJO SCORE (always mounted, product law) →
+ * questions → next move. "Where you stand" is hidden (component ActWhereYouStand kept in ./acts,
+ * simply not listed here, so it is restorable by re-adding one entry). Navigation is arrow keys
+ * (←/→) plus Home/End only — there is no number-key jump. The `act` field now only styles the nav
+ * tick (act vs gate) — it no longer drives any keyboard shortcut.
  */
 const BEATS = [
   { key: "cold", label: "Before we start", act: undefined },
-  { key: "record", label: "What the world says", act: 1 },
+  { key: "record", label: "What the world sees and says", act: 1 },
   { key: "yousay", label: "What you say", act: 2 },
   { key: "gap", label: "The gap", act: 3 },
-  { key: "serve", label: "Who you serve", act: 4 },
-  { key: "findings", label: "Findings", act: 5 },
-  { key: "score", label: "Mojo Score", act: undefined },
-  { key: "where", label: "Where you stand", act: undefined },
-  { key: "ourread", label: "Our read", act: undefined },
+  { key: "findings", label: "What stands out", act: 4 },
   { key: "base", label: "The Base", act: undefined },
+  { key: "serve", label: "Who you serve", act: 5 },
+  { key: "ourread", label: "Where this points", act: undefined },
+  { key: "score", label: "Mojo Score", act: undefined },
   { key: "questions", label: "Questions", act: undefined },
   { key: "next", label: "Next move", act: undefined },
 ] as const;
@@ -50,7 +53,7 @@ const BEATS = [
 export default function FirstReadPreviewView() {
   const { companyId } = useParams<{ companyId: string }>();
   const { data: baseData, loading, error } = useFirstReadPreviewData(companyId);
-  // Beat 7 questions come from the ONE open-question authority — it applies
+  // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions } = useFirstReadOpenQuestions(companyId);
   const data = useMemo(() => ({ ...baseData, questions }), [baseData, questions]);
@@ -113,11 +116,6 @@ export default function FirstReadPreviewView() {
           event.preventDefault();
           go(BEATS.length - 1);
           break;
-        default:
-          if (/^[1-5]$/.test(event.key)) {
-            event.preventDefault();
-            go(BEATS.findIndex((beat) => beat.act === Number(event.key)));
-          }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -140,8 +138,7 @@ export default function FirstReadPreviewView() {
         return <ActFindings read={data} />;
       case "score":
         return <ScoreReveal read={data} />;
-      case "where":
-        return <ActWhereYouStand read={data} />;
+      // case "where": return <ActWhereYouStand read={data} />;  // hidden — restore with BEATS entry + import
       case "ourread":
         return <ActOurRead read={data} />;
       case "base":
@@ -247,7 +244,7 @@ export default function FirstReadPreviewView() {
 
         {!isCold ? (
           <p className="mt-8 text-center text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-faint))" }}>
-            Keys: &larr; &rarr; move · 1–5 jump · Home / End ends
+            Keys: &larr; &rarr; move · Home / End ends
           </p>
         ) : null}
       </div>

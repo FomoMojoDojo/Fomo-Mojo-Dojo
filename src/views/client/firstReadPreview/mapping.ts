@@ -1,4 +1,4 @@
-// First Read (8-beat) — pure mapping functions, per operator rulings R2/R4/R5.
+// First Read — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
 import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";

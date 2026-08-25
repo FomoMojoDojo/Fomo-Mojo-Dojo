@@ -1,13 +1,14 @@
 // GATE (2026-08-22): (a) the status-vs-gap coherence note shows ONLY when a company has a rung-1
 // status conflict AND zero contradicted beat-4 statements (CB2 branch); it is hidden when
-// contradicted statements exist (Edgewood branch). (b) Every beat carries its signed "why this beat"
-// rationale line, verbatim.
+// contradicted statements exist (Edgewood branch). (b) Every content page carries its signed "Why this"
+// rationale line, verbatim — EXCEPT the cold open, which is structurally exempt (standing rule).
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import {
   ColdOpen, ActWhatYouSay, ActGap, ActWhoYouServe, ActFindings, ScoreReveal,
   ActWhereYouStand, BaseGate, ActQuestions, ActNext,
 } from "./acts";
+import { BeatWhy } from "./primitives";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRStatusConflict } from "./types";
 
 const conflict: FRStatusConflict = {
@@ -36,7 +37,7 @@ describe("beat-4 status-vs-gap coherence note", () => {
 describe("signed per-beat rationale lines — present and exact", () => {
   const E = EMPTY_FIRST_READ;
   const cases: Array<[string, JSX.Element]> = [
-    ["Before we open anything up, here's the single thing the outside record makes impossible to ignore.", <ColdOpen read={E} onContinue={() => {}} />],
+    // NOTE: the cold open no longer carries a rationale (standing rule) — covered in its own block below.
     ["Your own public words, exactly as they appear. This is the claim the rest of the read tests.", <ActWhatYouSay read={E} />],
     ["Where your words and the record agree, disagree, or don't yet meet. The disagreements are the most useful part.", <ActGap read={E} />],
     ["The groups the public record suggests you're for. A hypothesis to confirm or correct, not a finding.", <ActWhoYouServe read={E} />],
@@ -51,7 +52,20 @@ describe("signed per-beat rationale lines — present and exact", () => {
     expect((render(el).container.textContent ?? "")).toContain(text);
   });
 
-  it("every rationale beat shows the 'Why this beat' label", () => {
-    expect((render(<ActGap read={E} />).container.textContent ?? "")).toContain("Why this beat");
+  it("every rationale beat shows the 'Why this' label", () => {
+    expect((render(<ActGap read={E} />).container.textContent ?? "")).toContain("Why this");
+  });
+});
+
+describe("cold open — NO rationale rail (standing rule 2026-08-24)", () => {
+  const E = EMPTY_FIRST_READ;
+  it("BeatWhy renders nothing for the cold page (structurally exempt — no rule line)", () => {
+    const { container } = render(<BeatWhy pageKey="cold">this must not render</BeatWhy>);
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("*")).toBeNull(); // no wrapper div, no left-border rule line
+  });
+  it("the cold open page renders no 'Why this' rationale", () => {
+    const text = render(<ColdOpen read={E} onContinue={() => {}} />).container.textContent ?? "";
+    expect(text).not.toContain("Why this");
   });
 });

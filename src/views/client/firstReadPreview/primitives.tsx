@@ -1,4 +1,4 @@
-// First Read (8-beat) presentation primitives — ported from mojomap-redesign
+// First Read presentation primitives — ported from mojomap-redesign
 // src/pages/first-read/primitives.tsx @ 1f54a56, with rightBody made optional
 // (real declared statements may carry no detail column) and an Absent
 // primitive for persisted-integrity empty states.
@@ -110,12 +110,17 @@ export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
   );
 }
 
-/** Signed "why this beat" rationale note — same muted treatment as beat 2's "Why outside first".
- *  Rendered in the header's right column (stacks under the headline on mobile). */
-export function BeatWhy({ children }: { children: ReactNode }) {
+/** Signed "Why this" rationale note — same muted treatment as the record page's "Why outside first".
+ *  Rendered in the header's right column (stacks under the headline on mobile).
+ *  STANDING RULE (2026-08-24): the rationale rail must NEVER render on the cold-open page
+ *  ("Before we start", key `cold`) — it introduced an unwanted vertical rule line on the opener.
+ *  Cold is STRUCTURALLY exempt: BeatWhy no-ops for the cold key here (and the cold open passes no
+ *  rationale at all). Both together make the rail impossible to render on the opener. */
+export function BeatWhy({ children, pageKey }: { children: ReactNode; pageKey?: string }) {
+  if (pageKey === "cold") return null;
   return (
     <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-      <Eyebrow>Why this beat</Eyebrow>
+      <Eyebrow>Why this</Eyebrow>
       <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
         {children}
       </p>

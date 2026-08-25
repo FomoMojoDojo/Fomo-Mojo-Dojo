@@ -1,4 +1,4 @@
-// First Read (8-beat) — source-tag derivation, per the source-honesty ruling
+// First Read — source-tag derivation, per the source-honesty ruling
 // (2026-08-20): source tags state the real source and real time, derived from
 // the persisted record. No fixed copy, ever. If no source is derivable the tag
 // is hidden (null) — never a placeholder, never "unknown".

@@ -1,4 +1,4 @@
-// First Read (8-beat) — the beats, rendering REAL data with persisted-
+// First Read — the pages, rendering REAL data with persisted-
 // integrity empty states. Ported from mojomap-redesign src/pages/first-read/
 // acts.tsx @ 1f54a56; every fixture-specific string dropped. Signed generic
 // copy (headlines, standfirsts, phases, closing line, base definition, band
@@ -71,9 +71,8 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
   );
 }
 
-// ── Signed per-beat "why this beat" rationale lines (2026-08-22, verbatim). Beat 2 keeps its
-//    existing "Why outside first" note; beat 9 adds nothing (its subtitle already carries the intent). ──
-const RATIONALE_COLD_OPEN = "Before we open anything up, here's the single thing the outside record makes impossible to ignore."; // signed
+// ── Signed per-page "Why this" rationale lines (2026-08-22, verbatim). The record page keeps its
+//    existing "Why outside first" note; the cold open carries NO rationale (standing rule). ──
 const RATIONALE_WHAT_YOU_SAY = "Your own public words, exactly as they appear. This is the claim the rest of the read tests."; // signed
 const RATIONALE_GAP = "Where your words and the record agree, disagree, or don't yet meet. The disagreements are the most useful part."; // signed
 const RATIONALE_SERVE = "The groups the public record suggests you're for. A hypothesis to confirm or correct, not a finding."; // signed
@@ -106,11 +105,7 @@ const GAP_LOOKED_NONE_NOTE =
 const GAP_COULDNT_CHECK_NOTE =
   "This comparison didn't complete — it will run again on the next refresh."; // signed
 const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed
-// ── "What we see" public-beats group (public-beats gate) — SIGNED ──
-const WHAT_WE_SEE_STANDFIRST =
-  "What we see: our read of your public record — your own channels, the market you're in, and how you position. Every line says where it came from."; // signed
-const LABEL_CHANNELS = "Your channels, as we read them"; // signed
-const LABEL_MARKETS = "Markets"; // signed
+// ── Our-read section labels (positioning / strategy / promise) — SIGNED ──
 const LABEL_POSITIONING = "Positioning"; // signed
 const LABEL_STRATEGY = "Strategy"; // signed
 const LABEL_PROMISE = "Promise"; // signed
@@ -120,26 +115,25 @@ const PROMISE_NOT_ENOUGH = "Not enough information to create promise."; // signe
 // Until then beat 9 shows these signed lines verbatim, no source tag, no body.
 const POSITIONING_NOT_ENOUGH = "Not enough public information to read positioning."; // signed
 const STRATEGY_NOT_ENOUGH = "Not enough public information to read strategy."; // signed
-const LABEL_BASE = "Where you stand (inferred)"; // signed
 const BASE_INFERRED_LABEL = "Inferred from your public record."; // signed
 // ── Standalone-beat copy (council beat-order ruling) — SIGNED ──
-const WORLD_HEADLINE = "What the world says."; // signed
+const WORLD_HEADLINE = "What the world sees and says."; // signed
 const WORLD_SUB = "From reviews, listings, press and the places people talk about you."; // signed
 const YOUSAY_HEADLINE = "What you say."; // signed
 const YOUSAY_SUB = "Read from your own channels — your site, your socials, your listings."; // signed
 const SERVE_HEADLINE = "Who you serve."; // signed
 const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // signed
-const OURREAD_HEADLINE = "Our read."; // signed
+const OURREAD_HEADLINE = "Where this points."; // signed
 const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // signed
 // Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
-const MARKET_POINTER_NOTE = "Who you serve — see above"; // signed
+const MARKET_POINTER_NOTE = "Who you serve — coming up"; // signed
 const WHERE_HEADLINE = "Where you stand."; // signed
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // signed
 // OW-3 (2026-08-20) — beat 3 own-words. SIGNED.
 const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-descriptions to quote yet."; // signed
 const IN_YOUR_WORDS_LABEL = "In your words"; // signed
 const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // signed
-const NO_SERVE_NOTE = "No public markets read yet."; // signed
+const NO_SERVE_NOTE = "No public read of who you serve yet."; // signed
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // signed
 // ── Findings beat (S4) — standfirst SIGNED (2026-08-21). Source counts hidden until per-finding
 // corroboration is real (gate 5a, clusterer repair); claim nothing about ordering. ──
@@ -155,8 +149,6 @@ const GAP_HEADLINE_NEUTRAL = "Your words next to the record."; // nothing yet
 const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // signed
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // signed
 const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // signed
-const STANDINGS_NOTE = "Base standings not yet generated."; // signed (Phase A ruling)
-const DISCUSSION_NOTE = "Discussion items not yet generated."; // signed (Phase A ruling)
 
 const SHOWN_FULL_SIZE = 4;
 
@@ -186,7 +178,8 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
           Here&rsquo;s what we can <span className="font-semibold">already see.</span>
         </h1>
-        <div className="mt-8"><BeatWhy>{RATIONALE_COLD_OPEN}</BeatWhy></div>
+        {/* STANDING RULE (2026-08-24): NO rationale rail on the cold open — it added an unwanted
+            vertical rule line. Cold passes no rationale; BeatWhy also no-ops for key `cold`. */}
         {read.coldOpen ? (
           <blockquote className="mt-16 max-w-xl">
             <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
@@ -230,112 +223,6 @@ function WeSeeSection({ label, show, children }: { label: string; show: boolean;
   );
 }
 
-/**
- * "What we see" — the public-register group (public-beats gate, 2026-08-20). Every
- * sub-section is public provenance and labelled OUR READ; each carries a source tag and
- * unmounts when its object is absent. There is NO "what you say" beat (R2): own-words
- * extraction ships in a separate gate.
- */
-export function ActWhatWeSee({ read }: { read: FirstReadPreviewData }) {
-  const p = read.positioning;
-  const st = read.strategy;
-  const pr = read.promise;
-  const b = read.whereYouStand;
-  return (
-    <>
-      <ActHeader headline="What we see." standfirst={WHAT_WE_SEE_STANDFIRST} />
-      <main className="fr-stagger">
-        {/* Your channels, as we read them (R3: junk hidden in the hook) */}
-        <WeSeeSection label={LABEL_CHANNELS} show={read.declared.length > 0}>
-          {read.declared.map((claim) => (
-            <LedgerRow
-              key={claim.id}
-              leftLabel="Our read"
-              leftBody={claim.statement}
-              meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
-            />
-          ))}
-        </WeSeeSection>
-
-        {/* Markets — ODI form: people getting a job done (never a quote) */}
-        <WeSeeSection label={LABEL_MARKETS} show={read.observedMarkets.length > 0}>
-          <div className="flex flex-col gap-8">
-            {read.observedMarkets.map((m) => (
-              <div key={m.id} className="flex flex-col gap-2">
-                <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
-                {m.job ? (
-                  <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                    {m.job}
-                  </p>
-                ) : null}
-                {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
-              </div>
-            ))}
-          </div>
-        </WeSeeSection>
-
-        {/* Positioning — the market_read canvas */}
-        <WeSeeSection label={LABEL_POSITIONING} show={!!p}>
-          {p?.category ? <p className="text-2xl font-semibold leading-snug">{p.category}</p> : null}
-          {p?.value ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{p.value}</p>
-          ) : null}
-          {p && p.differentiators.length > 0 ? (
-            <ul className="mt-4 flex flex-col gap-2">
-              {p.differentiators.map((d, i) => (
-                <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
-              ))}
-            </ul>
-          ) : null}
-          {p?.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
-        </WeSeeSection>
-
-        {/* Strategy — the market_read cascade */}
-        <WeSeeSection label={LABEL_STRATEGY} show={!!st}>
-          {st?.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
-          {st?.whereToPlay ? (
-            <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
-            </p>
-          ) : null}
-          {st?.howToWin ? (
-            <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              <span className="fr-eyebrow">How to win</span> — {st.howToWin}
-            </p>
-          ) : null}
-          {st?.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
-        </WeSeeSection>
-
-        {/* Promise (ruling 1): own field when present; otherwise the signed line, no source tag. */}
-        <WeSeeSection label={LABEL_PROMISE} show={!!(p || st) || !!pr?.text}>
-          {pr?.text ? (
-            <>
-              <p className="text-2xl font-semibold leading-snug">{pr.text}</p>
-              {pr.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
-            </>
-          ) : (
-            <p className="text-lg font-light leading-snug" style={{ color: "hsl(var(--fr-muted))" }}>{PROMISE_NOT_ENOUGH}</p>
-          )}
-        </WeSeeSection>
-
-        {/* Where you stand — inferred (R-B): persisted numbers only */}
-        <WeSeeSection label={LABEL_BASE} show={!!b}>
-          {b ? (
-            <>
-              <p className="max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-                {b.band} · {b.scoreValue} of 100 — {b.bandMeaning}
-              </p>
-              <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
-                {BASE_INFERRED_LABEL}
-              </p>
-              {b.sourceTag ? <div className="mt-3"><SourceTag>{b.sourceTag.label}</SourceTag></div> : null}
-            </>
-          ) : null}
-        </WeSeeSection>
-      </main>
-    </>
-  );
-}
 
 /**
  * Findings beat (S4) — public_inferred open findings in stored order. First 5 expanded; the rest
@@ -954,29 +841,6 @@ export function BaseGate() {
   );
 }
 
-export function ActMap({ read }: { read: FirstReadPreviewData }) {
-  const band = read.score ? bandForScore(read.score.value) : null;
-  return (
-    <>
-      <ActHeader
-        headline="Where your base stands."
-        right={read.score && band ? <ScoreNow now={read.score.value} band={band.name} compact /> : undefined}
-      />
-      <main className="fr-stagger">
-        <div className="border-b pb-14" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-          <Absent>{STANDINGS_NOTE}</Absent>
-        </div>
-        <div className="pt-14">
-          <Eyebrow>For discussion</Eyebrow>
-          <div className="mt-8">
-            <Absent>{DISCUSSION_NOTE}</Absent>
-          </div>
-        </div>
-      </main>
-    </>
-  );
-}
-
 /** Questions beat — the open questions this read raises (own beat per the beat order). */
 export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
   return (
@@ -1011,7 +875,7 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
 export function ActNext() {
   const phases = [
     { name: "Diagnose", body: "Open the inside: documents, numbers, and the people who hold the decisions." },
-    { name: "Focus", body: "Align your base, define your market." },
+    { name: "Focus", body: "Align your base, define who you serve." },
     { name: "Flow", body: "Implement the best path — monitored and measured as evidence lands." },
   ];
   return (

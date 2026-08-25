@@ -1,4 +1,4 @@
-// First Read (8-beat) adapter — the fixture→real seam.
+// First Read adapter — the fixture→real seam.
 //
 // READ-ONLY: every query is a SELECT; this surface has no write path, so a
 // frozen company (CB1) renders like any other. Missing data yields nulls and

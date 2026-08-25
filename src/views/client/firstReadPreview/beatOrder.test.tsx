@@ -20,15 +20,14 @@ const read: FirstReadPreviewData = {
 
 // The ruled order: [beat key, headline the beat renders].
 const RULED: Array<[string, string]> = [
-  ["record", "What the world says."],
+  ["record", "What the world sees and says."],
   ["yousay", "What you say."],
   ["gap", "Where the two readings disagree."],
-  ["serve", "Who you serve."],
   ["findings", "What stands out."],
-  ["score", "One number, read from the record."],
-  ["where", "Where you stand."],
-  ["ourread", "Our read."],
   ["base", "A strong base"],
+  ["serve", "Who you serve."],
+  ["ourread", "Where this points."],
+  ["score", "One number, read from the record."],
   ["questions", "Questions this read raises."],
   ["next", "What we'd do together."],
 ];
@@ -119,8 +118,8 @@ describe("beat order — ruled sequence", () => {
     const { container } = render(<BaseGate />);
     expect(container.textContent).toContain("A strong base"); // headline
     expect(container.textContent).toContain("Your base is the four commitments"); // framing
-    expect(container.textContent).toContain("Who you serve — see above"); // market pointer
-    for (const el of ["STRATEGY", "MARKET", "POSITIONING", "PROMISE"]) {
+    expect(container.textContent).toContain("Who you serve — coming up"); // forward hand-off pointer
+    for (const el of ["STRATEGY", "WHO YOU SERVE", "POSITIONING", "PROMISE"]) {
       expect(container.textContent).toContain(el);
     }
     expect(container.querySelector("svg"), "BaseAlignment illustration present").not.toBeNull();
@@ -128,7 +127,7 @@ describe("beat order — ruled sequence", () => {
 
   it("FALSIFICATION: swapping two beats breaks the monotonic order", () => {
     const swapped = [...RULED];
-    [swapped[1], swapped[4]] = [swapped[4], swapped[1]]; // yousay <-> findings
+    [swapped[1], swapped[4]] = [swapped[4], swapped[1]]; // yousay <-> base
     const text = renderSequence(swapped);
     // In the swapped render, the ruled sequence is NOT monotonic.
     let monotonic = true, prev = -1;

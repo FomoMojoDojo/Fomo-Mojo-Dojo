@@ -43,7 +43,7 @@ const ELEMENTS: {
   goalR: number;
 }[] = [
   { key: "strategy", label: "Strategy", sub: "what you're doing", today: { x: 300, y: 95 }, goalR: 70 },
-  { key: "market", label: "Market", sub: "who it's for", today: { x: 90, y: 272 }, goalR: 48 },
+  { key: "market", label: "Who you serve", sub: "who's critical to your success", today: { x: 90, y: 272 }, goalR: 48 },
   // Positioning carries anchor weight — heavier indigo stroke, outermost ring.
   { key: "positioning", label: "Positioning", sub: "why you win", today: { x: 385, y: 140 }, goalR: 92 },
   { key: "promise", label: "Promise", sub: "what you promise", today: { x: 245, y: 352 }, goalR: 26 },

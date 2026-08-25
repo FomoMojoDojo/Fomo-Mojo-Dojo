@@ -1,4 +1,4 @@
-// First Read (8-beat client surface) — real-data contract.
+// First Read (client surface) — real-data contract.
 //
 // Phase A: every section is nullable/empty-able; a missing section renders its
 // persisted-integrity empty state, NEVER fixture content. The shape descends
