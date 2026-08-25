@@ -174,12 +174,20 @@ export type FRStrategy = {
 } | null;
 
 /** Observed finding (S4) — public_inferred, ranked by recurrence breadth then recency. */
+/** FIX 3 (2026-08-25): a raw verbatim supporting quote beneath a synthesized finding — the actual
+ *  captured page text, source-attributed, under the same substring guard as a beat-4 record side
+ *  (verbatimRecord: non-empty, not model-'interpreted', a normalizeForHash-substring of claim_text).
+ *  Unverifiable ⇒ omitted entirely, never paraphrased into existence. */
+export type FRFindingQuote = { text: string; sourceTag: SourceTagResult; eventDate: string | null };
+
 export type FRFinding = {
   id: string;
   body: string;
   /** finding_recurrence.distinct_host_count (independent corroborating hosts), 0 if none. */
   recurrence: number;
   sourceTag: SourceTagResult;
+  /** FIX 3: 0–2 verbatim raw supporting quotes (empty ⇒ none provable, render shows no quote). */
+  quotes: FRFindingQuote[];
   /** R4: age of the finding's earliest backing signal. stale = event_date > 18 months old OR
    *  undated (reuses FRESHNESS_WINDOW_MONTHS). Stale ranks below fresh at equal recurrence;
    *  never hidden. The marker distinguishes an old-but-dated finding from an undated one. */

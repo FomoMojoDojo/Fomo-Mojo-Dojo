@@ -35,7 +35,7 @@ describe("S1 — Mojo Score beat is ALWAYS in the mounted tree", () => {
 });
 
 const finding = (id: string, body: string, recurrence: number): FRFinding => ({
-  id, body, recurrence, sourceTag: { label: "Public read · August 19, 2026" }, stale: false, ageMarker: null,
+  id, body, recurrence, sourceTag: { label: "Public read · August 19, 2026" }, stale: false, ageMarker: null, quotes: [],
 });
 
 describe("S4 — Findings beat: stored order, first-5/show-all, NO source count, junk-free", () => {

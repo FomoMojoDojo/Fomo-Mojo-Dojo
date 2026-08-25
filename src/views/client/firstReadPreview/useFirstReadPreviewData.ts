@@ -26,10 +26,11 @@ import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
-import { bareHost, coldOpenLadder, facetForTopic, groupGapStatements, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, coldOpenLadder, facetForTopic, groupGapStatements, hoistStrongestNegative, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
+  FRFindingQuote,
   FRGapPair,
   FRMarketDef,
   FROwnWord,
@@ -152,7 +153,11 @@ async function loadSignals(
     return (b.eventDate ?? "").localeCompare(a.eventDate ?? "");
   });
 
-  return { signals, newestByClaim: new Map() };
+  // FIX 2 (2026-08-25): reserve an early slot for the strongest negative outside signal, so general
+  // negative sentiment (e.g. the "going downhill" review, moderate strength, ~pos 88/106) is visible
+  // in the shown set rather than buried. Rule + placement live in hoistStrongestNegative (pure,
+  // tested): strongest-tier negative, most-recent, moved to NEG_SLOT_INDEX. No negative ⇒ unchanged.
+  return { signals: hoistStrongestNegative(signals), newestByClaim: new Map() };
 }
 
 /** Newest supporting signal (source + event_date) for each claim id. */
@@ -685,23 +690,40 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           .eq("register", "public_inferred");
         const { data: frRows } = await loose()
           .from("finding_recurrence")
-          .select("finding_id, distinct_host_count")
+          .select("finding_id, distinct_host_count, cluster_signal_ids")
           .eq("company_id", companyId);
         const recByFinding = new Map(
           ((frRows ?? []) as Array<{ finding_id: string; distinct_host_count: number | null }>)
             .map((r) => [r.finding_id, r.distinct_host_count ?? 0]),
         );
+        // FIX 3: a finding's RAW supporting quotes come from its recurrence CLUSTER members
+        // (finding_recurrence.cluster_signal_ids) — the actual captured reviews — NOT from
+        // origin_signal_id (which is the interpreted synthesis whose excerpt == the finding body,
+        // and would fail the verbatim guard anyway). Map finding → its cluster signal ids.
+        const clusterByFinding = new Map<string, string[]>(
+          ((frRows ?? []) as Array<{ finding_id: string; cluster_signal_ids: unknown }>).map((r) => [
+            r.finding_id,
+            Array.isArray(r.cluster_signal_ids) ? (r.cluster_signal_ids as unknown[]).map(String) : [],
+          ]),
+        );
         // R4: the finding's earliest backing signal gives its event_date (when the thing
         // happened) and read date (the run that read it). Load them for the origin signals.
         type FRow = { id: string; body: string | null; created_at: string | null; origin_signal_id: string | null };
         const fRowsT = ((fRows ?? []) as FRow[]).filter((f) => (f.body ?? "").trim());
-        const finSigIds = [...new Set(fRowsT.map((f) => f.origin_signal_id).filter((x): x is string => !!x))];
+        // Load BOTH origin signals (for the R4 date tag) AND all cluster members (for the raw quotes).
+        const finSigIds = [...new Set([
+          ...fRowsT.map((f) => f.origin_signal_id).filter((x): x is string => !!x),
+          ...fRowsT.flatMap((f) => clusterByFinding.get(f.id) ?? []),
+        ])];
         const { data: finSigs } = finSigIds.length
-          ? await supabase.from("signals").select("id, event_date, source_id").in("id", finSigIds)
+          ? await supabase.from("signals")
+              .select("id, event_date, source_id, evidence_excerpt, claim_text, structure_level, source_url, source_title, confidence_to_use")
+              .in("id", finSigIds)
           : { data: [] };
         const finSigById = new Map(
-          ((finSigs ?? []) as Array<{ id: string; event_date: string | null; source_id: string | null }>).map((s) => [s.id, s]),
+          ((finSigs ?? []) as SignalRow[]).map((s) => [s.id, s]),
         );
+        const CONF_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
         const findingsRaw = fRowsT.map((f) => {
           const sig = f.origin_signal_id ? finSigById.get(f.origin_signal_id) : null;
           const eventDate = sig?.event_date ?? null;
@@ -714,18 +736,49 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             : `read ${readFmt ?? ""}`.trim();
           // R4 age (reuse FRESHNESS_WINDOW_MONTHS + monthsBetween via findingsAge): >18mo/undated = stale.
           const { stale, ageMarker } = classifyFindingAge(eventDate, readDate);
+          // FIX 3: up to 2 raw supporting quotes from the finding's cluster members, each under the
+          // verbatimRecord substring guard (non-empty, not 'interpreted', a substring of claim_text).
+          // Prefer strongest confidence then most recent host. Unverifiable ⇒ omitted (tri-state:
+          // never paraphrase the synthesized body into a fake quote). CANDIDATES here (sorted by
+          // confidence then recency); the FINAL quotes are assigned in rank order with cross-finding
+          // dedup below, so a signal appears under at most one finding (several findings can share a
+          // generic recurrence cluster — without dedup they would all show the identical quote).
+          const quoteCandidates = (clusterByFinding.get(f.id) ?? [])
+            .map((sid) => finSigById.get(sid))
+            .filter((s): s is SignalRow => !!s)
+            .map((s) => ({ s, text: verbatimRecord(s) }))
+            .filter((x): x is { s: SignalRow; text: string } => !!x.text)
+            .sort((a, b) =>
+              (CONF_RANK[a.s.confidence_to_use ?? "low"] ?? 2) - (CONF_RANK[b.s.confidence_to_use ?? "low"] ?? 2)
+              || (b.s.event_date ?? "").localeCompare(a.s.event_date ?? ""));
           return {
             id: f.id,
             body: (f.body ?? "").trim(),
             recurrence: recByFinding.get(f.id) ?? 0,
             sourceTag: readFmt ? { label } : null,
+            quoteCandidates,
+            quotes: [] as FRFindingQuote[],
             stale, ageMarker,
             statusDisputed: disputes(f.body),
             recencyKey: eventDate ?? f.created_at ?? "",
           };
         });
         // R4 order: recurrence desc → fresh before stale (equal recurrence) → recency desc.
-        const findings: FRFinding[] = orderFindings(findingsRaw).map(({ recencyKey: _rk, ...f }) => f);
+        // FIX 3: assign quotes in RANK order with cross-finding dedup (cap 2), so the higher-ranked
+        // finding claims a shared cluster signal first and no raw quote repeats across findings.
+        const orderedFindings = orderFindings(findingsRaw);
+        const usedQuoteSignals = new Set<string>();
+        for (const f of orderedFindings) {
+          const picked: FRFindingQuote[] = [];
+          for (const c of f.quoteCandidates) {
+            if (picked.length >= 2) break;
+            if (usedQuoteSignals.has(c.s.id)) continue;
+            usedQuoteSignals.add(c.s.id);
+            picked.push({ text: c.text, sourceTag: publicSignalTag(c.s, runDates), eventDate: c.s.event_date ?? null });
+          }
+          f.quotes = picked;
+        }
+        const findings: FRFinding[] = orderedFindings.map(({ recencyKey: _rk, quoteCandidates: _qc, ...f }) => f);
 
         // S1: the outside read was LOOKED iff a public_baseline_run exists (persisted).
         const scoreLooked = runDates.size > 0;

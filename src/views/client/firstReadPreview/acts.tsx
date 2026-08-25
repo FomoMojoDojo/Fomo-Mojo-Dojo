@@ -271,6 +271,22 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
                 ) : null}
               </>
             }
+            // FIX 3: the raw supporting quote(s) beneath the synthesized finding — verbatim captured
+            // page text, source-attributed. Omitted entirely when none is provable (tri-state honesty).
+            rightContent={
+              f.quotes.length > 0 ? (
+                <div className="flex flex-col gap-6">
+                  {f.quotes.map((q, i) => (
+                    <div key={i}>
+                      <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                        &ldquo;{q.text}&rdquo;
+                      </p>
+                      {q.sourceTag ? <div className="mt-3"><SourceTag>{q.sourceTag.label}</SourceTag></div> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : undefined
+            }
           />
         ))}
       </main>

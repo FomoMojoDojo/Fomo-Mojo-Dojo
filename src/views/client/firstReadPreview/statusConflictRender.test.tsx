@@ -27,7 +27,7 @@ describe("S4 — status conflict pinned atop Questions + Findings", () => {
   });
 
   it("Findings: the conflict banner renders ABOVE the findings", () => {
-    const f: FRFinding = { id: "f1", body: "A finding body.", recurrence: 5, sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null };
+    const f: FRFinding = { id: "f1", body: "A finding body.", recurrence: 5, sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null, quotes: [] };
     const { container } = render(<ActFindings read={base({ statusConflicts: [CONFLICT], findings: [f] })} />);
     const text = container.textContent ?? "";
     expect(text.indexOf("Which is true today?")).toBeLessThan(text.indexOf("A finding body."));
@@ -77,7 +77,7 @@ describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () =
   });
 
   it("a disputed finding shows the chip and is not hidden", () => {
-    const f: FRFinding = { id: "f", body: "Le French Rooster partnership is primary channel.", recurrence: 3, sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null, statusDisputed: true };
+    const f: FRFinding = { id: "f", body: "Le French Rooster partnership is primary channel.", recurrence: 3, sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null, statusDisputed: true, quotes: [] };
     const text = render(<ActFindings read={base({ findings: [f] })} />).container.textContent ?? "";
     expect(text).toContain("Status disputed");
     expect(text).toContain("primary channel"); // still rendered

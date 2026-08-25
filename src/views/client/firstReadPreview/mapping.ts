@@ -145,6 +145,46 @@ export function strengthForSignal(
   return "moderate";
 }
 
+// FIX 2 (2026-08-25) — negative-valence cue lexicon for "What the world says". Render-layer only:
+// a deterministic keyword test on the outside excerpt, used ONLY to hoist the strongest negative
+// signal into an early slot (placement is the emphasis — no alarm styling, no editorializing).
+// Deliberately narrow to strong negative cues so a positive signal ("safe, supportive") is not
+// mis-hoisted; a rare false positive only surfaces a mildly-negative signal, never fabricates one.
+const NEGATIVE_CUES: readonly string[] = [
+  "downhill", "down hill", "declin", "getting worse", "got worse", "worse than", "deteriorat",
+  "understaff", "short staff", "short-staff", "high turnover", "turnover", "burnout", "burned out",
+  "quit", "walked out", "laid off", "layoff", "unsafe", "safety concern", "assault", "abuse",
+  "not recommend", "would not recommend", "do not recommend", "terrible", "awful", "horrible",
+  "avoid", "1 star", "one star", "toxic", "underpaid", "low pay", "pay is", "mismanage",
+  "no support", "lack of support", "understaffed", "chaos", "scam", "fraud", "lawsuit", "neglect",
+];
+export function isNegativeSignal(text: string | null | undefined): boolean {
+  const t = (text ?? "").toLowerCase();
+  return NEGATIVE_CUES.some((cue) => t.includes(cue));
+}
+
+// FIX 2: reserve an early slot for the strongest negative outside signal. Pure reorder (never adds/
+// removes/mutates the input): among signals whose text is a negative cue, pick the strongest strength
+// tier (strong > moderate > thin), tie-break most-recent eventDate, and move that ONE signal to
+// NEG_SLOT_INDEX (within the shown top rows). No negative ⇒ the array is returned unchanged.
+const NEG_STRENGTH_RANK: Record<string, number> = { strong: 0, moderate: 1, thin: 2 };
+export const NEG_SLOT_INDEX = 2;
+export function hoistStrongestNegative<T extends { id: string; text: string; strength: string; eventDate: string | null }>(signals: T[]): T[] {
+  const negatives = signals.filter((s) => isNegativeSignal(s.text));
+  if (negatives.length === 0) return signals;
+  const pick = negatives.reduce((best, s) =>
+    NEG_STRENGTH_RANK[s.strength] !== NEG_STRENGTH_RANK[best.strength]
+      ? (NEG_STRENGTH_RANK[s.strength] < NEG_STRENGTH_RANK[best.strength] ? s : best)
+      : ((s.eventDate ?? "") > (best.eventDate ?? "") ? s : best),
+  );
+  const idx = signals.findIndex((s) => s.id === pick.id);
+  if (idx <= NEG_SLOT_INDEX) return signals; // already in an early slot
+  const out = signals.slice();
+  out.splice(idx, 1);
+  out.splice(NEG_SLOT_INDEX, 0, pick);
+  return out;
+}
+
 // A1: beat-4 order by discussability — contradicted → unechoed → confirmed (unspoken last,
 // though it is off-surface). Ties break by evidence strength desc.
 export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, unechoed: 1, confirmed: 2, unspoken: 3 };
@@ -186,7 +226,21 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     const hasEcho = active.some((e) => e.verdict === "confirmed");
     st.verdict = hasContra ? "contradicted" : hasEcho ? "confirmed" : "unechoed";
   }
-  return order.map((k) => byId.get(k)!);
+  // FIX 1 (2026-08-25): order statements by their FINAL verdict, not the pre-strike pair order that
+  // orderGapPairs produced. Before the relevance backstop, first-pair-appearance matched the statement
+  // verdict; now a statement whose divergent pair(s) were struck orthogonal keeps its early
+  // "contradicted-block" position while its final verdict is confirmed/unechoed — so a CONFIRMED
+  // statement could render first on the disagreement page. Sort by GAP_VERDICT_ORDER (contradicted →
+  // not-echoed → confirmed); within a group, strongest ACTIVE evidence first (evidenceRank desc, tie
+  // most-recent active eventDate desc). Stable (JS sort) → first-appearance breaks full ties (e.g.
+  // not-echoed statements with no active evidence). Pure reorder: gapCounts are unaffected.
+  const activeOf = (st: FRGapStatement) => st.evidence.filter((e) => isRelevanceActive(e.relevanceVerdict));
+  const maxRank = (st: FRGapStatement) => activeOf(st).reduce((m, e) => Math.max(m, e.evidenceRank ?? 0), 0);
+  const maxDate = (st: FRGapStatement) => activeOf(st).reduce((m, e) => (e.eventDate && e.eventDate > m ? e.eventDate : m), "");
+  return order.map((k) => byId.get(k)!).sort((a, b) =>
+    (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9)
+    || maxRank(b) - maxRank(a)
+    || maxDate(b).localeCompare(maxDate(a)));
 }
 
 /**
