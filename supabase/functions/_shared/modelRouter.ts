@@ -70,11 +70,14 @@ export function makeRoutedModel(opts: {
   callLocalJudge: (model: string, system: string, user: string) => Promise<string>;
   openaiKey?: string;
   onUsage?: (u: OpenAIUsage) => void;
+  // Optional external-branch temperature. Omitted ⇒ callOpenAIJson's default (0.2). The relevance
+  // backstop passes 0 so its verdicts are deterministic (the dry-run review and the stamp match).
+  externalTemperature?: number;
 }): RoutedModel {
   return async ({ role, provenances, system, user }) => {
     const choice = _resolveModel({ role, inputs: provenances.map((p) => ({ provenance: p })) });
     if (choice.provider === "external_openai") {
-      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey }));
+      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature }));
       opts.onUsage?.(r.usage);
       return { content: r.content, provider: choice.provider, model: choice.model };
     }

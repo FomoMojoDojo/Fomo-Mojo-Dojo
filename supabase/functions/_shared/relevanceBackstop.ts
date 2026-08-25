@@ -97,7 +97,13 @@ export function stageARoute(
 
 // ── Stage B: the relevance judge (routed, external for public_vs_public) ───────
 
-export const RELEVANCE_JUDGE_SYSTEM =
+// V1 (RETAINED FOR AUDIT ONLY — not used). The apply-gate dry-run showed V1 slid from RELEVANCE
+// (is OBSERVED about the assertion?) to SUFFICIENCY (does OBSERVED fully prove the assertion /
+// its scope / range / superlative?). Sufficiency is the proof ladder's job, not the relevance
+// backstop's — V1 wrongly struck genuine weak-evidence-toward matches (e.g. a mold-remediation
+// DFW source vs a "small-residential-to-full-commercial remediation" claim). Superseded by
+// RELEVANCE_JUDGE_SYSTEM below. Kept as a named constant so the calibration change is auditable.
+export const RELEVANCE_JUDGE_SYSTEM_SUFFICIENCY_V1 =
   "You judge whether a publicly-OBSERVED statement is RELEVANT to a specific DECLARED assertion about the same company. " +
   "The two statements already share some wording and both concern the same company — that is NOT enough. " +
   "Decide RELEVANT only if the OBSERVED statement speaks to the SPECIFIC assertion the DECLARED statement makes (the same claim, offer, capability, scale, or fact). " +
@@ -106,8 +112,22 @@ export const RELEVANCE_JUDGE_SYSTEM =
   "Never force relevance; when unsure, answer orthogonal. " +
   'JSON only: {"relevance":"relevant"|"orthogonal","reason":"<one short clause>","span":"<verbatim words from the OBSERVED statement, or empty>"}.';
 
+// ACTIVE (V2, apply-gate calibration). Tests RELEVANCE = ABOUTNESS, NOT sufficiency. The backstop's
+// only job is to catch a pairing whose sole bond is the company name or a generic word (a source
+// about a DIFFERENT subject). Whether a genuinely on-subject source fully PROVES the claim's scope,
+// range, degree, or superlative is the proof ladder's concern — never a reason to strike here.
+export const RELEVANCE_JUDGE_SYSTEM =
+  "You judge whether a publicly-OBSERVED statement is ABOUT THE SAME subject as a DECLARED assertion about the same company — the same product, service, market, capability, or topic. " +
+  "The two already share some wording. " +
+  "Answer 'relevant' if OBSERVED speaks to the SAME subject as DECLARED, EVEN IF it does not confirm the full scope, range, degree, or superlative that DECLARED claims — partial, weak, or merely topical support IS relevant. " +
+  "Do NOT require OBSERVED to prove or fully confirm the claim: sufficiency of evidence is NOT your job, only ABOUTNESS. A source that supports the claim weakly, or covers only part of it, is RELEVANT. " +
+  "Answer 'orthogonal' ONLY if OBSERVED is about a DIFFERENT subject and the connection is merely the shared company name or a generic word (a source that would attach equally to many unrelated claims). " +
+  "When genuinely unsure whether the subject matches, answer 'relevant'. " +
+  "When 'relevant', span MUST be a verbatim run of words copied from OBSERVED that shows the shared subject. When 'orthogonal', span must be an empty string. " +
+  'JSON only: {"relevance":"relevant"|"orthogonal","reason":"<one short clause>","span":"<verbatim words from the OBSERVED statement, or empty>"}.';
+
 export function buildRelevanceUser(declared: string, observed: string): string {
-  return `DECLARED (the specific assertion): ${declared}\nOBSERVED (public statement already found to share wording): ${observed}\nIs the OBSERVED statement relevant to the SPECIFIC declared assertion, or only about the same company/topic?`;
+  return `DECLARED (the assertion): ${declared}\nOBSERVED (public statement already found to share wording): ${observed}\nIs OBSERVED about the SAME subject as DECLARED (relevant, even if it doesn't fully prove the claim), or about a DIFFERENT subject sharing only the company name / a generic word (orthogonal)?`;
 }
 
 export type RelevanceParsed = { relevance: "relevant" | "orthogonal"; reason: string; span: string };
@@ -160,6 +180,30 @@ export type RelevanceArgs = {
   // undefined ⇒ no cap (used by the scratch proof, which has ~2 rows). The stepper passes a cap.
   maxJudge?: number;
   pairingKind?: "public_vs_public";
+  // GATE-BEFORE-ARTIFACT: report-only mode. Runs Stage A + Stage B and RETURNS the proposed
+  // verdicts (in `proposals`) but writes NOTHING to claim_deltas and does NOT touch the integrity
+  // ledger. maxJudge is ignored (a review needs every proposal). Judge calls run with bounded
+  // concurrency (no writes ⇒ order-independent) so a large company stays under the isolate ceiling.
+  // Reusable by CB2's separate gate. Never stamps.
+  dryRun?: boolean;
+  // Concurrency for the dry-run judge calls (default 6). Ignored in stamp mode (sequential writes).
+  dryRunConcurrency?: number;
+};
+
+// A single proposed relevance verdict — the unit of the review table (gate-before-artifact).
+export type RelevanceProposal = {
+  id: string;                 // claim_deltas.id
+  delta_type: string;         // 'echoed' | 'divergent' (the PRIOR verdict being reviewed)
+  declared: string;           // declared/own-words statement
+  observed: string;           // paired public source statement
+  proposed_verdict: "relevant" | "orthogonal";
+  stage: "A" | "B";           // A = deterministic auto-spare; B = the routed judge
+  distinctive_overlap: number;
+  distinctive_tokens: string[];
+  reason: string | null;      // Stage-B judge reason (the over-strike watch-item)
+  span: string;               // judge's verbatim observed span for a 'relevant' verdict ("" otherwise)
+  model: string;
+  provider: string;
 };
 
 export type RelevanceResult =
@@ -172,6 +216,9 @@ export type RelevanceResult =
         judged_orthogonal: number;
         remaining: number;     // left unjudged this invocation (isolate cap) — resumable
       };
+      // Populated in dryRun (every row); in stamp mode carries the rows acted on this invocation.
+      proposals: RelevanceProposal[];
+      dry_run: boolean;
     }
   | { ok: false; skipped: "frozen_company" }
   | { ok: false; error: string };
@@ -204,10 +251,12 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   }>;
 
   const totals = { examined: rows.length, auto_relevant: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
+  const proposals: RelevanceProposal[] = [];
+  const dryRun = args.dryRun === true;
   if (rows.length === 0) {
     // Nothing left to judge for this company/kind — record the drained (completed) state.
-    if (args.write) await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, totals);
-    return { ok: true, totals };
+    if (args.write && !dryRun) await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, totals);
+    return { ok: true, totals, proposals, dry_run: dryRun };
   }
 
   // Fetch the statement text for every referenced claim in one shot.
@@ -219,47 +268,75 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
     ((claimRows ?? []) as Array<{ id: string; statement: string }>).map((c) => [c.id, c.statement]),
   );
 
-  let judgedCount = 0;
+  // ── STAGE A — deterministic partition (cheap, no model). Auto-spared here; the rest go to B. ──
+  type Job = { r: typeof rows[number]; declared: string; observed: string; overlap: number; tokens: string[] };
+  const judgeJobs: Job[] = [];
   for (const r of rows) {
     const declared = stmt.get(r.declared_claim_id) ?? "";
     const observed = stmt.get(r.public_claim_id) ?? "";
-
-    // STAGE A — deterministic auto-spare.
     const routeA = stageARoute(declared, observed, entities);
     if (!routeA.routeToJudge) {
-      await stampRelevance(args, r.id, {
-        verdict: "relevant",
-        reason: `distinctive-overlap>=2 {${routeA.distinctiveTokens.join(",")}}`.slice(0, 400),
-        span: "",
-        model: "router",
-        provider: "deterministic",
-      });
+      const reason = `distinctive-overlap>=2 {${routeA.distinctiveTokens.join(",")}}`.slice(0, 400);
+      if (!dryRun) {
+        await stampRelevance(args, r.id, { verdict: "relevant", reason, span: "", model: "router", provider: "deterministic" });
+      }
       totals.auto_relevant++;
+      proposals.push({
+        id: r.id, delta_type: r.delta_type, declared, observed,
+        proposed_verdict: "relevant", stage: "A",
+        distinctive_overlap: routeA.distinctiveOverlap, distinctive_tokens: routeA.distinctiveTokens,
+        reason, span: "", model: "router", provider: "deterministic",
+      });
       continue;
     }
+    judgeJobs.push({ r, declared, observed, overlap: routeA.distinctiveOverlap, tokens: routeA.distinctiveTokens });
+  }
 
-    // Isolate-ceiling guard for the judged rows only (Stage A costs nothing).
-    if (args.maxJudge !== undefined && judgedCount >= args.maxJudge) { totals.remaining++; continue; }
-
-    // STAGE B — the routed relevance judge (external for public_vs_public).
-    const provenances = ["public_observed", "public_observed"]; // pairing_kind guarantees both public
-    const res = await args.routedCall({
-      role: "judge",
-      provenances,
-      system: RELEVANCE_JUDGE_SYSTEM,
-      user: buildRelevanceUser(declared, observed),
-    });
+  const provenances = ["public_observed", "public_observed"]; // pairing_kind guarantees both public
+  const judgeOne = async (j: Job): Promise<RelevanceProposal> => {
+    const res = await args.routedCall({ role: "judge", provenances, system: RELEVANCE_JUDGE_SYSTEM, user: buildRelevanceUser(j.declared, j.observed) });
     const parsed = parseRelevance(res.content);
-    judgedCount++;
-    await stampRelevance(args, r.id, {
-      verdict: parsed.relevance,
+    return {
+      id: j.r.id, delta_type: j.r.delta_type, declared: j.declared, observed: j.observed,
+      proposed_verdict: parsed.relevance, stage: "B",
+      distinctive_overlap: j.overlap, distinctive_tokens: j.tokens,
       reason: parsed.reason.slice(0, 400) || null,
-      span: parsed.relevance === "relevant" ? (parsed.span || null) : null,
-      model: res.model,
-      provider: res.provider,
+      span: parsed.relevance === "relevant" ? (parsed.span || "") : "",
+      model: res.model, provider: res.provider,
+    };
+  };
+
+  if (dryRun) {
+    // ── STAGE B (report-only) — bounded concurrency, NO writes, NO cap: judge every row. ──
+    const limit = Math.max(1, Math.min(args.dryRunConcurrency ?? 6, judgeJobs.length));
+    let next = 0;
+    const workers = Array.from({ length: limit }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= judgeJobs.length) return;
+        const p = await judgeOne(judgeJobs[i]);
+        proposals.push(p);
+        if (p.proposed_verdict === "relevant") totals.judged_relevant++; else totals.judged_orthogonal++;
+      }
     });
-    if (parsed.relevance === "relevant") totals.judged_relevant++;
-    else totals.judged_orthogonal++;
+    await Promise.all(workers);
+    return { ok: true, totals, proposals, dry_run: true };
+  }
+
+  // ── STAGE B (stamp) — sequential (writes), isolate-cap via maxJudge, resumable. ──
+  let judgedCount = 0;
+  for (const j of judgeJobs) {
+    if (args.maxJudge !== undefined && judgedCount >= args.maxJudge) { totals.remaining++; continue; }
+    const p = await judgeOne(j);
+    judgedCount++;
+    await stampRelevance(args, j.r.id, {
+      verdict: p.proposed_verdict,
+      reason: p.reason,
+      span: p.proposed_verdict === "relevant" ? (p.span || null) : null,
+      model: p.model, provider: p.provider,
+    });
+    proposals.push(p);
+    if (p.proposed_verdict === "relevant") totals.judged_relevant++; else totals.judged_orthogonal++;
   }
 
   // Ledger only a fully-drained company (remaining === 0) as 'completed' — mirrors the
@@ -268,7 +345,7 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   if (args.write && totals.remaining === 0) {
     await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, totals);
   }
-  return { ok: true, totals };
+  return { ok: true, totals, proposals, dry_run: false };
 }
 
 async function stampRelevance(
