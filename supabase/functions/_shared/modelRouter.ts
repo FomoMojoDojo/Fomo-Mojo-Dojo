@@ -73,11 +73,13 @@ export function makeRoutedModel(opts: {
   // Optional external-branch temperature. Omitted ⇒ callOpenAIJson's default (0.2). The relevance
   // backstop passes 0 so its verdicts are deterministic (the dry-run review and the stamp match).
   externalTemperature?: number;
+  // Optional external-branch seed (best-effort determinism). The backstop passes 42.
+  externalSeed?: number;
 }): RoutedModel {
   return async ({ role, provenances, system, user }) => {
     const choice = _resolveModel({ role, inputs: provenances.map((p) => ({ provenance: p })) });
     if (choice.provider === "external_openai") {
-      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature }));
+      const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, apiKey: opts.openaiKey, temperature: opts.externalTemperature, seed: opts.externalSeed }));
       opts.onUsage?.(r.usage);
       return { content: r.content, provider: choice.provider, model: choice.model };
     }
@@ -95,6 +97,7 @@ export async function callOpenAIJson(opts: {
   temperature?: number;
   timeoutMs?: number;
   apiKey?: string;
+  seed?: number;
 }): Promise<{ content: string; usage: OpenAIUsage }> {
   const apiKey = opts.apiKey ?? Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("model router: external chosen but OPENAI_API_KEY is missing");
@@ -107,6 +110,8 @@ export async function callOpenAIJson(opts: {
       body: JSON.stringify({
         model: opts.model,
         temperature: opts.temperature ?? 0.2,
+        // Best-effort determinism (OpenAI honors seed when set); the relevance backstop passes 42.
+        ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: opts.system },

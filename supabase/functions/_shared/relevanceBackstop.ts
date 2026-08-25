@@ -6,15 +6,16 @@
 // echo. This module answers that missing question and records it as a REVERSIBLE OVERLAY on
 // claim_deltas (relevance_verdict = 'relevant' | 'orthogonal' | NULL), never altering delta_type.
 //
-// Two stages (design gate candidate iii):
-//   STAGE A — deterministic router (no model call). distinctiveOverlap = shared meaningful
-//     tokens MINUS the company-name/alias tokens MINUS a generic-word set. In public_vs_public
-//     BOTH sides are about the same company by construction, so the company name is shared in
-//     nearly every pair and carries zero discriminating power; ≥2 remaining distinctive tokens
-//     is strong evidence of a specific match → auto-SPARE ('relevant'). ≤1 → Stage B.
-//   STAGE B — the relevance judge (external gpt-4.1-mini for public_vs_public, routed by
-//     provenance via the injected routedCall — never hardcoded). Judge-only authority: the
-//     router never OVERTURNS a verdict, it only decides who needs the judge. temp0/seed42.
+// PRE-ROUTER (apply-gate-v3) — deterministic partition by distinctiveOverlap = shared meaningful
+// tokens MINUS company-name/alias MINUS generic words. In public_vs_public both sides are about
+// the same company by construction, so the company name carries zero discriminating power.
+//   dov>=2 → auto-SPARE 'relevant' (strong same-subject overlap), deterministic, no model.
+//   dov=0  → deterministic 'orthogonal' (entity-only co-mention), no model, HONEST router reason.
+//            The judge proved a coin-flip on this call (148/117 over 265), so the router owns it.
+//   dov=1  → the V3 relevance JUDGE (the ONLY pairs it sees; external gpt-4.1-mini for public,
+//            temp0, routed by provenance via the injected routedCall — never hardcoded), where
+//            it reliably separates same-subject (DFW-style, relevant) from different-subject
+//            co-mention (funding/listing/incident, orthogonal). Judge never makes the dov=0 call.
 //
 // Persistence law: this module ONLY runs UPDATE on the six overlay columns of existing
 // claim_deltas rows. It NEVER inserts or deletes a claim_deltas row and NEVER calls
@@ -112,11 +113,12 @@ export const RELEVANCE_JUDGE_SYSTEM_SUFFICIENCY_V1 =
   "Never force relevance; when unsure, answer orthogonal. " +
   'JSON only: {"relevance":"relevant"|"orthogonal","reason":"<one short clause>","span":"<verbatim words from the OBSERVED statement, or empty>"}.';
 
-// ACTIVE (V2, apply-gate calibration). Tests RELEVANCE = ABOUTNESS, NOT sufficiency. The backstop's
-// only job is to catch a pairing whose sole bond is the company name or a generic word (a source
-// about a DIFFERENT subject). Whether a genuinely on-subject source fully PROVES the claim's scope,
-// range, degree, or superlative is the proof ladder's concern — never a reason to strike here.
-export const RELEVANCE_JUDGE_SYSTEM =
+// V2 (RETAINED FOR AUDIT ONLY — not used). Corrected V1's sufficiency slide (DFW-style same-subject
+// partial support restored to relevant) but OVER-CORRECTED the other way: run uniformly it spared
+// dov=0 entity-only co-mentions — the model rationalized "both mention IAQM in the context of home
+// services" as a subject match, so "found IAQM on Angie's list" / an SBA PPP loan / a named technician
+// came back 'relevant'. It held only ONE edge. Superseded by V3 below.
+export const RELEVANCE_JUDGE_SYSTEM_ABOUTNESS_V2 =
   "You judge whether a publicly-OBSERVED statement is ABOUT THE SAME subject as a DECLARED assertion about the same company — the same product, service, market, capability, or topic. " +
   "The two already share some wording. " +
   "Answer 'relevant' if OBSERVED speaks to the SAME subject as DECLARED, EVEN IF it does not confirm the full scope, range, degree, or superlative that DECLARED claims — partial, weak, or merely topical support IS relevant. " +
@@ -126,8 +128,25 @@ export const RELEVANCE_JUDGE_SYSTEM =
   "When 'relevant', span MUST be a verbatim run of words copied from OBSERVED that shows the shared subject. When 'orthogonal', span must be an empty string. " +
   'JSON only: {"relevance":"relevant"|"orthogonal","reason":"<one short clause>","span":"<verbatim words from the OBSERVED statement, or empty>"}.';
 
+// ACTIVE (V3, apply-gate re-calibration). Must hold BOTH edges V1 and V2 each held only one:
+//   • dov=0 entity-only / generic-only co-mention (Angie's-list, SBA loan, named technician,
+//     directory listing) → ORTHOGONAL — a DIFFERENT specific matter that merely names the company.
+//   • dov>=1 same specific offering/service/market, partial or weak → RELEVANT (the DFW case).
+// The lever is the STRIP-THE-NAME test: remove the company name from OBSERVED; if what remains is
+// still about the same specific thing DECLARED asserts, relevant; if what remains is about some
+// other matter (a price, a person, a loan, a listing, a discovery story), orthogonal. Sharing the
+// broad INDUSTRY is not sharing the SUBJECT.
+export const RELEVANCE_JUDGE_SYSTEM =
+  "You judge whether a publicly-OBSERVED statement is about the SAME SPECIFIC SUBJECT as a DECLARED assertion about the same company — the same specific offering, service, product, market, or claim. " +
+  "The company name appears in both; that is NOT a subject match. Sharing the same broad INDUSTRY is NOT a subject match either. " +
+  "Answer 'orthogonal' when OBSERVED's only real tie to DECLARED is the company name (or an alias, or a generic word) and OBSERVED is actually about a DIFFERENT specific matter — for example: how a customer found or contacted the company, a price or cost remark, a named employee or technician, a loan or financial filing, a directory or listing entry, a contract or legal dispute, an employment experience, or hours/scheduling. These co-mention the company but are not about the declared offering. " +
+  "Answer 'relevant' when OBSERVED describes, reviews, confirms, disputes, or otherwise speaks to the SAME specific offering/service/product/market/claim as DECLARED — EVEN IF it covers only part of it, supports it weakly, or does not confirm the full scope, range, degree, or superlative DECLARED claims. Same-subject partial or weak support is RELEVANT; sufficiency of evidence is not your concern. " +
+  "DECISIVE TEST: mentally strip the company name from OBSERVED. If what remains is still about the same specific thing DECLARED asserts, answer 'relevant'. If what remains is about some other matter (a price, a person, a loan, a listing, a discovery story, a legal dispute), answer 'orthogonal'. " +
+  "When 'relevant', span MUST be a verbatim run of words copied from OBSERVED that names the shared subject. When 'orthogonal', span must be an empty string. " +
+  'JSON only: {"relevance":"relevant"|"orthogonal","reason":"<one short clause>","span":"<verbatim words from the OBSERVED statement, or empty>"}.';
+
 export function buildRelevanceUser(declared: string, observed: string): string {
-  return `DECLARED (the assertion): ${declared}\nOBSERVED (public statement already found to share wording): ${observed}\nIs OBSERVED about the SAME subject as DECLARED (relevant, even if it doesn't fully prove the claim), or about a DIFFERENT subject sharing only the company name / a generic word (orthogonal)?`;
+  return `DECLARED (the assertion): ${declared}\nOBSERVED (public statement already found to share wording): ${observed}\nStrip the company name from OBSERVED: is what remains about the SAME specific offering/service/market/claim as DECLARED (relevant, even if partial), or about a DIFFERENT matter that merely co-mentions the company (orthogonal)?`;
 }
 
 export type RelevanceParsed = { relevance: "relevant" | "orthogonal"; reason: string; span: string };
@@ -188,6 +207,8 @@ export type RelevanceArgs = {
   dryRun?: boolean;
   // Concurrency for the dry-run judge calls (default 6). Ignored in stamp mode (sequential writes).
   dryRunConcurrency?: number;
+  // Optional integrity-ledger run_ref (e.g. an apply-gate tag). Defaults to nowIso.
+  runRef?: string;
 };
 
 // A single proposed relevance verdict — the unit of the review table (gate-before-artifact).
@@ -210,11 +231,12 @@ export type RelevanceResult =
   | {
       ok: true;
       totals: {
-        examined: number;      // verdict rows loaded (unjudged this run)
-        auto_relevant: number; // Stage A auto-spared
-        judged_relevant: number;
-        judged_orthogonal: number;
-        remaining: number;     // left unjudged this invocation (isolate cap) — resumable
+        examined: number;         // verdict rows loaded (unjudged this run)
+        auto_relevant: number;    // Stage A auto-spared (dov>=2), deterministic
+        router_orthogonal: number; // PRE-ROUTER dov=0 struck deterministically (no judge)
+        judged_relevant: number;  // dov=1 judge → relevant
+        judged_orthogonal: number; // dov=1 judge → orthogonal
+        remaining: number;        // left unjudged this invocation (isolate cap) — resumable
       };
       // Populated in dryRun (every row); in stamp mode carries the rows acted on this invocation.
       proposals: RelevanceProposal[];
@@ -250,12 +272,12 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
     id: string; delta_type: string; declared_claim_id: string; public_claim_id: string; relevance_verdict: string | null;
   }>;
 
-  const totals = { examined: rows.length, auto_relevant: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
+  const totals = { examined: rows.length, auto_relevant: 0, router_orthogonal: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
   const proposals: RelevanceProposal[] = [];
   const dryRun = args.dryRun === true;
   if (rows.length === 0) {
     // Nothing left to judge for this company/kind — record the drained (completed) state.
-    if (args.write && !dryRun) await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, totals);
+    if (args.write && !dryRun) await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, pairingKind, args.runRef);
     return { ok: true, totals, proposals, dry_run: dryRun };
   }
 
@@ -268,14 +290,26 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
     ((claimRows ?? []) as Array<{ id: string; statement: string }>).map((c) => [c.id, c.statement]),
   );
 
-  // ── STAGE A — deterministic partition (cheap, no model). Auto-spared here; the rest go to B. ──
+  // ── PRE-ROUTER — deterministic partition (cheap, no model), three ways by distinctiveOverlap:
+  //   dov>=2  → auto-spare 'relevant' (strong same-subject overlap; unchanged Stage-A behavior).
+  //   dov=0   → deterministic 'orthogonal' — zero distinctive tokens shared after stripping the
+  //             company name/alias + generic words means the ONLY tie is the company itself (the
+  //             entity-only co-mention class). The judge proved UNRELIABLE on this call (a 148/117
+  //             coin-flip over 265 pairs — struck "Angie's list" but spared "GovCloud/FedRAMP"),
+  //             so the router owns it: no judge call, an HONEST router reason (never a fabricated
+  //             judge sentence). Rare pure-synonym same-subject dov=0 pairs are over-struck here —
+  //             a bounded, reviewable, reversible set surfaced for human review before a LIVE
+  //             client's strikes stand (the CB2 capability).
+  //   dov=1   → the V3 judge (the ONLY thing it sees), where it judges same-subject-vs-different-
+  //             subject reliably (keeps the DFW case relevant, catches funding/listing co-mentions).
+  const ROUTER_DOV0_REASON = "no distinctive token shared with the claim";
   type Job = { r: typeof rows[number]; declared: string; observed: string; overlap: number; tokens: string[] };
   const judgeJobs: Job[] = [];
   for (const r of rows) {
     const declared = stmt.get(r.declared_claim_id) ?? "";
     const observed = stmt.get(r.public_claim_id) ?? "";
     const routeA = stageARoute(declared, observed, entities);
-    if (!routeA.routeToJudge) {
+    if (routeA.distinctiveOverlap >= 2) {
       const reason = `distinctive-overlap>=2 {${routeA.distinctiveTokens.join(",")}}`.slice(0, 400);
       if (!dryRun) {
         await stampRelevance(args, r.id, { verdict: "relevant", reason, span: "", model: "router", provider: "deterministic" });
@@ -289,6 +323,20 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
       });
       continue;
     }
+    if (routeA.distinctiveOverlap === 0) {
+      if (!dryRun) {
+        await stampRelevance(args, r.id, { verdict: "orthogonal", reason: ROUTER_DOV0_REASON, span: "", model: "router", provider: "deterministic" });
+      }
+      totals.router_orthogonal++;
+      proposals.push({
+        id: r.id, delta_type: r.delta_type, declared, observed,
+        proposed_verdict: "orthogonal", stage: "A",
+        distinctive_overlap: 0, distinctive_tokens: [],
+        reason: ROUTER_DOV0_REASON, span: "", model: "router", provider: "deterministic",
+      });
+      continue;
+    }
+    // dov === 1 → the judge (the only pairs it ever sees).
     judgeJobs.push({ r, declared, observed, overlap: routeA.distinctiveOverlap, tokens: routeA.distinctiveTokens });
   }
 
@@ -343,7 +391,7 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   // gap-pairs integrity pattern (written after the work). A capped/partial invocation writes
   // no integrity row; the next invocation that drains the company records the completion.
   if (args.write && totals.remaining === 0) {
-    await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, totals);
+    await writeRelevanceIntegrity(args.supabase, args.companyId, args.nowIso, pairingKind, args.runRef);
   }
   return { ok: true, totals, proposals, dry_run: false };
 }
@@ -366,12 +414,30 @@ async function stampRelevance(
   if (error) throw new Error(`relevance overlay update failed (${deltaId}): ${error.message}`);
 }
 
+// CUMULATIVE ledger: written only when a company is fully drained (remaining === 0), so it queries
+// the company's ACTUAL stamped counts from claim_deltas rather than this invocation's local totals —
+// a chunked company (many invocations) then gets ONE honest company-wide row, not the last chunk's.
 async function writeRelevanceIntegrity(
   supabase: { from: (t: string) => any },
   companyId: string,
   nowIso: string,
-  totals: { examined: number; auto_relevant: number; judged_relevant: number; judged_orthogonal: number; remaining: number },
+  pairingKind: string,
+  runRef?: string,
 ): Promise<void> {
+  const { data: rows, error: qErr } = await supabase
+    .from("claim_deltas")
+    .select("relevance_verdict, relevance_model")
+    .eq("company_id", companyId)
+    .eq("pairing_kind", pairingKind)
+    .in("delta_type", ["echoed", "divergent"]);
+  if (qErr) throw new Error(`relevance integrity count query failed: ${qErr.message}`);
+  const r = (rows ?? []) as Array<{ relevance_verdict: string | null; relevance_model: string | null }>;
+  const examined = r.length;
+  const routerOrthogonal = r.filter((x) => x.relevance_verdict === "orthogonal" && x.relevance_model === "router").length;
+  const judgedOrthogonal = r.filter((x) => x.relevance_verdict === "orthogonal" && x.relevance_model !== "router").length;
+  const autoRelevant = r.filter((x) => x.relevance_verdict === "relevant" && x.relevance_model === "router").length;
+  const judgedRelevant = r.filter((x) => x.relevance_verdict === "relevant" && x.relevance_model !== "router").length;
+  const orthogonal = routerOrthogonal + judgedOrthogonal;
   const { error } = await supabase.from("integrity_runs").insert({
     company_id: companyId,
     component: RELEVANCE_INTEGRITY_COMPONENT,
@@ -379,16 +445,18 @@ async function writeRelevanceIntegrity(
     surface_id: null,
     ran_at: nowIso,
     status: "completed", // only called on a fully-drained company (see caller guard)
-    examined: totals.examined,
-    admitted: totals.judged_orthogonal, // 'admitted' reused as: rows the backstop struck orthogonal
-    excluded_by_rule: { // jsonb: how the spared rows were spared, + the struck count
-      spared: totals.auto_relevant + totals.judged_relevant,
-      auto_relevant: totals.auto_relevant,
-      judged_relevant: totals.judged_relevant,
-      judged_orthogonal: totals.judged_orthogonal,
+    examined,
+    admitted: orthogonal, // 'admitted' reused as: rows struck orthogonal (router dov=0 + judge dov=1)
+    excluded_by_rule: { // jsonb: the company-wide strike/spare breakdown by stage
+      orthogonal,
+      router_orthogonal: routerOrthogonal, // deterministic dov=0
+      judged_orthogonal: judgedOrthogonal,  // dov=1 judge strikes
+      spared: autoRelevant + judgedRelevant,
+      auto_relevant: autoRelevant,          // dov>=2 auto-spare
+      judged_relevant: judgedRelevant,      // dov=1 judge spares
     },
     error: null,
-    run_ref: nowIso,
+    run_ref: runRef ?? nowIso,
   });
   if (error) throw new Error(`relevance integrity insert failed: ${error.message}`);
 }

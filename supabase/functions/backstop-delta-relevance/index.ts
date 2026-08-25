@@ -31,12 +31,13 @@ function json(body: unknown, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { company_id, write, max_judge, dry_run } = await req.json();
+    const { company_id, write, max_judge, dry_run, run_ref } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const dryRun = dry_run === true;
     // GATE-BEFORE-ARTIFACT: a dry-run writes nothing regardless of `write`.
     const doWrite = !dryRun && write !== false;
     const maxJudge = typeof max_judge === "number" && max_judge > 0 ? Math.floor(max_judge) : undefined;
+    const runRef = typeof run_ref === "string" && run_ref.length > 0 ? run_ref : undefined;
 
     const ollamaUrl = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
     const supabase = createClient(
@@ -54,6 +55,7 @@ serve(async (req) => {
       callLocalJudge: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM),
       onUsage: (uu) => { usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens; },
       externalTemperature: 0, // deterministic relevance verdicts (dry-run review == stamp)
+      externalSeed: 42,       // best-effort determinism (temp0/seed42 spec)
     });
 
     const result = await computeRelevanceForCompany({
@@ -65,6 +67,7 @@ serve(async (req) => {
       maxJudge,
       pairingKind: "public_vs_public",
       dryRun,
+      runRef,
     });
 
     if (result.ok) {
