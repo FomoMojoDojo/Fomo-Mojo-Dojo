@@ -82,30 +82,41 @@ describe("FIX 2 — hoistStrongestNegative", () => {
 });
 
 // ── FIX 3 — findings show verbatim raw quotes; hidden when unverifiable ────────────────────────
-describe("FIX 3 — findings raw quotes", () => {
+describe("FIX 3 + GATE 1 — findings raw quotes: text shown, quote marks only when provably verbatim", () => {
   const readWith = (findings: FRFinding[]): FirstReadPreviewData =>
     ({ findings, statusConflicts: [] } as unknown as FirstReadPreviewData);
 
-  it("renders the verbatim quote beneath a finding when one is provable", () => {
+  it("GATE 1 downgrade — an OUTSIDE finding quote (not provable) renders UN-QUOTED (text shown, no quote marks)", () => {
     const findings: FRFinding[] = [{
       id: "f", body: "Chronic frontline staff underpayment and high turnover.", recurrence: 4,
       sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null,
-      quotes: [{ text: "Edgewood is a non profit that is going down hill.", sourceTag: { label: "indeed.com · July 2024" }, eventDate: "2024-07-05" }],
+      quotes: [{ text: "'Edgewood is a non profit that is going down hill.'", sourceTag: { label: "indeed.com · July 2024" }, eventDate: "2024-07-05", provablyVerbatim: false }],
     }];
-    render(<ActFindings read={readWith(findings)} />);
-    expect(screen.getByText(/going down hill/)).toBeTruthy();
-    expect(screen.getByText(/indeed\.com · July 2024/)).toBeTruthy();
+    const { container } = render(<ActFindings read={readWith(findings)} />);
+    expect(screen.getByText(/going down hill/)).toBeTruthy();               // text still visible
+    expect(screen.getByText(/indeed\.com · July 2024/)).toBeTruthy();       // attribution present
+    expect(container.textContent).not.toContain("”");                       // no closing quote mark → downgraded
+    expect(container.textContent).not.toContain("'Edgewood");               // stray leading literal quote trimmed
   });
 
-  it("renders NO quote when the guard found none (empty quotes) — never paraphrases the body", () => {
+  it("GATE 1 spare — a provably-verbatim (own-words) finding quote STILL renders QUOTED", () => {
+    const findings: FRFinding[] = [{
+      id: "f", body: "The company frames itself as craft-first.", recurrence: 2,
+      sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null,
+      quotes: [{ text: "We roast in small batches.", sourceTag: { label: "cafebarra.com · read Aug 1" }, eventDate: null, provablyVerbatim: true }],
+    }];
+    const { container } = render(<ActFindings read={readWith(findings)} />);
+    expect(screen.getByText(/We roast in small batches/)).toBeTruthy();
+    expect(container.textContent).toContain("”");                           // own-words verbatim keeps its quote
+  });
+
+  it("renders NO quote block when none provable (empty quotes) — never paraphrases the body", () => {
     const findings: FRFinding[] = [{
       id: "f", body: "A synthesized finding with no provable quote.", recurrence: 2,
       sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null, quotes: [],
     }];
     const { container } = render(<ActFindings read={readWith(findings)} />);
-    // the body renders; the quote block (which alone emits a CLOSING ” via &rdquo;) does not.
-    // (The LedgerRow adds a leading “ to the body itself, so absence is checked on the closing mark.)
     expect(screen.getByText(/A synthesized finding/)).toBeTruthy();
-    expect(container.textContent).not.toContain("”"); // no closing double-quote → no quote block rendered
+    expect(container.textContent).not.toContain("”");
   });
 });

@@ -11,13 +11,16 @@ export type SignalStrength = "strong" | "moderate" | "thin";
 
 export type FRSignal = {
   id: string;
-  /** Verbatim outside excerpt (signals.evidence_excerpt). */
+  /** Outside excerpt (signals.evidence_excerpt) — rendered UN-QUOTED unless provablyVerbatim. */
   text: string;
   /** Derived source tag (source-honesty ruling) — null hides the tag. */
   sourceTag: SourceTagResult;
   /** ISO date of the newest instance, or null — null omits MOST RECENT. */
   eventDate: string | null;
   strength: SignalStrength;
+  /** Gate 1 (2026-08-25): true only when provably own-words verbatim (snapshot-verified). Every
+   *  outside signal is false → renders un-quoted with attribution. Default-deny. */
+  provablyVerbatim: boolean;
 };
 
 export type FRColdOpen = {
@@ -31,6 +34,9 @@ export type FRColdOpen = {
   /** Cold-open ladder (2026-08-22): the strongest-signal rung is a QUOTE; the conflict + echo-gap
    *  rungs are signed lines rendered without quotation marks. Defaults to quoted (true) when absent. */
   quoted?: boolean;
+  /** Gate 1 (2026-08-25): the strongest-signal rung renders quoted ONLY when provably own-words
+   *  verbatim; an unprovable outside featured signal downgrades to un-quoted. */
+  provablyVerbatim?: boolean;
 };
 
 export type FRDeclared = {
@@ -178,7 +184,10 @@ export type FRStrategy = {
  *  captured page text, source-attributed, under the same substring guard as a beat-4 record side
  *  (verbatimRecord: non-empty, not model-'interpreted', a normalizeForHash-substring of claim_text).
  *  Unverifiable ⇒ omitted entirely, never paraphrased into existence. */
-export type FRFindingQuote = { text: string; sourceTag: SourceTagResult; eventDate: string | null };
+export type FRFindingQuote = { text: string; sourceTag: SourceTagResult; eventDate: string | null;
+  /** Gate 1 (2026-08-25): per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
+   *  cluster keeps an own-words member quoted while downgrading outside members to un-quoted. */
+  provablyVerbatim: boolean };
 
 export type FRFinding = {
   id: string;

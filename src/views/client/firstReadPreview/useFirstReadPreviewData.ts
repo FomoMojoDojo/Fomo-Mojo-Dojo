@@ -26,6 +26,7 @@ import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
+import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
 import { bareHost, coldOpenLadder, facetForTopic, groupGapStatements, hoistStrongestNegative, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
 import type {
   FirstReadPreviewData,
@@ -112,9 +113,28 @@ function publicSignalTag(sig: SignalRow, runDates: Map<string, string>) {
   });
 }
 
+// Gate 1: the provable-verbatim signal ids — own-words candidates the judge kept AND graded a
+// verbatim exact copy of the snapshot raw page (the ONE provable ground truth). Everything absent
+// from this set is unprovable and renders un-quoted. Reuses beat-3's own_words_candidates authority.
+async function loadProvableVerbatimSignalIds(companyId: string): Promise<Set<string>> {
+  const { data } = await loose()
+    .from("own_words_candidates")
+    .select("signal_id")
+    .eq("company_id", companyId)
+    .eq("judge_keep", true)
+    .eq("judge_fidelity", "verbatim")
+    .not("signal_id", "is", null);
+  return new Set(
+    ((data ?? []) as Array<{ signal_id: string | null }>)
+      .map((r) => r.signal_id)
+      .filter((x): x is string => !!x),
+  );
+}
+
 async function loadSignals(
   companyId: string,
   runDates: Map<string, string>,
+  provableVerbatim: ReadonlySet<string>,
 ): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
   const { data: sigRows } = await supabase
     .from("signals")
@@ -145,6 +165,9 @@ async function loadSignals(
       sourceTag: publicSignalTag(r, runDates),
       eventDate: r.event_date,
       strength: strengthForSignal(r.confidence_to_use, confirmed.has(r.id)),
+      // Gate 1: outside_voice signals are never own-words → always false here (loadSignals filters
+      // to outside_voice_about_client). Computed via the ONE predicate, not hard-coded (default-deny).
+      provablyVerbatim: isProvablyVerbatim(r.id, provableVerbatim),
     }));
 
   const order = { strong: 0, moderate: 1, thin: 2 } as const;
@@ -236,8 +259,15 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Baseline-run read dates (source-honesty ruling) ────────────────
         const runDates = await loadRunDates(companyId);
 
+        // ── Gate 1 (2026-08-25) render-honesty: the ONE provable-verbatim set. A signal renders
+        // quoted only if it is here — own-words verified against its own_words_page_snapshots raw
+        // page (own_words_candidates.judge_keep + judge_fidelity='verbatim'). Default-deny: every
+        // other signal (all outside reviews/press, market_context, competitor, analysis) is absent
+        // → renders un-quoted with attribution. Built once; used by beats 2, 5, and the cold-open.
+        const provableVerbatim = await loadProvableVerbatimSignalIds(companyId);
+
         // ── Outside-voice signals + strength (beats 0 fallback + 2) ────────
-        const { signals } = await loadSignals(companyId, runDates);
+        const { signals } = await loadSignals(companyId, runDates, provableVerbatim);
 
         // ── Act 1 (beat 1) — PUBLIC-ONLY ruling (2026-08-20): the company's own
         // PUBLIC voice. Rows are client-voice public claims: provenance =
@@ -425,6 +455,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
                 sourceTag: sig ? publicSignalTag(sig, runDates) : null,
                 eventDate: sig?.event_date ?? null,
                 statusDisputed: disputes(claim.statement),
+                // Gate 1: the featured outside claim renders quoted only if provably own-words verbatim.
+                provablyVerbatim: isProvablyVerbatim(sig?.id, provableVerbatim),
               };
             }
           }
@@ -432,7 +464,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         if (!coldOpen) {
           const fallback = signals.find((s) => s.strength === "strong") ?? null;
           if (fallback) {
-            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate, statusDisputed: disputes(fallback.text) };
+            coldOpen = { text: fallback.text, sourceTag: fallback.sourceTag, eventDate: fallback.eventDate, statusDisputed: disputes(fallback.text), provablyVerbatim: fallback.provablyVerbatim };
           }
         }
 
@@ -774,7 +806,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             if (picked.length >= 2) break;
             if (usedQuoteSignals.has(c.s.id)) continue;
             usedQuoteSignals.add(c.s.id);
-            picked.push({ text: c.text, sourceTag: publicSignalTag(c.s, runDates), eventDate: c.s.event_date ?? null });
+            // Gate 1: per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
+            // cluster keeps an own-words member quoted while an outside member downgrades.
+            picked.push({ text: c.text, sourceTag: publicSignalTag(c.s, runDates), eventDate: c.s.event_date ?? null,
+              provablyVerbatim: isProvablyVerbatim(c.s.id, provableVerbatim) });
           }
           f.quotes = picked;
         }

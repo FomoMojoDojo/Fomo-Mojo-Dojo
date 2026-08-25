@@ -21,6 +21,7 @@ import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
+import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -183,8 +184,12 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         {read.coldOpen ? (
           <blockquote className="mt-16 max-w-xl">
             <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-              {/* Ladder: signed lines (conflict / echo gap) render unquoted; the strongest-signal rung is a quote. */}
-              {read.coldOpen.quoted === false ? read.coldOpen.text : <>&ldquo;{read.coldOpen.text}&rdquo;</>}
+              {/* Ladder: signed lines (conflict / echo gap) render unquoted (quoted===false). Gate 1:
+                  the strongest-signal rung is quoted ONLY when provably own-words verbatim; an
+                  unprovable outside featured signal downgrades to un-quoted (stray marks trimmed). */}
+              {read.coldOpen.quoted !== false && read.coldOpen.provablyVerbatim === true
+                ? <>&ldquo;{read.coldOpen.text}&rdquo;</>
+                : (read.coldOpen.quoted === false ? read.coldOpen.text : stripEdgeQuotes(read.coldOpen.text))}
             </p>
             <footer className="mt-6 flex flex-col items-center gap-2">
               {/* S5 — the featured cold-open item carries the disputed marker too. */}
@@ -270,15 +275,16 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
                 ) : null}
               </>
             }
-            // FIX 3: the raw supporting quote(s) beneath the synthesized finding — verbatim captured
-            // page text, source-attributed. Omitted entirely when none is provable (tri-state honesty).
+            // FIX 3: the raw supporting quote(s) beneath the synthesized finding — source-attributed.
+            // Gate 1: per MEMBER — quote marks only when provably own-words verbatim; an unprovable
+            // outside member renders un-quoted (stray marks trimmed). Omitted when none provable.
             rightContent={
               f.quotes.length > 0 ? (
                 <div className="flex flex-col gap-6">
                   {f.quotes.map((q, i) => (
                     <div key={i}>
                       <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                        &ldquo;{q.text}&rdquo;
+                        {q.provablyVerbatim ? <>&ldquo;{q.text}&rdquo;</> : stripEdgeQuotes(q.text)}
                       </p>
                       {q.sourceTag ? <div className="mt-3"><SourceTag>{q.sourceTag.label}</SourceTag></div> : null}
                     </div>
@@ -580,7 +586,11 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
           <LedgerRow
             key={signal.id}
             leftLabel={signal.strength === "strong" ? "Outside" : "Outside"}
-            leftBody={signal.text}
+            // Gate 1: an outside excerpt renders UN-QUOTED (no false verbatim claim); stray stored
+            // quote chars are trimmed so no orphan mark remains beside the attribution. Own-words
+            // verbatim (provablyVerbatim) keeps its quote.
+            leftBody={signal.provablyVerbatim ? signal.text : stripEdgeQuotes(signal.text)}
+            quoted={signal.provablyVerbatim}
             muted={signal.strength !== "strong"}
             meta={signalMeta(signal)}
           />
@@ -615,7 +625,7 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
                     style={{ borderColor: "hsl(var(--fr-hair))" }}
                   >
                     <span className="fr-oneline min-w-0 flex-1 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }}>
-                      {item.text}
+                      {item.provablyVerbatim ? item.text : stripEdgeQuotes(item.text)}
                     </span>
                     <span
                       className="inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
