@@ -501,3 +501,54 @@ describe("D3 — anchor gate: unanchored outside signals never mint client claim
     expect(signalMatchesAnchor({ claim_text: "Belli Fratelli Roasters, 191 S Buena Vista", source_url: "https://yelp.com" }, ANCHORS)).toBe(false);
   });
 });
+
+import { extractConcreteTokens, retainConcreteEvidence } from "./evidenceMappers";
+
+describe("GATE 2 · E2 specificity guard — outside/customer thinning no longer drops concrete content", () => {
+  const outside = (text: string) => makeSignal({
+    signal_band: "outside", source_type: "public_baseline_run", structure_level: "extracted",
+    directness: "direct", claim_text: text, evidence_excerpt: text, source_url: "https://joe.coffee/x", topic: "market",
+  });
+
+  it("FAIL of the OLD thinning — a rich source EXPANDS past the generic lead (keeps pay/assault/staff)", () => {
+    // Edgewood 41c91fa4 shape: lead is generic valence, concrete allegations live in later clauses.
+    const src = "Edgewood is a non profit that is going down hill. The pay is terrible for what you have to endure and you get assaulted daily; there is never enough staff working each day.";
+    const c = mapSignalsToClaimCandidates("c", [outside(src)]);
+    expect(c).toHaveLength(1);
+    const st = c[0].claim.statement;
+    // the OLD lead-only output is REJECTED — the minted statement is not the thinned generic lead
+    expect(st).not.toBe("Edgewood is a non profit that is going down hill.");
+    // …and the concrete allegations the lead dropped now survive
+    expect(st.toLowerCase()).toContain("assaulted");
+    expect(st.toLowerCase()).toContain("staff");
+    expect(st.toLowerCase()).toContain("pay");
+  });
+
+  it("PASS — a pure-valence multi-sentence source thins to its lead (no concrete dropped)", () => {
+    // both sentences are generic valence: dropping the 2nd loses nothing concrete → lead-only is honest.
+    const src = "The coffee here is absolutely wonderful. Everyone should come and try it sometime.";
+    const c = mapSignalsToClaimCandidates("c", [outside(src)]);
+    expect(c).toHaveLength(1);
+    expect(c[0].claim.statement).toBe("The coffee here is absolutely wonderful.");
+  });
+
+  it("retainConcreteEvidence — structural detection stands ALONE (a number outside the lexicon is kept)", () => {
+    // no allegation word anywhere; the concrete fact is purely structural ($82K / 3.1) in the 2nd clause.
+    const src = "Reviews are mixed overall. Clinician salaries sit at ~$82K versus a market average near $147K.";
+    const out = retainConcreteEvidence(src);
+    expect(out).toContain("$82K");
+    expect(out).toContain("$147K");
+    expect(out).not.toBe("Reviews are mixed overall.");
+  });
+
+  it("extractConcreteTokens — the superset REFUSE primitive rejects a statement that drops a source number", () => {
+    const source = extractConcreteTokens("Comp & benefits 3.1/5; 'pay is low' cited in 7 reviews; salaries ~$82K.");
+    const thinned = extractConcreteTokens("Comp & benefits are a concern."); // drops 3.1/5, 7, 82k, pay
+    const dropsConcrete = [...source].some((tok) => !thinned.has(tok));
+    expect(dropsConcrete).toBe(true); // the assertion would REFUSE this over-thinned statement
+  });
+
+  it("control — a single-sentence source is returned unchanged (nothing to thin)", () => {
+    expect(retainConcreteEvidence("Great little neighborhood coffee spot.")).toBe("Great little neighborhood coffee spot.");
+  });
+});

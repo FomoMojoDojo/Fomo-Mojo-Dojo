@@ -191,6 +191,51 @@ function takeLeadClause(text: string) {
     .filter(Boolean)[0] || normalizeStatement(text);
 }
 
+// ── E2 SPECIFICITY GUARD (gate 2, 2026-08-25). The outside/customer band used to keep only the
+// lead sentence (takeLeadClause), dropping concrete allegations a rich source carried (Edgewood
+// "…going downhill" losing pay/assault/staffing). CONCRETE content is detected STRUCTURALLY first
+// — numbers, currency, percent, dates — which stands ALONE and never rots as allegations fall
+// outside a word list; a small allegation LEXICON is ONE ADDITIONAL input, not the whole test.
+// Deterministic; no model call.
+const CONCRETE_ROOTS = [
+  "assault", "pay", "wage", "salary", "overtime", "understaff", "staff",
+  "injur", "fire", "harass", "union", "burnout", "turnover", "layoff",
+  "strike", "lawsuit", "discriminat", "retaliat", "benefit", "safety",
+];
+export function extractConcreteTokens(text: string): Set<string> {
+  const t = String(text || "").toLowerCase();
+  const out = new Set<string>();
+  // STRUCTURAL (stands alone): currency, percent, ratios, any number (incl. k/m/bn suffix & years).
+  const structural = t.match(/\$\s?\d[\d,.]*|\d[\d,.]*\s*%|\b\d[\d,.]*(?:\/\d+)?(?:k|m|bn)?\b/g) || [];
+  for (const s of structural) {
+    // canonicalize to the numeric core so a $/% normalization difference can't split a token.
+    out.add(s.replace(/\s+/g, "").replace(/^\$/, "").replace(/%$/, ""));
+  }
+  // LEXICON (one additional input): concrete-allegation roots, substring-matched.
+  for (const root of CONCRETE_ROOTS) if (t.includes(root)) out.add(root);
+  return out;
+}
+
+// Keep the lead clause PLUS every later clause carrying concrete content the lead dropped, so a
+// multi-sentence source is never silently thinned below the concrete facts it stated. A single
+// sentence, or a lead that drops nothing concrete, is returned unchanged (prior behavior).
+export function retainConcreteEvidence(text: string): string {
+  const norm = normalizeStatement(text);
+  const sentences = norm.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length <= 1) return norm;
+  const lead = sentences[0];
+  const full = extractConcreteTokens(norm);
+  const inLead = extractConcreteTokens(lead);
+  const dropped = [...full].filter((tok) => !inLead.has(tok));
+  if (dropped.length === 0) return lead;
+  const kept = [lead];
+  for (let i = 1; i < sentences.length; i++) {
+    const st = extractConcreteTokens(sentences[i]);
+    if (dropped.some((tok) => st.has(tok))) kept.push(sentences[i]);
+  }
+  return kept.join(" ");
+}
+
 // D2 (generator root-cause): a claim must be intelligible standing ALONE. Two deterministic
 // context-incomplete shapes, both born from lead-clause truncation, are REFUSED (not minted):
 //   (1) a SINGLE-sentence claim carrying a dangling demonstrative — "that/this/these/those
@@ -234,7 +279,7 @@ function summarizeCustomerEvidence(text: string) {
   // signal's lead clause passes through, or nothing.
   const normalized = normalizeComparisonText(text);
   if (!normalized) return null;
-  return compactStatement(takeLeadClause(text));
+  return compactStatement(retainConcreteEvidence(text));
 }
 
 function summarizeOrganizationEvidence(claimText: string, evidenceText: string) {
@@ -270,7 +315,7 @@ function summarizeOutsideEvidence(text: string) {
   if (/(business to business relationships as partnerships|best roasted coffee to partner outlets)/.test(normalized)) {
     return null;
   }
-  return compactStatement(takeLeadClause(text));
+  return compactStatement(retainConcreteEvidence(text));
 }
 
 function synthesizeEvidenceStatement(signal: SignalDraft & { id?: string }) {
@@ -313,10 +358,31 @@ function canonicalizeClaimStatement(signal: SignalDraft & { id?: string }) {
   if (/(codi ed|co ff ee|coî|coé)/i.test(text)) return null;
   // D2: the declared (organization) band keeps FULL multi-sentence passages (thesis +
   // resolution), so its length ceiling is higher than the single-clause outside/customer cap.
-  const maxLen = signal.signal_band === "organization" ? 320 : 160;
+  // E2 (gate 2): when the outside/customer band RETAINED extra concrete clauses (multi-sentence
+  // AND concrete-bearing), the cap is raised so the un-thinning fix doesn't trade thinning for
+  // suppression. A single long sentence keeps the 160 cap (no new mints from that shape).
+  const multiSentence = /[.!?]\s+\S/.test(text);
+  const carriesConcrete = extractConcreteTokens(text).size > 0;
+  const maxLen = signal.signal_band === "organization" ? 320
+    : (multiSentence && carriesConcrete ? 480 : 160);
   if (text.length > maxLen) return null;
   if (text.length < 32 && GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(text))) return null;
   if (text.split(" ").length < 4) return null;
+
+  // E2 SPECIFICITY ASSERTION: the minted statement must not drop concrete content its source
+  // carried. If the source evidence has concrete tokens (structural or lexicon) the statement
+  // lacks, the extraction over-thinned → REFUSE (return null) rather than mint a generic
+  // lead-only claim. Scoped to outside/customer (the thinning bands); organization keeps its
+  // full passage via its own faithfulness path. Deterministic.
+  if (signal.signal_band !== "organization") {
+    const sourceConcrete = extractConcreteTokens(signal.evidence_excerpt || signal.claim_text || "");
+    if (sourceConcrete.size > 0) {
+      const stmtConcrete = extractConcreteTokens(text);
+      for (const tok of sourceConcrete) {
+        if (!stmtConcrete.has(tok)) return null;
+      }
+    }
+  }
 
   return text;
 }
@@ -1044,7 +1110,12 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
 
     return entry;
   }).filter((entry) => {
-    if (entry.claim.statement.length > 160) return false;
+    // E2 (gate 2): the final length gate mirrors canonicalizeClaimStatement's concrete-aware cap —
+    // a multi-sentence statement that carries concrete content (the un-thinned outside/customer
+    // shape) is allowed past 160 so this gate doesn't silently re-thin what the fix retained.
+    const s = entry.claim.statement;
+    const cap = (/[.!?]\s+\S/.test(s) && extractConcreteTokens(s).size > 0) ? 480 : 160;
+    if (s.length > cap) return false;
     if (GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(entry.claim.statement))) return false;
     return true;
   });

@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
 import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteProducer.ts";
+import { applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
@@ -678,6 +679,29 @@ export async function ingestPublicBaselineSignals(args: {
       if (produced.event_date) dated++;
     }
     console.log("[quote-producer] lifted", { quoted, dated, of_signals: signals.length });
+  }
+
+  // E4 EXCERPT GUARD (gate 2). Same basis as the quote producer (sourceTextByUrl = the retained
+  // source the extractor saw — fetched page on the OpenAI path, else the citation cited_text). A
+  // stored evidence_excerpt that is NOT a normalizeForHash-substring of that source is an analyst
+  // read, not the source's words → drop the excerpt+claim_text (attributed-summary path; gate 1
+  // renders it). The interpretation stays untouched in raw_payload. A draft with no retained
+  // source basis is left as-is (nothing to verify against; gate-3 re-crawl supplies the basis).
+  // Deterministic string op — zero model calls.
+  if (args.sourceTextByUrl && args.sourceTextByUrl.size > 0) {
+    const map = args.sourceTextByUrl;
+    let droppedExcerpts = 0;
+    for (const draft of signals) {
+      const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
+      if (!src) continue; // no retained basis → honest limit, leave as-is
+      const guarded = applyExcerptGuard(draft, src);
+      if (guarded.dropped) {
+        draft.evidence_excerpt = guarded.evidence_excerpt;
+        draft.claim_text = guarded.claim_text;
+        droppedExcerpts++;
+      }
+    }
+    console.log("[excerpt-guard] dropped_unverifiable", { droppedExcerpts, of_signals: signals.length });
   }
 
   // B2.0 ingest stamping: every outside_voice_about_client draft gets a syndication
