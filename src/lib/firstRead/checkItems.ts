@@ -38,10 +38,6 @@ export interface DeltaRender {
   // attribution formatter derives the registrable domain (sourceHost) and composes host/date.
   // Optional so a fixture may omit it (absent → no host). Never a link.
   sourceUrl?: string | null;
-  // RELEVANCE BACKSTOP: true iff this echoed/divergent pairing was struck 'orthogonal' by the
-  // relevance backstop — the paired source doesn't speak to the specific declared assertion. The
-  // row renders LINE-THROUGH in place (not deleted) and is out of the active counts.
-  relevanceStruck?: boolean;
 }
 
 export interface RawCheckItem {

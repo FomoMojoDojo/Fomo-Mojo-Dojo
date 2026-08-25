@@ -100,6 +100,10 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
       if (!see) continue;
       if (!isPublicProvenance(d.public_provenance)) continue; // internal/analytic see → excluded
       if (!admitPublicPerception(see)) continue; // framework token / analytic voice → excluded
+      // RELEVANCE BACKSTOP (operator ruling 2026-08-25): a relevance-'orthogonal' echoed/divergent
+      // pairing is OMITTED from the client render entirely (line-through retired) — same single
+      // selector as beat 4. The verdict stays recorded/reversible in claim_deltas.
+      if (isRelevanceStruck(d.relevance_verdict as "relevant" | "orthogonal" | null | undefined)) continue;
     }
 
     items.push({
@@ -118,9 +122,6 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
         reportedPrecision: d.reported_precision ?? null,
         capturedAt: d.captured_at ?? null,
         sourceUrl: d.source_url ?? null,
-        // RELEVANCE BACKSTOP — struck via the single shared selector (echoed/divergent only;
-        // publicly_silent has no paired source to judge).
-        relevanceStruck: isRelevanceStruck(d.relevance_verdict as "relevant" | "orthogonal" | null | undefined),
       },
     });
   }

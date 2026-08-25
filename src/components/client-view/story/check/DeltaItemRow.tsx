@@ -26,15 +26,14 @@ export default function DeltaItemRow({
   const rejected = item.verdict === "rejected";
   const notImportant = item.verdict === "not_important";
   const silent = d.deltaType === "publicly_silent" || !d.see;
-  // RELEVANCE BACKSTOP: an 'orthogonal' pairing renders LINE-THROUGH in place (not deleted) —
-  // the paired source doesn't speak to this specific declared assertion.
-  const orthogonal = d.relevanceStruck === true;
+  // RELEVANCE BACKSTOP (operator ruling 2026-08-25): relevance-'orthogonal' pairings are omitted
+  // upstream in assembleDeltaItems, so they never reach this row — no line-through render remains.
   // Overlap rule: the attribution line only when there is no quote (a quote-bearing signal
   // already shows its date via "As captured" — no double-date, and no host on that receipt).
   const reported = d.quote ? null : formatSourceAttribution(d.sourceUrl, d.reportedEventDate, d.capturedAt);
 
   return (
-    <div className={`cvs-delta-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}${notImportant ? " is-notimportant" : ""}${orthogonal ? " is-orthogonal" : ""}`}>
+    <div className={`cvs-delta-item${rejected ? " is-rejected" : ""}${confirmed ? " is-confirmed" : ""}${notImportant ? " is-notimportant" : ""}`}>
       <div className="cvs-delta-pair">
         <div className="cvs-delta-side cvs-delta-say">
           <p className="cvs-delta-label">{SAY_LABEL}</p>
@@ -45,7 +44,7 @@ export default function DeltaItemRow({
           {silent ? (
             <p className="cvs-delta-text is-silent">{SILENT_SEE_LINE}</p>
           ) : (
-            <p className="cvs-delta-text" style={orthogonal ? { textDecoration: "line-through", opacity: 0.6 } : undefined}>{d.see}</p>
+            <p className="cvs-delta-text">{d.see}</p>
           )}
           {/* verbatim receipt on the see side; SignalQuote renders nothing when quote is null */}
           <SignalQuote quote={d.quote} eventDate={d.eventDate} />

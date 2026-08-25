@@ -213,17 +213,19 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
       order.push(p.statementId);
     }
     // Only confirmed/contradicted pairs carry a public-record side — those are the evidence.
-    // RELEVANCE BACKSTOP: an 'orthogonal' pair is STILL kept as evidence (so it renders
-    // line-through in place, not deleted) — but it does not drive the statement verdict below.
-    if (p.verdict === "confirmed" || p.verdict === "contradicted") st.evidence.push(p);
+    // RELEVANCE BACKSTOP (operator ruling 2026-08-25): a relevance-'orthogonal' pair is OMITTED
+    // from the client render entirely (the line-through-in-place render is retired) — it never
+    // enters `evidence`, so it neither shows nor drives the verdict. It stays fully recorded and
+    // reversible in claim_deltas. The single shared selector isRelevanceActive is the gate.
+    if ((p.verdict === "confirmed" || p.verdict === "contradicted") && isRelevanceActive(p.relevanceVerdict)) st.evidence.push(p);
   }
   for (const st of byId.values()) {
-    // The statement verdict is computed from the ACTIVE evidence only (orthogonal struck rows
-    // excluded via the single shared selector), so a spurious echo/contradiction that rests on an
-    // orthogonal source no longer flips the statement — it falls to unechoed and stops counting.
-    const active = st.evidence.filter((e) => isRelevanceActive(e.relevanceVerdict));
-    const hasContra = active.some((e) => e.verdict === "contradicted");
-    const hasEcho = active.some((e) => e.verdict === "confirmed");
+    // Verdict from the (now already active-only) evidence: contradicted if ANY contradicted, else
+    // confirmed if ANY echoed, else not-echoed. A confirmed/contradicted statement therefore always
+    // has >=1 rendered evidence pair — it can never be all-struck (invariant asserted in tests);
+    // an all-struck statement falls to unechoed and renders the clean doesn't-echo empty state.
+    const hasContra = st.evidence.some((e) => e.verdict === "contradicted");
+    const hasEcho = st.evidence.some((e) => e.verdict === "confirmed");
     st.verdict = hasContra ? "contradicted" : hasEcho ? "confirmed" : "unechoed";
   }
   // FIX 1 (2026-08-25): order statements by their FINAL verdict, not the pre-strike pair order that
@@ -234,9 +236,9 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
   // not-echoed → confirmed); within a group, strongest ACTIVE evidence first (evidenceRank desc, tie
   // most-recent active eventDate desc). Stable (JS sort) → first-appearance breaks full ties (e.g.
   // not-echoed statements with no active evidence). Pure reorder: gapCounts are unaffected.
-  const activeOf = (st: FRGapStatement) => st.evidence.filter((e) => isRelevanceActive(e.relevanceVerdict));
-  const maxRank = (st: FRGapStatement) => activeOf(st).reduce((m, e) => Math.max(m, e.evidenceRank ?? 0), 0);
-  const maxDate = (st: FRGapStatement) => activeOf(st).reduce((m, e) => (e.eventDate && e.eventDate > m ? e.eventDate : m), "");
+  // `evidence` is already active-only (struck pairs were never pushed), so these read it directly.
+  const maxRank = (st: FRGapStatement) => st.evidence.reduce((m, e) => Math.max(m, e.evidenceRank ?? 0), 0);
+  const maxDate = (st: FRGapStatement) => st.evidence.reduce((m, e) => (e.eventDate && e.eventDate > m ? e.eventDate : m), "");
   return order.map((k) => byId.get(k)!).sort((a, b) =>
     (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9)
     || maxRank(b) - maxRank(a)

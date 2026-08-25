@@ -21,7 +21,6 @@ import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
-import { isRelevanceStruck } from "@/lib/firstRead/relevanceActive";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -746,9 +745,10 @@ function ContradictionWhy({ text }: { text: string }) {
 }
 
 function StatementEvidence({ statement }: { statement: FRGapStatement }) {
-  // Truly record-silent = no evidence pair at all (a publicly_silent statement). A statement whose
-  // only pairs were struck orthogonal by the relevance backstop keeps those pairs here so they
-  // render LINE-THROUGH IN PLACE (not deleted) — the record of the judgment stays visible.
+  // Record-silent = no ACTIVE evidence pair. RELEVANCE BACKSTOP (operator ruling 2026-08-25):
+  // relevance-'orthogonal' pairs are omitted upstream (groupGapStatements never adds them to
+  // `evidence`), so an all-struck statement arrives here with empty evidence and shows the clean
+  // doesn't-echo empty state — the line-through-in-place render is retired on the client surface.
   if (statement.evidence.length === 0) {
     return (
       <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
@@ -760,10 +760,8 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
     <div className="flex flex-col gap-8">
       {statement.evidence.map((pair) => {
         const recency = formatMonthYear(pair.eventDate);
-        // RELEVANCE BACKSTOP: an 'orthogonal' pair renders struck-through and does not count.
-        const struck = isRelevanceStruck(pair.relevanceVerdict);
         return (
-          <div key={pair.id} style={struck ? { opacity: 0.55 } : undefined}>
+          <div key={pair.id}>
             <div className="mb-3 flex flex-wrap items-center gap-4">
               {/* S5 — disputed marker per pair; the pair is NOT hidden. */}
               {pair.statusDisputed ? <StatusDisputedChip /> : null}
@@ -771,10 +769,7 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
             </div>
             {pair.record ? (
-              <p
-                className="text-lg font-light leading-relaxed"
-                style={{ color: "hsl(var(--fr-muted))", textDecoration: struck ? "line-through" : undefined }}
-              >
+              <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
                 {pair.record}
               </p>
             ) : null}
