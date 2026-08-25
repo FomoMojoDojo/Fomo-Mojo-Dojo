@@ -52,8 +52,14 @@ const all = argv.includes("--all");
 const onlyCompany = argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
 const fromStep = argv.find((a) => a.startsWith("--from="))?.split("=")[1] ?? null;
 const skipArg = argv.find((a) => a.startsWith("--skip="))?.split("=")[1] ?? null;
+// --only=<step,…>: restrict this run to EXACTLY the named steps (in dependency order). Reuses
+// parseSkip's name validation. Composes with --from. Used to run a single step (e.g. the net-new
+// conflict_explanations) surgically, without re-running append-only steps like score.
+const onlyArg = argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? null;
 let skipSet: Set<FillStep>;
-try { skipSet = parseSkip(skipArg); } catch (e) { console.error((e as Error).message); process.exit(1); }
+let onlySet: Set<FillStep> | null = null;
+try { skipSet = parseSkip(skipArg); if (onlyArg) onlySet = parseSkip(onlyArg); }
+catch (e) { console.error((e as Error).message); process.exit(1); }
 type Step = FillStep;
 
 function psql<T = unknown>(sql: string): T {
@@ -141,6 +147,12 @@ const q = {
   outsideSignals: (id: string) => count(`SELECT count(*) FROM signals WHERE company_id='${id}' AND signal_band='outside' AND voice_class='outside_voice_about_client' AND superseded_at IS NULL AND length(trim(coalesce(evidence_excerpt,'')))>0;`),
   recurrenceVerdicts: (id: string) => count(`SELECT count(*) FROM signal_recurrence_verdicts WHERE company_id='${id}';`),
   deltasPublic: (id: string) => count(`SELECT count(*) FROM claim_deltas WHERE company_id='${id}' AND pairing_kind='public_vs_public';`),
+  // Grounded conflict explanations (the step's before/after metric).
+  conflictGrounded: (id: string) => count(`SELECT count(*) FROM claim_deltas WHERE company_id='${id}' AND pairing_kind='public_vs_public' AND delta_type='divergent' AND conflict_explanation_grounded=true;`),
+  // IDEMPOTENCY SCOPE: divergent public_vs_public pairs NOT yet processed (grounded IS NULL). Once a
+  // pair is grounded (true) or rejected-and-cleared (false) it is excluded, so a re-run makes 0 calls.
+  conflictNullPairIds: (id: string): string[] =>
+    psql<string[] | null>(`SELECT coalesce(jsonb_agg(id ORDER BY id), '[]'::jsonb) FROM claim_deltas WHERE company_id='${id}' AND pairing_kind='public_vs_public' AND delta_type='divergent' AND conflict_explanation_grounded IS NULL;`) ?? [],
   questions: (id: string) => count(`SELECT count(*) FROM first_read_open_questions WHERE company_id='${id}' AND status='live' AND coalesce(source_kind,'')<>'status_conflict';`),
   statusConflicts: (id: string) => count(`SELECT count(*) FROM first_read_open_questions WHERE company_id='${id}' AND status='live' AND source_kind='status_conflict';`),
   scoreRows: (id: string) => count(`SELECT count(*) FROM mojo_scores WHERE company_id='${id}' AND methodology_version LIKE 'outside-%';`),
@@ -168,8 +180,11 @@ function selectCompanies(): Company[] {
 }
 
 function stepsToRun(): Step[] {
-  try { return stepsFrom(fromStep); }
-  catch (e) { console.error((e as Error).message); process.exit(1); }
+  try {
+    let steps = stepsFrom(fromStep);
+    if (onlySet) steps = steps.filter((s) => onlySet!.has(s));
+    return steps;
+  } catch (e) { console.error((e as Error).message); process.exit(1); }
 }
 function countsFor(c: Company): FillCounts {
   return { hasWebsite: !!c.website?.trim(), ownWords: q.ownWords(c.id), outsideSignals: q.outsideSignals(c.id) };
@@ -180,6 +195,7 @@ function stepMetric(step: Step, c: Company): number {
     case "own_words": return q.ownWords(c.id);
     case "recurrence": return q.recurrenceVerdicts(c.id);
     case "deltas_public": return q.deltasPublic(c.id);
+    case "conflict_explanations": return q.conflictGrounded(c.id);
     case "open_questions": return q.questions(c.id);
     case "status_conflict": return q.statusConflicts(c.id);
     case "score": return q.scoreRows(c.id);
@@ -254,6 +270,32 @@ async function runDeltasPublic(c: Company, counts: FillCounts): Promise<{ before
   return { before, after, outcome: `ran:chunks=${totalChunks}` };
 }
 
+// GATE 1c (net-new): grounded "what differs" conflict explanations for DIVERGENT public_vs_public
+// pairs. IS NULL-scoped (idempotency: only unprocessed pairs), chunked under the 150s edge ceiling,
+// resumable (a cut chunk's pairs stay NULL → next run picks them up), routed external (all-public) by
+// the generator. Writes nothing itself — the edge fn UPDATEs claim_deltas.conflict_explanation* by id.
+// CONFLICT_CHUNK = 4: the generator processes pairs sequentially and each pair is up to 4 external
+// gpt-4.1-mini calls (gen 0.2 → judge → regen 0.5 → judge), so 4 pairs stays well under 150s.
+const CONFLICT_CHUNK = 4;
+async function runConflictExplanations(c: Company, _counts: FillCounts): Promise<{ before: number; after: number; outcome: string }> {
+  const before = q.conflictGrounded(c.id);
+  const nullPairs = q.conflictNullPairIds(c.id); // idempotency scope: grounded IS NULL only
+  if (nullPairs.length === 0) return { before, after: before, outcome: "skipped:no_ungrounded_pairs" };
+  const chunks: string[][] = [];
+  for (let i = 0; i < nullPairs.length; i += CONFLICT_CHUNK) chunks.push(nullPairs.slice(i, i + CONFLICT_CHUNK));
+  let okChunks = 0, failedChunks = 0;
+  for (const chunk of chunks) {
+    try {
+      const res = await invokeFn("generate-conflict-explanation", { company_id: c.id, write: true, pair_ids: chunk }, 150_000);
+      if (res.ok) okChunks++;
+      else failedChunks++; // deterministic reject (403 frozen etc.) — resumable: NULL pairs remain
+    } catch { failedChunks++; /* transient: exhausted retries; remaining NULL pairs resume next run */ }
+  }
+  const after = q.conflictGrounded(c.id);
+  if (okChunks === 0) return { before, after, outcome: `failed:all_chunks(${failedChunks})` };
+  return { before, after, outcome: failedChunks > 0 ? `ran:pairs=${nullPairs.length},chunks_failed=${failedChunks}` : `ran:pairs=${nullPairs.length}` };
+}
+
 async function runOpenQuestions(c: Company, _counts: FillCounts): Promise<{ before: number; after: number; outcome: string }> {
   const before = q.questions(c.id);
   const plan = await invokeFn("generate-open-questions", { company_id: c.id, plan: true }, 120_000);
@@ -315,6 +357,7 @@ const RUNNERS: Record<Step, (c: Company, counts: FillCounts) => Promise<{ before
   own_words: runOwnWords,
   recurrence: runRecurrence,
   deltas_public: runDeltasPublic,
+  conflict_explanations: runConflictExplanations,
   open_questions: runOpenQuestions,
   status_conflict: runStatusConflict,
   score: runScore,
@@ -328,6 +371,7 @@ function dryPlan(c: Company): void {
     own_words: `own_words=${counts.ownWords}`,
     recurrence: `outside_signals=${counts.outsideSignals}`,
     deltas_public: `deltas_public=${q.deltasPublic(c.id)}`,
+    conflict_explanations: `ungrounded_divergent=${q.conflictNullPairIds(c.id).length}`,
     open_questions: `questions=${q.questions(c.id)}`,
     status_conflict: `conflicts=${q.statusConflicts(c.id)}`,
     score: `score_rows=${q.scoreRows(c.id)}`,

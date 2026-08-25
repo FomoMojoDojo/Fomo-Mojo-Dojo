@@ -5,6 +5,7 @@ export const FILL_STEP_ORDER = [
   "own_words",
   "recurrence",
   "deltas_public",
+  "conflict_explanations",
   "open_questions",
   "status_conflict",
   "score",
@@ -44,6 +45,7 @@ export function skipReason(step: FillStep, c: FillCounts): string | null {
     case "own_words": return c.hasWebsite ? null : "no_website";
     case "recurrence": return c.outsideSignals >= 2 ? null : "insufficient_signals";
     case "deltas_public": return c.ownWords > 0 ? null : "no_own_words";
+    case "conflict_explanations": return null; // always eligible; runner reports empty when no ungrounded divergent pairs
     case "open_questions": return null; // always runs; finalize marks empty when no anchors
     case "status_conflict": return null; // deterministic, always runs
     case "score": return c.outsideSignals >= 10 ? null : "ineligible_lt10_signals";

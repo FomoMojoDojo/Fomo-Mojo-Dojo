@@ -11,12 +11,12 @@ const FULL: FillCounts = { hasWebsite: true, ownWords: 5, outsideSignals: 100 };
 describe("fill plan — step order + resume", () => {
   it("runs the seven steps in dependency order", () => {
     expect([...FILL_STEP_ORDER]).toEqual([
-      "own_words", "recurrence", "deltas_public", "open_questions", "status_conflict", "score", "our_read",
+      "own_words", "recurrence", "deltas_public", "conflict_explanations", "open_questions", "status_conflict", "score", "our_read",
     ]);
   });
   it("stepsFrom() with no arg returns the full order; --from resumes; unknown throws", () => {
     expect(stepsFrom(null)).toEqual([...FILL_STEP_ORDER]);
-    expect(stepsFrom("deltas_public")).toEqual(["deltas_public", "open_questions", "status_conflict", "score", "our_read"]);
+    expect(stepsFrom("deltas_public")).toEqual(["deltas_public", "conflict_explanations", "open_questions", "status_conflict", "score", "our_read"]);
     expect(stepsFrom("score")).toEqual(["score", "our_read"]);
     expect(() => stepsFrom("nope")).toThrow(/not a step/);
   });
