@@ -3,6 +3,7 @@
 
 import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
 import { formatFullDate } from "./deriveSourceTag";
+import { isRelevanceActive } from "@/lib/firstRead/relevanceActive";
 
 // ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
 // A plain-language one-liner built ONLY from fields already on the pair/statement rows (both sides'
@@ -172,11 +173,17 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
       order.push(p.statementId);
     }
     // Only confirmed/contradicted pairs carry a public-record side — those are the evidence.
+    // RELEVANCE BACKSTOP: an 'orthogonal' pair is STILL kept as evidence (so it renders
+    // line-through in place, not deleted) — but it does not drive the statement verdict below.
     if (p.verdict === "confirmed" || p.verdict === "contradicted") st.evidence.push(p);
   }
   for (const st of byId.values()) {
-    const hasContra = st.evidence.some((e) => e.verdict === "contradicted");
-    const hasEcho = st.evidence.some((e) => e.verdict === "confirmed");
+    // The statement verdict is computed from the ACTIVE evidence only (orthogonal struck rows
+    // excluded via the single shared selector), so a spurious echo/contradiction that rests on an
+    // orthogonal source no longer flips the statement — it falls to unechoed and stops counting.
+    const active = st.evidence.filter((e) => isRelevanceActive(e.relevanceVerdict));
+    const hasContra = active.some((e) => e.verdict === "contradicted");
+    const hasEcho = active.some((e) => e.verdict === "confirmed");
     st.verdict = hasContra ? "contradicted" : hasEcho ? "confirmed" : "unechoed";
   }
   return order.map((k) => byId.get(k)!);

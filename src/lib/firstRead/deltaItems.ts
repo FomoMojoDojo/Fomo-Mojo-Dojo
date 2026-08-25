@@ -15,6 +15,7 @@
 
 import { isPublicProvenance } from "@/lib/registerGuard";
 import { admitPublicPerception } from "@/lib/firstRead/perceptionGuard";
+import { isRelevanceStruck } from "@/lib/firstRead/relevanceActive";
 import type { RawCheckItem } from "@/lib/firstRead/checkItems";
 
 export interface DeltaInput {
@@ -38,6 +39,9 @@ export interface DeltaInput {
   captured_at?: string | null;
   // source_url of the SAME backing signal the reported date came from (same-signal invariant).
   source_url?: string | null;
+  // RELEVANCE BACKSTOP: the machine relevance overlay (claim_deltas.relevance_verdict).
+  // 'orthogonal' ⇒ struck (line-through, out of counts); NULL/'relevant' ⇒ active.
+  relevance_verdict?: string | null;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -114,6 +118,9 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
         reportedPrecision: d.reported_precision ?? null,
         capturedAt: d.captured_at ?? null,
         sourceUrl: d.source_url ?? null,
+        // RELEVANCE BACKSTOP — struck via the single shared selector (echoed/divergent only;
+        // publicly_silent has no paired source to judge).
+        relevanceStruck: isRelevanceStruck(d.relevance_verdict as "relevant" | "orthogonal" | null | undefined),
       },
     });
   }

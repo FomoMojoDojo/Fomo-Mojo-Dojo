@@ -93,6 +93,10 @@ export type FRGapPair = {
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */
   statusDisputed?: boolean;
+  /** RELEVANCE BACKSTOP: the machine relevance overlay (claim_deltas.relevance_verdict).
+   *  'orthogonal' ⇒ the paired source doesn't speak to this specific assertion — out of the
+   *  active counts, rendered line-through in place. NULL/'relevant' ⇒ active (unchanged). */
+  relevanceVerdict?: "relevant" | "orthogonal" | null;
 };
 
 /** The unit of echo is the STATEMENT (operator ruling 2026-08-21). A declared own-words

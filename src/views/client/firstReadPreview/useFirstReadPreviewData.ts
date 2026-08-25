@@ -447,12 +447,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded")
+          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded, relevance_verdict")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
           .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null }>;
+        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null; relevance_verdict: string | null }>;
         const gapClaimIds = [
           ...new Set(
             deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x),
@@ -513,6 +513,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             conflictExplanation: d.conflict_explanation_grounded === true ? (d.conflict_explanation ?? null) : null,
             evidenceRank,
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
+            // RELEVANCE BACKSTOP overlay — carried to the single shared selector (counts + struck render).
+            relevanceVerdict: (d.relevance_verdict === "relevant" || d.relevance_verdict === "orthogonal") ? d.relevance_verdict : null,
           });
         }
         // A1 order — by discussability: contradicted → unechoed → confirmed; strength desc within.

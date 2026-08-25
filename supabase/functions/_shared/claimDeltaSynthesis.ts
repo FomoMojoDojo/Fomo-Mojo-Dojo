@@ -265,7 +265,10 @@ const STOP_WORDS = new Set([
   "they", "we", "our", "you", "your", "not", "no", "but", "from", "have", "has",
 ]);
 
-function meaningfulTokens(text: string): Set<string> {
+// Exported so the relevance backstop reuses the EXACT tokenizer that gates the
+// deltas (no parallel tokenizer, no stemming) — its distinctiveOverlap must be
+// computed on the same token set the prefilter/verdict reason about.
+export function meaningfulTokens(text: string): Set<string> {
   return new Set(
     normalizeForHash(text)
       .split(/[^a-z0-9]+/)

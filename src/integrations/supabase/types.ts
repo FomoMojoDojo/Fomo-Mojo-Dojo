@@ -395,6 +395,12 @@ export type Database = {
           pairing_basis: string
           pairing_kind: string
           public_claim_id: string | null
+          relevance_judged_at: string | null
+          relevance_model: string | null
+          relevance_provider: string | null
+          relevance_reason: string | null
+          relevance_span: string | null
+          relevance_verdict: string | null
         }
         Insert: {
           company_id: string
@@ -409,6 +415,12 @@ export type Database = {
           pairing_basis?: string
           pairing_kind?: string
           public_claim_id?: string | null
+          relevance_judged_at?: string | null
+          relevance_model?: string | null
+          relevance_provider?: string | null
+          relevance_reason?: string | null
+          relevance_span?: string | null
+          relevance_verdict?: string | null
         }
         Update: {
           company_id?: string
@@ -423,6 +435,12 @@ export type Database = {
           pairing_basis?: string
           pairing_kind?: string
           public_claim_id?: string | null
+          relevance_judged_at?: string | null
+          relevance_model?: string | null
+          relevance_provider?: string | null
+          relevance_reason?: string | null
+          relevance_span?: string | null
+          relevance_verdict?: string | null
         }
         Relationships: [
           {
