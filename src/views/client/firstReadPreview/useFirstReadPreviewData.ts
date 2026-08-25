@@ -21,6 +21,7 @@ import {
   PUBLIC_PROVENANCE,
   uploadDerivedClaimIds,
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
+import { normalizeForHash } from "../../../../supabase/functions/_shared/contentIdentity.ts";
 import { deriveSourceTag, formatFullDate } from "./deriveSourceTag";
 import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
@@ -62,7 +63,31 @@ type SignalRow = {
   source_id: string | null;
   event_date: string | null;
   confidence_to_use: string | null;
+  // Verbatim-verify (beat-4 record side): the excerpt is shown as a source QUOTE only when it is
+  // provably verbatim — structure_level ∈ raw/extracted (not model-'interpreted') AND the excerpt is
+  // a normalizeForHash-substring of the signal's captured claim_text.
+  claim_text: string | null;
+  structure_level: string | null;
 };
+
+/**
+ * The verbatim source quote for a record side, or null when none is provable.
+ * Tri-state honesty (a beat-4 record must NEVER show a synthesized claim as a source quote):
+ *   (a) a backing outside signal whose evidence_excerpt is non-empty, NOT model-'interpreted', and is
+ *       a normalizeForHash-substring of the signal's claim_text → return that verbatim excerpt.
+ *   (b) a signal exists but the excerpt is empty / 'interpreted' / not a clean substring → null.
+ *   (c) no backing signal → null.
+ * On null the render shows the source attribution (host · date) with NO quote — never the claim text.
+ */
+function verbatimRecord(sig: SignalRow | null): string | null {
+  if (!sig) return null; // (c)
+  const excerpt = (sig.evidence_excerpt ?? "").trim();
+  if (!excerpt) return null; // (b) empty
+  if (sig.structure_level === "interpreted") return null; // (b) synthesized signal text — not a verbatim quote
+  const src = normalizeForHash(sig.claim_text ?? "");
+  if (!src || !src.includes(normalizeForHash(excerpt))) return null; // (b) not a provable substring of captured text
+  return excerpt; // (a)
+}
 
 /** Baseline-run read dates keyed by String(public_baseline_runs.id). */
 async function loadRunDates(companyId: string): Promise<Map<string, string>> {
@@ -92,7 +117,7 @@ async function loadSignals(
 ): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
   const { data: sigRows } = await supabase
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level")
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     .eq("voice_class", "outside_voice_about_client")
@@ -143,7 +168,7 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   if (!sigIds.length) return out;
   const { data: sigs } = await supabase
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level")
     .in("id", sigIds)
     // R1: outside band only — an organization-band (e.g. uploaded) signal must never
     // supply the source tag for a public-record row.
@@ -241,7 +266,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const { data: dSigs } = dSigIds.length
           ? await supabase
               .from("signals")
-              .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, voice_class")
+              .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, voice_class, claim_text, structure_level")
               .in("id", dSigIds)
           : { data: [] };
         const dSigById = new Map(
@@ -475,7 +500,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             statementId: d.declared_claim_id, // own-words id — beat 4 groups on this (unit = statement)
             verdict,
             declared: declaredClaim.statement,
-            record: publicClaim?.statement ?? null,
+            // RECORD HONESTY: show the VERBATIM source excerpt, never the synthesized publicClaim
+            // statement (which can carry synthesis garble, e.g. "team"→"Cafe operators"). No provable
+            // verbatim backing ⇒ null ⇒ the render shows source attribution with NO quote.
+            record: verbatimRecord(sig),
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
             recordHost: sig?.source_url ? bareHost(sig.source_url) : null,
