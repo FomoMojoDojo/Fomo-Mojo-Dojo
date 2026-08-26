@@ -259,7 +259,12 @@ async function loadEligibleSignals(
     .from("signals")
     .select("id, claim_text, source_url, syndicated_from_client, voice_class")
     .eq("company_id", companyId)
-    .eq("signal_band", "outside");
+    .eq("signal_band", "outside")
+    // Gate 3 step 2: dropped fabrications (superseded_at) and held-pending-recrawl
+    // paraphrases (held_at) stop counting in recurrence — a fabrication must not
+    // inflate a finding's host count anywhere.
+    .is("superseded_at", null)
+    .is("held_at", null);
   if (error) throw new Error(`signals load failed: ${error.message}`);
 
   const signals: EligibleSignal[] = [];

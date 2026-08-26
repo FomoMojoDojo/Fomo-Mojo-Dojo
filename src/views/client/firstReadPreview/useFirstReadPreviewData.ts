@@ -142,7 +142,10 @@ async function loadSignals(
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     .eq("voice_class", "outside_voice_about_client")
-    .is("superseded_at", null);
+    // Gate 3 step 2: exclude dropped fabrications (superseded_at) AND held-pending-recrawl
+    // paraphrases (held_at) from the client's outside record.
+    .is("superseded_at", null)
+    .is("held_at", null);
   const rows = (sigRows ?? []) as SignalRow[];
 
   // R4: strong = recurrence-confirmed across independent sources.
@@ -200,7 +203,11 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
     .in("id", sigIds)
     // R1: outside band only — an organization-band (e.g. uploaded) signal must never
     // supply the source tag for a public-record row.
-    .eq("signal_band", "outside");
+    .eq("signal_band", "outside")
+    // Gate 3 step 2: a dropped fabrication or a held-pending-recrawl signal must never
+    // supply a beat-4 record source tag.
+    .is("superseded_at", null)
+    .is("held_at", null);
   const byId = new Map(((sigs ?? []) as SignalRow[]).map((s) => [s.id, s]));
   for (const r of refRows) {
     const s = byId.get(r.signal_id);
@@ -751,6 +758,9 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ? await supabase.from("signals")
               .select("id, event_date, source_id, evidence_excerpt, claim_text, structure_level, source_url, source_title, confidence_to_use")
               .in("id", finSigIds)
+              // Gate 3 step 2: dropped/held outside signals must not surface as finding citations.
+              .is("superseded_at", null)
+              .is("held_at", null)
           : { data: [] };
         const finSigById = new Map(
           ((finSigs ?? []) as SignalRow[]).map((s) => [s.id, s]),
