@@ -21,6 +21,7 @@ export type PruneCandidateRow = {
   id: string;
   status?: string | null;
   provenance: string | null;
+  claim_type?: string | null;
 };
 
 export function selectPruneVictims(
@@ -31,6 +32,13 @@ export function selectPruneVictims(
   return rows
     .filter((r) =>
       r.provenance === "public_observed" &&
+      // OWN-WORDS CARVE-OUT (R1, 2026-08-26): own_words claims are provenance='public_observed'
+      // but are NOT signal-derived — mapSignalsToClaimCandidates never emits them (they are written
+      // by extract-own-words from own_words_page_snapshots). So they are NEVER in candidateIds and a
+      // rebuild CANNOT re-mint this class. Pruning them here silently emptied beat-3 "In your words"
+      // (gate-2 recompute did exactly that for CB2 + Edgewood). Excluded structurally at the
+      // victim-selection site: a rebuild may only prune what a rebuild can re-mint.
+      r.claim_type !== "own_words" &&
       !manualClaimIds.has(r.id) &&
       r.status !== "struck" &&
       !candidateIds.has(r.id)

@@ -205,13 +205,14 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
 
   const { data: allExistingRows, error: loadExistingErr } = await supabase
     .from("claims")
-    .select("id, state, status, provenance")
+    .select("id, state, status, provenance, claim_type")
     .eq("company_id", companyId);
   if (loadExistingErr) throw new Error(`Failed loading existing claims for reconcile: ${loadExistingErr.message}`);
 
-  // Build id→state map for non-manual claims only. provenance is carried so the
-  // R2 prune (selectPruneVictims) can scope itself to public_observed — RB-1.
-  const existingRows = (allExistingRows ?? []) as Array<{ id: string; state: string; status?: string | null; provenance: string | null }>;
+  // Build id→state map for non-manual claims only. provenance is carried so the R2 prune
+  // (selectPruneVictims) can scope itself to public_observed — RB-1; claim_type is carried so the
+  // prune can carve out own_words (public_observed but not signal-derived — R1 carve-out).
+  const existingRows = (allExistingRows ?? []) as Array<{ id: string; state: string; status?: string | null; provenance: string | null; claim_type?: string | null }>;
   const existingStateById = new Map<string, string>();
   // RB-3: birth provenance of every existing claim. deriveClaimProvenance is
   // data-level and drifts as the signal corpus changes, but INT-2 freezes

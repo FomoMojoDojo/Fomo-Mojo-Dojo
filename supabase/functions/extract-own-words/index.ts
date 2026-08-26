@@ -187,6 +187,11 @@ Deno.serve(async (req) => {
     const company_id = String(body.company_id ?? "");
     const mode = String(body.mode ?? "plan");
     const urlFilter: string[] | null = Array.isArray(body.urls) ? body.urls.map(String) : null;
+    // R1 re-snapshot (2026-08-26): when true, plan mode does NOT reuse the existing immutable snapshot
+    // — it re-fetches the (redesigned) page and, when the content identity differs, writes a NEW
+    // moment-in-time snapshot row (drift; old rows are never touched or merged). An unchanged page
+    // yields the same hash → no duplicate row. Absent/false = the default reuse-existing behaviour.
+    const resnapshot = body.resnapshot === true;
     // Plan run_id groups a logical plan run across its batches (the caller passes one uuid for all
     // batches). Absent → one is minted per invocation. Write mode ignores it (reads the latest run).
     const planRunId: string | null = typeof body.run_id === "string" && body.run_id ? body.run_id : null;
@@ -236,19 +241,25 @@ Deno.serve(async (req) => {
     for (const url of urls) {
       if (Date.now() - startedAt > WALL_MS) { stoppedForTime = true; break; }
       const meta = byUrl.get(url)!;
-      // Snapshot REUSE (R1/step-2): if this URL already has an immutable snapshot, judge against
-      // that exact stored text — do NOT re-fetch, do NOT write a new snapshot. Only fetch when absent.
+      // Snapshot REUSE (R1/step-2): by default, if this URL already has an immutable snapshot, judge
+      // against that exact stored text — do NOT re-fetch, do NOT write a new snapshot. Only fetch when
+      // absent. R1 RE-SNAPSHOT (resnapshot=true): skip reuse, re-fetch the redesigned page, and write a
+      // NEW moment-in-time row ONLY when the content identity is new (drift never merges; unchanged =
+      // same hash = no duplicate row).
       let cleanText = "";
       let reused = false;
-      const { data: existingSnap } = await supabase
-        .from("own_words_page_snapshots")
-        .select("clean_text")
-        .eq("company_id", company_id).eq("source_url", url)
-        .order("fetched_at", { ascending: false }).limit(1).maybeSingle();
-      if (existingSnap && typeof (existingSnap as { clean_text?: string }).clean_text === "string") {
-        cleanText = (existingSnap as { clean_text: string }).clean_text;
-        reused = true;
-      } else {
+      if (!resnapshot) {
+        const { data: existingSnap } = await supabase
+          .from("own_words_page_snapshots")
+          .select("clean_text")
+          .eq("company_id", company_id).eq("source_url", url)
+          .order("fetched_at", { ascending: false }).limit(1).maybeSingle();
+        if (existingSnap && typeof (existingSnap as { clean_text?: string }).clean_text === "string") {
+          cleanText = (existingSnap as { clean_text: string }).clean_text;
+          reused = true;
+        }
+      }
+      if (!reused) {
         const fetched = await fetchAndExtract(url);
         if (!fetched.ok || !fetched.text.trim()) {
           pages.push({ url, fetched: false, status: fetched.status, snapshot_chars: 0, candidates: 0 });
@@ -256,10 +267,16 @@ Deno.serve(async (req) => {
         }
         cleanText = fetched.text;
         const text_sha256 = await sha256Hex(cleanText);
-        const { error: snapErr } = await supabase.from("own_words_page_snapshots").insert({
-          company_id, source_url: url, signal_id: meta.id, clean_text: cleanText, text_sha256, run_id: null,
-        });
-        if (snapErr) throw new Error(`snapshot insert failed for ${url}: ${snapErr.message}`);
+        // Content-identity idempotency: only insert when this hash is not already stored for the URL.
+        const { data: dupSnap } = await supabase.from("own_words_page_snapshots")
+          .select("id").eq("company_id", company_id).eq("source_url", url).eq("text_sha256", text_sha256)
+          .limit(1).maybeSingle();
+        if (!dupSnap) {
+          const { error: snapErr } = await supabase.from("own_words_page_snapshots").insert({
+            company_id, source_url: url, signal_id: meta.id, clean_text: cleanText, text_sha256, run_id: null,
+          });
+          if (snapErr) throw new Error(`snapshot insert failed for ${url}: ${snapErr.message}`);
+        }
       }
 
       // Generate.

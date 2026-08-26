@@ -59,6 +59,37 @@ describe("struck-preservation — R2 prune victim selection", () => {
   });
 });
 
+// OWN-WORDS CARVE-OUT (R1, 2026-08-26): own_words claims are public_observed but NOT signal-derived —
+// mapSignalsToClaimCandidates never emits them, so they are never in candidateIds and a rebuild cannot
+// re-mint them. Pre-carveout, a rebuild-claims run pruned EVERY own_words claim (it silently emptied
+// beat-3 for CB2 + Edgewood). The carve-out excludes claim_type='own_words' at victim selection.
+function selectPruneVictims_preCarveout(
+  rows: PruneCandidateRow[],
+  candidateIds: Set<string>,
+  manualClaimIds: Set<string>,
+): string[] {
+  return rows
+    .filter((r) => r.provenance === "public_observed" && !manualClaimIds.has(r.id) && r.status !== "struck" && !candidateIds.has(r.id))
+    .map((r) => r.id);
+}
+
+describe("own-words carve-out — a rebuild cannot prune what it cannot re-mint", () => {
+  it("an own_words claim (public_observed, not a candidate) SURVIVES the prune", () => {
+    const rows: PruneCandidateRow[] = [{ id: "ow", status: "active", provenance: P, claim_type: "own_words" }];
+    expect(selectPruneVictims(rows, noCandidates, noManual)).toEqual([]);          // carved out
+    expect(selectPruneVictims_preCarveout(rows, noCandidates, noManual)).toEqual(["ow"]); // pre-fix WOULD prune → guard is load-bearing
+  });
+
+  it("a rebuild over a mixed set leaves own_words intact and still prunes vanished inference claims", () => {
+    const rows: PruneCandidateRow[] = [
+      { id: "ow1", status: "active", provenance: P, claim_type: "own_words" },
+      { id: "ow2", status: "active", provenance: P, claim_type: "own_words" },
+      { id: "inf-gone", status: "active", provenance: P, claim_type: "inference" }, // signal vanished, re-mintable → prunes
+    ];
+    expect(selectPruneVictims(rows, noCandidates, noManual)).toEqual(["inf-gone"]);
+  });
+});
+
 describe("RB-1 provenance scoping — rebuild prunes public_observed ONLY", () => {
   // Every one of these rows has vanished signals (noCandidates) and is active,
   // so ONLY provenance decides its fate.
