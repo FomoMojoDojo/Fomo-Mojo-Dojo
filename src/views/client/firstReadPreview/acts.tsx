@@ -151,7 +151,6 @@ const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // signed
 // DRAFT (2026-08-26, operator signs at acceptance): the re-verifying holding note — shown ONCE over the
 // grouped re-verifying statements. Distinct from record-silent: here the record DID echo; gate 3 held
 // its backing signal pending re-crawl.
-const REVERIFYING_GROUP_NOTE = "We're re-verifying the public record on these claims.";
 const PAIRS_UNCOMPUTED_CAPTION = "Pair states not yet computed — all pairs untested"; // signed
 const PAIRS_UNCOMPUTED_TITLE = "No pair verdicts computed yet — element pairs await the diagnostic."; // signed
 
@@ -727,18 +726,19 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
  *  zero disagreements. contradicted > 0 → disagree; else unechoed > 0 → "record doesn't echo";
  *  else confirmed > 0 → "record backs you"; else neutral. */
 function gapHeadline(c: FRGapCounts): string {
-  // A re-verifying statement is a HELD disagreement/echo, not silence — it keeps the beat's original
-  // disagreement headline (never the "record doesn't echo" line, which would assert false silence).
-  if (c.contradicted > 0 || c.reverifying > 0) return GAP_HEADLINE_DISAGREE;
+  // RESOLVED-STATES-ONLY (2026-08-27): the headline follows the CLIENT-VISIBLE counts only. A
+  // re-verifying statement is off the client surface entirely (operator workbench), so it never
+  // drives the headline — ActGap always passes visibleCounts (reverifying = 0) here.
+  if (c.contradicted > 0) return GAP_HEADLINE_DISAGREE;
   if (c.unechoed > 0) return GAP_HEADLINE_UNECHOED;
   if (c.confirmed > 0) return GAP_HEADLINE_BACKED;
   return GAP_HEADLINE_NEUTRAL;
 }
-/** A3: standfirst NAMES the counts (only the non-zero categories). */
+/** A3: standfirst NAMES the counts (only the non-zero VISIBLE categories; re-verifying is off the
+ *  client surface — see ActGap's resolved-states-only note). */
 function gapStandfirst(c: FRGapCounts): string {
   const parts: string[] = [];
   if (c.contradicted) parts.push(`${c.contradicted} contradicted`);
-  if (c.reverifying) parts.push(`${c.reverifying} re-verifying`);
   if (c.unechoed) parts.push(`${c.unechoed} not echoed`);
   if (c.confirmed) parts.push(`${c.confirmed} confirmed`);
   const tally = parts.length ? ` ${parts.join(" · ")}.` : "";
@@ -767,7 +767,8 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
   // `evidence`), so an all-struck statement arrives here with empty evidence and shows the clean
   // doesn't-echo empty state — the line-through-in-place render is retired on the client surface.
   // Only unechoed (genuinely publicly-silent) statements reach here with empty evidence — reverifying
-  // statements are pulled into the grouped ReverifyingGroup block and never render per-row.
+  // statements are excluded from the client render entirely (resolved-states-only, 2026-08-27), so
+  // they never reach this per-row path.
   if (statement.evidence.length === 0) {
     return (
       <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
@@ -800,21 +801,38 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
 }
 
 export function ActGap({ read }: { read: FirstReadPreviewData }) {
+  // RESOLVED-STATES-ONLY (operator ruling 2026-08-27, SUPERSEDES A2's display treatment): the CLIENT
+  // surface shows ONLY resolved states — verdict rows with visible evidence, and not-echoed rows.
+  // 'reverifying' is process narration (misattributed under YOU SAY) and indefinite while its sources
+  // stay walled — that is operator workbench, not client content. The reverifying DATA STATE is
+  // UNCHANGED and remains law: groupGapStatements still computes it, and the held-echo carve-out is
+  // still load-bearing — it keeps these held rows OUT of a false 'not echoed'. Only the client RENDER
+  // is removed here. The held set stays fully queryable; item 23 (operator-only view) is its pending
+  // on-screen home. Counts/headline/standfirst below describe the VISIBLE surface only.
+  const visible = read.gapStatements.filter(
+    (s): s is FRGapStatement & { verdict: "confirmed" | "contradicted" | "unechoed" } => s.verdict !== "reverifying",
+  );
+  // Client-visible counts = the DATA counts with reverifying zeroed. gapCounts is the count authority
+  // (the hook computes it from the same statements); contradicted/unechoed/confirmed already exclude
+  // reverifying (verdicts are mutually exclusive), so only reverifying is dropped from the client copy.
+  const visibleCounts: FRGapCounts = { ...read.gapCounts, reverifying: 0 };
   return (
     <>
       {/* No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
           beat (beat 7). The gap renders only its integrity note or the pairs. */}
       <ActHeader
-        headline={gapHeadline(read.gapCounts)}
-        // Signed (string sheet, 2026-08-21). Standfirst NAMES the counts.
-        standfirst={gapStandfirst(read.gapCounts)}
+        headline={gapHeadline(visibleCounts)}
+        // Signed (string sheet, 2026-08-21). Standfirst NAMES the visible counts.
+        standfirst={gapStandfirst(visibleCounts)}
         rationale={RATIONALE_GAP}
       />
       {/* Coherence note (2026-08-22): a rung-1 status conflict with ZERO contradicted statements —
           the dispute is source-vs-source, not your-words-vs-record. Shown ONLY in that clean case.
-          DISPLAY-HONESTY (2026-08-26): SUPPRESSED while reverifying > 0 — its claim "nothing you've
-          said publicly is contradicted here" is FALSE when contradicting evidence exists and is held.
-          It returns naturally once the re-crawl restores evidence and reverifying = 0. */}
+          BOTH gates read the DATA state (read.gapCounts), NOT the rendered surface: a held contradiction
+          is SUPPRESSED, not RESOLVED, so while DATA reverifying > 0 the note's "nothing you've said
+          publicly is contradicted here" claim would still be false. (contradicted is DATA-keyed too —
+          a contradicted statement always carries visible evidence, so DATA == visible for it.) The note
+          returns naturally once the re-crawl restores evidence and the DATA reverifying count reaches 0. */}
       {read.statusConflicts.length > 0 && read.gapCounts.contradicted === 0 && read.gapCounts.reverifying === 0 ? (
         <p className="mb-12 max-w-2xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
           {STATUS_VS_GAP_COHERENCE_NOTE}
@@ -830,17 +848,10 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
                 : NO_PAIRS_NOTE}
           </Absent>
         ) : null}
-        {/* One row per STATEMENT (2026-08-21). Confirmed/contradicted statements list their pair
-            evidence beneath; not-echoed statements carry the signed record-silent line once.
-            GATE 3 (2026-08-26): re-verifying statements (public echo held pending re-crawl) are
-            pulled OUT of the per-row loop into ONE grouped block — a single holding note over the
-            client's declared statements, no verdict chips. Rendered once at the first reverifying
-            statement's sort position; the others are skipped. */}
-        {read.gapStatements.map((statement, idx, arr) => {
-          if (statement.verdict === "reverifying") {
-            if (arr.findIndex((s) => s.verdict === "reverifying") !== idx) return null;
-            return <ReverifyingGroup key="reverifying-group" statements={arr.filter((s) => s.verdict === "reverifying")} />;
-          }
+        {/* One row per RESOLVED STATEMENT. Confirmed/contradicted statements list their pair evidence
+            beneath; not-echoed statements carry the signed record-silent line once. Re-verifying
+            statements are excluded above (operator workbench) — no rows, no group, no note. */}
+        {visible.map((statement) => {
           // The contradiction "why" — THREE TIERS: (1) the freshly generated grounded "what differs"
           // explanation; else (2) the stored grounded judged reason; else (3) the derived line. Null
           // for confirmed/not-echoed. Rendered under the declared text (leftExtra).
@@ -871,26 +882,10 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
-/** Beat 4 — the re-verifying group (2026-08-26). A single holding note over the client's declared
- *  statements whose public echo gate 3 held pending re-crawl. Own-words styling, NO verdict chips,
- *  NO STATUS DISPUTED chip (evidence-less). Renders nothing when there are no re-verifying rows. */
-function ReverifyingGroup({ statements }: { statements: FRGapStatement[] }) {
-  if (statements.length === 0) return null;
-  return (
-    <div className="fr-row group flex flex-col border-b py-14" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-      <div className="mb-6"><Eyebrow>You say</Eyebrow></div>
-      <p className="fr-quote-muted text-lg font-light leading-relaxed">{REVERIFYING_GROUP_NOTE}</p>
-      <div className="mt-8 flex flex-col gap-6">
-        {statements.map((st) => (
-          <div key={st.statementId} className="relative">
-            <span className="fr-quote-mark" aria-hidden>&ldquo;</span>
-            <h3 className="fr-quote-muted text-lg font-medium leading-snug">{st.declared}</h3>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// RESOLVED-STATES-ONLY (2026-08-27): the client-side ReverifyingGroup was DELETED (not gated) — there
+// is no operator surface to move it to yet, and a dead client component invites drift. The re-verifying
+// DATA state is untouched (groupGapStatements + the held-echo carve-out still compute and protect it);
+// its on-screen home is deferred to item 23 (operator-only view), which will build fresh from the query.
 
 /** Base gate — interstitial beat between Act 3 (Gap) and Act 4. */
 export function BaseGate() {

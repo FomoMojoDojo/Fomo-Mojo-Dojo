@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { groupGapStatements } from "./mapping";
 import { ActGap } from "./acts";
-import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRGapPair, type FRGapStatement } from "./types";
+import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRGapPair, type FRGapStatement, type FRStatusConflict } from "./types";
 
 function pair(over: Partial<FRGapPair> & Pick<FRGapPair, "id" | "statementId" | "verdict">): FRGapPair {
   return {
@@ -66,22 +66,21 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
     expect(st[0].verdict).not.toBe("reverifying");
   });
 
-  it("5. ≤1 STATUS DISPUTED chip per statement, and NONE on an evidence-less (reverifying) row", () => {
+  it("5. ≤1 STATUS DISPUTED chip per statement (dedup); a reverifying statement contributes NOTHING to the client render", () => {
     // Statement A: 3 visible disputed pairs → exactly ONE chip (was 3 before dedup).
-    // Statement B: emptied → reverifying → ZERO chips, no verdict chip.
+    // Statement B: emptied → reverifying → excluded from the client render entirely (2026-08-27).
     const st = groupGapStatements([
       pair({ id: "a1", statementId: "A", verdict: "contradicted", record: "r1", sourceTag: { label: "yelp.com" }, statusDisputed: true }),
       pair({ id: "a2", statementId: "A", verdict: "contradicted", record: "r2", sourceTag: { label: "yelp.com" }, statusDisputed: true }),
       pair({ id: "a3", statementId: "A", verdict: "contradicted", record: "r3", sourceTag: { label: "yelp.com" }, statusDisputed: true }),
-      pair({ id: "b1", statementId: "B", verdict: "contradicted", record: null, sourceTag: null, statusDisputed: true }),
+      pair({ id: "b1", statementId: "B", verdict: "contradicted", declared: "Held statement B.", record: null, sourceTag: null, statusDisputed: true }),
     ]);
+    expect(st.find((s) => s.statementId === "B")?.verdict).toBe("reverifying"); // DATA state intact
     const { container } = render(<ActGap read={readWith(st)} />);
-    // ONE chip total: A dedupes 3 visible disputed pairs → 1; B (reverifying, evidence-less) → 0.
-    // (Pre-fix this was 3 per-pair on A alone.)
     const chips = container.textContent?.match(/status disputed/gi) ?? [];
-    expect(chips.length).toBe(1);
-    // B renders the re-verifying holding note (not the record-silent line).
-    expect(container.textContent?.toLowerCase()).toContain("re-verifying");
+    expect(chips.length).toBe(1);                                      // A dedupes 3 → 1; B renders nothing
+    expect(container.textContent?.toLowerCase()).not.toContain("re-verifying"); // B (reverifying) excluded
+    expect(container.textContent).not.toContain("Held statement B.");  // B's declared text absent
   });
 
   const CONFLICT = { location: "Le French Rooster", matchKey: "le french rooster", question: "closed?", closed: [], open: [] };
@@ -105,18 +104,18 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
     expect(container.textContent?.toLowerCase()).toContain("nothing you've said publicly is contradicted");
   });
 
-  it("7. the grouped re-verifying note renders ONCE over N statements, not once per row", () => {
+  it("7. reverifying statements are ABSENT from the client render — no note, no group, no declared text", () => {
     const st = groupGapStatements([
       pair({ id: "r1", statementId: "A", verdict: "contradicted", declared: "Claim one.", record: null, sourceTag: null }),
       pair({ id: "r2", statementId: "B", verdict: "confirmed", declared: "Claim two.", record: null, sourceTag: null }),
       pair({ id: "r3", statementId: "C", verdict: "contradicted", declared: "Claim three.", record: null, sourceTag: null }),
     ]);
-    expect(st.every((s) => s.verdict === "reverifying")).toBe(true);
+    expect(st.every((s) => s.verdict === "reverifying")).toBe(true); // DATA state intact (all reverifying)
     const { container } = render(<ActGap read={readWith(st)} />);
-    const notes = container.textContent?.match(/re-verifying the public record on these claims/gi) ?? [];
-    expect(notes.length).toBe(1);                                  // ONE grouped note, not 3
-    for (const d of ["Claim one.", "Claim two.", "Claim three."]) // all declared statements listed beneath
-      expect(container.textContent).toContain(d);
+    // Resolved-states-only (2026-08-27): none of these render on the client surface.
+    expect(container.textContent?.toLowerCase()).not.toContain("re-verifying");
+    for (const d of ["Claim one.", "Claim two.", "Claim three."])
+      expect(container.textContent).not.toContain(d);
   });
 });
 
@@ -159,5 +158,59 @@ describe("beat 4 — held echo counts as re-verifying regardless of provisional 
     ]);
     const byId = Object.fromEntries(st.map((s) => [s.statementId, s.verdict]));
     expect(byId).toEqual({ A: "contradicted", B: "unechoed", C: "unechoed" });
+  });
+});
+
+// RESOLVED-STATES-ONLY CLIENT RENDER (operator ruling 2026-08-27) — the client gap beat shows only
+// verdict rows with visible evidence and not-echoed rows; reverifying (held) rows are operator
+// workbench, excluded from the client render, counts, and copy. The DATA state is unchanged.
+describe("beat 4 — resolved-states-only client render", () => {
+  it("R1. counts/standfirst reflect VISIBLE rows only — reverifying is never named (fails without the change)", () => {
+    const st = groupGapStatements([
+      pair({ id: "c", statementId: "C", verdict: "contradicted", record: "r", sourceTag: { label: "yelp.com" } }),
+      pair({ id: "rv", statementId: "R", verdict: "confirmed", record: null, sourceTag: null, heldEcho: true, relevanceVerdict: "orthogonal" }), // → reverifying
+      pair({ id: "u", statementId: "U", verdict: "unechoed", record: null, sourceTag: null }),
+    ]);
+    expect(st.find((s) => s.statementId === "R")?.verdict).toBe("reverifying"); // data state
+    const t = render(<ActGap read={readWith(st)} />).container.textContent ?? "";
+    expect(t).toContain("1 contradicted");
+    expect(t).toContain("1 not echoed");
+    expect(t.toLowerCase()).not.toContain("re-verifying"); // NOT named in the client standfirst
+  });
+
+  it("R2. coherence note stays SUPPRESSED while held contradictions exist in DATA (suppressed ≠ resolved)", () => {
+    // 0 visible contradicted, but 1 held contradiction (reverifying) in data + a live status conflict.
+    const st = groupGapStatements([
+      pair({ id: "held", statementId: "H", verdict: "contradicted", record: null, sourceTag: null, heldEcho: true, relevanceVerdict: "orthogonal" }),
+      pair({ id: "u", statementId: "U", verdict: "unechoed", record: null, sourceTag: null }),
+    ]);
+    expect(st.find((s) => s.statementId === "H")?.verdict).toBe("reverifying");
+    const conflict = { location: "Le French Rooster", matchKey: "le french rooster", question: "closed?", closed: [], open: [] } as FRStatusConflict;
+    const read = { ...readWith(st), statusConflicts: [conflict] } as FirstReadPreviewData;
+    const t = render(<ActGap read={read} />).container.textContent?.toLowerCase() ?? "";
+    expect(t).not.toContain("nothing you've said publicly is contradicted"); // keyed on DATA reverifying > 0
+  });
+
+  it("R3. not-echoed and verdict rows render unaffected", () => {
+    const st = groupGapStatements([
+      pair({ id: "c", statementId: "C", verdict: "contradicted", declared: "We are open.", record: "Closed since April.", sourceTag: { label: "yelp.com" } }),
+      pair({ id: "u", statementId: "U", verdict: "unechoed", declared: "We roast on site.", record: null, sourceTag: null }),
+    ]);
+    const t = render(<ActGap read={readWith(st)} />).container.textContent ?? "";
+    expect(t).toContain("We are open.");      // contradicted row renders
+    expect(t).toContain("We roast on site."); // not-echoed row renders
+  });
+
+  it("R4. Edgewood-shape (0 reverifying) → every row renders; resolved-states-only is a no-op", () => {
+    const st = groupGapStatements([
+      pair({ id: "c", statementId: "A", verdict: "contradicted", declared: "Claim A.", record: "r", sourceTag: { label: "yelp.com" } }),
+      pair({ id: "u", statementId: "B", verdict: "unechoed", declared: "Claim B.", record: null, sourceTag: null }),
+    ]);
+    expect(st.some((s) => s.verdict === "reverifying")).toBe(false);
+    const t = render(<ActGap read={readWith(st)} />).container.textContent ?? "";
+    expect(t).toContain("Claim A.");
+    expect(t).toContain("Claim B.");
+    expect(t).toContain("1 contradicted");
+    expect(t).toContain("1 not echoed");
   });
 });
