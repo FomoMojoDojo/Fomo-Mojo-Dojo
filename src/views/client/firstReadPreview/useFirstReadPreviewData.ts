@@ -219,6 +219,40 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
 }
 
 /**
+ * HELD-ECHO backing set (2026-08-26): the public claim ids backed by ≥1 HELD outside signal —
+ * held_at set, OR superseded with reason 'held_source_unreachable_recrawl_pending' (the walled-
+ * source class awaiting re-verification). This is what distinguishes an echo that EXISTS but is
+ * held (→ reverifying) from a claim whose record is genuinely absent. source_gone / fabricated
+ * supersessions are EXCLUDED — those records are gone or never valid, not merely walled.
+ * newestSignalByClaim returns only VISIBLE signals; this returns the held-but-present ones, so the
+ * caller can tell "held echo" apart from "no echo".
+ */
+async function heldPendingClaimIds(claimIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!claimIds.length) return out;
+  const { data: refs } = await loose()
+    .from("claim_signal_refs")
+    .select("claim_id, signal_id")
+    .in("claim_id", claimIds);
+  const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
+  const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
+  if (!sigIds.length) return out;
+  // loose(): held_at / superseded_reason are gate-3 columns not in the generated row types.
+  const { data: sigs } = await loose()
+    .from("signals")
+    .select("id, held_at, superseded_reason")
+    .in("id", sigIds)
+    .eq("signal_band", "outside");
+  const heldSigIds = new Set(
+    ((sigs ?? []) as Array<{ id: string; held_at: string | null; superseded_reason: string | null }>)
+      .filter((s) => s.held_at != null || s.superseded_reason === "held_source_unreachable_recrawl_pending")
+      .map((s) => s.id),
+  );
+  for (const r of refRows) if (heldSigIds.has(r.signal_id)) out.add(r.claim_id);
+  return out;
+}
+
+/**
  * Shared provenance gate (R1): a claim is excluded if any backing signal is an uploaded
  * file (tier a) OR its own birth record cites an uploaded document (tier b) — so a
  * no-ref claim is resolved by its raw_payload, never assumed clean.
@@ -517,6 +551,11 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const publicNewest = await newestSignalByClaim(
           deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x),
         );
+        // Held-echo backing: public claims whose only outside backing is held/recrawl-pending. Used
+        // to keep a held echo in 'reverifying' even when its provisional relevance verdict is orthogonal.
+        const publicHeldPending = await heldPendingClaimIds(
+          deltas.map((d) => d.public_claim_id).filter((x): x is string => !!x),
+        );
         // Declared-side newest signal → the declared date for the derived contradiction "why".
         const declaredNewest = await newestSignalByClaim(declaredIdsInPairs);
         const confidenceRank = (c: string | null | undefined) =>
@@ -559,6 +598,10 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
             // RELEVANCE BACKSTOP overlay — carried to the single shared selector (counts + struck render).
             relevanceVerdict: (d.relevance_verdict === "relevant" || d.relevance_verdict === "orthogonal") ? d.relevance_verdict : null,
+            // HELD ECHO: a confirmed/contradicted pair with NO visible signal (sig null) whose public
+            // claim has a held/recrawl-pending backing — the echo exists but is walled. Keeps the
+            // statement reverifying regardless of the provisional relevance verdict (mapping.ts).
+            heldEcho: verdict !== "unechoed" && !sig && !!d.public_claim_id && publicHeldPending.has(d.public_claim_id),
           });
         }
         // A1 order — by discussability: contradicted → unechoed → confirmed; strength desc within.

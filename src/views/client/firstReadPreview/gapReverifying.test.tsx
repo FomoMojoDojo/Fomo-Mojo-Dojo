@@ -119,3 +119,45 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
       expect(container.textContent).toContain(d);
   });
 });
+
+// HELD-ECHO CARVE-OUT (2026-08-26) — a relevance verdict computed over held/walled evidence is
+// PROVISIONAL: it cannot demote a held echo to record-silence. This is the exact defect the R3
+// backstop run exposed (the 5 Square-ordering echoes, held on Uber Eats/Postmates, were judged
+// orthogonal and fell to 'unechoed'). H1 is the load-bearing red/green; H2–H4 prove the fix is
+// scoped (a VISIBLE orthogonal pair stays unechoed; visible evidence still wins; 0-held is inert).
+describe("beat 4 — held echo counts as re-verifying regardless of provisional relevance", () => {
+  it("H1. a HELD echo judged ORTHOGONAL renders REVERIFYING (FAILS without the carve-out → unechoed)", () => {
+    const st = groupGapStatements([
+      pair({ id: "h", statementId: "SQ", verdict: "confirmed", record: null, sourceTag: null, relevanceVerdict: "orthogonal", heldEcho: true }),
+    ]);
+    expect(st[0].verdict).toBe("reverifying");
+    expect(st[0].verdict).not.toBe("unechoed");
+    expect(st[0].evidence).toHaveLength(0); // held → no visible evidence pushed
+  });
+
+  it("H2. a VISIBLE active-backed ORTHOGONAL pair stays UNECHOED (scope: not over-broadened)", () => {
+    const st = groupGapStatements([
+      pair({ id: "o", statementId: "V", verdict: "confirmed", record: null, sourceTag: null, relevanceVerdict: "orthogonal", heldEcho: false }),
+    ]);
+    expect(st[0].verdict).toBe("unechoed"); // present-but-irrelevant, NOT held → not re-verifying
+  });
+
+  it("H3. MIXED (held-orthogonal + visible-relevant on one statement) → renders evidence, not falsely silent", () => {
+    const st = groupGapStatements([
+      pair({ id: "held", statementId: "M", verdict: "confirmed", record: null, sourceTag: null, relevanceVerdict: "orthogonal", heldEcho: true }),
+      pair({ id: "vis", statementId: "M", verdict: "contradicted", record: "The record disagrees.", sourceTag: { label: "yelp.com" }, relevanceVerdict: "relevant" }),
+    ]);
+    expect(st[0].verdict).toBe("contradicted");             // visible relevant evidence wins
+    expect(st[0].evidence.map((e) => e.id)).toEqual(["vis"]); // the held pair is never pushed as evidence
+  });
+
+  it("H4. Edgewood-shape (0 held) → identical to the relevance-only path (carve-out inert)", () => {
+    const st = groupGapStatements([
+      pair({ id: "c", statementId: "A", verdict: "contradicted", record: "r", sourceTag: { label: "yelp.com" }, relevanceVerdict: "relevant" }),
+      pair({ id: "orth", statementId: "B", verdict: "confirmed", record: null, sourceTag: null, relevanceVerdict: "orthogonal" }), // no heldEcho
+      pair({ id: "silent", statementId: "C", verdict: "unechoed", record: null, sourceTag: null }),
+    ]);
+    const byId = Object.fromEntries(st.map((s) => [s.statementId, s.verdict]));
+    expect(byId).toEqual({ A: "contradicted", B: "unechoed", C: "unechoed" });
+  });
+});

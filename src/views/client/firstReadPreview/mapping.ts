@@ -221,8 +221,17 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     // from the client render entirely (the line-through-in-place render is retired) — it never
     // enters `evidence`, so it neither shows nor drives the verdict. It stays fully recorded and
     // reversible in claim_deltas. The single shared selector isRelevanceActive is the gate.
-    const isEchoPair = (p.verdict === "confirmed" || p.verdict === "contradicted") && isRelevanceActive(p.relevanceVerdict);
-    if (isEchoPair) sawEcho.add(p.statementId); // a real public echo existed for this statement
+    const isEchoDelta = p.verdict === "confirmed" || p.verdict === "contradicted";
+    const isEchoPair = isEchoDelta && isRelevanceActive(p.relevanceVerdict);
+    // HELD-ECHO CARVE-OUT (2026-08-26): a confirmed/contradicted pair whose public evidence is
+    // entirely HELD (held_at / superseded-recrawl_pending) counts as a real echo REGARDLESS of its
+    // relevance verdict. A relevance verdict computed over walled/held evidence is PROVISIONAL — it
+    // cannot demote a held echo to record-silence ('unechoed'); the honest state is 'reverifying'
+    // (we are re-checking the record). A VISIBLE, active-backed orthogonal pair is NOT held, so it
+    // stays inactive and correctly renders 'unechoed'. This restores the A2 invariant after the R3
+    // backstop run judged the held Square-ordering echoes orthogonal. (See the FRGapPair.heldEcho
+    // note; the flag is set only when the public claim's sole backing is held/recrawl-pending.)
+    if (isEchoPair || (isEchoDelta && p.heldEcho)) sawEcho.add(p.statementId); // a real public echo existed for this statement
     // GATE 3 (2026-08-26): a pair whose evidence body was held/superseded arrives body-blank
     // (record AND sourceTag both null, since both come from the now-filtered public signal). It is
     // OMITTED like a struck pair — never shown as a chip-bearing blank scaffold.

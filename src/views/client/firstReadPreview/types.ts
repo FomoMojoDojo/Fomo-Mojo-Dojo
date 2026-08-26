@@ -103,6 +103,11 @@ export type FRGapPair = {
    *  'orthogonal' ⇒ the paired source doesn't speak to this specific assertion — out of the
    *  active counts, rendered line-through in place. NULL/'relevant' ⇒ active (unchanged). */
   relevanceVerdict?: "relevant" | "orthogonal" | null;
+  /** HELD ECHO (2026-08-26): a confirmed/contradicted pair whose public claim is backed ONLY by
+   *  held_at / superseded-recrawl_pending signals (walled sources awaiting re-verification) — the
+   *  echo EXISTS but its evidence is not yet visible. It keeps the statement RE-VERIFYING regardless
+   *  of the relevance verdict (a relevance judgment computed over held evidence is provisional). */
+  heldEcho?: boolean;
 };
 
 /** The unit of echo is the STATEMENT (operator ruling 2026-08-21). A declared own-words
