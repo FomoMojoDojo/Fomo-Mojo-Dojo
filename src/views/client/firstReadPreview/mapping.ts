@@ -1,7 +1,7 @@
 // First Read — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
-import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRStatusSource, SignalStrength } from "./types";
+import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRStatusSource, SignalStrength } from "./types";
 import { formatFullDate } from "./deriveSourceTag";
 import { isRelevanceActive } from "@/lib/firstRead/relevanceActive";
 
@@ -136,6 +136,53 @@ export function coldOpenLadder(input: ColdOpenLadderInput): FRColdOpen | null {
  * Unruled edge (single-source HIGH confidence) fails toward the weaker
  * bucket (moderate), consistent with R4's structure.
  */
+// R4 (2026-08-27) — FRESH-FIRST ordering for beat 2. Read-date (crawl) desc, then host — recency is
+// the honest general lead: a freshly-verified crawl surfaces above stale rows. Strength then event
+// date break the remaining ties for a deterministic order. Applied to EVERY company (no exceptions).
+export type Beat2Sortable = { signal: FRSignal; readDate: string; host: string };
+export function orderBeat2Signals(items: Beat2Sortable[]): FRSignal[] {
+  const strengthOrder = { strong: 0, moderate: 1, thin: 2 } as const;
+  return [...items]
+    .sort((a, b) =>
+      b.readDate.localeCompare(a.readDate)                                        // fresh read-date first
+      || a.host.localeCompare(b.host)                                             // then host
+      || strengthOrder[a.signal.strength] - strengthOrder[b.signal.strength]     // then strength
+      || (b.signal.eventDate ?? "").localeCompare(a.signal.eventDate ?? ""))      // then event date (recent first)
+    .map((x) => x.signal);
+}
+
+// R4 (2026-08-27) — DISPLAY GROUPING for beat 2: identical statement + HOST collapses to ONE row
+// carrying a mention count (the number of underlying signals it stands for). DE-EMPHASIZE, NEVER
+// DELETE — the caller keeps every underlying signal in the DB; this only folds the RENDER.
+//
+// The fold key is (bare host, text) — READ-DATE AGNOSTIC. It folds in the item domain (where the raw
+// host lives) rather than on the source-tag LABEL, because the public-signal label embeds the read-
+// date ("page · read <date>"): keying on the label would split the SAME statement+host read on two
+// baseline runs (the wanderlog quadruplicate — 3× Aug 19 + 1× Aug 7 — mis-split 3+1). The
+// representative keeps the FRESHEST read (its source tag shows the newest read-date) and the newest
+// eventDate; the mention count reflects EVERY folded row regardless of read-date. A set with no exact
+// repeats returns one-for-one (mentionCount = 1), so a company without duplicates is byte-identical.
+export function foldIdenticalSignals(items: Beat2Sortable[]): Beat2Sortable[] {
+  const byKey = new Map<string, Beat2Sortable>();
+  for (const it of items) {
+    const key = `${it.host}||${it.signal.text}`; // identical statement + host, read-date agnostic
+    const prior = byKey.get(key);
+    if (!prior) { byKey.set(key, { ...it, signal: { ...it.signal, mentionCount: 1 } }); continue; }
+    // Representative = the freshest read (its label carries the newest read-date). Accumulate the
+    // count across all folded rows; carry the newest eventDate.
+    const base = it.readDate > prior.readDate ? it : prior;
+    byKey.set(key, {
+      ...base,
+      signal: {
+        ...base.signal,
+        mentionCount: (prior.signal.mentionCount ?? 1) + 1,
+        eventDate: (it.signal.eventDate ?? "") > (prior.signal.eventDate ?? "") ? it.signal.eventDate : prior.signal.eventDate,
+      },
+    });
+  }
+  return [...byKey.values()];
+}
+
 export function strengthForSignal(
   confidence: string | null | undefined,
   recurrenceConfirmed: boolean,

@@ -214,3 +214,41 @@ describe("beat 4 — resolved-states-only client render", () => {
     expect(t).toContain("1 not echoed");
   });
 });
+
+// R4 (2026-08-27) — "Raised by the record": the reverse arrow renders active-backed record rows only,
+// with real source tags and NO verdict chip; absent when the renderable set is empty.
+import type { FRReverseRow } from "./types";
+const readReverse = (rows: FRReverseRow[]): FirstReadPreviewData => ({ ...EMPTY_FIRST_READ, reverseRows: rows });
+describe("beat 4 — Raised by the record (reverse arrow)", () => {
+  const ROWS: FRReverseRow[] = [
+    { id: "r1", statement: "4.8 Star Rating from 148 reviewers", sourceTag: { label: "chamberofcommerce.com · read Aug 2026" }, eventDate: "2026-01-01" },
+    { id: "r2", statement: "a charming bakery and café that offers a delightful experience", sourceTag: { label: "restaurantji.com · read Aug 2026" }, eventDate: "2026-01-01" },
+  ];
+
+  it("renders the section with the record rows + source tags, a distinct sub-count, and NO verdict chip", () => {
+    const t = render(<ActGap read={readReverse(ROWS)} />).container.textContent ?? "";
+    expect(t.toLowerCase()).toContain("raised by the record");
+    expect(t).toContain("4.8 Star Rating from 148 reviewers");
+    expect(t).toContain("a charming bakery and café that offers a delightful experience");
+    expect(t).toContain("chamberofcommerce.com");
+    expect(t).toContain("2 raised by the record");                 // distinct sub-count, not merged into say-vs-see
+    expect(t.toLowerCase()).not.toMatch(/\b(confirmed|contradicted|echoed|disputed)\b/); // unearned → no verdict chip
+  });
+
+  it("renders NOTHING when the renderable set is empty (Edgewood-shape / backstage-only)", () => {
+    const t = render(<ActGap read={readReverse([])} />).container.textContent ?? "";
+    expect(t.toLowerCase()).not.toContain("raised by the record");
+  });
+
+  it("a company with N renderable reverse rows renders all N — the feature is GENERAL, no company exception (Edgewood-shape)", () => {
+    // Edgewood has 9 renderable reverse rows (BBB, Birdeye, Charity Navigator, Glassdoor, Niche, Yelp).
+    // The feature applies to every company with active-backed internally_silent record — never scoped out.
+    const rows: FRReverseRow[] = Array.from({ length: 9 }, (_, i) => ({
+      id: `e${i}`, statement: `Edgewood record row ${i}`, sourceTag: { label: `host${i}.com` }, eventDate: "2026-01-01",
+    }));
+    const t = render(<ActGap read={readReverse(rows)} />).container.textContent ?? "";
+    expect(t.toLowerCase()).toContain("raised by the record");
+    expect(t).toContain("9 raised by the record");
+    for (let i = 0; i < 9; i++) expect(t).toContain(`Edgewood record row ${i}`);
+  });
+});

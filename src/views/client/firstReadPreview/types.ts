@@ -21,6 +21,9 @@ export type FRSignal = {
   /** Gate 1 (2026-08-25): true only when provably own-words verbatim (snapshot-verified). Every
    *  outside signal is false → renders un-quoted with attribution. Default-deny. */
   provablyVerbatim: boolean;
+  /** R4 (2026-08-27): identical statement+host collapsed to ONE display row; N = number of underlying
+   *  signals (ALL retained in data — de-emphasize, never delete). 1 for a singleton. */
+  mentionCount?: number;
 };
 
 export type FRColdOpen = {
@@ -135,6 +138,21 @@ export type FRGapStatement = {
 /** A1: persisted type counts that pick beat 4's headline (never a disagreement headline over
  *  zero disagreements). Counted by STATEMENT (2026-08-21), not by pair row. */
 export type FRGapCounts = { contradicted: number; reverifying: number; unechoed: number; confirmed: number };
+
+/** R4 (2026-08-27): a "Raised by the record" row — the RECORD side of a public_vs_public
+ *  internally_silent delta, backed by an ACTIVE outside signal. NO verdict (not earned — this is
+ *  neither confirmed nor contradicted; the record simply raises something the declared voice hasn't).
+ *  Source tag = real host + read date, or null (hidden — never fabricated). */
+export type FRReverseRow = {
+  /** delta id — stable render key. */
+  id: string;
+  /** the public-record statement (the record's words). */
+  statement: string;
+  /** real source tag (host + read date) or null (hidden). */
+  sourceTag: SourceTagResult;
+  /** the record signal's date, for ordering; null if undated. */
+  eventDate: string | null;
+};
 
 /** S3/S5: a live status conflict — an authoritative source reports {location} closed while others
  *  list it open. Pinned atop Questions + Findings; rows whose backing references {location} carry
@@ -263,6 +281,12 @@ export type FirstReadPreviewData = {
   gapStatements: FRGapStatement[];
   /** A1: statement counts driving the gap headline/standfirst. */
   gapCounts: FRGapCounts;
+  /** R4 (2026-08-27): the reverse arrow — "Raised by the record". public_vs_public internally_silent
+   *  deltas whose public claim has ≥1 ACTIVE (flags-NULL) outside signal and is relevance-active. The
+   *  say-vs-see mirror half: the record speaks where the declared voice is silent. Backstage (solely-held
+   *  backing) and screened (no backing / own-voice-shaped) rows never reach here — resolved-states law.
+   *  Its length is a DISTINCT sub-count, never merged into gapCounts' say-vs-see tally. */
+  reverseRows: FRReverseRow[];
   /** S3/S5: live status conflicts (pinned atop Questions + Findings; mark disputed rows). */
   statusConflicts: FRStatusConflict[];
   /**
@@ -303,6 +327,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   gapPairs: [],
   gapStatements: [],
   gapCounts: { contradicted: 0, reverifying: 0, unechoed: 0, confirmed: 0 },
+  reverseRows: [],
   statusConflicts: [],
   gapIntegrity: "not_yet",
   channelJunkIds: [],

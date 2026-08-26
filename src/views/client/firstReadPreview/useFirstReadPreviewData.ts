@@ -28,7 +28,7 @@ import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
-import { bareHost, coldOpenLadder, facetForTopic, groupGapStatements, hoistStrongestNegative, orderGapPairs, strengthForSignal, verdictForDeltaType } from "./mapping";
+import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, strengthForSignal, verdictForDeltaType, type Beat2Sortable } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
@@ -36,6 +36,7 @@ import type {
   FRGapPair,
   FRMarketDef,
   FROwnWord,
+  FRReverseRow,
   FRSignal,
   FRStatusSource,
 } from "./types";
@@ -137,9 +138,9 @@ async function loadSignals(
   runDates: Map<string, string>,
   provableVerbatim: ReadonlySet<string>,
 ): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
-  const { data: sigRows } = await supabase
+  const { data: sigRows } = await loose()
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, created_at")
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     .eq("voice_class", "outside_voice_about_client")
@@ -147,7 +148,7 @@ async function loadSignals(
     // paraphrases (held_at) from the client's outside record.
     .is("superseded_at", null)
     .is("held_at", null);
-  const rows = (sigRows ?? []) as SignalRow[];
+  const rows = (sigRows ?? []) as Array<SignalRow & { created_at?: string | null }>;
 
   // R4: strong = recurrence-confirmed across independent sources.
   const { data: recRows } = await loose()
@@ -161,24 +162,33 @@ async function loadSignals(
     confirmed.add(r.signal_b_id);
   }
 
-  const signals: FRSignal[] = rows
+  const items: Beat2Sortable[] = rows
     .filter((r) => (r.evidence_excerpt ?? "").trim())
     .map((r) => ({
-      id: r.id,
-      text: (r.evidence_excerpt ?? "").trim(),
-      sourceTag: publicSignalTag(r, runDates),
-      eventDate: r.event_date,
-      strength: strengthForSignal(r.confidence_to_use, confirmed.has(r.id)),
-      // Gate 1: outside_voice signals are never own-words → always false here (loadSignals filters
-      // to outside_voice_about_client). Computed via the ONE predicate, not hard-coded (default-deny).
-      provablyVerbatim: isProvablyVerbatim(r.id, provableVerbatim),
+      signal: {
+        id: r.id,
+        text: (r.evidence_excerpt ?? "").trim(),
+        sourceTag: publicSignalTag(r, runDates),
+        eventDate: r.event_date,
+        strength: strengthForSignal(r.confidence_to_use, confirmed.has(r.id)),
+        // Gate 1: outside_voice signals are never own-words → always false here (loadSignals filters
+        // to outside_voice_about_client). Computed via the ONE predicate, not hard-coded (default-deny).
+        provablyVerbatim: isProvablyVerbatim(r.id, provableVerbatim),
+        mentionCount: 1,
+      },
+      readDate: (r.created_at ?? "").slice(0, 10), // read/crawl date (day granularity)
+      host: bareHost(r.source_url ?? "") ?? "",
     }));
 
-  const order = { strong: 0, moderate: 1, thin: 2 } as const;
-  signals.sort((a, b) => {
-    if (order[a.strength] !== order[b.strength]) return order[a.strength] - order[b.strength];
-    return (b.eventDate ?? "").localeCompare(a.eventDate ?? "");
-  });
+  // R4 (2026-08-27) FOLD then ORDER:
+  //  · foldIdenticalSignals — DISPLAY GROUPING keyed on (host, text), READ-DATE AGNOSTIC: identical
+  //    statement+host collapses to one row + a mention count (the wanderlog quadruplicate read across
+  //    two runs → "4 mentions"). De-emphasize, never delete — every underlying signal stays in the DB;
+  //    only the render folds. The representative keeps the freshest read-date. Inert for a company with
+  //    no exact repeats. Fold FIRST so ordering sees each group's freshest read as one row.
+  //  · orderBeat2Signals — FRESH-FIRST: read-date (crawl) desc, then host; recency is the honest
+  //    general lead (a freshly-verified crawl surfaces above stale rows). Applied to EVERY company.
+  const signals: FRSignal[] = hoistStrongestNegative(orderBeat2Signals(foldIdenticalSignals(items)));
 
   // FIX 2 (2026-08-25): reserve an early slot for the strongest negative outside signal, so general
   // negative sentiment (e.g. the "going downhill" review, moderate strength, ~pos 88/106) is visible
@@ -621,6 +631,47 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           confirmed: gapStatements.filter((s) => s.verdict === "confirmed").length,
         };
 
+        // ── R4 reverse arrow — "Raised by the record" (2026-08-27) ──────────────────────────────
+        // public_vs_public internally_silent: the RECORD raises something the declared voice is silent
+        // on — the say-vs-see mirror half. RESOLVED-STATES LAW: only rows whose public claim has an
+        // ACTIVE (held_at/superseded_at NULL) OUTSIDE signal render (newestSignalByClaim returns non-
+        // null). Solely-held/superseded backing → BACKSTAGE (operator-side, item 23). No backing / an
+        // own-voice-shaped public side → SCREENED (a classification defect for item 31 — NEVER shown as
+        // record). relevance='orthogonal' (wrong-entity / off-topic, 23/25 territory) is struck out.
+        // NO verdict chip: the record raising a topic is neither confirmed nor contradicted.
+        const { data: revDeltaRows } = await loose()
+          .from("claim_deltas")
+          .select("id, public_claim_id, relevance_verdict")
+          .eq("company_id", companyId)
+          .eq("pairing_kind", "public_vs_public")
+          .eq("delta_type", "internally_silent");
+        const revDeltas = (revDeltaRows ?? []) as Array<{ id: string; public_claim_id: string | null; relevance_verdict: string | null }>;
+        const revPublicIds = [...new Set(revDeltas.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
+        const { data: revClaimRows } = revPublicIds.length
+          ? await supabase.from("claims").select("id, statement, status").in("id", revPublicIds)
+          : { data: [] };
+        const revClaimById = new Map(
+          ((revClaimRows ?? []) as Array<{ id: string; statement: string; status: string | null }>).map((c) => [c.id, c]),
+        );
+        const revNewest = await newestSignalByClaim(revPublicIds); // ACTIVE outside signals only
+        const reverseRows: FRReverseRow[] = [];
+        for (const d of revDeltas) {
+          if (!d.public_claim_id) continue;
+          if (d.relevance_verdict === "orthogonal") continue; // wrong-entity / off-topic strike (23/25)
+          const claim = revClaimById.get(d.public_claim_id);
+          if (!claim || claim.status === "struck") continue;
+          const sig = revNewest.get(d.public_claim_id) ?? null;
+          if (!sig) continue; // BACKSTAGE (solely held/superseded) or SCREENED (no active outside backing) → not rendered
+          reverseRows.push({
+            id: d.id,
+            statement: claim.statement,
+            sourceTag: publicSignalTag(sig, runDates),
+            eventDate: sig.event_date ?? null,
+          });
+        }
+        // Most-recent record first, then statement (stable).
+        reverseRows.sort((a, b) => (b.eventDate ?? "").localeCompare(a.eventDate ?? "") || a.statement.localeCompare(b.statement));
+
         // ── Cold-open ladder (2026-08-22): conflict → echo gap → strongest signal (first match wins).
         // Rungs 1/2 override the strongest-signal fallback built above. The echo-gap counts are beat
         // 4's STATEMENT numbers (gapStatements / gapCounts) — the SAME source, never recomputed here.
@@ -902,6 +953,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             gapPairs: orderedGapPairs,
             gapStatements,
             gapCounts,
+            reverseRows,
             statusConflicts,
             gapIntegrity,
             questions: [],

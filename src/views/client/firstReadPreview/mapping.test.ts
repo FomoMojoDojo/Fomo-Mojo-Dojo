@@ -85,3 +85,55 @@ describe("firstReadPreview mapping — foldByHostDate (S4 display fold, 2026-08-
     ]);
   });
 });
+
+// R4 (2026-08-27) — beat-2 display grouping: identical statement+HOST folds to one row + mention count.
+// The fold key is (host, text) — READ-DATE AGNOSTIC (see mapping.ts: the source-tag label embeds the
+// read-date, so keying on it mis-split the wanderlog quadruplicate 3+1 across two baseline runs).
+import { foldIdenticalSignals } from "./mapping";
+import type { FRSignal } from "./types";
+const sig = (over: Partial<FRSignal>): FRSignal => ({
+  id: "x", text: "t", sourceTag: { label: "wanderlog.com" }, eventDate: "2024-01-01",
+  strength: "moderate", provablyVerbatim: false, ...over,
+});
+const item = (over: { id?: string; text?: string; host?: string; readDate: string; eventDate?: string; label?: string }): Beat2Sortable => ({
+  signal: sig({ id: over.id, text: over.text ?? "t", eventDate: over.eventDate ?? "2024-01-01", sourceTag: { label: over.label ?? `${over.host ?? "wanderlog.com"} · read ${over.readDate}` } }),
+  readDate: over.readDate,
+  host: over.host ?? "wanderlog.com",
+});
+describe("foldIdenticalSignals — beat-2 display grouping (host+text, read-date agnostic)", () => {
+  it("folds identical statement+host read on DIFFERENT baseline runs to ONE row → all 4 mentions (fails without the fix)", () => {
+    // The exact wanderlog case: same text + host, 3 read Aug 19 + 1 read Aug 7. Must fold to ONE, count 4.
+    const out = foldIdenticalSignals([
+      item({ id: "a", text: "mixed reviews", readDate: "2026-08-19", eventDate: "2024-09-01" }),
+      item({ id: "b", text: "mixed reviews", readDate: "2026-08-19", eventDate: "2026-01-01" }),
+      item({ id: "c", text: "mixed reviews", readDate: "2026-08-19", eventDate: "2024-09-01" }),
+      item({ id: "d", text: "mixed reviews", readDate: "2026-08-07", eventDate: "2024-01-01" }),
+    ]);
+    expect(out).toHaveLength(1);                       // one row despite two read-dates
+    expect(out[0].signal.mentionCount).toBe(4);        // "4 mentions" — every folded row counted
+    expect(out[0].readDate).toBe("2026-08-19");        // representative keeps the FRESHEST read
+    expect(out[0].signal.eventDate).toBe("2026-01-01"); // newest eventDate carried
+  });
+  it("distinct statements OR hosts are NOT folded (a 0-duplicate company is byte-identical)", () => {
+    const out = foldIdenticalSignals([
+      item({ id: "a", text: "review one", host: "yelp.com", readDate: "2026-08-01" }),
+      item({ id: "b", text: "review two", host: "yelp.com", readDate: "2026-08-01" }),
+      item({ id: "c", text: "review one", host: "restaurantguru.com", readDate: "2026-08-01" }), // same text, diff host → distinct
+    ]);
+    expect(out).toHaveLength(3);
+    expect(out.every((x) => x.signal.mentionCount === 1)).toBe(true);
+  });
+});
+
+// R4 (2026-08-27) — beat-2 fresh-first ordering: read-date (crawl) desc, then host.
+import { orderBeat2Signals, type Beat2Sortable } from "./mapping";
+describe("orderBeat2Signals — fresh-first (read-date desc, then host)", () => {
+  it("leads with the freshest read-date; host breaks a read-date tie; stale trails (fails without the sort)", () => {
+    const items: Beat2Sortable[] = [
+      { signal: sig({ id: "stale" }), readDate: "2026-08-07", host: "wanderlog.com" },
+      { signal: sig({ id: "freshB" }), readDate: "2026-08-26", host: "restaurantji.com" },
+      { signal: sig({ id: "freshA" }), readDate: "2026-08-26", host: "chamberofcommerce.com" },
+    ];
+    expect(orderBeat2Signals(items).map((s) => s.id)).toEqual(["freshA", "freshB", "stale"]);
+  });
+});

@@ -148,6 +148,11 @@ const GAP_HEADLINE_UNECHOED = "What you say that the record doesn't echo."; // c
 const GAP_HEADLINE_BACKED = "Where the record backs you."; // only confirmed
 const GAP_HEADLINE_NEUTRAL = "Your words next to the record."; // nothing yet
 const RECORD_SILENT_NOTE = "The public record doesn't echo this yet."; // signed
+// R4 (2026-08-27) — the reverse arrow, "Raised by the record". DRAFT strings; operator signs/rewords
+// at acceptance. Vocabulary law: no verdict-family word (echoed/disputed/confirmed/contradicted), and
+// the section name must NOT collide with the ratified "Unspoken" (which names the OTHER arrow).
+const REVERSE_SECTION_LABEL = "Raised by the record"; // DRAFT
+const REVERSE_INTRO = "The record talks about things your own channels haven't mentioned yet."; // DRAFT
 // DRAFT (2026-08-26, operator signs at acceptance): the re-verifying holding note — shown ONCE over the
 // grouped re-verifying statements. Distinct from record-silent: here the record DID echo; gate 3 held
 // its backing signal pending re-crawl.
@@ -167,6 +172,9 @@ function signalMeta(signal: FRSignal) {
         {signal.strength} signal
       </span>
       {signal.sourceTag ? <SourceTag>{signal.sourceTag.label}</SourceTag> : null}
+      {/* R4 (2026-08-27): identical statement+host folded to one row; the count states how many
+          underlying mentions it stands for (all retained in data — de-emphasize, never delete). */}
+      {(signal.mentionCount ?? 1) > 1 ? <SourceTag>{`${signal.mentionCount} mentions`}</SourceTag> : null}
       {recency ? <RecencyTag>{recency}</RecencyTag> : null}
     </>
   );
@@ -878,6 +886,31 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
           );
         })}
       </main>
+      {/* R4 — the reverse arrow, "Raised by the record" (2026-08-27): the say-vs-see MIRROR half. Renders
+          the record statements that raise something the declared voice is silent on. RESOLVED-STATES LAW:
+          only active-backed rows reach read.reverseRows (backstage/screened are excluded in the hook), so
+          the section is absent when empty. NO verdict chip (unearned — neither confirmed nor contradicted);
+          source tag is real host + read date or hidden. The count is a DISTINCT sub-count, never merged
+          into the say-vs-see standfirst tally above. */}
+      {read.reverseRows.length > 0 ? (
+        <section className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+          <Eyebrow>{REVERSE_SECTION_LABEL}</Eyebrow>
+          <p className="mt-4 mb-2 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+            {REVERSE_INTRO}
+          </p>
+          <p className="mb-8 text-sm font-light" style={{ color: "hsl(var(--fr-muted))" }}>
+            {read.reverseRows.length} raised by the record.
+          </p>
+          <div className="fr-stagger flex flex-col">
+            {read.reverseRows.map((row) => (
+              <div key={row.id} className="fr-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+                <p className="text-lg font-light leading-relaxed">{row.statement}</p>
+                {row.sourceTag ? <div className="mt-3"><SourceTag>{row.sourceTag.label}</SourceTag></div> : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }
