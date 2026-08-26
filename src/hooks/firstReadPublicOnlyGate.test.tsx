@@ -62,6 +62,7 @@ import {
   featuredEligibleDeltas,
   firstReadExcludedClaimIds,
   clientVoiceClaimIds,
+  channelReadClaimIds,
   isOwnDomainUrl,
 } from "../../supabase/functions/_shared/firstReadProvenance.ts";
 
@@ -206,5 +207,47 @@ describe("PUBLIC-ONLY primitives", () => {
     expect(ids.has(PUBVOICE)).toBe(true);
     expect(ids.has(PUBNULL_OWN)).toBe(true);
     expect(ids.has(PUBNULL_3P)).toBe(false);
+  });
+});
+
+// CHANNEL-READ OWN-WORDS EXCLUSION (2026-08-27) — a statement rendered as the client's own words must
+// never also render as our read of their channels. Tests 1 & 5 fail without the claim_type exclusion.
+describe("channelReadClaimIds — own_words excluded from the channel-read set", () => {
+  const ov = (ids: string[]) => new Set(ids);
+  const none = new Set<string>();
+
+  it("1. an own_words claim (in ownVoiceIds via client_voice backing) is EXCLUDED — fails without the fix", () => {
+    const claims = [{ id: "ow", claim_type: "own_words" }, { id: "inf", claim_type: "inference" }];
+    const ids = channelReadClaimIds(claims, ov(["ow", "inf"]), none); // both own-voice qualified
+    expect(ids.has("ow")).toBe(false); // own_words render in their own block, never as a channel read
+    expect(ids.has("inf")).toBe(true); // inference stays
+  });
+
+  it("2. non-own_words channel rows (inference / customer_outcome / unmet_need) are unaffected", () => {
+    const claims = [
+      { id: "a", claim_type: "inference" },
+      { id: "b", claim_type: "customer_outcome" },
+      { id: "c", claim_type: "unmet_need" },
+    ];
+    expect([...channelReadClaimIds(claims, ov(["a", "b", "c"]), none)].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("3. upload-derived claims stay excluded (docExcluded), alongside own_words", () => {
+    const claims = [{ id: "doc", claim_type: "inference" }, { id: "keep", claim_type: "inference" }];
+    const ids = channelReadClaimIds(claims, ov(["doc", "keep"]), new Set(["doc"]));
+    expect(ids.has("doc")).toBe(false);
+    expect(ids.has("keep")).toBe(true);
+  });
+
+  it("4. CB2-shape: own_words NOT in ownVoiceIds (null-voice refs) → exclusion is a no-op (unchanged)", () => {
+    const claims = [{ id: "ow", claim_type: "own_words" }, { id: "inf", claim_type: "inference" }];
+    const ids = channelReadClaimIds(claims, ov(["inf"]), none); // ownVoiceIds EXCLUDES ow
+    expect([...ids]).toEqual(["inf"]); // identical to pre-fix — ow was never a channel read anyway
+  });
+
+  it("5. Edgewood-shape: 30 own_words all own-voice-qualified → 30 → 0 in channel-reads (fails without the fix)", () => {
+    const claims = Array.from({ length: 30 }, (_, i) => ({ id: `ow${i}`, claim_type: "own_words" }));
+    const ids = channelReadClaimIds(claims, ov(claims.map((c) => c.id)), none);
+    expect(ids.size).toBe(0);
   });
 });

@@ -16,6 +16,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  channelReadClaimIds,
   clientVoiceClaimIds,
   isOwnDomainUrl,
   PUBLIC_PROVENANCE,
@@ -319,7 +320,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const companyHost = bareHost((co as { website?: string | null } | null)?.website ?? null);
         const { data: declRows } = await supabase
           .from("claims")
-          .select("id, topic, statement, status, raw_payload, provenance, created_at")
+          .select("id, topic, statement, status, raw_payload, provenance, claim_type, created_at")
           .eq("company_id", companyId)
           .eq("provenance", PUBLIC_PROVENANCE);
         const declaredAll = ((declRows ?? []) as Array<{
@@ -329,6 +330,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           status: string | null;
           raw_payload: unknown;
           provenance: string;
+          claim_type: string | null;
           created_at: string | null;
         }>).filter((c) => c.status === "active");
         const declDocExcluded = await uploadDerivedFor(declaredAll);
@@ -361,8 +363,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           if (!prior || (s.event_date ?? "") > (prior.event_date ?? "")) ownSigByClaim.set(r.claim_id, s);
         }
 
+        // Channel-read membership — the single structural predicate (own-voice qualified, own_words
+        // and upload-derived excluded). own_words render once, in the OW-3 own-words block above; they
+        // must never double-render as our channel read. See channelReadClaimIds.
+        const channelReadIds = channelReadClaimIds(declaredAll, ownVoiceIds, declDocExcluded);
         const channelRowsAll = declaredAll
-          .filter((c) => !declDocExcluded.has(c.id) && ownVoiceIds.has(c.id))
+          .filter((c) => channelReadIds.has(c.id))
           .map((c) => {
             const sig = ownSigByClaim.get(c.id) ?? null;
             return {

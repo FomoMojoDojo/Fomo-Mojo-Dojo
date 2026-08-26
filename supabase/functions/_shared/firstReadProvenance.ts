@@ -73,6 +73,31 @@ export function clientVoiceClaimIds(
 }
 
 /**
+ * The claim ids that render in beat 3's "your channels, as we read them" (OUR READ) section:
+ * own-voice-qualified public claims, EXCLUDING own_words and upload-derived claims.
+ *
+ * OWN-WORDS EXCLUSION (2026-08-27): a statement rendered as the client's OWN WORDS must never also
+ * render as OUR READ of their channels. own_words claims are provenance='public_observed' and are
+ * typically backed by client_voice signals, so they satisfy clientVoiceClaimIds and would double-
+ * render below their own-words block. Excluded STRUCTURALLY by claim_type (like the prune carve-out),
+ * not by string-dedup. They still render once, in the own-words block (loaded as claim_type='own_words').
+ */
+export function channelReadClaimIds(
+  claims: Array<{ id: string; claim_type?: string | null }>,
+  ownVoiceIds: Set<string>,
+  docExcludedIds: Set<string>,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const c of claims) {
+    if (c.claim_type === "own_words") continue; // never double-render as our channel read
+    if (docExcludedIds.has(c.id)) continue;
+    if (!ownVoiceIds.has(c.id)) continue;
+    ids.add(c.id);
+  }
+  return ids;
+}
+
+/**
  * THE document-filename pattern — the single definition shared by the provenance gate (tier b)
  * and deriveSourceTag's doc branch. First match names the cited document.
  */
