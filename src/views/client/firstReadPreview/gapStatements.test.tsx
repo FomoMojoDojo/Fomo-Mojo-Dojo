@@ -55,7 +55,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
 
   it("render: one statement row each; confirmed lists all its pairs; not-echoed shows the signed line", () => {
     const statements = groupGapStatements(FIVE_ROWS);
-    const gapCounts: FRGapCounts = { contradicted: 0, unechoed: 1, confirmed: 1 };
+    const gapCounts: FRGapCounts = { contradicted: 0, reverifying: 0, unechoed: 1, confirmed: 1 };
     const read: FirstReadPreviewData = {
       ...EMPTY_FIRST_READ,
       company: { name: "Co", website: null },
@@ -91,7 +91,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     return {
       ...EMPTY_FIRST_READ, company: { name: "Co", website: null },
       gapPairs: rows, gapStatements: groupGapStatements(rows),
-      gapCounts: { contradicted: 1, unechoed: 0, confirmed: 0 }, gapIntegrity: "looked_none",
+      gapCounts: { contradicted: 1, reverifying: 0, unechoed: 0, confirmed: 0 }, gapIntegrity: "looked_none",
     };
   };
 

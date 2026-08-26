@@ -19,17 +19,17 @@ const COHERENCE = "is a disagreement between outside sources — not between you
 
 describe("beat-4 status-vs-gap coherence note", () => {
   it("CB2 branch — conflict present + 0 contradicted → the note shows", () => {
-    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [conflict], gapCounts: { contradicted: 0, unechoed: 3, confirmed: 2 } };
+    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [conflict], gapCounts: { contradicted: 0, reverifying: 0, unechoed: 3, confirmed: 2 } };
     expect((render(<ActGap read={read} />).container.textContent ?? "")).toContain(COHERENCE);
   });
 
   it("Edgewood branch — contradicted statements exist → the note is hidden", () => {
-    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [conflict], gapCounts: { contradicted: 9, unechoed: 6, confirmed: 16 } };
+    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [conflict], gapCounts: { contradicted: 9, reverifying: 0, unechoed: 6, confirmed: 16 } };
     expect((render(<ActGap read={read} />).container.textContent ?? "")).not.toContain(COHERENCE);
   });
 
   it("no conflict + 0 contradicted → note hidden (it requires a rung-1 conflict)", () => {
-    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [], gapCounts: { contradicted: 0, unechoed: 1, confirmed: 0 } };
+    const read: FirstReadPreviewData = { ...EMPTY_FIRST_READ, statusConflicts: [], gapCounts: { contradicted: 0, reverifying: 0, unechoed: 1, confirmed: 0 } };
     expect((render(<ActGap read={read} />).container.textContent ?? "")).not.toContain(COHERENCE);
   });
 });

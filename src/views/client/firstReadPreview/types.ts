@@ -116,14 +116,20 @@ export type FRGapStatement = {
   declared: string;
   /** the declared side's newest-signal date (for the derived contradiction "why"); null if undated. */
   declaredDate?: string | null;
-  verdict: "confirmed" | "contradicted" | "unechoed";
-  /** the public evidence pairs beneath — most-recent per source; empty for `unechoed`. */
+  /** 'reverifying' (2026-08-26): the statement HAD an active public echo, but gate-3 held/superseded
+   *  its backing signal — so evidence is empty yet the record is NOT silent. Distinct from 'unechoed'
+   *  (a genuinely publicly_silent statement). Renders the declared words + a re-verifying note, no verdict. */
+  verdict: "confirmed" | "contradicted" | "unechoed" | "reverifying";
+  /** the public evidence pairs beneath — most-recent per source; empty for `unechoed`/`reverifying`. */
   evidence: FRGapPair[];
+  /** S5 statement-level dispute marker — true ONLY when the statement has VISIBLE evidence and a pair
+   *  references the disputed location. One chip max per statement; never on an evidence-less row. */
+  statusDisputed?: boolean;
 };
 
 /** A1: persisted type counts that pick beat 4's headline (never a disagreement headline over
  *  zero disagreements). Counted by STATEMENT (2026-08-21), not by pair row. */
-export type FRGapCounts = { contradicted: number; unechoed: number; confirmed: number };
+export type FRGapCounts = { contradicted: number; reverifying: number; unechoed: number; confirmed: number };
 
 /** S3/S5: a live status conflict — an authoritative source reports {location} closed while others
  *  list it open. Pinned atop Questions + Findings; rows whose backing references {location} carry
@@ -291,7 +297,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   score: null,
   gapPairs: [],
   gapStatements: [],
-  gapCounts: { contradicted: 0, unechoed: 0, confirmed: 0 },
+  gapCounts: { contradicted: 0, reverifying: 0, unechoed: 0, confirmed: 0 },
   statusConflicts: [],
   gapIntegrity: "not_yet",
   channelJunkIds: [],

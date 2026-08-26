@@ -567,6 +567,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         const gapStatements = groupGapStatements(orderedGapPairs);
         const gapCounts = {
           contradicted: gapStatements.filter((s) => s.verdict === "contradicted").length,
+          reverifying: gapStatements.filter((s) => s.verdict === "reverifying").length,
           unechoed: gapStatements.filter((s) => s.verdict === "unechoed").length,
           confirmed: gapStatements.filter((s) => s.verdict === "confirmed").length,
         };

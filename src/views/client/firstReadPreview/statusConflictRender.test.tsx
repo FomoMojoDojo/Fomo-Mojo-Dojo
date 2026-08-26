@@ -64,7 +64,7 @@ describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () =
   const withStatements = (p: FRGapPair): Partial<FirstReadPreviewData> => ({
     gapPairs: [p],
     gapStatements: groupGapStatements([p]),
-    gapCounts: { contradicted: 0, unechoed: 0, confirmed: 1 },
+    gapCounts: { contradicted: 0, reverifying: 0, unechoed: 0, confirmed: 1 },
   });
 
   it("a disputed gap pair shows the chip; a clean one does not — BOTH still render", () => {

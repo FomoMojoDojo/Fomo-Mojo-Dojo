@@ -187,7 +187,7 @@ export function hoistStrongestNegative<T extends { id: string; text: string; str
 
 // A1: beat-4 order by discussability — contradicted → unechoed → confirmed (unspoken last,
 // though it is off-surface). Ties break by evidence strength desc.
-export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, unechoed: 1, confirmed: 2, unspoken: 3 };
+export const GAP_VERDICT_ORDER: Record<string, number> = { contradicted: 0, reverifying: 1, unechoed: 2, confirmed: 3, unspoken: 4 };
 export function orderGapPairs<T extends { verdict: string; evidenceRank: number }>(pairs: T[]): T[] {
   return [...pairs].sort((a, b) =>
     (GAP_VERDICT_ORDER[a.verdict] ?? 9) - (GAP_VERDICT_ORDER[b.verdict] ?? 9) || b.evidenceRank - a.evidenceRank);
@@ -205,6 +205,10 @@ export function orderGapPairs<T extends { verdict: string; evidenceRank: number 
 export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
   const order: string[] = [];
   const byId = new Map<string, FRGapStatement>();
+  // A statement that HAD an active public echo (regardless of whether its evidence is now visible).
+  const sawEcho = new Set<string>();
+  // A statement with a VISIBLE disputed pair (drives the single statement-level chip).
+  const disputed = new Set<string>();
   for (const p of pairs) {
     let st = byId.get(p.statementId);
     if (!st) {
@@ -217,16 +221,30 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     // from the client render entirely (the line-through-in-place render is retired) — it never
     // enters `evidence`, so it neither shows nor drives the verdict. It stays fully recorded and
     // reversible in claim_deltas. The single shared selector isRelevanceActive is the gate.
-    if ((p.verdict === "confirmed" || p.verdict === "contradicted") && isRelevanceActive(p.relevanceVerdict)) st.evidence.push(p);
+    const isEchoPair = (p.verdict === "confirmed" || p.verdict === "contradicted") && isRelevanceActive(p.relevanceVerdict);
+    if (isEchoPair) sawEcho.add(p.statementId); // a real public echo existed for this statement
+    // GATE 3 (2026-08-26): a pair whose evidence body was held/superseded arrives body-blank
+    // (record AND sourceTag both null, since both come from the now-filtered public signal). It is
+    // OMITTED like a struck pair — never shown as a chip-bearing blank scaffold.
+    const visible = !!p.record || !!p.sourceTag;
+    if (isEchoPair && visible) {
+      st.evidence.push(p);
+      if (p.statusDisputed) disputed.add(p.statementId); // chip only from a VISIBLE pair
+    }
   }
   for (const st of byId.values()) {
-    // Verdict from the (now already active-only) evidence: contradicted if ANY contradicted, else
-    // confirmed if ANY echoed, else not-echoed. A confirmed/contradicted statement therefore always
-    // has >=1 rendered evidence pair — it can never be all-struck (invariant asserted in tests);
-    // an all-struck statement falls to unechoed and renders the clean doesn't-echo empty state.
+    // Verdict from the (now already active-only, visible-only) evidence: contradicted if ANY
+    // contradicted, else confirmed if ANY echoed. With no visible evidence, the honest state depends
+    // on WHY it is empty: an active echo existed but was HELD/SUPERSEDED (gate 3) ⇒ 'reverifying'
+    // (the record is NOT silent, we are re-checking it); no echo ever (only publicly_silent, or all
+    // orthogonal-struck) ⇒ 'unechoed' (the record is genuinely silent, the clean doesn't-echo state).
     const hasContra = st.evidence.some((e) => e.verdict === "contradicted");
     const hasEcho = st.evidence.some((e) => e.verdict === "confirmed");
-    st.verdict = hasContra ? "contradicted" : hasEcho ? "confirmed" : "unechoed";
+    st.verdict = hasContra ? "contradicted"
+      : hasEcho ? "confirmed"
+      : sawEcho.has(st.statementId) ? "reverifying"
+      : "unechoed";
+    st.statusDisputed = disputed.has(st.statementId);
   }
   // FIX 1 (2026-08-25): order statements by their FINAL verdict, not the pre-strike pair order that
   // orderGapPairs produced. Before the relevance backstop, first-pair-appearance matched the statement
