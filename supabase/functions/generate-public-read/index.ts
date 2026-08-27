@@ -21,6 +21,8 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
+import { sha256Hex } from "../_shared/contentIdentity.ts";
+import { citationsLivePublic, framingViolations } from "../_shared/publicReadGuards.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,12 +55,16 @@ const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20
 async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): Promise<InputRow[]> {
   const rows: InputRow[] = [];
 
-  // 1. outside signals — outside band AND a PUBLIC web voice (analysis/NULL voice = our own read, excluded)
+  // 1. outside signals — outside band AND a PUBLIC web voice (analysis/NULL voice = our own read, excluded).
+  //    LIVE-ONLY (Gate 6a, 2026-08-26): superseded_at IS NULL AND held_at IS NULL — a hypothesis must not
+  //    rest on evidence that is terminally gone (fabricated / redesigned-away / source_gone) OR merely
+  //    held/recrawl-pending (unverified). Generation is STRICTER than the render overlay by design: the
+  //    render marks provisional citations, but the "Our read" seeds posits ONLY from live public evidence.
   const { data: sig } = await supabase
     .from("signals")
     .select("id, claim_text, evidence_excerpt, source_title, topic")
     .eq("company_id", companyId).eq("signal_band", "outside")
-    .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null);
+    .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null);
   for (const s of (sig ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; source_title: string | null; topic: string | null }>) {
     const text = (s.claim_text ?? s.evidence_excerpt ?? "").trim();
     if (text) rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}` });
@@ -72,10 +78,17 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
     if (text) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text });
   }
 
-  // 3. findings — the public_inferred register, open only
+  // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
+  //    only findings with a Gate-5c finding_recurrence row (entity-anchored, IDF-coherent, judge-anchored,
+  //    corroborated across ≥2 independent public sources) seed posits. Single-source open findings are
+  //    unverified across the record and do NOT seed a hypothesis — the 5c coherence work IS this gate.
+  const { data: recRows } = await supabase
+    .from("finding_recurrence").select("finding_id").eq("company_id", companyId);
+  const recurrenceBacked = new Set(((recRows ?? []) as Array<{ finding_id: string }>).map((r) => r.finding_id));
   const { data: fnd } = await supabase
     .from("findings").select("id, body").eq("company_id", companyId).eq("register", "public_inferred").eq("status", "open");
   for (const f of (fnd ?? []) as Array<{ id: string; body: string | null }>) {
+    if (!recurrenceBacked.has(f.id)) continue; // recurrence-backed only
     const text = (f.body ?? "").trim();
     if (text) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", text });
   }
@@ -114,11 +127,19 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
   });
 }
 
-function ledgerOf(inputs: InputRow[]) {
+// The INPUT LEDGER — the anti-provenance-lie record: EXACTLY what was read, its provenance, its
+// per-id liveness, and a corpus fingerprint. corpus_md5 is a sha256 of the sorted input texts (a
+// stable content hash — "md5" per the gate's shorthand; the algorithm is sha256). liveness is 'live'
+// for every id by construction (the queries select live-only public rows), recorded explicitly so the
+// ledger states it rather than implying it.
+async function ledgerOf(inputs: InputRow[]) {
+  const corpus_md5 = await sha256Hex(inputs.map((r) => r.text).sort().join("\n"));
   return {
     ids: inputs.map((r) => r.id),
     by_kind: KINDS_INPUT.reduce((acc, k) => { acc[k] = inputs.filter((r) => r.kind === k).map((r) => r.id); return acc; }, {} as Record<string, string[]>),
     provenances: inputs.reduce((acc, r) => { acc[r.id] = r.provenance; return acc; }, {} as Record<string, string>),
+    liveness: inputs.reduce((acc, r) => { acc[r.id] = "live"; return acc; }, {} as Record<string, string>),
+    corpus_md5,
     count: inputs.length,
   };
 }
@@ -183,13 +204,40 @@ Deno.serve(async (req) => {
     if (!company_id) return json({ error: "company_id is required" }, 400);
     if (company_id === CB1_FROZEN_ID) return json({ error: "frozen reference company — never written" }, 403);
     const doPlan = body.plan === true;
-    const doWrite = body.write !== false && !doPlan;
+    const doStage = body.stage === true;                 // Gate 6a two-phase: write NOT-current, await accept
+    const doPromote = body.promote === true;             // Gate 6a: flip the staged rows current + supersede
+    const doWrite = body.write !== false && !doPlan && !doStage && !doPromote;
     const probeId: string | null = typeof body._probe_internal_id === "string" ? body._probe_internal_id : null;
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+    // ── PROMOTE (accept): no generation, no model call. Per kind, flip the staged row (is_current
+    //    false→true) and supersede the prior current row (is_current true→false, superseded_by=staged).
+    //    The staged row is the unique is_current=false row with superseded_by NULL (staging created it).
+    if (doPromote) {
+      const promoted: Array<{ kind: Kind; staged: string; superseded: string | null }> = [];
+      for (const kind of KINDS) {
+        const { data: staged } = await supabase.from("public_reads")
+          .select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", false).is("superseded_by", null)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const stagedId = (staged as { id?: string } | null)?.id ?? null;
+        if (!stagedId) { promoted.push({ kind, staged: "", superseded: null }); continue; }
+        const { data: prior } = await supabase.from("public_reads")
+          .select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
+        const priorId = (prior as { id?: string } | null)?.id ?? null;
+        if (priorId) {
+          const { error: e1 } = await supabase.from("public_reads").update({ is_current: false, superseded_by: stagedId }).eq("id", priorId);
+          if (e1) throw new Error(`supersede-prior failed (${kind}): ${e1.message}`);
+        }
+        const { error: e2 } = await supabase.from("public_reads").update({ is_current: true }).eq("id", stagedId);
+        if (e2) throw new Error(`promote-staged failed (${kind}): ${e2.message}`);
+        promoted.push({ kind, staged: stagedId, superseded: priorId });
+      }
+      return json({ ok: true, promoted });
+    }
+
     const inputs = await gatherPublicInputs(supabase, company_id);
-    const ledger = ledgerOf(inputs);
+    const ledger = await ledgerOf(inputs);
     const ledgerIds = new Set(ledger.ids);
 
     // ── VACUOUS PROOF hook: prove a planted internal id is absent from every query's output + ledger.
@@ -283,6 +331,31 @@ ${US_ENGLISH_RULE}`;
       return json({ ok: false, rejected: "citation_outside_ledger", citation_errors: citationErrors, payloads, ledger_count: ledger.count }, 200);
     }
 
+    // ── FRAMING GATE (Gate 6a, deterministic, pre-judge): a posit is a HYPOTHESIS, never a verdict.
+    //    Reject verdict-family / UNDERSERVED vocabulary before the judge even runs. Write nothing.
+    const framing = framingViolations(payloads);
+    if (framing.length) {
+      return json({ ok: false, rejected: "framing_vocab", framing_violations: framing, payloads, ledger_count: ledger.count }, 200);
+    }
+
+    // ── CITATION RESOLUTION PROOF (Gate 6a): every ref a posit cites resolves to a ledger id that is
+    //    LIVE + PUBLIC at mint. Refs → uuids via the catalogue; each uuid must be in the ledger with a
+    //    public provenance and liveness 'live'. The ledger is live-public by construction (the queries
+    //    select live-only public rows), so this is an explicit assertion of that invariant.
+    const resolvedPayloads = Object.fromEntries(
+      KINDS.map((k) => [k, translateCitations(payloads[k], uuidByRef)]),
+    ) as Record<Kind, Record<string, unknown>>;
+    const citedUuids = [...new Set(KINDS.flatMap((k) => citedRefs(payloads[k]).map((ref) => uuidByRef.get(ref)).filter((x): x is string => !!x)))];
+    const citationResolution = citedUuids.map((id) => ({
+      id, in_ledger: ledgerIds.has(id), provenance: ledger.provenances[id] ?? null,
+      public: require_public(ledger.provenances[id]), liveness: ledger.liveness[id] ?? null,
+    }));
+    const livePublic = citationsLivePublic(citedUuids, ledger.provenances, ledger.liveness);
+    if (!livePublic.ok) {
+      // A cited id that isn't live-public in the ledger is an integrity failure — reject, write nothing.
+      return json({ ok: false, rejected: "citation_not_live_public", bad_ids: livePublic.bad, citation_resolution: citationResolution, payloads, ledger_count: ledger.count }, 200);
+    }
+
     // ── JUDGE all three together: grounding + plain-sanity + consistency ────────────────────────────
     const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise). Check THREE things:
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
@@ -301,16 +374,34 @@ Respond with ONLY JSON:
       // Reject → no write, verdict returned (nothing persisted).
       return json({ ok: false, rejected: "judge", judge_verdict: verdict, judge_model: judgeChoice.model, payloads, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
-    if (!doWrite) {
-      return json({ ok: true, dry_run: true, payloads, judge_verdict: verdict, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    if (!doWrite && !doStage) {
+      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdict: verdict, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
-    // ── ACCEPT → write current rows, superseding the prior current row (kept, never deleted). ───────
+    // ── ACCEPT → write rows, superseding the prior current row (kept, never deleted). ───────
     // Legacy market_read canvas/cascade id (if any) so the row records what it supersedes.
     const { data: legacyCanvas } = await supabase.from("positioning_canvases").select("id").eq("company_id", company_id).eq("artifact_role", "market_read").maybeSingle();
     const { data: legacyCascade } = await supabase.from("strategy_cascades").select("id").eq("company_id", company_id).eq("artifact_role", "market_read").maybeSingle();
     const legacyFor = (k: Kind): string | null =>
       k === "strategy" ? ((legacyCascade as { id?: string } | null)?.id ?? null) : ((legacyCanvas as { id?: string } | null)?.id ?? null);
+
+    // ── STAGE (Gate 6a two-phase): write is_current=FALSE rows, DO NOT supersede the prior current row.
+    //    The signed payloads persist as staged; `promote` (accept) flips them current + supersedes. This
+    //    lets the operator sign the EXACT payloads with nothing marked current until accept.
+    if (doStage) {
+      const staged: Array<{ kind: Kind; id: string }> = [];
+      for (const kind of KINDS) {
+        const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
+          company_id, kind, payload: resolvedPayloads[kind], input_ledger: ledger,
+          model_provider: genChoice.provider, model_name: genChoice.model,
+          judge_verdict: verdict, judge_model: judgeChoice.model,
+          is_current: false, supersedes_legacy_row: legacyFor(kind),
+        }).select("id").single();
+        if (insErr) throw new Error(`stage insert failed (${kind}): ${insErr.message}`);
+        staged.push({ kind, id: (ins as { id: string }).id });
+      }
+      return json({ ok: true, staged, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    }
 
     const written: Array<{ kind: Kind; id: string; superseded: string | null }> = [];
     for (const kind of KINDS) {
