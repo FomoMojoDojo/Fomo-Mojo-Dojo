@@ -83,11 +83,11 @@ export function ScoreNow({
 export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
   const map: Record<FRGapVerdict, { label: string; style: React.CSSProperties }> = {
     confirmed: {
-      label: "Confirmed",
+      label: "Echoed",
       style: { background: "hsl(160 84% 33% / 0.08)", color: "hsl(160 84% 28%)" },
     },
     contradicted: {
-      label: "Contradicted",
+      label: "Disputed",
       style: { background: "hsl(347 77% 50% / 0.08)", color: "hsl(347 77% 44%)" },
     },
     unechoed: {

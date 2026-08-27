@@ -68,7 +68,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     const text = container.textContent ?? "";
     // headline counts run on statements (1 confirmed / 1 not echoed)
     expect(text).toContain("1 not echoed");
-    expect(text).toContain("1 confirmed");
+    expect(text).toContain("1 echoed");
     // statement A's three public sources all present beneath the single statement row
     expect(text).toContain("Retailer A lists the 12 oz bag.");
     expect(text).toContain("Retailer B lists the 12 oz bag.");
@@ -106,7 +106,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     expect(text).not.toContain("tells a different story"); // tier 3 not used
     // placement unchanged: why precedes the chip and the pairs
     const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("indeed.com reports a former employee"))!;
-    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Contradicted" && e.children.length === 0)!;
+    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Disputed" && e.children.length === 0)!;
     expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -116,7 +116,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     const iDeclared = text.indexOf("We are the best clinic.");
     const iLabel = text.indexOf("WHY THIS SEEMS TO CONFLICT");
     const iReason = text.indexOf("employee review contradicts the declared supportive model");
-    const iChip = text.indexOf("Contradicted");
+    const iChip = text.indexOf("Disputed");
     const iPair = text.indexOf("A critical review says otherwise.");
     expect(iReason).toBeGreaterThanOrEqual(0); // JUDGED reason shown, not the derived line
     expect(text).not.toContain("tells a different story"); // derived line retired from render when judged passes
@@ -127,7 +127,7 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     expect(iChip).toBeLessThan(iPair);
     // structural: the why block is a PRECEDING sibling of BOTH the chip and the pair list
     const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("employee review"))!;
-    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Contradicted" && e.children.length === 0)!;
+    const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Disputed" && e.children.length === 0)!;
     const pairP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("A critical review says otherwise."))!;
     expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(whyP.compareDocumentPosition(pairP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

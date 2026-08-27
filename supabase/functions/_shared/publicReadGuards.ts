@@ -17,7 +17,7 @@
 /** Verdict-family + UNDERSERVED vocabulary forbidden on a posit (Gate-6a signature). */
 export const FORBIDDEN_FRAMING_WORDS = [
   "underserved", "verdict", "confirmed", "contradicted", "proven",
-  "definitive", "definitively", "certainly", "echoed", "unspoken",
+  "definitive", "definitively", "certainly", "echoed", "unspoken", "disputed",
 ] as const;
 const FRAMING_RE = new RegExp(`\\b(${FORBIDDEN_FRAMING_WORDS.join("|")})\\b`, "i");
 const CITATION_KEY_RE = /citation|cite|ids$/i;

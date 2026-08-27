@@ -70,16 +70,16 @@ describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () =
   it("a disputed gap pair shows the chip; a clean one does not — BOTH still render", () => {
     const disputedText = render(<ActGap read={base(withStatements(disputed))} />).container.textContent ?? "";
     const cleanText = render(<ActGap read={base(withStatements(clean))} />).container.textContent ?? "";
-    expect(disputedText).toContain("Status disputed");
+    expect(disputedText).toContain("Status conflict");
     expect(disputedText).toContain("Le French Rooster teaming up"); // not hidden
-    expect(cleanText).not.toContain("Status disputed");
+    expect(cleanText).not.toContain("Status conflict");
     expect(cleanText).toContain("great coffee");
   });
 
   it("a disputed finding shows the chip and is not hidden", () => {
     const f: FRFinding = { id: "f", body: "Le French Rooster partnership is primary channel.", recurrence: 3, sourceTag: { label: "read Aug 1" }, stale: false, ageMarker: null, statusDisputed: true, quotes: [] };
     const text = render(<ActFindings read={base({ findings: [f] })} />).container.textContent ?? "";
-    expect(text).toContain("Status disputed");
+    expect(text).toContain("Status conflict");
     expect(text).toContain("primary channel"); // still rendered
   });
 });

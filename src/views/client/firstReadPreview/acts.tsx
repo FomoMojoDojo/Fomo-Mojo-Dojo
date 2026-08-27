@@ -30,7 +30,7 @@ function StatusDisputedChip() {
       className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
       style={{ background: "hsl(347 77% 50% / 0.10)", color: "hsl(347 77% 42%)" }}
     >
-      Status disputed
+      Status conflict
     </span>
   );
 }
@@ -89,7 +89,7 @@ const RATIONALE_QUESTIONS = "The threads the record leaves open — worth taking
 const RATIONALE_NEXT = "Where we'd go from here, and how the method carries forward."; // signed
 // Coherence note (2026-08-22, signed): a company with a rung-1 status conflict but ZERO contradicted
 // beat-4 statements — the dispute is source-vs-source, not your-words-vs-record. Only shown then.
-const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see the top of this read) is a disagreement between outside sources — not between your words and the record. Nothing you've said publicly is contradicted here."; // signed
+const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see the top of this read) is a disagreement between outside sources — not between your words and the record. Nothing you've said publicly is disputed here."; // signed
 // Signed eyebrow above the derived contradiction "why" line (2026-08-22), so it reads as rationale,
 // not a source row. Hoisted above the pair evidence.
 const WHY_CONFLICT_LABEL = "WHY THIS SEEMS TO CONFLICT"; // signed
@@ -750,9 +750,9 @@ function gapHeadline(c: FRGapCounts): string {
  *  client surface — see ActGap's resolved-states-only note). */
 function gapStandfirst(c: FRGapCounts): string {
   const parts: string[] = [];
-  if (c.contradicted) parts.push(`${c.contradicted} contradicted`);
+  if (c.contradicted) parts.push(`${c.contradicted} disputed`);
   if (c.unechoed) parts.push(`${c.unechoed} not echoed`);
-  if (c.confirmed) parts.push(`${c.confirmed} confirmed`);
+  if (c.confirmed) parts.push(`${c.confirmed} echoed`);
   const tally = parts.length ? ` ${parts.join(" · ")}.` : "";
   return `What you tell the world on your own channels, next to what the world says back.${tally}`;
 }

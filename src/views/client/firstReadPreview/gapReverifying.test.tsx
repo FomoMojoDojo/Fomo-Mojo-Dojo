@@ -77,7 +77,7 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
     ]);
     expect(st.find((s) => s.statementId === "B")?.verdict).toBe("reverifying"); // DATA state intact
     const { container } = render(<ActGap read={readWith(st)} />);
-    const chips = container.textContent?.match(/status disputed/gi) ?? [];
+    const chips = container.textContent?.match(/status conflict/gi) ?? [];
     expect(chips.length).toBe(1);                                      // A dedupes 3 → 1; B renders nothing
     expect(container.textContent?.toLowerCase()).not.toContain("re-verifying"); // B (reverifying) excluded
     expect(container.textContent).not.toContain("Held statement B.");  // B's declared text absent
@@ -93,7 +93,7 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
       pair({ id: "s", statementId: "B", verdict: "unechoed", record: null, sourceTag: null }),      // → unechoed
     ]);
     const { container } = render(<ActGap read={readConflict(st)} />);
-    expect(container.textContent?.toLowerCase()).not.toContain("nothing you've said publicly is contradicted");
+    expect(container.textContent?.toLowerCase()).not.toContain("nothing you've said publicly is disputed");
   });
 
   it("6b. coherence note RETURNS when reverifying = 0 and contradicted = 0 (the clean state it was made for)", () => {
@@ -101,7 +101,7 @@ describe("beat 4 — gate-3 display honesty (reverifying + chip dedup)", () => {
       pair({ id: "s", statementId: "B", verdict: "unechoed", record: null, sourceTag: null }), // only unechoed → reverifying 0
     ]);
     const { container } = render(<ActGap read={readConflict(st)} />);
-    expect(container.textContent?.toLowerCase()).toContain("nothing you've said publicly is contradicted");
+    expect(container.textContent?.toLowerCase()).toContain("nothing you've said publicly is disputed");
   });
 
   it("7. reverifying statements are ABSENT from the client render — no note, no group, no declared text", () => {
@@ -173,7 +173,7 @@ describe("beat 4 — resolved-states-only client render", () => {
     ]);
     expect(st.find((s) => s.statementId === "R")?.verdict).toBe("reverifying"); // data state
     const t = render(<ActGap read={readWith(st)} />).container.textContent ?? "";
-    expect(t).toContain("1 contradicted");
+    expect(t).toContain("1 disputed");
     expect(t).toContain("1 not echoed");
     expect(t.toLowerCase()).not.toContain("re-verifying"); // NOT named in the client standfirst
   });
@@ -188,7 +188,7 @@ describe("beat 4 — resolved-states-only client render", () => {
     const conflict = { location: "Le French Rooster", matchKey: "le french rooster", question: "closed?", closed: [], open: [] } as FRStatusConflict;
     const read = { ...readWith(st), statusConflicts: [conflict] } as FirstReadPreviewData;
     const t = render(<ActGap read={read} />).container.textContent?.toLowerCase() ?? "";
-    expect(t).not.toContain("nothing you've said publicly is contradicted"); // keyed on DATA reverifying > 0
+    expect(t).not.toContain("nothing you've said publicly is disputed"); // keyed on DATA reverifying > 0
   });
 
   it("R3. not-echoed and verdict rows render unaffected", () => {
@@ -210,7 +210,7 @@ describe("beat 4 — resolved-states-only client render", () => {
     const t = render(<ActGap read={readWith(st)} />).container.textContent ?? "";
     expect(t).toContain("Claim A.");
     expect(t).toContain("Claim B.");
-    expect(t).toContain("1 contradicted");
+    expect(t).toContain("1 disputed");
     expect(t).toContain("1 not echoed");
   });
 });
