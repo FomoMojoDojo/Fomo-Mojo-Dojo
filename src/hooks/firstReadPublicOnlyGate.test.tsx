@@ -215,10 +215,11 @@ describe("PUBLIC-ONLY primitives", () => {
 describe("channelReadClaimIds — own_words excluded from the channel-read set", () => {
   const ov = (ids: string[]) => new Set(ids);
   const none = new Set<string>();
+  const noTexts = new Set<string>(); // no own-words text overlap in these cases
 
   it("1. an own_words claim (in ownVoiceIds via client_voice backing) is EXCLUDED — fails without the fix", () => {
     const claims = [{ id: "ow", claim_type: "own_words" }, { id: "inf", claim_type: "inference" }];
-    const ids = channelReadClaimIds(claims, ov(["ow", "inf"]), none); // both own-voice qualified
+    const ids = channelReadClaimIds(claims, ov(["ow", "inf"]), none, noTexts); // both own-voice qualified
     expect(ids.has("ow")).toBe(false); // own_words render in their own block, never as a channel read
     expect(ids.has("inf")).toBe(true); // inference stays
   });
@@ -229,25 +230,45 @@ describe("channelReadClaimIds — own_words excluded from the channel-read set",
       { id: "b", claim_type: "customer_outcome" },
       { id: "c", claim_type: "unmet_need" },
     ];
-    expect([...channelReadClaimIds(claims, ov(["a", "b", "c"]), none)].sort()).toEqual(["a", "b", "c"]);
+    expect([...channelReadClaimIds(claims, ov(["a", "b", "c"]), none, noTexts)].sort()).toEqual(["a", "b", "c"]);
   });
 
   it("3. upload-derived claims stay excluded (docExcluded), alongside own_words", () => {
     const claims = [{ id: "doc", claim_type: "inference" }, { id: "keep", claim_type: "inference" }];
-    const ids = channelReadClaimIds(claims, ov(["doc", "keep"]), new Set(["doc"]));
+    const ids = channelReadClaimIds(claims, ov(["doc", "keep"]), new Set(["doc"]), noTexts);
     expect(ids.has("doc")).toBe(false);
     expect(ids.has("keep")).toBe(true);
   });
 
   it("4. CB2-shape: own_words NOT in ownVoiceIds (null-voice refs) → exclusion is a no-op (unchanged)", () => {
     const claims = [{ id: "ow", claim_type: "own_words" }, { id: "inf", claim_type: "inference" }];
-    const ids = channelReadClaimIds(claims, ov(["inf"]), none); // ownVoiceIds EXCLUDES ow
+    const ids = channelReadClaimIds(claims, ov(["inf"]), none, noTexts); // ownVoiceIds EXCLUDES ow
     expect([...ids]).toEqual(["inf"]); // identical to pre-fix — ow was never a channel read anyway
   });
 
   it("5. Edgewood-shape: 30 own_words all own-voice-qualified → 30 → 0 in channel-reads (fails without the fix)", () => {
     const claims = Array.from({ length: 30 }, (_, i) => ({ id: `ow${i}`, claim_type: "own_words" }));
-    const ids = channelReadClaimIds(claims, ov(claims.map((c) => c.id)), none);
+    const ids = channelReadClaimIds(claims, ov(claims.map((c) => c.id)), none, noTexts);
     expect(ids.size).toBe(0);
+  });
+
+  it("6. TEXT IDENTITY: an inference claim whose text equals an own_words statement is EXCLUDED (fails without the completion)", () => {
+    // R3b client_voice regen minted an inference claim carrying the SAME verbatim own-site text as an
+    // own_words claim ("This is the Barra Method."). It passes the claim_type gate but must be excluded by text.
+    const { normalizeForHash } = require("../../supabase/functions/_shared/contentIdentity.ts");
+    const claims = [
+      { id: "inf_dup", claim_type: "inference", statement: "This is the Barra Method." },
+      { id: "inf_new", claim_type: "inference", statement: "We ship nationwide to wholesale partners." },
+    ];
+    const owText = new Set([normalizeForHash("this is the barra method.")]);
+    const ids = channelReadClaimIds(claims, ov(["inf_dup", "inf_new"]), none, owText);
+    expect(ids.has("inf_dup")).toBe(false); // text-identical to own_words → excluded
+    expect(ids.has("inf_new")).toBe(true);  // distinct text → renders
+  });
+
+  it("7. Edgewood-shape (0 text overlap): the text exclusion is a no-op → byte-identical", () => {
+    const claims = [{ id: "a", claim_type: "inference", statement: "Distinct channel statement." }];
+    const ids = channelReadClaimIds(claims, ov(["a"]), none, new Set<string>()); // no own-words texts
+    expect([...ids]).toEqual(["a"]);
   });
 });

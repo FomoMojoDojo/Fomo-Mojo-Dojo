@@ -375,8 +375,13 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
 
         // Channel-read membership — the single structural predicate (own-voice qualified, own_words
         // and upload-derived excluded). own_words render once, in the OW-3 own-words block above; they
-        // must never double-render as our channel read. See channelReadClaimIds.
-        const channelReadIds = channelReadClaimIds(declaredAll, ownVoiceIds, declDocExcluded);
+        // must never double-render as our channel read — excluded by class AND by TEXT IDENTITY (R3b
+        // client_voice regen can mint a non-own_words claim carrying the SAME verbatim own-site text).
+        // The own-words text set is the normalized statements of every active own_words claim.
+        const ownWordsNormTexts = new Set(
+          declaredAll.filter((c) => c.claim_type === "own_words").map((c) => normalizeForHash(c.statement)),
+        );
+        const channelReadIds = channelReadClaimIds(declaredAll, ownVoiceIds, declDocExcluded, ownWordsNormTexts);
         const channelRowsAll = declaredAll
           .filter((c) => channelReadIds.has(c.id))
           .map((c) => {

@@ -4,6 +4,8 @@
 // (the company's own public presence + what others say). UPLOADED DOCUMENTS must never feed any
 // First Read surface — uploaded documents power the deeper engagement only.
 //
+import { normalizeForHash } from "./contentIdentity.ts";
+//
 // R1 (operator ruling, 2026-08-20): upload-derived content is excluded STRUCTURALLY, as the union
 // of two derivable tests — (a) any backing signal with source_type = 'uploaded_file', and (b) the
 // claim's own birth record (raw_payload basis/source) citing an uploaded document by filename.
@@ -83,13 +85,21 @@ export function clientVoiceClaimIds(
  * not by string-dedup. They still render once, in the own-words block (loaded as claim_type='own_words').
  */
 export function channelReadClaimIds(
-  claims: Array<{ id: string; claim_type?: string | null }>,
+  claims: Array<{ id: string; claim_type?: string | null; statement?: string | null }>,
   ownVoiceIds: Set<string>,
   docExcludedIds: Set<string>,
+  ownWordsNormTexts: Set<string>,
 ): Set<string> {
   const ids = new Set<string>();
   for (const c of claims) {
-    if (c.claim_type === "own_words") continue; // never double-render as our channel read
+    if (c.claim_type === "own_words") continue; // never double-render as our channel read (by class)
+    // 1ea2464 COMPLETED to TEXT IDENTITY (R3b, 2026-08-27): the invariant is text-level, not
+    // claim_type-level — a statement must never render as both "your words" (own_words block) AND
+    // "our read of your channels", regardless of claim CLASS. R3b's client_voice regeneration minted
+    // `inference` claims carrying the SAME verbatim own-site text as own_words claims; those slip past
+    // the claim_type gate above but are excluded here by normalized-text identity (the single
+    // normalizeForHash normalizer — same rule the own-words verbatim guard uses).
+    if (c.statement && ownWordsNormTexts.has(normalizeForHash(c.statement))) continue;
     if (docExcludedIds.has(c.id)) continue;
     if (!ownVoiceIds.has(c.id)) continue;
     ids.add(c.id);
