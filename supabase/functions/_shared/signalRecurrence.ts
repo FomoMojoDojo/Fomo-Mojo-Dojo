@@ -29,8 +29,22 @@ import { signalProvenance } from "../../../src/lib/modelRouter/resolveModel.ts";
 import type { RoutedJudge } from "./modelRouter.ts";
 // Gate 5a: the ONE tokenizer authority (single source of truth). Re-exported so
 // existing consumers (normativeConsistency.ts) keep importing from here unchanged.
-import { meaningfulTokens, sharedTokenCount, sharedTokens } from "./tokens.ts";
-export { meaningfulTokens, sharedTokenCount, sharedTokens };
+import {
+  distinctiveSharedTokenCount,
+  distinctiveSharedTokens,
+  genericTokens,
+  meaningfulTokens,
+  sharedTokenCount,
+  sharedTokens,
+} from "./tokens.ts";
+export {
+  distinctiveSharedTokenCount,
+  distinctiveSharedTokens,
+  genericTokens,
+  meaningfulTokens,
+  sharedTokenCount,
+  sharedTokens,
+};
 
 export const DEFAULT_JUDGE_MODEL = "llama3:70b";
 export const JUDGE_TIMEOUT_MS = 180_000;
@@ -49,12 +63,19 @@ export const RECURRENCE_MIN_SHARED_TOKENS = 1;
 
 // Gate 5a (clusterer repair): a SEPARATE, stricter floor for FINDING↔cluster
 // MEMBERSHIP. A signal is a member of a finding's recurrence cluster only if it
-// shares ≥ this many meaningful tokens with the finding BODY. This is distinct
-// from RECURRENCE_MIN_SHARED_TOKENS (the signal↔signal candidate prefilter, which
-// MUST stay 1 — raising it drops the FMD solo cluster's only cross-domain pair,
-// and normativeConsistency.ts depends on it). Membership needs a firmer lexical
-// anchor than the prefilter because the union-find components over-merge; the
-// floor keeps a finding's cluster to signals actually about the finding's fact.
+// shares ≥ this many DISTINCTIVE meaningful tokens with the finding BODY. This is
+// distinct from RECURRENCE_MIN_SHARED_TOKENS (the signal↔signal candidate prefilter,
+// which MUST stay 1 — raising it drops the FMD solo cluster's only cross-domain
+// pair, and normativeConsistency.ts depends on it). Membership needs a firmer
+// lexical anchor than the prefilter because the union-find components over-merge;
+// the floor keeps a finding's cluster to signals actually about the finding's fact.
+//
+// DISTINCTIVE (2026-08-26): the counted tokens EXCLUDE the company's generic set
+// (near-universal brand/category tokens — genericTokens over the eligible corpus).
+// Measured live, the plain ≥2 floor was VACUOUSLY satisfied — the largest CB2
+// cluster's 18 of 20 members passed only via "cafe"/"barra"/"coffee". Counting only
+// distinctive tokens keeps the floor honest: two signals must share ≥2 tokens that
+// are NOT true of the whole company/category corpus.
 export const FINDING_MEMBERSHIP_MIN_SHARED_TOKENS = 2;
 
 // Registrable domain (independence unit, design Q3). Approximation: last two
@@ -330,7 +351,11 @@ export type GatedFindingRow = {
  * the finding BODY and the resolvable members of the judge-accepted union-find
  * recurrence component the finding is attached to:
  *   • MEMBERSHIP gate — keep a member only if it shares
- *     ≥ FINDING_MEMBERSHIP_MIN_SHARED_TOKENS meaningful tokens with the body.
+ *     ≥ FINDING_MEMBERSHIP_MIN_SHARED_TOKENS DISTINCTIVE tokens with the body
+ *     (distinctive = meaningful ∧ not in `generic`, the company's near-universal
+ *     brand/category set). `generic` is derived once per company from the eligible
+ *     corpus (genericTokens) and passed in — an empty set makes this the plain ≥2
+ *     shared-token rule (safe default when there is no corpus to measure).
  *   • HOST-inheritance gate — hosts come only from kept (floor-passing) members.
  *     Kept members are, by construction, judge-ACCEPTED same-fact: union() runs on
  *     accepted signal↔signal verdicts only, so unjudged/rejected signals never
@@ -344,9 +369,10 @@ export function deriveGatedFindingRow(
   findingBody: string,
   members: EligibleSignal[],
   acceptedPairs: Array<{ statement_a_identity: string; statement_b_identity: string }>,
+  generic: Set<string> = new Set<string>(),
 ): GatedFindingRow | null {
   const kept = members
-    .filter((m) => sharedTokenCount(findingBody, m.claim_text) >= FINDING_MEMBERSHIP_MIN_SHARED_TOKENS)
+    .filter((m) => distinctiveSharedTokenCount(findingBody, m.claim_text, generic) >= FINDING_MEMBERSHIP_MIN_SHARED_TOKENS)
     .slice().sort((a, b) => a.id.localeCompare(b.id));
   if (kept.length < 2) return null;
   const hosts = [...new Set(kept.map((m) => m.domain))].sort();
@@ -555,12 +581,16 @@ export async function computeRecurrenceForCompany(
   type DesiredRow = GatedFindingRow;
   const desired = new Map<string, DesiredRow>(); // finding_id → row
 
-  // Gate 5a: the row is derived per FINDING (membership floor against the finding
-  // body, host inheritance from floor-passing accepted-component members), not
-  // per cluster root — see deriveGatedFindingRow. Dangling ids can't occur here:
-  // `clusters` is built only from resolvable eligible signals.
+  // Gate 5a: the row is derived per FINDING (DISTINCTIVE membership floor against
+  // the finding body, host inheritance from floor-passing accepted-component
+  // members), not per cluster root — see deriveGatedFindingRow. Dangling ids can't
+  // occur here: `clusters` is built only from resolvable eligible signals.
+  // The company generic set = tokens near-universal across THIS eligible corpus
+  // (computed once, order-independent), so brand/category tokens can't vacuously
+  // satisfy the floor.
+  const genericSet = genericTokens(signals.map((s) => s.claim_text));
   const desiredRowForFinding = (findingBody: string, root: string): DesiredRow | null =>
-    deriveGatedFindingRow(findingBody, clusters.get(root) ?? [], acceptedByPair);
+    deriveGatedFindingRow(findingBody, clusters.get(root) ?? [], acceptedByPair, genericSet);
 
   // Pass 1 — PRIMARY join: origin_signal_id.
   for (const f of openFindings) {
@@ -795,6 +825,9 @@ export async function recomputeFindingRecurrenceGated(args: {
   const { signals } = await loadEligibleSignals(args.supabase, args.companyId);
   const byId = new Map(signals.map((s) => [s.id, s]));
   const currentIdentities = new Set(signals.map((s) => s.identity));
+  // Gate 5a distinctive floor — same generic set the finalize derives, from the
+  // same eligible corpus, so this deterministic path and the finalize agree.
+  const genericSet = genericTokens(signals.map((s) => s.claim_text));
 
   // 3. Accepted, LIVE signal↔signal pairs (both statement identities present) —
   //    the basis for post-floor verdict_count.
@@ -848,7 +881,7 @@ export async function recomputeFindingRecurrenceGated(args: {
     // (0 host breadth) rather than leave the stale pre-repair inheritance. Not a
     // delete (no-delete law), and 0 breadth matches what the finalize's delete
     // would yield for the client's breadth-ranking.
-    const derived = deriveGatedFindingRow(body, resolved, acceptedPairs);
+    const derived = deriveGatedFindingRow(body, resolved, acceptedPairs, genericSet);
     const after = derived ?? EMPTY_ROW;
     const emptied = derived === null;
     const unchanged = canon(after.cluster_signal_ids, after.distinct_host_count, after.host_list, after.verdict_count) ===

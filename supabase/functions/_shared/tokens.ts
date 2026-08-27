@@ -53,3 +53,59 @@ export function sharedTokens(a: string, b: string): string[] {
   for (const t of ta) if (tb.has(t)) out.push(t);
   return out;
 }
+
+// ── Gate 5a — DISTINCTIVE-token membership floor (2026-08-26) ───────────────────
+//
+// The ≥2 shared-token membership floor (FINDING_MEMBERSHIP_MIN_SHARED_TOKENS) is
+// VACUOUSLY satisfied when the only shared tokens are near-universal brand/category
+// words for the company: two outside signals sharing only "cafe"+"barra" (or
+// "coffee"+"roaster", or "edgewood") are not about the same FACT — they are merely
+// about the same company/category. Measured live: the largest CB2 cluster's 18 of
+// 20 members passed the floor ONLY via such tokens. The repair: count only
+// DISTINCTIVE tokens — meaningful tokens that are NOT near-universal in the
+// company's own eligible-signal corpus.
+//
+// GENERIC = document-frequency ≥ θ across the eligible-signal corpus. Deterministic:
+// DF counts are order-independent (a token's document count is independent of doc
+// order), θ is fixed, the functions are pure — a no-change rerun is byte-identical.
+
+/** Default document-frequency threshold above which a token is GENERIC for a
+ *  company (appears in ≥40% of eligible signals → near-universal → not distinctive). */
+export const GENERIC_TOKEN_DF_THRESHOLD = 0.4;
+
+/** The GENERIC token set for a corpus: meaningful tokens whose document frequency
+ *  (fraction of documents containing the token) is ≥ `threshold`. Order-independent
+ *  and pure. Empty corpus → empty set (nothing is generic, so the floor stays the
+ *  plain ≥2 shared-token rule). */
+export function genericTokens(corpus: string[], threshold: number = GENERIC_TOKEN_DF_THRESHOLD): Set<string> {
+  const n = corpus.length;
+  if (n === 0) return new Set<string>();
+  const df = new Map<string, number>();
+  for (const doc of corpus) {
+    for (const t of meaningfulTokens(doc)) df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const generic = new Set<string>();
+  for (const [t, c] of df) if (c / n >= threshold) generic.add(t);
+  return generic;
+}
+
+/** |intersection| of two texts' meaningful tokens, EXCLUDING generic (near-universal
+ *  in-corpus) tokens — the count the DISTINCTIVE membership floor gates on. With an
+ *  empty `generic` set this equals sharedTokenCount (the plain ≥N rule). */
+export function distinctiveSharedTokenCount(a: string, b: string, generic: Set<string>): number {
+  const ta = meaningfulTokens(a);
+  const tb = meaningfulTokens(b);
+  let n = 0;
+  for (const t of ta) if (tb.has(t) && !generic.has(t)) n++;
+  return n;
+}
+
+/** The distinctive shared tokens themselves (generic-excluded) — for auditable
+ *  proof output ("which non-generic tokens actually bridged these two texts"). */
+export function distinctiveSharedTokens(a: string, b: string, generic: Set<string>): string[] {
+  const ta = meaningfulTokens(a);
+  const tb = meaningfulTokens(b);
+  const out: string[] = [];
+  for (const t of ta) if (tb.has(t) && !generic.has(t)) out.push(t);
+  return out;
+}
