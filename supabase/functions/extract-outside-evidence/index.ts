@@ -19,7 +19,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sha256Hex, contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
-import { admitOutsideEvidence } from "../_shared/outsideEvidenceRegen.ts";
+import { admitOutsideEvidence, snapshotReadDate } from "../_shared/outsideEvidenceRegen.ts";
 
 const nowIso = () => new Date().toISOString();
 const corsHeaders = {
@@ -106,11 +106,15 @@ Deno.serve(async (req) => {
       .select("source_url, signal_id, clean_text, text_sha256, crawled_at, fetch_status")
       .eq("company_id", company_id).eq("fetch_status", "ok")
       .order("crawled_at", { ascending: false });
-    const newestByUrl = new Map<string, { clean_text: string; sha: string; signal_id: string | null }>();
-    for (const r of (snapRows ?? []) as Array<{ source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string }>) {
+    const newestByUrl = new Map<string, { clean_text: string; sha: string; signal_id: string | null; readDate: string | null }>();
+    for (const r of (snapRows ?? []) as Array<{ source_url: string; signal_id: string | null; clean_text: string | null; text_sha256: string; crawled_at?: string | null }>) {
       if (newestByUrl.has(r.source_url)) continue;
       if (!r.clean_text || r.text_sha256 === EMPTY_SHA) continue;
-      newestByUrl.set(r.source_url, { clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id });
+      // READ-DATE (task_13983caf, 2026-08-27): the page's true read date = when it was crawled. Carry
+      // the snapshot's crawled_at so the minted signal stamps event_date and its source tag renders
+      // "· read <date>" (deriveSourceTag uses runDate ?? eventDate). Null if the basis carries no date
+      // — dates are real or hidden, never a convenience value.
+      newestByUrl.set(r.source_url, { clean_text: r.clean_text, sha: r.text_sha256, signal_id: r.signal_id, readDate: snapshotReadDate(r.crawled_at) });
     }
     let urls = [...newestByUrl.keys()];
     if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
@@ -142,7 +146,7 @@ Deno.serve(async (req) => {
 
     for (const url of urls) {
       if (Date.now() - startedAt > WALL_MS) { stoppedForTime = true; break; }
-      const { clean_text, sha } = newestByUrl.get(url)!;
+      const { clean_text, sha, readDate } = newestByUrl.get(url)!;
 
       // Generate.
       let cands: string[] = [];
@@ -192,6 +196,7 @@ Deno.serve(async (req) => {
           topic: "outside_voice_signal", directness: "direct", recency: "recent", framing_fit: "partial",
           structure_level: "extracted", validation_status: "directional", confidence_to_use: "medium",
           voice_class: "outside_voice_about_client",
+          event_date: readDate, // READ-DATE stamped at mint from the snapshot's crawled_at (null if none)
           raw_payload: {
             source: "outside_recrawl_regen", content_identity: ci, page_url: url, snapshot_text_sha256: sha,
             run_id: runId, provenance: "public_observed", read_at: nowIso(),

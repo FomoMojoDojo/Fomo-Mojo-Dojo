@@ -49,3 +49,18 @@ describe("R3 birth guard — E2 specificity (cap + min length)", () => {
     expect(r.admit).toBe(true);
   });
 });
+
+// READ-DATE stamping (task_13983caf, 2026-08-27) — a minted outside signal carries its snapshot's
+// crawl date; a basis with no date stays NULL (dates are real or hidden, never a convenience value).
+import { snapshotReadDate } from "../../../supabase/functions/_shared/outsideEvidenceRegen.ts";
+describe("snapshotReadDate — read-date stamped from the snapshot's crawled_at", () => {
+  it("returns the YYYY-MM-DD date part of a real crawl timestamp (the row gets a dated tag)", () => {
+    expect(snapshotReadDate("2026-08-26T20:45:39.298Z")).toBe("2026-08-26");
+    expect(snapshotReadDate("2026-08-26")).toBe("2026-08-26");
+  });
+  it("stays NULL when the basis carries no date (honest date-less tag — fails a fabricate-a-date impl)", () => {
+    expect(snapshotReadDate(null)).toBeNull();
+    expect(snapshotReadDate(undefined)).toBeNull();
+    expect(snapshotReadDate("")).toBeNull();
+  });
+});

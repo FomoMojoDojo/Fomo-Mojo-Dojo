@@ -63,3 +63,13 @@ export function admitOutsideEvidence(rawExcerpt: string, sourceText: string): Ad
 
   return { admit: true, excerpt: shaped };
 }
+
+// READ-DATE derivation (task_13983caf, 2026-08-27): the true read date of an outside signal is the
+// day its basis page was crawled (outside_page_snapshots.crawled_at). Return the YYYY-MM-DD date part,
+// or null when the basis carries no timestamp — dates are REAL or HIDDEN, never a convenience value.
+// deriveSourceTag renders "· read <date>" from event_date; a null here keeps the honest date-less tag.
+export function snapshotReadDate(crawledAt: string | null | undefined): string | null {
+  if (!crawledAt) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(crawledAt));
+  return m ? m[1] : null;
+}
