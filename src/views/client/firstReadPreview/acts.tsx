@@ -86,7 +86,7 @@ const RATIONALE_SCORE = "One number for the likelihood your strategy succeeds, r
 const RATIONALE_WHERE = "The pieces behind that number, so it's inspectable rather than taken on trust."; // signed
 const RATIONALE_BASE = "The four commitments everything else stands on. Aligning them comes first."; // signed
 const RATIONALE_QUESTIONS = "The threads the record leaves open — worth taking a position on together."; // signed
-const RATIONALE_NEXT = "Where we'd go from here, and how the method carries forward."; // signed
+const RATIONALE_NEXT = "What this read opened, and where we go from here."; // signed
 // Coherence note (2026-08-22, signed): a company with a rung-1 status conflict but ZERO contradicted
 // beat-4 statements — the dispute is source-vs-source, not your-words-vs-record. Only shown then.
 const STATUS_VS_GAP_COHERENCE_NOTE = "The open-question about your status (see the top of this read) is a disagreement between outside sources — not between your words and the record. Nothing you've said publicly is disputed here."; // signed
@@ -982,30 +982,24 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
-export function ActNext() {
-  const phases = [
-    { name: "Diagnose", body: "Open the inside: documents, numbers, and the people who hold the decisions." },
-    { name: "Focus", body: "Align your base, define who you serve." },
-    { name: "Flow", body: "Implement the best path — monitored and measured as evidence lands." },
-  ];
+// The closer "Next move" — a PERSPECTIVE ARC (2026, signed): the read ends, and the marker moves
+// from the outside read to the same method turned inward. No internal-process vocabulary
+// (Diagnose/Focus/Flow removed). `isLast` is the parent's position marker (index === BEATS.length-1,
+// the same test the footer forward-button gate uses) — the marker caption renders only at the end of
+// the arc. Optional so the beat-order/rationale test fixtures render <ActNext/> untouched.
+export function ActNext({ isLast }: { isLast?: boolean }) {
   return (
     <>
-      <ActHeader
-        headline="What we'd do together."
-        rationale={RATIONALE_NEXT}
-        // PUBLIC-ONLY reword (signed, string sheet): told-us clause removed.
-        standfirst="This read used only what anyone can see. The full diagnostic opens your side — documents, numbers, and the people who hold the decisions."
-      />
+      {isLast ? (
+        <p className="fr-eyebrow mb-6" style={{ color: "hsl(var(--fr-faint))" }}>You are at the end of the first read.</p>
+      ) : null}
+      <ActHeader headline="Where we look next." rationale={RATIONALE_NEXT} />
       <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <Eyebrow>How the work unfolds</Eyebrow>
-        <ol className="mt-8 grid gap-8 md:grid-cols-3">
-          {phases.map((phase) => (
-            <li key={phase.name} className="border-b pb-6 md:border-b-0" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-              <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>{phase.name}</span>
-              <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{phase.body}</p>
-            </li>
-          ))}
-        </ol>
+        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          We&rsquo;ve read you from the outside — only what anyone can see. The next move is the same
+          method turned inward: your own documents, numbers, and the people who hold the decisions — and
+          the customers who matter most to your success.
+        </p>
       </main>
       <p className="fr-link-ink pt-12 text-center text-sm font-light leading-relaxed">
         The next step is a conversation, not a button.

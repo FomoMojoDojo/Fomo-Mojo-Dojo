@@ -46,7 +46,7 @@ describe("signed per-beat rationale lines — present and exact", () => {
     ["The pieces behind that number, so it's inspectable rather than taken on trust.", <ActWhereYouStand read={E} />],
     ["The four commitments everything else stands on. Aligning them comes first.", <BaseGate />],
     ["The threads the record leaves open — worth taking a position on together.", <ActQuestions read={E} />],
-    ["Where we'd go from here, and how the method carries forward.", <ActNext />],
+    ["What this read opened, and where we go from here.", <ActNext />],
   ];
   it.each(cases)("carries: %s", (text, el) => {
     expect((render(el).container.textContent ?? "")).toContain(text);

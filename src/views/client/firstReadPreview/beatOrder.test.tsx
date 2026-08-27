@@ -29,7 +29,7 @@ const RULED: Array<[string, string]> = [
   ["ourread", "Where this points."],
   ["score", "One number, read from the record."],
   ["questions", "Questions this read raises."],
-  ["next", "What we'd do together."],
+  ["next", "Where we look next."],
 ];
 
 const renderBeat = (key: string) => {

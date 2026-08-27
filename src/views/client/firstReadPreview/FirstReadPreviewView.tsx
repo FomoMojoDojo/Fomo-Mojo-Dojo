@@ -146,7 +146,7 @@ export default function FirstReadPreviewView() {
       case "questions":
         return <ActQuestions read={data} />;
       default:
-        return <ActNext />;
+        return <ActNext isLast={index === BEATS.length - 1} />;
     }
   }, [data, go, index]);
 
