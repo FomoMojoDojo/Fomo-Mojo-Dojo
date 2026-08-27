@@ -45,3 +45,19 @@ supabase/.temp/
 .tmp_*
 debug-*.cjs
 probe-*.cjs
+
+# Claude Code local state
+.claude/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Local backup dirs (not source-controlled)
+backups/
+saved backups/
+
+# Supabase SQL editor scratch queries
+supabase/snippets/Untitled query *.sql
+
+# One-off regen scripts
+scripts/oneoff/*.sql
