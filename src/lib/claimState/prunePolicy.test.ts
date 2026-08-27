@@ -138,3 +138,32 @@ describe("RB-1 provenance scoping — rebuild prunes public_observed ONLY", () =
     expect(selectPruneVictims(row, noCandidates, noManual)).toEqual([]);
   });
 });
+
+// R3b-2 (2026-08-27) — terminal-vs-provisional supersession at candidate selection. Each asserts the
+// rule directly; #1/#2 are the load-bearing red/green (a terminal signal stops backing candidates, a
+// provisional one keeps backing them). The prune itself is unchanged — evidencePhase1 excludes
+// terminal signals BEFORE mapping to candidates, so a terminal-only-backed claim falls out of the
+// candidate set and selectPruneVictims retires it (claim_removals 'signals_gone').
+import { isTerminalSupersession, selectPruneVictims as _prune, type PruneCandidateRow as _PC } from "./prunePolicy";
+describe("R3b-2 — isTerminalSupersession (terminal stops backing candidates; provisional keeps backing)", () => {
+  it("1. TERMINAL: source_gone / own_site_redesign_* / e4_fabricated_append / legacy-null → true (retire)", () => {
+    expect(isTerminalSupersession({ superseded_at: "t", superseded_reason: "source_gone" })).toBe(true);
+    expect(isTerminalSupersession({ superseded_at: "t", superseded_reason: "own_site_redesign_2026_08" })).toBe(true);
+    expect(isTerminalSupersession({ superseded_at: "t", superseded_reason: "e4_fabricated_append" })).toBe(true);
+    expect(isTerminalSupersession({ superseded_at: "t", superseded_reason: null })).toBe(true); // legacy-null
+  });
+  it("2. PROVISIONAL: superseded '…recrawl_pending' → false (keeps backing — awaiting evidence)", () => {
+    expect(isTerminalSupersession({ superseded_at: "t", superseded_reason: "held_source_unreachable_recrawl_pending" })).toBe(false);
+  });
+  it("3. HELD (held_at) is provisional → false (a re-crawl may restore it)", () => {
+    expect(isTerminalSupersession({ held_at: "t", superseded_at: null, superseded_reason: "held_unverified_paraphrase_recrawl_pending" })).toBe(false);
+  });
+  it("4. ACTIVE (no flags) is never terminal → false (Edgewood shape: all-active backing ⇒ nothing retires)", () => {
+    expect(isTerminalSupersession({ held_at: null, superseded_at: null, superseded_reason: null })).toBe(false);
+  });
+  it("5. own_words carve-out is untouched: the prune still spares own_words regardless of this rule", () => {
+    // isTerminalSupersession gates SIGNALS upstream; selectPruneVictims still carves own_words claims.
+    const rows: _PC[] = [{ id: "ow", status: "active", provenance: "public_observed", claim_type: "own_words" }];
+    expect(_prune(rows, new Set<string>(), new Set<string>())).toEqual([]); // own_words never pruned
+  });
+});

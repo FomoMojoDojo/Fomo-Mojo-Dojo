@@ -17,6 +17,34 @@
 // Single victim-selection authority for the reconcile's R2 prune — the edge
 // reconcile (evidencePhase1) imports this; tests pin the law here.
 
+// ── TERMINAL vs PROVISIONAL supersession (R3b-2, 2026-08-27) ──────────────────
+// rebuild-claims is flag-blind: it maps EVERY signal to a claim candidate regardless of held_at /
+// superseded_at (evidencePhase1's signal load carries no flag filter). That means a superseded signal
+// keeps re-minting its claim, so retiring a signal never retires its claim. This predicate splits the
+// two kinds of not-active signal so the candidate filter can drop only the ones whose evidence is
+// genuinely gone:
+//
+//   PROVISIONAL — held_at set, OR a superseded_reason that says '…recrawl_pending'. The evidence is
+//     walled/awaiting a re-crawl; it may RETURN. It KEEPS backing candidates so the reverifying /
+//     held-echo machinery survives. AWAITING-EVIDENCE IS NOT THE-WORLD-MOVED.
+//   TERMINAL — source_gone, own_site_redesign_*, e4_fabricated_append, or a legacy null-reason
+//     supersession. The evidence will not come back (the page is gone, the site redesigned it away,
+//     the extraction was fabricated, or it was superseded long ago without a recovery path). It STOPS
+//     backing candidates, so its now-candidate-less claims retire via the existing R2 prune (with a
+//     claim_removals 'signals_gone' audit). Active signals are never terminal.
+export type SupersessionRow = {
+  held_at?: string | null;
+  superseded_at?: string | null;
+  superseded_reason?: string | null;
+};
+export function isTerminalSupersession(row: SupersessionRow): boolean {
+  if (row.held_at) return false;                                  // held = awaiting re-crawl = provisional
+  if (!row.superseded_at) return false;                           // active = not terminal
+  const reason = String(row.superseded_reason ?? "");
+  if (reason.includes("recrawl_pending")) return false;          // provisional (source unreachable, pending)
+  return true;                                                    // source_gone / own_site_redesign_* / e4_fabricated_append / legacy-null
+}
+
 export type PruneCandidateRow = {
   id: string;
   status?: string | null;

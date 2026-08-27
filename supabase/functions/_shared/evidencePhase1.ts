@@ -7,7 +7,7 @@ import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity } from "./contentIdentity.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
-import { selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
+import { isTerminalSupersession, selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
 import {
   matchStrengthFromScore,
   mapDifyFileOutputToSignals,
@@ -170,6 +170,12 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
     // are retained page text + receipts, never claim candidates — read the
     // structural raw_payload flag, not a naming convention.
     if (isSiteCrawlReceiptRow(row as { raw_payload?: unknown })) return false;
+    // R3b-2 (2026-08-27): a TERMINAL supersession (source_gone / own_site_redesign_* /
+    // e4_fabricated_append / legacy-null) stops backing candidates so its claims retire via the
+    // R2 prune below. PROVISIONAL evidence (held_at / …recrawl_pending) STILL backs candidates —
+    // awaiting-evidence is not the-world-moved, and dropping it would erase the reverifying /
+    // held-echo state a future re-crawl restores. See isTerminalSupersession.
+    if (isTerminalSupersession(row as { held_at?: string | null; superseded_at?: string | null; superseded_reason?: string | null })) return false;
     return vc !== "competitor_voice" && vc !== "analysis";
   });
 
