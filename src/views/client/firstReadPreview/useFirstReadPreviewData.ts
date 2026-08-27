@@ -28,7 +28,7 @@ import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
-import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, strengthForSignal, verdictForDeltaType, type Beat2Sortable } from "./mapping";
+import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
 import type {
   FirstReadPreviewData,
   FRFinding,
@@ -467,17 +467,35 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           .from("first_read_open_questions")
           .select("question_text, conflict_location, conflict_sources")
           .eq("company_id", companyId).eq("source_kind", "status_conflict").eq("status", "live");
-        type SCRow = { question_text: string; conflict_location: string | null; conflict_sources: { closed?: FRStatusSource[]; open?: FRStatusSource[] } | null };
-        const statusConflicts = ((scRows ?? []) as SCRow[]).map((r) => {
-          const location = r.conflict_location ?? "";
-          return {
-            location,
-            matchKey: location.split(/\s[&(]/)[0].trim().toLowerCase(),
-            question: r.question_text,
-            closed: r.conflict_sources?.closed ?? [],
-            open: r.conflict_sources?.open ?? [],
-          };
-        }).filter((c) => c.matchKey.length > 2);
+        type SCRow = { question_text: string; conflict_location: string | null; conflict_sources: { closed?: RawStatusSource[]; open?: RawStatusSource[] } | null };
+        const scParsed = (scRows ?? []) as SCRow[];
+        // Dispute-refresh (2026-08-26): the stored conflict_sources is a frozen snapshot; honor CURRENT
+        // signal liveness at render (refreshStatusConflictLiveness — terminal citations dropped, held /
+        // recrawl-pending marked provisional, dispute retired when the closed side has no live-or-
+        // provisional citation). Pure helper in mapping.ts so the can-fail proofs exercise it directly.
+        const citedIds = [...new Set(scParsed.flatMap((r) =>
+          [...(r.conflict_sources?.closed ?? []), ...(r.conflict_sources?.open ?? [])]
+            .map((s) => s.signal_id).filter((x): x is string => !!x)))];
+        const liveness = new Map<string, CitationLiveness>();
+        if (citedIds.length) {
+          const { data: lv } = await loose().from("signals")
+            .select("id, held_at, superseded_at, superseded_reason").in("id", citedIds);
+          for (const s of (lv ?? []) as Array<{ id: string } & CitationLiveness>) {
+            liveness.set(s.id, { held_at: s.held_at, superseded_at: s.superseded_at, superseded_reason: s.superseded_reason });
+          }
+        }
+        const statusConflicts = scParsed
+          .map((r) => {
+            const location = r.conflict_location ?? "";
+            return refreshStatusConflictLiveness({
+              location,
+              matchKey: location.split(/\s[&(]/)[0].trim().toLowerCase(),
+              question: r.question_text,
+              closed: r.conflict_sources?.closed ?? [],
+              open: r.conflict_sources?.open ?? [],
+            }, liveness);
+          })
+          .filter((c): c is NonNullable<typeof c> => c !== null && c.matchKey.length > 2);
         const disputes = (text: string | null | undefined): boolean => {
           const t = (text ?? "").toLowerCase();
           return statusConflicts.some((c) => t.includes(c.matchKey));

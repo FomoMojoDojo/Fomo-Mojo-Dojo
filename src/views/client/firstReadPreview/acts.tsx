@@ -35,9 +35,13 @@ function StatusDisputedChip() {
   );
 }
 
-// "host · date" once, with " ×N" when N>1 raw signal rows fold into it (display only).
-function foldedSourceLine(g: { host: string; date: string | null; count: number }): string {
-  return `${g.host}${g.date ? ` · ${g.date}` : ""}${g.count > 1 ? ` ×${g.count}` : ""}`;
+// "host · date" once, with " ×N" when N>1 raw signal rows fold into it (display only). A provisional
+// citation (backing signal held / recrawl-pending — source currently unreachable) is marked verbatim,
+// never presented as live evidence (dispute-refresh, 2026-08-26; label signed).
+const PROVISIONAL_CITATION_LABEL = "unconfirmed — source currently unreachable"; // signed
+function foldedSourceLine(g: { host: string; date: string | null; count: number; provisional?: boolean }): string {
+  const base = `${g.host}${g.date ? ` · ${g.date}` : ""}${g.count > 1 ? ` ×${g.count}` : ""}`;
+  return g.provisional ? `${base} — ${PROVISIONAL_CITATION_LABEL}` : base;
 }
 
 // S4 — the pinned status-conflict banner (top of Questions + Findings). Both source sets, no verdict.

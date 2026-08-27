@@ -157,7 +157,11 @@ export type FRReverseRow = {
 /** S3/S5: a live status conflict — an authoritative source reports {location} closed while others
  *  list it open. Pinned atop Questions + Findings; rows whose backing references {location} carry
  *  a STATUS DISPUTED chip. Never a verdict. */
-export type FRStatusSource = { host: string; date: string | null; quote: string };
+/** provisional (2026-08-26, dispute-refresh): the cited signal is held / superseded-recrawl_pending
+ *  (source currently unreachable, awaiting re-crawl) — rendered MARKED, never counted as live evidence.
+ *  Terminally-superseded citations (fabricated / redesigned-away / gone) are dropped at the load and
+ *  never reach render. */
+export type FRStatusSource = { host: string; date: string | null; quote: string; provisional?: boolean };
 export type FRStatusConflict = {
   location: string;
   /** lowercased match key (the partner name) used to mark disputed rows. */

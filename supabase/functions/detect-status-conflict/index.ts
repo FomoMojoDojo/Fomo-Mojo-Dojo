@@ -6,6 +6,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { contentIdentity } from "../_shared/contentIdentity.ts";
 import { detectConflict, type StatusSignal } from "../_shared/statusConflict.ts";
+import { isTerminalSupersession } from "../../../src/lib/claimState/prunePolicy.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -38,9 +39,13 @@ Deno.serve(async (req) => {
 
     const { data: sigRows } = await supabase
       .from("signals")
-      .select("id, claim_text, evidence_excerpt, source_title, source_url, operating_status, operating_status_as_of, event_date, created_at")
+      .select("id, claim_text, evidence_excerpt, source_title, source_url, operating_status, operating_status_as_of, event_date, created_at, held_at, superseded_at, superseded_reason")
       .eq("company_id", company_id).limit(2000);
-    const sigs = (sigRows ?? []) as Array<Record<string, string | null>>;
+    // Dispute-refresh (2026-08-26): TERMINALLY-superseded signals (fabricated / redesigned-away / gone)
+    // must never seed a status conflict — they are not evidence of anything. Held / recrawl-pending
+    // signals ARE kept (provisional; the render marks them). Mirrors the render-side liveness gate.
+    const sigs = ((sigRows ?? []) as Array<Record<string, string | null>>)
+      .filter((s) => !isTerminalSupersession({ held_at: s.held_at, superseded_at: s.superseded_at, superseded_reason: s.superseded_reason }));
 
     const results: Array<Record<string, unknown>> = [];
     for (const ent of entities) {
@@ -58,7 +63,23 @@ Deno.serve(async (req) => {
         };
       });
       const r = detectConflict(mapped);
-      if (!r.fires) { results.push({ entity: ent.label, fires: false }); continue; }
+      if (!r.fires) {
+        // RETIRE path (dispute-refresh, 2026-08-26): the conflict no longer holds over the current
+        // (non-terminal) signal set — resolve any lingering live row so a healed dispute leaves the
+        // surface. Preserve-on-upsert never retired; this is its missing complement.
+        const identity = await contentIdentity(`status_conflict|${ent.label}`);
+        const { data: stale } = await supabase.from("first_read_open_questions")
+          .select("id").eq("company_id", company_id).eq("question_identity", identity).eq("status", "live").maybeSingle();
+        if (stale) {
+          const { error } = await supabase.from("first_read_open_questions")
+            .update({ status: "resolved" }).eq("id", (stale as { id: string }).id);
+          if (error) throw new Error(`retire failed: ${error.message}`);
+          results.push({ entity: ent.label, fires: false, action: "retired", question_id: (stale as { id: string }).id });
+        } else {
+          results.push({ entity: ent.label, fires: false });
+        }
+        continue;
+      }
 
       const srcSet = (arr: StatusSignal[]) => arr.map((x) => ({ host: x.host, date: x.asOf ?? x.date, quote: x.quote, signal_id: x.id }));
       const conflict_sources = { location: ent.label, closed: srcSet(r.closed), open: srcSet(r.open), closure_date: r.closureDate };

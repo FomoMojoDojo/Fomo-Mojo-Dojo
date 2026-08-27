@@ -1,9 +1,10 @@
 // First Read — pure mapping functions, per operator rulings R2/R4/R5.
 // Kept pure and separate so the rulings are testable without I/O.
 
-import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRStatusSource, SignalStrength } from "./types";
+import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRStatusConflict, FRStatusSource, SignalStrength } from "./types";
 import { formatFullDate } from "./deriveSourceTag";
 import { isRelevanceActive } from "@/lib/firstRead/relevanceActive";
+import { isTerminalSupersession } from "@/lib/claimState/prunePolicy";
 
 // ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
 // A plain-language one-liner built ONLY from fields already on the pair/statement rows (both sides'
@@ -339,7 +340,7 @@ export function verdictForDeltaType(deltaType: string): FRGapVerdict | null {
 }
 
 /** A folded status-conflict source: one host+date, with how many raw signal rows share it. */
-export type FoldedStatusSource = { host: string; date: string | null; count: number };
+export type FoldedStatusSource = { host: string; date: string | null; count: number; provisional?: boolean };
 
 /**
  * S4 (2026-08-21): DISPLAY-ONLY fold of status-conflict sources. Identical host+date entries
@@ -347,14 +348,49 @@ export type FoldedStatusSource = { host: string; date: string | null; count: num
  * never deleted or superseded). First-appearance order is preserved. Used by the pinned banner so
  * two corner.inc · 2026-04-19 signals read as "corner.inc · 2026-04-19 ×2", once.
  */
-export function foldByHostDate(sources: Pick<FRStatusSource, "host" | "date">[]): FoldedStatusSource[] {
+// ── Dispute-refresh (2026-08-26): render honors current signal liveness ─────────
+// The stored conflict_sources is a frozen snapshot. Before render, each cited source is re-classified
+// against the CURRENT signal state: TERMINAL (fabricated / redesigned-away / gone — isTerminalSupersession,
+// or the signal is missing/untraceable) → DROP; HELD or recrawl-pending → PROVISIONAL (kept, marked);
+// else LIVE. A dispute RETIRES (returns null) when its closed side has zero live-or-provisional citations
+// — all closure evidence is terminally gone. A provisional-only closed side is NOT retired (awaiting
+// evidence is not the-world-moved). Pure + deterministic so the five can-fail proofs test it directly.
+export type CitationLiveness = { held_at: string | null; superseded_at: string | null; superseded_reason: string | null };
+export type RawStatusSource = { host: string; date: string | null; quote: string; signal_id?: string | null };
+
+export function classifyCitation(row: CitationLiveness | null | undefined): "live" | "provisional" | "terminal" {
+  if (!row) return "terminal"; // signal missing / untraceable → cannot verify → drop
+  if (isTerminalSupersession(row)) return "terminal";
+  if (row.held_at || String(row.superseded_reason ?? "").includes("recrawl_pending")) return "provisional";
+  return "live";
+}
+
+export function filterCitations(arr: RawStatusSource[], liveness: Map<string, CitationLiveness>): FRStatusSource[] {
+  return arr
+    .map((s) => ({ s, k: classifyCitation(s.signal_id ? liveness.get(s.signal_id) : null) }))
+    .filter((x) => x.k !== "terminal")
+    .map((x) => ({ host: x.s.host, date: x.s.date, quote: x.s.quote, provisional: x.k === "provisional" }));
+}
+
+export function refreshStatusConflictLiveness(
+  raw: { location: string; matchKey: string; question: string; closed: RawStatusSource[]; open: RawStatusSource[] },
+  liveness: Map<string, CitationLiveness>,
+): FRStatusConflict | null {
+  const closed = filterCitations(raw.closed, liveness);
+  if (closed.length === 0) return null; // retire: no live-or-provisional closure evidence
+  return { location: raw.location, matchKey: raw.matchKey, question: raw.question, closed, open: filterCitations(raw.open, liveness) };
+}
+
+export function foldByHostDate(sources: Pick<FRStatusSource, "host" | "date" | "provisional">[]): FoldedStatusSource[] {
   const order: string[] = [];
   const byKey = new Map<string, FoldedStatusSource>();
   for (const s of sources) {
-    const key = `${s.host} ${s.date ?? ""}`;
+    // provisional is part of the fold key so a marked (unreachable) citation never folds into a live
+    // one at the same host+date — the mark must survive display folding.
+    const key = `${s.host} ${s.date ?? ""} ${s.provisional ? "1" : "0"}`;
     let g = byKey.get(key);
     if (!g) {
-      g = { host: s.host, date: s.date, count: 0 };
+      g = { host: s.host, date: s.date, count: 0, provisional: s.provisional };
       byKey.set(key, g);
       order.push(key);
     }
