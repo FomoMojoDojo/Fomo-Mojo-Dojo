@@ -190,7 +190,7 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
   return (
     <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
       <div className="fr-stagger flex max-w-2xl flex-col items-center">
-        <Eyebrow>Before we start</Eyebrow>
+        <Eyebrow>The first thing we saw.</Eyebrow>
         <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
           Here&rsquo;s what we can <span className="font-semibold">already see.</span>
         </h1>
@@ -207,8 +207,9 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
                 : (read.coldOpen.quoted === false ? read.coldOpen.text : stripEdgeQuotes(read.coldOpen.text))}
             </p>
             <footer className="mt-6 flex flex-col items-center gap-2">
-              {/* S5 — the featured cold-open item carries the disputed marker too. */}
-              {read.coldOpen.statusDisputed ? <StatusDisputedChip /> : null}
+              {/* Q2 ruling (2026): the verdict-adjacent Status-conflict chip is REMOVED from the opener —
+                  the cold-open is the hook, not a verdict surface. Evidence framing (the source line)
+                  stays; the chip still renders on gap/findings where it belongs. */}
               {read.coldOpen.sourceTag ? <SourceTag>{read.coldOpen.sourceTag.label}</SourceTag> : null}
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
             </footer>
@@ -228,6 +229,73 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
         </button>
       </div>
     </div>
+  );
+}
+
+// New OPENER (2026) — the "you are here" process arc. Structure / orientation ONLY: a four-stage
+// VISUAL SPINE (done → you-are-here → ahead) so the client sees where today's read sits in the whole
+// engagement, legible BEFORE reading any text. NO findings, signal, or verdict content — the arc is
+// structure, the cold-open is the hook. Full chrome: renders as a normal navigable beat. The
+// you-are-here node uses the SAME accent (--fr-accent) as the tick strip's current tick, so page and
+// strip speak one visual language. "Start the read" advances relative to position (go(index+1) in the
+// parent); the eyebrow ("Before we start") is the beat.label rendered by the parent.
+const ARC_STAGES = [
+  { label: "Outside first", state: "done", blurb: "We mapped what the world sees and says about you — before you told us anything." },
+  { label: "First meeting", state: "here", blurb: "Today you see the start of your map: the outside read, and the gaps it surfaces." },
+  { label: "Then inside", state: "ahead", blurb: "Your documents, your numbers, and the people who hold the decisions — how you see yourselves, at the same rigor." },
+  { label: "Then your customers", state: "ahead", blurb: "The customers who matter most to your success — what they're actually trying to get done, and how that matches what you're building." },
+] as const;
+
+export function ActArc({ onContinue }: { onContinue: () => void }) {
+  return (
+    <>
+      <ActHeader headline="What you'll walk away with." />
+      <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          By the end of this: a clear view of your real options, the evidence behind each, and an honest
+          read on your likelihood of success — so the choice you make is yours, and it&rsquo;s grounded.
+        </p>
+        <ol className="relative mt-14 flex flex-col gap-10 border-l pl-10" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+          {ARC_STAGES.map((s) => {
+            const done = s.state === "done";
+            const here = s.state === "here";
+            const node: React.CSSProperties = done
+              ? { background: "hsl(var(--fr-faint))", color: "white" }
+              : here
+              ? { background: "hsl(var(--fr-accent))", color: "white", boxShadow: "0 0 0 5px hsl(var(--fr-accent) / 0.16)" }
+              : { background: "white", border: "1.5px solid hsl(var(--fr-hair))" };
+            return (
+              <li key={s.label} className="relative" style={done ? { opacity: 0.62 } : undefined}>
+                <span
+                  aria-hidden
+                  className="absolute flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none"
+                  style={{ left: "-2.5rem", top: "0.4rem", transform: "translateX(-50%)", ...node }}
+                >
+                  {done ? "✓" : ""}
+                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xl font-semibold" style={{ color: here ? "hsl(var(--fr-accent))" : "hsl(var(--fr-ink))" }}>{s.label}</span>
+                  {here ? (
+                    <span className="fr-eyebrow rounded-full px-2.5 py-0.5" style={{ background: "hsl(var(--fr-accent) / 0.12)", color: "hsl(var(--fr-accent))" }}>You are here</span>
+                  ) : null}
+                </div>
+                <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{s.blurb}</p>
+              </li>
+            );
+          })}
+        </ol>
+      </main>
+      <div className="pt-12">
+        <button
+          type="button"
+          onClick={onContinue}
+          className="fr-link-ink group text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+        >
+          Start the read{" "}
+          <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
+        </button>
+      </div>
+    </>
   );
 }
 

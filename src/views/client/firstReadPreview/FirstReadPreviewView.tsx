@@ -11,6 +11,7 @@ import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
 import {
+  ActArc,
   ActFindings,
   ActGap,
   ActNext,
@@ -37,12 +38,13 @@ import {
  * tick (act vs gate) — it no longer drives any keyboard shortcut.
  */
 const BEATS = [
-  { key: "cold", label: "Before we start", act: undefined },
+  { key: "arc", label: "Before we start", act: undefined },
+  { key: "cold", label: "The first thing we saw.", act: undefined },
   { key: "record", label: "What the world sees and says", act: 1 },
   { key: "yousay", label: "What you say", act: 2 },
   { key: "gap", label: "The gap", act: 3 },
   { key: "findings", label: "What stands out", act: 4 },
-  { key: "base", label: "The Base", act: undefined },
+  { key: "base", label: "Your Base", act: undefined },
   { key: "serve", label: "Who you serve", act: 5 },
   { key: "ourread", label: "Where this points", act: undefined },
   { key: "score", label: "Mojo Score", act: undefined },
@@ -124,8 +126,14 @@ export default function FirstReadPreviewView() {
 
   const body = useMemo(() => {
     switch (BEATS[index].key) {
+      case "arc":
+        // New opener (2026): the "you are here" process arc — a four-stage engagement spine (in ActArc).
+        // Continue advances relative to position (go(index+1) = cold), so no future insertion re-breaks
+        // the hand-off. Structure only — no findings/signal/verdict content.
+        return <ActArc onContinue={() => go(index + 1)} />;
       case "cold":
-        return <ColdOpen read={data} onContinue={() => go(1)} />;
+        // FIX 1: relative advancement (was hardcoded go(1), which self-looped once the arc took index 0).
+        return <ColdOpen read={data} onContinue={() => go(index + 1)} />;
       case "record":
         return <ActRecord read={data} />;
       case "yousay":
