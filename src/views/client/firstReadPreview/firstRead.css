@@ -313,3 +313,172 @@
     display: none;
   }
 }
+
+/* ---- bookend path track (opener + closer) ----
+   Mobile default: the product's existing vertical milestone pattern — a
+   left hairline with dots hung off it. At >=820px it becomes a horizontal
+   left-to-right track; a single hairline connector (the ::before) runs
+   through the dot centers. No new colors — every value is a --fr token or
+   the accent already used elsewhere. */
+.fr-track {
+  position: relative;
+  list-style: none;
+  margin: 3.5rem 0 0;
+  padding: 0 0 0 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.75rem;
+  border-left: 1px solid hsl(var(--fr-hair));
+}
+
+.fr-station {
+  position: relative;
+  z-index: 1;
+}
+
+/* Complete-but-not-highlighted stations read as finished (dimmed); a
+   highlighted done station (the closer's first meeting) stays at full weight. */
+.fr-station[data-state="done"]:not([data-highlight="true"]) {
+  opacity: 0.62;
+}
+
+.fr-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  width: 16px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+  position: absolute;
+  left: -2.5rem;
+  top: 0.3rem;
+  transform: translateX(-50%);
+}
+
+/* first-meeting highlight — soft indigo card with a light outline. */
+.fr-station-card {
+  background: hsl(var(--fr-accent) / 0.1);
+  border: 1px solid hsl(var(--fr-accent) / 0.28);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.fr-station-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* timing chip — provisional/draft treatment (dashed hair, faint caps). */
+.fr-timing-chip {
+  display: inline-block;
+  border: 1px dashed hsl(var(--fr-hair));
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-faint));
+  white-space: nowrap;
+}
+
+.fr-timing-context {
+  font-style: italic;
+  color: hsl(var(--fr-muted));
+  font-size: 12px;
+}
+
+/* hairline-topped sub-step list. */
+.fr-substeps {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 1rem 0 0;
+  border-top: 1px solid hsl(var(--fr-hair));
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fr-substep {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+/* normal step = faint round bullet; gate step = indigo square marker. */
+.fr-substep-marker {
+  flex: none;
+  height: 5px;
+  width: 5px;
+  border-radius: 999px;
+  background: hsl(var(--fr-faint));
+  transform: translateY(-2px);
+}
+
+.fr-substep-marker[data-gate="true"] {
+  height: 7px;
+  width: 7px;
+  border-radius: 1px;
+  background: hsl(var(--fr-accent));
+}
+
+.fr-substep-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--fr-ink));
+}
+
+.fr-substep-detail {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-faint));
+}
+
+/* "what to expect · draft" — dashed provisional block on the closer. */
+.fr-expect {
+  border: 1px dashed hsl(var(--fr-hair));
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-top: 1.75rem;
+  max-width: 42rem;
+}
+
+@media (min-width: 820px) {
+  .fr-track {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0;
+    border-left: none;
+    padding: 0;
+  }
+
+  .fr-track::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: calc(1rem + 8px);
+    right: calc(100% / var(--fr-track-n) - 1rem - 8px);
+    height: 1px;
+    background: hsl(var(--fr-hair));
+    z-index: 0;
+  }
+
+  .fr-station {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 1rem;
+  }
+
+  .fr-dot {
+    position: static;
+    transform: none;
+    margin: 0 0 1.5rem;
+  }
+}

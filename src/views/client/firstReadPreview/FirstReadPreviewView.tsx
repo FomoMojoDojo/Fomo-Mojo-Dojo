@@ -216,7 +216,9 @@ export default function FirstReadPreviewView() {
         ) : null}
 
         <div key={beat.key} className="fr-act-enter">
-          {!isCold ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
+          {/* The closer renders its own eyebrow ("Before you go") inside ActNext, so suppress the
+              auto-eyebrow here — BEATS["next"].label stays "Next move" for the nav tick + forward link. */}
+          {!isCold && beat.key !== "next" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
           {body}
         </div>
 

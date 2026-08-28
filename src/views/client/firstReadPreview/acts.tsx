@@ -232,59 +232,262 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
   );
 }
 
-// New OPENER (2026) — the "you are here" process arc. Structure / orientation ONLY: a four-stage
-// VISUAL SPINE (done → you-are-here → ahead) so the client sees where today's read sits in the whole
-// engagement, legible BEFORE reading any text. NO findings, signal, or verdict content — the arc is
-// structure, the cold-open is the hook. Full chrome: renders as a normal navigable beat. The
-// you-are-here node uses the SAME accent (--fr-accent) as the tick strip's current tick, so page and
-// strip speak one visual language. "Start the read" advances relative to position (go(index+1) in the
-// parent); the eyebrow ("Before we start") is the beat.label rendered by the parent.
-const ARC_STAGES = [
-  { label: "Outside first", state: "done", blurb: "We mapped what the world sees and says about you — before you told us anything." },
-  { label: "First meeting", state: "here", blurb: "Today you see the start of your map: the outside read, and the gaps it surfaces." },
-  { label: "Then inside", state: "ahead", blurb: "Your documents, your numbers, and the people who hold the decisions — how you see yourselves, at the same rigor." },
-  { label: "Then your customers", state: "ahead", blurb: "The customers who matter most to your success — what they're actually trying to get done, and how that matches what you're building." },
-] as const;
+// ── Bookend path track (OPENER + CLOSER) ─────────────────────────────────────
+// Two "you are here" process beats — orientation ONLY: a done → current → ahead
+// VISUAL SPINE so the client sees where today's read sits in the whole engagement,
+// legible BEFORE reading any text. NO findings, signal, verdict, or score content.
+// Desktop: a horizontal left-to-right track (one hairline connector through the dot
+// centers, via .fr-track::before). Mobile (<820px): collapses to the product's
+// existing vertical milestone pattern. Every color is a --fr token or the accent
+// already used by the tick strip — no new colors. Signed copy 2026 (this brief).
+
+type StationState = "done" | "here" | "ahead";
+
+type SubStep = { title: string; detail?: string; gate?: boolean };
+
+interface Station {
+  label: string;
+  state: StationState;
+  /** accent pill on the CURRENT station ("You are here" / "Up next"). */
+  pill?: string;
+  /** neutral sequencing chip on AHEAD stations ("Up next" / "Then" / "After that"). */
+  chip?: string;
+  /** soft indigo highlight card (the first-meeting station). */
+  highlight?: boolean;
+  /** opener: one-paragraph description. */
+  blurb?: string;
+  /** closer: one-line subline under the title. */
+  subline?: string;
+  /** closer: draft timing chip text, e.g. "Timing · ~1–2 weeks". */
+  timing?: string;
+  /** closer: italic muted context beside the timing chip. */
+  context?: string;
+  /** closer: the hairline-topped sub-step list. */
+  substeps?: SubStep[];
+}
+
+// OPENER stations (signed). ARC_STAGES retained as the module-local name (no other
+// consumer, per diagnostic); now the five whole-path stations.
+const ARC_STAGES: Station[] = [
+  {
+    label: "Outside first",
+    state: "done",
+    blurb: "We mapped what the world sees and says about you — before you told us anything.",
+  },
+  {
+    label: "The first meeting",
+    state: "here",
+    pill: "You are here",
+    highlight: true,
+    blurb:
+      "Today you see the start of your map — the outside read, the gaps it surfaces, and a first pass at your base (market, strategy, positioning, promise, offerings). This is the map we build on from here.",
+  },
+  {
+    label: "Diagnose",
+    state: "ahead",
+    chip: "Up next",
+    blurb:
+      "We turn the read inward — firm up your base, and lay out your markets, outcomes, and needs.",
+  },
+  {
+    label: "Focus",
+    state: "ahead",
+    chip: "Then",
+    blurb:
+      "You choose where to commit, then gather the evidence and reveal the routes most likely to win.",
+  },
+  {
+    label: "Flow",
+    state: "ahead",
+    chip: "After that",
+    blurb:
+      "Put the chosen route into motion, and keep the map living as reality changes.",
+  },
+];
+
+// CLOSER stations (signed). "The first meeting" now DONE + highlighted; the three
+// phases carry sublines, draft timing chips, and sub-step lists (Focus = five).
+const NEXT_STATIONS: Station[] = [
+  {
+    label: "The first meeting",
+    state: "done",
+    highlight: true,
+    blurb:
+      "Your map is set up, the gaps named, your base drafted — we build on it from here.",
+  },
+  {
+    label: "Diagnose",
+    state: "here",
+    pill: "Up next",
+    subline: "Where guesswork becomes evidence you can rely on and share.",
+    timing: "Timing · ~1–2 weeks",
+    context: "the inside read",
+    substeps: [
+      { title: "Agree to go deeper", detail: "The engagement", gate: true },
+      { title: "Stakeholder interviews", detail: "The people who hold the decisions" },
+      { title: "Gather key documents", detail: "The inside view" },
+      { title: "Define your markets, outcomes & needs", detail: "The option set — nothing chosen yet" },
+    ],
+  },
+  {
+    label: "Focus",
+    state: "ahead",
+    chip: "Then",
+    subline: "Where a higher likelihood of success is unlocked.",
+    timing: "Timing · 2–6 weeks",
+    context: "the main effort",
+    substeps: [
+      { title: "Select your market & outcome", detail: "The choice that opens Focus", gate: true },
+      { title: "Gather & score the market's needs", detail: "Evidence of what's underserved" },
+      { title: "Reveal the routes", detail: "Options & opportunities to your outcome" },
+      { title: "Prioritize & narrow", detail: "Ranked by strength of evidence" },
+      { title: "Visualize the implications", detail: "A framework for positioning, messaging & offerings" },
+    ],
+  },
+  {
+    label: "Flow",
+    state: "ahead",
+    chip: "After that",
+    subline: "Implement with confidence — you've chosen what's most likely to work.",
+    timing: "Timing · 1–2 weeks, then ongoing",
+    context: "focused work, then monitoring",
+    substeps: [
+      { title: "Put your chosen route into motion", detail: "Test it in market" },
+      { title: "Run the weekly rhythm", detail: "Everyone has a voice" },
+      { title: "Keep the map living", detail: "Switch routes as reality changes" },
+      { title: "You leave with a reusable base", detail: "New markets build on it" },
+    ],
+  },
+];
+
+/** Two-weight headline via a CUSTOM split (not ActHeader's last-two-words rule):
+ *  the caller passes the plain lead and the exact bold tail. */
+function TwoWeightHeadline({ lead, bold }: { lead: string; bold: string }) {
+  return (
+    <h1 className="text-5xl font-extralight tracking-tight md:text-6xl">
+      {lead} <span className="font-semibold">{bold}</span>
+    </h1>
+  );
+}
+
+/** Accent pill — the existing "You are here" idiom (fr-eyebrow + rounded-full + accent/0.12). */
+function StationPill({ children }: { children: ReactNode }) {
+  return (
+    <span
+      className="fr-eyebrow rounded-full px-2.5 py-0.5"
+      style={{ background: "hsl(var(--fr-accent) / 0.12)", color: "hsl(var(--fr-accent))" }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Neutral sequencing chip — the VerdictChip neutral ("unspoken") idiom. */
+function SeqChip({ children }: { children: ReactNode }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+      style={{ background: "hsl(215 20% 65% / 0.12)", color: "hsl(215 16% 40%)" }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function PathDot({ state }: { state: StationState }) {
+  const style: React.CSSProperties =
+    state === "done"
+      ? { background: "hsl(var(--fr-faint))", color: "white" }
+      : state === "here"
+      ? { background: "hsl(var(--fr-accent))", color: "white", boxShadow: "0 0 0 5px hsl(var(--fr-accent) / 0.16)" }
+      : { background: "white", border: "1.5px solid hsl(var(--fr-hair))" };
+  return (
+    <span aria-hidden className="fr-dot" style={style}>
+      {state === "done" ? "✓" : ""}
+    </span>
+  );
+}
+
+/** The shared track. `n` sizes the desktop connector inset (through the dot centers). */
+function PathTrack({ stations, n }: { stations: Station[]; n: number }) {
+  return (
+    <ol className="fr-track" style={{ ["--fr-track-n" as string]: String(n) }}>
+      {stations.map((s) => {
+        const titleColor = s.state === "here" ? "hsl(var(--fr-accent))" : "hsl(var(--fr-ink))";
+        return (
+          <li key={s.label} className="fr-station" data-state={s.state} data-highlight={s.highlight ? "true" : undefined}>
+            <PathDot state={s.state} />
+            <div className={s.highlight ? "fr-station-card" : undefined}>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="fr-station-title" style={{ color: titleColor }}>{s.label}</span>
+                {s.pill ? <StationPill>{s.pill}</StationPill> : null}
+                {s.chip ? <SeqChip>{s.chip}</SeqChip> : null}
+              </div>
+              {s.blurb ? (
+                <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                  {s.blurb}
+                </p>
+              ) : null}
+              {s.subline ? (
+                <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                  {s.subline}
+                </p>
+              ) : null}
+              {s.timing ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="fr-timing-chip">{s.timing}</span>
+                  {s.context ? <span className="fr-timing-context">{s.context}</span> : null}
+                </div>
+              ) : null}
+              {s.substeps ? (
+                <ul className="fr-substeps">
+                  {s.substeps.map((step) => (
+                    <li key={step.title} className="fr-substep">
+                      <span className="fr-substep-marker" data-gate={step.gate ? "true" : undefined} aria-hidden />
+                      <span>
+                        <span className="fr-substep-title">{step.title}</span>
+                        {step.detail ? <span className="fr-substep-detail"> — {step.detail}</span> : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** Outcome hand-off — identical on both bookends (signed). */
+function OutcomeBlock() {
+  return (
+    <div className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+      <Eyebrow>Where this leads</Eyebrow>
+      <p className="mt-3 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+        A clear direction, a coordinated team, and a{" "}
+        <span className="font-semibold">rising likelihood of success.</span>
+      </p>
+    </div>
+  );
+}
 
 export function ActArc({ onContinue }: { onContinue: () => void }) {
   return (
     <>
-      <ActHeader headline="What you'll walk away with." />
-      <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-          By the end of this: a clear view of your real options, the evidence behind each, and an honest
-          read on your likelihood of success — so the choice you make is yours, and it&rsquo;s grounded.
+      <header className="mb-14 border-b pb-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <TwoWeightHeadline lead="You're already" bold="moving." />
+        <p className="mt-6 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          The outside read is already behind you — done before today, before you told us anything.
+          Here&rsquo;s the whole path from here, and where you stand on it now.
         </p>
-        <ol className="relative mt-14 flex flex-col gap-10 border-l pl-10" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-          {ARC_STAGES.map((s) => {
-            const done = s.state === "done";
-            const here = s.state === "here";
-            const node: React.CSSProperties = done
-              ? { background: "hsl(var(--fr-faint))", color: "white" }
-              : here
-              ? { background: "hsl(var(--fr-accent))", color: "white", boxShadow: "0 0 0 5px hsl(var(--fr-accent) / 0.16)" }
-              : { background: "white", border: "1.5px solid hsl(var(--fr-hair))" };
-            return (
-              <li key={s.label} className="relative" style={done ? { opacity: 0.62 } : undefined}>
-                <span
-                  aria-hidden
-                  className="absolute flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none"
-                  style={{ left: "-2.5rem", top: "0.4rem", transform: "translateX(-50%)", ...node }}
-                >
-                  {done ? "✓" : ""}
-                </span>
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-xl font-semibold" style={{ color: here ? "hsl(var(--fr-accent))" : "hsl(var(--fr-ink))" }}>{s.label}</span>
-                  {here ? (
-                    <span className="fr-eyebrow rounded-full px-2.5 py-0.5" style={{ background: "hsl(var(--fr-accent) / 0.12)", color: "hsl(var(--fr-accent))" }}>You are here</span>
-                  ) : null}
-                </div>
-                <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{s.blurb}</p>
-              </li>
-            );
-          })}
-        </ol>
-      </main>
+      </header>
+
+      <PathTrack stations={ARC_STAGES} n={ARC_STAGES.length} />
+
+      <OutcomeBlock />
+
       <div className="pt-12">
         <button
           type="button"
@@ -1050,26 +1253,38 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
-// The closer "Next move" — a PERSPECTIVE ARC (2026, signed): the read ends, and the marker moves
-// from the outside read to the same method turned inward. No internal-process vocabulary
-// (Diagnose/Focus/Flow removed). `isLast` is the parent's position marker (index === BEATS.length-1,
-// the same test the footer forward-button gate uses) — the marker caption renders only at the end of
-// the arc. Optional so the beat-order/rationale test fixtures render <ActNext/> untouched.
+// The CLOSER — the what's-next bookend (2026, signed). The marker has advanced: the first meeting
+// is DONE, Diagnose is up next, and Focus/Flow are laid out with real substance (sublines, draft
+// timing chips, sub-step lists). Same whole-path track as the opener; identical outcome hand-off.
+// Eyebrow "Before you go" is rendered HERE (BEATS["next"].label stays "Next move" for the nav/forward
+// link; the parent suppresses its auto-eyebrow for this beat). `isLast` is still passed by the parent
+// (unused now — the end-marker line was dropped per ruling); kept optional so <ActNext/> fixtures render.
 export function ActNext({ isLast }: { isLast?: boolean }) {
+  void isLast;
   return (
     <>
-      {isLast ? (
-        <p className="fr-eyebrow mb-6" style={{ color: "hsl(var(--fr-faint))" }}>You are at the end of the first read.</p>
-      ) : null}
-      <ActHeader headline="Where we look next." rationale={RATIONALE_NEXT} />
-      <main className="border-b pb-16" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <p className="max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-          We&rsquo;ve read you from the outside — only what anyone can see. The next move is the same
-          method turned inward: your own documents, numbers, and the people who hold the decisions — and
-          the customers who matter most to your success.
+      <p className="fr-eyebrow mb-4">Before you go</p>
+      <header className="mb-14 border-b pb-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+        <TwoWeightHeadline lead="Here's what happens" bold="next." />
+        <p className="mt-6 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          We&rsquo;ve named the gaps. Here&rsquo;s the work that turns them into a grounded choice —
+          what happens in each phase, and what we&rsquo;ll need from you.
         </p>
-      </main>
-      <p className="fr-link-ink pt-12 text-center text-sm font-light leading-relaxed">
+        <div className="fr-expect">
+          <Eyebrow>What to expect · draft</Eyebrow>
+          <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+            You pay for the <span className="font-semibold">map, not the hour</span>: a one-time setup to
+            build your base, then <span className="font-semibold">per market</span> you take on. Interview
+            and survey costs are passed through. Timing depends on access to the right people and documents.
+          </p>
+        </div>
+      </header>
+
+      <PathTrack stations={NEXT_STATIONS} n={NEXT_STATIONS.length} />
+
+      <OutcomeBlock />
+
+      <p className="fr-link-ink mt-12 text-center text-sm font-light leading-relaxed">
         The next step is a conversation, not a button.
       </p>
     </>
