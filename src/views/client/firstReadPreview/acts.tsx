@@ -671,7 +671,25 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
-/** Beat 5 — "Who you serve": the ODI market rows (people + the job). */
+/** Relationship-kind chip display map (OPERATOR-SIGNED, 2026-08-31). Stored kind → on-screen label.
+ *  Any kind outside the map renders the raw value, capitalized (the generator's vocabulary is
+ *  open-ended — "in the evidence's own terms"). null/empty → NO chip, silently (pre-MO-1 behavior). */
+const RELATIONSHIP_KIND_LABELS: Record<string, string> = {
+  funder: "Donor",
+  referrer: "Referrer",
+  recipient: "Recipient",
+  partner: "Partner",
+  buyer: "Buyer",
+  communicator: "Advocate",
+};
+export function relationshipKindLabel(kind: string | null): string | null {
+  const k = (kind ?? "").trim().toLowerCase();
+  if (!k) return null;
+  return RELATIONSHIP_KIND_LABELS[k] ?? k.charAt(0).toUpperCase() + k.slice(1);
+}
+
+/** Beat 5 — "Who you serve": the ODI market rows (people + the job), each with its
+ *  relationship-kind chip (SeqChip idiom — the surface's neutral chip primitive). */
 export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
   return (
     <>
@@ -679,15 +697,19 @@ export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
       <main className="fr-stagger">
         {read.observedMarkets.length === 0 ? <Absent>{NO_SERVE_NOTE}</Absent> : null}
         <div className="flex flex-col gap-10">
-          {read.observedMarkets.map((m) => (
-            <div key={m.id} className="flex flex-col gap-2">
-              <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
-              {m.job ? (
-                <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{m.job}</p>
-              ) : null}
-              {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
-            </div>
-          ))}
+          {read.observedMarkets.map((m) => {
+            const kindLabel = relationshipKindLabel(m.relationshipKind);
+            return (
+              <div key={m.id} className="flex flex-col gap-2">
+                {kindLabel ? <div><SeqChip>{kindLabel}</SeqChip></div> : null}
+                <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
+                {m.job ? (
+                  <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{m.job}</p>
+                ) : null}
+                {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
+              </div>
+            );
+          })}
         </div>
       </main>
     </>

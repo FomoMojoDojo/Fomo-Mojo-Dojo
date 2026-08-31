@@ -187,6 +187,9 @@ export type FRMarketDef = {
   id: string;
   who: string;
   job: string | null;
+  /** Relationship-kind chip (2026-08-31 restore): stored lowercase kind from the SAME
+   *  register-filtered query (public_inferred/publicly_declared only). null ⇒ no chip, silently. */
+  relationshipKind: string | null;
   sourceTag: SourceTagResult;
 };
 

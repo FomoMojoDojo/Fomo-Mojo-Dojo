@@ -737,13 +737,17 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
 
         // Observed markets (R-A): odi_market_definitions in the public register, ODI form
         // (WHO + job). market_lens active fronts render first.
+        // relationship_kind rides the SAME register-filtered query (chip restore, 2026-08-31):
+        // the table also holds internal_declared/internal_inferred rows, and this filter is the
+        // only wall — never read relationship_kind through a second, unfiltered query.
         const { data: mdRows } = await supabase
           .from("odi_market_definitions")
-          .select("id, journey_key, job_executor, jtbd, market_register, created_at, updated_at")
+          .select("id, journey_key, job_executor, jtbd, relationship_kind, market_register, created_at, updated_at")
           .eq("company_id", companyId)
           .in("market_register", ["public_inferred", "publicly_declared"]);
         const mdAll = (mdRows ?? []) as Array<{
           id: string; journey_key: string | null; job_executor: string | null; jtbd: string | null;
+          relationship_kind: string | null;
           market_register: string; created_at: string | null; updated_at: string | null;
         }>;
         const { data: lensRows } = await loose()
@@ -761,6 +765,8 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             id: m.id,
             who: (m.job_executor ?? "").trim(),
             job: (m.jtbd ?? "").trim() || null,
+            // null/empty ⇒ null ⇒ NO chip, silently (the pre-MO-1 KindChip behavior).
+            relationshipKind: (m.relationship_kind ?? "").trim().toLowerCase() || null,
             sourceTag: syntheticTag(m.updated_at ?? m.created_at),
           }));
 
