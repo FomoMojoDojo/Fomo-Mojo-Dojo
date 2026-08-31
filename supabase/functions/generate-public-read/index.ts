@@ -7,8 +7,14 @@
 //   outside_signals  signals.signal_band='outside' AND voice_class ∈ public voices   → public_observed
 //   own_words        own_words_candidates.judge_keep=true                            → public_observed
 //   findings         findings.register='public_inferred' AND status='open'           → public_inferred
-//   markets          odi_market_definitions.provenance_type='public_research'        → public_research
 //   deltas           claim_deltas.pairing_kind='public_vs_public' (echoed|divergent) → public_observed
+//   positioning read public_reads.kind='positioning' is_current (Stage B How-to-Win context — public
+//                    by construction; not a citable ref, framing context only)
+//
+// FORBIDDEN INPUTS (Stage B Option-B, structural — this module queries NONE of them; a source-level
+// test greps this file for each and asserts 0 hits): odi_market_definitions (all-internal markets
+// register), strategy_cascades (the admin cascade — market_read is uploaded-augmented), inputs /
+// uploaded files. The public cascade rests ONLY on the public record above.
 //
 // Model via the provenance router (all-public → external gpt-4.1-mini; any non-public/unknown/NULL →
 // local, fail-closed). The generator MUST cite input ids; any citation outside the ledger → the output
@@ -23,6 +29,7 @@ import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations } from "../_shared/publicReadGuards.ts";
+import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -49,7 +56,7 @@ type InputRow = { id: string; kind: string; provenance: string; text: string };
 // records EXACTLY the capped set that was read (honest — "these ids, not the whole corpus"). Findings
 // (public synthesis) and own-words (the company's own voice) are the highest-signal, so they get the
 // widest caps; signals/deltas are sampled. Every capped row is still 100% public-provenance.
-const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20, market: 10, delta: 15 };
+const READ_CAP: Record<string, number> = { finding: 25, own_word: 25, signal: 20, delta: 15 };
 
 // ── gather PUBLIC inputs — each query's predicate selects public provenance ONLY ──────────────────
 async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): Promise<InputRow[]> {
@@ -93,13 +100,13 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
     if (text) rows.push({ id: f.id, kind: "finding", provenance: "public_inferred", text });
   }
 
-  // 4. markets — public_research provenance ONLY (internal_hypothesis / internal_declared excluded structurally)
-  const { data: mk } = await supabase
-    .from("odi_market_definitions").select("id, job_executor, jtbd").eq("company_id", companyId).eq("provenance_type", "public_research");
-  for (const m of (mk ?? []) as Array<{ id: string; job_executor: string | null; jtbd: string | null }>) {
-    const text = [m.job_executor, m.jtbd].map((x) => (x ?? "").trim()).filter(Boolean).join(" — ");
-    if (text) rows.push({ id: m.id, kind: "market", provenance: "public_research", text });
-  }
+  // 4. (REMOVED — Stage B Option-B, 2026-08-28) odi_market_definitions is a STRUCTURALLY FORBIDDEN
+  //    input for this generator. Stage A proved the table holds ZERO public_research rows across the
+  //    portfolio (every market is internal_declared / internal_hypothesis — the internal Where-to-Play
+  //    register), so the old provenance_type='public_research' filter was a false-safety over an
+  //    all-internal table. The public cascade's Where-to-Play is read from the public record itself
+  //    (signals / findings / own-words / the positioning read), never from the markets table. This
+  //    generator now queries NO forbidden table (proven by the source-level forbidden-input test).
 
   // 5. deltas — the public_vs_public pairing; echoed/divergent (public confirms or contests a public claim)
   const { data: dl } = await supabase
@@ -143,13 +150,13 @@ async function ledgerOf(inputs: InputRow[]) {
     count: inputs.length,
   };
 }
-const KINDS_INPUT = ["signal", "own_word", "finding", "market", "delta"] as const;
+const KINDS_INPUT = ["signal", "own_word", "finding", "delta"] as const;
 
 // A SHORT-REF catalogue: an LLM cannot reliably echo dozens of 36-char uuids (it mangles them), so
 // each input gets a stable, kind-prefixed ref token (S1, O1, F1, M1, D1) mapped to its real id. The
 // model cites refs; we validate refs against the map (unknown ref → reject, fail loud) and translate
 // accepted refs BACK to the real ledger ids for storage, so stored citations resolve to the ledger.
-const REF_PREFIX: Record<string, string> = { signal: "S", own_word: "O", finding: "F", market: "M", delta: "D" };
+const REF_PREFIX: Record<string, string> = { signal: "S", own_word: "O", finding: "F", delta: "D" };
 function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<string, string>; tokenSummary: string } {
   const uuidByRef = new Map<string, string>();
   const counters: Record<string, number> = {};
@@ -209,6 +216,21 @@ Deno.serve(async (req) => {
     const doWrite = body.write !== false && !doPlan && !doStage && !doPromote;
     const probeId: string | null = typeof body._probe_internal_id === "string" ? body._probe_internal_id : null;
 
+    // ── KINDS-SCOPED RUN (2026-08-31, operator-signed): optional body.kinds narrows this run —
+    //    generate/judge/stage/write/promote loops iterate ONLY the listed kinds. Omitted or [] ⇒ all
+    //    three (existing behavior, non-breaking). An out-of-set entry is rejected loudly (400), never
+    //    silently dropped. An UNLISTED kind is not generated, judged, staged, written, or superseded
+    //    by this run — its current row is untouched. (Cascade-gap routing rides the strategy kind, so
+    //    it too runs only when "strategy" is listed.) No kind's generation prompt/logic is changed.
+    const rawKinds: unknown = body.kinds;
+    let activeKinds: readonly Kind[] = KINDS;
+    if (rawKinds !== undefined && rawKinds !== null) {
+      if (!Array.isArray(rawKinds)) return json({ error: "kinds must be an array of read kinds" }, 400);
+      const bad = rawKinds.filter((k) => !(KINDS as readonly string[]).includes(String(k)));
+      if (bad.length) return json({ error: `kinds must be a subset of: ${KINDS.join(", ")}`, bad_kinds: bad }, 400);
+      if (rawKinds.length > 0) activeKinds = [...new Set(rawKinds.map(String))] as Kind[];
+    }
+
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     // ── PROMOTE (accept): no generation, no model call. Per kind, flip the staged row (is_current
@@ -216,7 +238,7 @@ Deno.serve(async (req) => {
     //    The staged row is the unique is_current=false row with superseded_by NULL (staging created it).
     if (doPromote) {
       const promoted: Array<{ kind: Kind; staged: string; superseded: string | null }> = [];
-      for (const kind of KINDS) {
+      for (const kind of activeKinds) {
         const { data: staged } = await supabase.from("public_reads")
           .select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", false).is("superseded_by", null)
           .order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -242,12 +264,13 @@ Deno.serve(async (req) => {
 
     // ── VACUOUS PROOF hook: prove a planted internal id is absent from every query's output + ledger.
     if (probeId) {
-      // look up what the probe id actually IS (its provenance) — expected internal, NOT public
+      // look up what the probe id actually IS (its provenance) — expected internal, NOT public.
+      // Stage B: the probe does NOT read odi_market_definitions (a FORBIDDEN table — the source-level
+      // test greps this file for 0 hits). A planted markets-table id therefore reports probe_found_as
+      // null; the proof is the invariant `in_ledger:false` + `ledger_all_public:true`, not the lookup.
       let probeFoundAs: string | null = null;
       const { data: c } = await supabase.from("claims").select("id").eq("id", probeId).maybeSingle();
       if (c) probeFoundAs = "claim(internal_declared side)";
-      const { data: m } = await supabase.from("odi_market_definitions").select("id, provenance_type").eq("id", probeId).maybeSingle();
-      if (m) probeFoundAs = `odi_market_definitions(provenance_type=${(m as { provenance_type?: string }).provenance_type})`;
       return json({
         ok: true, vacuous_proof: true, probe_id: probeId, probe_found_as: probeFoundAs,
         in_ledger: ledgerIds.has(probeId),
@@ -307,21 +330,43 @@ Return ONLY JSON:
  "best_fit_customers":"<who it's for>","best_fit_citations":["<id>"],
  "unique_attributes":[{"text":"<one differentiator>","citations":["<id>"]}]}
 ${US_ENGLISH_RULE}`;
-    const GEN_STRATEGY = `You read a company's PUBLIC record and state its strategy as a hypothesis. ${CITE_RULE}
+    // Stage B — the FULL Playing-to-Win cascade (5 rungs), read as THE STRATEGY THE PUBLIC RECORD
+    // IMPLIES (a reading, never a go-forward proposal). Each rung is cited-or-OMITTED: a rung the
+    // public record can't ground is returned EMPTY (""/[]) with empty citations — never guessed. An
+    // omitted rung is routed to the Questions beat downstream (cascade_gap), never fabricated here.
+    const GEN_STRATEGY = `You read a company's PUBLIC record and state, as a hypothesis, THE STRATEGY ITS PUBLIC RECORD IMPLIES — using Roger Martin's Playing-to-Win cascade (five linked choices). This is a READING of what the record points to, never a recommendation or a go-forward plan. ${CITE_RULE}
+CRITICAL — cited-or-omitted: if the public record does not GROUND a rung, return it EMPTY ("" for a text rung, [] for a list rung) with empty citations. Do NOT invent capabilities or management systems that the record doesn't show. It is EXPECTED and correct for a rung to be empty.
 Return ONLY JSON:
-{"winning_aspiration":"<what winning looks like, plainly>","winning_aspiration_citations":["<id>"],
- "where_to_play":"<the arena / who / where>","where_to_play_citations":["<id>"],
- "how_to_win":"<the edge>","how_to_win_citations":["<id>"]}
+{"winning_aspiration":"<what winning looks like for this business, plainly>","winning_aspiration_citations":["<id>"],
+ "where_to_play":"<the arena the record implies — who / where / which segment>","where_to_play_citations":["<id>"],
+ "how_to_win":"<the edge the record implies — how it wins where it plays>","how_to_win_citations":["<id>"],
+ "must_have_capabilities":[{"text":"<one capability the record actually shows the business has/needs to win this way>","citations":["<id>"]}],
+ "management_systems":[{"text":"<one system/process/measure the record shows runs the strategy — rarely visible in a public record; return [] if none is shown>","citations":["<id>"]}]}
 ${US_ENGLISH_RULE}`;
     const GEN_PROMISE = `You read a company's PUBLIC record and state, in ONE sentence, what the customer is promised — stated ONLY as far as the record backs it. ${CITE_RULE}
 Return ONLY JSON: {"promise":"<one sentence>","citations":["<id>"]}
 ${US_ENGLISH_RULE}`;
 
+    // Stage B — the CURRENT positioning read (public_reads, is_current) is the How-to-Win CONTEXT for
+    // the strategy cascade (brief §4). It is public BY CONSTRUCTION (this generator only ever writes
+    // public_reads from public inputs), so it never introduces internal provenance. It is CONTEXT
+    // only — not a citable ledger ref: how_to_win still cites raw public inputs (S/O/F/D), so grounding
+    // is checked against the record, not against a prior synthesis restated.
+    const { data: posCurrent } = await supabase.from("public_reads")
+      .select("payload").eq("company_id", company_id).eq("kind", "positioning").eq("is_current", true).maybeSingle();
+    const posCtx = (posCurrent as { payload?: Record<string, unknown> } | null)?.payload ?? null;
+    const positioningContext = posCtx
+      ? `\n\nThe company's PUBLIC positioning read (already public-derived — use ONLY to frame how_to_win; do NOT restate it, do NOT cite it):\n` +
+        `category: ${String(posCtx.market_category ?? "")}\nvalue: ${String(posCtx.value_for_customer ?? "")}\n` +
+        `differentiators: ${Array.isArray(posCtx.unique_attributes) ? (posCtx.unique_attributes as Array<{ text?: string }>).map((a) => a?.text).filter(Boolean).join("; ") : ""}`
+      : "";
+
     const payloads: Record<Kind, Record<string, unknown>> = {} as Record<Kind, Record<string, unknown>>;
     const genSys: Record<Kind, string> = { positioning: GEN_POSITIONING, strategy: GEN_STRATEGY, promise: GEN_PROMISE };
     const citationErrors: Array<{ kind: Kind; bad_ids: string[] }> = [];
-    for (const kind of KINDS) {
-      const p = await run(genChoice, genSys[kind], `INPUTS:\n${CAT}\n\nProduce the ${kind} JSON.`, 0);
+    for (const kind of activeKinds) {
+      const extra = kind === "strategy" ? positioningContext : "";
+      const p = await run(genChoice, genSys[kind], `INPUTS:\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
       payloads[kind] = p;
       const bad = citedRefs(p).filter((ref) => !uuidByRef.has(ref));
       if (bad.length) citationErrors.push({ kind, bad_ids: bad });
@@ -343,9 +388,9 @@ ${US_ENGLISH_RULE}`;
     //    public provenance and liveness 'live'. The ledger is live-public by construction (the queries
     //    select live-only public rows), so this is an explicit assertion of that invariant.
     const resolvedPayloads = Object.fromEntries(
-      KINDS.map((k) => [k, translateCitations(payloads[k], uuidByRef)]),
+      activeKinds.map((k) => [k, translateCitations(payloads[k], uuidByRef)]),
     ) as Record<Kind, Record<string, unknown>>;
-    const citedUuids = [...new Set(KINDS.flatMap((k) => citedRefs(payloads[k]).map((ref) => uuidByRef.get(ref)).filter((x): x is string => !!x)))];
+    const citedUuids = [...new Set(activeKinds.flatMap((k) => citedRefs(payloads[k]).map((ref) => uuidByRef.get(ref)).filter((x): x is string => !!x)))];
     const citationResolution = citedUuids.map((id) => ({
       id, in_ledger: ledgerIds.has(id), provenance: ledger.provenances[id] ?? null,
       public: require_public(ledger.provenances[id]), liveness: ledger.liveness[id] ?? null,
@@ -356,26 +401,57 @@ ${US_ENGLISH_RULE}`;
       return json({ ok: false, rejected: "citation_not_live_public", bad_ids: livePublic.bad, citation_resolution: citationResolution, payloads, ledger_count: ledger.count }, 200);
     }
 
-    // ── JUDGE all three together: grounding + plain-sanity + consistency ────────────────────────────
-    const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise). Check THREE things:
+    // ── JUDGE all three together: grounding + plain-sanity + consistency + (Stage B) cascade coherence
+    // (d) CASCADE COHERENCE is a per-rung READING check — it NEVER blocks acceptance (ruling R3: a
+    // grounded-but-incoherent rung is SURFACED as a tension question, not a reason to reject the read).
+    // It reports whether how_to_win serves the stated where_to_play + winning_aspiration, and whether
+    // each capability serves how_to_win. A false verdict → that rung is excluded from the rendered spine
+    // and a tension question is minted downstream (with the judge's reason).
+    const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise). Check FOUR things:
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
 (b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category;
-(c) CONSISTENCY — positioning, strategy, and promise describe the SAME business and don't contradict each other.
+(c) CONSISTENCY — positioning, strategy, and promise describe the SAME business and don't contradict each other;
+(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.
 Respond with ONLY JSON:
 {"grounding_ok":true|false,"sanity_ok":true|false,"consistency_ok":true|false,
  "per_kind":{"positioning":{"ok":true|false,"reason":"..."},"strategy":{"ok":true|false,"reason":"..."},"promise":{"ok":true|false,"reason":"..."}},
+ "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
+   "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]},
  "accept":true|false,"reason":"<one line>"}`;
-    const judgeUser = `INPUTS (id-tagged):\n${CAT}\n\nTHE READ:\npositioning: ${JSON.stringify(payloads.positioning)}\nstrategy: ${JSON.stringify(payloads.strategy)}\npromise: ${JSON.stringify(payloads.promise)}\n\nJudge (a),(b),(c) and decide accept.`;
+    // KINDS-SCOPED: the judge sees only the kinds this run generated (an unlisted kind is not judged —
+    // there is no payload for it). The criteria and prompt are unchanged; only the READ list narrows.
+    const judgeRead = activeKinds.map((k) => `${k}: ${JSON.stringify(payloads[k])}`).join("\n");
+    const judgeUser = `INPUTS (id-tagged):\n${CAT}\n\nTHE READ:\n${judgeRead}\n\nJudge (a),(b),(c),(d) and decide accept (accept reflects a,b,c ONLY — d is reported, never blocks).`;
     const verdict = await run(judgeChoice, JUDGE_SYS, judgeUser, 0);
     const accept = verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true && verdict.accept === true;
     const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+
+    // ── Stage B — CASCADE ROUTING (deterministic, post-judge): the rendered SPINE (incoherent rungs
+    //    excluded) + the cascade_gap items (ungrounded rungs → gap; grounded-but-incoherent → tension).
+    //    The SPINE (not the raw strategy) is what gets stored, so the render shows only the coherent
+    //    spine; the excluded rungs live as questions on the Questions beat. Positioning/promise unchanged.
+    // KINDS-SCOPED: cascade routing rides the strategy kind — when "strategy" is not in this run,
+    // there is no strategy payload to derive from and the live cascade_gap questions must NOT be
+    // superseded (they belong to the untouched current strategy row).
+    const strategyActive = activeKinds.includes("strategy");
+    const coherence = (verdict.cascade_coherence ?? null) as CascadeCoherence | null;
+    // Storage payloads: strategy → the spine (still ref-tokened); positioning/promise → raw.
+    const storagePayloads: Record<Kind, Record<string, unknown>> = { ...payloads };
+    let cascadeItems: CascadeGapItem[] = [];
+    if (strategyActive) {
+      const derived = deriveCascadeSpineAndGaps(payloads.strategy as StrategyPayload, coherence);
+      cascadeItems = derived.items;
+      storagePayloads.strategy = derived.spine as Record<string, unknown>;
+      resolvedPayloads.strategy = translateCitations(derived.spine, uuidByRef) as Record<string, unknown>;
+    }
+    const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
 
     if (!accept) {
       // Reject → no write, verdict returned (nothing persisted).
       return json({ ok: false, rejected: "judge", judge_verdict: verdict, judge_model: judgeChoice.model, payloads, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
     if (!doWrite && !doStage) {
-      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdict: verdict, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdict: verdict, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
     // ── ACCEPT → write rows, superseding the prior current row (kept, never deleted). ───────
@@ -390,7 +466,7 @@ Respond with ONLY JSON:
     //    lets the operator sign the EXACT payloads with nothing marked current until accept.
     if (doStage) {
       const staged: Array<{ kind: Kind; id: string }> = [];
-      for (const kind of KINDS) {
+      for (const kind of activeKinds) {
         const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
           company_id, kind, payload: resolvedPayloads[kind], input_ledger: ledger,
           model_provider: genChoice.provider, model_name: genChoice.model,
@@ -404,7 +480,7 @@ Respond with ONLY JSON:
     }
 
     const written: Array<{ kind: Kind; id: string; superseded: string | null }> = [];
-    for (const kind of KINDS) {
+    for (const kind of activeKinds) {
       const { data: prior } = await supabase.from("public_reads").select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
       const priorId = (prior as { id?: string } | null)?.id ?? null;
       if (priorId) {
@@ -413,7 +489,7 @@ Respond with ONLY JSON:
         if (upErr) throw new Error(`supersede-prior failed (${kind}): ${upErr.message}`);
       }
       const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-        company_id, kind, payload: translateCitations(payloads[kind], uuidByRef), input_ledger: ledger,
+        company_id, kind, payload: translateCitations(storagePayloads[kind], uuidByRef), input_ledger: ledger,
         model_provider: genChoice.provider, model_name: genChoice.model,
         judge_verdict: verdict, judge_model: judgeChoice.model,
         is_current: true, supersedes_legacy_row: legacyFor(kind),
@@ -424,7 +500,17 @@ Respond with ONLY JSON:
       written.push({ kind, id: newId, superseded: priorId });
     }
 
-    return json({ ok: true, written, payloads, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    // ── Stage B — route the cascade's gaps + tensions to the Questions beat (idempotent supersede). This
+    //    happens on the DIRECT-WRITE path only (the read is is_current here, so its questions are live in
+    //    lockstep). The two-phase stage/promote path does NOT emit cascade_gaps (the staged read is not
+    //    current); regenerate via write to (re)route.
+    // KINDS-SCOPED: only a run that regenerated the strategy may touch cascade_gap rows — otherwise a
+    // scoped run (e.g. kinds:["positioning"]) would supersede the live questions of an untouched read.
+    const cascadeRouting = strategyActive
+      ? await writeCascadeGaps(supabase, company_id, cascadeItems, { provider: genChoice.provider, model: genChoice.model })
+      : { superseded: 0, inserted: 0, run_id: null };
+
+    return json({ ok: true, written, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }
@@ -432,4 +518,35 @@ Respond with ONLY JSON:
 
 function require_public(p: string | null | undefined): boolean {
   return p === "public_observed" || p === "public_inferred" || p === "public_research" || p === "market_read" || p === "publicly_declared";
+}
+
+// Stage B — route the cascade's ungrounded rungs (gap) + grounded-but-incoherent rungs (tension) to
+// the Questions beat as first_read_open_questions rows (source_kind='cascade_gap'). IDEMPOTENT per
+// (company, current read): each regeneration supersedes this company's prior LIVE cascade_gap rows,
+// then inserts the fresh set under a new run_id — never duplicates a live row. Reversible (superseded
+// rows are kept as history, never deleted).
+async function writeCascadeGaps(
+  supabase: SupabaseClient,
+  companyId: string,
+  items: CascadeGapItem[],
+  model: { provider: string; model: string },
+): Promise<{ superseded: number; inserted: number; run_id: string | null }> {
+  const { data: prior } = await supabase.from("first_read_open_questions")
+    .select("id").eq("company_id", companyId).eq("source_kind", "cascade_gap").eq("status", "live");
+  const priorIds = ((prior ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (priorIds.length) {
+    const { error } = await supabase.from("first_read_open_questions").update({ status: "superseded" }).in("id", priorIds);
+    if (error) throw new Error(`cascade_gap supersede failed: ${error.message}`);
+  }
+  if (!items.length) return { superseded: priorIds.length, inserted: 0, run_id: null };
+  const runId = `cascade:${crypto.randomUUID()}`;
+  const rows = items.map((it) => ({
+    company_id: companyId, run_id: runId, source_kind: "cascade_gap",
+    question_text: it.question_text, question_identity: it.question_identity,
+    anchor_identity: it.rung, status: "live",
+    model_provider: model.provider, model_name: model.model,
+  }));
+  const { error } = await supabase.from("first_read_open_questions").insert(rows);
+  if (error) throw new Error(`cascade_gap insert failed: ${error.message}`);
+  return { superseded: priorIds.length, inserted: rows.length, run_id: runId };
 }

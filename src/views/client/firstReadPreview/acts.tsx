@@ -114,6 +114,15 @@ const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed
 const LABEL_POSITIONING = "Positioning"; // signed
 const LABEL_STRATEGY = "Strategy"; // signed
 const LABEL_PROMISE = "Promise"; // signed
+// ── Stage B (2026-08-28) 5-rung public Playing-to-Win cascade ladder — DRAFT strings the operator
+//    signs at the hold. The framing line reads THE STRATEGY THE PUBLIC RECORD IMPLIES (a reading, not
+//    a go-forward proposal). The five eyebrows label the cascade rungs.
+const CASCADE_FRAMING = "The strategy your public record implies."; // DRAFT — sign at hold
+const RUNG_ASPIRATION = "Winning aspiration"; // DRAFT — sign at hold
+const RUNG_WHERE = "Where to play"; // DRAFT — sign at hold
+const RUNG_HOW = "How to win"; // DRAFT — sign at hold
+const RUNG_CAPABILITIES = "Must-have capabilities"; // DRAFT — sign at hold
+const RUNG_MGMT = "Management systems"; // DRAFT — sign at hold
 // Ruling 1 (2026-08-21): no distinct promise field in the canvas → render this verbatim, no source tag.
 const PROMISE_NOT_ENOUGH = "Not enough information to create promise."; // signed
 // GATE (2026-08-21): positioning + strategy render only from a CONFIRMED public-only row (gate 6a).
@@ -776,6 +785,50 @@ function sentenceCase(s: string | null | undefined): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
 }
 
+// Stage B — the 5-rung public Playing-to-Win cascade ladder. Each rung renders ONLY when present in
+// the stored spine; a missing rung renders NOTHING here (its question lives on the Questions beat).
+// The framing line reads the cascade as THE STRATEGY THE PUBLIC RECORD IMPLIES — never a go-forward.
+function CascadeRung({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <div className="mt-4">
+      <span className="fr-eyebrow">{eyebrow}</span>
+      <div className="mt-1 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{children}</div>
+    </div>
+  );
+}
+function CascadeLadder({ st }: { st: NonNullable<FirstReadPreviewData["strategy"]> }) {
+  const caps = st.capabilities ?? [];
+  const mgmt = st.managementSystems ?? [];
+  return (
+    <>
+      <p className="text-xs font-light italic" style={{ color: "hsl(var(--fr-faint))" }}>{CASCADE_FRAMING}</p>
+      {st.aspiration ? (
+        <div className="mt-3">
+          <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
+          <p className="mt-1 text-2xl font-semibold leading-snug">{st.aspiration}</p>
+        </div>
+      ) : null}
+      {st.whereToPlay ? <CascadeRung eyebrow={RUNG_WHERE}>{st.whereToPlay}</CascadeRung> : null}
+      {st.howToWin ? <CascadeRung eyebrow={RUNG_HOW}>{st.howToWin}</CascadeRung> : null}
+      {caps.length > 0 ? (
+        <CascadeRung eyebrow={RUNG_CAPABILITIES}>
+          <ul className="flex flex-col gap-1.5">
+            {caps.map((c, i) => <li key={i} style={{ color: "hsl(222 47% 25%)" }}>· {c}</li>)}
+          </ul>
+        </CascadeRung>
+      ) : null}
+      {mgmt.length > 0 ? (
+        <CascadeRung eyebrow={RUNG_MGMT}>
+          <ul className="flex flex-col gap-1.5">
+            {mgmt.map((m, i) => <li key={i} style={{ color: "hsl(222 47% 25%)" }}>· {m}</li>)}
+          </ul>
+        </CascadeRung>
+      ) : null}
+      {st.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
+    </>
+  );
+}
+
 export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
   // GATE (2026-08-21): positioning/strategy render substance ONLY from a confirmed public-only row
   // (the data hook gates them to null today, gate 6a). Otherwise each renders its signed line. The
@@ -809,20 +862,7 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
         </WeSeeSection>
         <WeSeeSection label={LABEL_STRATEGY} show>
           {st ? (
-            <>
-              {st.aspiration ? <p className="text-2xl font-semibold leading-snug">{st.aspiration}</p> : null}
-              {st.whereToPlay ? (
-                <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                  <span className="fr-eyebrow">Where to play</span> — {st.whereToPlay}
-                </p>
-              ) : null}
-              {st.howToWin ? (
-                <p className="mt-2 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                  <span className="fr-eyebrow">How to win</span> — {st.howToWin}
-                </p>
-              ) : null}
-              {st.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
-            </>
+            <CascadeLadder st={st} />
           ) : (
             <GatedLine>{STRATEGY_NOT_ENOUGH}</GatedLine>
           )}

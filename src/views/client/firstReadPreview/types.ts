@@ -204,11 +204,17 @@ export type FRPositioning = {
  *  line (no source tag). null = no canvas at all. */
 export type FRPromise = { text: string | null; sourceTag: SourceTagResult } | null;
 
-/** Observed strategy (strategy_cascades market_read). */
+/** The public Playing-to-Win cascade (public_reads.kind='strategy', 5 rungs — Stage B, 2026-08-28).
+ *  Rungs 1–3 are the spine; capabilities/managementSystems are the two added rungs. Each is the
+ *  COHERENT SPINE the generator stored (ungrounded + incoherent rungs are omitted here and routed to
+ *  the Questions beat as cascade_gap questions). capabilities/managementSystems are OPTIONAL so the
+ *  legacy 3-rung fixtures still type-check; the render treats absent as []. */
 export type FRStrategy = {
   aspiration: string | null;
   whereToPlay: string | null;
   howToWin: string | null;
+  capabilities?: string[];
+  managementSystems?: string[];
   sourceTag: SourceTagResult;
 } | null;
 

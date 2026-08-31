@@ -793,12 +793,32 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ? { category: posPayload.market_category ?? null, value: posPayload.value_for_customer ?? null, differentiators: posDiffs, sourceTag: publicReadTag(posRow.created_at) }
           : null;
 
+        // Stage B (2026-08-28): the strategy payload is the 5-rung public cascade SPINE. Rungs 4–5
+        // (must_have_capabilities / management_systems) are arrays of {text, citations}; extract the
+        // texts. The generator already stored only the coherent, grounded spine — the render shows what
+        // is present and shows nothing for an absent rung (its question lives on the Questions beat).
         const strRow = prByKind.get("strategy");
         const strPayload = (strRow?.payload ?? null) as
-          | { winning_aspiration?: string | null; where_to_play?: string | null; how_to_win?: string | null }
+          | {
+              winning_aspiration?: string | null; where_to_play?: string | null; how_to_win?: string | null;
+              must_have_capabilities?: Array<{ text?: string | null }> | null;
+              management_systems?: Array<{ text?: string | null }> | null;
+            }
           | null;
-        const strategy = strRow && strPayload && (strPayload.winning_aspiration || strPayload.where_to_play || strPayload.how_to_win)
-          ? { aspiration: strPayload.winning_aspiration ?? null, whereToPlay: strPayload.where_to_play ?? null, howToWin: strPayload.how_to_win ?? null, sourceTag: publicReadTag(strRow.created_at) }
+        const rungList = (arr: Array<{ text?: string | null }> | null | undefined): string[] =>
+          (Array.isArray(arr) ? arr : []).map((a) => String(a?.text ?? "").trim()).filter(Boolean);
+        const strCaps = rungList(strPayload?.must_have_capabilities);
+        const strMgmt = rungList(strPayload?.management_systems);
+        const strategy = strRow && strPayload &&
+          (strPayload.winning_aspiration || strPayload.where_to_play || strPayload.how_to_win || strCaps.length || strMgmt.length)
+          ? {
+              aspiration: strPayload.winning_aspiration ?? null,
+              whereToPlay: strPayload.where_to_play ?? null,
+              howToWin: strPayload.how_to_win ?? null,
+              capabilities: strCaps,
+              managementSystems: strMgmt,
+              sourceTag: publicReadTag(strRow.created_at),
+            }
           : null;
 
         const promRow = prByKind.get("promise");
