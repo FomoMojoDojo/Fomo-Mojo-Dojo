@@ -24,6 +24,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { packDeltaChunks, type DeltaPlanClaim } from "../../../src/lib/claimDeltas/packChunks.ts";
+import { classifyDeltaOutcome, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -130,8 +131,18 @@ Deno.serve(async (req) => {
 
   // ── 2) PLAN (resume truth) ──────────────────────────────────────────────────────────
   const planRes = await callDeltas(url, key, { company_id, plan: true, pairing_kind: pairingKind });
+  const planOutcome = classifyDeltaOutcome(planRes);
+  if (planOutcome === "completed_empty") {
+    // FIRST-RUN LAW: an absent declared side is nothing to compare against yet — an EARNED empty
+    // state, not a failure. Close BOTH the child and the parent completed-empty. (Defense-in-depth:
+    // the baseline tail already gates the chain away on a first public-only run, so reaching here
+    // means some other caller drove the stepper without a declared side; it still lands completed.)
+    await finish("completed", 0, NO_DECLARED_SIDE_LEDGER_TEXT);
+    return json({ ok: true, completed_empty: true }, 200);
+  }
   if (!planRes.ok) {
-    // A plan that errors deterministically (frozen/no-claims) is a legitimate terminal, not a stall.
+    // A non-empty plan error — deterministic (frozen/empty-scope) or transient — is a terminal here,
+    // not a stall. Historic behavior for every non-empty failure is unchanged.
     await finish("failed", 0, `plan failed: ${planRes.reason}`);
     return json({ ok: false, error: `plan failed: ${planRes.reason}` }, 200);
   }

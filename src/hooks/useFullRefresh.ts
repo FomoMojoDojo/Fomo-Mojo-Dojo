@@ -11,13 +11,24 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 
-export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "baseline_failed" | "deltas_failed" | "invoke_failed" | "frozen";
+export type FullRefreshStage = "idle" | "baseline" | "deltas" | "done" | "done_empty" | "baseline_failed" | "deltas_failed" | "invoke_failed" | "frozen";
 
 // OPERATOR-SIGNED strings (2026-08-08). The chain-error is the stale-sweep's ledger text (G3).
 export const FR_BUTTON_IDLE = "Full refresh";
 export const FR_STEP_BASELINE = "Refreshing outside signals (step 1 of 2)…";
 export const FR_STEP_DELTAS = "Computing what's changed (step 2 of 2)…";
 export const FR_DONE = "Full refresh complete.";
+// FIRST-RUN EARNED EMPTY (public-only, no declared side). The server closes the parent full_refresh
+// completed and stamps the "no declared side" ledger text (no delta stepper is fired). The outside
+// surface renders this as a CALM completion — a looked-and-found-the-outside-view state — never a
+// red error and never the stale "no signals collected" line. Header + two body lines below.
+export const FR_EMPTY_HEADER = "Outside read complete";
+export const FR_EMPTY_BODY_1 = "We've read the public record — this is the outside world's view of the company.";
+export const FR_EMPTY_BODY_2 = "The comparison — how that lines up against your own direction — appears once you add your internal view. There's nothing to hold it against yet.";
+// The ledger substring the server stamps on the completed-empty parent/child (kept in sync with
+// _shared/deltaChainGate.ts NO_DECLARED_SIDE_LEDGER_TEXT — matched loosely so wording tweaks on
+// either side never silently drop the earned-empty read).
+const EMPTY_LEDGER_MATCH = /no declared side/i;
 export const FR_HALT = "Outside-signal refresh failed — deltas were not run.";
 export const FR_DELTAS_FAILED = "Outside signals updated; delta compute failed.";
 export const FR_RESUME = "Outside signals are fresh; deltas pending — run it again to finish.";
@@ -67,13 +78,20 @@ export function useFullRefresh(companyId?: string, companyName?: string, website
     parentRef.current = pid;
     const { data: rows } = await supabase
       .from("long_runner_runs")
-      .select("id, run_kind, status")
+      .select("id, run_kind, status, error_text")
       .or(`id.eq.${pid},parent_run_id.eq.${pid}`);
-    const list = (rows ?? []) as Array<{ id: string; run_kind: string; status: string }>;
+    const list = (rows ?? []) as Array<{ id: string; run_kind: string; status: string; error_text: string | null }>;
     const parent = list.find((r) => r.id === pid);
     const baseline = list.find((r) => r.run_kind === "public_baseline");
     const deltas = list.find((r) => r.run_kind === "claim_deltas");
 
+    // FIRST-RUN EARNED EMPTY: a completed row carrying the "no declared side" ledger text is the
+    // public-only outcome (no internal view to compare against yet) — a completion, rendered calm.
+    const isEmptyTerminal = (r?: { status: string; error_text: string | null }) =>
+      r?.status === "completed" && EMPTY_LEDGER_MATCH.test(r?.error_text ?? "");
+    if (isEmptyTerminal(parent) || isEmptyTerminal(deltas)) {
+      return { stage: "done_empty", message: FR_EMPTY_HEADER, running: false };
+    }
     if (parent?.status === "completed" || deltas?.status === "completed") {
       return { stage: "done", message: FR_DONE, running: false };
     }

@@ -147,7 +147,13 @@ serve(async (req) => {
             status: "skipped_empty_input", ranAtIso: integrityCtx.nowIso, runRef: integrityCtx.nowIso,
           }).catch((e) => console.error("[generate-claim-deltas] integrity skip-write failed:", String(e)));
         }
-        return json({ ok: false, error: "no declared-side claims for this company" }, 404);
+        // FIRST-RUN LAW: no declared side is an EARNED empty state, never a failure. A first
+        // "Run outside signals" run is public-only and must not require internal material — the
+        // delta is meaningful only once BOTH sides exist. Return SUCCESS-shaped carrying a
+        // machine-readable marker (skipped/empty) so the stepper closes the chain completed-empty.
+        // (The old bare 404 destroyed the empty signal at the server-to-server hop — a 404 was
+        // indistinguishable from a genuine worker failure, so the stepper failed the whole run.)
+        return json({ ok: true, skipped: "no_declared_claims", empty: true, reason: "no declared-side claims for this company" }, 200);
       }
     }
     return json({ ok: false, error: (result as { error: string }).error }, 500);

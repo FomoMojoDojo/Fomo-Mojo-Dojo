@@ -23,7 +23,7 @@ import { visibleFileTags, readAreaSupportTags, makeAreaSupportTag, isInternalFil
 import { mapInputToAreaKey, inferAreaHintsFromFileName } from "@/lib/areaMapping";
 import FileUploadDialog from "@/components/FileUploadDialog";
 import { supabase } from "@/integrations/supabase/client";
-import { useFullRefresh, FR_BUTTON_IDLE } from "@/hooks/useFullRefresh";
+import { useFullRefresh, FR_BUTTON_IDLE, FR_EMPTY_HEADER, FR_EMPTY_BODY_1, FR_EMPTY_BODY_2 } from "@/hooks/useFullRefresh";
 
 import { Eyebrow } from "@/components/design-system/Eyebrow";
 import { D } from "@/components/design-system/tokens";
@@ -1700,6 +1700,24 @@ export default function InputsTab({
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // FIRST-RUN EARNED EMPTY (public-only, no declared side). A calm completed state — NOT a red
+  // error and NOT the stale "No outside signals collected" line. Rendered under the refresh control
+  // in whichever branch is live. The delta comparison only becomes meaningful once an internal view
+  // is added; until then this is the honest "we looked — nothing to hold it against yet" read.
+  const outsideEmptyBlock = fullRefresh.state.stage === "done_empty" ? (
+    <div style={{ marginTop: 10, maxWidth: 580 }}>
+      <p style={{ fontFamily: D.sans, fontSize: 13, fontWeight: 600, color: "#2f6b3a", margin: "0 0 5px" }}>
+        {FR_EMPTY_HEADER}
+      </p>
+      <p style={{ fontFamily: D.sans, fontSize: 12.5, color: D.inkSoft, margin: "0 0 4px", lineHeight: 1.5 }}>
+        {FR_EMPTY_BODY_1}
+      </p>
+      <p style={{ fontFamily: D.sans, fontSize: 12.5, color: D.inkSoft, margin: 0, lineHeight: 1.5 }}>
+        {FR_EMPTY_BODY_2}
+      </p>
+    </div>
+  ) : null;
+
   return (
     <div style={hasHierarchy
       ? { margin: -36, padding: "40px 48px 80px", background: D.canvas }
@@ -1721,6 +1739,7 @@ export default function InputsTab({
 
           {/* Admin-only: outside signals refresh */}
           {isAdmin && (
+            <>
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20, marginBottom: 4 }}>
               <span style={{ fontFamily: D.mono, fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: D.inkFaint }}>
                 Outside signals
@@ -1747,12 +1766,14 @@ export default function InputsTab({
                     misfire). DRAFT string pending operator signature. */}
                 {fullRefreshBusy ? "Refreshing…" : `${FR_BUTTON_IDLE} — ${companyName} →`}
               </button>
-              {fullRefresh.state.message && (
+              {fullRefresh.state.message && fullRefresh.state.stage !== "done_empty" && (
                 <span style={{ fontFamily: D.mono, fontSize: 9, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
             </div>
+            {outsideEmptyBlock}
+            </>
           )}
 
           {/* Dynamic integration status */}
@@ -1806,6 +1827,7 @@ export default function InputsTab({
               Rendered (not hidden) when blocked, with the reason in the title, because a
               hidden control is what caused this gap. DRAFT strings pending signature. */}
           {isAdmin && (
+            <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1822,12 +1844,12 @@ export default function InputsTab({
               >
                 {fullRefreshBusy ? "Refreshing…" : outsideSignalsLabel}
               </button>
-              {fullRefresh.state.message && (
+              {fullRefresh.state.message && fullRefresh.state.stage !== "done_empty" && (
                 <span style={{ fontFamily: "monospace", fontSize: 10, color: fullRefresh.state.stage.endsWith("failed") ? "#c07a5a" : D.inkSoft }}>
                   {fullRefresh.state.message}
                 </span>
               )}
-              {!baselineLoading && !hasBaselineRun && (
+              {!baselineLoading && !hasBaselineRun && fullRefresh.state.stage !== "done_empty" && (
                 <span style={{ fontFamily: "monospace", fontSize: 10, color: "#aaa" }}>
                   No outside signals collected for this company yet.
                 </span>
@@ -1838,6 +1860,8 @@ export default function InputsTab({
                 </span>
               )}
             </div>
+            {outsideEmptyBlock}
+            </>
           )}
           {/* BRT-1 — cold start for a company whose outside read is banked but whose
               spine was never built. Until now the only birth trigger on this surface

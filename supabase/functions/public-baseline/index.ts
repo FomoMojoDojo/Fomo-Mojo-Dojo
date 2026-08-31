@@ -9,6 +9,7 @@ import { extractCitationSourceText, mergeCitationSourceText } from "../../../src
 // claims from scratch, so it must refuse a frozen company before any write.
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 import { isOwnDomainUrl, normalizeHost } from "../_shared/firstReadProvenance.ts";
+import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3264,12 +3265,38 @@ Deno.serve(async (req) => {
     // AFTER the internal chains; the delta stepper self-chains + writes the child claim_deltas
     // ledger row linked to the parent.
     if (chain) {
-      waitUntil(triggerRefreshDeltas(
-        company_id,
-        parentRunId,
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      ));
+      // FIRST-RUN GATE (Cause A). Stage 2 (the delta) is meaningful ONLY once a declared side
+      // exists to compare the public read against. The chain fires the stepper as internal_vs_public,
+      // whose declared side is the client-side corpus (internal_declared + client_attested). Count it
+      // LOCALLY — this read is on the local side of the privacy boundary and must never be gated in
+      // the browser. No declared side ⇒ do NOT chain: this is a public-only first run, an earned
+      // empty state, not a run that should fail on absent internal material.
+      const { count: declaredCount } = await supabase
+        .from("claims")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", company_id)
+        .in("provenance", ["internal_declared", "client_attested"]);
+      if (shouldChainDeltas({ chain, declaredClaimCount: declaredCount ?? 0 })) {
+        waitUntil(triggerRefreshDeltas(
+          company_id,
+          parentRunId,
+          Deno.env.get("SUPABASE_URL") ?? "",
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+        ));
+      } else if (parentRunId) {
+        // No declared side → the delta stepper is intentionally never fired, so nothing else will
+        // close the parent full_refresh row. Close it here as an EARNED completion (public-only run
+        // finished), carrying the completed-empty ledger text so a reader sees "we looked — there's
+        // nothing to hold it against yet", never a red failure and never a stuck-running row.
+        console.log("[baseline] first-run public-only (no declared side) — skipping delta chain, closing parent completed-empty");
+        await supabase.from("long_runner_runs").update({
+          status: "completed",
+          done_count: 0,
+          error_text: NO_DECLARED_SIDE_LEDGER_TEXT,
+          finished_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", parentRunId);
+      }
     }
 
     return json({
