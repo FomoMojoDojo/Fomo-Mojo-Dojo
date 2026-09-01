@@ -10,6 +10,7 @@ import { extractCitationSourceText, mergeCitationSourceText } from "../../../src
 import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 import { isOwnDomainUrl, normalizeHost } from "../_shared/firstReadProvenance.ts";
 import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
+import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure, runSynthesisWithParseRetry } from "../_shared/synthesisJsonExtract.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1663,25 +1664,8 @@ async function callOpenAI(opts: {
 }
 
 // OE-1: defensively extract a JSON object from model text (strip fences, slice braces).
-function parseJsonObjectDefensive(text: string): Record<string, unknown> | null {
-  if (!text) return null;
-  let t = String(text).trim();
-  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) t = fence[1].trim();
-  try {
-    const o = JSON.parse(t);
-    if (o && typeof o === "object") return o as Record<string, unknown>;
-  } catch (_) { /* fall through */ }
-  const first = t.indexOf("{");
-  const last = t.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    try {
-      const o = JSON.parse(t.slice(first, last + 1));
-      if (o && typeof o === "object") return o as Record<string, unknown>;
-    } catch (_) { /* give up */ }
-  }
-  return null;
-}
+// parseJsonObjectDefensive + selectFinalText + blockCensus now live in _shared/synthesisJsonExtract.ts
+// (pure, imported above) so the edge function and the vitest regression fixtures exercise ONE impl.
 
 // OE-1: Claude web-search synthesis. Collapses discovery+synthesis — Claude runs its
 // own web_search to surface GENUINE outside voices (employee/customer reviews, community)
@@ -1697,6 +1681,11 @@ async function callClaudeWebSearch(opts: {
   domain: string;
   resolvedCategory?: string;
   excludeDomains?: string[];
+  // FORENSIC PERSIST + retry (probe 2026-09-01): the service-role client + failing ledger row, so a
+  // parse failure is captured SELECT-queryably and the one transport retry can be labeled by attempt.
+  supabase: { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  companyId: string;
+  ledgerRunId: string | null;
 }): Promise<{ parsed: Record<string, unknown>; citationSourceTextByUrl: Map<string, string> }> {
   const schemaHint =
     `{\n` +
@@ -1751,45 +1740,53 @@ async function callClaudeWebSearch(opts: {
   }
   console.log(`[baseline] claude web_search tool config: ${JSON.stringify(webSearchTool)}`);
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": opts.apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
+  // ONE transport-level retry on PARSE FAILURE only (probe 2026-09-01, operator-signed). The retry +
+  // persist orchestration is the shared runSynthesisWithParseRetry (unit-tested with a fake sink);
+  // doAttempt is the one live call+parse (it throws HTTP / max_tokens — those propagate, never retried).
+  const { parsed, data } = await runSynthesisWithParseRetry({
+    maxAttempts: 2,
+    doAttempt: async (_attempt) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": opts.apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: opts.model,
+          // 32000: big-footprint companies (SIAA: 17-19 content blocks, 25-29KB of
+          // final text) blew the old 8000 cap MID-JSON — the truncated object then
+          // failed the defensive parse and misreported as a parse error. Sonnet-tier
+          // output ceiling is 128K; output tokens bill only what is produced.
+          max_tokens: 32000,
+          tools: [webSearchTool],
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(`Anthropic web-search call failed: HTTP ${res.status} ${errText.slice(0, 500)}`);
+      }
+      const d = await res.json();
+      // stop_reason honesty (require_model law): a max_tokens truncation cuts the final JSON mid-object.
+      // It is its OWN error — never a parse failure, never retried, never persisted as a parse failure.
+      const stopReason = String((d as any)?.stop_reason ?? "");
+      if (stopReason === "max_tokens") {
+        throw new Error(`Anthropic web-search: output hit the max_tokens cap (stop_reason=max_tokens) — synthesis truncated mid-JSON; the footprint needs a higher cap`);
+      }
+      const blocks = Array.isArray((d as any)?.content) ? (d as any).content : [];
+      // The JSON answer is in the FINAL text block, after the tool calls (selectFinalText, shared).
+      const finalText = selectFinalText(blocks);
+      return { parsed: parseJsonObjectDefensive(finalText), finalText, blocks, stopReason, usage: (d as any)?.usage ?? null, data: d };
     },
-    body: JSON.stringify({
-      model: opts.model,
-      // 32000: big-footprint companies (SIAA: 17-19 content blocks, 25-29KB of
-      // final text) blew the old 8000 cap MID-JSON — the truncated object then
-      // failed the defensive parse and misreported as a parse error. Sonnet-tier
-      // output ceiling is 128K; output tokens bill only what is produced.
-      max_tokens: 32000,
-      tools: [webSearchTool],
-      messages: [{ role: "user", content: prompt }],
-    }),
+    // No JSON-repair pass (explicitly rejected): the model produces the object or the run fails loud.
+    persistFailure: (attemptN, a) =>
+      persistSynthesisParseFailure(opts.supabase, {
+        companyId: opts.companyId, ledgerRunId: opts.ledgerRunId, attemptN, model: opts.model,
+        stopReason: a.stopReason, blocks: a.blocks, rawFinalText: a.finalText, usage: a.usage,
+      }),
   });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Anthropic web-search call failed: HTTP ${res.status} ${errText.slice(0, 500)}`);
-  }
-  const data = await res.json();
-  // stop_reason honesty (require_model law): a max_tokens truncation cuts the
-  // final JSON mid-object — without this check it misreports downstream as
-  // "could not parse JSON". Name the real failure.
-  const stopReason = String((data as any)?.stop_reason ?? "");
-  if (stopReason === "max_tokens") {
-    throw new Error(`Anthropic web-search: output hit the max_tokens cap (stop_reason=max_tokens) — synthesis truncated mid-JSON; the footprint needs a higher cap`);
-  }
-  const blocks = Array.isArray((data as any)?.content) ? (data as any).content : [];
-  // Multiple content blocks (text / server_tool_use / web_search_tool_result). The JSON
-  // answer is in the FINAL text block, after the tool calls — not block[0].
-  const textBlocks = blocks.filter((b: any) => b?.type === "text" && typeof b?.text === "string");
-  const finalText = textBlocks.length > 0 ? String(textBlocks[textBlocks.length - 1].text) : "";
-  const parsed = parseJsonObjectDefensive(finalText);
-  if (!parsed) {
-    throw new Error(`Anthropic web-search: could not parse JSON from final text block (len=${finalText.length}, blocks=${blocks.length})`);
-  }
   // Normalize each discovered URL's source_type — NON-DESTRUCTIVELY. inferSourceType is
   // authoritative only when it confidently matches a known domain (returns a non-public_web
   // bucket); when it returns the public_web fallback, KEEP Claude's own page-level label
@@ -1838,7 +1835,8 @@ async function callClaudeWebSearch(opts: {
   // blocks + citations), independent of the reclassified `parsed`. Empty when the
   // model cited nothing — honest absence, no lift.
   const citationSourceTextByUrl = extractCitationSourceText(data);
-  return { parsed, citationSourceTextByUrl };
+  // parsed is guaranteed non-null here: the loop above either broke with parsed set or threw.
+  return { parsed: parsed as Record<string, unknown>, citationSourceTextByUrl };
 }
 
 const QUALITY_PROMPTS: Record<"no_results" | "thin" | "ambiguous" | "search_unavailable", string> = {
@@ -3113,6 +3111,11 @@ Deno.serve(async (req) => {
         domain,
         resolvedCategory: priorCategoryArchetype,
         excludeDomains: sourceFilters.exclude_domains,
+        // FORENSIC PERSIST + one retry (probe 2026-09-01): capture a parse failure keyed to the
+        // public_baseline ledger row (ledgerRowId), SELECT-queryable afterwards.
+        supabase,
+        companyId: company_id,
+        ledgerRunId: ledgerRowId,
       });
       result = claudeOut.parsed;
       claudeCitationSourceText = claudeOut.citationSourceTextByUrl;
