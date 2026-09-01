@@ -807,6 +807,27 @@ function sentenceCase(s: string | null | undefined): string {
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
 }
 
+/** Numbered hanging-indent list (2026-08-31 restyle) — the Questions-beat mechanic at list scale.
+ *  The two-digit index is a SEPARATE flex item, so wrapped lines align under the TEXT column, never
+ *  the margin (the defect the old "· " bullets had). Strings render verbatim — zero copy change.
+ *  Empty list ⇒ nothing (no empty <ol>). Used identically by the three "Where this points" blocks:
+ *  positioning differentiators, must-have capabilities, management systems. */
+function NumberedList({ items, className }: { items: string[]; className?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
+      {items.map((text, i) => (
+        <li key={i} className="flex gap-4">
+          <span className="shrink-0 pt-0.5 text-[10px] font-bold tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{text}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 // Stage B — the 5-rung public Playing-to-Win cascade ladder. Each rung renders ONLY when present in
 // the stored spine; a missing rung renders NOTHING here (its question lives on the Questions beat).
 // The framing line reads the cascade as THE STRATEGY THE PUBLIC RECORD IMPLIES — never a go-forward.
@@ -834,16 +855,12 @@ function CascadeLadder({ st }: { st: NonNullable<FirstReadPreviewData["strategy"
       {st.howToWin ? <CascadeRung eyebrow={RUNG_HOW}>{st.howToWin}</CascadeRung> : null}
       {caps.length > 0 ? (
         <CascadeRung eyebrow={RUNG_CAPABILITIES}>
-          <ul className="flex flex-col gap-1.5">
-            {caps.map((c, i) => <li key={i} style={{ color: "hsl(222 47% 25%)" }}>· {c}</li>)}
-          </ul>
+          <NumberedList items={caps} />
         </CascadeRung>
       ) : null}
       {mgmt.length > 0 ? (
         <CascadeRung eyebrow={RUNG_MGMT}>
-          <ul className="flex flex-col gap-1.5">
-            {mgmt.map((m, i) => <li key={i} style={{ color: "hsl(222 47% 25%)" }}>· {m}</li>)}
-          </ul>
+          <NumberedList items={mgmt} />
         </CascadeRung>
       ) : null}
       {st.sourceTag ? <div className="mt-4"><SourceTag>{st.sourceTag.label}</SourceTag></div> : null}
@@ -870,11 +887,7 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
                 <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{sentenceCase(p.value)}</p>
               ) : null}
               {p.differentiators.length > 0 ? (
-                <ul className="mt-4 flex flex-col gap-2">
-                  {p.differentiators.map((d, i) => (
-                    <li key={i} className="text-sm font-light" style={{ color: "hsl(222 47% 25%)" }}>· {d}</li>
-                  ))}
-                </ul>
+                <NumberedList items={p.differentiators} className="mt-4" />
               ) : null}
               {p.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
             </>
