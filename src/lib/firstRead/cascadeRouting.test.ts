@@ -132,9 +132,14 @@ describe("proof 6 — KINDS SELECTOR (source-level): a scoped run touches ONLY t
     expect(src).toContain("kinds must be a subset of");
     expect(src).toContain("bad_kinds: bad");
   });
-  it("(c) omitted/empty kinds defaults to ALL THREE (non-breaking)", () => {
-    // the default binding is the full constant; only a non-empty valid list narrows it.
-    expect(src).toContain("let activeKinds: readonly Kind[] = KINDS;");
+  it("(c) omitted/empty kinds defaults to the ORIGINAL THREE (non-breaking); offering is opt-in", () => {
+    // The default binding is DEFAULT_KINDS (the original three) — NOT the full KINDS constant, which now
+    // also includes 'offering'. So an unscoped run (kinds omitted/[]) generates exactly the original
+    // three and never 'offering'; only an explicit kinds:["offering"] narrows to it. This is what keeps
+    // every existing caller byte-identical while offering ships opt-in.
+    expect(src).toContain("let activeKinds: readonly Kind[] = DEFAULT_KINDS;");
+    expect(src).toContain('const DEFAULT_KINDS = ["positioning", "strategy", "promise"] as const;');
+    expect(src).toContain('const KINDS = ["positioning", "strategy", "promise", "offering"] as const;');
     expect(src).toContain("if (rawKinds.length > 0) activeKinds");
   });
   it("(d) cascade_gap routing rides the strategy kind — never superseded by a non-strategy run", () => {

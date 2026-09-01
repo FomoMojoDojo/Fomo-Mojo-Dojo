@@ -28,7 +28,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
-import { citationsLivePublic, framingViolations } from "../_shared/publicReadGuards.ts";
+import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
 
 const corsHeaders = {
@@ -38,7 +38,12 @@ const corsHeaders = {
 const LOCAL_HOST_ALLOWLIST = new Set(["localhost", "127.0.0.1", "::1", "host.docker.internal"]);
 const CB1_FROZEN_ID = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc";
 const PUBLIC_SIGNAL_VOICES = ["outside_voice_about_client", "client_voice", "market_context", "competitor_voice"];
-const KINDS = ["positioning", "strategy", "promise"] as const;
+// KINDS is the full set of VALID read kinds (matches the public_reads_kind_check constraint). DEFAULT_KINDS
+// is what an unscoped run (body.kinds omitted/[]) generates — the ORIGINAL three, so `offering` is
+// OPT-IN ONLY (a caller must pass kinds:["offering"]). This keeps every existing caller's default run
+// byte-identical: offering is never generated, judged, or written unless explicitly requested.
+const KINDS = ["positioning", "strategy", "promise", "offering"] as const;
+const DEFAULT_KINDS = ["positioning", "strategy", "promise"] as const;
 type Kind = (typeof KINDS)[number];
 
 function isLocalOllamaUrl(rawUrl: string) {
@@ -49,7 +54,14 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-type InputRow = { id: string; kind: string; provenance: string; text: string };
+type InputRow = {
+  id: string; kind: string; provenance: string; text: string;
+  // Source metadata — used ONLY to DERIVE the offering read's seen_on / source_count / date range in
+  // code (the model never claims these). source_url → domain; event_date → the item's date range;
+  // own_site is true for own-words (the company's own public site by construction) or when the domain
+  // matches the company's own host. Absent (findings/deltas are syntheses with no single source).
+  source_url?: string | null; event_date?: string | null; own_site?: boolean;
+};
 
 // Per-kind read caps. A 3-sentence public read needs a tractable, prioritized catalogue — a model
 // cannot reliably cite from hundreds of id-tagged rows (it invents ref numbers). The input_ledger
@@ -69,20 +81,21 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
   //    render marks provisional citations, but the "Our read" seeds posits ONLY from live public evidence.
   const { data: sig } = await supabase
     .from("signals")
-    .select("id, claim_text, evidence_excerpt, source_title, topic")
+    .select("id, claim_text, evidence_excerpt, source_title, source_url, event_date, topic")
     .eq("company_id", companyId).eq("signal_band", "outside")
     .in("voice_class", PUBLIC_SIGNAL_VOICES).is("superseded_at", null).is("held_at", null);
-  for (const s of (sig ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; source_title: string | null; topic: string | null }>) {
+  for (const s of (sig ?? []) as Array<{ id: string; claim_text: string | null; evidence_excerpt: string | null; source_title: string | null; source_url: string | null; event_date: string | null; topic: string | null }>) {
     const text = (s.claim_text ?? s.evidence_excerpt ?? "").trim();
-    if (text) rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}` });
+    if (text) rows.push({ id: s.id, kind: "signal", provenance: "public_observed", text: `${text}${s.source_title ? ` (${s.source_title})` : ""}`, source_url: s.source_url, event_date: s.event_date });
   }
 
-  // 2. own-words — the company's OWN public-site voice, judge-kept only
+  // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
+  //    (own-words ARE judge-kept quotes from the company's own public site — the seen_on "own site" set).
   const { data: ow } = await supabase
     .from("own_words_candidates").select("id, quote").eq("company_id", companyId).eq("judge_keep", true);
   for (const w of (ow ?? []) as Array<{ id: string; quote: string | null }>) {
     const text = (w.quote ?? "").trim();
-    if (text) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text });
+    if (text) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text, own_site: true });
   }
 
   // 3. findings — the public_inferred register, open, AND RECURRENCE-BACKED (Gate 6a, 2026-08-26):
@@ -177,7 +190,7 @@ function buildCatalogue(inputs: InputRow[]): { text: string; uuidByRef: Map<stri
 function citedRefs(payload: unknown): string[] {
   const out: string[] = [];
   const walk = (v: unknown, key?: string) => {
-    if (Array.isArray(v)) { if (key && /citation|cite|ids$/i.test(key)) { for (const x of v) if (typeof x === "string") out.push(x.trim()); } else for (const x of v) walk(x); }
+    if (Array.isArray(v)) { if (key && /citation|cite|refs?$|ids$/i.test(key)) { for (const x of v) if (typeof x === "string") out.push(x.trim()); } else for (const x of v) walk(x); }
     else if (v && typeof v === "object") for (const [k, val] of Object.entries(v)) walk(val, k);
   };
   walk(payload);
@@ -191,12 +204,51 @@ function translateCitations(payload: unknown, uuidByRef: Map<string, string>): u
   if (payload && typeof payload === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(payload)) {
-      if (/citation|cite|ids$/i.test(k) && Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? (uuidByRef.get(x.trim()) ?? x) : x));
+      if (/citation|cite|refs?$|ids$/i.test(k) && Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? (uuidByRef.get(x.trim()) ?? x) : x));
       else out[k] = translateCitations(v, uuidByRef);
     }
     return out;
   }
   return payload;
+}
+
+// bare host of a URL (www. stripped, lowercased). null when unparseable — a synthesis row has no URL.
+function hostOf(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase() || null; }
+  catch { return null; }
+}
+
+// ── OFFERING seen_on derivation (STRUCTURAL — the model never emits seen_on) ────────────────────────
+// For each offering item, resolve its cited ref tokens → ledger uuids → the per-id source metadata
+// gathered above, then decide seen_on by the honesty axis WHERE it was seen: any own-site ref (own-words,
+// or a signal whose domain matches the company's own host) → "own_site"; otherwise "outside". Also
+// record source_count (distinct cited refs), the distinct source domains, and the earliest/latest source
+// date. This is a breadth/strength measure, never a verdict.
+type OfferingSeenOn = {
+  index: number; label: string; seen_on: "own_site" | "outside";
+  source_count: number; domains: string[]; earliest: string | null; latest: string | null;
+};
+function deriveOfferingSeenOn(
+  payload: Record<string, unknown>,
+  uuidByRef: Map<string, string>,
+  refMeta: Map<string, { domain: string | null; date: string | null; own_site: boolean }>,
+  ownHosts: Set<string>,
+): OfferingSeenOn[] {
+  const items = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
+  return items.map((it, index) => {
+    const refTokens = [...new Set((Array.isArray(it.refs) ? it.refs : []).filter((r): r is string => typeof r === "string").map((r) => r.trim()))];
+    const metas = refTokens.map((t) => refMeta.get(uuidByRef.get(t) ?? "")).filter((m): m is { domain: string | null; date: string | null; own_site: boolean } => !!m);
+    const domains = [...new Set(metas.map((m) => m.domain).filter((d): d is string => !!d))];
+    const dates = metas.map((m) => m.date).filter((d): d is string => !!d).sort();
+    const ownSite = metas.some((m) => m.own_site) || domains.some((d) => ownHosts.has(d));
+    return {
+      index, label: typeof it.label === "string" ? it.label : "",
+      seen_on: ownSite ? "own_site" : "outside",
+      source_count: refTokens.length, domains,
+      earliest: dates[0] ?? null, latest: dates[dates.length - 1] ?? null,
+    };
+  });
 }
 
 Deno.serve(async (req) => {
@@ -223,7 +275,7 @@ Deno.serve(async (req) => {
     //    by this run — its current row is untouched. (Cascade-gap routing rides the strategy kind, so
     //    it too runs only when "strategy" is listed.) No kind's generation prompt/logic is changed.
     const rawKinds: unknown = body.kinds;
-    let activeKinds: readonly Kind[] = KINDS;
+    let activeKinds: readonly Kind[] = DEFAULT_KINDS;
     if (rawKinds !== undefined && rawKinds !== null) {
       if (!Array.isArray(rawKinds)) return json({ error: "kinds must be an array of read kinds" }, 400);
       const bad = rawKinds.filter((k) => !(KINDS as readonly string[]).includes(String(k)));
@@ -320,7 +372,7 @@ Deno.serve(async (req) => {
     };
 
     const { text: CAT, uuidByRef, tokenSummary } = buildCatalogue(inputs);
-    const CITE_RULE = `You may cite ONLY the short reference tokens that appear in the INPUTS list below, each in square brackets like [S1], [O3], [F2]. The ONLY valid tokens are exactly: ${tokenSummary}. There are NO other tokens — never cite a number outside these ranges, and never invent one. Every substantive claim must cite AT MOST 3 of these tokens in its "citations" array (copy the token EXACTLY as shown). If the public record does not support a field, return it as an empty string "" with an empty citations array — do not guess.`;
+    const CITE_RULE = `Cite ONLY tokens that appear VERBATIM in the LEDGER below — each printed in square brackets at the start of its line (e.g. [S1], [O3], [F2], [D1]). The valid tokens are exactly these families and NO others: ${tokenSummary} (S… = signals, O… = own-words, F… = findings, D… = deltas). Any token NOT printed in the ledger INVALIDATES THE WHOLE RESPONSE — this includes a position/ordinal number, an "Item N" reference to your own output, and any "I…" / "INPUT…" / "L…" prefix. There is no "I" family; never invent one. Copy each token EXACTLY as shown and cite AT MOST 3 per claim. If the public record does not support a field, return it empty ("" or []) with no citations — never guess or invent a token.`;
 
     // ── GENERATE each kind ───────────────────────────────────────────────────────────────────────
     const GEN_POSITIONING = `You read a company's PUBLIC record and state its positioning as a hypothesis for the room to test. ${CITE_RULE}
@@ -346,6 +398,23 @@ ${US_ENGLISH_RULE}`;
     const GEN_PROMISE = `You read a company's PUBLIC record and state, in ONE sentence, what the customer is promised — stated ONLY as far as the record backs it. ${CITE_RULE}
 Return ONLY JSON: {"promise":"<one sentence>","citations":["<id>"]}
 ${US_ENGLISH_RULE}`;
+    // OFFERING (2026-09-01) — ENUMERATE what the public record shows THIS COMPANY currently puts in
+    // front of the people it serves: products / services / programs / formats / channels. This is a
+    // catalogue of concrete offerings AS THE RECORD SHOWS THEM — never a strategy statement, never
+    // intent, never a quality judgment. Cite every item; OMIT anything uncited. Currency/entity doubts
+    // go in open_questions (never inside an item statement). ATTRIBUTE ONLY TO THIS COMPANY.
+    const GEN_OFFERING = `You read a company's PUBLIC record and ENUMERATE what it currently puts in front of the people it serves — its offerings: products, services, programs, formats, and channels, exactly as the record shows them. ${CITE_RULE}
+STRICT RULES:
+- ENUMERATE, don't strategize: each item names ONE concrete thing offered (e.g. "small-batch roasted coffee", "residential crisis stabilization program", "wholesale café supply"). NOT a positioning line, NOT a value claim, NOT intent, NOT a quality/verdict word.
+- CITED-OR-OMITTED: every item MUST cite at least one token in its "refs" array, and every token MUST be one printed in the LEDGER (e.g. [S3], [O4], [F1], [D1]). If you cannot cite it from the ledger, DO NOT include it. NEGATIVE EXAMPLE — never write refs like ["I11"], ["Item 11"], or ["11"]: there is no "I" family and item positions are NOT tokens; any such token invalidates the whole response.
+- ATTRIBUTE ONLY TO THIS COMPANY: if the record shows an offering that belongs to a CO-LOCATED, PARTNER, or THIRD-PARTY entity (a different business at the same address, a supplier, a marketplace), EXCLUDE it from items and instead raise it as an open_question with reason:"entity".
+- DOUBTS GO IN open_questions, never in an item: if the record raises a CURRENCY doubt (a dated closure, a management change, a possibly-retired program) or an ENTITY doubt, put it in open_questions with reason:"currency" or "entity" and cite it. Never write a doubt as a verdict inside an item statement.
+- Do NOT output any "seen_on" / "source"/"where" field — those are derived downstream from your refs, not by you.
+- If the public record shows NO attributable offering, return items:[] (an honest empty is correct).
+Return ONLY JSON:
+{"items":[{"label":"<≤8 words>","statement":"<one sentence: what is put in front of whom, in the record's own terms>","refs":["<token>"],"kind_hint":"product|service|program|format|channel"}],
+ "open_questions":[{"text":"<the doubt, as a question>","refs":["<token>"],"reason":"currency|entity|other"}]}
+${US_ENGLISH_RULE}`;
 
     // Stage B — the CURRENT positioning read (public_reads, is_current) is the How-to-Win CONTEXT for
     // the strategy cascade (brief §4). It is public BY CONSTRUCTION (this generator only ever writes
@@ -362,11 +431,11 @@ ${US_ENGLISH_RULE}`;
       : "";
 
     const payloads: Record<Kind, Record<string, unknown>> = {} as Record<Kind, Record<string, unknown>>;
-    const genSys: Record<Kind, string> = { positioning: GEN_POSITIONING, strategy: GEN_STRATEGY, promise: GEN_PROMISE };
+    const genSys: Record<Kind, string> = { positioning: GEN_POSITIONING, strategy: GEN_STRATEGY, promise: GEN_PROMISE, offering: GEN_OFFERING };
     const citationErrors: Array<{ kind: Kind; bad_ids: string[] }> = [];
     for (const kind of activeKinds) {
       const extra = kind === "strategy" ? positioningContext : "";
-      const p = await run(genChoice, genSys[kind], `INPUTS:\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
+      const p = await run(genChoice, genSys[kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
       payloads[kind] = p;
       const bad = citedRefs(p).filter((ref) => !uuidByRef.has(ref));
       if (bad.length) citationErrors.push({ kind, bad_ids: bad });
@@ -374,6 +443,18 @@ ${US_ENGLISH_RULE}`;
     // FAIL LOUD: any citation outside the ledger → reject the whole read, write nothing.
     if (citationErrors.length) {
       return json({ ok: false, rejected: "citation_outside_ledger", citation_errors: citationErrors, payloads, ledger_count: ledger.count }, 200);
+    }
+
+    // ── OFFERING STRUCTURE GATE (deterministic, pre-judge): every offering item must carry a label, a
+    //    statement, a NON-EMPTY refs array of valid ledger tokens, and a valid kind_hint; no currency/
+    //    verdict vocab in a statement; open_questions well-formed. This is the cite-or-omit floor for the
+    //    offering catalogue (an uncited item slips past the generic ref-token check, which only rejects
+    //    UNKNOWN tokens — never an EMPTY refs array). Reject → write nothing.
+    if (activeKinds.includes("offering")) {
+      const offViol = offeringStructureViolations(payloads.offering, new Set(uuidByRef.keys()));
+      if (offViol.length) {
+        return json({ ok: false, rejected: "offering_structure", offering_violations: offViol, payloads, ledger_count: ledger.count }, 200);
+      }
     }
 
     // ── FRAMING GATE (Gate 6a, deterministic, pre-judge): a posit is a HYPOTHESIS, never a verdict.
@@ -407,23 +488,43 @@ ${US_ENGLISH_RULE}`;
     // It reports whether how_to_win serves the stated where_to_play + winning_aspiration, and whether
     // each capability serves how_to_win. A false verdict → that rung is excluded from the rendered spine
     // and a tension question is minted downstream (with the judge's reason).
-    const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise). Check FOUR things:
+    const offeringActive = activeKinds.includes("offering");
+    // OFFERING criteria (appended only when the offering kind is in this run). The judge returns an
+    // `offering` verdict block whose four flags gate acceptance (offeringAcceptFromVerdict): (e)
+    // ENUMERABLE — each item is a concrete offering, not a strategy/positioning statement; (f) ENTITY
+    // ATTRIBUTION — no item describes a co-located / partner / third-party entity's offering (reject the
+    // whole read if any item does); (g) DOUBTS-PLACED — currency/entity doubts appear in open_questions,
+    // never as a verdict inside an item; (h) BANNED-VOCAB — no verdict/currency/status words in an item.
+    const OFFERING_JUDGE_CLAUSE = offeringActive
+      ? `\n(e)–(h) OFFERING (the "offering" read is a CATALOGUE of what the company puts in front of customers):
+(e) ENUMERABLE — every item names a concrete offering (product/service/program/format/channel), NOT a strategy line, value claim, or intent;
+(f) ENTITY ATTRIBUTION — every item's cited inputs describe THIS company's own offering; if ANY item actually describes a CO-LOCATED / partner / third-party entity's offering, set entity_attribution_ok:false;
+(g) DOUBTS-PLACED — currency/entity doubts live in open_questions (with a reason), never phrased as a verdict inside an item statement;
+(h) BANNED-VOCAB — no verdict/currency/status words (confirmed, disputed, stale, closed, retired, underserved, …) appear inside any item statement.`
+      : "";
+    const OFFERING_VERDICT_FIELD = offeringActive
+      ? `,\n "offering":{"enumerable_ok":true|false,"entity_attribution_ok":true|false,"doubts_placed_ok":true|false,"banned_vocab_ok":true|false,"reason":"<one line>"}`
+      : "";
+    const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise, and possibly an offering catalogue). Check:
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
-(b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category;
-(c) CONSISTENCY — positioning, strategy, and promise describe the SAME business and don't contradict each other;
-(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.
+(b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category. If positioning is not in this read, set sanity_ok:true;
+(c) CONSISTENCY — the read describes the SAME business throughout and does not contradict itself. If only one kind is in this read, judge its internal consistency and set consistency_ok:true when coherent;
+(d) CASCADE COHERENCE (strategy only, does NOT affect accept) — does how_to_win plausibly SERVE the stated where_to_play AND winning_aspiration? Does each must_have_capability plausibly SERVE how_to_win? A rung left empty is neither coherent nor incoherent — mark empty rungs coherent:true. Judge only NON-empty rungs on the merits.${OFFERING_JUDGE_CLAUSE}
 Respond with ONLY JSON:
 {"grounding_ok":true|false,"sanity_ok":true|false,"consistency_ok":true|false,
  "per_kind":{"positioning":{"ok":true|false,"reason":"..."},"strategy":{"ok":true|false,"reason":"..."},"promise":{"ok":true|false,"reason":"..."}},
  "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
-   "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]},
+   "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]}${OFFERING_VERDICT_FIELD},
  "accept":true|false,"reason":"<one line>"}`;
     // KINDS-SCOPED: the judge sees only the kinds this run generated (an unlisted kind is not judged —
     // there is no payload for it). The criteria and prompt are unchanged; only the READ list narrows.
     const judgeRead = activeKinds.map((k) => `${k}: ${JSON.stringify(payloads[k])}`).join("\n");
-    const judgeUser = `INPUTS (id-tagged):\n${CAT}\n\nTHE READ:\n${judgeRead}\n\nJudge (a),(b),(c),(d) and decide accept (accept reflects a,b,c ONLY — d is reported, never blocks).`;
+    const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nTHE READ:\n${judgeRead}\n\nJudge and decide accept (accept reflects a,b,c${offeringActive ? " and the offering e–h flags" : ""} ONLY — d is reported, never blocks).`;
     const verdict = await run(judgeChoice, JUDGE_SYS, judgeUser, 0);
-    const accept = verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true && verdict.accept === true;
+    // Accept: base (grounding/sanity/consistency/accept) AND — when offering is in the run — all four
+    // offering flags (offeringAcceptFromVerdict, fail-closed on a missing flag).
+    const accept = verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
+      && verdict.accept === true && (offeringActive ? offeringAcceptFromVerdict(verdict) : true);
     const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
 
     // ── Stage B — CASCADE ROUTING (deterministic, post-judge): the rendered SPINE (incoherent rungs
@@ -446,12 +547,56 @@ Respond with ONLY JSON:
     }
     const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
 
+    // ── OFFERING seen_on derivation (STRUCTURAL, post-judge): resolve each item's refs → source domains
+    //    against the company's own host(s). The model never emitted seen_on; it is derived here from the
+    //    ledger's per-id source metadata. refMeta maps ledger uuid → {domain, date, own_site}; ownHosts is
+    //    the company's own-site host(s). Built only when offering is in the run.
+    let derivedSeenOn: OfferingSeenOn[] | null = null;
+    if (offeringActive) {
+      const { data: coRow } = await supabase.from("companies").select("website").eq("id", company_id).maybeSingle();
+      const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
+      const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
+      const refMeta = new Map<string, { domain: string | null; date: string | null; own_site: boolean }>();
+      for (const r of inputs) {
+        refMeta.set(r.id, {
+          domain: hostOf(r.source_url) ?? (r.own_site && ownHost ? ownHost : null),
+          date: r.event_date ?? null,
+          own_site: r.own_site === true || (hostOf(r.source_url) !== null && ownHosts.has(hostOf(r.source_url)!)),
+        });
+      }
+      derivedSeenOn = deriveOfferingSeenOn(payloads.offering, uuidByRef, refMeta, ownHosts);
+      // Merge the DERIVED seen_on/source_count/date range into the STORAGE payload's items (Stage B
+      // write path). The model's item refs get translated token→uuid at insert; the seen_on fields carry
+      // no refs, so they pass through unchanged. (Dry-run returns derivedSeenOn separately and writes
+      // nothing.)
+      const offItems = Array.isArray((storagePayloads.offering as Record<string, unknown>).items)
+        ? ((storagePayloads.offering as Record<string, unknown>).items as Array<Record<string, unknown>>) : [];
+      storagePayloads.offering = {
+        ...(storagePayloads.offering as Record<string, unknown>),
+        items: offItems.map((it, i) => ({
+          ...it,
+          seen_on: derivedSeenOn![i]?.seen_on ?? null,
+          source_count: derivedSeenOn![i]?.source_count ?? 0,
+          source_domains: derivedSeenOn![i]?.domains ?? [],
+          earliest_source: derivedSeenOn![i]?.earliest ?? null,
+          latest_source: derivedSeenOn![i]?.latest ?? null,
+        })),
+      };
+    }
+    // Router resolution + a compact ledger summary — surfaced in the dry-run for operator review.
+    const routerResolution = {
+      generator: genChoice.provider, judge: judgeChoice.provider,
+      all_public: ledger.ids.every((id) => require_public(ledger.provenances[id])),
+      distinct_provenances: [...new Set(Object.values(ledger.provenances))].sort(),
+    };
+    const ledgerSummary = { count: ledger.count, by_kind: Object.fromEntries(KINDS_INPUT.map((k) => [k, ledger.by_kind[k]?.length ?? 0])), corpus_md5: ledger.corpus_md5 };
+
     if (!accept) {
       // Reject → no write, verdict returned (nothing persisted).
-      return json({ ok: false, rejected: "judge", judge_verdict: verdict, judge_model: judgeChoice.model, payloads, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+      return json({ ok: false, rejected: "judge", judge_verdict: verdict, judge_model: judgeChoice.model, payloads, derived_seen_on: derivedSeenOn, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
     if (!doWrite && !doStage) {
-      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdict: verdict, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdict: verdict, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
     // ── ACCEPT → write rows, superseding the prior current row (kept, never deleted). ───────
@@ -510,14 +655,49 @@ Respond with ONLY JSON:
       ? await writeCascadeGaps(supabase, company_id, cascadeItems, { provider: genChoice.provider, model: genChoice.model })
       : { superseded: 0, inserted: 0, run_id: null };
 
-    return json({ ok: true, written, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    // ── OFFERING integrity (Stage B — REAL run only; never on dry_run). One first_read_offering row per
+    //    accepted write: examined = public rows in the ledger, admitted = offering items enumerated,
+    //    excluded_by_rule records the own-site/outside split + open-question count. This is the persisted
+    //    record an earned-empty offering read renders from (items:[] → admitted 0, honest not-empty-query).
+    if (offeringActive) {
+      const offStored = (storagePayloads.offering as Record<string, unknown>) ?? {};
+      const offItems = Array.isArray(offStored.items) ? (offStored.items as unknown[]) : [];
+      const offOqs = Array.isArray((payloads.offering as Record<string, unknown>).open_questions) ? ((payloads.offering as Record<string, unknown>).open_questions as unknown[]) : [];
+      const ownCount = (derivedSeenOn ?? []).filter((s) => s.seen_on === "own_site").length;
+      await writeOfferingIntegrity(supabase, company_id, {
+        examined: ledger.count, admitted: offItems.length,
+        excludedByRule: { items: offItems.length, own_site: ownCount, outside: offItems.length - ownCount, open_questions: offOqs.length, ledger_ids: ledger.count, mode: "write" },
+      });
+    }
+
+    return json({ ok: true, written, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }
 });
 
+// HARDENED (2026-09-01): delegates to the single shared public-provenance allowlist, which DELIBERATELY
+// excludes 'market_read' (the refresh-cascade provenance-lie string). One allowlist, fail-closed — any
+// value not explicitly public (market_read, unknown, null) is non-public. See publicReadGuards.ts.
 function require_public(p: string | null | undefined): boolean {
-  return p === "public_observed" || p === "public_inferred" || p === "public_research" || p === "market_read" || p === "publicly_declared";
+  return isPublicProvenance(p);
+}
+
+// OFFERING integrity (2026-09-01) — one first_read_offering row per accepted offering write, mirroring
+// the first_read_own_words / first_read_gap_pairs shape (examined / admitted / excluded_by_rule / status).
+// Written ONLY on the real accept-write path (never on dry_run). The persisted record is what an
+// earned-empty offering read renders from — sources examined + items admitted — so an empty offering
+// never renders from a bare empty query.
+async function writeOfferingIntegrity(
+  supabase: SupabaseClient,
+  companyId: string,
+  args: { examined: number; admitted: number; excludedByRule: Record<string, unknown> },
+): Promise<void> {
+  const { error } = await supabase.from("integrity_runs").insert({
+    company_id: companyId, component: "first_read_offering", status: "completed",
+    examined: args.examined, admitted: args.admitted, excluded_by_rule: args.excludedByRule,
+  });
+  if (error) throw new Error(`offering integrity insert failed: ${error.message}`);
 }
 
 // Stage B — route the cascade's ungrounded rungs (gap) + grounded-but-incoherent rungs (tension) to

@@ -12,26 +12,20 @@ export type ModelRole = "generator" | "judge";
 export type ModelProvider = "external_openai" | "local_ollama";
 export type ModelChoice = { provider: ModelProvider; model: string; role: ModelRole };
 
-/** Provenance values that mean "from the public record" — safe to send to an external API.
- *  Everything else (internal_declared, client_attested, analytic, uploaded_file, intake, unknown,
- *  NULL) is NOT public and forces local. */
-export const PUBLIC_PROVENANCES: ReadonlySet<string> = new Set([
-  "public_observed",   // outside-web claims + own-words (the company's own PUBLIC site)
-  "public_inferred",   // findings / our-read public register
-  "public_research",   // public scan artifacts
-  "market_read",       // market_read canvas/cascade (public register)
-  "publicly_declared", // publicly-declared markets
-]);
+// SINGLE ALLOWLIST AUTHORITY (2026-09-01). The public-provenance allowlist lives in ONE place —
+// supabase/functions/_shared/publicReadGuards.ts — so the model router (this external-vs-local gate)
+// and the public-read gate can NEVER diverge. That authority DELIBERATELY excludes 'market_read' (the
+// refresh-cascade provenance-lie string: an uploaded-augmented cascade stamped public). Re-exported
+// here (imported + re-exported, NOT a second Set literal) so every existing router consumer keeps
+// importing PUBLIC_PROVENANCES / isPublicProvenance from this module unchanged, now hardened at source.
+import { PUBLIC_PROVENANCES, isPublicProvenance } from "../../../supabase/functions/_shared/publicReadGuards.ts";
+export { PUBLIC_PROVENANCES, isPublicProvenance };
 
 // No stronger public judge is configured anywhere — the only external model in the stack is
 // gpt-4.1-mini (research-company / refresh-positioning). Use it for BOTH roles on the public branch.
 export const EXTERNAL_MODEL = "gpt-4.1-mini";
 export const LOCAL_GENERATOR = "qwen2.5:14b-instruct";
 export const LOCAL_JUDGE = "llama3:70b";
-
-export function isPublicProvenance(p: string | null | undefined): boolean {
-  return !!p && PUBLIC_PROVENANCES.has(p);
-}
 
 /** A signal has no provenance column — derive it from band + voice. Only outside-band PUBLIC-web
  *  voices are public; our own analysis, unknown/NULL voices, and non-outside bands are non-public. */

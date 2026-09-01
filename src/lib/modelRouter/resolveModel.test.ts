@@ -33,8 +33,10 @@ describe("resolveModel — route by provenance of every input", () => {
   });
 
   it("isPublicProvenance: public values true; internal/analytic/null false", () => {
-    for (const p of ["public_observed", "public_inferred", "public_research", "market_read", "publicly_declared"]) expect(isPublicProvenance(p)).toBe(true);
-    for (const p of ["internal_declared", "analytic", "client_attested", null, undefined, "unknown"]) expect(isPublicProvenance(p)).toBe(false);
+    for (const p of ["public_observed", "public_inferred", "public_research", "publicly_declared"]) expect(isPublicProvenance(p)).toBe(true);
+    // HARDENED (2026-09-01): 'market_read' (refresh-cascade provenance-lie) is now NON-public — see
+    // resolveModelHardening.test.ts. It joins the internal/unknown values that force local.
+    for (const p of ["market_read", "internal_declared", "analytic", "client_attested", null, undefined, "unknown"]) expect(isPublicProvenance(p)).toBe(false);
   });
 
   it("signalProvenance: outside-band public voices → public_observed; analysis/NULL/non-outside → null (local)", () => {
