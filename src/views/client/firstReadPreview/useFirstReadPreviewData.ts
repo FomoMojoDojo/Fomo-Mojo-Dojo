@@ -833,6 +833,49 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ? { text: promText, sourceTag: publicReadTag(promRow.created_at) }
           : null;
 
+        // ── Gate-C Stage B (2026-09-01): "What you offer" — the accepted, judged public offering ──
+        // Read from the SAME is_current public_reads authority (kind='offering'). Items carry code-
+        // derived seen_on / source_count / year fields VERBATIM — never recomputed here. open_questions
+        // route to the Questions beat via the existing open-question list (see the view merge).
+        const offRow = prByKind.get("offering");
+        const offPayload = (offRow?.payload ?? null) as
+          | { items?: Array<Record<string, unknown>>; open_questions?: Array<{ text?: string | null }> }
+          | null;
+        const yr = (v: unknown): string | null => {
+          const s = v == null ? "" : String(v);
+          return /^\d{4}/.test(s) ? s.slice(0, 4) : null;
+        };
+        const offItems = (Array.isArray(offPayload?.items) ? offPayload!.items : [])
+          .map((it) => ({
+            label: String(it.label ?? "").trim(),
+            statement: String(it.statement ?? "").trim(),
+            seenOn: it.seen_on === "outside" ? ("outside" as const) : ("own_site" as const),
+            sourceCount: Number(it.source_count ?? 0),
+            earliestYear: yr(it.earliest_source),
+            latestYear: yr(it.latest_source),
+          }))
+          .filter((it) => it.label && it.statement);
+        const offering = offRow && offItems.length ? { items: offItems } : null;
+        const offeringOpenQuestions = (Array.isArray(offPayload?.open_questions) ? offPayload!.open_questions : [])
+          .map((q) => String(q?.text ?? "").trim())
+          .filter(Boolean);
+        // Earned-empty state (mirrors gapIntegrity): no row → not-yet; completed/skipped → looked-and-
+        // none; failed → couldn't-check. The line derives from THIS persisted record, never emptiness.
+        let offeringIntegrity: FirstReadPreviewData["offeringIntegrity"] = "not_yet";
+        const { data: offIntRows } = await loose()
+          .from("integrity_runs")
+          .select("status, examined")
+          .eq("company_id", companyId)
+          .eq("component", "first_read_offering")
+          .order("ran_at", { ascending: false })
+          .limit(1);
+        const offIntRow = ((offIntRows ?? []) as Array<{ status: string; examined: number | null }>)[0] ?? null;
+        if (offIntRow) offeringIntegrity = offIntRow.status === "failed" ? "couldnt_check" : "looked_none";
+        const offeringExamined = offIntRow?.examined ?? null;
+        // "through <date>" = the latest public-baseline read date (the record's read-through).
+        const throughIso = [...runDates.values()].sort().at(-1) ?? null;
+        const offeringThroughDate = formatFullDate(throughIso);
+
         // Where you stand (W1, 2026-08-20): the interpretation of the beat-7 score, read
         // ONLY from the persisted mojo_scores snapshot — band + band meaning + the five
         // micro-moves (component_scores[key].value/max paired with explanation[key]). No
@@ -1006,6 +1049,11 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             statusConflicts,
             gapIntegrity,
             questions: [],
+            offering,
+            offeringIntegrity,
+            offeringExamined,
+            offeringThroughDate,
+            offeringOpenQuestions,
           });
           setLoading(false);
         }

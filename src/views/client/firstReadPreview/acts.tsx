@@ -20,7 +20,7 @@ import {
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
-import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FRSignal, FRStatusConflict } from "./types";
+import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -149,6 +149,38 @@ const IN_YOUR_WORDS_LABEL = "In your words"; // signed
 const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // signed
 const NO_SERVE_NOTE = "No public read of who you serve yet."; // signed
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // signed
+// ── Gate-C Stage B (2026-09-01): "What you offer" (public offering read) — SIGNED, byte-exact ──
+// The offering is enumerated ONLY from the accepted, judged public_reads kind='offering' payload;
+// items carry code-derived seen_on / source_count / year fields verbatim. Earned-empty renders from
+// the persisted first_read_offering integrity record (three honest states), never an empty query.
+const OFFER_EYEBROW = "FROM THE RECORD"; // signed
+const OFFER_HEADLINE = "What you offer, as the market can see it."; // signed
+const OFFER_SUB = "Products, services, programs — as they appear in public. Not what you intend. What's visible."; // signed
+const OFFER_WHY = "Your base is what you intend. Your offering is what people actually meet. The gap between them is where the next phase starts."; // signed (WHY THIS body)
+const OFFER_GROUP_OWN = "Named on your own site"; // signed
+const OFFER_GROUP_OUTSIDE = "Seen only from outside"; // signed
+const OFFER_EARNED_EMPTY = "The record doesn't yet show what you offer."; // signed
+const OFFER_CLOSING = "Next, we lay this against what your market needs."; // signed
+// Design rationale (placement) — signed for beatRationale.test.tsx ONLY; internal shorthand, never
+// rendered on the page (operator ruling 2026-09-01). Exported so the test asserts its value directly.
+export const OFFER_RATIONALE = "The offering is what the base produces — it has to be on the table before needs-vs-offer."; // signed (rationale line, test-only)
+// Earned-empty ground line — the three honest states (mirrors the gap beat's integrity-derived line).
+const OFFER_NOT_YET = "The record hasn't been read for this yet."; // signed
+const OFFER_COULDNT = "We couldn't produce a grounded read from the record this time."; // signed
+// looked-and-none: signed template — <n> examined public sources + the read-through date. Both come
+// from the persisted integrity record (examined) + the run ledger (through date); never recomputed.
+const offerLookedLine = (n: number, date: string | null) =>
+  `Across ${n} public sources through ${date ?? "the latest read"}, nothing spoke to it.`; // signed
+// Quiet, CODE-DERIVED source line: "<n> source(s) · <earliest>–<latest>" (single year if same; the
+// date clause is omitted when the payload carries no source years). Never recomputed — reads the
+// payload's carried fields as-is.
+function offerSourceLine(it: FROfferItem): string {
+  const years = [it.earliestYear, it.latestYear].filter((y): y is string => !!y);
+  const range = years.length
+    ? ` · ${years[0] === years[years.length - 1] ? years[0] : `${years[0]}–${years[years.length - 1]}`}`
+    : "";
+  return `${it.sourceCount} source${it.sourceCount === 1 ? "" : "s"}${range}`;
+}
 // ── Findings beat (S4) — standfirst SIGNED (2026-08-21). Source counts hidden until per-finding
 // corroboration is real (gate 5a, clusterer repair); claim nothing about ordering. ──
 const FINDINGS_STANDFIRST = "What we read from the public record."; // signed
@@ -711,6 +743,71 @@ export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
             );
           })}
         </div>
+      </main>
+    </>
+  );
+}
+
+/** Gate-C Stage B — one offering group ("Named on your own site" / "Seen only from outside").
+ *  Reuses the "Where this points" numbered hanging-indent idiom: the two-digit numeral is a SEPARATE
+ *  flex item so wrapped lines align under the text column. Each cell is label (bold) + statement +
+ *  the quiet code-derived source line. Numbering is continuous across groups (startIndex). */
+function OfferGroup({ label, items, startIndex }: { label: string; items: FROfferItem[]; startIndex: number }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <Eyebrow>{label}</Eyebrow>
+      <ol className="flex flex-col gap-8">
+        {items.map((it, i) => (
+          <li key={`${it.label}-${i}`} className="flex gap-4">
+            <span className="shrink-0 pt-0.5 text-[10px] font-bold tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
+              {String(startIndex + i + 1).padStart(2, "0")}
+            </span>
+            <div className="flex max-w-xl flex-col gap-1">
+              <p className="text-sm font-semibold leading-snug">{it.label}</p>
+              <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{it.statement}</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>{offerSourceLine(it)}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** Beat — "What you offer": the public offering, enumerated from the accepted, judged offering read.
+ *  Two groups (own-site first, then outside; an empty group's header is omitted). No chips, no verdict
+ *  language, no decorative rules — the only vertical rule is the header's Why-this divider. Earned-empty
+ *  renders from the persisted integrity record's three honest states, never from an empty query. Open
+ *  questions route to the Questions beat (via the shared open-question list), never onto this beat. */
+export function ActWhatYouOffer({ read }: { read: FirstReadPreviewData }) {
+  const off = read.offering;
+  const own = off ? off.items.filter((i) => i.seenOn === "own_site") : [];
+  const outside = off ? off.items.filter((i) => i.seenOn === "outside") : [];
+  const groundLine =
+    read.offeringIntegrity === "couldnt_check"
+      ? OFFER_COULDNT
+      : read.offeringIntegrity === "looked_none"
+        ? offerLookedLine(read.offeringExamined ?? 0, read.offeringThroughDate)
+        : OFFER_NOT_YET;
+  return (
+    <>
+      <div className="mb-4"><Eyebrow>{OFFER_EYEBROW}</Eyebrow></div>
+      <ActHeader headline={OFFER_HEADLINE} standfirst={OFFER_SUB} rationale={OFFER_WHY} />
+      <main className="fr-stagger">
+        {off ? (
+          <div className="flex flex-col gap-12">
+            {own.length > 0 ? <OfferGroup label={OFFER_GROUP_OWN} items={own} startIndex={0} /> : null}
+            {outside.length > 0 ? <OfferGroup label={OFFER_GROUP_OUTSIDE} items={outside} startIndex={own.length} /> : null}
+          </div>
+        ) : (
+          <Absent>
+            <p>{OFFER_EARNED_EMPTY}</p>
+            <p className="mt-2">{groundLine}</p>
+          </Absent>
+        )}
+        <p className="mt-12 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+          {OFFER_CLOSING}
+        </p>
       </main>
     </>
   );

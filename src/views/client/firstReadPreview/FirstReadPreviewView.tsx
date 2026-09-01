@@ -22,6 +22,7 @@ import {
   // ActWhereYouStand — component kept in ./acts (still exported/tested); "Where you stand"
   // is currently hidden (not listed in BEATS). To restore: re-add the import, the BEATS
   // entry, and the switch case below.
+  ActWhatYouOffer,
   ActWhoYouServe,
   BaseGate,
   ColdOpen,
@@ -46,6 +47,7 @@ const BEATS = [
   { key: "findings", label: "What stands out", act: 4 },
   { key: "base", label: "Your Base", act: undefined },
   { key: "serve", label: "Who you serve", act: 5 },
+  { key: "offer", label: "What you offer", act: 5 },
   { key: "ourread", label: "Where this points", act: undefined },
   { key: "score", label: "Mojo Score", act: undefined },
   { key: "questions", label: "Questions", act: undefined },
@@ -58,7 +60,13 @@ export default function FirstReadPreviewView() {
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions } = useFirstReadOpenQuestions(companyId);
-  const data = useMemo(() => ({ ...baseData, questions }), [baseData, questions]);
+  // The offering payload's open_questions route to the Questions beat via the SAME open-question
+  // list (the existing mechanic) — appended after the DB-authority questions, never rendered as
+  // verdicts on the offer beat itself.
+  const data = useMemo(
+    () => ({ ...baseData, questions: [...questions, ...(baseData.offeringOpenQuestions ?? [])] }),
+    [baseData, questions],
+  );
   const [index, setIndex] = useState(0);
 
   const go = useCallback((next: number) => {
@@ -142,6 +150,8 @@ export default function FirstReadPreviewView() {
         return <ActGap read={data} />;
       case "serve":
         return <ActWhoYouServe read={data} />;
+      case "offer":
+        return <ActWhatYouOffer read={data} />;
       case "findings":
         return <ActFindings read={data} />;
       case "score":

@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import {
   ColdOpen, ActWhatYouSay, ActGap, ActWhoYouServe, ActFindings, ScoreReveal,
-  ActWhereYouStand, BaseGate, ActQuestions, ActNext,
+  ActWhereYouStand, BaseGate, ActQuestions, ActNext, OFFER_RATIONALE,
 } from "./acts";
 import { BeatWhy } from "./primitives";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRStatusConflict } from "./types";
@@ -55,6 +55,12 @@ describe("signed per-beat rationale lines — present and exact", () => {
 
   it("every rationale beat shows the 'Why this' label", () => {
     expect((render(<ActGap read={E} />).container.textContent ?? "")).toContain("Why this");
+  });
+
+  // The offer beat's placement rationale is signed metadata, NOT rendered on the page (operator ruling
+  // 2026-09-01 — internal shorthand). Asserted by value here so a one-character drift still fails.
+  it("offer beat carries the signed (test-only, non-rendered) placement rationale", () => {
+    expect(OFFER_RATIONALE).toBe("The offering is what the base produces — it has to be on the table before needs-vs-offer.");
   });
 });
 

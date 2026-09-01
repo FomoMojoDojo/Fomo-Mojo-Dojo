@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import {
-  ActRecord, ActWhatYouSay, ActGap, ActWhoYouServe, ActFindings,
+  ActRecord, ActWhatYouSay, ActGap, ActWhoYouServe, ActWhatYouOffer, ActFindings,
   ScoreReveal, ActWhereYouStand, ActOurRead, ActQuestions, ActNext, BaseGate,
 } from "./acts";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData } from "./types";
@@ -26,6 +26,7 @@ const RULED: Array<[string, string]> = [
   ["findings", "What stands out."],
   ["base", "A strong base"],
   ["serve", "Who you serve."],
+  ["offer", "What you offer, as the market can see it."],
   ["ourread", "Where this points."],
   ["score", "One number, read from the record."],
   ["questions", "Questions this read raises."],
@@ -38,6 +39,7 @@ const renderBeat = (key: string) => {
     case "yousay": return <ActWhatYouSay read={read} />;
     case "gap": return <ActGap read={read} />;
     case "serve": return <ActWhoYouServe read={read} />;
+    case "offer": return <ActWhatYouOffer read={read} />;
     case "findings": return <ActFindings read={read} />;
     case "score": return <ScoreReveal read={read} />;
     case "where": return <ActWhereYouStand read={read} />;

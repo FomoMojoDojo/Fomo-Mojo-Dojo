@@ -273,6 +273,23 @@ export type FRWhereYouStand = {
   sourceTag: SourceTagResult;
 } | null;
 
+/** Gate-C Stage B (2026-09-01) — one enumerated offering item read from the accepted, judged
+ *  public_reads kind='offering' payload. seenOn splits the two groups (Named on your own site /
+ *  Seen only from outside). sourceCount + the year range are CODE-DERIVED fields carried verbatim
+ *  from the payload (never recomputed here); a null year omits that side of the range. */
+export type FROfferItem = {
+  label: string;
+  statement: string;
+  seenOn: "own_site" | "outside";
+  sourceCount: number;
+  earliestYear: string | null;
+  latestYear: string | null;
+};
+
+/** The offering read: the enumerated items, or null when there is no current offering row with
+ *  items (→ the beat renders its earned-empty state from the persisted integrity record). */
+export type FROffering = { items: FROfferItem[] } | null;
+
 export type FirstReadPreviewData = {
   company: { name: string; website: string | null } | null;
   coldOpen: FRColdOpen | null;
@@ -325,6 +342,20 @@ export type FirstReadPreviewData = {
    */
   scoreLooked: boolean;
   questions: string[];
+  // ── Gate-C Stage B (2026-09-01): "What you offer" (public offering read) ──
+  /** The enumerated offering, or null → earned-empty (line chosen by offeringIntegrity). */
+  offering: FROffering;
+  /** GATE (mirrors gapIntegrity): the offering's persisted integrity state (integrity_runs,
+   *  component 'first_read_offering'). No row → not-yet; completed/skipped → looked-and-none;
+   *  failed → couldn't-check. The earned-empty line derives from THIS record, never array emptiness. */
+  offeringIntegrity: "not_yet" | "looked_none" | "couldnt_check";
+  /** Sources examined by the offering read (integrity_runs.examined) — the <n> in the looked line. */
+  offeringExamined: number | null;
+  /** The record's read-through date for the looked line ("through <date>"); null omits it. */
+  offeringThroughDate: string | null;
+  /** The offering payload's open_questions, routed to the Questions beat via the existing
+   *  open-question list (never rendered as verdicts on the offer beat). */
+  offeringOpenQuestions: string[];
 };
 
 export const EMPTY_FIRST_READ: FirstReadPreviewData = {
@@ -352,4 +383,9 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   findings: [],
   scoreLooked: false,
   questions: [],
+  offering: null,
+  offeringIntegrity: "not_yet",
+  offeringExamined: null,
+  offeringThroughDate: null,
+  offeringOpenQuestions: [],
 };
