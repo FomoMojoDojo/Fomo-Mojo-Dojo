@@ -335,6 +335,11 @@ export type FirstReadPreviewData = {
   whereYouStand: FRWhereYouStand;
   /** S4: observed findings (public_inferred, open), recurrence-ranked. */
   findings: FRFinding[];
+  /** GATE (mirrors gapIntegrity/offeringIntegrity): the findings-capture persisted integrity state
+   *  (integrity_runs, component 'first_read_findings', written by evidencePhase1 findings capture).
+   *  No row → not-yet; completed → looked-and-none; failed → couldn't-check. The "What stands out"
+   *  empty line derives from THIS record, never array emptiness. */
+  findingsIntegrity: "not_yet" | "looked_none" | "couldnt_check";
   /**
    * S1: whether the outside read was LOOKED (a public_baseline_run exists) — grounds the
    * always-mounted Mojo Score beat's honest empty state in a persisted record, not array
@@ -386,6 +391,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   strategy: null,
   whereYouStand: null,
   findings: [],
+  findingsIntegrity: "not_yet",
   scoreLooked: false,
   questions: [],
   openQuestionsIntegrity: "not_yet",

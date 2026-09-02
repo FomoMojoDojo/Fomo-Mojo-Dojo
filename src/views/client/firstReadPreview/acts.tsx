@@ -188,7 +188,11 @@ function offerSourceLine(it: FROfferItem): string {
 // ── Findings beat (S4) — standfirst SIGNED (2026-08-21). Source counts hidden until per-finding
 // corroboration is real (gate 5a, clusterer repair); claim nothing about ordering. ──
 const FINDINGS_STANDFIRST = "What we read from the public record."; // signed
-const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // signed
+const NO_FINDINGS_NOTE = "No public findings surfaced yet."; // signed (not-yet: no integrity row)
+// Integrity-grounded empty lines (mirror offeringIntegrity/gapIntegrity vocabulary). DRAFT strings
+// pending operator signature — added with the first_read_findings integrity gate.
+const FINDINGS_LOOKED_NONE = "We read the outside record and nothing stood out on its own yet."; // signed
+const FINDINGS_COULDNT = "We couldn't read the record for what stands out this time."; // signed
 const FINDINGS_SHOWN = 5;
 const UNSPOKEN_LEFT = "[ No declared position on this theme ]"; // signed
 // A1/A3 (2026-08-20) — beat 4 headline follows the persisted type counts. SIGNED.
@@ -588,7 +592,17 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
       <main className="fr-stagger">
         {/* S4: status conflicts pinned ABOVE findings (above recurrence). */}
         <StatusConflictBanner conflicts={read.statusConflicts} />
-        {total === 0 && read.statusConflicts.length === 0 ? <Absent>{NO_FINDINGS_NOTE}</Absent> : null}
+        {/* Integrity-grounded empty state (never array emptiness alone): not-yet vs looked-and-none vs
+            couldn't-check, from first_read_findings integrity (evidencePhase1 capture). */}
+        {total === 0 && read.statusConflicts.length === 0 ? (
+          <Absent>
+            {read.findingsIntegrity === "couldnt_check"
+              ? FINDINGS_COULDNT
+              : read.findingsIntegrity === "looked_none"
+                ? FINDINGS_LOOKED_NONE
+                : NO_FINDINGS_NOTE}
+          </Absent>
+        ) : null}
         {shown.map((f) => (
           // No source-count label: counts are unearned until gate 5a (clusterer repair). The
           // `f.recurrence` plumbing stays for 5a but nothing reads from it here.

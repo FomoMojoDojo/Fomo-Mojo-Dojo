@@ -32,10 +32,20 @@ export function excerptTracesToSource(
  *     the default Claude path with no citation, and gate-3 re-crawl is what supplies a basis).
  *   - excerpt traces → unchanged.
  *  Deterministic string op — zero model calls. */
-export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_text: string }>(
+export function applyExcerptGuard<T extends { evidence_excerpt: string; claim_text: string; voice_class?: string | null }>(
   draft: T,
   sourceText: string | null | undefined,
 ): { evidence_excerpt: string; claim_text: string; dropped: boolean } {
+  // ANALYSIS CARVE-OUT (2026-09-02). An analysis read (voice_class='analysis') is OUR reading of the
+  // record — it lives LABELED in raw_payload.hypothesis and is voice_class='analysis', excluded from
+  // quote/evidence rendering and gated through isProvablyVerbatim (default-deny) everywhere it could
+  // surface. It is NEVER a verbatim claim on the source's words, so it is never a substring — E4 would
+  // ALWAYS clear it, nuking the finding body that findings-capture reads (evidencePhase1). E4 protects
+  // EXCERPTS (text asserted AS the source's words); it must not strip an analysis read. Key on the
+  // stored voice_class ONLY — never on substring failure, basis presence, or text shape.
+  if (draft.voice_class === "analysis") {
+    return { evidence_excerpt: draft.evidence_excerpt, claim_text: draft.claim_text, dropped: false };
+  }
   const hasBasis = !!normalizeForHash(String(sourceText ?? ""));
   if (!hasBasis) return { evidence_excerpt: draft.evidence_excerpt, claim_text: draft.claim_text, dropped: false };
   if (excerptTracesToSource(draft.evidence_excerpt, sourceText)) {

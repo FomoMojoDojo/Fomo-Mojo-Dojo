@@ -1021,6 +1021,21 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // S1: the outside read was LOOKED iff a public_baseline_run exists (persisted).
         const scoreLooked = runDates.size > 0;
 
+        // ── Findings beat PERSISTED integrity (mirrors gapIntegrity) ───────
+        // Written by evidencePhase1 findings-capture (integrity_runs, component
+        // 'first_read_findings', with seen/captured counts). No row → not-yet;
+        // completed → looked-and-none; failed → couldn't-check.
+        let findingsIntegrity: FirstReadPreviewData["findingsIntegrity"] = "not_yet";
+        const { data: fIntRows } = await loose()
+          .from("integrity_runs")
+          .select("status")
+          .eq("company_id", companyId)
+          .eq("component", "first_read_findings")
+          .order("ran_at", { ascending: false })
+          .limit(1);
+        const fIntRow = ((fIntRows ?? []) as Array<{ status: string }>)[0] ?? null;
+        if (fIntRow) findingsIntegrity = fIntRow.status === "failed" ? "couldnt_check" : "looked_none";
+
         // ── Questions beat PERSISTED integrity (mirrors gapIntegrity) ───────
         // Written by open-questions-step's finalize (integrity_runs, component
         // 'first_read_open_questions'). No row → not-yet; completed → looked-and-none;
@@ -1054,6 +1069,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             strategy,
             whereYouStand,
             findings,
+            findingsIntegrity,
             scoreLooked,
             openQuestionsIntegrity,
             signals,
