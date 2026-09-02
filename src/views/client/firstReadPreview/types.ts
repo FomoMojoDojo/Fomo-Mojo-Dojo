@@ -342,6 +342,11 @@ export type FirstReadPreviewData = {
    */
   scoreLooked: boolean;
   questions: string[];
+  /** GATE (mirrors gapIntegrity/offeringIntegrity): the open-questions persisted integrity state
+   *  (integrity_runs, component 'first_read_open_questions', written by open-questions-step's finalize).
+   *  No row → not-yet; completed → looked-and-none; failed → couldn't-check. The Questions beat's empty
+   *  line derives from THIS record, never array emptiness. */
+  openQuestionsIntegrity: "not_yet" | "looked_none" | "couldnt_check";
   // ── Gate-C Stage B (2026-09-01): "What you offer" (public offering read) ──
   /** The enumerated offering, or null → earned-empty (line chosen by offeringIntegrity). */
   offering: FROffering;
@@ -383,6 +388,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   findings: [],
   scoreLooked: false,
   questions: [],
+  openQuestionsIntegrity: "not_yet",
   offering: null,
   offeringIntegrity: "not_yet",
   offeringExamined: null,

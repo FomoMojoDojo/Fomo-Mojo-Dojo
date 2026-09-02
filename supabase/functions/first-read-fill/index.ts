@@ -18,7 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
-  chainKindLedgerStatus, chainKindIsTerminal, missingPublicReadKinds, marketReadIsEmpty,
+  chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty,
   type PublicReadKind, type GenPerKind, type KindStatus,
   type ChainKindStep, type ChainKindTerminal,
 } from "../_shared/firstReadFill.ts";
@@ -225,7 +225,41 @@ Deno.serve(async (req) => {
     },
   };
 
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep], { recordChainLedger }));
+  // OPEN QUESTIONS. Runs AFTER public_gap_pairs terminates (it questions the publicly_silent deltas
+  // that kind writes). generate-open-questions is a plan→chunks→finalize stepper with no single-call
+  // mode, so the fill DISPATCHES the self-chaining open-questions-step (fire-and-forget) and records
+  // 'handed_off' — never 'completed' for work it did not observe; the stepper's own long_runner_runs
+  // row (run_kind='open_questions') is truth. First-fill = (a) delta-driven questions already exist OR
+  // (b) a stepper run is already in-flight → skip (no double-fire).
+  const openQuestionsStep: ChainKindStep = {
+    kind: "open_questions",
+    alreadyPresent: async () => {
+      // (a) delta-driven questions already written (cascade_gap rows do NOT block — different source_kind)
+      const { data: q } = await supabase.from("first_read_open_questions").select("id")
+        .eq("company_id", company_id).eq("source_kind", "silent_delta").limit(1);
+      // (b) an open-questions stepper run is already in-flight — no double-fire
+      const { data: run } = await supabase.from("long_runner_runs").select("id")
+        .eq("company_id", company_id).eq("run_kind", "open_questions").eq("status", "running").limit(1);
+      return openQuestionsAlreadyPresent({
+        hasSilentDeltaRows: ((q ?? []) as unknown[]).length > 0,
+        hasRunningStepper: ((run ?? []) as unknown[]).length > 0,
+      });
+    },
+    run: async () => {
+      // Await the FIRST step (plan; fast, no model) to capture the stepper's run_id/ledger; it self-
+      // fires the chunks in its own background isolates. The stepper owns the ledger + integrity row.
+      const res = await postFn("open-questions-step", { company_id, parent_run_id });
+      if (res.status === 403 || (res.data as { frozen?: unknown } | null)?.frozen === true) {
+        return { status: "failed" as const, note: "refused: company frozen" };
+      }
+      if (!res.ok) return { status: "failed" as const, note: `open-questions-step dispatch failed (${res.status})` };
+      const ledger = (res.data as { ledger?: unknown } | null)?.ledger;
+      const outcome = (res.data as { outcome?: unknown } | null)?.outcome;
+      return { status: "handed_off" as const, note: `handed off to open-questions-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
+    },
+  };
+
+  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep], { recordChainLedger }));
 
   return json({ ok: true, ...result });
 });

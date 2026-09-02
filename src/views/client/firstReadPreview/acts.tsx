@@ -109,7 +109,11 @@ const GAP_LOOKED_NONE_NOTE =
   "We compared your public voice with the record — no disagreements stand right now."; // signed
 const GAP_COULDNT_CHECK_NOTE =
   "This comparison didn't complete — it will run again on the next refresh."; // signed
-const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed
+const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed (not-yet: no integrity row)
+// Integrity-grounded empty lines (mirror offeringIntegrity/gapIntegrity vocabulary). DRAFT strings
+// pending operator signature — added with the first_read_open_questions integrity gate.
+const QUESTIONS_LOOKED_NONE = "We compared what you say with what's out there and found nothing left open yet."; // signed
+const QUESTIONS_COULDNT = "We couldn't run that comparison this time."; // signed
 // ── Our-read section labels (positioning / strategy / promise) — SIGNED ──
 const LABEL_POSITIONING = "Positioning"; // signed
 const LABEL_STRATEGY = "Strategy"; // signed
@@ -1407,7 +1411,17 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
         {/* S4: status conflicts pinned ABOVE all questions. */}
         <StatusConflictBanner conflicts={read.statusConflicts} />
         {read.questions.length === 0 ? (
-          read.statusConflicts.length === 0 ? <Absent>{NO_QUESTIONS_NOTE}</Absent> : null
+          // Integrity-grounded empty state (never array emptiness alone): not-yet vs looked-and-none vs
+          // couldn't-check, from first_read_open_questions integrity (open-questions-step finalize).
+          read.statusConflicts.length === 0 ? (
+            <Absent>
+              {read.openQuestionsIntegrity === "couldnt_check"
+                ? QUESTIONS_COULDNT
+                : read.openQuestionsIntegrity === "looked_none"
+                  ? QUESTIONS_LOOKED_NONE
+                  : NO_QUESTIONS_NOTE}
+            </Absent>
+          ) : null
         ) : (
           <ol className="space-y-8">
             {read.questions.map((question, index) => (

@@ -1021,6 +1021,21 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // S1: the outside read was LOOKED iff a public_baseline_run exists (persisted).
         const scoreLooked = runDates.size > 0;
 
+        // ── Questions beat PERSISTED integrity (mirrors gapIntegrity) ───────
+        // Written by open-questions-step's finalize (integrity_runs, component
+        // 'first_read_open_questions'). No row → not-yet; completed → looked-and-none;
+        // failed → couldn't-check. The empty-beat line derives from THIS record.
+        let openQuestionsIntegrity: FirstReadPreviewData["openQuestionsIntegrity"] = "not_yet";
+        const { data: oqIntRows } = await loose()
+          .from("integrity_runs")
+          .select("status")
+          .eq("company_id", companyId)
+          .eq("component", "first_read_open_questions")
+          .order("ran_at", { ascending: false })
+          .limit(1);
+        const oqIntRow = ((oqIntRows ?? []) as Array<{ status: string }>)[0] ?? null;
+        if (oqIntRow) openQuestionsIntegrity = oqIntRow.status === "failed" ? "couldnt_check" : "looked_none";
+
         // Questions (beat 7) come from useFirstReadOpenQuestions in the view —
         // the ONE authority that applies the outside-only provenance gate.
         if (!cancelled) {
@@ -1040,6 +1055,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             whereYouStand,
             findings,
             scoreLooked,
+            openQuestionsIntegrity,
             signals,
             score,
             gapPairs: orderedGapPairs,

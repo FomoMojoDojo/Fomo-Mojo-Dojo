@@ -138,7 +138,12 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
 // so a gateway cut is NOT a failure. The edge maps 'unconfirmed' to a completed-status ledger row with
 // an explicit note — never 'failed' — and the next re-invoke's first-fill check reads the real state
 // from the integrity row / existing deltas, not this ledger.
-export type ChainKindTerminal = "completed" | "completed_empty" | "failed" | "unconfirmed";
+//
+// 'handed_off' is the terminal for a fire-and-forget chain kind that DISPATCHES a self-chaining stepper
+// (open_questions → open-questions-step) rather than doing the work itself. The fill NEVER writes
+// 'completed' for work it did not observe: the stepper's own long_runner_runs row is truth. Like
+// 'unconfirmed' it maps to a non-terminal 'running' ledger row (never completed/failed).
+export type ChainKindTerminal = "completed" | "completed_empty" | "failed" | "unconfirmed" | "handed_off";
 
 /**
  * After a gateway timeout (504/502/408) on the public-delta call, the worker may already have finished
@@ -166,13 +171,27 @@ export function classifyGapPairsAfterTimeout(
  */
 export function chainKindLedgerStatus(terminal: ChainKindTerminal): "running" | "completed" | "failed" {
   if (terminal === "failed") return "failed";
-  if (terminal === "unconfirmed") return "running"; // non-terminal placeholder; migration owed
+  // 'unconfirmed' (504, migration owed) and 'handed_off' (fired a stepper we did not observe) are both
+  // NON-terminal 'running' — never 'completed' for work the fill did not itself complete.
+  if (terminal === "unconfirmed" || terminal === "handed_off") return "running";
   return "completed"; // completed | completed_empty
 }
 
-/** A chain-kind terminal is FINAL (sets finished_at) unless it is the unresolved 'unconfirmed'. */
+/** A chain-kind terminal is FINAL (sets finished_at) unless it is unresolved ('unconfirmed') or a
+ *  dispatch we do not own the completion of ('handed_off') — the stepper's own row closes that. */
 export function chainKindIsTerminal(terminal: ChainKindTerminal): boolean {
-  return terminal !== "unconfirmed";
+  return terminal !== "unconfirmed" && terminal !== "handed_off";
+}
+
+/**
+ * First-fill-only predicate for the open_questions chain kind: skip (never re-fire) when EITHER
+ *  (a) delta-driven questions already exist (source_kind='silent_delta'), OR
+ *  (b) an open-questions stepper run is already in-flight (long_runner_runs run_kind='open_questions'
+ *      status='running') — the no-double-fire guard.
+ * The cascade_gap question does NOT count (different source_kind), so it never blocks the first fill.
+ */
+export function openQuestionsAlreadyPresent(a: { hasSilentDeltaRows: boolean; hasRunningStepper: boolean }): boolean {
+  return a.hasSilentDeltaRows || a.hasRunningStepper;
 }
 
 /** One chain kind: a first-fill-only gate + the producer call(s) it guards. */

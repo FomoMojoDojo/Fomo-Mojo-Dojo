@@ -9,6 +9,8 @@ import {
   runChainKinds,
   classifyGapPairsAfterTimeout,
   chainKindLedgerStatus,
+  chainKindIsTerminal,
+  openQuestionsAlreadyPresent,
   PUBLIC_READ_KINDS,
   type PublicReadKind,
   type GenPerKind,
@@ -273,5 +275,37 @@ describe("chain kinds — public-delta 504 confirm-poll (worker outran the gatew
     expect(chainKindLedgerStatus("completed")).toBe("completed");
     expect(chainKindLedgerStatus("completed_empty")).toBe("completed");
     expect(chainKindLedgerStatus("failed")).toBe("failed");
+  });
+});
+
+describe("chain kinds — open_questions handoff (fire-and-forget stepper dispatch)", () => {
+  // The fill NEVER writes 'completed' for the handed-off stepper work it did not observe.
+  it("'handed_off' maps to the non-terminal ledger status 'running' — never completed, never failed", () => {
+    expect(chainKindLedgerStatus("handed_off")).toBe("running");
+    expect(chainKindLedgerStatus("handed_off")).not.toBe("completed");
+    expect(chainKindLedgerStatus("handed_off")).not.toBe("failed");
+    expect(chainKindIsTerminal("handed_off")).toBe(false); // no finished_at — the stepper's row closes it
+  });
+
+  it("a handed_off step is recorded (running) and does not fail the run", async () => {
+    const oqRun = vi.fn(async () => ({ status: "handed_off" as const, note: "handed off · run=42" }));
+    const lg = ledger();
+    const out = await runChainKinds([step("open_questions", false, oqRun)], { recordChainLedger: lg.record });
+    expect(oqRun).toHaveBeenCalledTimes(1);
+    expect(out[0].status).toBe("handed_off");
+    expect(lg.rows[0]).toMatchObject({ kind: "open_questions", status: "handed_off" });
+    expect(chainKindLedgerStatus(lg.rows[0].status)).toBe("running"); // asserts the LEDGER status, not the note
+  });
+});
+
+describe("open_questions first-fill-only predicate (skip on rows OR in-flight run)", () => {
+  it("skips when delta-driven questions already exist", () => {
+    expect(openQuestionsAlreadyPresent({ hasSilentDeltaRows: true, hasRunningStepper: false })).toBe(true);
+  });
+  it("skips when a stepper run is already in-flight (no double-fire)", () => {
+    expect(openQuestionsAlreadyPresent({ hasSilentDeltaRows: false, hasRunningStepper: true })).toBe(true);
+  });
+  it("fires only when NEITHER holds (cascade_gap alone never blocks — different source_kind)", () => {
+    expect(openQuestionsAlreadyPresent({ hasSilentDeltaRows: false, hasRunningStepper: false })).toBe(false);
   });
 });
