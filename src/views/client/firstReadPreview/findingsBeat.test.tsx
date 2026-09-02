@@ -55,3 +55,42 @@ describe("Findings beat empty state — integrity, not emptiness", () => {
     expect(c.textContent).not.toContain(S.lookedNone);
   });
 });
+
+// STEP 2 — render honesty. The finding body is OUR reading, not a quote; the meta must not name a
+// source that isn't there. DOM-structure assertions where possible; the SOURCE-absence one is a text
+// assertion by necessity (there is no element to key on — it is the literal "Source:" label).
+describe("Findings render honesty — no glyph on the body, honest meta pre-recurrence", () => {
+  const finding = (over: Partial<FRFinding>): FRFinding => ({
+    id: "f1", body: "The firm's competitive moat is leadership pedigree from prior exits.",
+    recurrence: 0, sourceTag: { label: "read September 2, 2026" }, quotes: [], stale: false, ageMarker: null, statusDisputed: false, ...over,
+  });
+  const read = (f: FRFinding): FirstReadPreviewData => ({ ...EMPTY_FIRST_READ, findings: [f], findingsIntegrity: "looked_none" });
+
+  it("(2a) the analysis-register finding BODY wears NO hanging-quote glyph", () => {
+    const c = renderF(read(finding({})));
+    expect(c.querySelectorAll(".fr-quote-mark").length).toBe(0); // no body glyph
+    expect(c.textContent).toContain(finding({}).body);
+  });
+
+  it("(2a) a provably-verbatim cluster-member RECEIPT keeps its quote marks (receipts ARE quotes)", () => {
+    const c = renderF(read(finding({
+      quotes: [{ text: "beans roasted in small batches", sourceTag: { label: "roastmag.com · read Sep 2 2026" }, eventDate: null, provablyVerbatim: true }],
+    })));
+    expect(c.textContent).toContain("“beans roasted in small batches”"); // “…” kept on the receipt
+  });
+
+  it("(2b) no corroborating hosts (recurrence 0) → OUR READ (A′ clean), NO 'Source:', NO 'undated' noise", () => {
+    const c = renderF(read(finding({ recurrence: 0, ageMarker: "undated" })));
+    expect(c.textContent).toContain("Our read · September 2, 2026"); // A′: date alone, no double "read"
+    expect(c.textContent).not.toContain("Source:");
+    expect(c.textContent).not.toContain("read September 2, 2026"); // the "read " prefix is stripped
+    expect(c.textContent).not.toContain("undated"); // our reading has no event date — marker dropped
+  });
+
+  it("(2b) corroborated (recurrence > 0) → the read date renders, but NO 'Source:' label (header drop; hosts not named here)", () => {
+    const c = renderF(read(finding({ recurrence: 3 })));
+    expect(c.textContent).not.toContain("Source:"); // no SOURCE label without a source on either branch
+    expect(c.textContent).not.toContain("Our read"); // corroborated is not "our read"
+    expect(c.textContent).toContain("September 2, 2026"); // the read date still shows
+  });
+});

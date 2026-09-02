@@ -259,7 +259,48 @@ Deno.serve(async (req) => {
     },
   };
 
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep], { recordChainLedger }));
+  // FINDING BEATS. Fills Observe/Name/Open on findings WHERE beats IS NULL (idempotent). Runs INLINE
+  // (fast, ~1 gpt-4.1-mini call/finding). First-fill = there ARE findings needing beats (skip if none).
+  // Findings are captured upstream in the baseline; the recapture path (E4 backfill) leaves beats null,
+  // so this is the backstop that fills them.
+  const findingBeatsStep: ChainKindStep = {
+    kind: "finding_beats",
+    alreadyPresent: async () => {
+      const { data } = await supabase.from("findings").select("id").eq("company_id", company_id).is("beats", null).limit(1);
+      return ((data ?? []) as unknown[]).length === 0; // nothing needs beats → skip
+    },
+    run: async () => {
+      const res = await postFn("generate-finding-beats", { company_id });
+      if (!res.ok) return { status: "failed" as const, note: `finding-beats failed (${res.status})` };
+      const gen = Number((res.data as { generated?: unknown } | null)?.generated ?? 0);
+      return gen > 0 ? { status: "completed" as const, note: `beats generated ${gen}` } : { status: "completed_empty" as const, note: "beats: nothing to do" };
+    },
+  };
+
+  // SIGNAL RECURRENCE. A self-chaining stepper (recurrence-step) — the pair corpus is large (~1865 for
+  // Geniant, hours on the local judge), so the fill DISPATCHES it fire-and-forget and records
+  // 'handed_off' (never 'completed' for unobserved work; the stepper's recurrence_step row is truth).
+  // First-fill = finding_recurrence rows already exist OR a recurrence run is in-flight (no double-fire).
+  const recurrenceStep: ChainKindStep = {
+    kind: "signal_recurrence",
+    alreadyPresent: async () => {
+      const { data: fr } = await supabase.from("finding_recurrence").select("finding_id").eq("company_id", company_id).limit(1);
+      if (((fr ?? []) as unknown[]).length > 0) return true;
+      const { data: run } = await supabase.from("long_runner_runs").select("id")
+        .eq("company_id", company_id).in("run_kind", ["recurrence_step", "signal_recurrence"]).eq("status", "running").limit(1);
+      return ((run ?? []) as unknown[]).length > 0;
+    },
+    run: async () => {
+      const res = await postFn("recurrence-step", { company_id, parent_run_id });
+      if (res.status === 403 || (res.data as { frozen?: unknown } | null)?.frozen === true) return { status: "failed" as const, note: "refused: company frozen" };
+      if (!res.ok) return { status: "failed" as const, note: `recurrence-step dispatch failed (${res.status})` };
+      const ledger = (res.data as { ledger?: unknown } | null)?.ledger;
+      const outcome = (res.data as { outcome?: unknown } | null)?.outcome;
+      return { status: "handed_off" as const, note: `handed off to recurrence-step · run=${ledger ?? "?"} · outcome=${outcome ?? "?"}` };
+    },
+  };
+
+  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }));
 
   return json({ ok: true, ...result });
 });

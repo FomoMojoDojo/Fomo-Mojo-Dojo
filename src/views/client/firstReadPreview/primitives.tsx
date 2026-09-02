@@ -250,6 +250,17 @@ export function SourceTag({ children }: { children: ReactNode }) {
   );
 }
 
+/** OUR-READ attribution — for an analysis-register finding with NO corroborating hosts yet: it is our
+ *  reading of the record, not something a source said, so it must NOT wear the "Source:" label.
+ *  (STEP 2b — SIGNED A′: "Our read · <date>", the read date alone; no "read " prefix, no "undated".) */
+export function OurReadTag({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+      Our read · {children}
+    </span>
+  );
+}
+
 /** Recency attribution — rendered beside an outside signal's source line. */
 export function RecencyTag({ children }: { children: ReactNode }) {
   return (
