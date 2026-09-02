@@ -129,6 +129,25 @@ async function triggerRefreshDeltas(companyId: string, parentRunId: string | nul
   }
 }
 
+// FIRST-FILL AUTO-CHAIN (operator-signed 2026-09-01): after a successful baseline in a full_refresh,
+// fire the first-read fill stage. It generates ONLY missing public-read kinds + market discovery
+// (first-fill-only by construction — a no-op on a company with current reads) and NEVER blocks or
+// closes the parent (the existing delta/completed-empty path owns the parent close; first-read-fill
+// fills async and its own per-kind ledger is truth). owns_parent_close stays false: the parent
+// completes fast on its existing path, and beats render as generation lands.
+async function triggerFirstReadFill(companyId: string, parentRunId: string | null, supabaseUrl: string, serviceRoleKey: string) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/first-read-fill`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRoleKey}` },
+      body: JSON.stringify({ company_id: companyId, parent_run_id: parentRunId, owns_parent_close: false }),
+    });
+    console.log("[baseline] triggered first-read-fill (chain), status:", res.status);
+  } catch (err) {
+    console.error("[baseline] failed to trigger first-read-fill:", err);
+  }
+}
+
 function startCompanyRunLockHeartbeat(args: {
   supabase: ReturnType<typeof createClient>;
   companyId: string;
@@ -3268,6 +3287,16 @@ Deno.serve(async (req) => {
     // AFTER the internal chains; the delta stepper self-chains + writes the child claim_deltas
     // ledger row linked to the parent.
     if (chain) {
+      // FIRST-FILL AUTO-CHAIN — fire the first-read fill stage (generates only MISSING public-read
+      // kinds + market discovery; first-fill-only by construction, a no-op on a company with current
+      // reads). Additive: it never closes the parent — the parent completes on its existing path below,
+      // and the fill's own per-kind ledger is truth. Fired for every chain run (a no-op is cheap).
+      waitUntil(triggerFirstReadFill(
+        company_id,
+        parentRunId,
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      ));
       // FIRST-RUN GATE (Cause A). Stage 2 (the delta) is meaningful ONLY once a declared side
       // exists to compare the public read against. The chain fires the stepper as internal_vs_public,
       // whose declared side is the client-side corpus (internal_declared + client_attested). Count it
