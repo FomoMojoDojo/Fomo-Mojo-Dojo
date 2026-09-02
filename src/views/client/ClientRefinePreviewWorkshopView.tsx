@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
+import { runCreateOnramp } from "@/lib/createOnramp";
 import { engagementDayFrom } from "@/lib/engagementDay";
 import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
@@ -1728,9 +1729,39 @@ export default function ClientRefinePreviewWorkshopView() {
 
       if (newClientRunBaseline && sanitizedWebsite) {
         baselineName = data.name;
-        toast.loading(`Running outside signals for ${data.name}…`, { id: "create-client-baseline" });
-        await runPublicBaseline(data.id, data.name, sanitizedWebsite);
-        toast.success(`Outside signals captured for ${data.name}.`, { id: "create-client-baseline" });
+        // DESIGN A′ (2026-09-02): one create → birth (customer spine) → chained refresh (chain:true),
+        // which fires the shipped first_read_fill + market-discovery stepper. Client-orchestrated by
+        // necessity: run-agent-flow (birth) and public-baseline both verify_jwt=true, so a service-role
+        // server orchestrator can't invoke them. The birth is AWAITED (~150s HTTP, same wall as today's
+        // baseline; the isolate keeps building past the cut) so it has a head start; the chained refresh
+        // is FIRED (not awaited) — the long chain never blocks the dialog; DB + the inputs tab are truth.
+        toast.loading(`Setting up ${data.name} — building the spine, then reading the outside record…`, { id: "create-client-baseline" });
+        await runCreateOnramp({
+          hasSpine: async () => {
+            // Skip-if-present pre-check (odi_market_definitions is the market-discovery-relevant marker);
+            // run-agent-flow's companyHasSpine union is the authoritative backstop.
+            const { data: sp } = await supabase
+              .from("odi_market_definitions").select("id").eq("company_id", data.id).limit(1).maybeSingle();
+            return !!sp;
+          },
+          fireBirth: async () => {
+            // Awaited (~150s wall-cut; the birth isolate continues server-side). The 150s cut is NOT a
+            // failure (mirrors handleBirthSpine) — swallow it so the chain proceeds.
+            const { error } = await supabase.functions.invoke("run-agent-flow", {
+              body: coldStartBody(data.id, data.name, sanitizedWebsite, "add_client_create"),
+            });
+            if (error) console.warn("[Workshop] create onramp birth invoke returned (likely 150s cut, still building):", error);
+          },
+          fireRefresh: async () => {
+            // Fire-and-forget the full refresh with chain:true — the baseline→first_read_fill→market
+            // discovery chain runs server-side (DB is truth); the dialog does not block on it.
+            void supabase.functions.invoke("public-baseline", {
+              body: { company_id: data.id, company_name: data.name, website: sanitizedWebsite, chain: true },
+            });
+          },
+          onBirthError: (e) => console.warn("[Workshop] create onramp birth failed (isolated — refresh still fires):", e),
+        });
+        toast.success(`${data.name} is set up — the outside read is running; the First Read fills in a few minutes.`, { id: "create-client-baseline" });
       } else {
         toast.success(`Client created: ${data.name}`);
         if (!sanitizedWebsite) {
