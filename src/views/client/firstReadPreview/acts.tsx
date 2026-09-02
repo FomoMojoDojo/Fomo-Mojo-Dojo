@@ -617,22 +617,13 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
               <>
                 {/* S5 — disputed marker when the finding references a conflicted location. */}
                 {f.statusDisputed ? <StatusDisputedChip /> : null}
-                {/* STEP 2b: label honesty. A finding with corroborating hosts (recurrence > 0) keeps the
-                    existing Source line, unchanged. With NO hosts yet it is OUR read of the record — never
-                    print "Source:" naming no source. */}
-                {f.sourceTag ? (
-                  // NO "Source:" label without a source on EITHER branch: the meta carries only the read
-                  // date (host NAMES are not rendered here). Corroborated (recurrence > 0) → the read date
-                  // plainly, the "Source:" header dropped. Uncorroborated → A′ "Our read · <date>".
-                  f.recurrence > 0
-                    ? <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>{f.sourceTag.label}</span>
-                    : <OurReadTag>{f.sourceTag.label.replace(/^read\s+/i, "")}</OurReadTag>
-                ) : null}
-                {/* R4 age marker — a stale (old-dated or undated) finding is marked. NOT on an OUR-READ
-                    line: our reading has no event date by nature, so "undated" there is noise (A′). */}
-                {f.ageMarker && f.recurrence > 0 ? (
-                  <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-faint))" }}>{f.ageMarker}</span>
-                ) : null}
+                {/* Header meta line. CORROBORATED (recurrence > 0): DROPPED entirely — the per-receipt
+                    lines below already carry host + read date, so a bare "read <date> · undated" here
+                    names nothing. UNCORROBORATED: "Our read · <date>" (signed A′; read date alone; no
+                    "undated" — our reading has no event date). No age marker on either branch. */}
+                {f.recurrence > 0
+                  ? null
+                  : (f.sourceTag ? <OurReadTag>{f.sourceTag.label.replace(/^read\s+/i, "")}</OurReadTag> : null)}
               </>
             }
             // FIX 3: the raw supporting quote(s) beneath the synthesized finding — source-attributed.

@@ -87,10 +87,21 @@ describe("Findings render honesty — no glyph on the body, honest meta pre-recu
     expect(c.textContent).not.toContain("undated"); // our reading has no event date — marker dropped
   });
 
-  it("(2b) corroborated (recurrence > 0) → the read date renders, but NO 'Source:' label (header drop; hosts not named here)", () => {
-    const c = renderF(read(finding({ recurrence: 3 })));
-    expect(c.textContent).not.toContain("Source:"); // no SOURCE label without a source on either branch
-    expect(c.textContent).not.toContain("Our read"); // corroborated is not "our read"
-    expect(c.textContent).toContain("September 2, 2026"); // the read date still shows
+  it("(2b) corroborated (recurrence > 0) → the header meta line is DROPPED entirely (no date, no Source, no Our-read)", () => {
+    const c = renderF(read(finding({ recurrence: 3, quotes: [] })));
+    expect(c.textContent).not.toContain("Source:");
+    expect(c.textContent).not.toContain("Our read");
+    expect(c.textContent).not.toContain("September 2, 2026"); // header meta node gone (receipts carry host+date)
+    expect(c.textContent).not.toContain("undated");
+    expect(c.textContent).toContain(finding({}).body); // the body still renders
+  });
+
+  it("(2b) receipts unchanged: a corroborated finding's verbatim receipt still carries its quote + host/date", () => {
+    const c = renderF(read(finding({
+      recurrence: 3,
+      quotes: [{ text: "revenue doubled year over year", sourceTag: { label: "pitchbook.com · read Sep 2 2026" }, eventDate: null, provablyVerbatim: true }],
+    })));
+    expect(c.textContent).toContain("“revenue doubled year over year”");
+    expect(c.textContent).toContain("pitchbook.com · read Sep 2 2026"); // per-receipt host+date intact
   });
 });
