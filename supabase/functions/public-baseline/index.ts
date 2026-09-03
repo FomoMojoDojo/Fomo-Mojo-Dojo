@@ -11,6 +11,8 @@ import { FROZEN_COMPANY_IDS } from "../_shared/frozenCompanies.ts";
 import { isOwnDomainUrl, normalizeHost } from "../_shared/firstReadProvenance.ts";
 import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
 import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure, runSynthesisWithParseRetry } from "../_shared/synthesisJsonExtract.ts";
+// AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE on aggregator company-profile URLs.
+import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3147,6 +3149,36 @@ Deno.serve(async (req) => {
         companyUrl: website,
         evidence,
       });
+    }
+    // AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE. The host guard above stamps
+    // voice_class by WHERE an item was found; an aggregator company-profile page (Glassdoor /Overview/,
+    // LinkedIn /company/, Crunchbase /organization/, ZoomInfo /c/, …) is a CHANNEL that reproduces the
+    // company's own boilerplate beside reviewer and aggregator words. On those URLs ONLY, the local
+    // authorship judge decides WHOSE WORDS the item carries: the subject company speaking ⇒
+    // client_voice; another named entity speaking ⇒ competitor_voice; ratings / reviews / aggregator
+    // facts ⇒ the model's label stands. URL pattern gates the judge; authorship decides; a judge
+    // failure leaves the label untouched (logged). Runs on BOTH engines, BEFORE result_json is
+    // persisted and minted, so signals.voice_class is born from authorship — forward-only; stored
+    // rows are handled by restamp-aggregator-self-voice (audited, reversible, operator-reviewed).
+    if (typeof result === "object" && result !== null) {
+      const authorshipOllamaUrl = resolveLocalOllamaUrl();
+      const authorshipSubjectHost = (() => {
+        try {
+          return normalizeHost(new URL(website || `https://${domain}`).hostname);
+        } catch {
+          return normalizeHost(String(domain || ""));
+        }
+      })();
+      const gate = await demoteAggregatorSelfVoiceInResult(result as Record<string, unknown>, {
+        subjectName: company_name,
+        subjectHost: authorshipSubjectHost,
+        judge: authorshipOllamaUrl
+          ? (input) => judgeAggregatorAuthorship(input, { ollamaUrl: authorshipOllamaUrl, model: Deno.env.get("OLLAMA_MODEL") || undefined })
+          : () => Promise.resolve({ verdict: "judge_failed" as const, entity: null, reason: "local Ollama URL unavailable (local-only policy) — label left unchanged.", model: "none" }),
+        log: (s) => console.log(`[baseline] authorship: ${s}`),
+      });
+      result = gate.result;
+      console.log(`[baseline] authorship gate: ${JSON.stringify(gate.stats)}`);
     }
     const discoveredProfileEvidence = [...socialEvidenceMerged, ...manualSeedEvidence]
       .filter((entry) => String(entry?.url || "").trim().length > 0)

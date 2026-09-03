@@ -49,7 +49,7 @@ function buildClassifyUser(doc: { file_name: string; file_type: string; excerpt:
   );
 }
 
-async function callClassifier(ollamaUrl: string, model: string, system: string, user: string): Promise<string> {
+export async function callClassifier(ollamaUrl: string, model: string, system: string, user: string): Promise<string> {
   const nativeBase = ollamaUrl.replace(/\/v1\/?$/, "");
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), CLASSIFY_TIMEOUT_MS);
