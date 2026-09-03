@@ -44,12 +44,36 @@ export function marketReadIsEmpty(
   );
 }
 
+/**
+ * Should the fill (re)fire market discovery? The MANIFEST is the completeness authority, NOT def
+ * existence — the old def-existence gate no-op'd forever once a single def landed (Lumio stuck at
+ * 1-of-6). "Complete" = a terminal manifest whose cursor reached the end (cursor >= total), or an
+ * honest empty completion (total 0). Everything else — no manifest yet, or a manifest that is
+ * running / unconfirmed / failed, or completed with cursor < total — needs a (re)fire; the stepper
+ * resumes from the persisted cursor (idempotent by content identity).
+ *
+ * `manifest` = the newest market_discovery ledger row's { status, chain_state:{cursor,candidates} }, or
+ * null if discovery has never run. When there is NO manifest we fall back to the legacy def-emptiness
+ * gate (`defsEmpty`), so a company that got its public defs from the pre-manifest era is left alone.
+ */
+export function marketDiscoveryNeedsFire(
+  manifest: { status?: string | null; chain_state?: { cursor?: unknown; candidates?: unknown } | null } | null,
+  defsEmpty: boolean,
+): boolean {
+  if (!manifest) return defsEmpty; // no manifest → legacy def-based gate (fire only when no public def)
+  const cs = manifest.chain_state ?? null;
+  const total = Array.isArray(cs?.candidates) ? (cs!.candidates as unknown[]).length : 0;
+  const cursor = Number(cs?.cursor ?? 0);
+  if (manifest.status === "completed" && (total === 0 || cursor >= total)) return false; // complete
+  return true; // no/partial/failed/unconfirmed manifest → resume
+}
+
 export type KindStatus = "completed" | "failed" | "completed_empty";
 export type GenPerKind = Record<string, "written" | "rejected" | "error">;
 
 export type FirstReadFillConfig = {
   missingKinds: PublicReadKind[]; // from missingPublicReadKinds(current)
-  marketEmpty: boolean;           // from marketReadIsEmpty(defs)
+  marketNeedsFire: boolean;       // from marketDiscoveryNeedsFire(manifest, marketReadIsEmpty(defs))
   /** Generate ONLY the missing kinds through the normal judged path; returns per-kind written/rejected. */
   generatePublicRead: (kinds: PublicReadKind[]) => Promise<{ perKind: GenPerKind }>;
   /** Record one per-kind child ledger row (completed / failed / completed_empty when nothing missing). */
@@ -107,9 +131,10 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
     }
   }
 
-  // Market discovery — fired only when the beat is empty; a fire error is isolated (parent still completes).
+  // Market discovery — (re)fired when the manifest is incomplete (never merely on def-emptiness); the
+  // stepper resumes from its persisted cursor. A fire error is isolated (parent still completes).
   let marketFired = false;
-  if (cfg.marketEmpty) {
+  if (cfg.marketNeedsFire) {
     try {
       await cfg.fireMarketDiscovery();
       marketFired = true;
@@ -121,7 +146,7 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
   // The parent full_refresh completes regardless of any kind failure.
   if (cfg.closeParent) await cfg.closeParent();
 
-  const stageEmpty = cfg.missingKinds.length === 0 && !cfg.marketEmpty;
+  const stageEmpty = cfg.missingKinds.length === 0 && !cfg.marketNeedsFire;
   return { generated, skipped, failed, marketFired, stageEmpty };
 }
 

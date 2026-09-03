@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   missingPublicReadKinds,
   marketReadIsEmpty,
+  marketDiscoveryNeedsFire,
   runFirstReadFill,
   runChainKinds,
   classifyGapPairsAfterTimeout,
@@ -20,7 +21,7 @@ import {
 
 const cfg = (over: Partial<Parameters<typeof runFirstReadFill>[0]>): Parameters<typeof runFirstReadFill>[0] => ({
   missingKinds: [],
-  marketEmpty: false,
+  marketNeedsFire: false,
   generatePublicRead: vi.fn(async () => ({ perKind: {} as GenPerKind })),
   recordKindLedger: vi.fn(async () => {}),
   fireMarketDiscovery: vi.fn(async () => {}),
@@ -91,7 +92,7 @@ describe("(c) no-op — all current + non-empty market ⇒ completed_empty, zero
     const gen = vi.fn(async () => ({ perKind: {} as GenPerKind }));
     const fire = vi.fn(async () => {});
     const rec = vi.fn(async () => {});
-    const out = await runFirstReadFill(cfg({ missingKinds: [], marketEmpty: false, generatePublicRead: gen, fireMarketDiscovery: fire, recordKindLedger: rec }));
+    const out = await runFirstReadFill(cfg({ missingKinds: [], marketNeedsFire: false, generatePublicRead: gen, fireMarketDiscovery: fire, recordKindLedger: rec }));
     expect(gen).not.toHaveBeenCalled();
     expect(fire).not.toHaveBeenCalled();
     expect(out.stageEmpty).toBe(true);
@@ -101,16 +102,36 @@ describe("(c) no-op — all current + non-empty market ⇒ completed_empty, zero
   });
 });
 
+describe("marketDiscoveryNeedsFire — MANIFEST is the completeness authority (not def existence)", () => {
+  it("no manifest ⇒ falls back to the legacy def-emptiness gate", () => {
+    expect(marketDiscoveryNeedsFire(null, true)).toBe(true);   // no defs → fire
+    expect(marketDiscoveryNeedsFire(null, false)).toBe(false); // pre-manifest defs exist → leave alone
+  });
+  it("completed@total (or completed-empty) ⇒ NEVER re-fires — even when defs would look present", () => {
+    expect(marketDiscoveryNeedsFire({ status: "completed", chain_state: { cursor: 6, candidates: new Array(6) } }, false)).toBe(false);
+    expect(marketDiscoveryNeedsFire({ status: "completed", chain_state: { cursor: 0, candidates: [] } }, true)).toBe(false); // honest empty completion
+  });
+  it("FALSIFICATION (the Lumio 1-of-6 stuck bug): a failed/partial manifest with cursor < total ⇒ RE-FIRES, even with a def present", () => {
+    // The old gate keyed on def existence → false (no re-fire) → stuck forever. The manifest gate re-fires.
+    expect(marketDiscoveryNeedsFire({ status: "failed", chain_state: { cursor: 0, candidates: new Array(6) } }, false)).toBe(true);
+    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 2, candidates: new Array(6) } }, false)).toBe(true);
+    // an unconfirmed HOLD is a 'running' row with cursor < total → resumes
+    expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 4, candidates: new Array(6) } }, false)).toBe(true);
+    // completed but cursor short of total (defensive) → still resumes
+    expect(marketDiscoveryNeedsFire({ status: "completed", chain_state: { cursor: 3, candidates: new Array(6) } }, false)).toBe(true);
+  });
+});
+
 describe("market discovery firing", () => {
-  it("fires only when the market read is empty; a fire error is isolated (parent still completes)", async () => {
+  it("fires only when the manifest needs it; a fire error is isolated (parent still completes)", async () => {
     const fireOk = vi.fn(async () => {});
     const closeParent = vi.fn(async () => {});
-    const a = await runFirstReadFill(cfg({ marketEmpty: true, fireMarketDiscovery: fireOk, closeParent }));
+    const a = await runFirstReadFill(cfg({ marketNeedsFire: true, fireMarketDiscovery: fireOk, closeParent }));
     expect(fireOk).toHaveBeenCalledTimes(1);
     expect(a.marketFired).toBe(true);
     const fireThrow = vi.fn(async () => { throw new Error("discovery boot failed"); });
     const closeParent2 = vi.fn(async () => {});
-    const b = await runFirstReadFill(cfg({ marketEmpty: true, fireMarketDiscovery: fireThrow, closeParent: closeParent2 }));
+    const b = await runFirstReadFill(cfg({ marketNeedsFire: true, fireMarketDiscovery: fireThrow, closeParent: closeParent2 }));
     expect(b.marketFired).toBe(false);
     expect(closeParent2).toHaveBeenCalledTimes(1); // isolated — parent completed anyway
   });

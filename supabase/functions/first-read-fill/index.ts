@@ -18,7 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
-  chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty,
+  chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
   type PublicReadKind, type GenPerKind, type KindStatus,
   type ChainKindStep, type ChainKindTerminal,
 } from "../_shared/firstReadFill.ts";
@@ -55,7 +55,17 @@ Deno.serve(async (req) => {
   const missingKinds = missingPublicReadKinds(currentKinds);
 
   const { data: mdRows } = await supabase.from("odi_market_definitions").select("market_register, job_executor").eq("company_id", company_id);
-  const marketEmpty = marketReadIsEmpty((mdRows ?? []) as Array<{ market_register?: string | null; job_executor?: string | null }>);
+  const defsEmpty = marketReadIsEmpty((mdRows ?? []) as Array<{ market_register?: string | null; job_executor?: string | null }>);
+  // The MANIFEST is the completeness authority: read the newest market_discovery ledger row and decide
+  // (re)fire vs skip from its terminal state + cursor — NOT from def existence (which no-op'd forever
+  // once one def landed). No manifest → fall back to the legacy def-emptiness gate.
+  const { data: mdManifest } = await supabase.from("long_runner_runs")
+    .select("status, chain_state").eq("company_id", company_id).eq("run_kind", "market_discovery")
+    .order("started_at", { ascending: false }).limit(1).maybeSingle();
+  const marketNeedsFire = marketDiscoveryNeedsFire(
+    (mdManifest ?? null) as { status?: string | null; chain_state?: { cursor?: unknown; candidates?: unknown } | null } | null,
+    defsEmpty,
+  );
 
   // per-kind child ledger row (run_kind fr_<kind>): completed / failed / completed_empty (skipped).
   const recordKindLedger = async (kind: string, status: KindStatus) => {
@@ -100,7 +110,7 @@ Deno.serve(async (req) => {
     ? async () => { await supabase.from("long_runner_runs").update({ status: "completed", done_count: 0, error_text: "first read filled", finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", parent_run_id); }
     : undefined;
 
-  const result = await runFirstReadFill({ missingKinds, marketEmpty, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent });
+  const result = await runFirstReadFill({ missingKinds, marketNeedsFire, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent });
 
   // close the stage ledger: completed_empty (no-op) when nothing was missing, else completed (work done).
   if (stageId) {

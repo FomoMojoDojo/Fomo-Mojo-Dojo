@@ -25,8 +25,16 @@ export type MDStepConfig = {
   state: MDChainState;
   /** Run the plan (generate-market-discovery plan:true). alreadyDiscovered ⇒ nothing to do. */
   plan: () => Promise<{ candidates: unknown[]; alreadyDiscovered?: boolean }>;
-  /** Judge ONE chunk (generate-market-discovery candidates:[chunk]); ok:false ⇒ this fire made no progress. */
+  /** Judge ONE chunk (generate-market-discovery candidates:[chunk]); ok:false ⇒ the FETCH did not return
+   *  a success — but the worker (local 70b, ~45s/candidate) may still be alive and writing server-side,
+   *  so ok:false is NEVER treated as failure on its own. confirmChunk is the arbiter (DB is truth). */
   judgeChunk: (chunk: unknown[]) => Promise<{ ok: boolean }>;
+  /** CONFIRM-POLL (the gap_pairs 504 class, for discovery): on a not-ok chunk fetch, bounded-poll the
+   *  chunk's PERSISTED writes and return how many LEADING candidates (contiguous from the chunk start)
+   *  are accounted — a written def (accepted/deduped), a banked solution_agnostic verdict
+   *  (rejected_solution), or a banked buyer verdict (rejected_buyer). A judged rejection with a
+   *  persisted reason counts as accounted, never "not yet". 0 ⇒ nothing landed within the window. */
+  confirmChunk: (chunk: unknown[]) => Promise<{ accounted: number }>;
   /** The unscoped finalize (generate-market-discovery with no candidates). */
   finalize: () => Promise<void>;
   /** Persist the plan manifest to the ledger chain row (DB is truth). */
@@ -37,7 +45,11 @@ export type MDStepConfig = {
   closeCompleted: (empty: boolean) => Promise<void>;
   /** Close the ledger failed with a machine-readable reason (terminal, no self-fire). */
   closeFailed: (reason: string) => Promise<void>;
-  /** Self-fire the next step (a fresh isolate). Never called on a terminal. */
+  /** HOLD the chain non-terminal at the given cursor: status stays 'running' + a note (sweep-excluded),
+   *  NO self-fire. The worker may be alive; a later re-fire (fill predicate / manual control) resumes
+   *  from this cursor. NEVER 'failed' when the worker may still be writing. */
+  markUnconfirmed: (cursor: number) => Promise<void>;
+  /** Self-fire the next step (a fresh isolate). Never called on a terminal or an unconfirmed hold. */
   selfFire: () => Promise<void>;
 };
 
@@ -47,8 +59,12 @@ export type MDStepOutcome =
   | "planned_empty"
   | "planned"
   | "finalized"
-  | "no_progress_failed"
-  | "chunk_done";
+  | "chunk_done"
+  // not-ok fetch, but the confirm-poll accounted the chunk's writes → cursor advanced, chain continues.
+  | "chunk_recovered"          // the whole chunk was accounted
+  | "chunk_recovered_partial"  // only the leading N were accounted; the tail re-judges next fire
+  // not-ok fetch, nothing accounted within the window → non-terminal hold (running + note), no self-fire.
+  | "unconfirmed_hold";
 
 /**
  * Run ONE market-discovery step. Exactly one of: terminate (max-steps/no-progress → failed), plan,
@@ -92,14 +108,30 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
   const res = await cfg.judgeChunk(chunk);
   const nextCursor = s.cursor + chunk.length;
 
-  // TERMINAL 2 — no-progress guard. A fire that judged its chunk but advanced ZERO (chunk failed, or
-  // the cursor did not move) closes the ledger failed rather than self-firing again → no infinite loop.
-  if (!res.ok || nextCursor <= s.cursor) {
-    await cfg.closeFailed(`no_progress at cursor ${s.cursor} — market discovery halted`);
-    return { outcome: "no_progress_failed" };
+  // HAPPY PATH — the fetch returned success and the chunk is non-empty → advance + self-fire.
+  if (res.ok && nextCursor > s.cursor) {
+    await cfg.persistProgress(nextCursor, s.stepCount + 1);
+    await cfg.selfFire();
+    return { outcome: "chunk_done" };
   }
 
-  await cfg.persistProgress(nextCursor, s.stepCount + 1);
-  await cfg.selfFire();
-  return { outcome: "chunk_done" };
+  // NOT-OK — the fetch did not return success (isolate wall / gateway cut). The worker may be ALIVE and
+  // still writing (~45s/candidate on local 70b). DB is truth: confirm-poll the chunk's persisted writes
+  // before ever calling it failed (the gap_pairs 504 class; market-discovery had no confirm-poll before).
+  const { accounted } = await cfg.confirmChunk(chunk);
+  if (accounted > 0) {
+    // Progress is REAL (a def / a banked verdict landed) → advance to the last accounted candidate
+    // (full or partial) and continue. The unaccounted tail re-judges next fire — banked-verdict cheap,
+    // dedup-safe by content identity. A real advance means no infinite loop.
+    const advanced = s.cursor + Math.min(accounted, chunk.length);
+    await cfg.persistProgress(advanced, s.stepCount + 1);
+    await cfg.selfFire();
+    return { outcome: advanced >= nextCursor ? "chunk_recovered" : "chunk_recovered_partial" };
+  }
+
+  // Nothing landed within the window → the worker may still be alive mid-first-candidate. HOLD
+  // non-terminal (running + note, sweep-excluded); NO self-fire (no hot loop). A later re-fire resumes
+  // from this cursor. NEVER 'failed' on a maybe-alive worker.
+  await cfg.markUnconfirmed(s.cursor);
+  return { outcome: "unconfirmed_hold" };
 }

@@ -15,11 +15,13 @@ const cfg = (state: MDChainState, over: Partial<MDStepConfig> = {}): MDStepConfi
   state,
   plan: vi.fn(async () => ({ candidates: CANDS })),
   judgeChunk: vi.fn(async () => ({ ok: true })),
+  confirmChunk: vi.fn(async () => ({ accounted: 0 })),
   finalize: vi.fn(async () => {}),
   persistPlanned: vi.fn(async () => {}),
   persistProgress: vi.fn(async () => {}),
   closeCompleted: vi.fn(async () => {}),
   closeFailed: vi.fn(async () => {}),
+  markUnconfirmed: vi.fn(async () => {}),
   selfFire: vi.fn(async () => {}),
   ...over,
 });
@@ -75,18 +77,55 @@ describe("RESUME-AFTER-DEATH — resume from the DB cursor, not from 0", () => {
   });
 });
 
-describe("TERMINAL DISCIPLINE — no infinite loop", () => {
-  it("NO-REFIRE-ON-NO-PROGRESS: a failed chunk closes the ledger failed and NEVER self-fires", async () => {
-    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false })); // the chunk made no progress
-    const closeFailed = vi.fn(async (_reason: string) => {});
-    const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, closeFailed });
+describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs 504 class)", () => {
+  it("NOT-OK + fully accounted ⇒ advance to nextCursor + self-fire, NEVER closeFailed (worker was alive)", async () => {
+    // The fetch was cut, but the worker wrote/judged BOTH chunk candidates server-side.
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false }));
+    const confirm = vi.fn(async (chunk: unknown[]) => ({ accounted: chunk.length })); // 2 of 2
+    const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm });
     const out = await runMarketDiscoveryStep(c);
-    expect(out.outcome).toBe("no_progress_failed");
-    expect(closeFailed).toHaveBeenCalledTimes(1);
-    expect(closeFailed.mock.calls[0][0]).toMatch(/no_progress/);
-    expect(c.selfFire).not.toHaveBeenCalled();   // the loop is broken
-    expect(c.persistProgress).not.toHaveBeenCalled();
+    expect(out.outcome).toBe("chunk_recovered");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2); // cursor 2→4 (recovered the whole chunk)
+    expect(c.selfFire).toHaveBeenCalledTimes(1);          // the chain CONTINUES
+    expect(c.closeFailed).not.toHaveBeenCalled();         // FALSIFICATION: reverting to closeFailed breaks this
+    expect(c.markUnconfirmed).not.toHaveBeenCalled();
   });
+  it("NOT-OK + PARTIAL accounted ⇒ advance to the last-accounted candidate + self-fire (tail re-judges)", async () => {
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false }));
+    const confirm = vi.fn(async (_chunk: unknown[]) => ({ accounted: 1 })); // only the leading 1 of 2 landed
+    const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("chunk_recovered_partial");
+    expect(c.persistProgress).toHaveBeenCalledWith(3, 2); // cursor 2→3 (last accounted), NOT 4
+    expect(c.selfFire).toHaveBeenCalledTimes(1);          // resumes at 3 next fire
+    expect(c.closeFailed).not.toHaveBeenCalled();
+    expect(c.markUnconfirmed).not.toHaveBeenCalled();
+  });
+  it("NOT-OK + NOTHING accounted ⇒ unconfirmed HOLD (running + note), NO self-fire, NEVER failed", async () => {
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false }));
+    const confirm = vi.fn(async (_chunk: unknown[]) => ({ accounted: 0 })); // nothing landed in the window
+    const markUnconfirmed = vi.fn(async (_cursor: number) => {});
+    const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm, markUnconfirmed });
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("unconfirmed_hold");
+    expect(markUnconfirmed).toHaveBeenCalledWith(2);      // held at the CURRENT cursor (resumable)
+    expect(c.closeFailed).not.toHaveBeenCalled();         // the worker may be alive — NEVER failed
+    expect(c.selfFire).not.toHaveBeenCalled();            // no hot loop
+    expect(c.persistProgress).not.toHaveBeenCalled();     // cursor did not advance
+  });
+  it("HAPPY PATH unchanged: ok:true advances + self-fires WITHOUT consulting confirmChunk", async () => {
+    const confirm = vi.fn(async (_chunk: unknown[]) => ({ accounted: 0 }));
+    const c = cfg(base({ cursor: 2, stepCount: 1 }), { confirmChunk: confirm }); // judge default ok:true
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("chunk_done");
+    expect(confirm).not.toHaveBeenCalled();               // confirm-poll is the not-ok path ONLY
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2);
+    expect(c.selfFire).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TERMINAL DISCIPLINE — no infinite loop", () => {
   it("MAX-STEPS: at the step ceiling it closes failed FIRST, doing no further work", async () => {
     const plan = vi.fn(async () => ({ candidates: CANDS }));
     const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: true }));
