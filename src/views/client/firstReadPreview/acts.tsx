@@ -21,8 +21,9 @@ import {
 import BaseAlignment, { allUntestedPairs } from "./BaseAlignment";
 import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
-import type { FirstReadPreviewData, FRGapCounts, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
+import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
+import { OperatorPairMeta, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -1339,7 +1340,7 @@ function ContradictionWhy({ text }: { text: string }) {
   );
 }
 
-function StatementEvidence({ statement }: { statement: FRGapStatement }) {
+function StatementEvidence({ statement, struck = [] }: { statement: FRGapStatement; struck?: FRGapPair[] }) {
   // Record-silent = no ACTIVE evidence pair. RELEVANCE BACKSTOP (operator ruling 2026-08-25):
   // relevance-'orthogonal' pairs are omitted upstream (groupGapStatements never adds them to
   // `evidence`), so an all-struck statement arrives here with empty evidence and shows the clean
@@ -1347,9 +1348,14 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
   // Only unechoed (genuinely publicly-silent) statements reach here with empty evidence — reverifying
   // statements are excluded from the client render entirely (resolved-states-only, 2026-08-27), so
   // they never reach this per-row path.
+  // OPERATOR OVERRIDE (stage 3, 2026-09-03): the struck pairs render ONLY under the admin preview
+  // (StruckPairsBlock is context-gated — null everywhere else), so the client empty state is unchanged.
   if (statement.evidence.length === 0) {
     return (
-      <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
+      <>
+        <p className="fr-quote-muted text-lg font-light leading-relaxed">{RECORD_SILENT_NOTE}</p>
+        <StruckPairsBlock pairs={struck} />
+      </>
     );
   }
   // The contradiction "why" (judged reason, grounded; derived line as fallback) renders in the LEFT
@@ -1365,6 +1371,8 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
                   statement (in ActGap's meta), not per pair. */}
               {pair.sourceTag ? <SourceTag>{pair.sourceTag.label}</SourceTag> : null}
               {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+              {/* Operator-only (context-gated): Strike, or provenance + Withdraw on an operator-spared pair. */}
+              <OperatorPairMeta pair={pair} />
             </div>
             {pair.record ? (
               <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
@@ -1374,6 +1382,7 @@ function StatementEvidence({ statement }: { statement: FRGapStatement }) {
           </div>
         );
       })}
+      <StruckPairsBlock pairs={struck} />
     </div>
   );
 }
@@ -1394,6 +1403,9 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
   // (the hook computes it from the same statements); contradicted/unechoed/confirmed already exclude
   // reverifying (verdicts are mutually exclusive), so only reverifying is dropped from the client copy.
   const visibleCounts: FRGapCounts = { ...read.gapCounts, reverifying: 0 };
+  // OPERATOR OVERRIDE (stage 3): struck pairs by statement, from the raw pairs (they are omitted from
+  // `evidence` upstream). Consumed only by the context-gated operator block — inert on client surfaces.
+  const struckByStatement = struckPairsByStatement(read.gapPairs);
   return (
     <>
       {/* No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
@@ -1451,7 +1463,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
                   {statement.statusDisputed ? <StatusDisputedChip /> : null}
                 </>
               }
-              rightContent={<StatementEvidence statement={statement} />}
+              rightContent={<StatementEvidence statement={statement} struck={struckByStatement.get(statement.statementId) ?? []} />}
             />
           );
         })}

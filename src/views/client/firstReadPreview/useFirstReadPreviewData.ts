@@ -286,7 +286,9 @@ async function uploadDerivedFor(claimRows: Array<{ id: string; raw_payload?: unk
   return uploadDerivedClaimIds(refRows, srcBySig, claimRows);
 }
 
-export function useFirstReadPreviewData(companyId: string | undefined) {
+/** `refreshKey`: bump it to re-run the read (this surface is plain state, not react-query — the
+ *  operator override path bumps it after a write so the beat re-reads the derived stamp). */
+export function useFirstReadPreviewData(companyId: string | undefined, refreshKey = 0) {
   const [data, setData] = useState<FirstReadPreviewData>(EMPTY_FIRST_READ);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -573,12 +575,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded, relevance_verdict")
+          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded, relevance_verdict, content_identity, relevance_provider, relevance_model, relevance_reason, relevance_judged_at")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
           .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null; relevance_verdict: string | null }>;
+        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null; relevance_verdict: string | null; content_identity: string | null; relevance_provider: string | null; relevance_model: string | null; relevance_reason: string | null; relevance_judged_at: string | null }>;
         const gapClaimIds = [
           ...new Set(
             deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x),
@@ -646,6 +648,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             statusDisputed: disputes(`${declaredClaim.statement} ${publicClaim?.statement ?? ""}`),
             // RELEVANCE BACKSTOP overlay — carried to the single shared selector (counts + struck render).
             relevanceVerdict: (d.relevance_verdict === "relevant" || d.relevance_verdict === "orthogonal") ? d.relevance_verdict : null,
+            // OPERATOR OVERRIDE (stage 3): identity + stamp provenance, carried for the preview-only controls.
+            contentIdentity: d.content_identity ?? null,
+            relevanceProvider: d.relevance_provider ?? null,
+            relevanceModel: d.relevance_model ?? null,
+            relevanceReason: d.relevance_reason ?? null,
+            relevanceDecidedAt: d.relevance_judged_at ?? null,
             // HELD ECHO: a confirmed/contradicted pair with NO visible signal (sig null) whose public
             // claim has a held/recrawl-pending backing — the echo exists but is walled. Keeps the
             // statement reverifying regardless of the provisional relevance verdict (mapping.ts).
@@ -1111,7 +1119,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
   return { data, loading, error };
 }

@@ -8,6 +8,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import "./firstRead.css";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { OperatorControlsContext, type OperatorControls, type OperatorDecision } from "./operatorControls";
+import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideAction";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
 import {
@@ -75,9 +79,37 @@ export const BEATS = [
   { key: "next", label: "Next move", act: undefined },
 ] as const;
 
+/** react-query is present under the app router; a bare test mount has no client — invalidation is then a no-op. */
+function useOptionalQueryClient() {
+  try {
+    return useQueryClient();
+  } catch {
+    return null;
+  }
+}
+
 export default function FirstReadPreviewView() {
   const { companyId } = useParams<{ companyId: string }>();
-  const { data: baseData, loading, error } = useFirstReadPreviewData(companyId);
+  // OPERATOR OVERRIDE (stage 3, 2026-09-03): the preview re-reads after a decision (refreshKey — this
+  // hook is plain state, not react-query) and invalidates the react-query readers of claim_deltas so no
+  // surface holds a stale verdict. This view is the ONLY provider of OperatorControlsContext: it mounts
+  // solely under the admin preview route, so client views structurally never render the controls.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { data: baseData, loading, error } = useFirstReadPreviewData(companyId, refreshKey);
+  const queryClient = useOptionalQueryClient();
+  const operatorControls = useMemo<OperatorControls | null>(() => {
+    if (!companyId) return null;
+    return {
+      decide: async ({ pair, verdict, reason }: OperatorDecision) => {
+        // A withdrawal also awaits refresh-relevance-step (decideRelevance) so this refresh shows the machine verdict.
+        const res = await decideRelevance(supabase, supabase.functions, { companyId, contentIdentity: pair.contentIdentity, verdict, reason });
+        const failure = overrideFailureMessage(res);
+        if (failure) throw new Error(failure);
+        await queryClient?.invalidateQueries({ queryKey: ["strategic-delta", companyId] });
+        setRefreshKey((k) => k + 1);
+      },
+    };
+  }, [companyId, queryClient]);
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions } = useFirstReadOpenQuestions(companyId);
@@ -237,6 +269,7 @@ export default function FirstReadPreviewView() {
   return (
     // D1: a siesta is visibly a break — full-page accent ground (--fr-accent), white type. The break
     // class scopes the inversion of the header + progress ticks so they stay legible (never global).
+    <OperatorControlsContext.Provider value={operatorControls}>
     <div className={`first-read${isSiesta ? " fr-siesta" : ""}`}>
       <div className="first-read-shell">
         {!isCold ? (
@@ -307,5 +340,6 @@ export default function FirstReadPreviewView() {
         ) : null}
       </div>
     </div>
+    </OperatorControlsContext.Provider>
   );
 }

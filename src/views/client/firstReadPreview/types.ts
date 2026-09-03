@@ -98,6 +98,17 @@ export type FRGapPair = {
   /** The generated, grounded "what differs" one-liner (claim_deltas.conflict_explanation) — tier 1 of
    *  the contradiction "why". Null unless present AND grounded. */
   conflictExplanation?: string | null;
+  /** OPERATOR OVERRIDE (stage 3, 2026-09-03): the pair's identity (claim_deltas.content_identity) — the
+   *  key set_relevance_override writes on. Null only for a legacy row without an identity. */
+  contentIdentity?: string | null;
+  /** Relevance stamp provenance: 'deterministic' (router) / 'external_openai' (judge) / 'operator'. */
+  relevanceProvider?: string | null;
+  /** 'router' / 'gpt-4.1-mini' / 'operator_override'. */
+  relevanceModel?: string | null;
+  /** The stored relevance_reason — the machine's reason on a strike, the operator's reason on an override. */
+  relevanceReason?: string | null;
+  /** relevance_judged_at — for an operator row this is the override's decided_at (the provenance date). */
+  relevanceDecidedAt?: string | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */
