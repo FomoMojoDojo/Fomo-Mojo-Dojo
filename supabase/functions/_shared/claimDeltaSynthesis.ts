@@ -246,6 +246,28 @@ export async function writeGapPairsIntegrity(
   if (error) throw new Error(`gap-pairs integrity insert failed: ${error.message}`);
 }
 
+// OPERATOR RELEVANCE OVERRIDE (operator ruling 2026-09-03): a live decision in
+// claim_delta_relevance_overrides (superseded_by IS NULL, verdict relevant|orthogonal) is the
+// operator's verdict on a PAIR IDENTITY. A pair row born for that identity carries the operator's
+// columns from birth (never NULL, never a machine verdict) — the DB trigger apply_relevance_override
+// enforces the same at the row boundary; this is the write-side courtesy so the row is honest on insert.
+export type LiveRelevanceOverride = { verdict: "relevant" | "orthogonal"; reason: string; decided_at: string };
+export function overrideColumnsFor(
+  identity: string,
+  overrides: Map<string, LiveRelevanceOverride>,
+): Record<string, unknown> {
+  const ov = overrides.get(identity);
+  if (!ov) return {};
+  return {
+    relevance_verdict: ov.verdict,
+    relevance_provider: "operator",
+    relevance_model: "operator_override",
+    relevance_reason: ov.reason,
+    relevance_span: null,
+    relevance_judged_at: ov.decided_at,
+  };
+}
+
 export async function pairIdentity(declaredStatement: string, publicStatement: string): Promise<string> {
   return await sha256Hex(`pair|${normalizeForHash(declaredStatement)}|${normalizeForHash(publicStatement)}`);
 }
@@ -596,6 +618,18 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   const loadedRejections = (rejRows ?? []) as RejRow[];
   const rejectionByIdentity = new Map<string, string>(loadedRejections.map((r) => [r.content_identity, r.id]));
 
+  // OPERATOR RELEVANCE OVERRIDES (2026-09-03): live decisions by pair identity, so a pair row born this
+  // run for an overridden identity carries the operator's relevance columns (see overrideColumnsFor).
+  const { data: ovRows } = await args.supabase
+    .from("claim_delta_relevance_overrides")
+    .select("content_identity, verdict, reason, decided_at, superseded_by")
+    .eq("company_id", args.companyId)
+    .eq("pairing_kind", pairingKind); // live = superseded_by IS NULL, filtered below (a handful of rows per company)
+  const relevanceOverrides = new Map<string, LiveRelevanceOverride>();
+  for (const o of ((ovRows ?? []) as Array<{ content_identity: string; verdict: string; reason: string; decided_at: string; superseded_by: string | null }>)) {
+    if (o.superseded_by == null && (o.verdict === "relevant" || o.verdict === "orthogonal")) relevanceOverrides.set(o.content_identity, { verdict: o.verdict, reason: o.reason, decided_at: o.decided_at });
+  }
+
   // CH-2b-1: mode is PRESENCE-GATED on declaredIds — the same parameter that
   // narrows the iteration disables the silence loops and the sweep below, so
   // they cannot disagree. Presence-based, NOT coverage-based: ids covering
@@ -857,6 +891,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           pairing_kind: pairingKind,
           model_provider: judgeRes.provider,
           model_name: judgeRes.model,
+          // OPERATOR OVERRIDE: born with the operator's relevance columns when a live decision exists.
+          ...overrideColumnsFor(identity, relevanceOverrides),
         });
         if (insErr) throw new Error(`claim-delta inline insert failed: ${insErr.message}`);
         insertedThisRun.add(identity);

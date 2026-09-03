@@ -218,7 +218,7 @@ export type RelevanceProposal = {
   declared: string;           // declared/own-words statement
   observed: string;           // paired public source statement
   proposed_verdict: "relevant" | "orthogonal";
-  stage: "A" | "B";           // A = deterministic auto-spare; B = the routed judge
+  stage: "A" | "B" | "O";     // A = deterministic auto-spare; B = the routed judge; O = operator override (never routed)
   distinctive_overlap: number;
   distinctive_tokens: string[];
   reason: string | null;      // Stage-B judge reason (the over-strike watch-item)
@@ -232,6 +232,7 @@ export type RelevanceResult =
       ok: true;
       totals: {
         examined: number;         // verdict rows loaded (unjudged this run)
+        overridden: number;       // OPERATOR OVERRIDE (2026-09-03): stamped from claim_delta_relevance_overrides, never routed/judged
         auto_relevant: number;    // Stage A auto-spared (dov>=2), deterministic
         router_orthogonal: number; // PRE-ROUTER dov=0 struck deterministically (no judge)
         judged_relevant: number;  // dov=1 judge → relevant
@@ -262,17 +263,32 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   // Overlay is keyed on the delta row id; we need both statements — join through claims.
   const { data: deltaRows, error: dErr } = await args.supabase
     .from("claim_deltas")
-    .select("id, delta_type, declared_claim_id, public_claim_id, relevance_verdict")
+    .select("id, delta_type, declared_claim_id, public_claim_id, relevance_verdict, content_identity")
     .eq("company_id", args.companyId)
     .eq("pairing_kind", pairingKind)
     .in("delta_type", ["echoed", "divergent"])
     .is("relevance_verdict", null);
   if (dErr) return { ok: false, error: String(dErr.message ?? dErr) };
   const rows = (deltaRows ?? []) as Array<{
-    id: string; delta_type: string; declared_claim_id: string; public_claim_id: string; relevance_verdict: string | null;
+    id: string; delta_type: string; declared_claim_id: string; public_claim_id: string; relevance_verdict: string | null; content_identity: string;
   }>;
 
-  const totals = { examined: rows.length, auto_relevant: 0, router_orthogonal: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
+  // OPERATOR OVERRIDES (operator ruling 2026-09-03): a LIVE decision in claim_delta_relevance_overrides
+  // (superseded_by IS NULL, verdict relevant|orthogonal) wins over the machine — such a pair is stamped
+  // from the override here and NEVER sent to the router or the judge (no spend, no machine verdict).
+  // The DB trigger apply_relevance_override enforces the same at the row boundary; this is the spend gate.
+  const { data: ovRows, error: ovErr } = await args.supabase
+    .from("claim_delta_relevance_overrides")
+    .select("content_identity, verdict, reason, decided_at, superseded_by")
+    .eq("company_id", args.companyId)
+    .eq("pairing_kind", pairingKind); // live = superseded_by IS NULL, filtered below (a handful of rows per company)
+  if (ovErr) return { ok: false, error: String(ovErr.message ?? ovErr) };
+  const overrides = new Map<string, { verdict: "relevant" | "orthogonal"; reason: string; decided_at: string }>();
+  for (const o of (ovRows ?? []) as Array<{ content_identity: string; verdict: string; reason: string; decided_at: string; superseded_by: string | null }>) {
+    if (o.superseded_by == null && (o.verdict === "relevant" || o.verdict === "orthogonal")) overrides.set(o.content_identity, { verdict: o.verdict, reason: o.reason, decided_at: o.decided_at });
+  }
+
+  const totals = { examined: rows.length, overridden: 0, auto_relevant: 0, router_orthogonal: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
   const proposals: RelevanceProposal[] = [];
   const dryRun = args.dryRun === true;
   if (rows.length === 0) {
@@ -308,6 +324,21 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   for (const r of rows) {
     const declared = stmt.get(r.declared_claim_id) ?? "";
     const observed = stmt.get(r.public_claim_id) ?? "";
+    // OPERATOR OVERRIDE wins — stamped from the decision, never routed, never judged.
+    const ov = overrides.get(r.content_identity);
+    if (ov) {
+      if (!dryRun) {
+        await stampRelevance(args, r.id, { verdict: ov.verdict, reason: ov.reason, span: "", model: "operator_override", provider: "operator", judgedAt: ov.decided_at });
+      }
+      totals.overridden++;
+      proposals.push({
+        id: r.id, delta_type: r.delta_type, declared, observed,
+        proposed_verdict: ov.verdict, stage: "O",
+        distinctive_overlap: 0, distinctive_tokens: [],
+        reason: ov.reason, span: "", model: "operator_override", provider: "operator",
+      });
+      continue;
+    }
     const routeA = stageARoute(declared, observed, entities);
     if (routeA.distinctiveOverlap >= 2) {
       const reason = `distinctive-overlap>=2 {${routeA.distinctiveTokens.join(",")}}`.slice(0, 400);
@@ -399,7 +430,7 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
 async function stampRelevance(
   args: RelevanceArgs,
   deltaId: string,
-  v: { verdict: "relevant" | "orthogonal"; reason: string | null; span: string | null; model: string; provider: string },
+  v: { verdict: "relevant" | "orthogonal"; reason: string | null; span: string | null; model: string; provider: string; judgedAt?: string },
 ): Promise<void> {
   if (!args.write) return;
   // UPDATE of overlay columns ONLY — never insert/delete a claim_deltas row.
@@ -409,7 +440,7 @@ async function stampRelevance(
     relevance_span: v.span,
     relevance_model: v.model,
     relevance_provider: v.provider,
-    relevance_judged_at: args.nowIso,
+    relevance_judged_at: v.judgedAt ?? args.nowIso,
   }).eq("id", deltaId);
   if (error) throw new Error(`relevance overlay update failed (${deltaId}): ${error.message}`);
 }
@@ -426,18 +457,21 @@ async function writeRelevanceIntegrity(
 ): Promise<void> {
   const { data: rows, error: qErr } = await supabase
     .from("claim_deltas")
-    .select("relevance_verdict, relevance_model")
+    .select("relevance_verdict, relevance_model, relevance_provider")
     .eq("company_id", companyId)
     .eq("pairing_kind", pairingKind)
     .in("delta_type", ["echoed", "divergent"]);
   if (qErr) throw new Error(`relevance integrity count query failed: ${qErr.message}`);
-  const r = (rows ?? []) as Array<{ relevance_verdict: string | null; relevance_model: string | null }>;
+  const r = (rows ?? []) as Array<{ relevance_verdict: string | null; relevance_model: string | null; relevance_provider: string | null }>;
   const examined = r.length;
-  const routerOrthogonal = r.filter((x) => x.relevance_verdict === "orthogonal" && x.relevance_model === "router").length;
-  const judgedOrthogonal = r.filter((x) => x.relevance_verdict === "orthogonal" && x.relevance_model !== "router").length;
-  const autoRelevant = r.filter((x) => x.relevance_verdict === "relevant" && x.relevance_model === "router").length;
-  const judgedRelevant = r.filter((x) => x.relevance_verdict === "relevant" && x.relevance_model !== "router").length;
-  const orthogonal = routerOrthogonal + judgedOrthogonal;
+  const isOp = (x: { relevance_provider: string | null }) => x.relevance_provider === "operator";
+  const operatorRelevant = r.filter((x) => isOp(x) && x.relevance_verdict === "relevant").length;
+  const operatorOrthogonal = r.filter((x) => isOp(x) && x.relevance_verdict === "orthogonal").length;
+  const routerOrthogonal = r.filter((x) => !isOp(x) && x.relevance_verdict === "orthogonal" && x.relevance_model === "router").length;
+  const judgedOrthogonal = r.filter((x) => !isOp(x) && x.relevance_verdict === "orthogonal" && x.relevance_model !== "router").length;
+  const autoRelevant = r.filter((x) => !isOp(x) && x.relevance_verdict === "relevant" && x.relevance_model === "router").length;
+  const judgedRelevant = r.filter((x) => !isOp(x) && x.relevance_verdict === "relevant" && x.relevance_model !== "router").length;
+  const orthogonal = routerOrthogonal + judgedOrthogonal + operatorOrthogonal;
   const { error } = await supabase.from("integrity_runs").insert({
     company_id: companyId,
     component: RELEVANCE_INTEGRITY_COMPONENT,
@@ -451,9 +485,13 @@ async function writeRelevanceIntegrity(
       orthogonal,
       router_orthogonal: routerOrthogonal, // deterministic dov=0
       judged_orthogonal: judgedOrthogonal,  // dov=1 judge strikes
-      spared: autoRelevant + judgedRelevant,
+      spared: autoRelevant + judgedRelevant + operatorRelevant,
       auto_relevant: autoRelevant,          // dov>=2 auto-spare
       judged_relevant: judgedRelevant,      // dov=1 judge spares
+      // OPERATOR OVERRIDE (2026-09-03): decisions from claim_delta_relevance_overrides, never routed/judged
+      overridden: operatorRelevant + operatorOrthogonal,
+      operator_relevant: operatorRelevant,
+      operator_orthogonal: operatorOrthogonal,
     },
     error: null,
     run_ref: runRef ?? nowIso,
