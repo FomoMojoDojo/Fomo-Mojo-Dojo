@@ -25,13 +25,16 @@ const SUBJECT = { subjectName: "Geniant", subjectHost: "geniant.com" };
 
 const OVERVIEW_URL = "https://www.glassdoor.com/Overview/Working-at-geniant-EI_IE32093.11,18.htm";
 const REVIEWS_URL = "https://www.glassdoor.com/Reviews/geniant-Reviews-E32093.htm";
-const OTHER_LINKEDIN_URL = "https://www.linkedin.com/company/eastlake-studio";
+const OTHER_LINKEDIN_URL = "https://www.linkedin.com/company/vegastudio";
 
+// REAL stored text of Geniant 1e590a73 (the 7-false-echo row) — including the appended E4-class
+// analysis fragment, which is exactly what the first judge tripped on.
 const COMPANY_COPY =
-  "Working with a wide range of organizations - from high-growth startups to Fortune 500 companies - geniant excels at delivering exceptional experiences for your employees and customers.";
+  "Working with a wide range of organizations - from high-growth startups to Fortune 500 companies - geniant excels at delivering exceptional experiences for your employees and customers. Only 3 employee reviews publicly visible.";
 const EMPLOYEE_REVIEW = "Great colleagues but leadership changes direction every quarter; work-life balance is poor.";
 const RATING_ROW = "geniant employees attributed a compensation and benefits rating of 4.6/5 stars to their company.";
-const OTHER_ENTITY_COPY = "Eastlake Studio (acquired by geniant) | 948 followers on LinkedIn. We are a product design studio based in Chicago.";
+// REAL stored text of Geniant 808eff85 (Vega's own LinkedIn company page).
+const OTHER_ENTITY_COPY = "Vega is now a part of geniant. Vega is a digital product studio based out of Dallas, Texas.";
 
 const judgment = (verdict: AuthorshipJudgment["verdict"], entity: string | null = null): AuthorshipJudgment => ({
   verdict, entity, reason: `stub: ${verdict}`, model: "stub-model",
@@ -87,7 +90,7 @@ describe("AUTHORSHIP decides the label (ingest branch)", () => {
   });
 
   it("planted competitor LinkedIn company page → competitor_voice (another named entity speaking), never client_voice", async () => {
-    const judge = stubJudge({ [OTHER_ENTITY_COPY]: judgment("other_entity", "Eastlake Studio") });
+    const judge = stubJudge({ [OTHER_ENTITY_COPY]: judgment("other_entity", "Vega") });
     const out = await applyAuthorshipToEntries(
       [{ url: OTHER_LINKEDIN_URL, snippet: OTHER_ENTITY_COPY, voice_class: "outside_voice_about_client" }],
       { ...SUBJECT, getText: (e) => String(e.snippet ?? ""), judge },
@@ -226,7 +229,7 @@ describe("backfill — apply writes one audit row per changed row, and skips dri
     });
     const plan = [
       { signal_id: "a", from: "outside_voice_about_client", to: "client_voice" as const, judge_verdict: "subject_company", judge_entity: null, judge_reason: "r", judge_model: "m" },
-      { signal_id: "b", from: "outside_voice_about_client", to: "competitor_voice" as const, judge_verdict: "other_entity", judge_entity: "Eastlake Studio", judge_reason: "r", judge_model: "m" },
+      { signal_id: "b", from: "outside_voice_about_client", to: "competitor_voice" as const, judge_verdict: "other_entity", judge_entity: "Vega", judge_reason: "r", judge_model: "m" },
       { signal_id: "drifted", from: "outside_voice_about_client", to: "client_voice" as const, judge_verdict: "subject_company", judge_entity: null, judge_reason: "r", judge_model: "m" },
     ];
     const out = await applyRestamp(store, { plan });

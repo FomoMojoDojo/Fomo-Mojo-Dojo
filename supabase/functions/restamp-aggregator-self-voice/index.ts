@@ -102,6 +102,8 @@ Deno.serve(async (req) => {
       gated: out.proposals.length,
       proposed_changes: changing.length,
       skipped_frozen: out.skipped_frozen,
+      // Rows whose judged text came from quote_source_text / evidence_excerpt AND differed from claim_text.
+      cleaner_text_available: out.cleaner_text_available,
       proposals: out.proposals,
       // The apply payload for the rows that WOULD change — the operator strikes rows, then posts it back.
       plan: changing.map<PlanRow>((p) => ({

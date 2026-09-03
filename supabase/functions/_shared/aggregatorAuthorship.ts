@@ -124,32 +124,85 @@ export function outcomeFor(j: AuthorshipJudgment, subjectName: string): VoiceOut
 }
 
 // ── local judge (qwen2.5:14b-instruct on the operator's Ollama; local-only) ─────
+//
+// CRITERION (operator ruling 2026-09-03, "tighten"): STRUCTURAL, never tonal. The first cut asked the
+// model whether text "read as marketing voice" — it equated neutral tone with third-party authorship
+// and left company-supplied About copy (Geniant 1e590a73, 7 false echoes; Edgewood e756386d, 8) as
+// outside voice. The judge is now told the HOST and PAGE TYPE, which FIELDS on that page are
+// company-supplied and which are platform-authored, and is asked ONE question: which field is this
+// text from, and who writes that field. Tone is not evidence.
+
+/** Field-ownership brief per aggregator host: who writes what on this page type. Informational for
+ *  the judge only — the URL gate table (AGGREGATOR_PROFILE_PATTERNS) is the sole gate and is unchanged. */
+const PAGE_BRIEFS: ReadonlyArray<{ host: string; brief: string }> = [
+  { host: "glassdoor.com", brief: "Glassdoor company Overview page. The 'About' / company description / mission field is COMPANY-SUPPLIED (the employer writes it, usually in the third person). Overall ratings, % recommend, interview stats, compensation ratings, review counts, pros/cons and salaries are PLATFORM- or REVIEWER-authored." },
+  { host: "indeed.com", brief: "Indeed company page. The company description is EMPLOYER-SUPPLIED; ratings, review counts and review text are EMPLOYEE- or PLATFORM-authored." },
+  { host: "linkedin.com", brief: "LinkedIn company page. The tagline, 'About' text and posts are written by the PAGE OWNER — the company that owns THIS page, which may be a different entity from the subject (an acquired studio's page is that studio's own copy). Follower counts are PLATFORM data." },
+  { host: "crunchbase.com", brief: "Crunchbase organization profile. The company description paragraph is COMPANY-SUPPLIED boilerplate; acquisition counts, funding, headcount ranges and 'most recent' facts are PLATFORM data." },
+  { host: "zoominfo.com", brief: "ZoomInfo company profile. The company description paragraph is COMPANY-SUPPLIED (taken from the company's own site, often 'X is a leading provider of…'); revenue estimates, headcount, activity/intent scores, PPP loan data, SIC/NAICS codes and news summaries are PLATFORM data." },
+  { host: "cbinsights.com", brief: "CB Insights company profile. The company description is written by CB INSIGHTS ANALYSTS (PLATFORM-authored) even when it reads like an About paragraph; founding year, HQ, competitors and funding are PLATFORM data; press entries are wire/press summaries." },
+  { host: "pitchbook.com", brief: "PitchBook profile. Descriptions, deal facts, headcount and HQ are PITCHBOOK-authored PLATFORM data." },
+  { host: "datanyze.com", brief: "Datanyze data-aggregator profile. Revenue and headcount estimates, NAICS/SIC codes, HQ and categories are PLATFORM-computed; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "getlatka.com", brief: "GetLatka data-aggregator profile. Revenue and team-size estimates and headlines are PLATFORM-computed; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "leadiq.com", brief: "LeadIQ data-aggregator profile. NAICS/SIC codes, contacts, headcount and news summaries are PLATFORM data; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "prospeo.io", brief: "Prospeo data-aggregator profile. Revenue and employee estimates and funding status are PLATFORM-computed; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "rocketreach.co", brief: "RocketReach data-aggregator profile. Category, location, employee count, management lists and NAICS/SIC codes are PLATFORM data; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "salary.com", brief: "Salary.com company salary page. Salary ranges and averages are PLATFORM-computed; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "craft.co", brief: "Craft.co company profile. Status, sector, founding year, HQ, revenue and headcount are PLATFORM data; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "owler.com", brief: "Owler company profile. Revenue/headcount estimates and competitor lists are PLATFORM data; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "dnb.com", brief: "Dun & Bradstreet company profile. Revenue, headcount, industry codes and location are PLATFORM data; a company description paragraph, when present, is COMPANY-SUPPLIED boilerplate." },
+  { host: "bbb.org", brief: "BBB business profile. The 'Business Details' / products-and-services description and stated leadership are COMPANY-SUPPLIED; accreditation status and dates, BBB rating, licensing lines and complaint summaries are BBB-authored PLATFORM data; complaint and review bodies are CUSTOMER-authored." },
+  { host: "guidestar.org", brief: "Candid / GuideStar nonprofit profile. Mission, program and 'what we do' descriptions are SELF-REPORTED by the nonprofit (COMPANY-SUPPLIED); EIN, IRS category, seals of transparency and financial figures are PLATFORM data." },
+  { host: "charitynavigator.org", brief: "Charity Navigator profile. Star ratings, scores, expense ratios, board-independence metrics and 'not yet scored' notes are CHARITY NAVIGATOR-authored PLATFORM data; a quoted mission statement is the nonprofit's own copy." },
+  { host: "g2.com", brief: "G2 product / seller profile. The product or seller description is VENDOR-SUPPLIED; star ratings, review counts and 'users praise…' summaries are REVIEWER- or PLATFORM-authored." },
+  { host: "globenewswire.com", brief: "PRESS WIRE (GlobeNewswire). A release body — including its self-descriptive boilerplate ('X, a leading…', 'X announced…') — is COMPANY-AUTHORED: the company wrote it and paid to distribute it. Only the wire's own index / search-listing lines (headline lists, dates, result counts) are PLATFORM-authored." },
+  { host: "prnewswire.com", brief: "PRESS WIRE (PR Newswire). A release body — including its self-descriptive boilerplate — is COMPANY-AUTHORED; only the wire's own index / search-listing lines are PLATFORM-authored." },
+  { host: "businesswire.com", brief: "PRESS WIRE (Business Wire). A release body — including its self-descriptive boilerplate — is COMPANY-AUTHORED; only the wire's own index / search-listing lines are PLATFORM-authored." },
+];
+const GENERIC_BRIEF = "Third-party company profile page. A company description / About / mission paragraph is COMPANY-SUPPLIED; ratings, review counts, complaints, financial or PPP data, headcount and revenue estimates, SIC/NAICS codes, and analyst blurbs are PLATFORM-authored.";
+
+export function pageBriefFor(url: string): { host: string; brief: string } {
+  const host = hostOf(url);
+  for (const b of PAGE_BRIEFS) {
+    if (host === b.host || host.endsWith(`.${b.host}`)) return b;
+  }
+  return { host: host || "unknown host", brief: GENERIC_BRIEF };
+}
+
 const JUDGE_SYSTEM =
-  "You judge the AUTHORSHIP of one short statement that was collected from a third-party aggregator page " +
-  "(a company profile / overview / about page on a site such as Glassdoor, LinkedIn, Crunchbase, ZoomInfo, BBB). " +
-  "The question is NOT what the statement is about — it is WHOSE WORDS these are. The SUBJECT company is named. " +
-  "Return exactly one verdict:\n" +
-  "- subject_company: the words are the SUBJECT company's own self-description reproduced on the aggregator — " +
-  "company-supplied boilerplate ('X is a leading…', 'we deliver…', mission / tagline / 'about' copy written in the company's own voice), " +
-  "or a close paraphrase that carries only the company's own claims about itself.\n" +
-  "- other_entity: the words are ANOTHER named company's or organization's own voice — a different company's profile page " +
-  "describing itself, an acquired or subsidiary studio describing itself, a partner describing its own program. Name that entity.\n" +
-  "- third_party: the words are the aggregator's or the public's own observation — star ratings, review counts, employee or customer " +
-  "reviews, journalist reporting, aggregator-computed facts (headcount, revenue estimates, funding, founding year, location), rankings, " +
-  "or a neutral factual summary that does not read as the company's marketing voice.\n" +
-  "- uncertain: you genuinely cannot tell whose words these are.\n" +
-  "Judge authorship, not topic: a statement ABOUT the subject written by reviewers or the aggregator is third_party even though it names " +
-  "the subject. Trailing aggregator metadata (e.g. 'Only 3 reviews visible') does not change the authorship of the main statement. " +
-  "When the statement is too thin to tell, answer uncertain — never guess subject_company.\n" +
-  'Return JSON only: {"verdict":"subject_company|other_entity|third_party|uncertain","entity":"<the named speaking entity, or null>",' +
-  '"reason":"one sentence, in your own words, citing what in the statement shows whose voice it is"}.';
+  "You determine WHO WROTE one short text that was collected from a third-party company-profile page (an aggregator such as " +
+  "Glassdoor, LinkedIn, Crunchbase, ZoomInfo, BBB, GuideStar, CB Insights, or a press wire). You are told the SUBJECT company, the " +
+  "HOST, and a PAGE BRIEF that says which fields on that page are COMPANY-SUPPLIED and which are PLATFORM-AUTHORED.\n" +
+  "Answer ONE question — from which field does this text come, and who writes that field on this host:\n" +
+  "- subject_company: the text is the SUBJECT company's own description copy — the company-supplied About / description / mission / " +
+  "products-and-services field, or a press-release body the company authored. Company-supplied descriptions are routinely plain, " +
+  "factual and written in the third person ('X focuses on…', 'X is a provider of…', 'X CSU is the only…'). That is still the company's copy.\n" +
+  "- other_entity: the text is ANOTHER named company's or organization's own copy — e.g. a different company's LinkedIn page describing " +
+  "itself, an acquired or subsidiary studio's own tagline or post, a partner's own program description. Name that entity.\n" +
+  "- third_party: the text is PLATFORM-, REVIEWER- or ANALYST-authored data — star ratings, % recommend, review counts, complaint " +
+  "bodies, employee or customer reviews, salaries, PPP-loan or financial data, headcount / revenue estimates, activity scores, " +
+  "SIC/NAICS codes, acquisition/deal counts, founding-year/HQ facts as a platform summary, CB Insights or Charity Navigator analyst " +
+  "blurbs, and a wire's own index or search-listing lines.\n" +
+  "- uncertain: the text could come from either kind of field and nothing decides it.\n" +
+  "RULES. (1) TONE IS NOT EVIDENCE: neutral, factual or unpolished wording does NOT make text platform-authored, and polished wording " +
+  "does NOT make it company copy — decide by the FIELD and its author on this host. (2) A statement ABOUT the subject can be any of " +
+  "the three; naming the subject decides nothing. (3) If company description copy carries an appended platform-metadata fragment " +
+  "(e.g. 'Only 3 employee reviews publicly visible.', 'SIC Code 17,179; NAICS Code 56,562.'), judge the MAIN BODY and ignore the " +
+  "appended fragment. (4) The subject may appear under variants (lower-case, with LLC/Inc, an acronym). (5) On a press wire, a " +
+  "release body is the issuing company's copy even when it reports an event in the third person ('X announced the acquisition of…'). " +
+  "(6) When the text could only be a company-supplied description field but you cannot tell WHICH company supplied it, answer uncertain.\n" +
+  'Return JSON only: {"verdict":"subject_company|other_entity|third_party|uncertain","entity":"<the named entity whose copy this is, or null>",' +
+  '"reason":"one sentence naming the page FIELD this text comes from and who writes it on this host"}.';
 
 function buildJudgeUser(input: AuthorshipInput): string {
+  const page = pageBriefFor(input.url);
   return (
     `SUBJECT COMPANY: ${input.subjectName}${input.subjectHost ? ` (${input.subjectHost})` : ""}\n` +
-    `SOURCE URL: ${input.url}\n\n` +
-    `STATEMENT (verbatim, may be truncated):\n${input.text.slice(0, 3600)}\n\n` +
-    `Whose words are these? Return the JSON verdict.`
+    `HOST: ${page.host}\n` +
+    `SOURCE URL: ${input.url}\n` +
+    `PAGE BRIEF: ${page.brief}\n\n` +
+    `TEXT (verbatim, may be truncated):\n${input.text.slice(0, 3600)}\n\n` +
+    `Which field is this text from, and who wrote it? Return the JSON verdict.`
   );
 }
 
@@ -311,9 +364,23 @@ export type CandidateSignal = {
   voice_class: string | null;
   claim_text: string;
   evidence_excerpt: string;
+  quote_source_text?: string | null;
   held_at: string | null;
   raw_payload: Record<string, unknown>;
 };
+
+export type JudgedTextSource = "quote_source_text" | "evidence_excerpt" | "claim_text";
+/** The text the judge sees for a stored row. claim_text may carry an appended E4-class analysis
+ *  fragment ("Only 3 employee reviews publicly visible."); prefer the retained source text, then the
+ *  excerpt, and fall back to claim_text. Reports which one was used so the plan can count how many
+ *  rows had a cleaner text available. */
+export function judgedTextFor(s: Pick<CandidateSignal, "claim_text" | "evidence_excerpt" | "quote_source_text">): { text: string; source: JudgedTextSource } {
+  const qst = String(s.quote_source_text ?? "").trim();
+  if (qst) return { text: qst, source: "quote_source_text" };
+  const ee = String(s.evidence_excerpt ?? "").trim();
+  if (ee) return { text: ee, source: "evidence_excerpt" };
+  return { text: String(s.claim_text ?? "").trim(), source: "claim_text" };
+}
 export type DeltaBacking = { echoed: number; divergent: number; internally_silent: number };
 export type AuditRow = {
   company_id: string;
@@ -356,6 +423,9 @@ export type RestampProposal = {
   to: VoiceOutcome;
   held: boolean;
   text: string;
+  /** Which stored field the judged text came from; `cleaner_text` = it differs from claim_text. */
+  text_source: JudgedTextSource;
+  cleaner_text: boolean;
   judge: AuthorshipJudgment;
   echo_deltas: number;
   delta_backing: DeltaBacking;
@@ -370,7 +440,7 @@ function isFrozen(co: { id: string; frozen: boolean } | undefined): boolean {
 export async function planRestamp(
   store: RestampStore,
   opts: { companyId?: string; judge: AuthorshipJudge; log?: (s: string) => void },
-): Promise<{ proposals: RestampProposal[]; scanned: number; skipped_frozen: string[] }> {
+): Promise<{ proposals: RestampProposal[]; scanned: number; skipped_frozen: string[]; cleaner_text_available: number }> {
   const companies = await store.loadCompanies();
   const byId = new Map(companies.map((c) => [c.id, c]));
   if (opts.companyId) {
@@ -384,11 +454,15 @@ export async function planRestamp(
   const gated = signals.filter((s) => !!matchAggregatorProfileUrl(String(s.source_url ?? "")));
   const backing = await store.loadDeltaBacking(gated.map((s) => s.id));
   const proposals: RestampProposal[] = [];
+  let cleanerTextAvailable = 0;
   for (const s of gated) {
     const m = matchAggregatorProfileUrl(String(s.source_url))!;
     const co = byId.get(s.company_id);
     if (!co || isFrozen(co)) continue; // belt-and-braces: never judge a frozen company's row
-    const text = (s.evidence_excerpt || s.claim_text || "").trim();
+    const jt = judgedTextFor(s);
+    const text = jt.text;
+    const cleaner = jt.source !== "claim_text" && text !== String(s.claim_text ?? "").trim();
+    if (cleaner) cleanerTextAvailable++;
     const j = text
       ? await opts.judge({ subjectName: co.name, subjectHost: hostOf(co.website ?? ""), url: String(s.source_url), text })
       : { verdict: "uncertain" as const, entity: null, reason: "empty statement — nothing to judge", model: "none" };
@@ -396,11 +470,11 @@ export async function planRestamp(
     const to = j.verdict === "judge_failed" ? null : outcomeFor(j, co.name);
     proposals.push({
       signal_id: s.id, company_id: s.company_id, company_name: co.name, host: m.host, path: m.path,
-      from: s.voice_class, to, held: !!s.held_at, text, judge: j, echo_deltas: b.echoed, delta_backing: b,
+      from: s.voice_class, to, held: !!s.held_at, text, text_source: jt.source, cleaner_text: cleaner, judge: j, echo_deltas: b.echoed, delta_backing: b,
     });
     opts.log?.(`${co.name} ${s.id.slice(0, 8)} ${m.host} ${s.voice_class} → ${to ?? "(unchanged)"} [${j.verdict}] ${j.reason}`);
   }
-  return { proposals, scanned: signals.length, skipped_frozen: skippedFrozen };
+  return { proposals, scanned: signals.length, skipped_frozen: skippedFrozen, cleaner_text_available: cleanerTextAvailable };
 }
 
 export type PlanRow = {
@@ -516,7 +590,7 @@ export async function revertRestamp(
 // ── supabase-backed store ────────────────────────────────────────────────────────
 // deno-lint-ignore no-explicit-any
 type SupabaseLike = { from: (t: string) => any };
-const SIGNAL_COLS = "id, company_id, source_url, voice_class, claim_text, evidence_excerpt, held_at, raw_payload";
+const SIGNAL_COLS = "id, company_id, source_url, voice_class, claim_text, evidence_excerpt, quote_source_text, held_at, raw_payload";
 const PAGE = 1000;
 const IN_CHUNK = 200;
 
