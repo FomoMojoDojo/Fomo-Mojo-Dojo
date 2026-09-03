@@ -108,6 +108,17 @@ Deno.serve(async (req) => {
       body: JSON.stringify({ company_id, parent_run_id }),
     }).catch(() => {}));
   };
+  // TRIGGER i for the outside Mojo Score (orphan #6): recurrence is the LAST of its two dependencies, so
+  // when this chain reaches a terminal (completed OR failed both count for scoring), fire outside-score
+  // fire-and-forget. It self-gates (frozen → first-fill → gap-pairs-also-terminal), so a fire on the
+  // fresh-A′ path where gap-pairs is somehow still running simply no-ops; the fill's TRIGGER ii covers
+  // the both-already-terminal case. One path, first-fill-guarded — never double-scores.
+  const fireOutsideScore = () => {
+    waitUntil(fetch(`${url}/functions/v1/outside-score`, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      body: JSON.stringify({ company_id }),
+    }).catch(() => {}));
+  };
 
   let finalizeClusters: number | null = null;
   const out = await runRecurrenceStep({
@@ -147,11 +158,13 @@ Deno.serve(async (req) => {
       await writeIntegrity("completed", empty ? 0 : chain.pairs.length, finalizeClusters, badged, null);
       await closeLedger("completed", empty ? "no fresh pairs — reconciled from banked verdicts" : null);
       await closeDispatch("completed");
+      fireOutsideScore(); // recurrence terminal → outside score may now be scorable (TRIGGER i)
     },
     closeFailed: async (reason) => {
       await writeIntegrity("failed", chain.pairs.length, null, null, reason);
       await closeLedger("failed", reason);
       await closeDispatch("failed");
+      fireOutsideScore(); // failed still counts terminal for scoring (record_strength reads what exists)
     },
     selfFire,
   });

@@ -68,6 +68,41 @@ export function marketDiscoveryNeedsFire(
   return true; // no/partial/failed/unconfirmed manifest → resume
 }
 
+// ── outside_score dependency gate + first-fill (pure) ────────────────────────────────────────────
+// The outside Mojo Score (computeOutsideScore, outside-v1.1.0) reads outside-voice signals + public
+// deltas + the recurrence-accepted set, so it runs ONLY after BOTH public_gap_pairs AND signal
+// recurrence have TERMINATED. "Terminal for scoring" is generous: completed / failed, or an unconfirmed
+// HOLD (status 'running' with an 'unconfirmed…' note) — record_strength reads whatever accepted set
+// exists, so a non-'completed' terminal still scores (the integrity note flags it). Only a LIVE-running
+// row (running, no unconfirmed marker) — or NO row at all — defers.
+export type DepRow = { status?: string | null; error_text?: string | null } | null;
+export function depTerminalForScore(row: DepRow): boolean {
+  if (!row) return false; // the dependency never ran → not terminal (defer, never score on absence)
+  const st = String(row.status ?? "");
+  if (st === "completed" || st === "failed") return true;
+  if (st === "running" && /^unconfirmed/i.test(String(row.error_text ?? ""))) return true; // HOLD counts
+  return false; // live running → defer
+}
+export function outsideScoreDepsTerminal(gapPairs: DepRow, recurrence: DepRow): boolean {
+  return depTerminalForScore(gapPairs) && depTerminalForScore(recurrence);
+}
+// First-fill: an existing scored outside-* row is terminal for the surface (skip forever — insert-only,
+// the beat reads the newest). Otherwise skip only when an outside-score record already exists FOR THE
+// CURRENT baseline run — a NEWER baseline run id re-arms (its ineligible verdict was for older signal).
+export function outsideScoreFirstFill(args: {
+  hasOutsideScoreRow: boolean;
+  recordBaselineRunId: string | null;  // baseline id the newest first_read_outside_score record carries
+  currentBaselineRunId: string | null; // newest public_baseline_runs.id for the company
+}): "skip" | "fire" {
+  if (args.hasOutsideScoreRow) return "skip"; // already scored — never recompute (across baselines)
+  if (
+    args.currentBaselineRunId !== null &&
+    args.recordBaselineRunId !== null &&
+    args.recordBaselineRunId === args.currentBaselineRunId
+  ) return "skip"; // an ineligible verdict already stands for THIS baseline — a new baseline re-arms
+  return "fire";
+}
+
 export type KindStatus = "completed" | "failed" | "completed_empty";
 export type GenPerKind = Record<string, "written" | "rejected" | "error">;
 

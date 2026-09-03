@@ -874,11 +874,13 @@ function fmtLeverValue(n: number): string {
  * Band name + band meaning (ladder copy) + the five micro-moves, each value / max with its
  * persisted explanation, ordered by headroom desc. Rendered ONLY from the mojo_scores
  * snapshot — no live recompute, no unearned adjectives. No score → the SAME honest empty
- * state as beat 7 (grounded in scoreLooked, never array emptiness).
+ * state as beat 7, grounded in the outside-score PRODUCER record (ineligible vs never-fired).
  */
 export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
   const b = read.whereYouStand;
-  const emptyNote = read.scoreLooked ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
+  // Producer-grounded (2026-09-02): the producer ran and found <10 signals → NOT_ENOUGH; it never fired
+  // (no record) → NO_SCORE. Never baseline-ran-ness. A present score row renders the band, not a note.
+  const emptyNote = read.outsideScoreState === "ineligible" ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
       <ActHeader headline={WHERE_HEADLINE} rationale={RATIONALE_WHERE} />
@@ -1237,10 +1239,11 @@ export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
   const score = read.score?.value ?? null;
   const active = score !== null ? bandForScore(score) : null;
   const ladder = [...SCORE_BANDS].reverse();
-  // S1: the empty state is grounded in a PERSISTED record — scoreLooked (a public_baseline_run
-  // exists) → the read ran but didn't clear the scoring threshold; else no read yet. Never
-  // absent-by-omission: the Mojo Score beat is always mounted (product law).
-  const emptyNote = read.scoreLooked ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
+  // S1: the empty state is grounded in the outside-score PRODUCER record (first_read_outside_score) —
+  // 'ineligible' → the producer ran and <10 outside signals cleared the floor (NOT_ENOUGH); no record →
+  // the producer never fired (NO_SCORE). Never baseline-ran-ness, never absent-by-omission: the Mojo
+  // Score beat is always mounted (product law). A present score row renders the band, not a note.
+  const emptyNote = read.outsideScoreState === "ineligible" ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <>
       <ActHeader

@@ -6,6 +6,9 @@ import {
   missingPublicReadKinds,
   marketReadIsEmpty,
   marketDiscoveryNeedsFire,
+  depTerminalForScore,
+  outsideScoreDepsTerminal,
+  outsideScoreFirstFill,
   runFirstReadFill,
   runChainKinds,
   classifyGapPairsAfterTimeout,
@@ -119,6 +122,37 @@ describe("marketDiscoveryNeedsFire — MANIFEST is the completeness authority (n
     expect(marketDiscoveryNeedsFire({ status: "running", chain_state: { cursor: 4, candidates: new Array(6) } }, false)).toBe(true);
     // completed but cursor short of total (defensive) → still resumes
     expect(marketDiscoveryNeedsFire({ status: "completed", chain_state: { cursor: 3, candidates: new Array(6) } }, false)).toBe(true);
+  });
+});
+
+describe("outside_score dependency gate + first-fill (orphan #6)", () => {
+  it("depTerminalForScore: completed/failed/unconfirmed-HOLD are terminal; live-running / absent are not", () => {
+    expect(depTerminalForScore({ status: "completed" })).toBe(true);
+    expect(depTerminalForScore({ status: "failed" })).toBe(true);
+    // an unconfirmed HOLD is status 'running' with an 'unconfirmed…' note — counts terminal for scoring
+    expect(depTerminalForScore({ status: "running", error_text: "unconfirmed: chunk at cursor 2 …" })).toBe(true);
+    // a live-running row (no unconfirmed marker) DEFERS
+    expect(depTerminalForScore({ status: "running", error_text: null })).toBe(false);
+    // never ran → not terminal (never score on absence)
+    expect(depTerminalForScore(null)).toBe(false);
+  });
+  it("outsideScoreDepsTerminal: fires ONLY when BOTH gap-pairs and recurrence are terminal", () => {
+    const done = { status: "completed" as const };
+    const live = { status: "running", error_text: null };
+    expect(outsideScoreDepsTerminal(done, done)).toBe(true);
+    expect(outsideScoreDepsTerminal(done, live)).toBe(false); // recurrence still running → defer
+    expect(outsideScoreDepsTerminal(live, done)).toBe(false); // gap-pairs still running → defer
+    expect(outsideScoreDepsTerminal(null, done)).toBe(false); // gap-pairs never ran → defer
+  });
+  it("outsideScoreFirstFill: an existing outside row skips forever; an ineligible record skips only for ITS baseline (a new baseline re-arms)", () => {
+    // already scored → skip regardless of baseline
+    expect(outsideScoreFirstFill({ hasOutsideScoreRow: true, recordBaselineRunId: "60", currentBaselineRunId: "61" })).toBe("skip");
+    // no row, ineligible record stands for the CURRENT baseline → skip (don't re-run the same verdict)
+    expect(outsideScoreFirstFill({ hasOutsideScoreRow: false, recordBaselineRunId: "60", currentBaselineRunId: "60" })).toBe("skip");
+    // FALSIFICATION (re-arm): a NEWER baseline run id ⇒ the old ineligible record no longer matches → FIRE
+    expect(outsideScoreFirstFill({ hasOutsideScoreRow: false, recordBaselineRunId: "60", currentBaselineRunId: "61" })).toBe("fire");
+    // never fired (no row, no record) → fire
+    expect(outsideScoreFirstFill({ hasOutsideScoreRow: false, recordBaselineRunId: null, currentBaselineRunId: "60" })).toBe("fire");
   });
 });
 

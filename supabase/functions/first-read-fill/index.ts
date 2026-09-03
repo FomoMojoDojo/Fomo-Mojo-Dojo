@@ -310,7 +310,17 @@ Deno.serve(async (req) => {
     },
   };
 
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }));
+  // OUTSIDE SCORE (orphan #6) — the outside Mojo Score producer. NOT a sequential chain kind: it depends
+  // on signal recurrence, which is handed-off (async), so it cannot run inline after the recurrence
+  // DISPATCH. Instead it is fired fire-and-forget here (TRIGGER ii) and self-gates: on a fresh A′ its deps
+  // are still running → it no-ops (deps_pending); the recurrence-step finalize re-fires it (TRIGGER i)
+  // once recurrence lands. On a re-invoke where both deps are ALREADY terminal (Geniant), it scores now.
+  // One path, first-fill-guarded — never double-scores.
+  const fireOutsideScore = () => fetch(`${url}/functions/v1/outside-score`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ company_id }),
+  }).catch(() => {});
+  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }).then(fireOutsideScore));
 
   return json({ ok: true, ...result });
 });

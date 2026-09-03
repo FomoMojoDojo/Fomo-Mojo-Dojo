@@ -21,14 +21,19 @@ describe("S1 — Mojo Score beat is ALWAYS in the mounted tree", () => {
     expect(container.textContent).toContain("16"); // the number is on the ladder
   });
 
-  it("renders an HONEST EMPTY (not absent) for a company WITHOUT a score — looked", () => {
-    const { container } = render(<ScoreReveal read={read({ score: null, scoreLooked: true })} />);
-    expect(container.textContent).toContain(SCORE_HEADLINE); // FALSIFICATION: still mounted
+  it("EMPTY grounded in the PRODUCER record: producer ran + ineligible → NOT_ENOUGH", () => {
+    // Producer-grounded (2026-09-02): the note comes from first_read_outside_score, NOT scoreLooked.
+    // FALSIFICATION: with the old scoreLooked grounding this case would need scoreLooked=true; here
+    // scoreLooked is irrelevant — the 'ineligible' record alone drives NOT_ENOUGH.
+    const { container } = render(<ScoreReveal read={read({ score: null, outsideScoreState: "ineligible", scoreLooked: false })} />);
+    expect(container.textContent).toContain(SCORE_HEADLINE); // still mounted
     expect(container.textContent).toContain("Not enough public signal to score yet.");
   });
 
-  it("renders an HONEST EMPTY for a company WITHOUT a score — not yet read", () => {
-    const { container } = render(<ScoreReveal read={read({ score: null, scoreLooked: false })} />);
+  it("EMPTY grounded in the PRODUCER record: producer NEVER fired (no record) → NO_SCORE", () => {
+    // No record even though baseline ran (scoreLooked=true) → NO_SCORE, not NOT_ENOUGH. FALSIFICATION:
+    // the old scoreLooked grounding rendered NOT_ENOUGH here — the record grounding renders NO_SCORE.
+    const { container } = render(<ScoreReveal read={read({ score: null, outsideScoreState: null, scoreLooked: true })} />);
     expect(container.textContent).toContain(SCORE_HEADLINE); // still mounted
     expect(container.textContent).toContain("No score snapshot yet.");
   });

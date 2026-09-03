@@ -94,10 +94,11 @@ describe("beat 8 — Where you stand (W1)", () => {
     expect(text).not.toContain("0 / 2");
   });
 
-  it("no score → the SAME honest empty state as beat 7 (scoreLooked-grounded)", () => {
-    const looked: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, scoreLooked: true, whereYouStand: null };
-    const notYet: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, scoreLooked: false, whereYouStand: null };
-    expect(render(<ActWhereYouStand read={looked} />).container.textContent).toContain("Not enough public signal to score yet.");
-    expect(render(<ActWhereYouStand read={notYet} />).container.textContent).toContain("No score snapshot yet.");
+  it("no score → the SAME honest empty state as beat 7 (PRODUCER-record-grounded)", () => {
+    // Grounded in first_read_outside_score (2026-09-02): 'ineligible' → NOT_ENOUGH; no record → NO_SCORE.
+    const ineligible: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, outsideScoreState: "ineligible", whereYouStand: null };
+    const neverFired: FirstReadPreviewData = { ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, outsideScoreState: null, whereYouStand: null };
+    expect(render(<ActWhereYouStand read={ineligible} />).container.textContent).toContain("Not enough public signal to score yet.");
+    expect(render(<ActWhereYouStand read={neverFired} />).container.textContent).toContain("No score snapshot yet.");
   });
 });

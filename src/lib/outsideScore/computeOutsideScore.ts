@@ -52,7 +52,10 @@
 // HALF-UP to an integer; each component is stored UNROUNDED.
 
 export const OUTSIDE_METHODOLOGY_VERSION = "outside-v1.1.0";
-import { categorizeHost, coverageSubline, hostFromUrl, OUTSIDE_KINDS, type SourceCategory } from "./sourceCategories";
+// Explicit .ts extension — this pure module is now imported by the outside-score EDGE fn (Deno runtime,
+// which requires the extension); allowImportingTsExtensions is on, so Vite/vitest/tsc accept it too. No
+// formula change — the anchor + micro-moves below are untouched.
+import { categorizeHost, coverageSubline, hostFromUrl, OUTSIDE_KINDS, type SourceCategory } from "./sourceCategories.ts";
 
 export const OUTSIDE_ANCHOR = 15;
 // Signed (2026-08-22): record_strength lever sub-line when recurrence has not been run for a company.

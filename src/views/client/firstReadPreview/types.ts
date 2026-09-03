@@ -306,6 +306,11 @@ export type FirstReadPreviewData = {
   signals: FRSignal[];
   /** Outside-methodology score rows ONLY (R1) — v1.1.0 never renders here. */
   score: FRScore | null;
+  /** The outside-score PRODUCER's persisted verdict (first_read_outside_score integrity), grounding the
+   *  empty note: 'scored'/'ineligible' from the record, or null when the producer never fired. The beat
+   *  renders the band from `score`; when `score` is null it renders NOT_ENOUGH (ineligible) vs NO_SCORE
+   *  (never-fired) FROM THIS record — never from baseline-ran-ness. */
+  outsideScoreState: "scored" | "ineligible" | null;
   gapPairs: FRGapPair[];
   /** Beat 4 render unit (2026-08-21): declared statements, each with its evidence pairs beneath. */
   gapStatements: FRGapStatement[];
@@ -378,6 +383,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   markets: [],
   signals: [],
   score: null,
+  outsideScoreState: null,
   gapPairs: [],
   gapStatements: [],
   gapCounts: { contradicted: 0, reverifying: 0, unechoed: 0, confirmed: 0 },

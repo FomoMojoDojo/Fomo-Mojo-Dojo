@@ -561,6 +561,16 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ? { value: Math.round(Number(scoreRow.total_score)), computedAt: scoreRow.computed_at, methodologyVersion: scoreRow.methodology_version }
           : null;
 
+        // The outside-score PRODUCER's verdict (first_read_outside_score integrity) — grounds the empty
+        // note in a producer record (never-fired vs fired-and-ineligible), not baseline-ran-ness.
+        const { data: osRows } = await loose()
+          .from("integrity_runs").select("excluded_by_rule")
+          .eq("company_id", companyId).eq("component", "first_read_outside_score")
+          .order("ran_at", { ascending: false }).limit(1);
+        const osState = (((osRows ?? []) as Array<{ excluded_by_rule?: { state?: unknown } | null }>)[0]?.excluded_by_rule?.state ?? null) as string | null;
+        const outsideScoreState: "scored" | "ineligible" | null =
+          osState === "scored" || osState === "ineligible" ? osState : null;
+
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await loose()
           .from("claim_deltas")
@@ -1074,6 +1084,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             openQuestionsIntegrity,
             signals,
             score,
+            outsideScoreState,
             gapPairs: orderedGapPairs,
             gapStatements,
             gapCounts,
