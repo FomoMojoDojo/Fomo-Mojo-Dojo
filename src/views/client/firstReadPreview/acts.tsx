@@ -142,10 +142,24 @@ const YOUSAY_HEADLINE = "What you say."; // signed
 const YOUSAY_SUB = "Read from your own channels — your site, your socials, your listings."; // signed
 const SERVE_HEADLINE = "Who you serve."; // signed
 const SERVE_SUB = "Groups of people trying to get something done — and the job they're hiring you for."; // signed
-const OURREAD_HEADLINE = "Where this points."; // signed
-const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // signed
+const OURREAD_HEADLINE = "Where this points."; // signed (superseded by the promise/positioning/strategy split — kept for the dark ActOurRead)
+const OURREAD_SUB = "What we'd posit about your positioning, strategy and promise — hypotheses for the room to test, not verdicts."; // signed (superseded)
+// ── Flow restructure (2026-09-02): the "Where this points" page splits into three unpacking pages
+//    (Promise → Positioning → Strategy) + two siesta interludes. All DRAFT pending operator signature. ──
+const PROMISE_TITLE = "Your promise"; // signed
+const PROMISE_WHY = "What the record hears you promising — the first thing to unpack."; // signed
+const POSITIONING_TITLE = "Your positioning"; // signed
+const POSITIONING_WHY = "Behind that promise is a position — where you stand against the alternatives."; // signed
+const STRATEGY_TITLE = "Your strategy"; // signed
+const STRATEGY_WHY = "Behind that position is a set of choices — where to play, how to win."; // signed
+const SIESTA1_HEADLINE = "That's what the record shows. Now, what it means."; // signed
+const SIESTA1_LINE = "Four commitments the record lets us read — then the base they sit on."; // signed
+const SIESTA2_HEADLINE = "That's your base, as the record shows it."; // signed
+const SIESTA2_LINE = "Every route on the map starts here. Now — what you offer, and how likely it is to work."; // signed
 // Beat 9 opens with the COMPLETE BaseGate (headline + framing + BaseAlignment illustration).
-const MARKET_POINTER_NOTE = "Who you serve — coming up"; // signed
+// R1 (2026-09-02): SUPERSEDED BY REORDER — "Who you serve" now precedes the Base in the ruled order, so
+// this forward pointer was false. Removed from the Base render; the constant is retained (no replacement).
+const MARKET_POINTER_NOTE = "Who you serve — coming up"; // signed (superseded — no longer rendered)
 const WHERE_HEADLINE = "Where you stand."; // signed
 const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // signed
 // OW-3 (2026-08-20) — beat 3 own-words. SIGNED.
@@ -1039,6 +1053,88 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
   );
 }
 
+// ── The three unpacking pages (flow restructure). Each renders exactly what ActOurRead rendered for
+//    its kind (structure ported, content rules intact) + its own headline + WHY-THIS (unpacking voice).
+//    The LABEL_* section eyebrow is kept so no signed string is dropped. ──
+export function ActPromise({ read }: { read: FirstReadPreviewData }) {
+  const pr = read.promise;
+  return (
+    <>
+      <ActHeader headline={PROMISE_TITLE} rationale={PROMISE_WHY} />
+      {/* R2: no inner LABEL_ eyebrow — the page title ("Your promise") carries it. */}
+      <main className="fr-stagger">
+        {pr?.text ? (
+          <>
+            <p className="text-2xl font-semibold leading-snug">{pr.text}</p>
+            {pr.sourceTag ? <div className="mt-4"><SourceTag>{pr.sourceTag.label}</SourceTag></div> : null}
+          </>
+        ) : (
+          <GatedLine>{PROMISE_NOT_ENOUGH}</GatedLine>
+        )}
+      </main>
+    </>
+  );
+}
+
+export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
+  const p = read.positioning;
+  return (
+    <>
+      <ActHeader headline={POSITIONING_TITLE} rationale={POSITIONING_WHY} />
+      {/* R2: no inner LABEL_ eyebrow — the page title ("Your positioning") carries it. */}
+      <main className="fr-stagger">
+        {p ? (
+          <>
+            {p.category ? <p className="text-2xl font-semibold leading-snug">{sentenceCase(p.category)}</p> : null}
+            {p.value ? (
+              <p className="mt-3 max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{sentenceCase(p.value)}</p>
+            ) : null}
+            {p.differentiators.length > 0 ? (
+              <NumberedList items={p.differentiators} className="mt-4" />
+            ) : null}
+            {p.sourceTag ? <div className="mt-4"><SourceTag>{p.sourceTag.label}</SourceTag></div> : null}
+          </>
+        ) : (
+          <GatedLine>{POSITIONING_NOT_ENOUGH}</GatedLine>
+        )}
+      </main>
+    </>
+  );
+}
+
+export function ActStrategy({ read }: { read: FirstReadPreviewData }) {
+  const st = read.strategy;
+  return (
+    <>
+      <ActHeader headline={STRATEGY_TITLE} rationale={STRATEGY_WHY} />
+      {/* R2: no inner LABEL_ eyebrow — the page title ("Your strategy") carries it. */}
+      <main className="fr-stagger">
+        {st ? <CascadeLadder st={st} /> : <GatedLine>{STRATEGY_NOT_ENOUGH}</GatedLine>}
+      </main>
+    </>
+  );
+}
+
+// ── Siesta interludes (BaseGate shape: no props, no read). A headline + one line, centered, generous
+//    whitespace. No chips, no rules, no icons, no illustration. Rationale-exempt by design. ──
+export function ActSiesta1() {
+  return (
+    <div className="flex flex-col items-center py-24 text-center">
+      <h1 className="max-w-2xl text-4xl font-extralight tracking-tight md:text-5xl">{SIESTA1_HEADLINE}</h1>
+      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(0 0% 100% / 0.85)" }}>{SIESTA1_LINE}</p>
+    </div>
+  );
+}
+
+export function ActSiesta2() {
+  return (
+    <div className="flex flex-col items-center py-24 text-center">
+      <h1 className="max-w-2xl text-4xl font-extralight tracking-tight md:text-5xl">{SIESTA2_HEADLINE}</h1>
+      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(0 0% 100% / 0.85)" }}>{SIESTA2_LINE}</p>
+    </div>
+  );
+}
+
 export function ActRecord({ read }: { read: FirstReadPreviewData }) {
   const [open, setOpen] = useState(false);
   const shown = read.signals.slice(0, SHOWN_FULL_SIZE);
@@ -1407,11 +1503,11 @@ export function BaseGate() {
           Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.
         </p>
         <div className="mt-8"><BeatWhy>{RATIONALE_BASE}</BeatWhy></div>
+        {/* R1: marketNote (MARKET_POINTER_NOTE) removed — "Who you serve" now precedes the Base. */}
         <BaseAlignment
           pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
           caption={PAIRS_UNCOMPUTED_CAPTION}
           goalCaption="When your base is aligned, you look like one company."
-          marketNote={MARKET_POINTER_NOTE}
         />
       </div>
     </div>

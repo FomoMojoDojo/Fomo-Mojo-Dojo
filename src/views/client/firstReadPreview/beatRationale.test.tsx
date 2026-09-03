@@ -7,6 +7,7 @@ import { render } from "@testing-library/react";
 import {
   ColdOpen, ActWhatYouSay, ActGap, ActWhoYouServe, ActFindings, ScoreReveal,
   ActWhereYouStand, BaseGate, ActQuestions, ActNext, OFFER_RATIONALE,
+  ActPromise, ActPositioning, ActStrategy, ActSiesta1, ActSiesta2,
 } from "./acts";
 import { BeatWhy } from "./primitives";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRStatusConflict } from "./types";
@@ -61,6 +62,31 @@ describe("signed per-beat rationale lines — present and exact", () => {
   // 2026-09-01 — internal shorthand). Asserted by value here so a one-character drift still fails.
   it("offer beat carries the signed (test-only, non-rendered) placement rationale", () => {
     expect(OFFER_RATIONALE).toBe("The offering is what the base produces — it has to be on the table before needs-vs-offer.");
+  });
+});
+
+// Flow restructure (2026-09-02): the three unpacking pages each carry a WHY-THIS (operator-signed
+// operator signs on screen). The two siesta interludes are rationale-EXEMPT by design (join cold/
+// closer/offer) — a pause has no Why-this — and take NO read data.
+describe("unpacking pages carry a Why-this (signed); siestas are exempt", () => {
+  const E = EMPTY_FIRST_READ;
+  const signedWhy: Array<[string, JSX.Element]> = [
+    ["What the record hears you promising — the first thing to unpack.", <ActPromise read={E} />],
+    ["Behind that promise is a position — where you stand against the alternatives.", <ActPositioning read={E} />],
+    ["Behind that position is a set of choices — where to play, how to win.", <ActStrategy read={E} />],
+  ];
+  it.each(signedWhy)("carries: %s", (text, el) => {
+    const out = render(el).container.textContent ?? "";
+    expect(out).toContain(text);
+    expect(out).toContain("Why this");
+  });
+
+  it("siesta interludes render NO 'Why this' node — a pause has no rationale (rendered with no read)", () => {
+    for (const el of [<ActSiesta1 />, <ActSiesta2 />]) {
+      const c = render(el).container;
+      expect(c.textContent ?? "").not.toContain("Why this");
+      expect(c.querySelector('[class*="border-l"]'), "no left-border rule on a siesta").toBeNull();
+    }
   });
 });
 

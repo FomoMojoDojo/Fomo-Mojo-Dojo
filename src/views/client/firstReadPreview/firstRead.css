@@ -27,6 +27,27 @@
   padding: 56px 24px 96px;
 }
 
+/* D1 (2026-09-02): a SIESTA interlude is visibly a break — the surface's own accent (--fr-accent) as a
+   full-page ground, white type. Scoped inversion of the header + progress ticks so they stay legible on
+   the accent (never a global restyle). No rules / icons / illustration on a siesta. */
+.first-read.fr-siesta {
+  background: hsl(var(--fr-accent));
+  color: #fff;
+}
+.first-read.fr-siesta nav span,
+.first-read.fr-siesta .fr-eyebrow {
+  color: hsl(0 0% 100% / 0.8) !important; /* overrides the identity line's inline muted color */
+}
+.first-read.fr-siesta .fr-progress-tick {
+  background: hsl(0 0% 100% / 0.28);
+}
+.first-read.fr-siesta .fr-progress-tick[data-state="current"] {
+  background: #fff;
+}
+.first-read.fr-siesta .fr-progress-tick[data-state="done"] {
+  background: hsl(0 0% 100% / 0.55);
+}
+
 .fr-eyebrow {
   font-size: 10px;
   font-weight: 700;

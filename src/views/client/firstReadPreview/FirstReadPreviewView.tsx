@@ -15,7 +15,13 @@ import {
   ActFindings,
   ActGap,
   ActNext,
-  ActOurRead,
+  // ActOurRead — "Where this points" split into ActPromise / ActPositioning / ActStrategy (flow
+  // restructure 2026-09-02); component kept in ./acts (dark), like ActWhereYouStand.
+  ActPromise,
+  ActPositioning,
+  ActStrategy,
+  ActSiesta1,
+  ActSiesta2,
   ActQuestions,
   ActRecord,
   ActWhatYouSay,
@@ -38,17 +44,32 @@ import {
  * (←/→) plus Home/End only — there is no number-key jump. The `act` field now only styles the nav
  * tick (act vs gate) — it no longer drives any keyboard shortcut.
  */
-const BEATS = [
+// Flow restructure (operator-ruled 2026-09-02): PROMISE-FIRST unpacking arc — each page reveals what is
+// behind the one before (the reverse of derivation order). "Where this points" splits into three pages
+// (promise → positioning → strategy). Two siesta interludes (siesta1 after findings, siesta2 after base).
+// "What you offer" moves AFTER siesta2 (downstream of the base by law). "Where you stand" stays dark.
+// Siesta/promise/positioning/strategy labels are operator-signed (2026-09-02). The siesta "A moment"
+// labels only surface in the nav/forward-link, which is hidden behind FIRST_READ_SHOW_NAV_CHROME.
+// D2 (operator 2026-09-02): the operator drives the presentation by keyboard, so the footer chrome
+// (Back / forward-link / Reference / Keys hint) is HIDDEN behind this flag. Keyboard nav (←/→/Home/End)
+// and the progress ticks stay. A client-facing build flips this true — the components are never deleted.
+const FIRST_READ_SHOW_NAV_CHROME = false;
+
+export const BEATS = [
   { key: "arc", label: "Before we start", act: undefined },
   { key: "cold", label: "The first thing we saw.", act: undefined },
   { key: "record", label: "What the world sees and says", act: 1 },
   { key: "yousay", label: "What you say", act: 2 },
   { key: "gap", label: "The gap", act: 3 },
   { key: "findings", label: "What stands out", act: 4 },
-  { key: "base", label: "Your Base", act: undefined },
+  { key: "siesta1", label: "A moment", act: undefined },
+  { key: "promise", label: "Your promise", act: undefined },
+  { key: "positioning", label: "Your positioning", act: undefined },
+  { key: "strategy", label: "Your strategy", act: undefined },
   { key: "serve", label: "Who you serve", act: 5 },
+  { key: "base", label: "Your Base", act: undefined },
+  { key: "siesta2", label: "A moment", act: undefined },
   { key: "offer", label: "What you offer", act: 5 },
-  { key: "ourread", label: "Where this points", act: undefined },
   { key: "score", label: "Mojo Score", act: undefined },
   { key: "questions", label: "Questions", act: undefined },
   { key: "next", label: "Next move", act: undefined },
@@ -133,7 +154,8 @@ export default function FirstReadPreviewView() {
   }, [go, index]);
 
   const body = useMemo(() => {
-    switch (BEATS[index].key) {
+    const beatKey: string = BEATS[index].key;
+    switch (beatKey) {
       case "arc":
         // New opener (2026): the "you are here" process arc — a four-stage engagement spine (in ActArc).
         // Continue advances relative to position (go(index+1) = cold), so no future insertion re-breaks
@@ -157,19 +179,33 @@ export default function FirstReadPreviewView() {
       case "score":
         return <ScoreReveal read={data} />;
       // case "where": return <ActWhereYouStand read={data} />;  // hidden — restore with BEATS entry + import
-      case "ourread":
-        return <ActOurRead read={data} />;
+      case "siesta1":
+        return <ActSiesta1 />;
+      case "promise":
+        return <ActPromise read={data} />;
+      case "positioning":
+        return <ActPositioning read={data} />;
+      case "strategy":
+        return <ActStrategy read={data} />;
       case "base":
         return <BaseGate />;
+      case "siesta2":
+        return <ActSiesta2 />;
       case "questions":
         return <ActQuestions read={data} />;
-      default:
+      case "next":
         return <ActNext isLast={index === BEATS.length - 1} />;
+      default:
+        // Every BEATS key MUST have an explicit case above — the closer ("next") is never the fallback.
+        // A missing case is a structural bug (a new beat that would otherwise render as the closer
+        // mid-flow); throw so the guard catches it rather than silently showing "Next move".
+        throw new Error(`FirstReadPreviewView: no body case for beat key "${beatKey}"`);
     }
   }, [data, go, index]);
 
   const beat = BEATS[index];
   const isCold = beat.key === "cold";
+  const isSiesta = beat.key === "siesta1" || beat.key === "siesta2";
   const host = bareHost(data.company?.website);
   const identity = data.company
     ? `${data.company.name}${host ? ` · ${host}` : ""}`
@@ -199,7 +235,9 @@ export default function FirstReadPreviewView() {
   }
 
   return (
-    <div className="first-read">
+    // D1: a siesta is visibly a break — full-page accent ground (--fr-accent), white type. The break
+    // class scopes the inversion of the header + progress ticks so they stay legible (never global).
+    <div className={`first-read${isSiesta ? " fr-siesta" : ""}`}>
       <div className="first-read-shell">
         {!isCold ? (
           <nav className="mb-16 flex flex-col gap-4">
@@ -228,11 +266,11 @@ export default function FirstReadPreviewView() {
         <div key={beat.key} className="fr-act-enter">
           {/* The closer renders its own eyebrow ("Before you go") inside ActNext, so suppress the
               auto-eyebrow here — BEATS["next"].label stays "Next move" for the nav tick + forward link. */}
-          {!isCold && beat.key !== "next" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
+          {!isCold && beat.key !== "next" && beat.key !== "siesta1" && beat.key !== "siesta2" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
           {body}
         </div>
 
-        {!isCold ? (
+        {FIRST_READ_SHOW_NAV_CHROME && !isCold ? (
           <footer className="mt-16 flex items-center justify-between">
             <button
               type="button"
@@ -262,7 +300,7 @@ export default function FirstReadPreviewView() {
           </footer>
         ) : null}
 
-        {!isCold ? (
+        {FIRST_READ_SHOW_NAV_CHROME && !isCold ? (
           <p className="mt-8 text-center text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-faint))" }}>
             Keys: &larr; &rarr; move · Home / End ends
           </p>
