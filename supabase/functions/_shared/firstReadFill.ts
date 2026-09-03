@@ -103,6 +103,34 @@ export function outsideScoreFirstFill(args: {
   return "fire";
 }
 
+// ── relevance_backstop fire gate (pure) ──────────────────────────────────────────────────────────
+// The relevance overlay (claim_deltas.relevance_verdict) is ROW-BOUND: the delta finalize's stale sweep
+// deletes and re-inserts pair rows, so a recompute leaves the company unstamped (Edgewood 49 → 0,
+// 2026-09-03). Every delta terminal therefore fires refresh-relevance-step — through ONE self-gating
+// path. This is the gate the stepper applies BEFORE find-or-create, so a second finalize can never
+// spawn a second chain:
+//   · a live running row inside the chain window → adopt it (the running step owns the drain);
+//   · zero unstamped judgeable rows (IS-NULL scope) → skip, NO ledger row (already drained);
+//   · otherwise → fire (create the ledger row and step).
+// A running row OLDER than the window is not adopted — the sweep owns burying it; re-entry is free
+// because the core only ever loads relevance_verdict IS NULL rows.
+export type RelevanceFireDecision = "fire" | "adopt_running" | "skip_nothing_to_stamp";
+export function relevanceBackstopNeedsFire(args: {
+  unstampedPairs: number;
+  runningRow: { id: string; started_at: string } | null;
+  nowMs?: number;
+  windowMs?: number;
+}): RelevanceFireDecision {
+  const now = args.nowMs ?? Date.now();
+  const windowMs = args.windowMs ?? 25 * 60_000;
+  if (args.runningRow) {
+    const started = Date.parse(args.runningRow.started_at);
+    if (Number.isFinite(started) && now - started <= windowMs) return "adopt_running";
+  }
+  if (args.unstampedPairs <= 0) return "skip_nothing_to_stamp";
+  return "fire";
+}
+
 export type KindStatus = "completed" | "failed" | "completed_empty";
 export type GenPerKind = Record<string, "written" | "rejected" | "error">;
 

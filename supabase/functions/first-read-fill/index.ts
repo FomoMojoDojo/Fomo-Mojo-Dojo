@@ -194,6 +194,10 @@ Deno.serve(async (req) => {
 
   // PUBLIC GAP-PAIRS. First-fill = a non-failed first_read_gap_pairs integrity row OR any existing
   // public_vs_public claim_deltas. The worker self-writes first_read_gap_pairs on every terminal.
+  // Beat-4 relevance overlay: armed ONLY by a COMPLETED public_gap_pairs terminal (never unconfirmed /
+  // failed / completed_empty). The relevance chain kind below dispatches the stepper when armed OR when
+  // unstamped judgeable rows already exist from an earlier run; the stepper itself self-gates.
+  let relevanceArmed = false;
   const gapPairsStep: ChainKindStep = {
     kind: "public_gap_pairs",
     alreadyPresent: async () => {
@@ -212,6 +216,7 @@ Deno.serve(async (req) => {
       if (res.ok && data && data.ok !== false) {
         // The worker returns success-shaped with a marker for the earned no-declared-side empty state.
         if (data.skipped === "no_declared_claims" || data.empty === true) return { status: "completed_empty" as const, note: "no declared side — nothing to compare yet" };
+        relevanceArmed = true; // completed terminal → the relevance kind fires next
         return { status: "completed" as const, note: "public deltas computed" };
       }
       // GATEWAY CUT (504/502/408): the worker isolate may have outrun the response and finished
@@ -232,6 +237,34 @@ Deno.serve(async (req) => {
         }
       }
       return { status: "failed" as const, note: `deltas failed (${res.status})` };
+    },
+  };
+
+  // RELEVANCE BACKSTOP (operator ruling 2026-09-03). Runs AFTER public_gap_pairs: the delta finalize's
+  // stale sweep deletes the row-bound relevance stamps, so the fill re-fires refresh-relevance-step —
+  // dispatched fire-and-forget, recorded 'handed_off' (the stepper's relevance_backstop row is truth).
+  // First-fill = zero unstamped judgeable rows OR a relevance chain already running (the stepper applies
+  // the same gate again, so a double dispatch adopts rather than spawns). NOT fired on an unconfirmed /
+  // failed gap-pairs terminal unless unstamped rows from an earlier run are already waiting.
+  const relevanceStep: ChainKindStep = {
+    kind: "relevance_backstop",
+    alreadyPresent: async () => {
+      const { count } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true })
+        .eq("company_id", company_id).eq("pairing_kind", "public_vs_public")
+        .in("delta_type", ["echoed", "divergent"]).is("relevance_verdict", null);
+      if (Number(count ?? 0) === 0) return true; // nothing to stamp — first-fill satisfied
+      const { data: run } = await supabase.from("long_runner_runs").select("id")
+        .eq("company_id", company_id).eq("run_kind", "relevance_backstop").eq("status", "running").limit(1);
+      return ((run ?? []) as unknown[]).length > 0;
+    },
+    run: async () => {
+      if (!relevanceArmed) return { status: "completed_empty" as const, note: "gap pairs not completed this fill — waiting rows left for the next completed delta terminal" };
+      const res = await postFn("refresh-relevance-step", { company_id, parent_run_id });
+      if (res.status === 403 || (res.data as { frozen?: unknown } | null)?.frozen === true) return { status: "failed" as const, note: "refused: company frozen" };
+      if (!res.ok) return { status: "failed" as const, note: `refresh-relevance-step dispatch failed (${res.status})` };
+      const d = res.data as { skipped?: unknown; stepped?: unknown; drained?: unknown; remaining?: unknown } | null;
+      if (d?.skipped === "nothing_to_stamp") return { status: "completed_empty" as const, note: "nothing to stamp" };
+      return { status: "handed_off" as const, note: `handed off to refresh-relevance-step · ${d?.drained ? "drained" : `remaining=${d?.remaining ?? "?"}`}` };
     },
   };
 
@@ -320,7 +353,7 @@ Deno.serve(async (req) => {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
     body: JSON.stringify({ company_id }),
   }).catch(() => {});
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }).then(fireOutsideScore));
+  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, relevanceStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }).then(fireOutsideScore));
 
   return json({ ok: true, ...result });
 });

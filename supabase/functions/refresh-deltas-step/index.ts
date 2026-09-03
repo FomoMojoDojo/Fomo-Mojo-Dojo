@@ -177,11 +177,24 @@ Deno.serve(async (req) => {
     return json({ ok: true, stepped: true, remaining: remainingAfter, target: targetCount });
   }
 
+  // RELEVANCE BACKSTOP (operator ruling 2026-09-03): the finalize's stale sweep deletes the row-bound
+  // relevance stamps, so every COMPLETED delta terminal re-fires refresh-relevance-step fire-and-forget.
+  // It self-gates (frozen → nothing-to-stamp skip → adopt-running), so a second finalize spawns
+  // nothing. NOT fired from a failed terminal (partial rows the next finalize may sweep) and NOT from
+  // the unconfirmed re-fire path (the isolate that lands the finalize fires it).
+  const fireRelevanceBackstop = () => {
+    waitUntil(fetch(`${url}/functions/v1/refresh-relevance-step`, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      body: JSON.stringify({ company_id }),
+    }).catch(() => {}));
+  };
+
   // ── 4) plan dry → the ONE unscoped finalize (silences + stale-sweep) ────────────────
   const { count: preCount } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id).eq("pairing_kind", pairingKind);
   const finRes = await callDeltas(url, key, { company_id, write: true, pairing_kind: pairingKind });
   if (finRes.ok) {
     await finish("completed", targetCount ?? 0);
+    fireRelevanceBackstop(); // completed terminal (i)
     return json({ ok: true, finalized: true });
   }
   if (isDeterministicWorkerError(finRes.status)) {
@@ -193,7 +206,7 @@ Deno.serve(async (req) => {
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5000));
     const { count } = await supabase.from("claim_deltas").select("id", { count: "exact", head: true }).eq("company_id", company_id).eq("pairing_kind", pairingKind);
-    if ((count ?? 0) !== (preCount ?? 0)) { await finish("completed", targetCount ?? 0); return json({ ok: true, finalized: true, polled: true }); }
+    if ((count ?? 0) !== (preCount ?? 0)) { await finish("completed", targetCount ?? 0); fireRelevanceBackstop(); /* completed terminal (ii) */ return json({ ok: true, finalized: true, polled: true }); }
   }
   // Couldn't confirm within the poll — re-fire once more (finalize is idempotent); the sweep bounds the tail.
   waitUntil(fetch(`${url}/functions/v1/refresh-deltas-step`, {
