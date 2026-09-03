@@ -19,6 +19,7 @@ import {
   channelReadClaimIds,
   clientVoiceClaimIds,
   isOwnDomainUrl,
+  ownHostSignalByClaim,
   PUBLIC_PROVENANCE,
   uploadDerivedClaimIds,
 } from "../../../../supabase/functions/_shared/firstReadProvenance";
@@ -361,17 +362,12 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           ((dSigs ?? []) as Array<SignalRow & { voice_class: string | null }>).map((s) => [s.id, s]),
         );
         const ownVoiceIds = clientVoiceClaimIds(dRefRows, dSigById, companyHost);
-        const ownSigByClaim = new Map<string, SignalRow>();
-        for (const r of dRefRows) {
-          const s = dSigById.get(r.signal_id);
-          if (!s) continue;
-          const vc = s.voice_class ?? null;
-          const own =
-            vc === "client_voice" || (vc === null && !!s.source_url && isOwnDomainUrl(s.source_url, companyHost));
-          if (!own) continue;
-          const prior = ownSigByClaim.get(r.claim_id);
-          if (!prior || (s.event_date ?? "") > (prior.event_date ?? "")) ownSigByClaim.set(r.claim_id, s);
-        }
+        // Beat-3 (b) ruling (2026-09-03): the channel block renders ONLY sources on the company's
+        // own host. ownHostSignalByClaim yields the newest own-voice signal per claim that is
+        // on-host; a claim whose own-voice backing is entirely aggregator-hosted (Glassdoor About,
+        // press wire, ZoomInfo — client_voice by authorship, never echoes) gets no entry and is
+        // excluded below, its id REPORTED in channelOffHostIds (never silent).
+        const ownSigByClaim: Map<string, SignalRow> = ownHostSignalByClaim(dRefRows, dSigById, companyHost);
 
         // Channel-read membership — the single structural predicate (own-voice qualified, own_words
         // and upload-derived excluded). own_words render once, in the OW-3 own-words block above; they
@@ -382,18 +378,21 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
           declaredAll.filter((c) => c.claim_type === "own_words").map((c) => normalizeForHash(c.statement)),
         );
         const channelReadIds = channelReadClaimIds(declaredAll, ownVoiceIds, declDocExcluded, ownWordsNormTexts);
-        const channelRowsAll = declaredAll
-          .filter((c) => channelReadIds.has(c.id))
+        const channelMembers = declaredAll.filter((c) => channelReadIds.has(c.id));
+        // Off-host: own-voice but not one of the company's channels — excluded here, reported.
+        const channelOffHostIds = channelMembers.filter((c) => !ownSigByClaim.has(c.id)).map((c) => c.id);
+        const channelRowsAll = channelMembers
+          .filter((c) => ownSigByClaim.has(c.id))
           .map((c) => {
-            const sig = ownSigByClaim.get(c.id) ?? null;
+            const sig = ownSigByClaim.get(c.id)!;
             return {
               id: c.id,
               topic: c.topic,
               facet: facetForTopic(c.topic),
               statement: c.statement,
               // Public branch: the page it came from + the run read date.
-              sourceTag: sig ? publicSignalTag(sig, runDates) : null,
-              junk: isChannelJunk(c.statement, sig?.source_title ?? null),
+              sourceTag: publicSignalTag(sig, runDates),
+              junk: isChannelJunk(c.statement, sig.source_title ?? null),
             };
           });
         // R3: junk rows (page titles / no-content notes) are hidden but their ids reported.
@@ -1072,6 +1071,7 @@ export function useFirstReadPreviewData(companyId: string | undefined) {
             ownWordsHiddenIds,
             ownWordsLooked,
             channelJunkIds,
+            channelOffHostIds,
             markets,
             observedMarkets,
             positioning,

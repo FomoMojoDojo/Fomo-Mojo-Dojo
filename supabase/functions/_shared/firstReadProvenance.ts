@@ -108,6 +108,37 @@ export function channelReadClaimIds(
 }
 
 /**
+ * OWN-HOST channel signal per claim (operator ruling 2026-09-03, beat 3 "What you say" (b)):
+ * the demoted "Your channels, as we read them" block renders ONLY sources on the company's own
+ * host. Aggregator-hosted self-copy (Glassdoor About, a press-wire release body, a ZoomInfo
+ * description) keeps voice_class='client_voice' — it is the company's voice and must never echo —
+ * but it is not one of the company's channels, so it does not render there. For each claim,
+ * returns the NEWEST own-voice signal (event_date) whose source_url is on the company host
+ * (isOwnDomainUrl — the same rule the stamping guard and clientVoiceClaimIds use). A claim whose
+ * own-voice signals are all off-host gets no entry: the caller excludes it and REPORTS its id.
+ */
+export function ownHostSignalByClaim<S extends { source_url?: string | null; voice_class?: string | null; event_date?: string | null }>(
+  refs: Array<{ claim_id: string; signal_id: string }>,
+  signalById: Map<string, S>,
+  companyHost: string | null | undefined,
+): Map<string, S> {
+  const out = new Map<string, S>();
+  for (const r of refs) {
+    const s = signalById.get(r.signal_id);
+    if (!s) continue;
+    const vc = s.voice_class ?? null;
+    const ownVoice = vc === "client_voice" || (vc === null && !!s.source_url && isOwnDomainUrl(s.source_url, companyHost));
+    if (!ownVoice) continue;
+    // OWN HOST ONLY: a client_voice signal on an aggregator host is the company's voice but not
+    // one of its channels — it never becomes the channel row's source.
+    if (!s.source_url || !isOwnDomainUrl(s.source_url, companyHost)) continue;
+    const prior = out.get(r.claim_id);
+    if (!prior || (s.event_date ?? "") > (prior.event_date ?? "")) out.set(r.claim_id, s);
+  }
+  return out;
+}
+
+/**
  * THE document-filename pattern — the single definition shared by the provenance gate (tier b)
  * and deriveSourceTag's doc branch. First match names the cited document.
  */

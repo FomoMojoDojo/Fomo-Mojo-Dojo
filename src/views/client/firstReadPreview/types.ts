@@ -333,6 +333,9 @@ export type FirstReadPreviewData = {
   // ── "What we see" public register (public-beats gate, 2026-08-20) ──
   /** R3: ids of channel rows hidden by the junk filter (reported, never silent). */
   channelJunkIds: string[];
+  /** Beat-3 (b), 2026-09-03: own-voice claims whose backing is entirely OFF the company's own host
+   *  (aggregator-hosted self-copy) — excluded from the channel block, reported, never silent. */
+  channelOffHostIds: string[];
   observedMarkets: FRMarketDef[];
   positioning: FRPositioning;
   promise: FRPromise;
@@ -391,6 +394,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   statusConflicts: [],
   gapIntegrity: "not_yet",
   channelJunkIds: [],
+  channelOffHostIds: [],
   observedMarkets: [],
   positioning: null,
   promise: null,

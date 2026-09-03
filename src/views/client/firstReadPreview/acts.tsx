@@ -723,7 +723,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
         ))}
         {/* Demoted: our inference read of the channels, below the company's own words. */}
         {read.declared.length > 0 ? (
-          <div className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+          <div data-fr-block="channels" className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
             <div className="mb-8"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></div>
             {read.declared.map((claim) => (
               <LedgerRow
