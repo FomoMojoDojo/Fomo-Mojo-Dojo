@@ -207,7 +207,6 @@ export function LedgerRow({
       className="fr-row group flex flex-col border-b py-14 md:grid md:grid-cols-12 md:gap-16"
       style={{ borderColor: "hsl(var(--fr-hair))" }}
     >
-      <span className="fr-row-marker" aria-hidden />
       <div className="fr-row-body md:col-span-5">
         {leftLabel ? (
           <div className="mb-6">

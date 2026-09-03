@@ -140,20 +140,6 @@
   opacity: 1;
 }
 
-.fr-row-marker {
-  position: absolute;
-  left: -20px;
-  top: 3.6rem;
-  height: 0;
-  width: 2px;
-  background: hsl(var(--fr-accent));
-  transition: height 320ms cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-
-.fr-row:hover .fr-row-marker {
-  height: 28px;
-}
-
 .fr-row .fr-row-body {
   transition: transform 320ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
