@@ -10,6 +10,7 @@
 // supersedes nothing, and writes ONLY to outside_page_snapshots.
 import { fetchWithTimeout, extractTextBasic } from "./fetchAndExtract.ts";
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
+import { extractStructured, type StructuredBlock } from "./listingDetect.ts";
 
 // A browser User-Agent, matching the design-gate reachability probe: outside review /
 // listing sites commonly 403 a bot UA. Fetching public pages we are allowed to read.
@@ -31,6 +32,14 @@ export interface OutsideSnapshotDraft {
   http_status: number;
   clean_text: string | null;
   text_sha256: string;
+  /** LISTING CLASS (2026-09-04): the raw structured block (JSON-LD / og product meta / vendor), captured
+   *  from the RAW html BEFORE extractTextBasic. null unless the fetch was ok. The prose body is unchanged. */
+  structured: StructuredBlock | null;
+}
+
+/** Pure split of one raw html document into the (unchanged) prose body and the structured block. */
+export function snapshotFromHtml(html: string): { clean_text: string; structured: StructuredBlock } {
+  return { clean_text: extractTextBasic(html).slice(0, 12_000), structured: extractStructured(html) };
 }
 
 /** Fetch + clean one outside URL into a snapshot draft. Never throws — a network
@@ -39,6 +48,7 @@ export async function fetchOutsidePage(url: string): Promise<OutsideSnapshotDraf
   let httpStatus = 0;
   let ok = false;
   let text = "";
+  let structured: StructuredBlock | null = null;
   try {
     const resp = await fetchWithTimeout(url, 20_000, { headers: { "User-Agent": BROWSER_UA } });
     httpStatus = resp.status;
@@ -46,7 +56,9 @@ export async function fetchOutsidePage(url: string): Promise<OutsideSnapshotDraf
     if (resp.ok && ct.includes("application/pdf")) {
       httpStatus = 415; // non-HTML → not readable text
     } else if (resp.ok) {
-      text = extractTextBasic(await resp.text()).slice(0, 12_000);
+      const split = snapshotFromHtml(await resp.text());
+      text = split.clean_text;
+      structured = split.structured;
       ok = text.trim().length > 0;
       if (!ok) httpStatus = httpStatus || 204; // 200-but-empty is not usable basis
     }
@@ -57,5 +69,5 @@ export async function fetchOutsidePage(url: string): Promise<OutsideSnapshotDraf
   const clean_text = fetch_status === "ok" ? text : null;
   // Deterministic identity even for no-fetch rows: hash of the empty-normalized string.
   const text_sha256 = await sha256Hex(normalizeForHash(clean_text ?? ""));
-  return { fetch_status, http_status: httpStatus, clean_text, text_sha256 };
+  return { fetch_status, http_status: httpStatus, clean_text, text_sha256, structured: fetch_status === "ok" ? structured : null };
 }

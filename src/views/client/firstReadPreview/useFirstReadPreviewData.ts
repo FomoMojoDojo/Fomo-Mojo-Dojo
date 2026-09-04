@@ -33,6 +33,7 @@ import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { ownWordsClientVisible, parseOwnWordsKind } from "../../../../supabase/functions/_shared/ownWordsKinds";
 import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
 import type {
+  FRListing,
   FirstReadPreviewData,
   FRFinding,
   FRFindingQuote,
@@ -74,6 +75,9 @@ type SignalRow = {
   // provably verbatim — structure_level ∈ raw/extracted (not model-'interpreted') AND the excerpt is
   // a normalizeForHash-substring of the signal's captured claim_text.
   claim_text: string | null;
+  /** LISTING CLASS (2026-09-04): prose | listing, and the structured listing fields when listing. */
+  evidence_class?: string | null;
+  listing?: { product_name?: string; price?: number | null; currency?: string | null; attribution_text?: string | null; listing_url?: string } | null;
   structure_level: string | null;
 };
 
@@ -86,6 +90,13 @@ type SignalRow = {
  *   (c) no backing signal → null.
  * On null the render shows the source attribution (host · date) with NO quote — never the claim text.
  */
+/** LISTING CLASS: the FRListing view of a listing signal, or null for prose. Host from the listing URL. */
+function toFRListing(sig: SignalRow | null | undefined): FRListing | null {
+  if (!sig || sig.evidence_class !== "listing" || !sig.listing?.product_name) return null;
+  const url = sig.listing.listing_url ?? sig.source_url ?? "";
+  return { host: bareHost(url) ?? url, productName: sig.listing.product_name, price: sig.listing.price ?? null, currency: sig.listing.currency ?? null, attribution: sig.listing.attribution_text ?? null, url };
+}
+
 function verbatimRecord(sig: SignalRow | null): string | null {
   if (!sig) return null; // (c)
   const excerpt = (sig.evidence_excerpt ?? "").trim();
@@ -143,7 +154,7 @@ async function loadSignals(
 ): Promise<{ signals: FRSignal[]; newestByClaim: Map<string, SignalRow> }> {
   const { data: sigRows } = await loose()
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, created_at")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, created_at, evidence_class, listing")
     .eq("company_id", companyId)
     .eq("signal_band", "outside")
     .eq("voice_class", "outside_voice_about_client")
@@ -167,6 +178,7 @@ async function loadSignals(
 
   const items: Beat2Sortable[] = rows
     .filter((r) => (r.evidence_excerpt ?? "").trim())
+    .filter((r) => r.evidence_class !== "listing") // LISTING CLASS (shape d): beat 2 shows prose only
     .map((r) => ({
       signal: {
         id: r.id,
@@ -211,9 +223,10 @@ async function newestSignalByClaim(claimIds: string[]): Promise<Map<string, Sign
   const refRows = (refs ?? []) as Array<{ claim_id: string; signal_id: string }>;
   const sigIds = [...new Set(refRows.map((r) => r.signal_id))];
   if (!sigIds.length) return out;
-  const { data: sigs } = await supabase
+  // loose(): evidence_class / listing (2026-09-04) postdate the generated types.
+  const { data: sigs } = await loose()
     .from("signals")
-    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level")
+    .select("id, evidence_excerpt, source_title, source_url, source_id, event_date, confidence_to_use, claim_text, structure_level, evidence_class, listing")
     .in("id", sigIds)
     // R1: outside band only — an organization-band (e.g. uploaded) signal must never
     // supply the source tag for a public-record row.
@@ -674,6 +687,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // statement (which can carry synthesis garble, e.g. "team"→"Cafe operators"). No provable
             // verbatim backing ⇒ null ⇒ the render shows source attribution with NO quote.
             record: verbatimRecord(sig),
+            // LISTING CLASS: a listing observed side renders ListingRow, never the record paragraph.
+            listing: toFRListing(sig),
             sourceTag: sig ? publicSignalTag(sig, runDates) : null,
             eventDate: sig?.event_date ?? null,
             recordHost: sig?.source_url ? bareHost(sig.source_url) : null,
@@ -1069,7 +1084,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             // Gate 1: per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
             // cluster keeps an own-words member quoted while an outside member downgrades.
             picked.push({ text: c.text, sourceTag: publicSignalTag(c.s, runDates), eventDate: c.s.event_date ?? null,
-              provablyVerbatim: isProvablyVerbatim(c.s.id, provableVerbatim) });
+              provablyVerbatim: isProvablyVerbatim(c.s.id, provableVerbatim), listing: toFRListing(c.s) });
           }
           f.quotes = picked;
         }

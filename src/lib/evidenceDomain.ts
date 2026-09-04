@@ -120,6 +120,9 @@ export type Signal = {
   // true strips corroboration rights; score kept for threshold calibration.
   syndicated_from_client?: boolean | null;
   syndication_score?: number | null;
+  /** LISTING CLASS (2026-09-04): prose (default) | listing; `listing` carries the structured fields. */
+  evidence_class?: string | null;
+  listing?: Record<string, unknown> | null;
   raw_payload: unknown;
   created_at: string;
   updated_at: string;

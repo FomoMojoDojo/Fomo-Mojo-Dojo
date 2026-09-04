@@ -62,6 +62,7 @@
 // template fallback, no synthesized verdicts, no silent degradation.
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
+import { listingMayCorroborate } from "./listingCorroboration.ts";
 import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
@@ -95,6 +96,8 @@ export type DeltaClaim = {
   page_url?: string | null;
   // ADMISSION CRITERION (2026-09-03): own_words claims carry declared_eligible; false ⇒ never the declared side.
   declared_eligible?: boolean | null;
+  // LISTING CORROBORATION (2026-09-04): the declared side's judged kind — listingMayCorroborate reads it.
+  statement_kind?: string | null;
 };
 
 export type ComputedDelta = {
@@ -484,7 +487,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
   const { data: claimRows, error: claimsErr } = await args.supabase
     .from("claims")
-    .select("id, statement, topic, provenance, status, claim_type, proof_category, raw_payload, declared_eligible")
+    .select("id, statement, topic, provenance, status, claim_type, proof_category, raw_payload, declared_eligible, statement_kind")
     .eq("company_id", args.companyId);
   if (claimsErr) return { ok: false, error: String(claimsErr.message ?? claimsErr) };
 
@@ -593,8 +596,11 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // SAME footing as 'client_voice': it produces no echo/divergence/internally_silent, so our
   // own analysis can never score as market confirmation in the delta compute.
   const { data: sigRows } = await args.supabase
-    .from("signals").select("id, voice_class, source_url").eq("company_id", args.companyId);
-  const allSigs = (sigRows ?? []) as Array<{ id: string; voice_class: string | null; source_url: string | null }>;
+    .from("signals").select("id, voice_class, source_url, evidence_class").eq("company_id", args.companyId);
+  const allSigs = (sigRows ?? []) as Array<{ id: string; voice_class: string | null; source_url: string | null; evidence_class?: string | null }>;
+  // LISTING CLASS (2026-09-04): observed claims backed by a listing signal pair ONLY where listingMayCorroborate
+  // admits the declared side (offer/audience + placement token) — every other pairing is refused at synthesis.
+  const listingSignalIds = new Set(allSigs.filter((s) => s.evidence_class === "listing").map((s) => s.id));
   const selfSignalIds = new Set(
     allSigs.filter((s) => s.voice_class === "client_voice" || s.voice_class === "analysis").map((s) => s.id),
   );
@@ -602,8 +608,10 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", args.companyId);
   const allRefs = (refRows ?? []) as Array<{ claim_id: string; signal_id: string }>;
   const selfVoiceClaimIds = new Set<string>();
+  const listingBackedClaimIds = new Set<string>();
   for (const r of allRefs) {
     if (selfSignalIds.has(r.signal_id)) selfVoiceClaimIds.add(r.claim_id);
+    if (listingSignalIds.has(r.signal_id)) listingBackedClaimIds.add(r.claim_id);
   }
 
   // ── OBSERVED-SIDE ADMISSION (self-echo gate, operator ruling 2026-09-03) ──────
@@ -786,6 +794,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     unbacked_excluded: unbackedExcluded,
     own_words_ineligible: ownWordsIneligible,
     proof_guard_excluded: proofGuardExcludedIds.length,
+    listing_corroboration_refused: 0,
   };
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
@@ -839,6 +848,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
   for (const d of declaredScope) {
     for (const p of publics) {
+      // LISTING CORROBORATION (operator ruling 2026-09-04): a listing-backed observed claim pairs ONLY where the
+      // predicate admits the declared side; refused pairings are COUNTED and never reach the prefilter/judge.
+      if (listingBackedClaimIds.has(p.id) && !listingMayCorroborate(d).ok) { totals.listing_corroboration_refused++; continue; }
       if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
       totals.candidates++;
       const identity = await pairIdentity(d.statement, p.statement);

@@ -31,6 +31,7 @@
 //   npx vite-node scripts/first-read-outside-recrawl.ts -- --company=<uuid> --review --run-id=<uuid>
 //   … --review --run-id=<uuid> --baseline-run=<uuid>   (ruling 3: baseline from THAT run's snapshots only)
 //   … --review --run-id=<uuid> --url=<exact source_url>  (restrict the review to one dependent URL)
+//   … --review --run-id=<uuid> --only-approved-from=<prior run_id>  (restrict to URLs the operator APPROVED in a prior run)
 //
 // --review (operator ruling 2026-09-04): the RECRAWL-INTO-REVIEW-TABLE run. URL universe = the DEPENDENT
 // set only (outside signals held, or superseded held_source_unreachable_recrawl_pending). Each URL is
@@ -45,6 +46,8 @@ import { chromium, type Browser, type BrowserContext } from "playwright";
 import { fetchOutsidePage } from "../supabase/functions/_shared/outsidePageStore";
 import { extractTextBasic } from "../supabase/functions/_shared/fetchAndExtract";
 import { normalizeForHash, sha256Hex } from "../supabase/functions/_shared/contentIdentity";
+import { extractStructured, type StructuredBlock } from "../supabase/functions/_shared/listingDetect";
+import { structuredBackfillTargets } from "../supabase/functions/_shared/structuredBackfill";
 import { anchorPresent, buildAnchors, selectBaseline, type SnapshotCandidate } from "../supabase/functions/_shared/outsideRecrawlAnchors";
 
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
@@ -61,6 +64,7 @@ const review = process.argv.includes("--review");
 const runIdArg = process.argv.find((a) => a.startsWith("--run-id="))?.split("=")[1] ?? null;
 const baselineRunArg = process.argv.find((a) => a.startsWith("--baseline-run="))?.split("=")[1] ?? null;
 const urlOnlyArg = process.argv.find((a) => a.startsWith("--url="))?.slice("--url=".length) ?? null;
+const onlyApprovedFrom = process.argv.find((a) => a.startsWith("--only-approved-from="))?.split("=")[1] ?? null;
 /** The vacuous-proof plant lives under this run_id; the baseline selection EXCLUDES it by construction. */
 const SENTINEL_RUN_ID = "0000feed-0000-4000-8000-000000000001";
 const company = process.argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
@@ -167,11 +171,29 @@ type RowDraft = {
   run_id: string;
   fetch_status: "ok";
   http_status: number;
+  /** LISTING CLASS (2026-09-04): raw structured block captured before cleaning (null when none). */
+  structured: StructuredBlock | null;
 };
 const runId = review ? runIdArg! : randomUUID();
 const runRef = `r2_outside_recrawl_${review ? "review_" : ""}${new Date().toISOString()}`;
 const report: Array<{ url: string; path: "simple" | "headless"; verdict: Verdict; minted: number }> = [];
 const lists = { recovered: [] as string[], changed: [] as string[], gone: [] as string[], still_walled: [] as string[] };
+
+/** STRUCTURED BACKFILL (ruling 1, 2026-09-04): an ok fetch that minted zero rows (identical hash stored) backfills its
+ *  structured block onto the existing identical-hash rows whose structured IS NULL — via the ONE pure predicate. */
+function backfillStructured(url: string, hash: string, block: StructuredBlock | null): number {
+  if (dryRun || !block) return 0;
+  const existing: Array<{ id: string; text_sha256: string; structured: unknown | null }> = JSON.parse(psql(
+    `select coalesce(json_agg(json_build_object('id', id, 'text_sha256', text_sha256, 'structured', structured)),'[]')
+       from outside_page_snapshots where company_id=:'c' and source_url=:'u' and fetch_status='ok';`, { c: company!, u: url }));
+  const ids = structuredBackfillTargets(existing, hash, block);
+  if (!ids.length) return 0;
+  const out = psql(`with p as (select ${b64Sql({ ids, block })} j),
+     upd as (update outside_page_snapshots s set structured = (select j->'block' from p)
+              where s.id in (select (x)::uuid from p, jsonb_array_elements_text(p.j->'ids') x) and s.structured is null returning 1)
+     select count(*) from upd;`);
+  return parseInt(out, 10) || 0;
+}
 
 function insertRows(rows: RowDraft[]): number {
   if (dryRun || rows.length === 0) return 0;
@@ -181,12 +203,13 @@ function insertRows(rows: RowDraft[]): number {
             select (e->>'company_id')::uuid company_id, e->>'source_url' source_url,
                    (e->>'signal_id')::uuid signal_id, e->>'clean_text' clean_text,
                    e->>'text_sha256' text_sha256, (e->>'run_id')::uuid run_id,
-                   (e->>'fetch_status')::outside_fetch_status fetch_status, (e->>'http_status')::int http_status
+                   (e->>'fetch_status')::outside_fetch_status fetch_status, (e->>'http_status')::int http_status,
+                   e->'structured' structured
               from p, jsonb_array_elements(p.arr) e),
           ins as (
             insert into outside_page_snapshots
-              (company_id, source_url, signal_id, clean_text, text_sha256, run_id, fetch_status, http_status, crawled_at)
-            select company_id, source_url, signal_id, clean_text, text_sha256, run_id, fetch_status, http_status, now()
+              (company_id, source_url, signal_id, clean_text, text_sha256, run_id, fetch_status, http_status, structured, crawled_at)
+            select company_id, source_url, signal_id, clean_text, text_sha256, run_id, fetch_status, http_status, structured, now()
               from rows on conflict (company_id, signal_id, text_sha256) do nothing returning 1)
      select count(*) from ins;`,
   );
@@ -201,9 +224,10 @@ async function run() {
     if (simple.fetch_status === "ok") {
       const rows: RowDraft[] = signalIds.map((sid) => ({
         company_id: company!, source_url: url, signal_id: sid, clean_text: simple.clean_text,
-        text_sha256: simple.text_sha256, run_id: runId, fetch_status: "ok", http_status: simple.http_status,
+        text_sha256: simple.text_sha256, run_id: runId, fetch_status: "ok", http_status: simple.http_status, structured: simple.structured,
       }));
       const minted = insertRows(rows);
+      if (minted === 0) backfillStructured(url, simple.text_sha256, simple.structured);
       // dry-run: predict changed/unchanged from the stored hash; live: from minted count.
       const changed = dryRun ? simple.text_sha256 !== (storedNewest[url] ?? "") : minted > 0;
       const verdict: Verdict = changed ? "ok-changed" : "ok-unchanged";
@@ -238,7 +262,7 @@ async function run() {
       } else {
         const rows: RowDraft[] = signalIds.map((sid) => ({
           company_id: company!, source_url: url, signal_id: sid, clean_text: clean,
-          text_sha256: hash, run_id: runId, fetch_status: "ok", http_status: hl.status,
+          text_sha256: hash, run_id: runId, fetch_status: "ok", http_status: hl.status, structured: extractStructured(hl.html),
         }));
         minted = insertRows(rows);
         verdict = "recovered";
@@ -258,6 +282,8 @@ type ReviewRow = {
   url: string; path: "plain" | "headless"; fetch_status: "ok" | "blocked" | "gone"; http_status: number;
   baseline_sha: string | null; baseline_status: string | null; new_sha: string | null;
   disposition: Disposition; anchor_present: boolean | null; signal_ids: string[]; delta_ids: string[]; minted: number; ms: number;
+  /** which structured kinds were captured ("ld+json+og:product+vendor"), null when none */
+  structured: string | null;
 };
 const reviewRows: ReviewRow[] = [];
 async function runReview() {
@@ -277,8 +303,14 @@ async function runReview() {
     { c: company! },
   ));
   if (deps.length === 0) fail("review: no dependent URLs (nothing held / recrawl-pending) for this company");
-  const depsUsed = urlOnlyArg ? deps.filter((d) => d.url === urlOnlyArg) : deps;
-  if (depsUsed.length === 0) fail(`review: --url does not name a dependent URL: ${urlOnlyArg}`);
+  let depsUsed = urlOnlyArg ? deps.filter((d) => d.url === urlOnlyArg) : deps;
+  if (onlyApprovedFrom) {
+    // Only the URLs the operator APPROVED in a prior review run — rejected URLs are left out of this run entirely.
+    const approved: string[] = JSON.parse(psql(`select coalesce(json_agg(source_url),'[]') from outside_recrawl_review where company_id=:'c' and run_id=:'r'::uuid and operator_decision='approve';`, { c: company!, r: onlyApprovedFrom }));
+    depsUsed = depsUsed.filter((d) => approved.includes(d.url));
+    console.log(`  only-approved-from ${onlyApprovedFrom}: ${approved.length} approved, ${depsUsed.length} in the dependent set`);
+  }
+  if (depsUsed.length === 0) fail(`review: no URLs selected (${urlOnlyArg ? `--url=${urlOnlyArg}` : ""}${onlyApprovedFrom ? ` --only-approved-from=${onlyApprovedFrom}` : ""})`);
   // Baseline per URL (ruling 3): candidates are every snapshot for the URL; the pure selector applies the law
   // (--baseline-run → that run only; absent → newest non-sentinel predating today — NEVER bare newest).
   const candByUrl: Record<string, SnapshotCandidate[]> = JSON.parse(psql(
@@ -301,9 +333,10 @@ async function runReview() {
     let http_status: number;
     let clean: string | null = null;
     let sha: string | null = null;
+    let structured: StructuredBlock | null = null;
     const simple = await fetchOutsidePage(d.url);
     if (simple.fetch_status === "ok") {
-      fetch_status = "ok"; http_status = simple.http_status; clean = simple.clean_text; sha = simple.text_sha256;
+      fetch_status = "ok"; http_status = simple.http_status; clean = simple.clean_text; sha = simple.text_sha256; structured = simple.structured;
     } else {
       path = "headless";
       const hl = await headless(d.url);
@@ -313,7 +346,7 @@ async function runReview() {
         const txt = extractTextBasic(hl.html).slice(0, TEXT_CAP);
         const h = await sha256Hex(normalizeForHash(txt));
         if (!txt.trim() || h === EMPTY_SHA) { fetch_status = "blocked"; http_status = hl.status; }
-        else { fetch_status = "ok"; http_status = hl.status; clean = txt; sha = h; }
+        else { fetch_status = "ok"; http_status = hl.status; clean = txt; sha = h; structured = extractStructured(hl.html); }
       } else { fetch_status = "blocked"; http_status = hl.status > 0 ? hl.status : simple.http_status; }
     }
     // Disposition vs baseline. Headless bodies hash by a different method than plain bodies, so a headless ok
@@ -329,11 +362,13 @@ async function runReview() {
       else disposition = sha === base.sha ? "unchanged" : "changed";
       if (!(path === "headless" && base && base.status === "ok")) {
         minted = insertRows(d.signal_ids.map((sid) => ({
-          company_id: company!, source_url: d.url, signal_id: sid, clean_text: clean, text_sha256: sha!, run_id: runId, fetch_status: "ok", http_status,
+          company_id: company!, source_url: d.url, signal_id: sid, clean_text: clean, text_sha256: sha!, run_id: runId, fetch_status: "ok", http_status, structured,
         })));
+        if (minted === 0) { const n = backfillStructured(d.url, sha!, structured); if (n) console.log(`    structured backfilled onto ${n} identical-hash row(s)`); }
       }
     } else disposition = fetch_status === "gone" ? "gone" : "still_walled";
-    const row: ReviewRow = { url: d.url, path, fetch_status, http_status, baseline_sha: base?.sha ?? null, baseline_status: base?.status ?? null, new_sha: sha, disposition, anchor_present, signal_ids: d.signal_ids, delta_ids: d.delta_ids, minted, ms: Date.now() - t0 };
+    const structuredKinds = structured ? [structured.ld_json.length ? "ld+json" : null, structured.og.type ? `og:${structured.og.type}` : null, structured.vendor ? "vendor" : null].filter(Boolean).join("+") : "";
+    const row: ReviewRow = { url: d.url, path, fetch_status, http_status, baseline_sha: base?.sha ?? null, baseline_status: base?.status ?? null, new_sha: sha, disposition, anchor_present, signal_ids: d.signal_ids, delta_ids: d.delta_ids, minted, ms: Date.now() - t0, structured: structuredKinds || null };
     reviewRows.push(row);
     if (!dryRun) {
       psql(`with p as (select ${b64Sql({
@@ -347,7 +382,7 @@ async function runReview() {
                (j->>'anchor_present')::boolean
           from p;`);
     }
-    console.log(`  ${disposition.padEnd(13)} ${path.padEnd(8)} ${String(http_status).padEnd(4)} anchor=${String(anchor_present).padEnd(5)} ${(Date.now() - t0) + "ms"}  ${d.url.replace(/^https?:\/\//, "")}`);
+    console.log(`  ${disposition.padEnd(13)} ${path.padEnd(8)} ${String(http_status).padEnd(4)} anchor=${String(anchor_present).padEnd(5)} structured=${(structuredKinds || "none").padEnd(24)} ${(Date.now() - t0) + "ms"}  ${d.url.replace(/^https?:\/\//, "")}`);
   }
 }
 

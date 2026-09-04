@@ -31,6 +31,8 @@
 // call routes external — no local-model path is exercised. internal_vs_public is a separate
 // surface, carried to a follow-up.
 
+import { backstopSkipsListingPair } from "./listingClass.ts";
+export { backstopSkipsListingPair };
 import { meaningfulTokens } from "./claimDeltaSynthesis.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
@@ -288,7 +290,7 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
     if (o.superseded_by == null && (o.verdict === "relevant" || o.verdict === "orthogonal")) overrides.set(o.content_identity, { verdict: o.verdict, reason: o.reason, decided_at: o.decided_at });
   }
 
-  const totals = { examined: rows.length, overridden: 0, auto_relevant: 0, router_orthogonal: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0 };
+  const totals = { examined: rows.length, overridden: 0, auto_relevant: 0, router_orthogonal: 0, judged_relevant: 0, judged_orthogonal: 0, remaining: 0, listing_excluded: 0 };
   const proposals: RelevanceProposal[] = [];
   const dryRun = args.dryRun === true;
   if (rows.length === 0) {
@@ -305,6 +307,9 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   const stmt = new Map<string, string>(
     ((claimRows ?? []) as Array<{ id: string; statement: string }>).map((c) => [c.id, c.statement]),
   );
+  // LISTING CLASS (2026-09-04): a listing-backed observed claim is corroboration-by-predicate (claimDeltaSynthesis),
+  // never token-overlap prose — its pairs are excluded from the router and the judge with an explicit branch.
+  const listingBacked = await listingBackedPublicClaimIds(args.supabase, args.companyId, rows.map((r) => r.public_claim_id));
 
   // ── PRE-ROUTER — deterministic partition (cheap, no model), three ways by distinctiveOverlap:
   //   dov>=2  → auto-spare 'relevant' (strong same-subject overlap; unchanged Stage-A behavior).
@@ -324,6 +329,7 @@ export async function computeRelevanceForCompany(args: RelevanceArgs): Promise<R
   for (const r of rows) {
     const declared = stmt.get(r.declared_claim_id) ?? "";
     const observed = stmt.get(r.public_claim_id) ?? "";
+    if (backstopSkipsListingPair(listingBacked, r.public_claim_id)) { totals.listing_excluded++; continue; }
     // OPERATOR OVERRIDE wins — stamped from the decision, never routed, never judged.
     const ov = overrides.get(r.content_identity);
     if (ov) {
@@ -497,4 +503,19 @@ async function writeRelevanceIntegrity(
     run_ref: runRef ?? nowIso,
   });
   if (error) throw new Error(`relevance integrity insert failed: ${error.message}`);
+}
+
+// ── LISTING CLASS (2026-09-04): explicit exclusion helpers (pure predicate + the ref-keyed loader) ────────
+// deno-lint-ignore no-explicit-any
+async function listingBackedPublicClaimIds(supabase: { from: (t: string) => any }, companyId: string, claimIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const ids = [...new Set(claimIds.filter(Boolean))];
+  if (!ids.length) return out;
+  const { data: refs } = await supabase.from("claim_signal_refs").select("claim_id, signal_id").in("claim_id", ids);
+  const sigIds = [...new Set(((refs ?? []) as Array<{ signal_id: string }>).map((r) => r.signal_id))];
+  if (!sigIds.length) return out;
+  const { data: sigs } = await supabase.from("signals").select("id, evidence_class").in("id", sigIds).eq("company_id", companyId);
+  const listingSig = new Set(((sigs ?? []) as Array<{ id: string; evidence_class?: string | null }>).filter((s) => s.evidence_class === "listing").map((s) => s.id));
+  for (const r of (refs ?? []) as Array<{ claim_id: string; signal_id: string }>) if (listingSig.has(r.signal_id)) out.add(r.claim_id);
+  return out;
 }

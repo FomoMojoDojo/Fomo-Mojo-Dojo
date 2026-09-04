@@ -1,3 +1,5 @@
+import { isListingDraft } from "./listingClass.ts";
+export { isListingDraft };
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { ClaimCandidate, ClaimDraft, ClaimSignalRefDraft, SignalDraft } from "../../../src/lib/evidenceDomain.ts";
 import { liftVerbatimQuote, pickEventDate } from "../../../src/lib/verbatimQuote.ts";
@@ -670,6 +672,7 @@ export async function ingestPublicBaselineSignals(args: {
     let quoted = 0, dated = 0;
     const ordered = [...signals].sort((a, b) => (a.voice_class === "client_voice" ? 0 : 1) - (b.voice_class === "client_voice" ? 0 : 1));
     for (const draft of ordered) {
+      if (isListingDraft(draft)) continue; // LISTING CLASS: quote set at mint (title line), never lifted from prose
       if (draft.quote) continue; // never overwrite an existing quote
       const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
       if (!src) continue; // no retained source for this URL → honest absence
@@ -700,6 +703,7 @@ export async function ingestPublicBaselineSignals(args: {
     const map = args.sourceTextByUrl;
     let droppedExcerpts = 0;
     for (const draft of signals) {
+      if (isListingDraft(draft)) continue; // LISTING CLASS: the title line is verified at mint, not by the prose E4 guard
       const src = map.get(normalizeUrlKey(String(draft.source_url || "")));
       if (!src) continue; // no retained basis → honest limit, leave as-is
       const guarded = applyExcerptGuard(draft, src);
@@ -871,3 +875,4 @@ export async function ingestDifyProposalSignals(args: {
   console.log(`[evidence] dify proposal ingested company=${args.companyId} proposal=${args.proposalId} signals=${stats.signalCount} claims=${stats.claimCount} refs=${stats.refCount} stepDeps=${stats.jobStepDependencyCount} needDeps=${stats.needDependencyCount} hypotheses=${stats.hypothesisCount} hypothesisDeps=${stats.dependencyCount} routeHypothesisDeps=${stats.routeDependencyCount} graphLinkedRoutes=${stats.graphLinkedRouteCount}`);
   return stats;
 }
+

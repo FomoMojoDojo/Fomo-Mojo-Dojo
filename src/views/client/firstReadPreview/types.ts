@@ -9,6 +9,9 @@ import type { SourceTagResult } from "./deriveSourceTag";
 
 export type SignalStrength = "strong" | "moderate" | "thin";
 
+/** LISTING EVIDENCE CLASS (2026-09-04): a third-party product listing — rendered as a listing, never as speech. */
+export type FRListing = { host: string; productName: string; price: number | null; currency: string | null; attribution: string | null; url: string };
+
 export type FRSignal = {
   id: string;
   /** Outside excerpt (signals.evidence_excerpt) — rendered UN-QUOTED unless provablyVerbatim. */
@@ -92,6 +95,8 @@ export type FRGapPair = {
    *  statement this row belongs to. Beat 4 groups on this: the unit of echo is the STATEMENT. */
   statementId: string;
   verdict: FRGapVerdict;
+  /** LISTING CLASS: set when the observed side is a listing signal — the row renders ListingRow, not `record`. */
+  listing?: FRListing | null;
   /** Declared-side statement; null only for a record-only row. */
   declared: string | null;
   /** Public-record side statement; null for `unechoed` (the record is silent). */
@@ -251,6 +256,8 @@ export type FRStrategy = {
  *  (verbatimRecord: non-empty, not model-'interpreted', a normalizeForHash-substring of claim_text).
  *  Unverifiable ⇒ omitted entirely, never paraphrased into existence. */
 export type FRFindingQuote = { text: string; sourceTag: SourceTagResult; eventDate: string | null;
+  /** LISTING CLASS: a listing member renders ListingRow (never quoted). */
+  listing?: FRListing | null;
   /** Gate 1 (2026-08-25): per cluster MEMBER — quoted only if provably own-words verbatim; a mixed
    *  cluster keeps an own-words member quoted while downgrading outside members to un-quoted. */
   provablyVerbatim: boolean };

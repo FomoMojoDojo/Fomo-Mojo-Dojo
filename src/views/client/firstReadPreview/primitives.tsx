@@ -3,6 +3,8 @@
 // (real declared statements may carry no detail column) and an Absent
 // primitive for persisted-integrity empty states.
 
+import type { FRListing } from "./types";
+import { LISTING_STRINGS, listingBody } from "./listingStrings";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { FRGapVerdict } from "./types";
 
@@ -266,5 +268,23 @@ export function RecencyTag({ children }: { children: ReactNode }) {
     <span className="fr-recency text-[10px] font-bold uppercase tracking-widest">
       Most recent: {children}
     </span>
+  );
+}
+
+/** LISTING EVIDENCE CLASS (operator ruling 2026-09-04, shape (d)): "Listed by {host}" over "{product}, {price}".
+ *  NEVER a quote mark, never `fr-quote-mark`: a listing is not speech. Source tag as today. `extra` is the
+ *  slot for an operator-only node (the kind label), rendered beside the tag. */
+export function ListingRow({ listing, sourceTag, extra }: { listing: FRListing; sourceTag: { label: string } | null; extra?: ReactNode }) {
+  return (
+    <div className="fr-listing flex flex-col gap-3" data-fr-listing={listing.host}>
+      <Eyebrow>{LISTING_STRINGS.eyebrow(listing.host)}</Eyebrow>
+      <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{listingBody(listing)}</p>
+      {(sourceTag || extra) ? (
+        <div className="flex flex-wrap items-center gap-4">
+          {sourceTag ? <SourceTag>{sourceTag.label}</SourceTag> : null}
+          {extra}
+        </div>
+      ) : null}
+    </div>
   );
 }

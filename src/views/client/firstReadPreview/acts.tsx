@@ -23,6 +23,7 @@ import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
+import { ListingRow } from "./primitives";
 import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
@@ -672,10 +673,17 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
                 <div className="flex flex-col gap-6">
                   {f.quotes.map((q, i) => (
                     <div key={i}>
-                      <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-                        {q.provablyVerbatim ? <>&ldquo;{q.text}&rdquo;</> : stripEdgeQuotes(q.text)}
-                      </p>
-                      {q.sourceTag ? <div className="mt-3"><SourceTag>{q.sourceTag.label}</SourceTag></div> : null}
+                      {/* LISTING CLASS (shape d): a listing member is a listing, never a quote. */}
+                      {q.listing ? (
+                        <ListingRow listing={q.listing} sourceTag={q.sourceTag} extra={<OperatorKindTag kind="listing" reason={null} />} />
+                      ) : (
+                        <>
+                          <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+                            {q.provablyVerbatim ? <>&ldquo;{q.text}&rdquo;</> : stripEdgeQuotes(q.text)}
+                          </p>
+                          {q.sourceTag ? <div className="mt-3"><SourceTag>{q.sourceTag.label}</SourceTag></div> : null}
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1403,7 +1411,10 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
               {/* Operator-only (context-gated): Strike, or provenance + Withdraw on an operator-spared pair. */}
               <OperatorPairMeta pair={pair} />
             </div>
-            {pair.record ? (
+            {/* LISTING CLASS (shape d): a listing observed side renders as a listing — never the record paragraph. */}
+            {pair.listing ? (
+              <ListingRow listing={pair.listing} sourceTag={null} extra={<OperatorKindTag kind="listing" reason={null} />} />
+            ) : pair.record ? (
               <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
                 {pair.record}
               </p>

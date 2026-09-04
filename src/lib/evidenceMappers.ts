@@ -1005,10 +1005,15 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     // D3 anchor gate — outside-band signals must reference a client anchor to mint a client
     // claim (inert when no anchors are configured for the company).
     if (signal.signal_band === "outside" && !signalMatchesAnchor(signal, anchors)) return;
-    const statement = canonicalizeClaimStatement(signal);
+    // LISTING CLASS (operator ruling 2026-09-04): a listing signal maps to an inference claim whose statement
+    // IS the title line — never prose-canonicalized, never dropped as a "quoted excerpt", never summarized.
+    // The claim carries a listing marker in raw_payload so every reader can tell it from prose.
+    const listingFields = (signal.evidence_class === "listing" && signal.listing && typeof signal.listing === "object") ? (signal.listing as { product_name?: unknown }) : null;
+    const isListing = !!listingFields;
+    const statement = isListing ? String(listingFields.product_name ?? "").trim() || null : canonicalizeClaimStatement(signal);
     if (!statement) return;
-    const topic = inferTopicFromText(statement, signal.framework || null, signal.topic || null);
-    const claimType = claimTypeFromSignal({
+    const topic = isListing ? "market" : inferTopicFromText(statement, signal.framework || null, signal.topic || null);
+    const claimType = isListing ? "inference" : claimTypeFromSignal({
       statement,
       topic,
       signalBand: signal.signal_band,
@@ -1019,7 +1024,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     // Reject aspirations, positioning statements, and strategic beliefs — these are
     // not unmet-need hypotheses and pollute the commit picker. Manual claims
     // (raw_payload.source = manual_*) never enter this path so they are unaffected.
-    if (claimType === "strategic_belief" || topic === "positioning" || topic === "strategy") return;
+    if (!isListing && (claimType === "strategic_belief" || topic === "positioning" || topic === "strategy")) return;
 
     const key = normalizeClaimKey(statement);
     if (!key) return;
@@ -1037,7 +1042,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
           confidence: "low",
           provenance: "public_observed", // finalized below from the FULL group
           revalidation_flag: signal.framing_fit === "weak" || signal.framing_fit === "unknown",
-          raw_payload: { sample_signal: signal.raw_payload },
+          raw_payload: { sample_signal: signal.raw_payload, ...(isListing ? { evidence_class: "listing", listing: signal.listing } : {}) },
         },
         sourceSignals: [],
         qualities: [],

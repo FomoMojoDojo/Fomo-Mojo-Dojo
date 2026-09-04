@@ -16,6 +16,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { structuredBackfillTargets } from "../_shared/structuredBackfill.ts";
 import { fetchOutsidePage } from "../_shared/outsidePageStore.ts";
 
 const corsHeaders = {
@@ -75,13 +76,22 @@ serve(async (req) => {
         run_id: run_id ?? null,
         fetch_status: d.fetch_status,
         http_status: d.http_status,
+        structured: d.structured, // LISTING CLASS (2026-09-04): raw structured block, prose body unchanged
       };
       // Idempotent: ON CONFLICT (company_id, signal_id, text_sha256) DO NOTHING.
       const { error, count } = await supabase
         .from("outside_page_snapshots")
         .upsert(row, { onConflict: "company_id,signal_id,text_sha256", ignoreDuplicates: true, count: "exact" });
       if (error) return json({ ok: false, error: `write: ${error.message}` }, 500);
-      if (count && count > 0) totals.rows_written++; else totals.rows_skipped++;
+      if (count && count > 0) totals.rows_written++; else {
+        totals.rows_skipped++;
+        // STRUCTURED BACKFILL (ruling 1, 2026-09-04): identical hash already stored → backfill structured where NULL.
+        if (d.structured) {
+          const { data: ex } = await supabase.from("outside_page_snapshots").select("id, text_sha256, structured").eq("company_id", company_id).eq("signal_id", s.id).eq("text_sha256", d.text_sha256);
+          const ids = structuredBackfillTargets((ex ?? []) as Array<{ id: string; text_sha256: string; structured: unknown | null }>, d.text_sha256, d.structured);
+          if (ids.length) await supabase.from("outside_page_snapshots").update({ structured: d.structured }).in("id", ids).is("structured", null);
+        }
+      }
     }
 
     return json({ ok: true, company_id, totals });
