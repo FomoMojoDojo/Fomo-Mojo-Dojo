@@ -28,6 +28,16 @@
 //
 //   npx vite-node scripts/first-read-outside-recrawl.ts -- --company=<uuid> --dry-run
 //   npx vite-node scripts/first-read-outside-recrawl.ts -- --company=<uuid>
+//   npx vite-node scripts/first-read-outside-recrawl.ts -- --company=<uuid> --review --run-id=<uuid>
+//   … --review --run-id=<uuid> --baseline-run=<uuid>   (ruling 3: baseline from THAT run's snapshots only)
+//   … --review --run-id=<uuid> --url=<exact source_url>  (restrict the review to one dependent URL)
+//
+// --review (operator ruling 2026-09-04): the RECRAWL-INTO-REVIEW-TABLE run. URL universe = the DEPENDENT
+// set only (outside signals held, or superseded held_source_unreachable_recrawl_pending). Each URL is
+// fetched (plain, then headless on a wall), an ok body is snapshotted as usual, and ONE outside_recrawl_review
+// row per URL records disposition vs the BASELINE (newest snapshot whose run_id is not the sentinel and
+// which predates today — never bare newest), anchor presence, and the dependent signal / delta ids.
+// operator_decision is left NULL: nothing regenerates until the operator approves (R3 gate). No R3 call.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -35,6 +45,7 @@ import { chromium, type Browser, type BrowserContext } from "playwright";
 import { fetchOutsidePage } from "../supabase/functions/_shared/outsidePageStore";
 import { extractTextBasic } from "../supabase/functions/_shared/fetchAndExtract";
 import { normalizeForHash, sha256Hex } from "../supabase/functions/_shared/contentIdentity";
+import { anchorPresent, buildAnchors, selectBaseline, type SnapshotCandidate } from "../supabase/functions/_shared/outsideRecrawlAnchors";
 
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
 const CB1_FROZEN_ID = "58b2b15b-bada-4bcd-9c12-b7e66a37d0bc"; // NEVER written
@@ -46,6 +57,12 @@ const TEXT_CAP = 12_000; // parity with fetchAndExtract's 12k cap
 const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // sha256("")
 
 const dryRun = process.argv.includes("--dry-run");
+const review = process.argv.includes("--review");
+const runIdArg = process.argv.find((a) => a.startsWith("--run-id="))?.split("=")[1] ?? null;
+const baselineRunArg = process.argv.find((a) => a.startsWith("--baseline-run="))?.split("=")[1] ?? null;
+const urlOnlyArg = process.argv.find((a) => a.startsWith("--url="))?.slice("--url=".length) ?? null;
+/** The vacuous-proof plant lives under this run_id; the baseline selection EXCLUDES it by construction. */
+const SENTINEL_RUN_ID = "0000feed-0000-4000-8000-000000000001";
 const company = process.argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
 
 function fail(msg: string): never {
@@ -55,6 +72,9 @@ function fail(msg: string): never {
 if (!company) fail("required: --company=<uuid>");
 if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company)) fail("--company must be a uuid");
 if (company === CB1_FROZEN_ID) fail("REFUSED: CB1 is the frozen reference fixture — it is never re-crawled or written.");
+if (review && (!runIdArg || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runIdArg))) fail("--review requires --run-id=<uuid>");
+if (review && runIdArg === SENTINEL_RUN_ID) fail("REFUSED: the sentinel run_id is reserved for the vacuous-proof plant.");
+if (baselineRunArg && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(baselineRunArg)) fail("--baseline-run must be a uuid");
 
 /** Run SQL through the audited docker-exec psql channel. SQL is delivered on STDIN (not argv),
  *  so there is no ARG_MAX ceiling on payload size. `vars` become psql -v NAME=VALUE for tiny
@@ -148,8 +168,8 @@ type RowDraft = {
   fetch_status: "ok";
   http_status: number;
 };
-const runId = randomUUID();
-const runRef = `r2_outside_recrawl_${new Date().toISOString()}`;
+const runId = review ? runIdArg! : randomUUID();
+const runRef = `r2_outside_recrawl_${review ? "review_" : ""}${new Date().toISOString()}`;
 const report: Array<{ url: string; path: "simple" | "headless"; verdict: Verdict; minted: number }> = [];
 const lists = { recovered: [] as string[], changed: [] as string[], gone: [] as string[], still_walled: [] as string[] };
 
@@ -232,16 +252,145 @@ async function run() {
   }
 }
 
+// ── REVIEW MODE (operator ruling 2026-09-04) ──────────────────────────────────
+type Disposition = "new" | "changed" | "unchanged" | "still_walled" | "gone" | "recovered";
+type ReviewRow = {
+  url: string; path: "plain" | "headless"; fetch_status: "ok" | "blocked" | "gone"; http_status: number;
+  baseline_sha: string | null; baseline_status: string | null; new_sha: string | null;
+  disposition: Disposition; anchor_present: boolean | null; signal_ids: string[]; delta_ids: string[]; minted: number; ms: number;
+};
+const reviewRows: ReviewRow[] = [];
+async function runReview() {
+  // Dependent URL set: held, or superseded recrawl-pending, outside signals — grouped by URL.
+  type Dep = { url: string; signal_ids: string[]; delta_ids: string[]; quotes: string[] };
+  const deps: Dep[] = JSON.parse(psql(
+    `with dep as (
+       select source_url, id, quote from signals
+        where company_id=:'c' and signal_band='outside' and source_url is not null and length(trim(source_url))>0
+          and (held_at is not null or superseded_reason='held_source_unreachable_recrawl_pending'))
+     select coalesce(json_agg(t order by t.url),'[]') from (
+       select d.source_url url,
+              array_agg(distinct d.id) signal_ids,
+              coalesce((select array_agg(distinct x.id) from claim_deltas x join claim_signal_refs r on r.claim_id=x.public_claim_id where x.company_id=:'c' and r.signal_id = any(array_agg(d.id))), '{}') delta_ids,
+              coalesce(array_agg(distinct d.quote) filter (where d.quote is not null and length(trim(d.quote))>0), '{}') quotes
+         from dep d group by d.source_url) t;`,
+    { c: company! },
+  ));
+  if (deps.length === 0) fail("review: no dependent URLs (nothing held / recrawl-pending) for this company");
+  const depsUsed = urlOnlyArg ? deps.filter((d) => d.url === urlOnlyArg) : deps;
+  if (depsUsed.length === 0) fail(`review: --url does not name a dependent URL: ${urlOnlyArg}`);
+  // Baseline per URL (ruling 3): candidates are every snapshot for the URL; the pure selector applies the law
+  // (--baseline-run → that run only; absent → newest non-sentinel predating today — NEVER bare newest).
+  const candByUrl: Record<string, SnapshotCandidate[]> = JSON.parse(psql(
+    `select coalesce(json_object_agg(source_url, rows),'{}') from (
+       select source_url, json_agg(json_build_object('sha', text_sha256, 'status', fetch_status, 'run_id', run_id, 'crawled_at', crawled_at)) rows
+         from outside_page_snapshots where company_id=:'c' group by source_url) t;`,
+    { c: company! },
+  ));
+  const today = new Date().toISOString().slice(0, 10);
+  const baselineFor = (url: string) => selectBaseline(candByUrl[url] ?? [], { sentinel: SENTINEL_RUN_ID, today, baselineRun: baselineRunArg });
+  // Anchors (ruling 2): entity_anchors_json + website host label + name with the fixture suffix stripped.
+  const coRow = JSON.parse(psql("select coalesce(row_to_json(t)::text,'null') from (select name, website, entity_anchors_json from companies where id=:'c') t;", { c: company! })) as { name: string | null; website: string | null; entity_anchors_json: unknown[] | null } | null;
+  const anchors = buildAnchors({ name: coRow?.name ?? null, website: coRow?.website ?? null, entityAnchors: coRow?.entity_anchors_json ?? [] });
+  console.log(`  anchors: ${anchors.join(" | ")}${baselineRunArg ? `\n  baseline-run: ${baselineRunArg}` : ""}`);
+  for (const d of depsUsed) {
+    const t0 = Date.now();
+    const base = baselineFor(d.url);
+    let path: "plain" | "headless" = "plain";
+    let fetch_status: "ok" | "blocked" | "gone";
+    let http_status: number;
+    let clean: string | null = null;
+    let sha: string | null = null;
+    const simple = await fetchOutsidePage(d.url);
+    if (simple.fetch_status === "ok") {
+      fetch_status = "ok"; http_status = simple.http_status; clean = simple.clean_text; sha = simple.text_sha256;
+    } else {
+      path = "headless";
+      const hl = await headless(d.url);
+      const dns = hl.navError ? /ERR_NAME_NOT_RESOLVED|ENOTFOUND|getaddrinfo|dns/i.test(hl.navError) : false;
+      if (dns || hl.status === 404 || hl.status === 410 || simple.fetch_status === "gone") { fetch_status = "gone"; http_status = hl.status > 0 ? hl.status : simple.http_status; }
+      else if (hl.status >= 200 && hl.status < 400 && hl.textLen > 400 && !hl.challenged) {
+        const txt = extractTextBasic(hl.html).slice(0, TEXT_CAP);
+        const h = await sha256Hex(normalizeForHash(txt));
+        if (!txt.trim() || h === EMPTY_SHA) { fetch_status = "blocked"; http_status = hl.status; }
+        else { fetch_status = "ok"; http_status = hl.status; clean = txt; sha = h; }
+      } else { fetch_status = "blocked"; http_status = hl.status > 0 ? hl.status : simple.http_status; }
+    }
+    // Disposition vs baseline. Headless bodies hash by a different method than plain bodies, so a headless ok
+    // against an ok baseline is compared by ANCHOR only and reported 'unchanged' (no mint) — the runner's law.
+    let disposition: Disposition;
+    let anchor_present: boolean | null = null;
+    let minted = 0;
+    if (fetch_status === "ok") {
+      anchor_present = anchorPresent(clean ?? "", anchors, d.quotes);
+      if (!base) disposition = "new";
+      else if (base.status !== "ok") disposition = "recovered";
+      else if (path === "headless") disposition = "unchanged";
+      else disposition = sha === base.sha ? "unchanged" : "changed";
+      if (!(path === "headless" && base && base.status === "ok")) {
+        minted = insertRows(d.signal_ids.map((sid) => ({
+          company_id: company!, source_url: d.url, signal_id: sid, clean_text: clean, text_sha256: sha!, run_id: runId, fetch_status: "ok", http_status,
+        })));
+      }
+    } else disposition = fetch_status === "gone" ? "gone" : "still_walled";
+    const row: ReviewRow = { url: d.url, path, fetch_status, http_status, baseline_sha: base?.sha ?? null, baseline_status: base?.status ?? null, new_sha: sha, disposition, anchor_present, signal_ids: d.signal_ids, delta_ids: d.delta_ids, minted, ms: Date.now() - t0 };
+    reviewRows.push(row);
+    if (!dryRun) {
+      psql(`with p as (select ${b64Sql({
+        company_id: company, run_id: runId, source_url: d.url, baseline_sha256: row.baseline_sha, baseline_status: row.baseline_status, new_sha256: row.new_sha,
+        fetch_status, http_status, fetch_path: path, disposition, dependent_signal_ids: d.signal_ids, dependent_delta_ids: d.delta_ids, anchor_present,
+      })} j)
+        insert into outside_recrawl_review (company_id, run_id, source_url, baseline_sha256, baseline_status, new_sha256, fetch_status, http_status, fetch_path, disposition, dependent_signal_ids, dependent_delta_ids, anchor_present)
+        select (j->>'company_id')::uuid, (j->>'run_id')::uuid, j->>'source_url', j->>'baseline_sha256', j->>'baseline_status', j->>'new_sha256',
+               (j->>'fetch_status')::outside_fetch_status, (j->>'http_status')::int, j->>'fetch_path', j->>'disposition',
+               array(select jsonb_array_elements_text(j->'dependent_signal_ids'))::uuid[], array(select jsonb_array_elements_text(j->'dependent_delta_ids'))::uuid[],
+               (j->>'anchor_present')::boolean
+          from p;`);
+    }
+    console.log(`  ${disposition.padEnd(13)} ${path.padEnd(8)} ${String(http_status).padEnd(4)} anchor=${String(anchor_present).padEnd(5)} ${(Date.now() - t0) + "ms"}  ${d.url.replace(/^https?:\/\//, "")}`);
+  }
+}
+
 // integrity_runs.status vocabulary is CHECK-constrained: completed | failed | skipped_empty_input | planned.
 let status = "completed";
 let error: string | null = null;
 try {
-  await run();
+  if (review) await runReview(); else await run();
 } catch (e) {
   status = "failed";
   error = String((e as Error).message || e).slice(0, 300);
 } finally {
   if (browser) await browser.close();
+}
+
+// ── REVIEW ledger + report ─────────────────────────────────────────────────────
+if (review) {
+  const byDisp: Record<string, string[]> = {};
+  for (const r of reviewRows) (byDisp[r.disposition] ??= []).push(r.url);
+  const rvExamined = reviewRows.length;
+  const rvMinted = reviewRows.reduce((n, r) => n + r.minted, 0);
+  const rvMs = reviewRows.reduce((n, r) => n + r.ms, 0);
+  let rvLedger = "(dry-run: not written)";
+  if (!dryRun) {
+    rvLedger = psql(
+      `with p as (select ${b64Sql({
+        company_id: company, component: "r2_outside_recrawl", surface_type: "outside_review",
+        status, examined: rvExamined, admitted: rvMinted,
+        excluded_by_rule: { mode: "review", run_id: runId, dispositions: byDisp, error, wall_ms: rvMs }, run_ref: runRef,
+      })} j),
+       ins as (
+         insert into integrity_runs (company_id, component, surface_type, ran_at, status, examined, admitted, excluded_by_rule, run_ref)
+         select (j->>'company_id')::uuid, j->>'component', j->>'surface_type', now(),
+                j->>'status', (j->>'examined')::int, (j->>'admitted')::int, j->'excluded_by_rule', j->>'run_ref'
+           from p returning id)
+       select id from ins;`,
+    );
+  }
+  console.log(`\nREVIEW run · company ${company} · run_id=${runId} · urls=${rvExamined} · snapshot rows minted=${rvMinted} · wall=${(rvMs / 1000).toFixed(1)}s · status=${status}`);
+  for (const [k, v] of Object.entries(byDisp)) console.log(`  ${k.padEnd(13)} ${v.length}`);
+  console.log(`ledger integrity_runs.id = ${rvLedger}`);
+  if (error) console.log(`ERROR: ${error}`);
+  process.exit(status === "completed" ? 0 : 1);
 }
 
 // ── ledger row (written AFTER the pass; failure-settable) ─────────────────────

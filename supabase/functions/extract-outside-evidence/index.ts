@@ -18,6 +18,7 @@
 // content_identity + snapshot hash in raw_payload for audit. Frozen company → 403.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { gateRegenUrls, requireRunId } from "../_shared/outsideRecrawlReview.ts";
 import { sha256Hex, contentIdentity, normalizeForHash } from "../_shared/contentIdentity.ts";
 import { admitOutsideEvidence, snapshotReadDate } from "../_shared/outsideEvidenceRegen.ts";
 
@@ -88,10 +89,19 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const company_id = String(body.company_id ?? "");
     const urlFilter: string[] | null = Array.isArray(body.urls) ? body.urls.map(String) : null;
-    const runId: string = typeof body.run_id === "string" && body.run_id ? body.run_id : crypto.randomUUID();
     if (!company_id) return json({ error: "company_id is required" }, 400);
-
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // R3 REVIEW GATE (operator ruling 2026-09-04): run_id is REQUIRED — it names the outside_recrawl_review
+    // run whose approved rows are the only URLs this door may regenerate. A missing run_id is refused (400)
+    // and ledgered; nothing is read from the basis.
+    const runId: string | null = requireRunId(body as Record<string, unknown>);
+    if (!runId) {
+      await supabase.from("integrity_runs").insert({
+        company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
+        excluded_by_rule: { refused: "run_id_required", review_gate: true }, run_ref: "r3_outside_regen_refused_no_run_id",
+      });
+      return json({ ok: false, error: "run_id is required: name the outside_recrawl_review run whose approved rows to regenerate" }, 400);
+    }
 
     // Frozen refusal — a frozen company is never regenerated or written.
     const { data: co } = await supabase.from("companies").select("id, frozen, entity_anchors_json").eq("id", company_id).maybeSingle();
@@ -118,6 +128,20 @@ Deno.serve(async (req) => {
     }
     let urls = [...newestByUrl.keys()];
     if (urlFilter) urls = urls.filter((u) => urlFilter.includes(u));
+    // R3 REVIEW GATE: only operator-APPROVED rows for this run_id pass; every other URL is refused + ledgered.
+    const { data: reviewRows } = await supabase
+      .from("outside_recrawl_review").select("source_url, operator_decision")
+      .eq("company_id", company_id).eq("run_id", runId);
+    const gate = gateRegenUrls(urls, (reviewRows ?? []) as Array<{ source_url: string; operator_decision: string | null }>);
+    const reviewRefused = gate.refused;
+    urls = gate.allowed;
+    if (urls.length === 0) {
+      await supabase.from("integrity_runs").insert({
+        company_id, component: "r3_outside_regen", status: "failed", examined: 0, admitted: 0,
+        excluded_by_rule: { refused: "no_approved_urls", review_refused: reviewRefused, run_id: runId, review_gate: true }, run_ref: `r3_outside_regen_${runId}`,
+      });
+      return json({ ok: false, error: "no approved URLs for this run_id", run_id: runId, review_refused: reviewRefused }, 400);
+    }
 
     // Existing outside content identities (dedup — never mint a duplicate of an existing signal's excerpt).
     const { data: existSig } = await supabase
@@ -221,13 +245,13 @@ Deno.serve(async (req) => {
     const { error: intErr } = await supabase.from("integrity_runs").insert({
       company_id, component: "r3_outside_regen", status: stoppedForTime ? "failed" : "completed",
       examined: candidates_total, admitted: admitted_total,
-      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime },
+      excluded_by_rule: { guard_rejected_total, reject_reasons: rejectReasons, urls: urls.length, pages: processed, run_id: runId, stopped_for_time: stoppedForTime, review_refused: reviewRefused, review_gate: true },
       run_ref: `r3_outside_regen_${runId}`,
     });
     if (intErr) throw new Error(`integrity insert failed: ${intErr.message}`);
 
     return json({
-      ok: true, company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime,
+      ok: true, company_id, run_id: runId, urls_total: urls.length, pages_processed: processed, stopped_for_time: stoppedForTime, review_refused: reviewRefused,
       totals: { candidates: candidates_total, admitted: admitted_total, guard_rejected: guard_rejected_total, reject_reasons: rejectReasons },
       pages,
     });
