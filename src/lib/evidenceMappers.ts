@@ -1,4 +1,5 @@
 import { E2_SINGLE_SENTENCE_MAX, E2_MULTI_SENTENCE_MAX, E2_ORGANIZATION_MAX } from "./evidenceCaps.ts";
+import { anchorBasisFor, type AnchorBasis } from "../../supabase/functions/_shared/outsideRecrawlAnchors.ts";
 import {
   type ClaimCandidate,
   type ClaimDraft,
@@ -301,11 +302,14 @@ function summarizeOrganizationEvidence(claimText: string, evidenceText: string) 
   return full;
 }
 
-function summarizeOutsideEvidence(text: string) {
+/** RULING 1 (2026-09-04): an R3-judge-admitted VERBATIM outside signal has already passed the judge and the E4/E2 rails;
+ *  the comma-count feature-list heuristic (built for un-judged baseline paraphrases) does not apply to it. */
+export const R3_ADMITTED_SOURCE_TYPES: ReadonlySet<string> = new Set(["outside_recrawl_regen"]);
+function summarizeOutsideEvidence(text: string, opts: { judgedVerbatim?: boolean } = {}) {
   const normalized = normalizeComparisonText(text);
   if (!normalized) return null;
   if (looksLikeOutsideNoise(text)) return null;
-  if (looksLikeFeatureList(text)) return null;
+  if (!opts.judgedVerbatim && looksLikeFeatureList(text)) return null;
   if (looksLikeLowValueOutsideDescription(text)) return null;
   if (
     /(located in|operates primarily|followers|employees listed|website blocked|blog content|various arabica|direct online store|physical venues|geographic markets|small batch|hand roasted|product offerings?|flavor profiles?|versatility for multiple brewing methods|coffee consumers seeking|business customers looking for wholesale|customer engagement includes|tastings or consultation meetings|quality conscious independent cafes|sales channels include)/.test(normalized) &&
@@ -336,7 +340,7 @@ function synthesizeEvidenceStatement(signal: SignalDraft & { id?: string }) {
   if (signal.signal_band === "organization") {
     return summarizeOrganizationEvidence(rawClaim, rawEvidence || rawClaim);
   }
-  return summarizeOutsideEvidence(rawEvidence || rawClaim);
+  return summarizeOutsideEvidence(rawEvidence || rawClaim, { judgedVerbatim: R3_ADMITTED_SOURCE_TYPES.has(String(signal.source_type ?? "")) });
 }
 
 function canonicalizeClaimStatement(signal: SignalDraft & { id?: string }) {
@@ -989,13 +993,15 @@ export function deriveClaimProvenance(
 // has not been seeded behaves exactly as before, so the gate rolls out per-company on seed.
 // KNOWN false-positive (named at the design gate): a genuine location review that names no
 // anchor ("Adorable little French Bakery…") is refused and stays a signal.
-export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null }, anchors: string[]): boolean {
-  if (!anchors.length) return true;
-  const hay = `${signal.claim_text ?? ""} ${signal.evidence_excerpt ?? ""} ${signal.source_url ?? ""}`.toLowerCase();
-  return anchors.some((a) => {
-    const needle = String(a || "").trim().toLowerCase();
-    return needle.length > 0 && hay.includes(needle);
-  });
+/** D3 anchor gate — delegates to the ONE anchor authority (rulings 2a/2b, 2026-09-04): normalized slugs anchor names;
+ *  a page that anchors the client plus a role-reference sentence counts as anchored ('page+role'). */
+export function signalAnchorBasis(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): AnchorBasis | null {
+  const rp = (signal.raw_payload && typeof signal.raw_payload === "object" ? signal.raw_payload : {}) as { page_title?: unknown; og_title?: unknown };
+  const text = `${signal.claim_text ?? ""} ${signal.evidence_excerpt ?? ""}`;
+  return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, pageTitle: signal.source_title ?? (typeof rp.page_title === "string" ? rp.page_title : null), ogTitle: typeof rp.og_title === "string" ? rp.og_title : null }, anchors);
+}
+export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): boolean {
+  return signalAnchorBasis(signal, anchors) !== null;
 }
 
 export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = []): ClaimCandidate[] {
@@ -1005,7 +1011,8 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     if (!isSignalProvenanceWorthy(signal)) return;
     // D3 anchor gate — outside-band signals must reference a client anchor to mint a client
     // claim (inert when no anchors are configured for the company).
-    if (signal.signal_band === "outside" && !signalMatchesAnchor(signal, anchors)) return;
+    const anchorBasis = signal.signal_band === "outside" ? signalAnchorBasis(signal, anchors) : null;
+    if (signal.signal_band === "outside" && anchorBasis === null) return;
     // LISTING CLASS (operator ruling 2026-09-04): a listing signal maps to an inference claim whose statement
     // IS the title line — never prose-canonicalized, never dropped as a "quoted excerpt", never summarized.
     // The claim carries a listing marker in raw_payload so every reader can tell it from prose.
@@ -1043,7 +1050,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
           confidence: "low",
           provenance: "public_observed", // finalized below from the FULL group
           revalidation_flag: signal.framing_fit === "weak" || signal.framing_fit === "unknown",
-          raw_payload: { sample_signal: signal.raw_payload, ...(isListing ? { evidence_class: "listing", listing: signal.listing } : {}) },
+          raw_payload: { sample_signal: signal.raw_payload, ...(isListing ? { evidence_class: "listing", listing: signal.listing } : {}), ...(anchorBasis ? { anchor_basis: anchorBasis } : {}) },
         },
         sourceSignals: [],
         qualities: [],
