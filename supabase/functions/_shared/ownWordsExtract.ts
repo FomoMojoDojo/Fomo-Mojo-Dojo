@@ -50,12 +50,19 @@ export function isRecruitingCopy(quote: string): boolean {
 // SPECIFIC item. Requires actual tasting/roast vocabulary so offering-breadth statements
 // ("all of our coffees are available in 12oz bags") are NOT matched by shape alone.
 const ROAST_RE = /\b(?:light|medium|medium[- ]dark|dark)\s+roast\b/i;
-const TASTING_RE = /\b(full[- ]bodied|fruity|earthy|nutty|chocolat\w*|floral|aromatic|acidic|caramel\w*|citrus\w*|berr\w*|smoky|silky|velvety|balanced\s+(?:medium|roast|coffee))\b/i;
+// Widened (operator ruling 2026-09-04, fleet-wide by design): (a) "tastes" / "darker" / "lighter" join the flavor
+// vocabulary ("This medium roast tastes a little darker."); (b) a capitalised product name immediately followed by
+// "Roast" ("Machado Roast") is a NAMED-SKU trigger — case-sensitive on purpose, so "our roast" / "the roast" never
+// fire. A named roast is the product itself, so it stands alone (no flavor descriptor required).
+const TASTING_RE = /\b(full[- ]bodied|fruity|earthy|nutty|chocolat\w*|floral|aromatic|acidic|caramel\w*|citrus\w*|berr\w*|smoky|silky|velvety|balanced\s+(?:medium|roast|coffee)|tastes|darker|lighter)\b/i;
+const NAMED_ROAST_RE = /\b[A-Z][a-z]+ Roast\b/; // no `i` flag — the capital is the trigger
 const SKU_OPENER_RE = /^\s*this\s+(?:coffee|roast|blend|medium|dark|light|single)\b/i;
 export function isProductDescription(quote: string): boolean {
   const flavorCount = (quote.match(new RegExp(TASTING_RE, "gi")) || []).length;
+  // named SKU ("Machado Roast") — the product by name, a description by construction;
   // roast profile + any flavor descriptor, OR a "This <coffee/roast…>" opener with a flavor note,
   // OR two-plus flavor descriptors (a tasting note regardless of opener).
+  if (NAMED_ROAST_RE.test(quote)) return true;
   if (ROAST_RE.test(quote) && TASTING_RE.test(quote)) return true;
   if (SKU_OPENER_RE.test(quote) && TASTING_RE.test(quote)) return true;
   if (flavorCount >= 2) return true;
