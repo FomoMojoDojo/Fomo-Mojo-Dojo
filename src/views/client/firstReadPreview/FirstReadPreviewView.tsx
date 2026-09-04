@@ -11,6 +11,7 @@ import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { OperatorControlsContext, type OperatorControls, type OperatorDecision } from "./operatorControls";
+import { OPERATOR_STRINGS } from "./operatorStrings";
 import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideAction";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
@@ -97,8 +98,14 @@ export default function FirstReadPreviewView() {
   const [refreshKey, setRefreshKey] = useState(0);
   const { data: baseData, loading, error } = useFirstReadPreviewData(companyId, refreshKey);
   const queryClient = useOptionalQueryClient();
+  // RULE (a) (operator ruling 2026-09-03): this preview is the surface shown on screen in client meetings,
+  // so the operator affordance is OFF by default and lives in component state ONLY — no localStorage,
+  // no sessionStorage, no URL param. A hard reload lands on the client render. When on, the context is
+  // provided and every operator node (controls, provenance tags, struck-pairs blocks) renders; when off
+  // the context is null and the preview is byte-identical to the client render.
+  const [operatorOn, setOperatorOn] = useState(false);
   const operatorControls = useMemo<OperatorControls | null>(() => {
-    if (!companyId) return null;
+    if (!companyId || !operatorOn) return null;
     return {
       decide: async ({ pair, verdict, reason }: OperatorDecision) => {
         // A withdrawal also awaits refresh-relevance-step (decideRelevance) so this refresh shows the machine verdict.
@@ -109,7 +116,7 @@ export default function FirstReadPreviewView() {
         setRefreshKey((k) => k + 1);
       },
     };
-  }, [companyId, queryClient]);
+  }, [companyId, queryClient, operatorOn]);
   // Questions come from the ONE open-question authority — it applies
   // the outside-only provenance gate (doc-derived questions never render).
   const { questions } = useFirstReadOpenQuestions(companyId);
@@ -339,6 +346,23 @@ export default function FirstReadPreviewView() {
           </p>
         ) : null}
       </div>
+      {/* Operator switch (rule (a), edited 2026-09-03): the operator's own affordance, not a client element —
+          fixed bottom-left, glyph only (circle-with-dot), muted while off, full while on. No text node; the
+          aria strings are the only strings. State only — never persisted. */}
+      <button
+        type="button"
+        className="fixed bottom-6 left-6 flex h-8 w-8 items-center justify-center transition-opacity"
+        style={{ color: "hsl(var(--fr-muted))", opacity: operatorOn ? 1 : 0.35 }}
+        data-fr-operator-switch={operatorOn ? "on" : "off"}
+        aria-label={OPERATOR_STRINGS.switchAriaLabel}
+        aria-pressed={operatorOn}
+        onClick={() => setOperatorOn((v) => !v)}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
+          <circle cx="8" cy="8" r="2" fill="currentColor" />
+        </svg>
+      </button>
     </div>
     </OperatorControlsContext.Provider>
   );

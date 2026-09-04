@@ -17,6 +17,10 @@ export const OPERATOR_STRINGS = {
   /** Who decided a machine strike, prefixed to the stored relevance_reason. */
   routerPrefix: "Router · ",
   judgePrefix: "Judge · ",
+  /** The operator switch (rule (a), 2026-09-03, edited: bottom-left, glyph only): the preview is the
+   *  meeting-screen surface — operator controls are OFF by default, state-only (never persisted), and a
+   *  hard reload lands on the client render. The switch carries NO visible text; aria strings only. */
+  switchAriaLabel: "Operator controls",
 } as const;
 
 /** Provenance tag on an operator-decided pair: "Operator · spared · September 3, 2026". */
