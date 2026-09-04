@@ -65,3 +65,31 @@ export function classifyDeltaOutcome(res: DeltaWorkerResponse): DeltaOutcome {
   }
   return "transient";
 }
+
+// ── STEPPER GUARDS (operator rulings 2026-09-04) — pure, vitest-proven ──────────────────────────────────
+/** The stepper attaches to a running row younger than this; older unfinished rows are abandoned (ruling 5). */
+export const CHAIN_WINDOW_MS = 25 * 60_000;
+/** Livelock guard (ruling 3): this many consecutive passes with `done` not advancing fails the row and stops. */
+export const LIVELOCK_PASSES = 3;
+export const LIVELOCK_LEDGER_TEXT = "livelock: plan yields work write refuses" as const;
+export const ABANDON_LEDGER_TEXT = "abandoned: no finish within attach window" as const;
+
+export type ChainState = { last_done: number; no_advance_passes: number };
+/** Fold one pass into the chain state. `no_advance_passes` counts consecutive passes that observed the SAME `done`
+ *  (the first observation counts as 1); an advancing `done` restarts the count at 1. LIVELOCK_PASSES consecutive
+ *  observations of one value trip the guard — a stub that never advances fails on its 3rd pass, never a 4th. */
+export function nextChainState(prev: ChainState | null | undefined, done: number): { state: ChainState; tripped: boolean } {
+  if (!prev || done > prev.last_done) return { state: { last_done: done, no_advance_passes: 1 }, tripped: false };
+  const passes = prev.no_advance_passes + 1;
+  return { state: { last_done: done, no_advance_passes: passes }, tripped: passes >= LIVELOCK_PASSES };
+}
+/** The finalize-retry re-entry body — the pairing kind travels with it (ruling 4). */
+export function finalizeRetryBody(company_id: string, parent_run_id: string | null, pairing_kind: "internal_vs_public" | "public_vs_public") {
+  return { company_id, parent_run_id, pairing_kind };
+}
+/** Running, unfinished rows whose updated_at is older than the attach window (ruling 5). */
+export function abandonedRunIds(rows: Array<{ id: string; status: string; finished_at: string | null; updated_at: string | null }>, nowMs: number): string[] {
+  const cutoff = nowMs - CHAIN_WINDOW_MS;
+  return rows.filter((r) => r.status === "running" && !r.finished_at && r.updated_at != null && Date.parse(r.updated_at) < cutoff).map((r) => r.id);
+}
+

@@ -63,6 +63,7 @@
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { listingMayCorroborate } from "./listingCorroboration.ts";
+import { listingIdentityInput, type Listing } from "./listingDetect.ts";
 import { isOwnDomainUrl, normalizeHost } from "./firstReadProvenance.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 
@@ -98,13 +99,15 @@ export type DeltaClaim = {
   declared_eligible?: boolean | null;
   // LISTING CORROBORATION (2026-09-04): the declared side's judged kind — listingMayCorroborate reads it.
   statement_kind?: string | null;
+  // LISTING PAIRS BY CONSTRUCTION (2026-09-04): the observed side's structured listing (raw_payload.listing).
+  listing?: Listing | null;
 };
 
 export type ComputedDelta = {
   delta_type: "echoed" | "divergent" | "publicly_silent" | "internally_silent";
   declared_claim_id: string | null;
   public_claim_id: string | null;
-  pairing_basis: "judge_confirmed" | "inferred";
+  pairing_basis: "judge_confirmed" | "inferred" | "listing";
   judge_reason: string | null;
   content_identity: string;
   declared_statement?: string;
@@ -131,6 +134,8 @@ export type DeltaRunResult =
         // text (or absent) — a mechanical failure, NOT a verdict. NEVER written (no rejection,
         // no pair), so the pair stays revisitable and asserts neither echo nor no-echo.
         spans_unjudged: number;
+        // LISTING PAIRS BY CONSTRUCTION (2026-09-04): refused listing candidates; deterministic listing pairs formed.
+        listing_corroboration_refused?: number; pairs_listing?: number;
         // SELF-ECHO GATE (2026-09-03): observed candidates refused at admission — own-host backed, and
         // (public kind) unresolvable (no refs, no page_url). Neither can corroborate; both are ledgered.
         own_host_excluded?: number; unbacked_excluded?: number;
@@ -281,6 +286,16 @@ export function overrideColumnsFor(
     relevance_span: null,
     relevance_judged_at: ov.decided_at,
   };
+}
+
+/** LISTING PAIRS BY CONSTRUCTION (operator ruling 2026-09-04): identity = declared content identity + listing identity
+ *  (host + product + price) — never the paraphrase text, so a re-typed title never re-keys the pair. */
+export async function listingPairIdentity(declaredStatement: string, listing: Listing): Promise<string> {
+  return await sha256Hex(`listingpair|${normalizeForHash(declaredStatement)}|${listingIdentityInput(listing)}`);
+}
+export const LISTING_PREDICATE_PROVIDER = "listing_predicate" as const;
+export function listingPairReason(kind: string | null | undefined): string {
+  return `listing corroborates a ${(kind ?? "untyped")} placement statement (listingMayCorroborate)`;
 }
 
 export async function pairIdentity(declaredStatement: string, publicStatement: string): Promise<string> {
@@ -504,6 +519,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       ...c,
       source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null,
       page_url: typeof c.raw_payload?.page_url === "string" ? c.raw_payload.page_url : null,
+      // LISTING PAIRS: the listing block travels (structured fields only), raw_payload itself does not.
+      listing: ((c.raw_payload as { listing?: Listing | null } | null | undefined)?.listing ?? null),
       raw_payload: undefined,
     }));
   const pairingKind: PairingKind = args.pairingKind ?? "internal_vs_public";
@@ -652,6 +669,12 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // side — a claim can never sit on both sides of its own pairing. (Self-voice exclusion
   // already removes client_voice/analysis-backed claims; this additionally removes the
   // NULL-voice own-domain declared rows the positive-only self-voice test leaves in.)
+  /** LISTING PAIRS (parity): for a listing-backed observed claim, the structured listing when the declared side is
+   *  admitted by listingMayCorroborate, "refused" when it is not, null for a prose observed claim. */
+  const listingCandidate = (d: { statement: string; statement_kind?: string | null }, p: { id: string; listing?: Listing | null }): Listing | "refused" | null => {
+    if (!listingBackedClaimIds.has(p.id) || !p.listing) return null;
+    return listingMayCorroborate(d).ok ? p.listing : "refused";
+  };
   const voiceOrDeclared = (c: { id: string }) => selfVoiceClaimIds.has(c.id) || (publicVoiceDeclaredIds?.has(c.id) ?? false);
   const publics = publicsAll.filter(
     (c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && !unbackedClaimIds.has(c.id),
@@ -748,6 +771,19 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     for (const d of declaredScope) {
       let total = 0, cached = 0, tombstoned = 0, rejected = 0;
       for (const p of publics) {
+        // LISTING PAIRS BY CONSTRUCTION — plan/write PARITY: the SAME predicate call, in the SAME position as the
+        // write loop. Refused listing candidates are not candidates at all (never fresh); admitted ones are a
+        // deterministic pair keyed by listingPairIdentity (cached once written, fresh until then).
+        const lst = listingCandidate(d, p);
+        if (lst === "refused") continue;
+        if (lst) {
+          total++;
+          const identity = await listingPairIdentity(d.statement, lst);
+          if (tombstones.has(identity)) { tombstoned++; continue; }
+          const kept = existing.get(identity);
+          if (kept && kept.delta_type === "echoed") { cached++; continue; }
+          continue; // fresh — the write creates it by construction (no proposer, no rejection cache)
+        }
         if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
         total++;
         const identity = await pairIdentity(d.statement, p.statement);
@@ -795,6 +831,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     own_words_ineligible: ownWordsIneligible,
     proof_guard_excluded: proofGuardExcludedIds.length,
     listing_corroboration_refused: 0,
+    pairs_listing: 0,
   };
 
   // NEG-CACHE: every identity that survives the prefilter THIS run — the
@@ -848,9 +885,45 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
   for (const d of declaredScope) {
     for (const p of publics) {
-      // LISTING CORROBORATION (operator ruling 2026-09-04): a listing-backed observed claim pairs ONLY where the
-      // predicate admits the declared side; refused pairings are COUNTED and never reach the prefilter/judge.
-      if (listingBackedClaimIds.has(p.id) && !listingMayCorroborate(d).ok) { totals.listing_corroboration_refused++; continue; }
+      // LISTING PAIRS BY CONSTRUCTION (operator ruling 2026-09-04): a listing-backed observed claim admitted by
+      // listingMayCorroborate forms its echoed pair deterministically — basis 'listing', provider
+      // listing_predicate, verdict relevant — and NEVER enters the proposer, the rejection cache, or the router.
+      // A refused listing candidate is refused in the SAME position plan mode refuses it (parity), counted.
+      const lst = listingCandidate(d, p);
+      if (lst === "refused") { totals.listing_corroboration_refused++; continue; }
+      if (lst) {
+        totals.candidates++;
+        const identity = await listingPairIdentity(d.statement, lst);
+        candidateIdentities.add(identity);
+        if (tombstones.has(identity)) { totals.tombstones_respected++; continue; }
+        const kept = existing.get(identity);
+        if (kept && kept.delta_type === "echoed") { pairedDeclared.add(d.id); pairedPublic.add(p.id); keptPairIdentities.add(identity); continue; }
+        pairedDeclared.add(d.id);
+        pairedPublic.add(p.id);
+        totals.pairs_listing++;
+        const reason = listingPairReason(d.statement_kind);
+        const pairRow: ComputedDelta = {
+          delta_type: "echoed", declared_claim_id: d.id, public_claim_id: p.id, pairing_basis: "listing",
+          judge_reason: reason, content_identity: identity, declared_statement: d.statement, public_statement: p.statement,
+        };
+        deltas.push(pairRow);
+        if (args.write && !existing.has(identity) && !insertedThisRun.has(identity)) {
+          const { error: insErr } = await args.supabase.from("claim_deltas").insert({
+            company_id: args.companyId, declared_claim_id: d.id, public_claim_id: p.id,
+            delta_type: "echoed", pairing_basis: "listing", judge_reason: reason, content_identity: identity,
+            computed_at: args.nowIso, pairing_kind: pairingKind,
+            model_provider: LISTING_PREDICATE_PROVIDER, model_name: "deterministic",
+            observed_own_host: observedOwnHost(p.id),
+            relevance_verdict: "relevant", relevance_provider: LISTING_PREDICATE_PROVIDER, relevance_model: LISTING_PREDICATE_PROVIDER,
+            relevance_reason: reason, relevance_span: "", relevance_judged_at: args.nowIso,
+            ...overrideColumnsFor(identity, relevanceOverrides),
+          });
+          if (insErr) throw new Error(`claim-delta listing-pair insert failed: ${insErr.message}`);
+          insertedThisRun.add(identity);
+          totals.rows_new++;
+        }
+        continue;
+      }
       if (sharedTokenCount(d.statement, p.statement) < PREFILTER_MIN_SHARED_TOKENS) continue;
       totals.candidates++;
       const identity = await pairIdentity(d.statement, p.statement);

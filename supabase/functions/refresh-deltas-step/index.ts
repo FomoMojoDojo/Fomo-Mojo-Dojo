@@ -24,7 +24,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { packDeltaChunks, type DeltaPlanClaim } from "../../../src/lib/claimDeltas/packChunks.ts";
-import { classifyDeltaOutcome, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/deltaChainGate.ts";
+import { classifyDeltaOutcome, NO_DECLARED_SIDE_LEDGER_TEXT, CHAIN_WINDOW_MS, LIVELOCK_LEDGER_TEXT, ABANDON_LEDGER_TEXT, nextChainState, finalizeRetryBody, abandonedRunIds, type ChainState } from "../_shared/deltaChainGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,7 +46,6 @@ const RUN_KIND_INTERNAL = "claim_deltas";
 const RUN_KIND_PUBLIC = "claim_deltas_public";
 // A chain is "this company's claim_deltas row still running, started recently". 25 min is
 // comfortably longer than the observed ~4-min loop and shorter than the 30-min lock TTL.
-const CHAIN_WINDOW_MS = 25 * 60_000;
 
 // One server-to-server call into generate-claim-deltas (the untouched worker).
 async function callDeltas(url: string, key: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: Record<string, unknown> | null; reason?: string }> {
@@ -92,20 +91,33 @@ Deno.serve(async (req) => {
   if (!company_id) return json({ ok: false, error: "company_id required" }, 400);
   const RUN_KIND = pairingKind === "public_vs_public" ? RUN_KIND_PUBLIC : RUN_KIND_INTERNAL;
 
+  // ── 0) ABANDON PATH (ruling 5, 2026-09-04): a running, unfinished row of this kind+company whose updated_at
+  //       is older than the attach window is stamped failed BEFORE a new row opens — by code, never by hand.
+  {
+    const { data: staleRows } = await supabase
+      .from("long_runner_runs").select("id, status, finished_at, updated_at")
+      .eq("company_id", company_id).eq("run_kind", RUN_KIND).eq("status", "running");
+    const abandoned = abandonedRunIds((staleRows ?? []) as Array<{ id: string; status: string; finished_at: string | null; updated_at: string | null }>, Date.now());
+    if (abandoned.length) {
+      await supabase.from("long_runner_runs").update({ status: "failed", error_text: ABANDON_LEDGER_TEXT, finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).in("id", abandoned);
+    }
+  }
   // ── 1) find-or-create the child ledger row (chain identity) ─────────────────────────
   const sinceIso = new Date(Date.now() - CHAIN_WINDOW_MS).toISOString();
   let childId: string | null = null;
   let targetCount: number | null = null;
+  let chainState: ChainState | null = null;
   {
     const { data: existing } = await supabase
       .from("long_runner_runs")
-      .select("id, target_count")
+      .select("id, target_count, chain_state")
       .eq("company_id", company_id).eq("run_kind", RUN_KIND).eq("status", "running")
       .gte("started_at", sinceIso)
       .order("started_at", { ascending: false }).limit(1).maybeSingle();
     if (existing) {
       childId = String((existing as { id: string }).id);
       targetCount = (existing as { target_count: number | null }).target_count ?? null;
+      chainState = ((existing as { chain_state?: ChainState | null }).chain_state ?? null);
     } else {
       const insertRow: Record<string, unknown> = { run_kind: RUN_KIND, company_id, status: "running", done_count: 0 };
       if (parent_run_id) insertRow.parent_run_id = parent_run_id; // Gate 2 column; harmless if the migration is applied
@@ -166,7 +178,15 @@ Deno.serve(async (req) => {
     // the chunk didn't bank; the next re-plan returns it again (idempotent retry).
     const remainingAfter = res.ok ? Math.max(0, chunks.length - 1) : chunks.length;
     const done = Math.max(0, (targetCount ?? chunks.length) - remainingAfter);
-    await supabase.from("long_runner_runs").update({ done_count: done, updated_at: new Date().toISOString() }).eq("id", childId);
+    // LIVELOCK GUARD (ruling 3, 2026-09-04): if `done` has not advanced for LIVELOCK_PASSES consecutive passes,
+    // fail the row with the signed reason and STOP — never re-chain (the 2026-09-04 runaway: plan yielded a chunk
+    // the write refused, forever).
+    const guard = nextChainState(chainState, done);
+    await supabase.from("long_runner_runs").update({ done_count: done, chain_state: guard.state, updated_at: new Date().toISOString() }).eq("id", childId);
+    if (guard.tripped) {
+      await finish("failed", done, LIVELOCK_LEDGER_TEXT);
+      return json({ ok: false, error: LIVELOCK_LEDGER_TEXT, passes: guard.state.no_advance_passes }, 200);
+    }
     waitUntil(callDeltas(url, key, { company_id, plan: true, pairing_kind: pairingKind }).then(() =>
       fetch(`${url}/functions/v1/refresh-deltas-step`, {
         method: "POST",
@@ -209,10 +229,11 @@ Deno.serve(async (req) => {
     if ((count ?? 0) !== (preCount ?? 0)) { await finish("completed", targetCount ?? 0); fireRelevanceBackstop(); /* completed terminal (ii) */ return json({ ok: true, finalized: true, polled: true }); }
   }
   // Couldn't confirm within the poll — re-fire once more (finalize is idempotent); the sweep bounds the tail.
+  // RETRY KIND (ruling 4, 2026-09-04): the re-entry carries the pairing kind — a public chain never resumes as internal.
   waitUntil(fetch(`${url}/functions/v1/refresh-deltas-step`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-    body: JSON.stringify({ company_id, parent_run_id }),
+    body: JSON.stringify(finalizeRetryBody(company_id, parent_run_id, pairingKind)),
   }).catch(() => {}));
   return json({ ok: true, finalize_retry: true });
 });
