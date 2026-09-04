@@ -7,6 +7,7 @@
 // page text — a model can never talk a fabricated quote past it.
 
 import { contentIdentity, normalizeForHash } from "./contentIdentity.ts";
+import { declaredEligibleFor, type OwnWordsKind } from "./ownWordsKinds.ts";
 
 // ── channelJunk — byte-mirror of src/views/client/firstReadPreview/channelJunk.ts (R3).
 // A second copy on the edge side (like fetchAndExtract); unification is filed, not done here.
@@ -98,6 +99,10 @@ export type JudgeVerdict = {
   fidelity: "verbatim" | "paraphrased";
   selfAssertion: boolean;
   reason?: string;
+  // ADMISSION CRITERION (2026-09-03): the typed kind + its reason from the same judge call. null =
+  // missing/invalid (a judge glitch) — the assembler fails TOWARD eligible and logs it.
+  kind?: OwnWordsKind | null;
+  kindReason?: string;
 };
 export type Survivor = {
   quote: string;
@@ -105,6 +110,11 @@ export type Survivor = {
   length: number;
   fidelity: "verbatim" | "paraphrased";
   contentIdentity: string;
+  kind: OwnWordsKind | null;
+  kindReason: string | null;
+  /** declared_eligible on the minted claim — kind ∈ {positioning, offer, audience, proof}; a missing kind ⇒ true. */
+  declaredEligible: boolean;
+  kindMissing: boolean;
 };
 export type Rejection = { quote: string; reason: string };
 
@@ -118,6 +128,7 @@ export type Rejection = { quote: string; reason: string };
  *   5. judge keep — the judge's overall verdict (also carries the R1 criteria for ambiguous cases).
  *   6. verbatim guard (DETERMINISTIC, final) — substring-provable against the page, else reject.
  *   7. dedup by content identity.
+ *   8. kind → declared_eligible (admission criterion; missing kind fails toward eligible, logged).
  * A missing verdict for a candidate is a reject (require_model — no verdict, no keep).
  */
 export async function assembleOwnWords(
@@ -142,7 +153,14 @@ export async function assembleOwnWords(
     const id = await contentIdentity(c.quote);
     if (seen.has(id)) { rejections.push({ quote: c.quote, reason: "duplicate" }); continue; }
     seen.add(id);
-    survivors.push({ quote: c.quote, offset: c.offset, length: c.length, fidelity: v.fidelity, contentIdentity: id });
+    // ADMISSION CRITERION: admit/decline by kind, never rewrite. FAIL-TOWARD-ELIGIBLE on a missing kind.
+    const kind = v.kind ?? null;
+    const kindMissing = kind === null;
+    if (kindMissing) console.warn(`[own-words] judge returned no valid kind for "${c.quote.slice(0, 60)}" — kept declared-eligible (fail-toward-eligible)`);
+    survivors.push({
+      quote: c.quote, offset: c.offset, length: c.length, fidelity: v.fidelity, contentIdentity: id,
+      kind, kindReason: v.kindReason ?? null, declaredEligible: declaredEligibleFor(kind), kindMissing,
+    });
   }
   return { survivors, rejections };
 }

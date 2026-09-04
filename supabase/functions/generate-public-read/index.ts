@@ -25,6 +25,7 @@
 // CB1 / frozen companies are refused structurally (by id here, and by the DB freeze trigger).
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { declaredEligibleFor, parseOwnWordsKind } from "../_shared/ownWordsKinds.ts";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
 import { sha256Hex } from "../_shared/contentIdentity.ts";
@@ -92,8 +93,10 @@ async function gatherPublicInputs(supabase: SupabaseClient, companyId: string): 
   // 2. own-words — the company's OWN public-site voice, judge-kept only. own_site=true by construction
   //    (own-words ARE judge-kept quotes from the company's own public site — the seen_on "own site" set).
   const { data: ow } = await supabase
-    .from("own_words_candidates").select("id, quote").eq("company_id", companyId).eq("judge_keep", true);
-  for (const w of (ow ?? []) as Array<{ id: string; quote: string | null }>) {
+    .from("own_words_candidates").select("id, quote, judge_kind").eq("company_id", companyId).eq("judge_keep", true);
+  for (const w of (ow ?? []) as Array<{ id: string; quote: string | null; judge_kind?: string | null }>) {
+    // ADMISSION CRITERION (2026-09-03): only declared-eligible kinds seed posits (a missing kind is eligible).
+    if (!declaredEligibleFor(parseOwnWordsKind(w.judge_kind))) continue;
     const text = (w.quote ?? "").trim();
     if (text) rows.push({ id: w.id, kind: "own_word", provenance: "public_observed", text, own_site: true });
   }

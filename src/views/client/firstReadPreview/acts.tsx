@@ -23,7 +23,7 @@ import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
-import { OperatorPairMeta, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorPairMeta, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -46,6 +46,36 @@ function foldedSourceLine(g: { host: string; date: string | null; count: number;
   return g.provisional ? `${base} — ${PROVISIONAL_CITATION_LABEL}` : base;
 }
 
+// Source lists fold to this many rows; the rest sit behind a "+n more" toggle (2026-09-03, operator ask:
+// the folded rows were unreachable). State only — collapsed again on every mount.
+const SOURCE_LIST_FOLD = 6;
+const SHOW_FEWER_LABEL = "Show fewer"; // signed with the +n more toggle
+
+/** One source column: the folded rows, then "+n more" as a text toggle (the header's muted link primitive). */
+function SourceColumn({ label, groups }: { label: string; groups: ReturnType<typeof foldByHostDate> }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? groups : groups.slice(0, SOURCE_LIST_FOLD);
+  const hidden = groups.length - SOURCE_LIST_FOLD;
+  return (
+    <div data-fr-sources={expanded ? "expanded" : "folded"}>
+      <p className="fr-eyebrow mb-2">{label}</p>
+      {shown.map((g, i) => (
+        <p key={i}>{foldedSourceLine(g)}</p>
+      ))}
+      {hidden > 0 ? (
+        <button
+          type="button"
+          className="fr-link-muted mt-1 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? SHOW_FEWER_LABEL : `+${hidden} more`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 // S4 — the pinned status-conflict banner (top of Questions + Findings). Both source sets, no verdict.
 function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) {
   if (conflicts.length === 0) return null;
@@ -56,21 +86,11 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
           <div className="mb-3"><StatusDisputedChip /></div>
           <p className="max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
           {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
-              duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows. */}
+              duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows, and
+              now expands in place (both columns) so every source is reachable. */}
           <div className="mt-5 grid gap-6 text-xs md:grid-cols-2" style={{ color: "hsl(var(--fr-muted))" }}>
-            <div>
-              <p className="fr-eyebrow mb-2">Reported closed</p>
-              {foldByHostDate(c.closed).map((g, i) => (
-                <p key={i}>{foldedSourceLine(g)}</p>
-              ))}
-            </div>
-            <div>
-              <p className="fr-eyebrow mb-2">Still listed open</p>
-              {foldByHostDate(c.open).slice(0, 6).map((g, i) => (
-                <p key={i}>{foldedSourceLine(g)}</p>
-              ))}
-              {foldByHostDate(c.open).length > 6 ? <p>+{foldByHostDate(c.open).length - 6} more</p> : null}
-            </div>
+            <SourceColumn label="Reported closed" groups={foldByHostDate(c.closed)} />
+            <SourceColumn label="Still listed open" groups={foldByHostDate(c.open)} />
           </div>
         </div>
       ))}
@@ -722,6 +742,8 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
             meta={w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
           />
         ))}
+        {/* ADMISSION CRITERION: own words kept as record only — operator view (context-gated, null for the client). */}
+        <OwnWordsRecordBlock words={read.ownWordsRecordOnly} />
         {/* Demoted: our inference read of the channels, below the company's own words. */}
         {read.declared.length > 0 ? (
           <div data-fr-block="channels" className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>

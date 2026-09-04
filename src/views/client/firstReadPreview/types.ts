@@ -62,6 +62,9 @@ export type FROwnWord = {
   pageHost: string;
   fidelity: "verbatim" | "paraphrased";
   sourceTag: { label: string } | null;
+  /** ADMISSION CRITERION (2026-09-03): the judged statement kind (null = not yet typed) + eligibility. */
+  kind?: string | null;
+  declaredEligible?: boolean;
 };
 
 export type FRMarket = {
@@ -326,6 +329,8 @@ export type FirstReadPreviewData = {
    *  (never-fired) FROM THIS record — never from baseline-ran-ness. */
   outsideScoreState: "scored" | "ineligible" | null;
   gapPairs: FRGapPair[];
+  /** Own words kept as RECORD only (instruction / policy / recruiting / other) — operator view, never the client. */
+  ownWordsRecordOnly: FROwnWord[];
   /** Beat 4 render unit (2026-08-21): declared statements, each with its evidence pairs beneath. */
   gapStatements: FRGapStatement[];
   /** A1: statement counts driving the gap headline/standfirst. */
@@ -402,6 +407,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   score: null,
   outsideScoreState: null,
   gapPairs: [],
+  ownWordsRecordOnly: [],
   gapStatements: [],
   gapCounts: { contradicted: 0, reverifying: 0, unechoed: 0, confirmed: 0 },
   reverseRows: [],

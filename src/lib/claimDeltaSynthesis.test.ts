@@ -1139,3 +1139,38 @@ describe("self-echo gate — own-host observed claims never reach the echo side"
     expect((removal!.row_snapshot as Row).content_identity).toBe("gone-identity");
   });
 });
+
+// ── OWN-WORDS ADMISSION (operator ruling 2026-09-03): an ineligible own-words claim never enters the
+// declared side and yields NO publicly_silent row — it is record, not a "you say" statement. ──────────
+describe("own-words admission at the declared seam", () => {
+  const silent = () => stubOllama(() => ({ same_subject: false, relation: null, reason: "no relation" }));
+  const HOST = "https://www.cafebarra.com";
+  const own = (id: string, statement: string, declared_eligible: boolean, kind: string | null) => ({
+    claim: { id, company_id: CO, statement, topic: null, provenance: "public_observed", claim_type: "own_words", declared_eligible, statement_kind: kind },
+    signal: { id: `sig-${id}`, company_id: CO, voice_class: "client_voice", source_url: `${HOST}/home` },
+    ref: { claim_id: id, signal_id: `sig-${id}`, company_id: CO },
+  });
+  it("declared_eligible=false (instruction) ⇒ not declared, no publicly_silent row; ledgered own_words_ineligible=1", async () => {
+    silent();
+    const pos = own("d-pos", "we roast for cafés that want a partner, not a vendor", true, "positioning");
+    const instr = own("d-instr", "just add hot water", false, "instruction");
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [pos.claim, instr.claim], signals: [pos.signal, instr.signal], claim_signal_refs: [pos.ref, instr.ref] });
+    const r = await computeDeltasForCompany({ ...baseArgs(db, CO, true), pairingKind: "public_vs_public" });
+    if (!r.ok) throw new Error("expected ok: " + JSON.stringify(r));
+    expect(r.totals.declared).toBe(1);
+    expect(r.totals.own_words_ineligible).toBe(1);
+    expect(r.deltas.some((d) => d.declared_claim_id === "d-instr")).toBe(false);
+    expect(db.tables.claim_deltas.some((row) => row.declared_claim_id === "d-instr")).toBe(false);
+    // the eligible one still lands publicly_silent (the honest state with no outside record)
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d-pos")).toBe(true);
+  });
+  it("RED-half: the SAME claim with declared_eligible=true IS declared and lands publicly_silent", async () => {
+    silent();
+    const instr = own("d-instr", "just add hot water", true, null);
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [instr.claim], signals: [instr.signal], claim_signal_refs: [instr.ref] });
+    const r = await computeDeltasForCompany({ ...baseArgs(db, CO, false), pairingKind: "public_vs_public" });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.own_words_ineligible).toBe(0);
+    expect(r.deltas.some((d) => d.delta_type === "publicly_silent" && d.declared_claim_id === "d-instr")).toBe(true);
+  });
+});

@@ -21,6 +21,10 @@ export const OPERATOR_STRINGS = {
    *  meeting-screen surface — operator controls are OFF by default, state-only (never persisted), and a
    *  hard reload lands on the client render. The switch carries NO visible text; aria strings only. */
   switchAriaLabel: "Operator controls",
+  /** Own-words admission (2026-09-03): the operator-only block under "In your words" listing the own words
+   *  kept as record but not shown to the client (instruction / policy / recruiting / other). PROPOSED — for sign-off. */
+  recordOnlyEyebrow: "Kept as record — not shown to the client",
+  kindPrefix: "Kind · ",
 } as const;
 
 /** Provenance tag on an operator-decided pair: "Operator · spared · September 3, 2026". */

@@ -93,6 +93,8 @@ export type DeltaClaim = {
   // SELF-ECHO GATE: the page an own-words claim was read from (raw_payload.page_url) — the no-ref
   // resolution of the observed side's host when its signal refs are absent.
   page_url?: string | null;
+  // ADMISSION CRITERION (2026-09-03): own_words claims carry declared_eligible; false ⇒ never the declared side.
+  declared_eligible?: boolean | null;
 };
 
 export type ComputedDelta = {
@@ -129,6 +131,8 @@ export type DeltaRunResult =
         // SELF-ECHO GATE (2026-09-03): observed candidates refused at admission — own-host backed, and
         // (public kind) unresolvable (no refs, no page_url). Neither can corroborate; both are ledgered.
         own_host_excluded?: number; unbacked_excluded?: number;
+        // ADMISSION CRITERION: own-words claims left off the declared side by kind.
+        own_words_ineligible?: number;
         // SELF-VOICE EXCLUSION: public_observed claims dropped from the observed side because
         // their source signal is the company's own voice (voice_class='client_voice') — the
         // company's own words cannot count as the market confirming it. The claim ROW is
@@ -480,7 +484,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
 
   const { data: claimRows, error: claimsErr } = await args.supabase
     .from("claims")
-    .select("id, statement, topic, provenance, status, claim_type, proof_category, raw_payload")
+    .select("id, statement, topic, provenance, status, claim_type, proof_category, raw_payload, declared_eligible")
     .eq("company_id", args.companyId);
   if (claimsErr) return { ok: false, error: String(claimsErr.message ?? claimsErr) };
 
@@ -527,6 +531,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   }
   let declared: typeof claims;
   let publicVoiceDeclaredIds: Set<string> | null = null;
+  let ownWordsIneligible = 0;
   if (pairingKind === "public_vs_public") {
     const { data: vSigRows } = await args.supabase
       .from("signals").select("id, voice_class, source_url").eq("company_id", args.companyId);
@@ -551,7 +556,12 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     // claim_type='own_words') as the declared side when the extractor has produced them; fall
     // back to the client-voice INFERENCE claims (our read of the channels) when it hasn't. Never
     // both — own words replace the inference, mirroring beat 3's lead/demote.
-    const ownWordsPublics = clientVoicePublics.filter((c) => c.claim_type === "own_words");
+    // ADMISSION CRITERION (operator ruling 2026-09-03): only DECLARED-ELIGIBLE own words (kind ∈
+    // positioning/offer/audience/proof) are "you say" statements. Ineligible kinds (instruction, slogan,
+    // story, policy, …) stay as own-words record: never declared, never a publicly_silent row.
+    const ownWordsAll = clientVoicePublics.filter((c) => c.claim_type === "own_words");
+    const ownWordsPublics = ownWordsAll.filter((c) => c.declared_eligible !== false);
+    ownWordsIneligible = ownWordsAll.length - ownWordsPublics.length;
     declared = ownWordsPublics.length > 0
       ? ownWordsPublics
       : clientVoicePublics.filter((c) => c.claim_type !== "own_words");
@@ -772,6 +782,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     self_voice_excluded: selfVoiceExcluded,
     own_host_excluded: ownHostExcluded,
     unbacked_excluded: unbackedExcluded,
+    own_words_ineligible: ownWordsIneligible,
     proof_guard_excluded: proofGuardExcludedIds.length,
   };
 
@@ -1080,6 +1091,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           self_voice: totals.self_voice_excluded,
           own_host: totals.own_host_excluded,
           unbacked: totals.unbacked_excluded,
+          own_words_ineligible: totals.own_words_ineligible,
           proof_guard: totals.proof_guard_excluded,
         },
       });

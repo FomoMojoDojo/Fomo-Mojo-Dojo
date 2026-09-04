@@ -13,7 +13,7 @@ import { createContext, useContext, useState } from "react";
 import { Eyebrow, RecencyTag, SourceTag } from "./primitives";
 import { formatFullDate } from "./deriveSourceTag";
 import { formatMonthYear } from "./mapping";
-import type { FRGapPair } from "./types";
+import type { FRGapPair, FROwnWord } from "./types";
 import { OPERATOR_MARK, OPERATOR_STRINGS, operatorProvenanceLabel } from "./operatorStrings";
 import type { RelevanceOverrideVerdict } from "./relevanceOverrideAction";
 
@@ -212,3 +212,25 @@ export function struckPairsByStatement(pairs: FRGapPair[]): Map<string, FRGapPai
   return out;
 }
 
+
+/** OWN-WORDS ADMISSION (2026-09-03): own words kept as RECORD but never shown to the client (instruction /
+ *  policy / recruiting / other). Operator view only — null without the context. Rendered under "In your
+ *  words" so the operator sees what the criterion declined, with the judged kind. */
+export function OwnWordsRecordBlock({ words }: { words: FROwnWord[] }) {
+  const ctx = useOperatorControls();
+  if (!ctx || words.length === 0) return null;
+  return (
+    <div className="fr-op-record mt-12 flex flex-col gap-6" {...{ [OPERATOR_MARK.attr]: "record-only" }}>
+      <Eyebrow>{OPERATOR_STRINGS.recordOnlyEyebrow}</Eyebrow>
+      {words.map((w) => (
+        <div key={w.id} data-fr-record-only={w.id}>
+          <div className="mb-2 flex flex-wrap items-center gap-4">
+            {w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
+            <span className={TAG_CLASS} style={TAG_STYLE}>{OPERATOR_STRINGS.kindPrefix}{w.kind ?? "untyped"}</span>
+          </div>
+          <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-faint))" }}>{w.quote}</p>
+        </div>
+      ))}
+    </div>
+  );
+}

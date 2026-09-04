@@ -30,6 +30,7 @@ import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
 import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
+import { ownWordsClientVisible, parseOwnWordsKind } from "../../../../supabase/functions/_shared/ownWordsKinds";
 import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
 import type {
   FirstReadPreviewData,
@@ -407,15 +408,17 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // ── OW-3: own words (beat 3 lead) — the company's own verbatim self-assertions,
         // written by the extractor as claim_type='own_words'. Tri-state by fidelity; page +
         // read-date tag. The demoted inference rows (`declared` above) render below them.
-        const { data: owRows } = await supabase
+        const { data: owRows } = await loose()
           .from("claims")
-          .select("id, statement, raw_payload, created_at")
+          .select("id, statement, raw_payload, created_at, statement_kind, declared_eligible")
           .eq("company_id", companyId)
           .eq("claim_type", "own_words")
           .eq("status", "active");
-        type OwRow = { id: string; statement: string | null; raw_payload?: { page_url?: string; fidelity?: string; read_at?: string } | null; created_at: string | null };
+        type OwRow = { id: string; statement: string | null; raw_payload?: { page_url?: string; fidelity?: string; read_at?: string } | null; created_at: string | null; statement_kind?: string | null; declared_eligible?: boolean | null };
         const ownWordsHiddenIds: string[] = [];
         const ownWords: FROwnWord[] = [];
+        // ADMISSION CRITERION (2026-09-03): kept as record, operator view only — never the client surface.
+        const ownWordsRecordOnly: FROwnWord[] = [];
         for (const c of (owRows ?? []) as OwRow[]) {
           const quote = (c.statement ?? "").trim();
           if (!quote) { ownWordsHiddenIds.push(c.id); continue; } // hidden bucket — reported, not silent
@@ -423,11 +426,17 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           const pageUrl = String(rp.page_url ?? "");
           const host = bareHost(pageUrl) || pageUrl;
           const readDate = formatFullDate(rp.read_at ?? c.created_at);
-          ownWords.push({
+          const kind = parseOwnWordsKind(c.statement_kind);
+          const declaredEligible = c.declared_eligible !== false;
+          const row: FROwnWord = {
             id: c.id, quote, pageUrl, pageHost: host,
             fidelity: rp.fidelity === "paraphrased" ? "paraphrased" : "verbatim",
             sourceTag: { label: `${host}${readDate ? ` · read ${readDate}` : ""}`.trim() },
-          });
+            kind, declaredEligible,
+          };
+          // The ONE visibility rule (ownWordsKinds.ts): eligible kinds + slogan/story/location are the client's
+          // "In your words"; instruction/policy/recruiting/other are record only.
+          if (ownWordsClientVisible(kind, declaredEligible)) ownWords.push(row); else ownWordsRecordOnly.push(row);
         }
         // verbatim lead, then paraphrased; stable by page then quote.
         ownWords.sort((a, b) =>
@@ -1080,6 +1089,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             coldOpen,
             declared,
             ownWords,
+            ownWordsRecordOnly,
             ownWordsHiddenIds,
             ownWordsLooked,
             channelJunkIds,

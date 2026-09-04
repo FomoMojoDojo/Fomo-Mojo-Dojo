@@ -83,3 +83,27 @@ describe("S5 — STATUS DISPUTED chip marks (never hides) conflicted rows", () =
     expect(text).toContain("primary channel"); // still rendered
   });
 });
+
+// "+n more" is a TOGGLE (2026-09-03, operator ask): the folded source rows were unreachable on screen.
+describe("S4 — '+n more' expands the folded source rows in place", () => {
+  it("9 distinct open groups: 6 rows + '+3 more' button; click → all 9 + 'Show fewer'; click → folded again", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const open = Array.from({ length: 9 }, (_, i) => ({ host: `host${i}.com`, date: `2026-08-${String(10 + i).padStart(2, "0")}`, quote: "open" }));
+    const { container } = render(<ActFindings read={base({ statusConflicts: [{ ...CONFLICT, open }], findings: [] })} />);
+    const col = container.querySelector('[data-fr-sources="folded"]:has(button)') ?? [...container.querySelectorAll("[data-fr-sources]")].find((d) => d.textContent?.includes("Still listed open"))!;
+    const rows = () => [...col.querySelectorAll("p")].filter((p) => /host\d\.com/.test(p.textContent ?? ""));
+    expect(rows()).toHaveLength(6);
+    const btn = col.querySelector("button")!;
+    expect(btn.textContent).toBe("+3 more");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(btn);
+    expect(rows()).toHaveLength(9);
+    expect(col.getAttribute("data-fr-sources")).toBe("expanded");
+    expect(col.querySelector("button")!.textContent).toBe("Show fewer");
+    fireEvent.click(col.querySelector("button")!);
+    expect(rows()).toHaveLength(6);
+    // the closed column (1 row) has no toggle at all
+    const closed = [...container.querySelectorAll("[data-fr-sources]")].find((d) => d.textContent?.includes("Reported closed"))!;
+    expect(closed.querySelector("button")).toBeNull();
+  });
+});

@@ -167,3 +167,60 @@ describe("own-words rails — privacy refusal (Option B)", () => {
     expect(privateSig.source_type).toBe("uploaded_file");
   });
 });
+
+// ── ADMISSION CRITERION (operator ruling 2026-09-03) — kind → declared_eligible at the assembler ────────
+// The judge answers ONE typed question inside its existing call. Admit/decline only: an ineligible kind
+// is STILL a survivor (own-words record), it just cannot be the declared side. Each proof fails if the
+// branch is removed.
+import { declaredEligibleFor, ownWordsClientVisible, parseOwnWordsKind } from "../../../supabase/functions/_shared/ownWordsKinds";
+import { vi } from "vitest";
+
+describe("own-words admission — kind decides declared eligibility, never survival", () => {
+  const KPAGE = "Just add hot water. We roast for cafés that want a partner, not a vendor. Science meets art meets commitment.";
+  const kc = (quote: string): Candidate => ({ quote, offset: KPAGE.indexOf(quote), length: quote.length });
+  const INSTR = kc("Just add hot water.");
+  const POS = kc("We roast for cafés that want a partner, not a vendor.");
+  const SLOGAN = kc("Science meets art meets commitment.");
+  const base = { keep: true, fidelity: "verbatim" as const, selfAssertion: true };
+
+  it('"Just add hot water" kind=instruction ⇒ survivor, declaredEligible FALSE', async () => {
+    const { survivors } = await assembleOwnWords([INSTR], [{ ...base, kind: "instruction", kindReason: "usage copy" }], KPAGE, null);
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0].kind).toBe("instruction");
+    expect(survivors[0].declaredEligible).toBe(false);
+    expect(survivors[0].kindMissing).toBe(false);
+  });
+
+  it('"We roast for cafés that want a partner, not a vendor" kind=positioning ⇒ declaredEligible TRUE', async () => {
+    const { survivors } = await assembleOwnWords([POS], [{ ...base, kind: "positioning", kindReason: "why choose us" }], KPAGE, null);
+    expect(survivors[0].declaredEligible).toBe(true);
+    expect(survivors[0].kind).toBe("positioning");
+  });
+
+  it("missing/invalid kind ⇒ FAIL-TOWARD-ELIGIBLE (true) + logged; the statement is not hidden by a judge glitch", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { survivors } = await assembleOwnWords([POS, SLOGAN], [{ ...base }, { ...base, kind: parseOwnWordsKind("tagline") }], KPAGE, null);
+    expect(survivors).toHaveLength(2);
+    expect(survivors.every((s) => s.declaredEligible)).toBe(true);
+    expect(survivors.every((s) => s.kindMissing)).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it("the ONE rule: eligible kinds; slogan/story/location client-visible as record; the rest operator-only", () => {
+    expect(declaredEligibleFor("positioning")).toBe(true);
+    expect(declaredEligibleFor("offer")).toBe(true);
+    expect(declaredEligibleFor("audience")).toBe(true);
+    expect(declaredEligibleFor("proof")).toBe(true);
+    for (const k of ["instruction", "slogan", "location", "policy", "story", "recruiting", "other"] as const) expect(declaredEligibleFor(k)).toBe(false);
+    expect(declaredEligibleFor(null)).toBe(true);
+    expect(ownWordsClientVisible("slogan", false)).toBe(true);
+    expect(ownWordsClientVisible("story", false)).toBe(true);
+    expect(ownWordsClientVisible("location", false)).toBe(true);
+    expect(ownWordsClientVisible("instruction", false)).toBe(false);
+    expect(ownWordsClientVisible("policy", false)).toBe(false);
+    expect(ownWordsClientVisible("recruiting", false)).toBe(false);
+    expect(ownWordsClientVisible("other", false)).toBe(false);
+    expect(ownWordsClientVisible(null, true)).toBe(true);
+  });
+});

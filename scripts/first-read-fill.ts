@@ -143,7 +143,8 @@ async function waitForEdge(): Promise<boolean> {
 // ── per-company counts (skip inputs + before/after) ────────────────────────────
 const q = {
   website: (id: string) => psql<string | null>(`SELECT coalesce(to_jsonb(website), 'null'::jsonb) FROM companies WHERE id='${id}';`),
-  ownWords: (id: string) => count(`SELECT count(*) FROM claims WHERE company_id='${id}' AND claim_type='own_words';`),
+  // ADMISSION CRITERION (2026-09-03): the deltas gate counts DECLARED-ELIGIBLE own words only.
+  ownWords: (id: string) => count(`SELECT count(*) FROM claims WHERE company_id='${id}' AND claim_type='own_words' AND status='active' AND declared_eligible;`),
   outsideSignals: (id: string) => count(`SELECT count(*) FROM signals WHERE company_id='${id}' AND signal_band='outside' AND voice_class='outside_voice_about_client' AND superseded_at IS NULL AND length(trim(coalesce(evidence_excerpt,'')))>0;`),
   recurrenceVerdicts: (id: string) => count(`SELECT count(*) FROM signal_recurrence_verdicts WHERE company_id='${id}';`),
   deltasPublic: (id: string) => count(`SELECT count(*) FROM claim_deltas WHERE company_id='${id}' AND pairing_kind='public_vs_public';`),

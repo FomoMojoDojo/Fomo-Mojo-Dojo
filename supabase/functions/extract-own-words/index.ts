@@ -20,6 +20,9 @@ import {
   assembleOwnWords, assertPublicClientVoice,
   type Candidate, type JudgeVerdict, type SignalGate,
 } from "../_shared/ownWordsExtract.ts";
+import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts } from "../_shared/ownWordsJudge.ts";
+import type { Survivor } from "../_shared/ownWordsExtract.ts";
+import { parseOwnWordsKind } from "../_shared/ownWordsKinds.ts";
 
 const nowIso = () => new Date().toISOString();
 
@@ -33,13 +36,8 @@ function json(body: unknown, status = 200) {
 }
 
 const QUOTE_MAX_WORDS = 40;
-const GEN_MODEL = Deno.env.get("OWN_WORDS_MODEL") ?? "gpt-4.1-mini";
-const GEN_FALLBACK = Deno.env.get("OWN_WORDS_FALLBACK_MODEL") ?? "gpt-4.1-nano";
 // Local qwen is WIRED but off — flip OWN_WORDS_LOCAL=1 to route to a local ollama instead of
 // OpenAI (only ever for non-public input, which this extractor structurally never has).
-const USE_LOCAL = Deno.env.get("OWN_WORDS_LOCAL") === "1";
-const OLLAMA_BASE_URL = Deno.env.get("OLLAMA_BASE_URL") ?? "http://host.docker.internal:11434/v1";
-const LOCAL_MODEL = Deno.env.get("OWN_WORDS_LOCAL_MODEL") ?? "qwen2.5:14b-instruct";
 
 const GEN_SYSTEM =
   `Extract ONLY statements the company asserts ABOUT ITSELF — positioning, promise, who it serves, why it wins. ` +
@@ -48,44 +46,7 @@ const GEN_SYSTEM =
   `Each quote must be at most ${QUOTE_MAX_WORDS} words. Invent nothing — every quote must be copy-paste from the text. ` +
   `Respond with ONLY JSON: {"statements":[{"quote":"...","offset":0,"length":0}]}. No other text.`;
 
-const JUDGE_SYSTEM =
-  `You judge candidate own-words quotes pulled from a company's OWN web page. For each candidate decide: ` +
-  `keep (true ONLY if it is the company asserting something about itself — positioning, promise, who it serves, why it wins); ` +
-  `selfAssertion (is the company speaking about ITSELF, not a third party, review, menu item, or navigation); ` +
-  `fidelity ('verbatim' if an exact copy from the page, else 'paraphrased'). Reject third-party quotes, navigation, menus, prices, legal. ` +
-  `ALSO reject: (i) PRODUCT/SKU descriptions — tasting notes, roast profiles, or format/price copy describing a SPECIFIC item ` +
-  `(e.g. "This medium roast is fruity and full-bodied", "our Pour-Over packs let you…"); ` +
-  `(ii) RECRUITING/JOB copy — hiring calls, benefits lists, role descriptions ("we're looking for…", "competitive compensation", "as a X you'll…"). ` +
-  `But KEEP offering-model statements — what the company provides, to whom, and how (e.g. "we provide crisis stabilization to Bay Area youth", "all of our coffees are available in 12oz bags for wholesale partners"). ` +
-  `Respond with ONLY JSON: {"verdicts":[{"quote":"...","keep":true,"selfAssertion":true,"fidelity":"verbatim","reason":"..."}]}. No other text.`;
-
-async function callModel(system: string, user: string): Promise<Record<string, unknown>> {
-  const endpoint = USE_LOCAL ? `${OLLAMA_BASE_URL}/chat/completions` : "https://api.openai.com/v1/chat/completions";
-  const apiKey = USE_LOCAL ? "ollama" : Deno.env.get("OPENAI_API_KEY");
-  if (!USE_LOCAL && !apiKey) throw new Error("OPENAI_API_KEY not set");
-  const models = USE_LOCAL ? [LOCAL_MODEL] : [GEN_MODEL, GEN_FALLBACK];
-  let lastErr: unknown = null;
-  for (const model of models) {
-    try {
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model, temperature: 0,
-          response_format: { type: "json_object" },
-          messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        }),
-      });
-      if (!resp.ok) { lastErr = new Error(`${model} ${resp.status}: ${(await resp.text()).slice(0, 200)}`); continue; }
-      const data = await resp.json();
-      const content = String(data?.choices?.[0]?.message?.content ?? "");
-      const m = content.match(/\{[\s\S]*\}/);
-      if (!m) { lastErr = new Error(`${model} returned no JSON`); continue; }
-      return JSON.parse(m[0]) as Record<string, unknown>;
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr ?? new Error("all models failed");
-}
+// JUDGE_SYSTEM + callModel are shared with retype-own-words (ownWordsJudge.ts) so the typed kind question is asked ONE way.
 
 // ── WRITE MODE (ruling B) — materialize own_words claims from the LATEST frozen plan run.
 // Reads own_words_candidates + snapshots, re-applies the DETERMINISTIC rails (assembleOwnWords),
@@ -101,7 +62,7 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
   if (!runId) return json({ ok: false, error: "own-words write refused: no frozen candidates — run a plan first (no silent regeneration)" }, 409);
 
   const { data: candRows } = await supabase.from("own_words_candidates")
-    .select("source_url, signal_id, snapshot_text_sha256, quote, quote_offset, quote_length, judge_keep, judge_self_assertion, judge_fidelity, judge_reason, content_identity")
+    .select("source_url, signal_id, snapshot_text_sha256, quote, quote_offset, quote_length, judge_keep, judge_self_assertion, judge_fidelity, judge_reason, judge_kind, judge_kind_reason, content_identity")
     .eq("company_id", company_id).eq("run_id", runId);
   const cands = (candRows ?? []) as Array<Record<string, unknown>>;
   if (cands.length === 0) return json({ ok: false, error: "own-words write refused: frozen run has no candidates" }, 409);
@@ -113,7 +74,7 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
     byUrl.get(u)!.push(c);
   }
 
-  const survivorsAll: Array<{ quote: string; offset: number; length: number; fidelity: string; contentIdentity: string; url: string; signal_id: string | null }> = [];
+  const survivorsAll: Array<Survivor & { url: string; signal_id: string | null }> = [];
   const perPage: Array<Record<string, unknown>> = [];
   for (const [url, list] of byUrl) {
     const sha = String(list[0].snapshot_text_sha256);
@@ -132,6 +93,8 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
       keep: c.judge_keep === true, selfAssertion: c.judge_self_assertion === true,
       fidelity: c.judge_fidelity === "paraphrased" ? "paraphrased" : "verbatim",
       reason: c.judge_reason ? String(c.judge_reason) : undefined,
+      kind: parseOwnWordsKind(c.judge_kind),
+      kindReason: c.judge_kind_reason ? String(c.judge_kind_reason) : undefined,
     }));
     const { survivors } = await assembleOwnWords(candidates, verdicts, cleanText, sourceTitle);
     for (const s of survivors) survivorsAll.push({ ...s, url, signal_id: sigId });
@@ -157,6 +120,8 @@ async function writeFromFrozen(supabase: any, company_id: string, nowStr: string
     const { data: ins, error: cErr } = await supabase.from("claims").insert({
       company_id, statement: s.quote, claim_type: "own_words", provenance: "public_observed",
       proof_category: "public_answerable", topic: "own_words", status: "active",
+      // ADMISSION CRITERION: the typed kind + eligibility from the frozen judge verdict (fail-toward-eligible).
+      statement_kind: s.kind, declared_eligible: s.declaredEligible,
       raw_payload: { content_identity: s.contentIdentity, page_url: s.url, verbatim_span: { offset: s.offset, length: s.length }, fidelity: s.fidelity, source: "own_words_extractor", read_at: nowStr },
     }).select("id").single();
     if (cErr) throw new Error(`own_words claim insert failed: ${cErr.message}`);
@@ -301,15 +266,7 @@ Deno.serve(async (req) => {
       if (candidates.length > 0) {
         try {
           const j = await callModel(JUDGE_SYSTEM, `PAGE TEXT:\n${cleanText}\n\nCANDIDATES:\n${candidates.map((c) => `- ${c.quote}`).join("\n")}`);
-          const verdicts = (Array.isArray(j.verdicts) ? j.verdicts : []) as Array<Record<string, unknown>>;
-          verdictByQuote = new Map(
-            verdicts.map((v) => [String(v.quote ?? "").trim(), {
-              keep: v.keep === true,
-              fidelity: v.fidelity === "paraphrased" ? "paraphrased" : "verbatim",
-              selfAssertion: v.selfAssertion === true,
-              reason: v.reason ? String(v.reason) : undefined,
-            } as JudgeVerdict]),
-          );
+          verdictByQuote = parseJudgeVerdicts(j); // keep / selfAssertion / fidelity / reason + the typed kind
         } catch (e) {
           pages.push({ url, fetched: true, snapshot_chars: cleanText.length, candidates: candidates.length, error: `judge: ${(e as Error).message}` });
           continue;
@@ -327,6 +284,7 @@ Deno.serve(async (req) => {
           quote: c.quote, quote_offset: c.offset, quote_length: c.length,
           judge_keep: v?.keep ?? false, judge_self_assertion: v?.selfAssertion ?? false,
           judge_fidelity: v?.fidelity ?? "verbatim", judge_reason: v?.reason ?? null,
+          judge_kind: v?.kind ?? null, judge_kind_reason: v?.kindReason ?? null,
           content_identity: await contentIdentity(c.quote),
         };
       }));
@@ -348,7 +306,7 @@ Deno.serve(async (req) => {
         url, fetched: true, reused, snapshot_chars: cleanText.length,
         candidates: candidates.length, kept: survivors.length, guard_rejected: guardRej,
         rejections: rejections.map((r) => ({ quote: r.quote.slice(0, 80), reason: r.reason })),
-        survivors: survivors.map((s) => ({ quote: s.quote, fidelity: s.fidelity })),
+        survivors: survivors.map((s) => ({ quote: s.quote, fidelity: s.fidelity, kind: s.kind, declared_eligible: s.declaredEligible })),
       });
       processed++;
     }
