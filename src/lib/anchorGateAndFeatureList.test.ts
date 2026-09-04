@@ -27,27 +27,30 @@ describe("(2a) normalization — one authority", () => {
     expect(normAnchor("Cafe  Barra")).toBe("cafe barra");
     expect(signalMatchesAnchor({ claim_text: "x", evidence_excerpt: "x", source_url: JOE_URL }, ["cafe barra"])).toBe(true);
     // pre-existing law preserved and labelled: a non-role sentence on an anchored URL passes as basis 'page'
-    expect(anchorBasisFor({ text: "x", sourceUrl: JOE_URL, pageTitle: null, ogTitle: null }, ["cafe barra"])).toBe("page");
+    expect(anchorBasisFor({ text: "x", sourceUrl: JOE_URL, ogTitle: null }, ["cafe barra"])).toBe("page");
     expect(signalMatchesAnchor({ claim_text: "x", evidence_excerpt: "x", source_url: "https://ritual.coffee/sweet-tooth" }, ["cafe barra"])).toBe(false);
   });
 });
 
 describe("(2b) page-level role attribution", () => {
-  it("S2 on the joe.coffee page → 'page+role'; S1 too", () => {
-    expect(anchorBasisFor({ text: S2, sourceUrl: JOE_URL, pageTitle: null, ogTitle: null }, ANCHORS)).toBe("page+role");
-    expect(anchorBasisFor({ text: S1, sourceUrl: JOE_URL, pageTitle: null, ogTitle: null }, ANCHORS)).toBe("page+role");
+  // HARD LINE (2026-09-04): the role list is EXACTLY the signed six. "this community favorite" is on it → 'page+role';
+  // "This independent roastery" is not "this roastery" → the sentence anchors via the page slug alone → 'page'.
+  it("S2 on the joe.coffee page → 'page+role'; S1 → 'page' (slug-anchored, no signed role phrase)", () => {
+    expect(anchorBasisFor({ text: S2, sourceUrl: JOE_URL, ogTitle: null }, ANCHORS)).toBe("page+role");
+    expect(anchorBasisFor({ text: S1, sourceUrl: JOE_URL, ogTitle: null }, ANCHORS)).toBe("page");
   });
   it("same sentence on a page anchored to Ritual Coffee → null (fails)", () => {
-    expect(anchorBasisFor({ text: S2, sourceUrl: "https://joe.coffee/locations/ca/sf/ritual-coffee-roasters/", pageTitle: "Ritual Coffee Roasters", ogTitle: null }, ANCHORS)).toBeNull();
+    expect(anchorBasisFor({ text: S2, sourceUrl: "https://joe.coffee/locations/ca/sf/ritual-coffee-roasters/", ogTitle: "Ritual Coffee Roasters" }, ANCHORS)).toBeNull();
   });
   it("a name-anchored sentence passes as 'name' regardless of page", () => {
-    expect(anchorBasisFor({ text: "Cafe Barra roasts every bean with care.", sourceUrl: "https://example.com/x", pageTitle: null, ogTitle: null }, ANCHORS)).toBe("name");
+    expect(anchorBasisFor({ text: "Cafe Barra roasts every bean with care.", sourceUrl: "https://example.com/x", ogTitle: null }, ANCHORS)).toBe("name");
   });
   it("VACUOUS PROOF: a role-reference sentence on an UN-anchored page fails", () => {
-    expect(anchorBasisFor({ text: "This independent roastery sources and roasts their beans with care.", sourceUrl: "https://example.com/blog/post-1", pageTitle: "A blog", ogTitle: null }, ANCHORS)).toBeNull();
+    expect(anchorBasisFor({ text: "This roastery sources and roasts their beans with care.", sourceUrl: "https://example.com/blog/post-1", ogTitle: "A blog" }, ANCHORS)).toBeNull();
   });
   it("ROLE_REFERENCES is the single-homed list and includes the signed roles", () => {
     for (const r of ["this roastery", "this cafe", "this shop", "this community favorite", "this roaster", "this restaurant"]) expect(ROLE_REFERENCES.some((re) => re.test(r))).toBe(true);
+    expect(ROLE_REFERENCES.some((re) => re.test("This independent roastery"))).toBe(false); // not on the signed list
     expect(ROLE_REFERENCES.some((re) => re.test("the weather"))).toBe(false);
   });
 });
@@ -60,9 +63,9 @@ describe("(1) R3-admitted verbatim skips the feature-list heuristic", () => {
   it("a real 3-segment feature list on a non-judged path is still refused", () => {
     expect(mapSignalsToClaimCandidates("co", [sig("Cafe Barra offers espresso, drip, and cold brew.", { source_type: "public_baseline_run" })], ANCHORS)).toHaveLength(0);
   });
-  it("the two minted claims carry anchor_basis in raw_payload", () => {
+  it("the two minted claims carry anchor_basis in raw_payload: S1 'page', S2 'page+role'", () => {
     const out = mapSignalsToClaimCandidates("co", [sig(S1), sig(S2)], ANCHORS);
     expect(out).toHaveLength(2);
-    for (const c of out) expect((c.claim.raw_payload as { anchor_basis?: string }).anchor_basis).toBe("page+role");
+    expect(out.map((c) => (c.claim.raw_payload as { anchor_basis?: string }).anchor_basis).sort()).toEqual(["page", "page+role"]);
   });
 });

@@ -1,4 +1,4 @@
-import { E2_SINGLE_SENTENCE_MAX, E2_MULTI_SENTENCE_MAX, E2_ORGANIZATION_MAX } from "./evidenceCaps.ts";
+import { E2_SINGLE_SENTENCE_MAX, E2_UNJUDGED_SINGLE_SENTENCE_MAX, E2_MULTI_SENTENCE_MAX, E2_ORGANIZATION_MAX } from "./evidenceCaps.ts";
 import { anchorBasisFor, type AnchorBasis } from "../../supabase/functions/_shared/outsideRecrawlAnchors.ts";
 import {
   type ClaimCandidate,
@@ -368,8 +368,10 @@ function canonicalizeClaimStatement(signal: SignalDraft & { id?: string }) {
   // suppression. A single long sentence keeps the 160 cap (no new mints from that shape).
   const multiSentence = /[.!?]\s+\S/.test(text);
   const carriesConcrete = extractConcreteTokens(text).size > 0;
+  // THE 18 (2026-09-04): the 210 single-sentence raise applies to judge-admitted verbatim only; un-judged rows keep 160.
+  const singleMax = R3_ADMITTED_SOURCE_TYPES.has(String(signal.source_type ?? "")) ? E2_SINGLE_SENTENCE_MAX : E2_UNJUDGED_SINGLE_SENTENCE_MAX;
   const maxLen = signal.signal_band === "organization" ? E2_ORGANIZATION_MAX
-    : (multiSentence && carriesConcrete ? E2_MULTI_SENTENCE_MAX : E2_SINGLE_SENTENCE_MAX); // single home: evidenceCaps.ts
+    : (multiSentence && carriesConcrete ? E2_MULTI_SENTENCE_MAX : singleMax); // single home: evidenceCaps.ts
   if (text.length > maxLen) return null;
   if (text.length < 32 && GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(text))) return null;
   if (text.split(" ").length < 4) return null;
@@ -996,9 +998,10 @@ export function deriveClaimProvenance(
 /** D3 anchor gate — delegates to the ONE anchor authority (rulings 2a/2b, 2026-09-04): normalized slugs anchor names;
  *  a page that anchors the client plus a role-reference sentence counts as anchored ('page+role'). */
 export function signalAnchorBasis(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): AnchorBasis | null {
-  const rp = (signal.raw_payload && typeof signal.raw_payload === "object" ? signal.raw_payload : {}) as { page_title?: unknown; og_title?: unknown };
+  const rp = (signal.raw_payload && typeof signal.raw_payload === "object" ? signal.raw_payload : {}) as { og_title?: unknown; h1?: unknown };
   const text = `${signal.claim_text ?? ""} ${signal.evidence_excerpt ?? ""}`;
-  return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, pageTitle: signal.source_title ?? (typeof rp.page_title === "string" ? rp.page_title : null), ogTitle: typeof rp.og_title === "string" ? rp.og_title : null }, anchors);
+  // source_title is NOT page metadata (it carries the run label on baseline signals) — only og:title / H1 / the slug count.
+  return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, ogTitle: typeof rp.og_title === "string" ? rp.og_title : null, h1: typeof rp.h1 === "string" ? rp.h1 : null }, anchors);
 }
 export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): boolean {
   return signalAnchorBasis(signal, anchors) !== null;
