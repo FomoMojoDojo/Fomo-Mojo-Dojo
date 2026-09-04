@@ -15,7 +15,7 @@
 
 import { isPublicProvenance } from "@/lib/registerGuard";
 import { admitPublicPerception } from "@/lib/firstRead/perceptionGuard";
-import { isRelevanceStruck } from "@/lib/firstRead/relevanceActive";
+import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import type { RawCheckItem } from "@/lib/firstRead/checkItems";
 
 export interface DeltaInput {
@@ -42,6 +42,8 @@ export interface DeltaInput {
   // RELEVANCE BACKSTOP: the machine relevance overlay (claim_deltas.relevance_verdict).
   // 'orthogonal' ⇒ struck (line-through, out of counts); NULL/'relevant' ⇒ active.
   relevance_verdict?: string | null;
+  // SELF-ECHO GATE: observed side backed by the company's own host (claim_deltas.observed_own_host).
+  observed_own_host?: boolean | null;
 }
 
 // COLLISION DETECTION: drop any delta whose identity equals a non-delta (finding) item's
@@ -103,7 +105,9 @@ export function assembleDeltaItems(deltas: DeltaInput[]): RawCheckItem[] {
       // RELEVANCE BACKSTOP (operator ruling 2026-08-25): a relevance-'orthogonal' echoed/divergent
       // pairing is OMITTED from the client render entirely (line-through retired) — same single
       // selector as beat 4. The verdict stays recorded/reversible in claim_deltas.
-      if (isRelevanceStruck(d.relevance_verdict as "relevant" | "orthogonal" | null | undefined)) continue;
+      // SELF-ECHO GATE (2026-09-03): the ONE admissibility predicate — relevance strike OR own-host observed
+      // side ⇒ omitted from the client render. Both stay recorded/reversible in claim_deltas.
+      if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host })) continue;
     }
 
     items.push({

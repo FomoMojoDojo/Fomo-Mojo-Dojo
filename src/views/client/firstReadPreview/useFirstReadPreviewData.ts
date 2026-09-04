@@ -29,6 +29,7 @@ import { isChannelJunk } from "./channelJunk";
 import { bandForScore, SCORE_LEVERS } from "./scoreBands";
 import { classifyFindingAge, orderFindings } from "./findingsAge";
 import { isProvablyVerbatim } from "@/lib/firstRead/provableVerbatim";
+import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { bareHost, coldOpenLadder, facetForTopic, foldIdenticalSignals, groupGapStatements, hoistStrongestNegative, orderBeat2Signals, orderGapPairs, refreshStatusConflictLiveness, strengthForSignal, verdictForDeltaType, type Beat2Sortable, type CitationLiveness, type RawStatusSource } from "./mapping";
 import type {
   FirstReadPreviewData,
@@ -575,12 +576,12 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // ── Gap pairs (beat 4) — R5; doc-derived declared excluded ──────────
         const { data: deltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded, relevance_verdict, content_identity, relevance_provider, relevance_model, relevance_reason, relevance_judged_at")
+          .select("id, delta_type, declared_claim_id, public_claim_id, judge_reason, conflict_explanation, conflict_explanation_grounded, relevance_verdict, content_identity, relevance_provider, relevance_model, relevance_reason, relevance_judged_at, observed_own_host")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public") // GATE B-1: First Read = public pairing only
           // A1: the DECLARED-anchored say-vs-see. internally_silent (record-only) is off this surface.
           .in("delta_type", ["echoed", "divergent", "publicly_silent"]);
-        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null; relevance_verdict: string | null; content_identity: string | null; relevance_provider: string | null; relevance_model: string | null; relevance_reason: string | null; relevance_judged_at: string | null }>;
+        const deltas = (deltaRows ?? []) as Array<{ id: string; delta_type: string; declared_claim_id: string | null; public_claim_id: string | null; judge_reason: string | null; conflict_explanation: string | null; conflict_explanation_grounded: boolean | null; relevance_verdict: string | null; content_identity: string | null; relevance_provider: string | null; relevance_model: string | null; relevance_reason: string | null; relevance_judged_at: string | null; observed_own_host: boolean | null }>;
         const gapClaimIds = [
           ...new Set(
             deltas.flatMap((d) => [d.declared_claim_id, d.public_claim_id]).filter((x): x is string => !!x),
@@ -654,6 +655,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             relevanceModel: d.relevance_model ?? null,
             relevanceReason: d.relevance_reason ?? null,
             relevanceDecidedAt: d.relevance_judged_at ?? null,
+            // SELF-ECHO GATE: own-host observed side — the shared selector (isPairAdmissible) omits it everywhere.
+            observedOwnHost: d.observed_own_host ?? false,
             // HELD ECHO: a confirmed/contradicted pair with NO visible signal (sig null) whose public
             // claim has a held/recrawl-pending backing — the echo exists but is walled. Keeps the
             // statement reverifying regardless of the provisional relevance verdict (mapping.ts).
@@ -681,11 +684,11 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // NO verdict chip: the record raising a topic is neither confirmed nor contradicted.
         const { data: revDeltaRows } = await loose()
           .from("claim_deltas")
-          .select("id, public_claim_id, relevance_verdict")
+          .select("id, public_claim_id, relevance_verdict, observed_own_host")
           .eq("company_id", companyId)
           .eq("pairing_kind", "public_vs_public")
           .eq("delta_type", "internally_silent");
-        const revDeltas = (revDeltaRows ?? []) as Array<{ id: string; public_claim_id: string | null; relevance_verdict: string | null }>;
+        const revDeltas = (revDeltaRows ?? []) as Array<{ id: string; public_claim_id: string | null; relevance_verdict: string | null; observed_own_host: boolean | null }>;
         const revPublicIds = [...new Set(revDeltas.map((d) => d.public_claim_id).filter((x): x is string => !!x))];
         const { data: revClaimRows } = revPublicIds.length
           ? await supabase.from("claims").select("id, statement, status").in("id", revPublicIds)
@@ -697,7 +700,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const reverseRows: FRReverseRow[] = [];
         for (const d of revDeltas) {
           if (!d.public_claim_id) continue;
-          if (d.relevance_verdict === "orthogonal") continue; // wrong-entity / off-topic strike (23/25)
+          // SELF-ECHO GATE: the ONE admissibility predicate (relevance strike OR own-host observed side).
+          if (!isPairAdmissible({ relevanceVerdict: d.relevance_verdict, observedOwnHost: d.observed_own_host })) continue;
           const claim = revClaimById.get(d.public_claim_id);
           if (!claim || claim.status === "struck") continue;
           const sig = revNewest.get(d.public_claim_id) ?? null;

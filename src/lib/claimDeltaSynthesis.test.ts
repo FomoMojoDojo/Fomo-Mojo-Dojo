@@ -27,6 +27,9 @@ type Row = Record<string, unknown>;
 function fakeDb(seed: {
   claims: Row[]; claim_deltas?: Row[]; claim_delta_rejections?: Row[];
   signals?: Row[]; claim_signal_refs?: Row[];
+  // SELF-ECHO GATE: the compute resolves the company host (companies.website) for the own-host
+  // admission; default empty ⇒ host null ⇒ the admission is inert (legacy tests byte-identical).
+  companies?: Row[];
 }) {
   // GATE B-1 (harness fidelity, not an assertion change): the migrated schema gives
   // claim_deltas / claim_delta_rejections a pairing_kind column with DB default
@@ -42,10 +45,28 @@ function fakeDb(seed: {
     claim_delta_rejections: (seed.claim_delta_rejections ?? []).map((r) => kindDefault("claim_delta_rejections", r)),
     signals: [...(seed.signals ?? [])],
     claim_signal_refs: [...(seed.claim_signal_refs ?? [])],
+    companies: [...(seed.companies ?? [])],
+    // DELETE AUDIT (2026-09-03): the sweep deletes through delete_claim_deltas_audited; the fake
+    // records each removal here so a test can assert the ledger (reason + snapshot).
+    claim_delta_removals: [],
+    // the public kind writes its own first_read_gap_pairs integrity row at the end of a write run
+    integrity_runs: [],
   };
   let nextId = 1;
   const db = {
     tables,
+    // The sanctioned audited deleter (migration 20260903200000): delete + one removal row per id.
+    rpc(fn: string, a: { p_company_id?: string; p_ids?: string[]; p_reason?: string }) {
+      if (fn !== "delete_claim_deltas_audited") return Promise.resolve({ data: null, error: { message: `unknown rpc ${fn}` } });
+      if (!a.p_reason || !a.p_reason.trim()) return Promise.resolve({ data: null, error: { message: "a reason is required" } });
+      if (a.p_company_id === CB1) return Promise.resolve({ data: null, error: { message: "frozen" } });
+      const ids = a.p_ids ?? [];
+      for (const r of tables.claim_deltas.filter((r) => ids.includes(r.id as string) && r.company_id === a.p_company_id)) {
+        tables.claim_delta_removals.push({ delta_id: r.id, reason: a.p_reason, row_snapshot: { ...r } });
+      }
+      tables.claim_deltas = tables.claim_deltas.filter((r) => !(ids.includes(r.id as string) && r.company_id === a.p_company_id));
+      return Promise.resolve({ data: ids.length, error: null });
+    },
     from(table: string) {
       const chain = {
         _filters: [] as Array<(r: Row) => boolean>,
@@ -54,6 +75,10 @@ function fakeDb(seed: {
         order() { return this; },
         then(resolve: (v: { data: Row[]; error: null }) => void) {
           resolve({ data: (tables[table] ?? []).filter((r) => chain._filters.every((f) => f(r))), error: null });
+        },
+        maybeSingle() {
+          const rows = (tables[table] ?? []).filter((r) => chain._filters.every((f) => f(r)));
+          return Promise.resolve({ data: rows[0] ?? null, error: null });
         },
         insert(payload: Row) {
           tables[table].push(kindDefault(table, { id: `row-${nextId++}`, ...payload }));
@@ -1014,5 +1039,103 @@ describe("proof-category guard", () => {
     expect(calls.length).toBe(2);
     expect(calls[0].user).toContain("[claim_type: problem]");
     expect(calls[0].user).toContain("[evidence source_type: review_signal]");
+  });
+});
+
+// ── SELF-ECHO GATE (operator ruling 2026-09-03) — observed-side admission keyed on HOST ─────────
+// "If it is them saying it on their own site that cannot be corroboration." The 08-05 exclusion above is
+// REF-KEYED; CB2's own-words refs were wiped on 08-26 and 32 own-host pairs landed on the echo side.
+// Admission now resolves every backing URL (refs → signals; no refs → raw_payload.page_url; nothing →
+// unresolvable) and refuses any own-host observed side through the single isOwnDomainUrl predicate.
+// Each proof fails if its branch is removed.
+describe("self-echo gate — own-host observed claims never reach the echo side", () => {
+  const alwaysEcho = () => stubOllama((model) =>
+    model === "llama3:70b"
+      ? { same_subject: true, relation: "echo", confident: true, reason: "match" }
+      : { same_subject: true, relation: "echo", reason: "same subject" },
+  );
+  const HOST = "https://www.cafebarra.com";
+  const DECL = "our business relationships are mutually beneficial partnerships";
+  // The public kind: the declared side is the company's own words backed by a client_voice signal on its site.
+  const ownWordsDeclared = () => ({
+    claim: { id: "d-own", company_id: CO, statement: DECL, topic: null, provenance: "public_observed", claim_type: "own_words" },
+    signal: { id: "sig-d-own", company_id: CO, voice_class: "client_voice", source_url: `${HOST}/partnerships` },
+    ref: { claim_id: "d-own", signal_id: "sig-d-own", company_id: CO },
+  });
+  const pub = (over: Row = {}): Row => ({ id: "p-x", company_id: CO, statement: DECL, topic: null, provenance: "public_observed", claim_type: "own_words", ...over });
+  const publicArgs = (db: ReturnType<typeof fakeDb>, write = true) => ({ ...baseArgs(db, CO, write), pairingKind: "public_vs_public" as const });
+
+  it("(b1) RED→GREEN: own-words observed claim on the company host with its refs WIPED (page_url only) ⇒ zero echoed/divergent pairs; counted own_host_excluded", async () => {
+    alwaysEcho();
+    const d = ownWordsDeclared();
+    // p-self: identical own-words text from another page of the SAME site; refs gone; raw_payload.page_url survives.
+    const p = pub({ id: "p-self", raw_payload: { source: "own_words_extractor", page_url: `${HOST}/home` } });
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [d.claim, p], signals: [d.signal], claim_signal_refs: [d.ref] });
+    const r = await computeDeltasForCompany(publicArgs(db));
+    if (!r.ok) throw new Error("expected ok: " + JSON.stringify(r));
+    expect(r.deltas.some((x) => (x.delta_type === "echoed" || x.delta_type === "divergent") && x.public_claim_id === "p-self")).toBe(false);
+    expect(r.totals.own_host_excluded).toBe(1);
+    expect(r.totals.public).toBe(0);
+    // the declared statement lands publicly_silent — the honest state: nobody outside has repeated it
+    expect(r.deltas.some((x) => x.delta_type === "publicly_silent" && x.declared_claim_id === "d-own")).toBe(true);
+    expect(db.tables.claim_deltas.some((row) => row.public_claim_id === "p-self")).toBe(false);
+    // the run's integrity row ledgers the refusal per rule
+    const integ = db.tables.integrity_runs.find((x) => x.component === "first_read_gap_pairs");
+    expect((integ?.excluded_by_rule as Row)?.own_host).toBe(1);
+  });
+
+  it("(b2) a no-ref observed claim with NO page_url is unresolvable ⇒ not admitted, counted unbacked_excluded", async () => {
+    alwaysEcho();
+    const d = ownWordsDeclared();
+    const p = pub({ id: "p-nothing", claim_type: "inference", raw_payload: {} });
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [d.claim, p], signals: [d.signal], claim_signal_refs: [d.ref] });
+    const r = await computeDeltasForCompany(publicArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((x) => x.public_claim_id === "p-nothing")).toBe(false);
+    expect(r.totals.unbacked_excluded).toBe(1);
+    expect(r.totals.own_host_excluded).toBe(0);
+  });
+
+  it("(b3) an OUTSIDE-host observed claim (ref → lefrenchrooster.com) is admitted and pairs; the row is born observed_own_host=false", async () => {
+    alwaysEcho();
+    const d = ownWordsDeclared();
+    const p = pub({ id: "p-outside", claim_type: "inference", statement: "Le French Rooster names Cafe Barra as its partner: mutually beneficial partnerships" });
+    const sig = { id: "sig-outside", company_id: CO, voice_class: "outside_voice_about_client", source_url: "https://lefrenchrooster.com/about-us/" };
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [d.claim, p], signals: [d.signal, sig], claim_signal_refs: [d.ref, { claim_id: "p-outside", signal_id: "sig-outside", company_id: CO }] });
+    const r = await computeDeltasForCompany(publicArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((x) => x.delta_type === "echoed" && x.declared_claim_id === "d-own" && x.public_claim_id === "p-outside")).toBe(true);
+    expect(r.totals.own_host_excluded).toBe(0);
+    expect(r.totals.unbacked_excluded).toBe(0);
+    const row = db.tables.claim_deltas.find((x) => x.public_claim_id === "p-outside");
+    expect(row?.observed_own_host).toBe(false);
+  });
+
+  it("(b4) a ref to an own-host signal (voice NULL, refs intact) is refused by HOST — no dependence on voice_class", async () => {
+    alwaysEcho();
+    const d = ownWordsDeclared();
+    const p = pub({ id: "p-own-ref", claim_type: "inference" });
+    const sig = { id: "sig-own-ref", company_id: CO, voice_class: null, source_url: `${HOST}/about` };
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [d.claim, p], signals: [d.signal, sig], claim_signal_refs: [d.ref, { claim_id: "p-own-ref", signal_id: "sig-own-ref", company_id: CO }] });
+    const r = await computeDeltasForCompany(publicArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.deltas.some((x) => x.public_claim_id === "p-own-ref")).toBe(false);
+    expect(r.totals.own_host_excluded).toBe(1);
+  });
+
+  it("(sweep) a stale row leaves through the audited deleter with a stale_sweep reason and a snapshot — never a bare delete", async () => {
+    alwaysEcho();
+    const d = ownWordsDeclared();
+    // a pre-existing pair row for a public claim that no longer exists ⇒ stale on this run
+    const stale = { id: "old-row", company_id: CO, content_identity: "gone-identity", delta_type: "echoed", operator_disposition: null, pairing_kind: "public_vs_public" };
+    const db = fakeDb({ companies: [{ id: CO, website: HOST }], claims: [d.claim], signals: [d.signal], claim_signal_refs: [d.ref], claim_deltas: [stale] });
+    const r = await computeDeltasForCompany(publicArgs(db));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.totals.rows_deleted).toBe(1);
+    expect(db.tables.claim_deltas.some((x) => x.id === "old-row")).toBe(false);
+    const removal = db.tables.claim_delta_removals.find((x) => x.delta_id === "old-row");
+    expect(removal).toBeTruthy();
+    expect(String(removal!.reason)).toMatch(/^stale_sweep:public_vs_public:/);
+    expect((removal!.row_snapshot as Row).content_identity).toBe("gone-identity");
   });
 });

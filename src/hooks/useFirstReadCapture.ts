@@ -139,7 +139,7 @@ export function useFirstReadCapture(
     if (!companyId) return EMPTY_DELTA;
     const { data: dData, error: dErr } = await supabase
       .from("claim_deltas")
-      .select("id, delta_type, content_identity, declared_claim_id, public_claim_id, relevance_verdict")
+      .select("id, delta_type, content_identity, declared_claim_id, public_claim_id, relevance_verdict, observed_own_host")
       .eq("company_id", companyId)
       // GATE B-1: First Read reads the PUBLIC pairing only (client-voice vs market).
       .eq("pairing_kind", "public_vs_public")
@@ -148,7 +148,7 @@ export function useFirstReadCapture(
       .in("delta_type", ["echoed", "divergent", "publicly_silent", "internally_silent"])
       .abortSignal(signal);
     if (dErr) throw new Error(dErr.message);
-    let dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null; relevance_verdict: string | null }>;
+    let dRows = (dData ?? []) as Array<{ id: string; delta_type: string; content_identity: string; declared_claim_id: string | null; public_claim_id: string | null; relevance_verdict: string | null; observed_own_host: boolean | null }>;
     if (dRows.length === 0) return EMPTY_DELTA;
 
     // PROVENANCE GATE (R1, 2026-08-20) — First Read is OUTSIDE-ONLY. Drop any delta whose declared
@@ -267,6 +267,7 @@ export function useFirstReadCapture(
         captured_at: rs?.captured ?? null,
         source_url: rs?.source_url ?? null,
         relevance_verdict: d.relevance_verdict ?? null,
+        observed_own_host: d.observed_own_host ?? false,
       };
     });
     return assembleDeltaItems(inputs);

@@ -3,7 +3,7 @@
 
 import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRStatusConflict, FRStatusSource, SignalStrength } from "./types";
 import { formatFullDate } from "./deriveSourceTag";
-import { isRelevanceActive } from "@/lib/firstRead/relevanceActive";
+import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { isTerminalSupersession } from "@/lib/claimState/prunePolicy";
 
 // ── Derived contradiction "why" (2026-08-22, SIGNED softened wording) ────────────────────────────
@@ -270,7 +270,9 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     // enters `evidence`, so it neither shows nor drives the verdict. It stays fully recorded and
     // reversible in claim_deltas. The single shared selector isRelevanceActive is the gate.
     const isEchoDelta = p.verdict === "confirmed" || p.verdict === "contradicted";
-    const isEchoPair = isEchoDelta && isRelevanceActive(p.relevanceVerdict);
+    // SELF-ECHO GATE (2026-09-03): the ONE admissibility predicate — a relevance strike OR an own-host
+    // observed side takes the pair out of the active set (own words cannot corroborate own words).
+    const isEchoPair = isEchoDelta && isPairAdmissible(p);
     // HELD-ECHO CARVE-OUT (2026-08-26): a confirmed/contradicted pair whose public evidence is
     // entirely HELD (held_at / superseded-recrawl_pending) counts as a real echo REGARDLESS of its
     // relevance verdict. A relevance verdict computed over walled/held evidence is PROVISIONAL — it
@@ -279,7 +281,8 @@ export function groupGapStatements(pairs: FRGapPair[]): FRGapStatement[] {
     // stays inactive and correctly renders 'unechoed'. This restores the A2 invariant after the R3
     // backstop run judged the held Square-ordering echoes orthogonal. (See the FRGapPair.heldEcho
     // note; the flag is set only when the public claim's sole backing is held/recrawl-pending.)
-    if (isEchoPair || (isEchoDelta && p.heldEcho)) sawEcho.add(p.statementId); // a real public echo existed for this statement
+    // An own-host pair is not a held echo either — it never counts toward 'reverifying'.
+    if (isEchoPair || (isEchoDelta && p.heldEcho && !p.observedOwnHost)) sawEcho.add(p.statementId); // a real public echo existed for this statement
     // GATE 3 (2026-08-26): a pair whose evidence body was held/superseded arrives body-blank
     // (record AND sourceTag both null, since both come from the now-filtered public signal). It is
     // OMITTED like a struck pair — never shown as a chip-bearing blank scaffold.

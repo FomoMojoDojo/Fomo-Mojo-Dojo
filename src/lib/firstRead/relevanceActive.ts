@@ -26,3 +26,15 @@ export function isRelevanceActive(v: RelevanceVerdict): boolean {
 export function isRelevanceStruck(v: RelevanceVerdict): boolean {
   return v === RELEVANCE_ORTHOGONAL;
 }
+
+// SELF-ECHO GATE (operator ruling 2026-09-03): "if it is them saying it on their own site that cannot be
+// corroboration." A pair whose observed side is backed by the company's OWN host (claim_deltas.
+// observed_own_host, stamped at pairing by the single TS own-domain predicate) is not an echo and not a
+// divergence — it is out of the active set on EVERY reader, exactly like a relevance strike. No reader
+// re-derives hosts in the browser; the column is the authority. This is the ONE admissibility predicate
+// for a verdict pair: beat 4's grouping, the Check act's items, the reverse rows, the capture.
+export type AdmissiblePair = { relevanceVerdict?: string | null; observedOwnHost?: boolean | null };
+
+export function isPairAdmissible(p: AdmissiblePair): boolean {
+  return isRelevanceActive(p.relevanceVerdict as RelevanceVerdict) && !p.observedOwnHost;
+}

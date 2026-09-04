@@ -109,6 +109,9 @@ export type FRGapPair = {
   relevanceReason?: string | null;
   /** relevance_judged_at — for an operator row this is the override's decided_at (the provenance date). */
   relevanceDecidedAt?: string | null;
+  /** SELF-ECHO GATE (2026-09-03): the observed side is backed by the company's own host (claim_deltas.
+   *  observed_own_host). Never an echo — omitted by the shared selector on every reader. */
+  observedOwnHost?: boolean | null;
   /** A1: evidence strength (3 strong / 2 moderate / 1 thin) — the within-category sort key. */
   evidenceRank: number;
   /** S5: backing references a location with a live status conflict. */

@@ -58,7 +58,17 @@ function fakeDb(seed: Record<string, Row[]>) {
     });
     return b;
   };
-  return { tables, from };
+  // DELETE AUDIT (2026-09-03): the stale sweep deletes through delete_claim_deltas_audited (company-scoped,
+  // reason required); the fake models the RPC so the kind-scoped sweep assertions below stay byte-identical.
+  const rpc = (fn: string, a: { p_company_id?: string; p_ids?: string[]; p_reason?: string }) => {
+    if (fn !== "delete_claim_deltas_audited") return Promise.resolve({ data: null, error: { message: `unknown rpc ${fn}` } });
+    if (!a.p_reason?.trim()) return Promise.resolve({ data: null, error: { message: "a reason is required" } });
+    const ids = a.p_ids ?? [];
+    tables["claim_deltas"] ??= [];
+    tables["claim_deltas"] = tables["claim_deltas"].filter((r) => !(ids.includes(r.id as string) && r.company_id === a.p_company_id));
+    return Promise.resolve({ data: ids.length, error: null });
+  };
+  return { tables, from, rpc };
 }
 
 // Ollama stub: no candidate ever survives the prefilter in these fixtures, so the

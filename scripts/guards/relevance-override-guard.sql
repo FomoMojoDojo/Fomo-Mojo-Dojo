@@ -33,6 +33,8 @@ declare
   v_n int;
   v_raised boolean := false;
 begin
+  -- delete audit (20260903200000): fixture teardown deletes carry a reason (rolled back anyway)
+  perform set_config('app.delta_removal_reason', 'guard: relevance-override fixture teardown', true);
   -- fixture claims (the observed one is deleted in step 5)
   insert into public.claims (id, company_id, statement, claim_type, provenance, topic, status)
   values (v_decl, v_co, 'GUARD declared statement', 'own_words', 'public_observed', 'own_words', 'active'),

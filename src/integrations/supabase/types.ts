@@ -396,6 +396,7 @@ export type Database = {
           pairing_kind: string
           public_claim_id: string | null
           relevance_judged_at: string | null
+          observed_own_host: boolean
           relevance_model: string | null
           relevance_provider: string | null
           relevance_reason: string | null
@@ -416,6 +417,7 @@ export type Database = {
           pairing_kind?: string
           public_claim_id?: string | null
           relevance_judged_at?: string | null
+          observed_own_host?: boolean
           relevance_model?: string | null
           relevance_provider?: string | null
           relevance_reason?: string | null
@@ -436,6 +438,7 @@ export type Database = {
           pairing_kind?: string
           public_claim_id?: string | null
           relevance_judged_at?: string | null
+          observed_own_host?: boolean
           relevance_model?: string | null
           relevance_provider?: string | null
           relevance_reason?: string | null

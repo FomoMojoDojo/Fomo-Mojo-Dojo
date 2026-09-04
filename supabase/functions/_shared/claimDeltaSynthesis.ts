@@ -90,6 +90,9 @@ export type DeltaClaim = {
   proof_category?: string | null;
   // Public-side evidence class (from raw_payload.sample_signal), prompt context only.
   source_type?: string | null;
+  // SELF-ECHO GATE: the page an own-words claim was read from (raw_payload.page_url) — the no-ref
+  // resolution of the observed side's host when its signal refs are absent.
+  page_url?: string | null;
 };
 
 export type ComputedDelta = {
@@ -123,6 +126,9 @@ export type DeltaRunResult =
         // text (or absent) — a mechanical failure, NOT a verdict. NEVER written (no rejection,
         // no pair), so the pair stays revisitable and asserts neither echo nor no-echo.
         spans_unjudged: number;
+        // SELF-ECHO GATE (2026-09-03): observed candidates refused at admission — own-host backed, and
+        // (public kind) unresolvable (no refs, no page_url). Neither can corroborate; both are ledgered.
+        own_host_excluded?: number; unbacked_excluded?: number;
         // SELF-VOICE EXCLUSION: public_observed claims dropped from the observed side because
         // their source signal is the company's own voice (voice_class='client_voice') — the
         // company's own words cannot count as the market confirming it. The claim ROW is
@@ -228,6 +234,8 @@ export async function writeGapPairsIntegrity(
     admitted?: number | null;
     error?: string | null;
     runRef?: string | null;
+    // SELF-ECHO GATE: per-rule admission counts (self_voice / own_host / unbacked), from the run totals.
+    excludedByRule?: Record<string, number> | null;
   },
 ): Promise<void> {
   const { error } = await supabase.from("integrity_runs").insert({
@@ -239,7 +247,7 @@ export async function writeGapPairsIntegrity(
     status: outcome.status,
     examined: outcome.examined ?? null,
     admitted: outcome.admitted ?? null,
-    excluded_by_rule: null,
+    excluded_by_rule: outcome.excludedByRule ?? null,
     error: outcome.error ?? null,
     run_ref: outcome.runRef ?? null,
   });
@@ -480,11 +488,17 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // their existing pair/silence rows go stale and the write phase deletes them
   // (rejected_pairing tombstones persist by design). Minimized claims keep
   // participating. JS-side filter so the fake-db unit tests can exercise it.
-  const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string; raw_payload?: { sample_signal?: { source_type?: unknown } } | null }>)
+  const claims = ((claimRows ?? []) as Array<DeltaClaim & { status?: string; raw_payload?: { sample_signal?: { source_type?: unknown }; page_url?: unknown } | null }>)
     .filter((c) => c.status !== "struck")
     // Evidence class for prompt context (Item c): the sample signal's source_type.
-    // Extracted here so raw_payload itself never travels further.
-    .map((c) => ({ ...c, source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null, raw_payload: undefined }));
+    // Extracted here so raw_payload itself never travels further. page_url (own-words extractor) is
+    // the no-ref host resolution for the observed-side admission below.
+    .map((c) => ({
+      ...c,
+      source_type: String(c.raw_payload?.sample_signal?.source_type ?? "") || null,
+      page_url: typeof c.raw_payload?.page_url === "string" ? c.raw_payload.page_url : null,
+      raw_payload: undefined,
+    }));
   const pairingKind: PairingKind = args.pairingKind ?? "internal_vs_public";
   const publicsAll = claims.filter((c) => c.provenance === "public_observed");
 
@@ -498,20 +512,22 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   //   are EXCLUDED (our reading of the record is not the company speaking). Both sides of
   //   a public run are public_observed text, so no internal/upload/canvas content can
   //   reach the models on this path (privacy Option B holds by construction).
+  // The company's own host — ONE resolution for both kinds (the declared-side voice rule below and the
+  // observed-side admission), through the single shared predicate isOwnDomainUrl.
+  const { data: coRow } = await args.supabase
+    .from("companies").select("website").eq("id", args.companyId).maybeSingle();
+  const website = (coRow as { website?: string | null } | null)?.website ?? null;
+  let companyHost: string | null = null;
+  if (website) {
+    try {
+      companyHost = normalizeHost(new URL(website.includes("://") ? website : `https://${website}`).hostname);
+    } catch {
+      companyHost = null;
+    }
+  }
   let declared: typeof claims;
   let publicVoiceDeclaredIds: Set<string> | null = null;
   if (pairingKind === "public_vs_public") {
-    const { data: coRow } = await args.supabase
-      .from("companies").select("website").eq("id", args.companyId).maybeSingle();
-    const website = (coRow as { website?: string | null } | null)?.website ?? null;
-    let companyHost: string | null = null;
-    if (website) {
-      try {
-        companyHost = normalizeHost(new URL(website.includes("://") ? website : `https://${website}`).hostname);
-      } catch {
-        companyHost = null;
-      }
-    }
     const { data: vSigRows } = await args.supabase
       .from("signals").select("id, voice_class, source_url").eq("company_id", args.companyId);
     const vSigs = (vSigRows ?? []) as Array<{ id: string; voice_class: string | null; source_url: string | null }>;
@@ -565,27 +581,65 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
   // SAME footing as 'client_voice': it produces no echo/divergence/internally_silent, so our
   // own analysis can never score as market confirmation in the delta compute.
   const { data: sigRows } = await args.supabase
-    .from("signals").select("id, voice_class").eq("company_id", args.companyId);
+    .from("signals").select("id, voice_class, source_url").eq("company_id", args.companyId);
+  const allSigs = (sigRows ?? []) as Array<{ id: string; voice_class: string | null; source_url: string | null }>;
   const selfSignalIds = new Set(
-    ((sigRows ?? []) as Array<{ id: string; voice_class: string | null }>)
-      .filter((s) => s.voice_class === "client_voice" || s.voice_class === "analysis").map((s) => s.id),
+    allSigs.filter((s) => s.voice_class === "client_voice" || s.voice_class === "analysis").map((s) => s.id),
   );
+  const { data: refRows } = await args.supabase
+    .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", args.companyId);
+  const allRefs = (refRows ?? []) as Array<{ claim_id: string; signal_id: string }>;
   const selfVoiceClaimIds = new Set<string>();
-  if (selfSignalIds.size > 0) {
-    const { data: refRows } = await args.supabase
-      .from("claim_signal_refs").select("claim_id, signal_id").eq("company_id", args.companyId);
-    for (const r of ((refRows ?? []) as Array<{ claim_id: string; signal_id: string }>)) {
-      if (selfSignalIds.has(r.signal_id)) selfVoiceClaimIds.add(r.claim_id);
-    }
+  for (const r of allRefs) {
+    if (selfSignalIds.has(r.signal_id)) selfVoiceClaimIds.add(r.claim_id);
   }
+
+  // ── OBSERVED-SIDE ADMISSION (self-echo gate, operator ruling 2026-09-03) ──────
+  // "If it is them saying it on their own site that cannot be corroboration." The voice test above
+  // is REF-KEYED: a claim whose refs are absent is invisible to it (CB2's own-words refs were wiped
+  // by the RB-2 rebuild on 08-26, and 32 own-host pairs landed on the echo side). Admission is
+  // therefore keyed on HOST, resolved structurally: every backing signal's URL via refs; if none,
+  // the claim's own raw_payload.page_url; if still nothing, the claim is UNRESOLVABLE — an unbacked
+  // claim cannot corroborate anything and is not admitted on the public kind (the internal kind
+  // keeps its legacy no-ref publics: they are the client corpus's pairing pool, not corroboration
+  // claims). Any own-host URL (the single shared isOwnDomainUrl predicate) ⇒ excluded from the
+  // echo/divergent side: no pair forms, so nothing is stamped. Pairs that DO form carry
+  // observed_own_host from the same predicate — false by construction after this gate; the column
+  // exists for legacy rows and for the readers' one shared selector (isPairAdmissible).
+  const sigUrlById = new Map(allSigs.filter((s) => !!s.source_url).map((s) => [s.id, s.source_url as string]));
+  const urlsByClaim = new Map<string, string[]>();
+  for (const r of allRefs) {
+    const u = sigUrlById.get(r.signal_id);
+    if (!u) continue;
+    const list = urlsByClaim.get(r.claim_id);
+    if (list) list.push(u); else urlsByClaim.set(r.claim_id, [u]);
+  }
+  const ownHostClaimIds = new Set<string>();
+  const unbackedClaimIds = new Set<string>();
+  for (const c of publicsAll) {
+    let urls = urlsByClaim.get(c.id) ?? [];
+    if (urls.length === 0 && c.page_url) urls = [c.page_url];
+    if (urls.length === 0) {
+      if (pairingKind === "public_vs_public") unbackedClaimIds.add(c.id);
+      continue;
+    }
+    if (companyHost && urls.some((u) => isOwnDomainUrl(u, companyHost))) ownHostClaimIds.add(c.id);
+  }
+  const observedOwnHost = (publicClaimId: string | null | undefined): boolean =>
+    !!publicClaimId && ownHostClaimIds.has(publicClaimId);
+
   // GATE B-1: in a public_vs_public run the declared set is carved OUT of the observed
   // side — a claim can never sit on both sides of its own pairing. (Self-voice exclusion
   // already removes client_voice/analysis-backed claims; this additionally removes the
   // NULL-voice own-domain declared rows the positive-only self-voice test leaves in.)
+  const voiceOrDeclared = (c: { id: string }) => selfVoiceClaimIds.has(c.id) || (publicVoiceDeclaredIds?.has(c.id) ?? false);
   const publics = publicsAll.filter(
-    (c) => !selfVoiceClaimIds.has(c.id) && !(publicVoiceDeclaredIds?.has(c.id) ?? false),
+    (c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && !unbackedClaimIds.has(c.id),
   );
-  const selfVoiceExcluded = publicsAll.length - publics.length;
+  // Ledger each admission rule separately (a claim is counted under the FIRST rule that refused it).
+  const selfVoiceExcluded = publicsAll.filter((c) => voiceOrDeclared(c)).length;
+  const ownHostExcluded = publicsAll.filter((c) => !voiceOrDeclared(c) && ownHostClaimIds.has(c.id)).length;
+  const unbackedExcluded = publicsAll.filter((c) => !voiceOrDeclared(c) && !ownHostClaimIds.has(c.id) && unbackedClaimIds.has(c.id)).length;
 
   // Existing rows: identity → row. Tombstones ('rejected_pairing') are never
   // re-proposed; all other existing identities are kept verbatim (no re-roll).
@@ -716,6 +770,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     rejections_cached: 0, rejections_pruned: 0,
     spans_unjudged: 0,
     self_voice_excluded: selfVoiceExcluded,
+    own_host_excluded: ownHostExcluded,
+    unbacked_excluded: unbackedExcluded,
     proof_guard_excluded: proofGuardExcludedIds.length,
   };
 
@@ -891,6 +947,8 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
           pairing_kind: pairingKind,
           model_provider: judgeRes.provider,
           model_name: judgeRes.model,
+          // SELF-ECHO GATE: stamped from the same predicate that admitted the observed side (false by construction).
+          observed_own_host: observedOwnHost(pairRow.public_claim_id),
           // OPERATOR OVERRIDE: born with the operator's relevance columns when a live decision exists.
           ...overrideColumnsFor(identity, relevanceOverrides),
         });
@@ -962,6 +1020,7 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         // Silences are DERIVED (absence), not judged — no model produced them.
         model_provider: "none",
         model_name: "deterministic",
+        observed_own_host: observedOwnHost(row.public_claim_id),
       });
       if (insErr) throw new Error(`claim-delta insert failed: ${insErr.message}`);
       totals.rows_new++;
@@ -971,10 +1030,14 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
       (r) => !producedIdentities.has(r.content_identity) && r.operator_disposition !== "rejected_pairing",
     );
     if (stale.length > 0) {
+      // DELETE AUDIT (2026-09-03): never a bare delete — the sanctioned RPC sets the transaction-local
+      // reason and the BEFORE DELETE trigger snapshots every row into claim_delta_removals. A bare
+      // .delete() would now be REFUSED by the trigger (no reason set).
       const staleIds = stale.map((r) => r.id);
+      const sweepReason = `stale_sweep:${pairingKind}:${args.nowIso}`;
       for (let i = 0; i < staleIds.length; i += 100) {
-        const { error: delErr } = await args.supabase
-          .from("claim_deltas").delete().in("id", staleIds.slice(i, i + 100));
+        const { error: delErr } = await (args.supabase as unknown as { rpc: (fn: string, a: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }> })
+          .rpc("delete_claim_deltas_audited", { p_company_id: args.companyId, p_ids: staleIds.slice(i, i + 100), p_reason: sweepReason });
         if (delErr) throw new Error(`claim-delta stale-delete failed: ${delErr.message}`);
       }
       totals.rows_deleted = stale.length;
@@ -1012,6 +1075,13 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
         examined: totals.candidates,
         admitted: totals.pairs_confirmed + totals.pairs_inferred,
         runRef: args.nowIso,
+        // SELF-ECHO GATE: the admission ledger — what this run refused on the observed side, per rule.
+        excludedByRule: {
+          self_voice: totals.self_voice_excluded,
+          own_host: totals.own_host_excluded,
+          unbacked: totals.unbacked_excluded,
+          proof_guard: totals.proof_guard_excluded,
+        },
       });
     }
   }
