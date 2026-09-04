@@ -48,6 +48,7 @@ import { extractTextBasic } from "../supabase/functions/_shared/fetchAndExtract"
 import { normalizeForHash, sha256Hex } from "../supabase/functions/_shared/contentIdentity";
 import { extractStructured, type StructuredBlock } from "../supabase/functions/_shared/listingDetect";
 import { structuredBackfillTargets } from "../supabase/functions/_shared/structuredBackfill";
+import { reviewUpsertSql } from "../supabase/functions/_shared/reviewRowUpsert";
 import { anchorPresent, buildAnchors, selectBaseline, type SnapshotCandidate } from "../supabase/functions/_shared/outsideRecrawlAnchors";
 
 const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
@@ -380,7 +381,8 @@ async function runReview() {
                (j->>'fetch_status')::outside_fetch_status, (j->>'http_status')::int, j->>'fetch_path', j->>'disposition',
                array(select jsonb_array_elements_text(j->'dependent_signal_ids'))::uuid[], array(select jsonb_array_elements_text(j->'dependent_delta_ids'))::uuid[],
                (j->>'anchor_present')::boolean
-          from p;`);
+          from p
+        ${reviewUpsertSql()};`); // UPSERT (ruling 2026-09-04): re-review under the same run updates the crawl columns, preserves the decision
     }
     console.log(`  ${disposition.padEnd(13)} ${path.padEnd(8)} ${String(http_status).padEnd(4)} anchor=${String(anchor_present).padEnd(5)} structured=${(structuredKinds || "none").padEnd(24)} ${(Date.now() - t0) + "ms"}  ${d.url.replace(/^https?:\/\//, "")}`);
   }
