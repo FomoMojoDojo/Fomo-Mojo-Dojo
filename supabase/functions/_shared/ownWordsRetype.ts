@@ -12,7 +12,12 @@ export type RetypeJudgeVerdict = { quote: string; kind: unknown; kindReason?: st
 /** Injected judge: page text (null when no snapshot is stored) + the page's statements → typed verdicts. */
 export type RetypeJudge = (pageText: string | null, statements: string[]) => Promise<RetypeJudgeVerdict[]>;
 
+/** A reviewed plan row handed back to the door: the operator's decision (or the dry-run's judge proposal,
+ *  re-applied verbatim). A page whose claims are ALL preset is never re-judged. */
+export type RetypePreset = { claim_id: string; kind: unknown; reason: string | null; decided_by: "judge" | "operator" };
+
 export type RetypePlanRow = {
+  decided_by: "judge" | "operator";
   claim_id: string;
   page_url: string | null;
   statement: string;
@@ -39,7 +44,10 @@ type Store = { from: (t: string) => any };
 
 export async function runOwnWordsRetype(args: {
   supabase: Store; companyId: string; mode: RetypeMode; judge: RetypeJudge; nowIso: string; runId?: string | null;
+  /** Reviewed plan (apply with edits): per-claim preset kinds; operator rows are audited as operator decisions. */
+  presets?: RetypePreset[] | null;
 }): Promise<RetypeResult> {
+  const presetById = new Map<string, RetypePreset>((args.presets ?? []).map((p) => [p.claim_id, p]));
   // Frozen fixtures are refused BEFORE any read (CB1 by law).
   if (FROZEN_COMPANY_IDS.has(args.companyId)) return { ok: false, skipped: "frozen_company" };
   const { data: co } = await args.supabase.from("companies").select("id, frozen").eq("id", args.companyId).maybeSingle();
@@ -73,23 +81,27 @@ export async function runOwnWordsRetype(args: {
       pageText = (snap as { clean_text?: string } | null)?.clean_text ?? null;
     }
     const statements = list.map((c) => (c.statement ?? "").trim());
-    const verdicts = await args.judge(pageText, statements);
-    judgeCalls++;
+    // A fully preset page (a reviewed plan) is never re-judged; otherwise judge once for the page.
+    const needsJudge = list.some((c) => !presetById.has(c.id));
+    const verdicts = needsJudge ? await args.judge(pageText, statements) : [];
+    if (needsJudge) judgeCalls++;
     const byQuote = new Map(verdicts.map((v) => [String(v.quote ?? "").trim(), v]));
     for (const c of list) {
       const st = (c.statement ?? "").trim();
-      const v = byQuote.get(st);
-      const kind = v ? parseOwnWordsKind(v.kind) : null;
+      const preset = presetById.get(c.id) ?? null;
+      const v = preset ? null : byQuote.get(st);
+      const kind = preset ? parseOwnWordsKind(preset.kind) : v ? parseOwnWordsKind(v.kind) : null;
       const missing = kind === null;
       if (missing) kindMissing++;
       const eligible = declaredEligibleFor(kind); // fail-toward-eligible
       const fromEligible = c.declared_eligible !== false;
       byKind[kind ?? "(missing)"] = (byKind[kind ?? "(missing)"] ?? 0) + 1;
       plan.push({
+        decided_by: preset ? preset.decided_by : "judge",
         claim_id: c.id, page_url: url, statement: st,
         from_kind: c.statement_kind ?? null, from_eligible: fromEligible,
         proposed_kind: kind, proposed_eligible: eligible, kind_missing: missing,
-        reason: v?.kindReason ? String(v.kindReason) : null,
+        reason: preset ? (preset.reason ?? null) : v?.kindReason ? String(v.kindReason) : null,
         // A missing kind proposes NO change (nothing is written from a glitch).
         changed: !missing && (kind !== (c.statement_kind ?? null) || eligible !== fromEligible),
       });
@@ -116,6 +128,7 @@ export async function runOwnWordsRetype(args: {
       company_id: args.companyId, claim_id: p.claim_id, run_id: runId,
       from_kind: p.from_kind, to_kind: p.proposed_kind, from_eligible: p.from_eligible, to_eligible: p.proposed_eligible,
       reason: p.reason ?? "(no reason returned)", applied_at: args.nowIso,
+      decided_by: p.decided_by,
     });
     if (audErr) return { ok: false, error: `audit insert failed for ${p.claim_id}: ${audErr.message}` };
     totals.audited++;

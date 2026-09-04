@@ -3,7 +3,7 @@
 // writes claims.statement_kind + declared_eligible with one own_words_retypes audit row per change under a
 // long_runner_runs row (own_words_retype). Frozen companies refused. Never deletes, never rewrites.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { runOwnWordsRetype, type RetypeJudgeVerdict } from "../_shared/ownWordsRetype.ts";
+import { runOwnWordsRetype, type RetypeJudgeVerdict, type RetypePreset } from "../_shared/ownWordsRetype.ts";
 import { RETYPE_SYSTEM, callModel } from "../_shared/ownWordsJudge.ts";
 
 const corsHeaders = {
@@ -28,7 +28,15 @@ Deno.serve(async (req) => {
       return (Array.isArray(j.verdicts) ? j.verdicts : []) as RetypeJudgeVerdict[];
     };
 
-    const res = await runOwnWordsRetype({ supabase, companyId: company_id, mode, judge, nowIso: new Date().toISOString(), runId: typeof body.run_id === "string" ? body.run_id : null });
+    // Reviewed plan (apply with edits): [{claim_id, kind, reason, decided_by:'judge'|'operator'}]. Operator rows
+    // are audited as operator decisions; a fully preset page is never re-judged.
+    const presets: RetypePreset[] = Array.isArray(body.plan)
+      ? (body.plan as Array<Record<string, unknown>>).map((r) => ({
+          claim_id: String(r.claim_id ?? ""), kind: r.kind, reason: r.reason == null ? null : String(r.reason),
+          decided_by: (r.decided_by === "operator" ? "operator" : "judge") as RetypePreset["decided_by"],
+        })).filter((r) => r.claim_id)
+      : [];
+    const res = await runOwnWordsRetype({ supabase, companyId: company_id, mode, judge, nowIso: new Date().toISOString(), runId: typeof body.run_id === "string" ? body.run_id : null, presets });
     if (!res.ok && "skipped" in res) {
       if (res.skipped === "frozen_company") return json({ ok: false, error: "This is a frozen reference company — its record is preserved and is not modified." }, 403);
       return json({ ok: false, error: "company not found" }, 404);

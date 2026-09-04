@@ -92,3 +92,28 @@ describe("(c) apply writes the two columns + one audit row per change under a le
     expect(store.tables.claims.map((r) => r.statement)).toEqual(claims().map((r) => r.statement));
   });
 });
+
+describe("(d) a reviewed plan (apply with edits): presets win, operator rows audited as operator, fully preset pages never re-judged", () => {
+  it("6-style operator override + judge presets ⇒ zero judge calls, decided_by recorded per row", async () => {
+    const store = fakeStore({ companies: [{ id: CO, frozen: false }], claims: claims(), own_words_page_snapshots: [], long_runner_runs: [], own_words_retypes: [] });
+    const j = vi.fn();
+    const out = await runOwnWordsRetype({
+      supabase: store.supabase, companyId: CO, mode: "apply", judge: j, nowIso: "2026-09-03T23:30:00Z", runId: "run-2",
+      presets: [
+        { claim_id: "c-pos", kind: "positioning", reason: "why choose us", decided_by: "judge" },
+        { claim_id: "c-instr", kind: "slogan", reason: "Operator review 2026-09-03: tagline — no testable claim", decided_by: "operator" },
+        { claim_id: "c-glitch", kind: "location", reason: "Operator review 2026-09-03: location", decided_by: "operator" },
+      ],
+    });
+    if (!out.ok) throw new Error("expected ok");
+    expect(j).not.toHaveBeenCalled();
+    expect(out.totals.judge_calls).toBe(0);
+    expect(out.totals.applied).toBe(3);
+    const audits = store.tables.own_words_retypes;
+    expect(audits.filter((a) => a.decided_by === "operator").map((a) => a.claim_id).sort()).toEqual(["c-glitch", "c-instr"]);
+    expect(audits.find((a) => a.claim_id === "c-pos")?.decided_by).toBe("judge");
+    const c = new Map(store.tables.claims.map((r) => [r.id, r]));
+    expect(c.get("c-instr")).toMatchObject({ statement_kind: "slogan", declared_eligible: false });
+    expect(c.get("c-glitch")).toMatchObject({ statement_kind: "location", declared_eligible: false });
+  });
+});
