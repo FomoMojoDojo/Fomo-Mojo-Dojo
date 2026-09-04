@@ -318,6 +318,10 @@ export type FirstReadPreviewData = {
   /** OW-3: whether the own-words extraction LOOKED (a first_read_own_words integrity record
    *  exists) — grounds beat 3's empty state in a persisted record, not array emptiness. */
   ownWordsLooked: boolean;
+  /** R2 (2026-09-04): an own-words RUN exists — a COMPLETED first_read_own_words integrity record
+   *  ('planned' is a dry run and writes nothing). Gates the "Your channels, as we read them" block;
+   *  the not-run state is surfaced operator-only (never as client copy). */
+  ownWordsRun: boolean;
   markets: FRMarket[];
   /** Outside-voice signals, strength-mapped (R4), strong-first then newest. */
   signals: FRSignal[];
@@ -402,6 +406,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   ownWords: [],
   ownWordsHiddenIds: [],
   ownWordsLooked: false,
+  ownWordsRun: false,
   markets: [],
   signals: [],
   score: null,

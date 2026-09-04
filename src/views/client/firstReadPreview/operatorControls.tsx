@@ -234,3 +234,16 @@ export function OwnWordsRecordBlock({ words }: { words: FROwnWord[] }) {
     </div>
   );
 }
+
+/** R2 (2026-09-04): beat 3 — no own-words run exists for this company (no COMPLETED first_read_own_words
+ *  record). The client sees NO copy for this state; the operator sees one line behind the glyph toggle.
+ *  Null without the context or when a run exists. */
+export function OwnWordsNotRunNote({ run }: { run: boolean }) {
+  const ctx = useOperatorControls();
+  if (!ctx || run) return null;
+  return (
+    <p className={`fr-op-not-ready ${TAG_CLASS}`} style={TAG_STYLE} {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.notMeetingReady }}>
+      {OPERATOR_STRINGS.notMeetingReadyOwnWords}
+    </p>
+  );
+}

@@ -57,3 +57,16 @@ describe("Questions beat empty state — integrity, not emptiness", () => {
     expect(c.textContent).not.toContain(S.notYet);
   });
 });
+
+// R3 (2026-09-04): the standfirst is the WHOLE signed line — byte-exact; the former public-record line is gone.
+describe("Questions beat standfirst (R3)", () => {
+  it("renders exactly 'Questions still to be answered' and never the retired line", () => {
+    const c = renderQ(empty("not_yet"));
+    // The standfirst is the <p> directly under the beat's <h1> (ActHeader) — byte-exact, the WHOLE line.
+    const standfirst = c.querySelector("h1 + p");
+    expect(standfirst).not.toBeNull();
+    expect(standfirst!.textContent).toBe("Questions still to be answered");
+    expect(c.textContent).not.toContain("from the public record");
+  });
+});
+

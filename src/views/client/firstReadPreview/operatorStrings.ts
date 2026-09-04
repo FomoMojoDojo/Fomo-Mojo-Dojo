@@ -25,6 +25,8 @@ export const OPERATOR_STRINGS = {
    *  kept as record but not shown to the client (instruction / policy / recruiting / other). PROPOSED — for sign-off. */
   recordOnlyEyebrow: "Kept as record — not shown to the client",
   kindPrefix: "Kind · ",
+  /** R2 (2026-09-04): beat 3 operator-only line when NO own-words run exists for the company. SIGNED. */
+  notMeetingReadyOwnWords: "Not meeting-ready — own-words not run",
 } as const;
 
 /** Provenance tag on an operator-decided pair: "Operator · spared · September 3, 2026". */
@@ -38,4 +40,5 @@ export const OPERATOR_MARK = {
   attr: "data-fr-operator",
   controls: "relevance-controls",
   struck: "struck-pairs",
+  notMeetingReady: "not-meeting-ready",
 } as const;

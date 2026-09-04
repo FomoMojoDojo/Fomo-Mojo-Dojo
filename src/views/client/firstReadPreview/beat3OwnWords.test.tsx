@@ -37,7 +37,7 @@ describe("beat 3 — own words (OW-3)", () => {
 
   it("demotes the inference rows to the 'Your channels, as we read them' sub-row, BELOW own words", () => {
     const { container } = render(<ActWhatYouSay read={base({
-      ownWords: [ow("o1", "This is the Barra Method.", "verbatim")], ownWordsLooked: true,
+      ownWords: [ow("o1", "This is the Barra Method.", "verbatim")], ownWordsLooked: true, ownWordsRun: true,
       declared: [{ id: "d1", topic: "market", facet: "Market", statement: "Sells coffee online", sourceTag: { label: "Public read · June 1, 2026" } }],
     })} />);
     const text = container.textContent ?? "";
@@ -47,10 +47,13 @@ describe("beat 3 — own words (OW-3)", () => {
     expect(text.indexOf("Your channels, as we read them")).toBeLessThan(text.indexOf("Sells coffee online"));
   });
 
-  it("empty state is integrity-grounded: looked → 'no verbatim' note; not-looked → 'haven't read'", () => {
+  // R2 (2026-09-04): the former not-read-yet line is RETIRED — not-looked renders NO client copy at all.
+  it("empty state is integrity-grounded: looked → 'no verbatim' note; not-looked → no client copy (retired line absent)", () => {
     const looked = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: true })} />).container.textContent ?? "";
-    const notYet = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: false })} />).container.textContent ?? "";
+    const notYet = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: false })} />).container;
     expect(looked).toContain("found no verbatim self-descriptions");
-    expect(notYet).toContain("haven't read your own channels");
+    expect(notYet.textContent ?? "").not.toContain("read your own channels");
+    expect(notYet.textContent ?? "").not.toContain("found no verbatim self-descriptions");
+    expect(notYet.querySelector(".fr-absent, [data-fr-absent]")).toBeNull();
   });
 });

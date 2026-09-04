@@ -444,9 +444,13 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           a.pageHost.localeCompare(b.pageHost) || a.quote.localeCompare(b.quote));
         // Integrity: did the own-words extraction LOOK? (grounds the empty state.)
         const { data: owIntRows } = await loose()
-          .from("integrity_runs").select("id")
-          .eq("company_id", companyId).eq("component", "first_read_own_words").limit(1);
-        const ownWordsLooked = ((owIntRows ?? []) as unknown[]).length > 0;
+          .from("integrity_runs").select("id, status")
+          .eq("company_id", companyId).eq("component", "first_read_own_words");
+        const owIntList = (owIntRows ?? []) as Array<{ id: unknown; status: string | null }>;
+        const ownWordsLooked = owIntList.length > 0;
+        // R2 (2026-09-04): an own-words RUN exists only when a COMPLETED record exists ('planned' is the
+        // extractor's dry run — nothing written to claims). Gates the channels block below own words.
+        const ownWordsRun = owIntList.some((r) => r.status === "completed");
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -1092,6 +1096,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             ownWordsRecordOnly,
             ownWordsHiddenIds,
             ownWordsLooked,
+            ownWordsRun,
             channelJunkIds,
             channelOffHostIds,
             markets,

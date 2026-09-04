@@ -23,7 +23,7 @@ import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
-import { OperatorPairMeta, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -136,6 +136,8 @@ const NO_QUESTIONS_NOTE = "No open questions generated yet."; // signed (not-yet
 // pending operator signature — added with the first_read_open_questions integrity gate.
 const QUESTIONS_LOOKED_NONE = "We compared what you say with what's out there and found nothing left open yet."; // signed
 const QUESTIONS_COULDNT = "We couldn't run that comparison this time."; // signed
+// R3 (2026-09-04): the Questions beat standfirst — the whole line, byte-exact. SIGNED.
+const QUESTIONS_STANDFIRST = "Questions still to be answered"; // signed
 // ── Our-read section labels (positioning / strategy / promise) — SIGNED ──
 const LABEL_POSITIONING = "Positioning"; // signed
 const LABEL_STRATEGY = "Strategy"; // signed
@@ -182,7 +184,8 @@ const SIESTA2_LINE = "Every route on the map starts here. Now — what you offer
 // this forward pointer was false. Removed from the Base render; the constant is retained (no replacement).
 const MARKET_POINTER_NOTE = "Who you serve — coming up"; // signed (superseded — no longer rendered)
 const WHERE_HEADLINE = "Where you stand."; // signed
-const NO_CHANNELS_NOTE = "We haven't read your own channels yet."; // signed
+// R2 (2026-09-04): the former not-read-yet channels line is RETIRED (deleted, not reworded). A company
+// with no own-words run shows no channel copy to the client; the state is operator-only (OwnWordsNotRunNote).
 // OW-3 (2026-08-20) — beat 3 own-words. SIGNED.
 const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-descriptions to quote yet."; // signed
 const IN_YOUR_WORDS_LABEL = "In your words"; // signed
@@ -717,12 +720,15 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
   const verbatim = read.ownWords.filter((w) => w.fidelity === "verbatim");
   const paraphrased = read.ownWords.filter((w) => w.fidelity === "paraphrased");
   const hasOwn = read.ownWords.length > 0;
-  const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : NO_CHANNELS_NOTE;
+  // R2: only the looked-and-none line remains; not-looked renders NO client copy.
+  const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : null;
   return (
     <>
       <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} rationale={RATIONALE_WHAT_YOU_SAY} />
       <main className="fr-stagger">
-        {!hasOwn ? <Absent>{emptyNote}</Absent> : null}
+        {!hasOwn && emptyNote ? <Absent>{emptyNote}</Absent> : null}
+        {/* R2: operator-only "Not meeting-ready" line when no own-words run exists (null for the client). */}
+        <OwnWordsNotRunNote run={read.ownWordsRun} />
         {/* Verbatim self-assertions lead — quoted, page + read date. */}
         {verbatim.map((w) => (
           <LedgerRow
@@ -744,8 +750,9 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
         ))}
         {/* ADMISSION CRITERION: own words kept as record only — operator view (context-gated, null for the client). */}
         <OwnWordsRecordBlock words={read.ownWordsRecordOnly} />
-        {/* Demoted: our inference read of the channels, below the company's own words. */}
-        {read.declared.length > 0 ? (
+        {/* Demoted: our inference read of the channels, below the company's own words.
+            R2 (2026-09-04): renders ONLY when an own-words run exists for the company. */}
+        {read.ownWordsRun && read.declared.length > 0 ? (
           <div data-fr-block="channels" className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
             <div className="mb-8"><Eyebrow>{CHANNELS_AS_READ_LABEL}</Eyebrow></div>
             {read.declared.map((claim) => (
@@ -1557,7 +1564,7 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
     <>
       <ActHeader
         headline="Questions this read raises."
-        standfirst="Open questions from the public record — the threads worth taking a position on."
+        standfirst={QUESTIONS_STANDFIRST}
         rationale={RATIONALE_QUESTIONS}
       />
       <main className="fr-stagger">

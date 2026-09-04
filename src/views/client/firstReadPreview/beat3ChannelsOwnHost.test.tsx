@@ -43,6 +43,7 @@ const read = (declared: FRDeclared[]): FirstReadPreviewData => ({
   company: { name: "Geniant", website: "https://geniant.com" },
   ownWords: [{ id: "o1", quote: "We don't train on your data.", pageUrl: "https://geniant.com/", pageHost: "geniant.com", fidelity: "verbatim", sourceTag: { label: "geniant.com · read September 2, 2026" } }],
   ownWordsLooked: true,
+  ownWordsRun: true,
   declared,
 });
 
