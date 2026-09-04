@@ -1,3 +1,4 @@
+import { E2_SINGLE_SENTENCE_MAX, E2_MULTI_SENTENCE_MAX, E2_ORGANIZATION_MAX } from "./evidenceCaps.ts";
 import {
   type ClaimCandidate,
   type ClaimDraft,
@@ -363,8 +364,8 @@ function canonicalizeClaimStatement(signal: SignalDraft & { id?: string }) {
   // suppression. A single long sentence keeps the 160 cap (no new mints from that shape).
   const multiSentence = /[.!?]\s+\S/.test(text);
   const carriesConcrete = extractConcreteTokens(text).size > 0;
-  const maxLen = signal.signal_band === "organization" ? 320
-    : (multiSentence && carriesConcrete ? 480 : 160);
+  const maxLen = signal.signal_band === "organization" ? E2_ORGANIZATION_MAX
+    : (multiSentence && carriesConcrete ? E2_MULTI_SENTENCE_MAX : E2_SINGLE_SENTENCE_MAX); // single home: evidenceCaps.ts
   if (text.length > maxLen) return null;
   if (text.length < 32 && GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(text))) return null;
   if (text.split(" ").length < 4) return null;
@@ -1119,7 +1120,7 @@ export function mapSignalsToClaimCandidates(companyId: string, signals: Array<Si
     // a multi-sentence statement that carries concrete content (the un-thinned outside/customer
     // shape) is allowed past 160 so this gate doesn't silently re-thin what the fix retained.
     const s = entry.claim.statement;
-    const cap = (/[.!?]\s+\S/.test(s) && extractConcreteTokens(s).size > 0) ? 480 : 160;
+    const cap = (/[.!?]\s+\S/.test(s) && extractConcreteTokens(s).size > 0) ? E2_MULTI_SENTENCE_MAX : E2_SINGLE_SENTENCE_MAX; // single home
     if (s.length > cap) return false;
     if (GENERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(entry.claim.statement))) return false;
     return true;

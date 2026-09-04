@@ -18,6 +18,7 @@
 // admitted excerpt survives rebuild-claims rather than being minted then dropped.
 import { excerptTracesToSource } from "../../../src/lib/evidenceExcerptGuard.ts";
 import { retainConcreteEvidence, extractConcreteTokens } from "../../../src/lib/evidenceMappers.ts";
+import { E2_SINGLE_SENTENCE_MAX, E2_MULTI_SENTENCE_MAX } from "../../../src/lib/evidenceCaps.ts";
 
 export type AdmitReason =
   | "empty"
@@ -46,7 +47,7 @@ export function admitOutsideEvidence(rawExcerpt: string, sourceText: string): Ad
   const shaped = retainConcreteEvidence(raw);
   const multiSentence = /[.!?]\s+\S/.test(shaped);
   const carriesConcrete = extractConcreteTokens(shaped).size > 0;
-  const maxLen = multiSentence && carriesConcrete ? 480 : 160;
+  const maxLen = multiSentence && carriesConcrete ? E2_MULTI_SENTENCE_MAX : E2_SINGLE_SENTENCE_MAX; // single home: evidenceCaps.ts
   if (shaped.length > maxLen) return { admit: false, reason: "e2_overbroad" };
   if (shaped.split(" ").filter(Boolean).length < MIN_WORDS) return { admit: false, reason: "e2_too_short" };
 
