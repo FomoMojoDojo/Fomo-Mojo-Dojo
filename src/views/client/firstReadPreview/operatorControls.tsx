@@ -14,7 +14,7 @@ import { Eyebrow, RecencyTag, SourceTag } from "./primitives";
 import { formatFullDate } from "./deriveSourceTag";
 import { formatMonthYear } from "./mapping";
 import type { FRGapPair, FROwnWord } from "./types";
-import { OPERATOR_MARK, OPERATOR_STRINGS, operatorProvenanceLabel } from "./operatorStrings";
+import { OPERATOR_MARK, OPERATOR_STRINGS, operatorKindLabel, operatorProvenanceLabel } from "./operatorStrings";
 import type { RelevanceOverrideVerdict } from "./relevanceOverrideAction";
 
 export type OperatorDecision = { pair: FRGapPair; verdict: RelevanceOverrideVerdict; reason: string };
@@ -226,7 +226,7 @@ export function OwnWordsRecordBlock({ words }: { words: FROwnWord[] }) {
         <div key={w.id} data-fr-record-only={w.id}>
           <div className="mb-2 flex flex-wrap items-center gap-4">
             {w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
-            <span className={TAG_CLASS} style={TAG_STYLE}>{OPERATOR_STRINGS.kindPrefix}{w.kind ?? "untyped"}</span>
+            <OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} />
           </div>
           <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-faint))" }}>{w.quote}</p>
         </div>
@@ -245,5 +245,18 @@ export function OwnWordsNotRunNote({ run }: { run: boolean }) {
     <p className={`fr-op-not-ready ${TAG_CLASS}`} style={TAG_STYLE} {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.notMeetingReady }}>
       {OPERATOR_STRINGS.notMeetingReadyOwnWords}
     </p>
+  );
+}
+
+/** OPERATOR KIND LABEL (2026-09-04): one tag-style line beside a row's source tag — the judged kind and, when an
+ *  audit reason exists (own_words_retypes), the reason. Operator view only — null without the context. Rendered
+ *  on every own-words row and every channel row (and inside the record-only block). */
+export function OperatorKindTag({ kind, reason }: { kind: string | null; reason: string | null }) {
+  const ctx = useOperatorControls();
+  if (!ctx) return null;
+  return (
+    <span className={TAG_CLASS} style={TAG_STYLE} {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.kindLabel }} data-fr-kind={kind ?? ""}>
+      {operatorKindLabel(kind, reason)}
+    </span>
   );
 }

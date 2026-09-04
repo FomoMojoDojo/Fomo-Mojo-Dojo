@@ -85,7 +85,7 @@ export function clientVoiceClaimIds(
  * not by string-dedup. They still render once, in the own-words block (loaded as claim_type='own_words').
  */
 export function channelReadClaimIds(
-  claims: Array<{ id: string; claim_type?: string | null; statement?: string | null }>,
+  claims: Array<{ id: string; claim_type?: string | null; statement?: string | null; declared_eligible?: boolean | null }>,
   ownVoiceIds: Set<string>,
   docExcludedIds: Set<string>,
   ownWordsNormTexts: Set<string>,
@@ -93,6 +93,10 @@ export function channelReadClaimIds(
   const ids = new Set<string>();
   for (const c of claims) {
     if (c.claim_type === "own_words") continue; // never double-render as our channel read (by class)
+    // RF ADMISSION (operator ruling 2026-09-04): an inference claim the admission criterion FAILED
+    // (declared_eligible=false, written by the rf-channels-apply door) never renders as our channel read.
+    // null/undefined = untyped = eligible (fail-toward-eligible, as for own words). Callers REPORT the ids.
+    if (c.declared_eligible === false) continue;
     // 1ea2464 COMPLETED to TEXT IDENTITY (R3b, 2026-08-27): the invariant is text-level, not
     // claim_type-level — a statement must never render as both "your words" (own_words block) AND
     // "our read of your channels", regardless of claim CLASS. R3b's client_voice regeneration minted

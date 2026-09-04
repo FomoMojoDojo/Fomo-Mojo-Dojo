@@ -27,7 +27,18 @@ export const OPERATOR_STRINGS = {
   kindPrefix: "Kind · ",
   /** R2 (2026-09-04): beat 3 operator-only line when NO own-words run exists for the company. SIGNED. */
   notMeetingReadyOwnWords: "Not meeting-ready — own-words not run",
+  /** OPERATOR KIND LABEL (2026-09-04, SIGNED): "Kind · offer" / "Kind · instruction · usage copy" / "Kind · untyped". */
+  kindUntyped: "untyped",
+  kindReasonSeparator: " · ",
 } as const;
+
+/** The per-row operator kind label — ONE formatter, byte-exact. null kind → "Kind · untyped"; a reason is appended
+ *  only when present (the latest own_words_retypes audit reason). */
+export function operatorKindLabel(kind: string | null | undefined, reason: string | null | undefined): string {
+  const k = (kind ?? "").trim() || OPERATOR_STRINGS.kindUntyped;
+  const r = (reason ?? "").trim();
+  return `${OPERATOR_STRINGS.kindPrefix}${k}${r ? `${OPERATOR_STRINGS.kindReasonSeparator}${r}` : ""}`;
+}
 
 /** Provenance tag on an operator-decided pair: "Operator · spared · September 3, 2026". */
 export function operatorProvenanceLabel(verdict: "relevant" | "orthogonal", fullDate: string | null): string {
@@ -41,4 +52,5 @@ export const OPERATOR_MARK = {
   controls: "relevance-controls",
   struck: "struck-pairs",
   notMeetingReady: "not-meeting-ready",
+  kindLabel: "kind-label",
 } as const;

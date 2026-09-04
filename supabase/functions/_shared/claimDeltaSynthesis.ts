@@ -564,7 +564,9 @@ export async function computeDeltasForCompany(args: DeltaComputeArgs): Promise<D
     ownWordsIneligible = ownWordsAll.length - ownWordsPublics.length;
     declared = ownWordsPublics.length > 0
       ? ownWordsPublics
-      : clientVoicePublics.filter((c) => c.claim_type !== "own_words");
+      // RF ADMISSION (2026-09-04): the inference fallback honours the same mark — a FAILED inference claim
+      // (declared_eligible=false) is never the declared side either.
+      : clientVoicePublics.filter((c) => c.claim_type !== "own_words" && c.declared_eligible !== false);
     publicVoiceDeclaredIds = new Set(declared.map((c) => c.id));
   } else {
     declared = claims.filter(

@@ -6,6 +6,11 @@
 // no ledger, no audit. There is NO --apply in this brief; apply comes under a separate brief.
 //
 //   npx vite-node scripts/rf-channels-dry-run.ts -- --company=<id>
+//   npx vite-node scripts/rf-channels-dry-run.ts -- --company=<id> --apply --plan=<signed.json>
+//
+// --apply posts the OPERATOR-SIGNED plan file ({ "plan": [{claim_id, kind, reason}] }) to the rf-channels-apply
+// edge door (service role). The judge is NOT called in apply mode — the signed table is the plan. CB1 is refused
+// by id before any read (above); the door refuses frozen companies again.
 //
 // Selection reproduces the hook (useFirstReadPreviewData) EXACTLY, with the same shared pure helpers:
 // active public_observed claims → not own_words (by class AND text identity) → not upload-derived →
@@ -29,7 +34,9 @@ const DB_CONTAINER = "supabase_db_dzlgyxcvuwiulgifbmew";
 const argv = process.argv.slice(2);
 const companyArg = argv.find((a) => a.startsWith("--company="))?.split("=")[1] ?? null;
 if (!companyArg) { console.error("usage: npx vite-node scripts/rf-channels-dry-run.ts -- --company=<id>"); process.exit(1); }
-if (argv.includes("--apply")) { console.error("refused: this dry-run has no apply mode (separate brief)."); process.exit(1); }
+const applyMode = argv.includes("--apply");
+const planPath = argv.find((a) => a.startsWith("--plan="))?.split("=")[1] ?? null;
+if (applyMode && !planPath) { console.error("--apply requires --plan=<signed.json>"); process.exit(1); }
 
 // Frozen by id, BEFORE any read.
 if (companyArg === CB1_FROZEN_ID || CB1_FROZEN_ID.startsWith(companyArg)) { console.error("refused: frozen reference company (CB1)."); process.exit(2); }
@@ -47,8 +54,8 @@ if (co.id === CB1_FROZEN_ID || co.frozen) { console.error(`refused: ${co.name} i
 const companyId = co.id;
 const companyHost = bareHost(co.website);
 
-type Claim = { id: string; topic: string | null; statement: string; status: string | null; raw_payload: unknown; provenance: string; claim_type: string | null };
-const claims = psqlJson<Claim[]>(`select coalesce(json_agg(t), '[]') from (select id, topic, statement, status, raw_payload, provenance, claim_type from claims where company_id='${companyId}' and provenance='${PUBLIC_PROVENANCE}' and status='active') t;`) ?? [];
+type Claim = { id: string; topic: string | null; statement: string; status: string | null; raw_payload: unknown; provenance: string; claim_type: string | null; statement_kind: string | null; declared_eligible: boolean | null };
+const claims = psqlJson<Claim[]>(`select coalesce(json_agg(t), '[]') from (select id, topic, statement, status, raw_payload, provenance, claim_type, statement_kind, declared_eligible from claims where company_id='${companyId}' and provenance='${PUBLIC_PROVENANCE}' and status='active') t;`) ?? [];
 type Ref = { claim_id: string; signal_id: string };
 const refs = claims.length ? psqlJson<Ref[]>(`select coalesce(json_agg(t), '[]') from (select claim_id, signal_id from claim_signal_refs where claim_id in (select id from claims where company_id='${companyId}' and provenance='${PUBLIC_PROVENANCE}' and status='active')) t;`) ?? [] : [];
 type Sig = { id: string; source_url: string | null; source_title: string | null; source_type: string | null; voice_class: string | null; event_date: string | null };
@@ -63,6 +70,9 @@ const ownSigByClaim = ownHostSignalByClaim(refs, sigById, companyHost);
 const ownWordsNormTexts = new Set(claims.filter((c) => c.claim_type === "own_words").map((c) => normalizeForHash(c.statement)));
 const channelReadIds = channelReadClaimIds(claims, ownVoiceIds, docExcluded, ownWordsNormTexts);
 const members = claims.filter((c) => channelReadIds.has(c.id));
+// RF ADMISSION: FAILED inference claims (declared_eligible=false) are dropped by the SAME predicate the hook
+// uses — reported here as channelIneligibleIds (the after-apply proof shows the five FAIL ids here).
+const ineligible = claims.filter((c) => c.claim_type !== "own_words" && c.declared_eligible === false && ownVoiceIds.has(c.id));
 const offHost = members.filter((c) => !ownSigByClaim.has(c.id));
 const onHost = members.filter((c) => ownSigByClaim.has(c.id));
 const junk = onHost.filter((c) => isChannelJunk(c.statement, ownSigByClaim.get(c.id)!.source_title ?? null));
@@ -101,9 +111,33 @@ async function judge(text: string | null, statements: string[]): Promise<RfJudge
   throw lastErr ?? new Error("all models failed");
 }
 
+const SUPA_URL = "http://127.0.0.1:54321";
+// Local demo service-role key (same as first-read-fill.ts — passes verify_jwt on every edge fn).
+const SERVICE_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.-3WFNcnncF4UrDHQ-nYO1RWUz_i-yLHWIPXVLQyQW-o";
+
+async function applySignedPlan(): Promise<void> {
+  const signed = JSON.parse(readFileSync(planPath!, "utf8")) as { plan: Array<{ claim_id: string; kind: string; reason: string | null }> };
+  if (!Array.isArray(signed.plan) || !signed.plan.length) throw new Error("plan file has no plan rows");
+  console.log(`RF APPLY · ${co.name} (${companyId}) · plan rows=${signed.plan.length} · door rf-channels-apply · judge NOT called`);
+  const resp = await fetch(`${SUPA_URL}/functions/v1/rf-channels-apply`, {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
+    body: JSON.stringify({ company_id: companyId, mode: "apply", plan: signed.plan }),
+  });
+  const text = await resp.text();
+  let data: any; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
+  if (!resp.ok || !data?.ok) { console.error(`apply refused/failed (${resp.status}):`, JSON.stringify(data)); process.exit(3); }
+  console.log(`run_id=${data.run_id} · totals=${JSON.stringify(data.totals)}`);
+  for (const r of data.rows as Array<Record<string, unknown>>) {
+    console.log(`  ${String(r.claim_id).slice(0, 8)}  ${r.changed ? "CHANGED" : r.refused ? `REFUSED:${r.refused}` : "unchanged"}  ${r.from_kind ?? "—"}/${r.from_eligible} → ${r.to_kind ?? "—"}/${r.to_eligible}  ${r.audit_reason}`);
+  }
+}
+
 (async () => {
+  if (applyMode) { await applySignedPlan(); return; }
   console.log(`RF DRY-RUN · ${co.name} (${companyId}) · host ${companyHost ?? "(none)"} · MODE dry_run · writes nothing`);
-  console.log(`selection: public_observed active=${claims.length} · own_words=${ownWordsNormTexts.size} · doc-excluded=${docExcluded.size} · channel members=${members.length} · off-host (excluded)=${offHost.length} · junk (hidden)=${junk.length} · BLOCK ROWS=${rows.length}`);
+  console.log(`selection: public_observed active=${claims.length} · own_words=${ownWordsNormTexts.size} · doc-excluded=${docExcluded.size} · channel members=${members.length} · off-host (excluded)=${offHost.length} · junk (hidden)=${junk.length} · ineligible (excluded)=${ineligible.length} · BLOCK ROWS=${rows.length}`);
+  console.log(`channelIneligibleIds: ${ineligible.length ? ineligible.map((c) => c.id.slice(0, 8)).join(", ") : "(none)"}`);
   const { plan, judgeCalls } = await planRfAdmission(rows, judge, pageText);
   const pad = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s.padEnd(n));
   console.log("");

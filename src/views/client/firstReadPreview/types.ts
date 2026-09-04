@@ -50,6 +50,11 @@ export type FRDeclared = {
   statement: string;
   /** Birth-record source tag — null hides the tag (never fixed copy). */
   sourceTag: SourceTagResult;
+  /** OPERATOR KIND LABEL (2026-09-04): judged kind (claims.statement_kind, null = untyped), eligibility, and
+   *  the latest audited reason (own_words_retypes). Operator view only — the client never sees these. */
+  kind?: string | null;
+  declaredEligible?: boolean;
+  reason?: string | null;
 };
 
 /** OW-3: a verbatim (or judge-faithful) self-assertion the company makes on its own channels,
@@ -65,6 +70,8 @@ export type FROwnWord = {
   /** ADMISSION CRITERION (2026-09-03): the judged statement kind (null = not yet typed) + eligibility. */
   kind?: string | null;
   declaredEligible?: boolean;
+  /** OPERATOR KIND LABEL (2026-09-04): latest audited reason (own_words_retypes), null = none. */
+  reason?: string | null;
 };
 
 export type FRMarket = {
@@ -359,6 +366,9 @@ export type FirstReadPreviewData = {
   /** Beat-3 (b), 2026-09-03: own-voice claims whose backing is entirely OFF the company's own host
    *  (aggregator-hosted self-copy) — excluded from the channel block, reported, never silent. */
   channelOffHostIds: string[];
+  /** RF ADMISSION (2026-09-04): own-voice inference claims dropped from the channel block because the
+   *  admission criterion FAILED them (declared_eligible=false) — reported, never silent. */
+  channelIneligibleIds: string[];
   observedMarkets: FRMarketDef[];
   positioning: FRPositioning;
   promise: FRPromise;
@@ -420,6 +430,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   gapIntegrity: "not_yet",
   channelJunkIds: [],
   channelOffHostIds: [],
+  channelIneligibleIds: [],
   observedMarkets: [],
   positioning: null,
   promise: null,

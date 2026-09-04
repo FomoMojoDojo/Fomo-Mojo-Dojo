@@ -333,9 +333,10 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // stamping guard uses). internal_declared/canvas/intake never render.
         // The R1 upload gate stays underneath as defense in depth.
         const companyHost = bareHost((co as { website?: string | null } | null)?.website ?? null);
-        const { data: declRows } = await supabase
+        // loose(): the generated types predate statement_kind / declared_eligible (same as the own-words select).
+        const { data: declRows } = await loose()
           .from("claims")
-          .select("id, topic, statement, status, raw_payload, provenance, claim_type, created_at")
+          .select("id, topic, statement, status, raw_payload, provenance, claim_type, created_at, statement_kind, declared_eligible")
           .eq("company_id", companyId)
           .eq("provenance", PUBLIC_PROVENANCE);
         const declaredAll = ((declRows ?? []) as Array<{
@@ -347,8 +348,20 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           provenance: string;
           claim_type: string | null;
           created_at: string | null;
+          statement_kind?: string | null;
+          declared_eligible?: boolean | null;
         }>).filter((c) => c.status === "active");
         const declDocExcluded = await uploadDerivedFor(declaredAll);
+        // OPERATOR KIND LABEL (2026-09-04): the latest audited reason per claim (own_words_retypes — the
+        // retype backfill AND the rf-channels-apply door both write it). Rendered operator-only; fetched
+        // once here because the hook does not know the operator state.
+        const { data: retypeRows } = await loose()
+          .from("own_words_retypes").select("claim_id, reason, applied_at")
+          .eq("company_id", companyId).order("applied_at", { ascending: false });
+        const reasonByClaim = new Map<string, string>();
+        for (const r of (retypeRows ?? []) as Array<{ claim_id: string; reason: string | null }>) {
+          if (!reasonByClaim.has(r.claim_id) && r.reason) reasonByClaim.set(r.claim_id, r.reason);
+        }
 
         // Voice classification + per-claim newest own-voice signal (its source tag).
         const { data: dRefs } = declaredAll.length
@@ -383,6 +396,11 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         );
         const channelReadIds = channelReadClaimIds(declaredAll, ownVoiceIds, declDocExcluded, ownWordsNormTexts);
         const channelMembers = declaredAll.filter((c) => channelReadIds.has(c.id));
+        // RF ADMISSION (2026-09-04): own-voice inference claims the criterion FAILED (declared_eligible=false)
+        // are dropped by the predicate above — REPORTED here, never silent (mirrors junk / off-host).
+        const channelIneligibleIds = declaredAll
+          .filter((c) => c.claim_type !== "own_words" && c.declared_eligible === false && ownVoiceIds.has(c.id))
+          .map((c) => c.id);
         // Off-host: own-voice but not one of the company's channels — excluded here, reported.
         const channelOffHostIds = channelMembers.filter((c) => !ownSigByClaim.has(c.id)).map((c) => c.id);
         const channelRowsAll = channelMembers
@@ -396,6 +414,10 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               statement: c.statement,
               // Public branch: the page it came from + the run read date.
               sourceTag: publicSignalTag(sig, runDates),
+              // Operator kind label: the judged kind + audited reason (null = untyped / no audit row).
+              kind: c.statement_kind ?? null,
+              declaredEligible: c.declared_eligible !== false,
+              reason: reasonByClaim.get(c.id) ?? null,
               junk: isChannelJunk(c.statement, sig.source_title ?? null),
             };
           });
@@ -433,6 +455,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             fidelity: rp.fidelity === "paraphrased" ? "paraphrased" : "verbatim",
             sourceTag: { label: `${host}${readDate ? ` · read ${readDate}` : ""}`.trim() },
             kind, declaredEligible,
+            reason: reasonByClaim.get(c.id) ?? null,
           };
           // The ONE visibility rule (ownWordsKinds.ts): eligible kinds + slogan/story/location are the client's
           // "In your words"; instruction/policy/recruiting/other are record only.
@@ -1099,6 +1122,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             ownWordsRun,
             channelJunkIds,
             channelOffHostIds,
+            channelIneligibleIds,
             markets,
             observedMarkets,
             positioning,

@@ -8,9 +8,12 @@
 // company's words but not its positioning: they stay as own-words RECORD (never deleted), never as the
 // declared side of the gap.
 
+// OPTION B (operator ruling 2026-09-04): product_description is a REAL non-eligible kind — the extractor's
+// deterministic check and the RF channels admission both name it. The judge enumeration gains it (nothing
+// else in the question changes). Never eligible, never a client-record kind (operator view only).
 export const OWN_WORDS_KINDS = [
   "positioning", "offer", "audience", "proof",
-  "instruction", "slogan", "location", "policy", "story", "recruiting", "other",
+  "instruction", "slogan", "location", "policy", "story", "recruiting", "other", "product_description",
 ] as const;
 export type OwnWordsKind = (typeof OWN_WORDS_KINDS)[number];
 

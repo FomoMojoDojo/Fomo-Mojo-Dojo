@@ -23,7 +23,7 @@ import { SCORE_BANDS, SCORE_LEVERS, bandForScore } from "./scoreBands";
 import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatMonthYear, judgedContradictionReason } from "./mapping";
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
-import { OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -735,7 +735,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
             key={w.id}
             leftLabel={IN_YOUR_WORDS_LABEL}
             leftBody={w.quote}
-            meta={w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
+            meta={<>{w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} /></>}
           />
         ))}
         {/* Judge-faithful paraphrases — NOT quoted; labelled "as stated on {page}". */}
@@ -745,7 +745,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
             quoted={false}
             leftLabel={`As stated on ${w.pageHost}`}
             leftBody={w.quote}
-            meta={w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}
+            meta={<>{w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} /></>}
           />
         ))}
         {/* ADMISSION CRITERION: own words kept as record only — operator view (context-gated, null for the client). */}
@@ -761,7 +761,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
                 muted
                 leftLabel="Our read"
                 leftBody={claim.statement}
-                meta={claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}
+                meta={<>{claim.sourceTag ? <SourceTag>{claim.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={claim.kind ?? null} reason={claim.reason ?? null} /></>}
               />
             ))}
           </div>
