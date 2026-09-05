@@ -2,11 +2,11 @@
 //  (2) page-level anchoring reads ONLY genuine page metadata — og:title and the normalized URL slug (H1 if stored).
 //      source_title is EXCLUDED: for baseline signals it holds the RUN LABEL ("Cafe Barra 2 public baseline"), which
 //      names the company and had made every baseline signal page-anchored.
-//  (3) ROLE_REFERENCES is EXACTLY the signed six — a signed string list is exact, nothing added.
+//  (3) the role nouns are EXACTLY the signed six — a signed list is exact, nothing added (shape signed third pass).
 //  (4) the 18: un-judged baseline paraphrases in the 161–210 band minted because the E2 raise reached the claim layer for
 //      everything; the raise belongs to judge-admitted verbatim only — un-judged single sentences keep 160 at the claim layer.
 import { describe, expect, it } from "vitest";
-import { anchorBasisFor, ROLE_REFERENCES, ROLE_REFERENCE_PHRASES } from "../../supabase/functions/_shared/outsideRecrawlAnchors";
+import { anchorBasisFor, ROLE_NOUNS, hasRolePhrase } from "../../supabase/functions/_shared/outsideRecrawlAnchors";
 import { mapSignalsToClaimCandidates, signalAnchorBasis } from "./evidenceMappers";
 import { E2_SINGLE_SENTENCE_MAX, E2_UNJUDGED_SINGLE_SENTENCE_MAX } from "./evidenceCaps";
 import type { SignalDraft } from "./evidenceDomain";
@@ -24,21 +24,22 @@ describe("(2) source_title is not page metadata", () => {
     expect(signalAnchorBasis(sig({}), ANCHORS)).toBeNull();
     expect(mapSignalsToClaimCandidates("co", [sig({})], ANCHORS)).toHaveLength(0);
   });
-  it("the joe.coffee page still anchors via its normalized slug (basis 'page'); og:title anchors too", () => {
-    expect(anchorBasisFor({ text: "x", sourceUrl: "https://joe.coffee/locations/ca/burbank/cafe-barra-and-le-french-rooster-burbank-78a63605/", ogTitle: null }, ANCHORS)).toBe("page");
-    expect(anchorBasisFor({ text: "x", sourceUrl: "https://example.com/p/1", ogTitle: "Cafe Barra Machado de Assis Brazil – Wine + Eggs" }, ANCHORS)).toBe("page");
+  it("the joe.coffee page still anchors via its normalized slug; og:title anchors too — with a role phrase (basis 'page' retired)", () => {
+    expect(anchorBasisFor({ text: "this cafe", sourceUrl: "https://joe.coffee/locations/ca/burbank/cafe-barra-and-le-french-rooster-burbank-78a63605/", ogTitle: null }, ANCHORS)).toBe("page+role");
+    expect(anchorBasisFor({ text: "this cafe", sourceUrl: "https://example.com/p/1", ogTitle: "Cafe Barra Machado de Assis Brazil – Wine + Eggs" }, ANCHORS)).toBe("page+role");
+    expect(anchorBasisFor({ text: "x", sourceUrl: "https://joe.coffee/locations/ca/burbank/cafe-barra-and-le-french-rooster-burbank-78a63605/", ogTitle: null }, ANCHORS)).toBeNull();
   });
 });
-describe("(3) ROLE_REFERENCES is exactly the signed six", () => {
-  it("byte-exact phrase list", () => {
-    expect(ROLE_REFERENCE_PHRASES).toEqual(["this roastery", "this cafe", "this shop", "this community favorite", "this roaster", "this restaurant"]);
-    expect(ROLE_REFERENCES).toHaveLength(6);
+describe("(3) ROLE_NOUNS is exactly the signed six (shape signed third pass: this + ≤2 words + noun)", () => {
+  it("byte-exact noun list", () => {
+    expect(ROLE_NOUNS).toEqual(["roastery", "cafe", "shop", "roaster", "restaurant", "community favorite"]);
+    expect(ROLE_NOUNS).toHaveLength(6);
   });
   it("'This place …' and 'The restaurant's …' do NOT match; the six do (case-insensitive)", () => {
-    const hit = (t: string) => ROLE_REFERENCES.some((re) => re.test(t));
+    const hit = hasRolePhrase;
     expect(hit("This place is so good.")).toBe(false);
     expect(hit("The restaurant's success reflects the area's appreciation.")).toBe(false);
-    expect(hit("This independent roastery has earned its stellar reputation")).toBe(false); // 'this independent roastery' is not 'this roastery'
+    expect(hit("This independent roastery has earned its stellar reputation")).toBe(true); // one intervening word — the signed shape
     for (const p of ["This roastery", "this cafe", "This shop", "this community favorite", "This roaster", "this restaurant"]) expect(hit(`${p} is great`)).toBe(true);
   });
 });

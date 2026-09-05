@@ -3,10 +3,10 @@
 //      the rule stays for every un-judged path;
 //  (2a) anchor comparison normalizes [-_]+ → space, collapses whitespace, lowercases, BOTH sides, in ONE authority;
 //  (2b) page-level anchoring: page title / og:title / normalized slug anchors the company AND the sentence carries a
-//      role reference (ROLE_REFERENCES, single-homed) → passes D3 with anchor_basis 'page+role'; a name-anchored
+//      role phrase (signed shape, single-homed) → passes D3 with anchor_basis 'page+role'; a name-anchored
 //      sentence passes as 'name'. VACUOUS PROOF: a role-reference sentence on an UN-anchored page fails.
 import { describe, expect, it } from "vitest";
-import { anchorBasisFor, normAnchor, ROLE_REFERENCES, buildAnchors } from "../../supabase/functions/_shared/outsideRecrawlAnchors";
+import { anchorBasisFor, normAnchor, hasRolePhrase, buildAnchors } from "../../supabase/functions/_shared/outsideRecrawlAnchors";
 import { mapSignalsToClaimCandidates, signalMatchesAnchor } from "./evidenceMappers";
 import type { SignalDraft } from "./evidenceDomain";
 
@@ -25,19 +25,19 @@ describe("(2a) normalization — one authority", () => {
   it("slug 'cafe-barra-and-le-french-rooster' anchors 'cafe barra'", () => {
     expect(normAnchor("cafe-barra-and-le-french-rooster")).toBe("cafe barra and le french rooster");
     expect(normAnchor("Cafe  Barra")).toBe("cafe barra");
-    expect(signalMatchesAnchor({ claim_text: "x", evidence_excerpt: "x", source_url: JOE_URL }, ["cafe barra"])).toBe(true);
-    // pre-existing law preserved and labelled: a non-role sentence on an anchored URL passes as basis 'page'
-    expect(anchorBasisFor({ text: "x", sourceUrl: JOE_URL, ogTitle: null }, ["cafe barra"])).toBe("page");
+    expect(signalMatchesAnchor({ claim_text: "this cafe", evidence_excerpt: "this cafe", source_url: JOE_URL }, ["cafe barra"])).toBe(true);
+    // RULING 1 (third pass): basis 'page' retired — a non-role sentence on an anchored URL is REFUSED
+    expect(anchorBasisFor({ text: "x", sourceUrl: JOE_URL, ogTitle: null }, ["cafe barra"])).toBeNull();
     expect(signalMatchesAnchor({ claim_text: "x", evidence_excerpt: "x", source_url: "https://ritual.coffee/sweet-tooth" }, ["cafe barra"])).toBe(false);
   });
 });
 
 describe("(2b) page-level role attribution", () => {
-  // HARD LINE (2026-09-04): the role list is EXACTLY the signed six. "this community favorite" is on it → 'page+role';
-  // "This independent roastery" is not "this roastery" → the sentence anchors via the page slug alone → 'page'.
-  it("S2 on the joe.coffee page → 'page+role'; S1 → 'page' (slug-anchored, no signed role phrase)", () => {
+  // RULING 3 (third pass): role phrase SHAPE = this + ≤2 words + signed noun. "this community favorite" and
+  // "This independent roastery" both match → 'page+role' on the slug-anchored joe.coffee page.
+  it("S2 and S1 on the joe.coffee page → 'page+role' (by the signed shape, not by the retired 'page' law)", () => {
     expect(anchorBasisFor({ text: S2, sourceUrl: JOE_URL, ogTitle: null }, ANCHORS)).toBe("page+role");
-    expect(anchorBasisFor({ text: S1, sourceUrl: JOE_URL, ogTitle: null }, ANCHORS)).toBe("page");
+    expect(anchorBasisFor({ text: S1, sourceUrl: JOE_URL, ogTitle: null }, ANCHORS)).toBe("page+role");
   });
   it("same sentence on a page anchored to Ritual Coffee → null (fails)", () => {
     expect(anchorBasisFor({ text: S2, sourceUrl: "https://joe.coffee/locations/ca/sf/ritual-coffee-roasters/", ogTitle: "Ritual Coffee Roasters" }, ANCHORS)).toBeNull();
@@ -48,10 +48,10 @@ describe("(2b) page-level role attribution", () => {
   it("VACUOUS PROOF: a role-reference sentence on an UN-anchored page fails", () => {
     expect(anchorBasisFor({ text: "This roastery sources and roasts their beans with care.", sourceUrl: "https://example.com/blog/post-1", ogTitle: "A blog" }, ANCHORS)).toBeNull();
   });
-  it("ROLE_REFERENCES is the single-homed list and includes the signed roles", () => {
-    for (const r of ["this roastery", "this cafe", "this shop", "this community favorite", "this roaster", "this restaurant"]) expect(ROLE_REFERENCES.some((re) => re.test(r))).toBe(true);
-    expect(ROLE_REFERENCES.some((re) => re.test("This independent roastery"))).toBe(false); // not on the signed list
-    expect(ROLE_REFERENCES.some((re) => re.test("the weather"))).toBe(false);
+  it("the role phrase shape is single-homed and covers the signed nouns", () => {
+    for (const r of ["this roastery", "this cafe", "this shop", "this community favorite", "this roaster", "this restaurant"]) expect(hasRolePhrase(r)).toBe(true);
+    expect(hasRolePhrase("This independent roastery")).toBe(true); // ≤2 intervening words — the signed shape
+    expect(hasRolePhrase("the weather")).toBe(false);
   });
 });
 
@@ -63,9 +63,9 @@ describe("(1) R3-admitted verbatim skips the feature-list heuristic", () => {
   it("a real 3-segment feature list on a non-judged path is still refused", () => {
     expect(mapSignalsToClaimCandidates("co", [sig("Cafe Barra offers espresso, drip, and cold brew.", { source_type: "public_baseline_run" })], ANCHORS)).toHaveLength(0);
   });
-  it("the two minted claims carry anchor_basis in raw_payload: S1 'page', S2 'page+role'", () => {
+  it("the two minted claims carry anchor_basis in raw_payload: both 'page+role'", () => {
     const out = mapSignalsToClaimCandidates("co", [sig(S1), sig(S2)], ANCHORS);
     expect(out).toHaveLength(2);
-    expect(out.map((c) => (c.claim.raw_payload as { anchor_basis?: string }).anchor_basis).sort()).toEqual(["page", "page+role"]);
+    expect(out.map((c) => (c.claim.raw_payload as { anchor_basis?: string }).anchor_basis)).toEqual(["page+role", "page+role"]);
   });
 });

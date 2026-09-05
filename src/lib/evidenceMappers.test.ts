@@ -497,7 +497,9 @@ describe("D3 — anchor gate: unanchored outside signals never mint client claim
   });
   it("signalMatchesAnchor: matches by name/domain/address, rejects a different business", () => {
     expect(signalMatchesAnchor({ claim_text: "Cafe Barra roasts small batch", source_url: null }, ANCHORS)).toBe(true);
-    expect(signalMatchesAnchor({ claim_text: "review", source_url: "https://cafebarra.com/x" }, ANCHORS)).toBe(true);
+    // RULING (2026-09-04, third pass): basis 'page' retired — a domain-anchored page admits only with a signed role phrase
+    expect(signalMatchesAnchor({ claim_text: "review", source_url: "https://cafebarra.com/x" }, ANCHORS)).toBe(false);
+    expect(signalMatchesAnchor({ claim_text: "this cafe is a gem", source_url: "https://cafebarra.com/x" }, ANCHORS)).toBe(true);
     expect(signalMatchesAnchor({ claim_text: "Belli Fratelli Roasters, 191 S Buena Vista", source_url: "https://yelp.com" }, ANCHORS)).toBe(false);
   });
 });

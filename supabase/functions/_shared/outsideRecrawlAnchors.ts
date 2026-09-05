@@ -11,16 +11,18 @@ export const norm = (s: string): string => (s ?? "").normalize("NFC").toLowerCas
 /** RULING 2a (2026-09-04): anchor comparison normalizes [-_]+ → space on BOTH sides (slugs anchor names). ONE authority. */
 export const normAnchor = (s: string): string => norm((s ?? "").replace(/[-_]+/g, " "));
 
-/** RULING 2b (2026-09-04): the single-homed role references — a sentence that names the client by ROLE on a page that
- *  anchors the client by NAME counts as anchored (anchor_basis 'page+role'). */
-// HARD LINE (operator, 2026-09-04): a signed string list is EXACT — these six phrases and nothing else.
-export const ROLE_REFERENCE_PHRASES = ["this roastery", "this cafe", "this shop", "this community favorite", "this roaster", "this restaurant"] as const;
-export const ROLE_REFERENCES: readonly RegExp[] = ROLE_REFERENCE_PHRASES.map((p) => new RegExp(`\\b${p.replace(/ /g, "\\s+")}\\b`, "i"));
-export type AnchorBasis = "name" | "page+role" | "page";
-/** D3 authority: 'name' when the sentence/text itself carries an anchor; 'page+role' when the PAGE (title / og:title /
- *  normalized slug) carries an anchor AND the sentence carries a role reference; 'page' when the page carries an anchor
- *  without a role reference (the PRE-EXISTING law — any sentence on an anchored URL passed the gate — preserved and
- *  now labelled, so the rulings add an admission path and narrow nothing); null otherwise. */
+/** RULING 3 (2026-09-04, third pass): the role phrase has a signed SHAPE — "this" + up to two intervening words + one of
+ *  EXACTLY six role nouns. "This independent roastery" matches; "this place" / "the restaurant's" / a three-word gap do not.
+ *  HARD LINE: a signed list or shape is EXACT — these six nouns, this gap, nothing else. Single-homed here. */
+export const ROLE_NOUNS = ["roastery", "cafe", "shop", "roaster", "restaurant", "community favorite"] as const;
+export const ROLE_PHRASE_RE: RegExp = new RegExp(`\\bthis\\b(?:\\s+[^\\s]+){0,2}\\s+(?:${ROLE_NOUNS.map((n) => n.replace(/ /g, "\\s+")).join("|")})\\b`, "i");
+export const hasRolePhrase = (text: string): boolean => ROLE_PHRASE_RE.test(text ?? "");
+/** RULING 1 (2026-09-04, third pass): basis 'page' is RETIRED. Admission bases are exactly 'name' and 'page+role'. */
+export type AnchorBasis = "name" | "page+role";
+/** D3 authority: 'name' when the sentence/text itself carries an anchor; 'page+role' when the PAGE (og:title / H1 /
+ *  normalized slug) carries an anchor AND the sentence carries a role phrase of the signed shape; null otherwise.
+ *  A sentence on an anchored page WITHOUT a role phrase is refused (the former basis 'page' — review filler on
+ *  slug-anchored URLs — no longer admits). */
 /** Page metadata = og:title (+ H1 when stored) + the normalized URL slug. NEVER source_title: for baseline signals it holds the
  *  RUN LABEL ("Cafe Barra 2 public baseline"), which would page-anchor every baseline signal (the 2026-09-04 rebuild). */
 export function anchorBasisFor(x: { text: string; sourceUrl: string | null | undefined; ogTitle: string | null | undefined; h1?: string | null }, anchors: string[]): AnchorBasis | null {
@@ -31,7 +33,7 @@ export function anchorBasisFor(x: { text: string; sourceUrl: string | null | und
   const page = normAnchor([x.ogTitle ?? "", x.h1 ?? "", x.sourceUrl ?? ""].join(" "));
   const pageAnchored = as.some((a) => page.includes(a));
   if (!pageAnchored) return null;
-  return ROLE_REFERENCES.some((re) => re.test(x.text)) ? "page+role" : "page";
+  return hasRolePhrase(x.text) ? "page+role" : null;
 }
 
 const FIXTURE_SUFFIX_RE = /\s+(?:\d+|\(\d+\)|#\d+|v\d+|copy)$/i;
