@@ -997,24 +997,25 @@ export function deriveClaimProvenance(
 // anchor ("Adorable little French Bakery…") is refused and stays a signal.
 /** D3 anchor gate — delegates to the ONE anchor authority (rulings 2a/2b, 2026-09-04): normalized slugs anchor names;
  *  a page that anchors the client plus a role-reference sentence counts as anchored ('page+role'). */
-export function signalAnchorBasis(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): AnchorBasis | null {
+export function signalAnchorBasis(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[], companyHost: string | null = null): AnchorBasis | null {
   const rp = (signal.raw_payload && typeof signal.raw_payload === "object" ? signal.raw_payload : {}) as { og_title?: unknown; h1?: unknown };
   const text = `${signal.claim_text ?? ""} ${signal.evidence_excerpt ?? ""}`;
   // source_title is NOT page metadata (it carries the run label on baseline signals) — only og:title / H1 / the slug count.
-  return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, ogTitle: typeof rp.og_title === "string" ? rp.og_title : null, h1: typeof rp.h1 === "string" ? rp.h1 : null }, anchors);
+  return anchorBasisFor({ text, sourceUrl: signal.source_url ?? null, ogTitle: typeof rp.og_title === "string" ? rp.og_title : null, h1: typeof rp.h1 === "string" ? rp.h1 : null, companyHost }, anchors);
 }
 export function signalMatchesAnchor(signal: { claim_text?: string | null; evidence_excerpt?: string | null; source_url?: string | null; source_title?: string | null; raw_payload?: unknown }, anchors: string[]): boolean {
   return signalAnchorBasis(signal, anchors) !== null;
 }
 
-export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = []): ClaimCandidate[] {
+/** companyHost: the company's own host (www-stripped) — grants anchor basis 'host' to own-site sentences via isOwnDomainUrl. */
+export function mapSignalsToClaimCandidates(companyId: string, signals: Array<SignalDraft & { id?: string }>, anchors: string[] = [], companyHost: string | null = null): ClaimCandidate[] {
   const grouped = new Map<string, { claim: ClaimDraft; sourceSignals: ClaimCandidate["sourceSignals"]; qualities: Array<{ band: SignalBand; directness: Directness; confidence: ConfidenceLevel; validation: ValidationStatus; sourceType: string }> }>();
 
   signals.forEach((signal, index) => {
     if (!isSignalProvenanceWorthy(signal)) return;
     // D3 anchor gate — outside-band signals must reference a client anchor to mint a client
     // claim (inert when no anchors are configured for the company).
-    const anchorBasis = signal.signal_band === "outside" ? signalAnchorBasis(signal, anchors) : null;
+    const anchorBasis = signal.signal_band === "outside" ? signalAnchorBasis(signal, anchors, companyHost) : null;
     if (signal.signal_band === "outside" && anchorBasis === null) return;
     // LISTING CLASS (operator ruling 2026-09-04): a listing signal maps to an inference claim whose statement
     // IS the title line — never prose-canonicalized, never dropped as a "quoted excerpt", never summarized.

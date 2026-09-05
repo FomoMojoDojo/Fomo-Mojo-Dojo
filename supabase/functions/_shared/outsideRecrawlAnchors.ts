@@ -7,6 +7,7 @@
 // (3) BASELINE: --baseline-run given → the newest snapshot under THAT run_id only (null when none — never a
 //     fallback to another run); absent → the newest snapshot whose run_id is not the sentinel and which
 //     predates the review day — never bare newest (the plant lives under the sentinel).
+import { isOwnDomainUrl } from "./firstReadProvenance.ts";
 export const norm = (s: string): string => (s ?? "").normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim();
 /** RULING 2a (2026-09-04): anchor comparison normalizes [-_]+ → space on BOTH sides (slugs anchor names). ONE authority. */
 export const normAnchor = (s: string): string => norm((s ?? "").replace(/[-_]+/g, " "));
@@ -17,19 +18,23 @@ export const normAnchor = (s: string): string => norm((s ?? "").replace(/[-_]+/g
 export const ROLE_NOUNS = ["roastery", "cafe", "shop", "roaster", "restaurant", "community favorite"] as const;
 export const ROLE_PHRASE_RE: RegExp = new RegExp(`\\bthis\\b(?:\\s+[^\\s]+){0,2}\\s+(?:${ROLE_NOUNS.map((n) => n.replace(/ /g, "\\s+")).join("|")})\\b`, "i");
 export const hasRolePhrase = (text: string): boolean => ROLE_PHRASE_RE.test(text ?? "");
-/** RULING 1 (2026-09-04, third pass): basis 'page' is RETIRED. Admission bases are exactly 'name' and 'page+role'. */
-export type AnchorBasis = "name" | "page+role";
-/** D3 authority: 'name' when the sentence/text itself carries an anchor; 'page+role' when the PAGE (og:title / H1 /
+/** RULING 1 (2026-09-04, third pass): basis 'page' is RETIRED. RULING (fourth pass): a third basis 'host' — the page is the
+ *  company's OWN host per the SINGLE authority isOwnDomainUrl (firstReadProvenance). No hostname comparison lives here.
+ *  'host' never touches corroboration: the same predicate refuses an own-host observed side in the delta compute. */
+export type AnchorBasis = "name" | "page+role" | "host";
+/** D3 authority: 'name' when the sentence/text itself carries an anchor; 'host' when the page URL is own-host
+ *  (isOwnDomainUrl against the company host — null/absent host ⇒ never 'host'); 'page+role' when the PAGE (og:title / H1 /
  *  normalized slug) carries an anchor AND the sentence carries a role phrase of the signed shape; null otherwise.
- *  A sentence on an anchored page WITHOUT a role phrase is refused (the former basis 'page' — review filler on
- *  slug-anchored URLs — no longer admits). */
+ *  A third-party sentence on an anchored page WITHOUT a role phrase is refused (the former basis 'page' — review filler
+ *  on slug-anchored URLs — no longer admits). */
 /** Page metadata = og:title (+ H1 when stored) + the normalized URL slug. NEVER source_title: for baseline signals it holds the
  *  RUN LABEL ("Cafe Barra 2 public baseline"), which would page-anchor every baseline signal (the 2026-09-04 rebuild). */
-export function anchorBasisFor(x: { text: string; sourceUrl: string | null | undefined; ogTitle: string | null | undefined; h1?: string | null }, anchors: string[]): AnchorBasis | null {
+export function anchorBasisFor(x: { text: string; sourceUrl: string | null | undefined; ogTitle: string | null | undefined; h1?: string | null; companyHost?: string | null }, anchors: string[]): AnchorBasis | null {
   const as = anchors.map(normAnchor).filter(Boolean);
   if (!as.length) return "name"; // gate inert when no anchors are configured
   const text = normAnchor(x.text);
   if (as.some((a) => text.includes(a))) return "name";
+  if (x.sourceUrl && isOwnDomainUrl(x.sourceUrl, x.companyHost ?? null)) return "host";
   const page = normAnchor([x.ogTitle ?? "", x.h1 ?? "", x.sourceUrl ?? ""].join(" "));
   const pageAnchored = as.some((a) => page.includes(a));
   if (!pageAnchored) return null;

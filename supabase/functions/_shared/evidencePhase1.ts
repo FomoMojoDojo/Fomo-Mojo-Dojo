@@ -7,6 +7,7 @@ import { produceQuote, normalizeUrlKey } from "../../../src/lib/firstRead/quoteP
 import { applyExcerptGuard } from "../../../src/lib/evidenceExcerptGuard.ts";
 import { isSiteCrawlReceiptRow } from "../../../src/lib/siteCrawl/mint.ts";
 import { contentIdentity } from "./contentIdentity.ts";
+import { normalizeHost } from "./firstReadProvenance.ts";
 import { withRebuildLedger } from "./rebuildLedger.ts";
 import { inferClaimState } from "../../../src/lib/claimState/migration/inferState.ts";
 import { isTerminalSupersession, selectPruneVictims } from "../../../src/lib/claimState/prunePolicy.ts";
@@ -186,13 +187,21 @@ async function rebuildClaimsForCompany(supabase: SupabaseClient, companyId: stri
   // partner / address). Outside-band signals mint a client claim only if they reference one.
   // Empty/absent → the gate is inert (unseeded companies mint exactly as before).
   const { data: companyRow } = await supabase
-    .from("companies").select("entity_anchors_json").eq("id", companyId).maybeSingle();
+    .from("companies").select("entity_anchors_json, website").eq("id", companyId).maybeSingle();
   const anchorsRaw = (companyRow as { entity_anchors_json?: unknown } | null)?.entity_anchors_json;
   const anchors = Array.isArray(anchorsRaw)
     ? anchorsRaw.map((a) => String(a || "").trim()).filter(Boolean)
     : [];
+  // Basis 'host' (operator ruling 2026-09-04): own-site sentences anchor by the page host. The company host is derived
+  // exactly as the delta compute derives it (companies.website → normalizeHost), so the anchor grant and the self-echo
+  // refusal read the same host through the same isOwnDomainUrl predicate.
+  const website = (companyRow as { website?: string | null } | null)?.website ?? null;
+  let companyHost: string | null = null;
+  if (website) {
+    try { companyHost = normalizeHost(new URL(website.includes("://") ? website : `https://${website}`).hostname); } catch { companyHost = null; }
+  }
 
-  const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>, anchors);
+  const candidates = mapSignalsToClaimCandidates(companyId, signals as Array<SignalDraft & { id?: string }>, anchors, companyHost);
 
   // Compute deterministic stable IDs for every candidate.
   const stableIds = await Promise.all(
