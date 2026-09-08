@@ -68,48 +68,60 @@
   font-weight: 400;
 }
 
-/* Statement headlines (beats 2, 8, 9, 10, dividers): 2.6rem / 6xl sm / 7xl lg. */
+/* STAGE 3d TYPE SPEC — Statement (dark pages 2, 8, 9, 10; dividers 7, 13): 2.4rem sm / 3rem md /
+   4.25rem lg, 700, leading 0.92, tracking -0.035em. */
 .fr-h-statement {
-  font-size: 2.6rem;
+  font-size: 2.4rem;
   max-width: 12ch;
 }
 .fr-h-statement--wide {
   max-width: 16ch;
 }
-@media (min-width: 640px) { .fr-h-statement { font-size: 3.75rem; } }
-@media (min-width: 1024px) { .fr-h-statement { font-size: 4.5rem; } }
+@media (min-width: 768px) { .fr-h-statement { font-size: 3rem; } }
+@media (min-width: 1024px) { .fr-h-statement { font-size: 4.25rem; } }
 
-/* Spread titles + the opener/closer headline: 2.4rem / 5xl sm / 4.25rem lg. */
-.fr-h1,
-.fr-spread-title {
+/* The opener/closer headline shares the statement scale. */
+.fr-h1 {
   font-size: 2.4rem;
   max-width: 14ch;
 }
-@media (min-width: 640px) { .fr-h1, .fr-spread-title { font-size: 3rem; } }
-@media (min-width: 1024px) { .fr-h1, .fr-spread-title { font-size: 4.25rem; } }
-.fr-spread-title { max-width: 12ch; }
+@media (min-width: 768px) { .fr-h1 { font-size: 3rem; } }
+@media (min-width: 1024px) { .fr-h1 { font-size: 4.25rem; } }
+
+/* Spread sidebar title: 2.25rem md / 2.75rem lg, 700, leading 0.95, tracking -0.03em, paper. */
+.fr-spread-title {
+  font-size: 2rem;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+  max-width: 12ch;
+  color: hsl(var(--fr-paper));
+}
+@media (min-width: 768px) { .fr-spread-title { font-size: 2.25rem; } }
+@media (min-width: 1024px) { .fr-spread-title { font-size: 2.75rem; } }
+.fr-spread[data-fr-sidebar="lime"] .fr-spread-title { color: hsl(var(--fr-ink)); }
 
 .fr-h2 {
   font-size: clamp(1.75rem, 3.2vw, 2.5rem);
   max-width: 22ch;
 }
 
-/* Row headlines (outside strong rows, own-words claims, gap statements, findings, serve, offer). */
+/* Row title (outside strong rows, own-words claims, gap statements, findings, serve, offer):
+   1.5rem md / 1.75rem lg, 600, ink, leading 1.1, tracking -0.02em. */
 .fr-hanging-row-title,
 .fr-hanging-title {
   font-family: var(--fr-font-display);
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.05;
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.1;
   letter-spacing: -0.02em;
+  color: hsl(var(--fr-ink));
   max-width: 34rem;
 }
-@media (min-width: 1024px) {
-  .fr-hanging-row-title,
-  .fr-hanging-title { font-size: 2rem; }
-}
+@media (min-width: 768px) { .fr-hanging-row-title, .fr-hanging-title { font-size: 1.5rem; } }
+@media (min-width: 1024px) { .fr-hanging-row-title, .fr-hanging-title { font-size: 1.75rem; } }
 
-/* Body / lede: text-lg leading-snug 400, steel on paper, paper/70 on dark. */
+/* Body face: Space Grotesk 400 — row body / evidence / jtbd / offer statement 1.125rem, steel,
+   leading 1.5. Sidebar lede paper/70 leading 1.45; questions ink leading 1.45 (below). */
 .fr-lede,
 .fr-spread-lede,
 .fr-spread-statement,
@@ -122,10 +134,11 @@
 .fr-questions p,
 .fr-vscale-band-desc,
 .fr-rung-text,
+.fr-conflict-question,
 .fr-numbered-cols p {
   font-family: var(--fr-font-display);
   font-size: 1.125rem;
-  line-height: 1.375;
+  line-height: 1.5;
   font-weight: 400;
   color: hsl(var(--fr-steel));
 }
@@ -140,9 +153,17 @@
 }
 
 /* R2: a statement longer than ~110 characters steps down one scale step. */
-.fr-h-statement--long { font-size: 2.2rem; max-width: 20ch; }
-@media (min-width: 640px) { .fr-h-statement--long { font-size: 3rem; } }
-@media (min-width: 1024px) { .fr-h-statement--long { font-size: 3.75rem; } }
+.fr-h-statement--long { font-size: 2rem; max-width: 20ch; }
+@media (min-width: 768px) { .fr-h-statement--long { font-size: 2.4rem; } }
+@media (min-width: 1024px) { .fr-h-statement--long { font-size: 3rem; } }
+
+/* Weight law (stage 3d): nothing under .first-read at ≥500 except the listed titles/eyebrows.
+   Links and numerals are micro-labels at 400. */
+.first-read .fr-link-ink,
+.first-read .fr-link-muted,
+.first-read .fr-numeral,
+.first-read .fr-hanging-num,
+.first-read .fr-question-num { font-weight: 400 !important; }
 
 /* Eyebrows: mono 10px, tracking 0.24em, uppercase, 400. Steel on paper; lime on dark grounds. */
 .fr-eyebrow {
@@ -262,8 +283,10 @@
   white-space: nowrap;
 }
 
+/* L7: identity 400 mono faint. */
 .fr-shell-identity {
-  color: hsl(var(--fr-steel));
+  font-weight: 400;
+  color: hsl(var(--fr-faint));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -542,19 +565,22 @@
   align-items: baseline;
 }
 
-/* normal step = faint round bullet; gate step = lime square marker. */
+/* L6: dash bullets — a mono "—" in lime (CSS content), never a dot. A gate step keeps its marker
+   attribute for later gates; it reads the same dash today. */
 .fr-substep-marker {
-  flex: none; height: 5px; width: 5px; border-radius: 999px;
-  background: hsl(var(--fr-faint)); transform: translateY(-2px);
+  flex: none;
+  font-family: var(--fr-font-mono);
+  font-size: 0.75rem;
+  line-height: 1;
+  color: hsl(var(--fr-lime));
+  transform: translateY(-1px);
 }
+.fr-substep-marker::before { content: "—"; }
 
-.fr-substep-marker[data-gate="true"] {
-  height: 7px; width: 7px; border-radius: 1px; background: hsl(var(--fr-accent));
-}
-
+/* Bullet lead phrase 600 ink; detail 400 steel. */
 .fr-substep-title {
   font-size: 0.9375rem;
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.4;
   color: hsl(var(--fr-ink));
 }
@@ -581,9 +607,11 @@
   margin-top: 3rem;
   max-width: none;
 }
+.fr-expect--foot .fr-eyebrow { color: hsl(var(--fr-faint)); }
 .fr-expect-text {
   margin-top: 0.5rem;
   font-size: 11px;
+  font-weight: 400;
   line-height: 1.7;
   color: hsl(var(--fr-steel));
 }
@@ -755,8 +783,8 @@
 .fr-rung .fr-eyebrow { display: block; margin-bottom: 0.9rem; }
 .fr-rung-text {
   font-size: 1.25rem;
-  font-weight: 500;
-  line-height: 1.3;
+  font-weight: 400;
+  line-height: 1.4;
   color: hsl(var(--fr-paper));
 }
 .fr-rung ol p { color: hsl(var(--fr-paper) / 0.85); }
@@ -786,6 +814,15 @@
 .fr-card--dark .fr-h2 {
   margin-top: 1.25rem;
   color: hsl(var(--fr-paper));
+}
+
+/* L6: the closer's note inside the dark card — mono 11px uppercase paper/60. */
+.fr-card-note {
+  margin-top: 1.5rem;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-paper) / 0.6);
 }
 
 /* ---- Spread ----
@@ -843,21 +880,23 @@
 
 .fr-spread-lead { margin-bottom: 1.75rem; }
 
+/* Sidebar lede: 1.125rem, 400, leading 1.45, paper/70. */
 .fr-spread-lede {
   margin-top: 1.25rem;
+  line-height: 1.45;
   max-width: 24rem;
 }
 .fr-spread-statement {
   margin-top: 1rem;
+  line-height: 1.45;
   max-width: 24rem;
 }
-/* Sidebar body text: 400, paper/70. */
 .fr-spread[data-fr-sidebar="slate"] .fr-spread-lede,
 .fr-spread[data-fr-sidebar="slate"] .fr-spread-statement { color: hsl(var(--fr-paper) / 0.7); }
 .fr-spread[data-fr-sidebar="lime"] .fr-spread-lede,
 .fr-spread[data-fr-sidebar="lime"] .fr-spread-statement { color: hsl(var(--fr-ink) / 0.75); }
 
-/* Below the hairline: the count element, the Why-this rationale. Mono, small, faint. */
+/* Below the hairline: the count element, the Why-this rationale, a moved line. */
 .fr-spread-aside {
   margin-top: 2.5rem;
   padding-top: 1.5rem;
@@ -868,20 +907,40 @@
 .fr-spread[data-fr-sidebar="lime"] .fr-spread-aside { border-top-color: hsl(var(--fr-ink) / 0.3); }
 
 .fr-why + .fr-why,
-.fr-side-count + .fr-why { margin-top: 1.5rem; }
+.fr-side-count + .fr-why,
+.fr-why + .fr-why-line { margin-top: 1.5rem; }
 
-.fr-why .fr-eyebrow { display: block; margin-bottom: 0.6rem; }
+/* Sidebar rationale: mono 11px, 400, tracking 0.12em, uppercase, paper/45 — and its "Why this"
+   label directly above in the same style. */
+.fr-why .fr-eyebrow {
+  display: block;
+  margin-bottom: 0.6rem;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: hsl(var(--fr-paper) / 0.45);
+}
 
 .fr-why-text,
 .fr-why p {
   font-family: var(--fr-font-mono);
   font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   line-height: 1.7;
-  color: hsl(var(--fr-paper) / 0.6);
+  color: hsl(var(--fr-paper) / 0.45);
 }
 
 .fr-spread[data-fr-sidebar="lime"] .fr-why-text,
-.fr-spread[data-fr-sidebar="lime"] .fr-why p { color: hsl(var(--fr-ink) / 0.75); }
+.fr-spread[data-fr-sidebar="lime"] .fr-why p,
+.fr-spread[data-fr-sidebar="lime"] .fr-why .fr-eyebrow { color: hsl(var(--fr-ink) / 0.6); }
+
+/* L2: the body column's foot line (a secondary eyebrow moved out of the sidebar). */
+.fr-spread-foot {
+  margin-top: 3.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid hsl(var(--fr-line));
+}
 
 .fr-side-count { margin-bottom: 1.5rem; }
 .fr-side-count .fr-eyebrow { display: block; }
@@ -891,14 +950,9 @@
   color: hsl(var(--fr-lime));
 }
 
-/* The status-conflict banner (body column, bordered block). */
+/* The status-conflict banner (body column, bordered block). Question in the body style; sources mono. */
 .fr-conflict-banner { margin-bottom: 0; }
-.fr-conflict-question {
-  font-family: var(--fr-font-display);
-  font-size: 1.125rem;
-  font-weight: 500;
-  line-height: 1.375;
-}
+.fr-conflict-question { color: hsl(var(--fr-ink)); }
 .fr-conflict-sources { font-family: var(--fr-font-mono); font-size: 10px; }
 
 .fr-spread-main {
@@ -1049,16 +1103,28 @@
 }
 .fr-offer-item .fr-hanging-num { padding-top: 0.55em; }
 
-/* ---- Questions: two columns on desktop ---- */
+/* ---- Questions: grid 1fr 1fr, gap 4rem on ≥lg (L5); one column below ---- */
 
-.fr-questions { list-style: none; margin: 0; padding: 0; }
-.fr-questions > li { break-inside: avoid; margin-bottom: 2rem; }
-.fr-questions > li > span { color: hsl(var(--fr-lime)); font-weight: 400; }
-.fr-questions p { color: hsl(var(--fr-ink)); }
-
-@media (min-width: 1024px) {
-  .fr-questions { column-count: 2; column-gap: 3rem; }
+.fr-questions-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 4rem;
+  min-width: 0;
 }
+@media (min-width: 1024px) {
+  .fr-questions-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.fr-questions { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.fr-questions > li { margin-bottom: 2rem; }
+.fr-question-num {
+  padding-top: 0.2rem;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: hsl(var(--fr-lime));
+}
+/* Questions: 1.125rem, 400, ink, leading 1.45. */
+.fr-questions p { color: hsl(var(--fr-ink)); line-height: 1.45; }
 
 /* ---- VerticalScale (Mojo Score) ---- */
 
@@ -1256,9 +1322,9 @@
 .fr-flow-col[data-state="done"] { opacity: 0.62; }
 .fr-flow-col[data-state="done"][data-highlight="true"] { opacity: 1; }
 
-/* The highlight column: the "You are here" / "Up next" station. */
+/* The highlight card: the "You are here" / "Up next" station only — lime/12 fill, lime top rule. */
 .fr-flow-col[data-state="here"] {
-  background: hsl(var(--fr-lime) / 0.22);
+  background: hsl(var(--fr-lime) / 0.12);
   padding-left: 1rem;
   border-top: 2px solid hsl(var(--fr-lime));
 }
@@ -1276,22 +1342,41 @@
 }
 .fr-flow-chip--pill { color: hsl(var(--fr-ink)); }
 
+/* Column title 1.5rem 600 — steel, ink on the highlighted column. Body 1.0625rem 400 steel. */
 .fr-flow-title {
   font-family: var(--fr-font-display);
-  font-size: 1.375rem;
-  font-weight: 700;
+  font-size: 1.5rem;
+  font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.02em;
   color: hsl(var(--fr-steel));
 }
-.fr-flow-col[data-state="here"] .fr-flow-title,
-.fr-flow-col[data-highlight="true"] .fr-flow-title { color: hsl(var(--fr-ink)); }
+.fr-flow-col[data-state="here"] .fr-flow-title { color: hsl(var(--fr-ink)); }
 
 .fr-flow-blurb {
   margin-top: 0.75rem;
-  font-size: 0.9375rem;
+  font-size: 1.0625rem;
   line-height: 1.5;
 }
+
+/* L6: numerals 01…n above the dots (CSS counters). */
+.fr-flow-nums {
+  display: grid;
+  grid-template-columns: repeat(var(--fr-flow-n, 4), minmax(0, 1fr));
+  counter-reset: fr-flow;
+  margin-bottom: 0.5rem;
+}
+.fr-flow-num {
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: hsl(var(--fr-faint));
+}
+.fr-flow-num::before {
+  counter-increment: fr-flow;
+  content: counter(fr-flow, decimal-leading-zero);
+}
+.fr-flow-num[data-state="here"] { color: hsl(var(--fr-ink)); }
 
 .fr-arc-path { margin-top: 3.5rem; }
 
@@ -1305,14 +1390,45 @@
   }
 }
 
-/* ---- Base alignment (stage 3b): HTML nodes over an SVG connector underlay ---- */
+/* ---- Base alignment (stage 3b/3d): HTML nodes over an SVG connector underlay ---- */
+
+/* L3: the toggle as a segmented control, top-left. The filled segment marks the current state. */
+.fr-base-toolbar { margin-bottom: 1.5rem; }
+.fr-seg {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid hsl(var(--fr-ink));
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-ink));
+  background: hsl(var(--fr-paper));
+}
+.fr-seg-marker {
+  display: block;
+  width: 14px;
+  background: hsl(var(--fr-ink));
+}
+.fr-seg-label { display: block; padding: 6px 12px; }
+.fr-seg[data-aligned="true"] .fr-seg-marker { background: hsl(var(--fr-lime)); }
 
 .fr-base-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 640 / 420;
+  aspect-ratio: 640 / 690;
   counter-reset: fr-base;
 }
+
+.fr-base-tag-back { fill: hsl(var(--fr-paper)); }
+
+.fr-base-caption-row {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+}
+.fr-base-caption-row .fr-eyebrow { color: hsl(var(--fr-faint)); }
 
 .fr-base-links {
   position: absolute;
@@ -1397,19 +1513,21 @@
   content: counter(fr-base, decimal-leading-zero);
 }
 
+/* Node name mono uppercase 13px tracking 0.18em; sub-line 1.0625rem 400. */
 .fr-base-node-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
   color: hsl(var(--fr-ink));
   line-height: 1.3;
 }
 .fr-base-node[data-anchor="true"] .fr-base-node-label { color: hsl(var(--fr-lime)); }
 
 .fr-base-node-sub {
-  margin-top: 0.3rem;
-  font-size: 0.75rem;
-  line-height: 1.25;
+  margin-top: 0.4rem;
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.3;
   color: hsl(var(--fr-steel));
   transition: opacity 500ms ease;
 }
@@ -1426,5 +1544,6 @@
 .fr-base-stage[data-aligned="true"] .fr-base-node-inner { justify-content: flex-start; padding-top: 0; }
 .fr-base-stage[data-aligned="true"] .fr-base-node-inner { transform: translateY(-60%); }
 .fr-base-stage[data-aligned="true"] .fr-base-node-num { display: none; }
+.fr-base-stage[data-aligned="true"] .fr-base-node-label { font-size: 10px; }
 
 .fr-base-caption { max-width: 30rem; }

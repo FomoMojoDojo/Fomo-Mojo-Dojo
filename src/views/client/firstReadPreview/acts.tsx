@@ -43,6 +43,7 @@ function SpreadBeat({
   count,
   rationale,
   extra,
+  foot,
   children,
 }: {
   eyebrow?: ReactNode;
@@ -52,6 +53,8 @@ function SpreadBeat({
   count?: ReactNode;
   rationale?: ReactNode;
   extra?: ReactNode;
+  /** L2: the body column's foot line (a secondary eyebrow moved out of the sidebar). */
+  foot?: ReactNode;
   children: ReactNode;
 }) {
   const aside = count || rationale || extra ? (
@@ -62,7 +65,7 @@ function SpreadBeat({
     </>
   ) : undefined;
   return (
-    <Spread eyebrow={eyebrow} title={typeof headline === "string" ? withStop(headline) : headline} lede={standfirst} statement={subline} aside={aside}>
+    <Spread eyebrow={eyebrow} title={typeof headline === "string" ? withStop(headline) : headline} lede={standfirst} statement={subline} aside={aside} foot={foot}>
       {children}
     </Spread>
   );
@@ -131,7 +134,7 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
       {conflicts.map((c) => (
         <div key={c.location} className="fr-conflict-banner rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(var(--fr-bad))", background: "hsl(var(--fr-bad) / 0.04)" }}>
           <div className="mb-3"><StatusDisputedChip /></div>
-          <p className="fr-conflict-question max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
+          <p className="fr-conflict-question max-w-2xl">{c.question}</p>
           {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
               duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows, and
               now expands in place (both columns) so every source is reachable. */}
@@ -583,7 +586,7 @@ function PathTrack({ stations, n }: { stations: Station[]; n: number }) {
 
 /** Outcome hand-off — identical on both bookends (signed). `tone="dark"` (stage 2, opener) renders
  *  the same two strings as a dark slate card; the default keeps the closer's hairline-topped block. */
-function OutcomeBlock({ tone = "rule" }: { tone?: "rule" | "dark" }) {
+function OutcomeBlock({ tone = "rule", note }: { tone?: "rule" | "dark"; note?: ReactNode }) {
   if (tone === "dark") {
     return (
       <div className="fr-card fr-card--dark mt-16">
@@ -592,6 +595,8 @@ function OutcomeBlock({ tone = "rule" }: { tone?: "rule" | "dark" }) {
           A clear direction, a coordinated team, and a{" "}
           <span>rising likelihood of success<span className="fr-stop">.</span></span>
         </p>
+        {/* L6: the closer's one-line note sits inside the card, under the headline. */}
+        {note ? <p className="fr-card-note fr-mono">{note}</p> : null}
       </div>
     );
   }
@@ -953,12 +958,15 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
         ? offerLookedLine(read.offeringExamined ?? 0, read.offeringThroughDate)
         : OFFER_NOT_YET;
   return (
-    // Stage 3: both existing eyebrows (the beat label, then FROM THE RECORD) stack in the sidebar.
+    // L2/L4 (stage 3d): one sidebar eyebrow (the beat label); FROM THE RECORD becomes the body's foot
+    // line; the closing line sits in the sidebar below the hairline in rationale style.
     <SpreadBeat
-      eyebrow={<><span>{eyebrow}</span><span>{OFFER_EYEBROW}</span></>}
+      eyebrow={eyebrow}
       headline={OFFER_HEADLINE}
       standfirst={OFFER_SUB}
       rationale={OFFER_WHY}
+      extra={<p className="fr-why-text fr-why-line">{OFFER_CLOSING}</p>}
+      foot={OFFER_EYEBROW}
     >
       <main className="fr-stagger">
         {off ? (
@@ -972,9 +980,6 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
             <p className="mt-2">{groundLine}</p>
           </Absent>
         )}
-        <p className="mt-12 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
-          {OFFER_CLOSING}
-        </p>
       </main>
     </SpreadBeat>
   );
@@ -1084,7 +1089,7 @@ function NumberedList({ items, className }: { items: string[]; className?: strin
     <ol className={`flex flex-col gap-2${className ? ` ${className}` : ""}`}>
       {items.map((text, i) => (
         <li key={i} className="flex gap-4">
-          <span className="shrink-0 pt-0.5 text-[10px] font-bold tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
+          <span className="shrink-0 pt-0.5 text-[10px] tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
             {String(i + 1).padStart(2, "0")}
           </span>
           <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{text}</p>
@@ -1672,12 +1677,14 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
  *  and the BeatWhy rationale; the right column is the existing BaseAlignment (toggle + SVG + caption). */
 export function BaseGate({ eyebrow }: { eyebrow?: ReactNode }) {
   return (
+    // L2 (stage 3d): one sidebar eyebrow; "Before the map" is the body's foot line.
     <Spread
-      eyebrow={<><span>{eyebrow}</span><span>Before the map</span></>}
+      eyebrow={eyebrow}
       title={<>A strong base <span>changes your odds<span className="fr-stop">.</span></span></>}
       lede={<>Every choice downstream inherits its strength — or its cracks. Aligning it comes first.</>}
       statement={<>Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.</>}
       aside={<BeatWhy plain>{RATIONALE_BASE}</BeatWhy>}
+      foot="Before the map"
     >
       <div className="fr-stagger flex w-full flex-col items-center">
         {/* R1: marketNote (MARKET_POINTER_NOTE) removed — "Who you serve" now precedes the Base. */}
@@ -1716,17 +1723,25 @@ export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; ey
             </Absent>
           ) : null
         ) : (
-          // Stage 3: two columns on desktop (CSS columns), one below lg. Numerals are existing text.
-          <ol className="fr-questions">
-            {read.questions.map((question, index) => (
-              <li key={question} className="flex gap-6">
-                <span className="pt-1 text-[10px] font-bold tracking-widest fr-mono" style={{ color: "hsl(var(--fr-faint))" }}>
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{question}</p>
-              </li>
-            ))}
-          </ol>
+          // L5 (stage 3d): two columns (grid 1fr 1fr) on ≥lg, the list split in halves so the reading
+          // order runs down the left column then the right; one column below lg. Numerals are text.
+          <div className="fr-questions-grid">
+            {[read.questions.slice(0, Math.ceil(read.questions.length / 2)), read.questions.slice(Math.ceil(read.questions.length / 2))]
+              .filter((half) => half.length > 0)
+              .map((half, h) => (
+                <ol key={h} className="fr-questions">
+                  {half.map((question, i) => {
+                    const index = h === 0 ? i : Math.ceil(read.questions.length / 2) + i;
+                    return (
+                      <li key={question} className="flex gap-6">
+                        <span className="fr-question-num fr-mono">{String(index + 1).padStart(2, "0")}</span>
+                        <p>{question}</p>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ))}
+          </div>
         )}
       </main>
     </SpreadBeat>
@@ -1757,10 +1772,11 @@ export function ActNext({ isLast }: { isLast?: boolean }) {
       </header>
 
       <div className="fr-arc-path">
-        <FlowLine stations={NEXT_STATIONS.map((s) => ({ key: s.label, state: s.state }))} />
+        <FlowLine numerals stations={NEXT_STATIONS.map((s) => ({ key: s.label, state: s.state }))} />
         <div className="fr-flow-cols" style={flowColumns(NEXT_STATIONS.length)}>
           {NEXT_STATIONS.map((s) => (
-            <div key={s.label} className="fr-flow-col" data-state={s.state} data-highlight={s.highlight ? "true" : undefined}>
+            // L6: the highlighted card is the Up-next station only (state "here"), never the done one.
+            <div key={s.label} className="fr-flow-col" data-state={s.state}>
               {s.state === "done" ? <span className="fr-flow-chip" aria-hidden>✓</span> : null}
               {s.pill ? <span className="fr-flow-chip fr-flow-chip--pill">{s.pill}</span> : null}
               {s.chip ? <span className="fr-flow-chip">{s.chip}</span> : null}
@@ -1791,18 +1807,14 @@ export function ActNext({ isLast }: { isLast?: boolean }) {
         </div>
       </div>
 
-      <OutcomeBlock tone="dark" />
-
-      <p className="fr-link-ink mt-12 text-center text-sm font-light leading-relaxed">
-        The next step is a conversation, not a button.
-      </p>
+      <OutcomeBlock tone="dark" note="The next step is a conversation, not a button." />
 
       {/* The pricing paragraph as the foot line (the same two strings, below a hairline). */}
       <div className="fr-expect fr-expect--foot">
         <Eyebrow>What to expect · draft</Eyebrow>
         <p className="fr-expect-text fr-mono">
-          You pay for the <span className="font-semibold">map, not the hour</span>: a one-time setup to
-          build your base, then <span className="font-semibold">per market</span> you take on. Interview
+          You pay for the <span>map, not the hour</span>: a one-time setup to
+          build your base, then <span>per market</span> you take on. Interview
           and survey costs are passed through. Timing depends on access to the right people and documents.
         </p>
       </div>

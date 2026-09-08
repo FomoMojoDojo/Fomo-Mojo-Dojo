@@ -5,12 +5,14 @@
 // proof-category verdict gate). The caption states the uncomputed condition
 // honestly — it never claims states were read from the record when none were.
 //
-// Stage 3b/3c (visual port, SIGNED 4): the "today" view — four HTML nodes (outer ink ring, inner lime
-// ring), numbered 01–04 by CSS counter (display only, never DOM text), node name mono uppercase,
-// the existing sub-line beneath; dashed connectors on all six pairs on an SVG underlay with the
-// pair-state tag on each. An UNTESTED link is two overlaid dashed strokes whose dashes travel slowly
-// in opposite directions (grey one way, periwinkle the other), eased; prefers-reduced-motion stops
-// them. The "See it aligned" toggle and the aligned view are kept.
+// Stage 3b/3c/3d (visual port, SIGNED 4 + L3): the "today" view — four HTML nodes (outer ink ring,
+// inner lime ring) laid out 01 top-left / 02 right / 03 lower-left / 04 lower-right, numbered by CSS
+// counter (display only, never DOM text), node name mono uppercase, the existing sub-line beneath;
+// dashed connectors on all six pairs on an SVG underlay, each with its pair-state tag on a paper
+// backing at the connector midpoint (tags that would sit within 40px of each other are offset along
+// the connector normal). An UNTESTED link is two overlaid dashed strokes whose dashes travel slowly in
+// opposite directions (grey / periwinkle), eased; prefers-reduced-motion stops them. The toggle
+// (existing strings) is a segmented control above the stage; the aligned view is kept.
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
@@ -39,11 +41,15 @@ export function allUntestedPairs(readFrom: string): BasePairInput[] {
   return PAIR_KEYS.map(([a, b]) => ({ a, b, state: "untested", readFrom }));
 }
 
-// Layout space (the SVG underlay's viewBox); node positions are converted to percentages.
+// Layout space (the SVG underlay's viewBox); node positions are converted to percentages. At the
+// 1440 layout the body column is ~568px wide, so a 270-unit ring renders at ~240px.
 const W = 640;
-const H = 420;
-const TODAY_R = 66;
-const GOAL_CENTER = { x: 320, y: 218 };
+const H = 690;
+const TODAY_R = 135;
+const GOAL_CENTER = { x: 320, y: 355 };
+// Tag collision threshold / offset, in viewBox units (~40px / ~28px at the 1440 layout).
+const TAG_NEAR = 45;
+const TAG_OFFSET = 32;
 
 /** Reading order = numbering order (01 Strategy, 02 Positioning, 03 Who you serve, 04 Promise). */
 const ELEMENTS: {
@@ -53,11 +59,11 @@ const ELEMENTS: {
   today: { x: number; y: number };
   goalR: number;
 }[] = [
-  { key: "strategy", label: "Strategy", sub: "what you're doing", today: { x: 300, y: 95 }, goalR: 70 },
+  { key: "strategy", label: "Strategy", sub: "what you're doing", today: { x: 170, y: 165 }, goalR: 115 },
   // Positioning carries anchor weight — heavier ring, outermost in the aligned view.
-  { key: "positioning", label: "Positioning", sub: "why you win", today: { x: 470, y: 150 }, goalR: 92 },
-  { key: "market", label: "Who you serve", sub: "who's critical to your success", today: { x: 140, y: 275 }, goalR: 48 },
-  { key: "promise", label: "Promise", sub: "what you promise", today: { x: 370, y: 330 }, goalR: 26 },
+  { key: "positioning", label: "Positioning", sub: "why you win", today: { x: 470, y: 245 }, goalR: 150 },
+  { key: "market", label: "Who you serve", sub: "who's critical to your success", today: { x: 170, y: 470 }, goalR: 80 },
+  { key: "promise", label: "Promise", sub: "what you promise", today: { x: 470, y: 545 }, goalR: 45 },
 ];
 
 const STATE_LABEL: Record<PairState, string> = {
@@ -92,6 +98,46 @@ function edgePoint(from: { x: number; y: number }, toward: { x: number; y: numbe
   return { x: from.x + (dx / len) * r, y: from.y + (dy / len) * r };
 }
 
+type Pt = { x: number; y: number };
+
+// A connector shorter than this (ring edge to ring edge) cannot carry its tag on the line without
+// touching a ring, so the tag moves off the line along the normal, outward from the stage centre.
+const SHORT_LINK = 100;
+const SHORT_OFFSET = 42;
+const STAGE_CENTER = { x: W / 2, y: H / 2 };
+
+/** Connector geometry + a tag position that never sits within TAG_NEAR of an earlier tag and never
+ *  on a ring (short links offset along the normal, outward). */
+function layoutPairs(pairs: BasePairInput[]) {
+  const placed: Pt[] = [];
+  return pairs.map((pair) => {
+    const a = elementFor(pair.a);
+    const b = elementFor(pair.b);
+    const start = edgePoint(a.today, b.today, TODAY_R + 6);
+    const end = edgePoint(b.today, a.today, TODAY_R + 6);
+    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const len = Math.hypot(end.x - start.x, end.y - start.y) || 1;
+    const normal = { x: -(end.y - start.y) / len, y: (end.x - start.x) / len };
+    const near = (p: Pt) => placed.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < TAG_NEAR);
+    const along = (d: number): Pt => ({ x: mid.x + normal.x * d, y: mid.y + normal.y * d });
+    let tag = mid;
+    if (len < SHORT_LINK) {
+      // Outward candidate first (farther from the stage centre), the other side if it collides.
+      const plus = along(SHORT_OFFSET);
+      const minus = along(-SHORT_OFFSET);
+      const dist = (p: Pt) => Math.hypot(p.x - STAGE_CENTER.x, p.y - STAGE_CENTER.y);
+      const [first, second] = dist(plus) >= dist(minus) ? [plus, minus] : [minus, plus];
+      tag = !near(first) ? first : second;
+    } else if (near(tag)) {
+      const plus = along(TAG_OFFSET);
+      const minus = along(-TAG_OFFSET);
+      tag = !near(plus) ? plus : !near(minus) ? minus : plus;
+    }
+    placed.push(tag);
+    return { pair, start, end, tag };
+  });
+}
+
 export default function BaseAlignment({
   pairs,
   caption,
@@ -107,9 +153,36 @@ export default function BaseAlignment({
 }) {
   // Default is always TODAY — the goal state is a preview, never the landing view.
   const [aligned, setAligned] = useState(false);
+  const laid = layoutPairs(pairs);
 
   return (
-    <div className="fr-base mt-6 flex w-full max-w-[720px] flex-col items-center">
+    <div className="fr-base w-full">
+      {/* L3: the toggle as a segmented control, top-left of the body column. The existing strings are the
+          button's own ("See it aligned" / "Back to today"); the filled segment is the state marker. */}
+      <div className="fr-base-toolbar">
+        <button
+          type="button"
+          onClick={() => setAligned((current) => !current)}
+          className="fr-seg fr-mono"
+          data-aligned={aligned ? "true" : "false"}
+        >
+          <span className="fr-seg-marker" aria-hidden />
+          <span className="fr-seg-label">
+            {aligned ? (
+              <>
+                <span className="inline-block">&larr;</span>{" "}
+                Back to today
+              </>
+            ) : (
+              <>
+                See it aligned{" "}
+                <span className="inline-block">&rarr;</span>
+              </>
+            )}
+          </span>
+        </button>
+      </div>
+
       <div className="fr-base-stage" data-aligned={aligned ? "true" : "false"}>
         {/* Connectors + pair-state tags — today only (SVG underlay). */}
         <svg
@@ -119,14 +192,11 @@ export default function BaseAlignment({
           aria-hidden={aligned}
           style={{ opacity: aligned ? 0 : 1 }}
         >
-          {pairs.map((pair) => {
-            const a = elementFor(pair.a);
-            const b = elementFor(pair.b);
+          {laid.map(({ pair, start, end, tag }) => {
             const color = STATE_COLOR[pair.state];
-            const start = edgePoint(a.today, b.today, TODAY_R + 4);
-            const end = edgePoint(b.today, a.today, TODAY_R + 4);
-            const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
             const d = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+            const label = STATE_LABEL[pair.state].toUpperCase();
+            const bw = label.length * 6.6 + 16;
             return (
               <g key={`${pair.a}-${pair.b}`}>
                 <title>{pair.readFrom}</title>
@@ -146,17 +216,19 @@ export default function BaseAlignment({
                     vectorEffect="non-scaling-stroke"
                   />
                 )}
+                {/* Paper backing so the tag never collides with a stroke, a ring or another tag. */}
+                <rect className="fr-base-tag-back" x={tag.x - bw / 2} y={tag.y - 8} width={bw} height={16} rx={2} />
                 <text
                   className="fr-align-tag"
-                  x={mid.x}
-                  y={mid.y - 6}
+                  x={tag.x}
+                  y={tag.y}
                   textAnchor="middle"
+                  dominantBaseline="central"
                   fontSize={9}
-                  fontWeight={500}
                   letterSpacing="0.18em"
                   fill={color}
                 >
-                  {STATE_LABEL[pair.state].toUpperCase()}
+                  {label}
                 </text>
               </g>
             );
@@ -193,7 +265,8 @@ export default function BaseAlignment({
         </ol>
       </div>
 
-      <div className="mt-8 flex flex-col items-center gap-2 text-center">
+      {/* Caption below the stage, left-aligned, mono faint. */}
+      <div className="fr-base-caption-row">
         {aligned ? (
           <>
             <Eyebrow>Goal state</Eyebrow>
@@ -203,24 +276,6 @@ export default function BaseAlignment({
           <Eyebrow>{caption}</Eyebrow>
         )}
       </div>
-
-      <button
-        type="button"
-        onClick={() => setAligned((current) => !current)}
-        className="fr-link-ink group mt-6 text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
-      >
-        {aligned ? (
-          <>
-            <span className="inline-block transition-transform group-hover:-translate-x-1">&larr;</span>{" "}
-            Back to today
-          </>
-        ) : (
-          <>
-            See it aligned{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
-          </>
-        )}
-      </button>
     </div>
   );
 }

@@ -62,6 +62,7 @@ export function Spread({
   lede,
   aside,
   statement,
+  foot,
   children,
 }: {
   sidebar?: SpreadSidebar;
@@ -74,6 +75,8 @@ export function Spread({
   aside?: ReactNode;
   /** A second paragraph under the lede (an anchor line, a framing line). */
   statement?: ReactNode;
+  /** L2 (stage 3d): the body column's foot/source line, mono faint (a secondary eyebrow moved here). */
+  foot?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -88,7 +91,10 @@ export function Spread({
           {aside ? <div className="fr-spread-aside">{aside}</div> : null}
         </div>
       </aside>
-      <div className="fr-spread-main">{children}</div>
+      <div className="fr-spread-main">
+        {children}
+        {foot ? <p className="fr-spread-foot fr-tag fr-mono">{foot}</p> : null}
+      </div>
     </section>
   );
 }
@@ -262,10 +268,10 @@ export type FlowStation = { key: string; state: FlowStationState };
  *  is lime with a halo; ahead dots are hollow. The SVG carries NO text (a glyph here would be DOM text);
  *  the caller renders the milestone pattern's ✓ in the done station's column, where it always was.
  *  Column content (titles, chips, blurbs) is laid out by the caller in a matching `.fr-flow-cols` grid. */
-export function FlowLine({ stations }: { stations: FlowStation[] }) {
+export function FlowLine({ stations, numerals = false }: { stations: FlowStation[]; numerals?: boolean }) {
   const n = Math.max(stations.length, 1);
   const cx = (i: number) => `${((i + 0.5) / n) * 100}%`;
-  return (
+  const svg = (
     <svg className="fr-flow" width="100%" height="28" role="presentation" aria-hidden="true" focusable="false">
       <line className="fr-flow-line" x1={cx(0)} x2={cx(n - 1)} y1="14" y2="14" />
       {stations.map((s, i) => (
@@ -275,6 +281,16 @@ export function FlowLine({ stations }: { stations: FlowStation[] }) {
         </g>
       ))}
     </svg>
+  );
+  if (!numerals) return svg;
+  // L6 (stage 3d): 01…n above the dots — CSS counters, display only, never DOM text.
+  return (
+    <div className="fr-flow-wrap">
+      <div className="fr-flow-nums" style={flowColumns(n)} aria-hidden>
+        {stations.map((s) => <span key={s.key} className="fr-flow-num fr-mono" data-state={s.state} />)}
+      </div>
+      {svg}
+    </div>
   );
 }
 
