@@ -13,6 +13,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { OperatorControlsContext, type OperatorControls, type OperatorDecision } from "./operatorControls";
 import { OPERATOR_STRINGS } from "./operatorStrings";
 import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideAction";
+// Stage 2 (visual port): shell chrome — sticky Header (title / identity / segments / counter) + bottom Nav.
+import { Header, Nav } from "./shell";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
 import {
@@ -199,7 +201,9 @@ export default function FirstReadPreviewView() {
         // New opener (2026): the "you are here" process arc — a four-stage engagement spine (in ActArc).
         // Continue advances relative to position (go(index+1) = cold), so no future insertion re-breaks
         // the hand-off. Structure only — no findings/signal/verdict content.
-        return <ActArc onContinue={() => go(index + 1)} />;
+        // Stage 2: the beat's nav label is the opener's eyebrow (rendered inside its Screen; the
+        // generic auto-eyebrow below skips "arc" so the string renders exactly once, as before).
+        return <ActArc eyebrow={BEATS[index].label} onContinue={() => go(index + 1)} />;
       case "cold":
         // FIX 1: relative advancement (was hardcoded go(1), which self-looped once the arc took index 0).
         return <ColdOpen read={data} onContinue={() => go(index + 1)} />;
@@ -277,73 +281,35 @@ export default function FirstReadPreviewView() {
     // D1: a siesta is visibly a break — full-page accent ground (--fr-accent), white type. The break
     // class scopes the inversion of the header + progress ticks so they stay legible (never global).
     <OperatorControlsContext.Provider value={operatorControls}>
-    <div className={`first-read${isSiesta ? " fr-siesta" : ""}`}>
+    <div className={`first-read${isSiesta ? " fr-siesta" : ""}${FIRST_READ_SHOW_NAV_CHROME ? " fr-has-nav" : ""}`}>
+      {/* Stage 2 shell: the sticky header carries the same two strings the old in-body nav did
+          ("First read" + identity) and the progress segments, on EVERY beat (the cold open included).
+          The "NN / N" counter is new text, so it is gated with the nav chrome (off by default). */}
+      <Header
+        title="First read"
+        identity={identity}
+        beats={BEATS}
+        index={index}
+        onGo={go}
+        showCounter={FIRST_READ_SHOW_NAV_CHROME}
+      />
       <div className="first-read-shell">
-        {!isCold ? (
-          <nav className="mb-16 flex flex-col gap-4">
-            <div className="flex flex-col">
-              <span className="fr-eyebrow mb-1">First read</span>
-              <span className="text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-muted))" }}>
-                {identity}
-              </span>
-            </div>
-            <div className="flex gap-1.5">
-              {BEATS.map((b, i) => (
-                <button
-                  key={b.key}
-                  type="button"
-                  aria-label={b.label}
-                  onClick={() => go(i)}
-                  className="fr-progress-tick"
-                  data-kind={b.act !== undefined ? "act" : "gate"}
-                  data-state={i === index ? "current" : i < index ? "done" : "todo"}
-                />
-              ))}
-            </div>
-          </nav>
-        ) : null}
-
-        <div key={beat.key} className="fr-act-enter">
-          {/* The closer renders its own eyebrow ("Before you go") inside ActNext, so suppress the
-              auto-eyebrow here — BEATS["next"].label stays "Next move" for the nav tick + forward link. */}
-          {!isCold && beat.key !== "next" && beat.key !== "siesta1" && beat.key !== "siesta2" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
+        <div key={beat.key} className="fr-act-enter fr-beat">
+          {/* The closer renders its own eyebrow ("Before you go") inside ActNext, and the opener
+              renders its nav label inside its Screen (stage 2), so suppress the auto-eyebrow for both —
+              BEATS["next"].label stays "Next move" for the nav tick + forward link. */}
+          {!isCold && beat.key !== "arc" && beat.key !== "next" && beat.key !== "siesta1" && beat.key !== "siesta2" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
           {body}
         </div>
 
-        {FIRST_READ_SHOW_NAV_CHROME && !isCold ? (
-          <footer className="mt-16 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => go(index - 1)}
-              className="fr-link-muted group flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
-            >
-              <span className="text-lg leading-none transition-transform group-hover:-translate-x-1">&larr;</span> Back
-            </button>
-            <div className="flex items-center gap-12">
-              <div className="hidden flex-col items-end md:flex">
-                <span className="fr-eyebrow mb-1">Reference</span>
-                <span className="text-[10px] font-bold">
-                  FIRST_READ · {(data.company.name || "").toUpperCase()}
-                </span>
-              </div>
-              {index < BEATS.length - 1 ? (
-                <button
-                  type="button"
-                  onClick={() => go(index + 1)}
-                  className="fr-link-ink group flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
-                >
-                  {BEATS[index + 1].label}{" "}
-                  <span className="text-lg leading-none transition-transform group-hover:translate-x-1">&rarr;</span>
-                </button>
-              ) : null}
-            </div>
-          </footer>
-        ) : null}
-
-        {FIRST_READ_SHOW_NAV_CHROME && !isCold ? (
-          <p className="mt-8 text-center text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: "hsl(var(--fr-faint))" }}>
-            Keys: &larr; &rarr; move · Home / End ends
-          </p>
+        {/* D2: the bottom Back / forward-link / Reference / Keys bar stays behind the flag. */}
+        {FIRST_READ_SHOW_NAV_CHROME ? (
+          <Nav
+            beats={BEATS}
+            index={index}
+            onGo={go}
+            referenceName={`FIRST_READ · ${(data.company.name || "").toUpperCase()}`}
+          />
         ) : null}
       </div>
       {/* Operator switch (rule (a), edited 2026-09-03): the operator's own affordance, not a client element —

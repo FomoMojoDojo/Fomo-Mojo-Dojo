@@ -25,13 +25,15 @@ import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROf
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
 import { ListingRow } from "./primitives";
 import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+// Stage 2 (visual port): editorial layout primitives — applied to beats 1–2 only this stage.
+import { FlowLine, Screen, flowColumns } from "./primitives-editorial";
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
   return (
     <span
       className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-      style={{ background: "hsl(347 77% 50% / 0.10)", color: "hsl(347 77% 42%)" }}
+      style={{ background: "hsl(var(--fr-bad) / 0.10)", color: "hsl(var(--fr-bad))" }}
     >
       Status conflict
     </span>
@@ -83,7 +85,7 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
   return (
     <div className="mb-12 flex flex-col gap-6">
       {conflicts.map((c) => (
-        <div key={c.location} className="rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(347 77% 50%)", background: "hsl(347 77% 50% / 0.04)" }}>
+        <div key={c.location} className="rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(var(--fr-bad))", background: "hsl(var(--fr-bad) / 0.04)" }}>
           <div className="mb-3"><StatusDisputedChip /></div>
           <p className="max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
           {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
@@ -260,7 +262,7 @@ function signalMeta(signal: FRSignal) {
     <>
       <span
         className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-        style={{ background: "hsl(215 20% 65% / 0.14)", color: "hsl(var(--fr-muted))" }}
+        style={{ background: "hsl(var(--fr-faint) / 0.14)", color: "hsl(var(--fr-muted))" }}
       >
         {signal.strength} signal
       </span>
@@ -273,51 +275,55 @@ function signalMeta(signal: FRSignal) {
   );
 }
 
-/** Cold open — one outside statement, full screen, before Act 1. */
+/** Cold open — one outside statement, full screen, before Act 1.
+ *  Stage 2 (visual port): a DARK Screen — eyebrow + statement-size headline in the main column, the
+ *  ladder blockquote (or the NO_SIGNALS_NOTE empty state) in the right-hand aside, the forward-link in
+ *  the Screen foot. DOM order is unchanged (eyebrow → headline → quote/tags → link); strings verbatim. */
 export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onContinue: () => void }) {
   const recency = formatMonthYear(read.coldOpen?.eventDate ?? null);
+  // STANDING RULE (2026-08-24): NO rationale rail on the cold open — it added an unwanted
+  // vertical rule line. Cold passes no rationale; BeatWhy also no-ops for key `cold`.
+  const note = read.coldOpen ? (
+    <blockquote className="fr-cold-quote">
+      <p className="fr-cold-text">
+        {/* Ladder: signed lines (conflict / echo gap) render unquoted (quoted===false). Gate 1:
+            the strongest-signal rung is quoted ONLY when provably own-words verbatim; an
+            unprovable outside featured signal downgrades to un-quoted (stray marks trimmed). */}
+        {read.coldOpen.quoted !== false && read.coldOpen.provablyVerbatim === true
+          ? <>&ldquo;{read.coldOpen.text}&rdquo;</>
+          : (read.coldOpen.quoted === false ? read.coldOpen.text : stripEdgeQuotes(read.coldOpen.text))}
+      </p>
+      <footer className="mt-6 flex flex-col gap-2">
+        {/* Q2 ruling (2026): the verdict-adjacent Status-conflict chip is REMOVED from the opener —
+            the cold-open is the hook, not a verdict surface. Evidence framing (the source line)
+            stays; the chip still renders on gap/findings where it belongs. */}
+        {read.coldOpen.sourceTag ? <SourceTag>{read.coldOpen.sourceTag.label}</SourceTag> : null}
+        {recency ? <RecencyTag>{recency}</RecencyTag> : null}
+      </footer>
+    </blockquote>
+  ) : (
+    <Absent>{NO_SIGNALS_NOTE}</Absent>
+  );
   return (
-    <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
-      <div className="fr-stagger flex max-w-2xl flex-col items-center">
-        <Eyebrow>The first thing we saw.</Eyebrow>
-        <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
-          Here&rsquo;s what we can <span className="font-semibold">already see.</span>
-        </h1>
-        {/* STANDING RULE (2026-08-24): NO rationale rail on the cold open — it added an unwanted
-            vertical rule line. Cold passes no rationale; BeatWhy also no-ops for key `cold`. */}
-        {read.coldOpen ? (
-          <blockquote className="mt-16 max-w-xl">
-            <p className="text-2xl font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
-              {/* Ladder: signed lines (conflict / echo gap) render unquoted (quoted===false). Gate 1:
-                  the strongest-signal rung is quoted ONLY when provably own-words verbatim; an
-                  unprovable outside featured signal downgrades to un-quoted (stray marks trimmed). */}
-              {read.coldOpen.quoted !== false && read.coldOpen.provablyVerbatim === true
-                ? <>&ldquo;{read.coldOpen.text}&rdquo;</>
-                : (read.coldOpen.quoted === false ? read.coldOpen.text : stripEdgeQuotes(read.coldOpen.text))}
-            </p>
-            <footer className="mt-6 flex flex-col items-center gap-2">
-              {/* Q2 ruling (2026): the verdict-adjacent Status-conflict chip is REMOVED from the opener —
-                  the cold-open is the hook, not a verdict surface. Evidence framing (the source line)
-                  stays; the chip still renders on gap/findings where it belongs. */}
-              {read.coldOpen.sourceTag ? <SourceTag>{read.coldOpen.sourceTag.label}</SourceTag> : null}
-              {recency ? <RecencyTag>{recency}</RecencyTag> : null}
-            </footer>
-          </blockquote>
-        ) : (
-          <div className="mt-16 w-full max-w-xl">
-            <Absent>{NO_SIGNALS_NOTE}</Absent>
-          </div>
-        )}
+    <Screen
+      tone="dark"
+      eyebrow="The first thing we saw."
+      note={note}
+      foot={
         <button
           type="button"
           onClick={onContinue}
-          className="fr-link-ink group mt-20 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+          className="fr-link-ink group text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
         >
           Now here&rsquo;s what the world says{" "}
           <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
         </button>
-      </div>
-    </div>
+      }
+    >
+      <h1 className="fr-display fr-h-statement">
+        Here&rsquo;s what we can <span>already see.</span>
+      </h1>
+    </Screen>
   );
 }
 
@@ -476,7 +482,7 @@ function SeqChip({ children }: { children: ReactNode }) {
   return (
     <span
       className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-      style={{ background: "hsl(215 20% 65% / 0.12)", color: "hsl(215 16% 40%)" }}
+      style={{ background: "hsl(var(--fr-faint) / 0.12)", color: "hsl(var(--fr-steel))" }}
     >
       {children}
     </span>
@@ -549,12 +555,24 @@ function PathTrack({ stations, n }: { stations: Station[]; n: number }) {
   );
 }
 
-/** Outcome hand-off — identical on both bookends (signed). */
-function OutcomeBlock() {
+/** Outcome hand-off — identical on both bookends (signed). `tone="dark"` (stage 2, opener) renders
+ *  the same two strings as a dark slate card; the default keeps the closer's hairline-topped block. */
+function OutcomeBlock({ tone = "rule" }: { tone?: "rule" | "dark" }) {
+  if (tone === "dark") {
+    return (
+      <div className="fr-card fr-card--dark mt-16">
+        <Eyebrow>Where this leads</Eyebrow>
+        <p className="fr-display fr-h2">
+          A clear direction, a coordinated team, and a{" "}
+          <span>rising likelihood of success.</span>
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="mt-16 border-t pt-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
       <Eyebrow>Where this leads</Eyebrow>
-      <p className="mt-3 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+      <p className="mt-3 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
         A clear direction, a coordinated team, and a{" "}
         <span className="font-semibold">rising likelihood of success.</span>
       </p>
@@ -562,32 +580,53 @@ function OutcomeBlock() {
   );
 }
 
-export function ActArc({ onContinue }: { onContinue: () => void }) {
+/** The opener. Stage 2 (visual port): a paper Screen — headline + lede, the five ARC_STAGES on a
+ *  FlowLine (dots) with their existing labels / pill / chips / blurbs in matching columns, the
+ *  outcome hand-off as a dark card, then the start link. Per-station DOM order is the milestone
+ *  pattern's (✓ · title · pill/chip · blurb), so the rendered text is byte-identical to before.
+ *  `eyebrow` is the beat's nav label, passed by the view (the same string the view used to render). */
+export function ActArc({ eyebrow, onContinue }: { eyebrow?: ReactNode; onContinue: () => void }) {
   return (
-    <>
-      <header className="mb-14 border-b pb-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-        <TwoWeightHeadline lead="You're already" bold="moving." />
-        <p className="mt-6 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+    <Screen tone="paper" eyebrow={eyebrow}>
+      <header className="fr-arc-head">
+        <h1 className="fr-display fr-h1">
+          {"You're already"} <span>moving.</span>
+        </h1>
+        <p className="fr-lede">
           The outside read is already behind you — done before today, before you told us anything.
           Here&rsquo;s the whole path from here, and where you stand on it now.
         </p>
       </header>
 
-      <PathTrack stations={ARC_STAGES} n={ARC_STAGES.length} />
+      <div className="fr-arc-path">
+        <FlowLine stations={ARC_STAGES.map((s) => ({ key: s.label, state: s.state }))} />
+        <div className="fr-flow-cols" style={flowColumns(ARC_STAGES.length)}>
+          {ARC_STAGES.map((s) => (
+            <div key={s.label} className="fr-flow-col" data-state={s.state}>
+              {/* The done marker keeps the milestone pattern's ✓ glyph (the dot on the line is plain). */}
+              {s.state === "done" ? <span className="fr-flow-chip" aria-hidden>✓</span> : null}
+              <p className="fr-flow-title">{s.label}</p>
+              {s.pill ? <span className="fr-flow-chip fr-flow-chip--pill">{s.pill}</span> : null}
+              {s.chip ? <span className="fr-flow-chip">{s.chip}</span> : null}
+              {s.blurb ? <p className="fr-flow-blurb">{s.blurb}</p> : null}
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <OutcomeBlock />
+      <OutcomeBlock tone="dark" />
 
       <div className="pt-12">
         <button
           type="button"
           onClick={onContinue}
-          className="fr-link-ink group text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+          className="fr-link-ink group text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
         >
           Start the read{" "}
           <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
         </button>
       </div>
-    </>
+    </Screen>
   );
 }
 
@@ -840,7 +879,7 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
             </span>
             <div className="flex max-w-xl flex-col gap-1">
               <p className="text-sm font-semibold leading-snug">{it.label}</p>
-              <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{it.statement}</p>
+              <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{it.statement}</p>
               <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>{offerSourceLine(it)}</p>
             </div>
           </li>
@@ -881,7 +920,7 @@ export function ActWhatYouOffer({ read }: { read: FirstReadPreviewData }) {
             <p className="mt-2">{groundLine}</p>
           </Absent>
         )}
-        <p className="mt-12 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+        <p className="mt-12 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
           {OFFER_CLOSING}
         </p>
       </main>
@@ -945,7 +984,7 @@ export function ActWhereYouStand({ read }: { read: FirstReadPreviewData }) {
                 >
                   <div className="flex items-baseline justify-between gap-6">
                     <span className="text-sm font-semibold">{lever.label}</span>
-                    <span className="shrink-0 text-sm font-light tabular-nums" style={{ color: "hsl(222 47% 25%)" }}>
+                    <span className="shrink-0 text-sm font-light tabular-nums" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
                       {lever.notComputed || lever.value == null ? "—" : fmtLeverValue(lever.value)} / {lever.max}
                     </span>
                   </div>
@@ -996,7 +1035,7 @@ function NumberedList({ items, className }: { items: string[]; className?: strin
           <span className="shrink-0 pt-0.5 text-[10px] font-bold tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
             {String(i + 1).padStart(2, "0")}
           </span>
-          <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{text}</p>
+          <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{text}</p>
         </li>
       ))}
     </ol>
@@ -1161,7 +1200,7 @@ export function ActSiesta1() {
   return (
     <div className="flex flex-col items-center py-24 text-center">
       <h1 className="max-w-2xl text-4xl font-extralight tracking-tight md:text-5xl">{SIESTA1_HEADLINE}</h1>
-      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(0 0% 100% / 0.85)" }}>{SIESTA1_LINE}</p>
+      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-paper) / 0.85)" }}>{SIESTA1_LINE}</p>
     </div>
   );
 }
@@ -1170,7 +1209,7 @@ export function ActSiesta2() {
   return (
     <div className="flex flex-col items-center py-24 text-center">
       <h1 className="max-w-2xl text-4xl font-extralight tracking-tight md:text-5xl">{SIESTA2_HEADLINE}</h1>
-      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(0 0% 100% / 0.85)" }}>{SIESTA2_LINE}</p>
+      <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-paper) / 0.85)" }}>{SIESTA2_LINE}</p>
     </div>
   );
 }
@@ -1247,7 +1286,7 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
                     </span>
                     <span
                       className="inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-                      style={{ background: "hsl(215 20% 65% / 0.14)", color: "hsl(var(--fr-muted))" }}
+                      style={{ background: "hsl(var(--fr-faint) / 0.14)", color: "hsl(var(--fr-muted))" }}
                     >
                       {item.strength}
                     </span>
@@ -1554,7 +1593,7 @@ export function BaseGate() {
         <p className="mt-6 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
           Every choice downstream inherits its strength — or its cracks. Aligning it comes first.
         </p>
-        <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+        <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
           Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.
         </p>
         <div className="mt-8"><BeatWhy>{RATIONALE_BASE}</BeatWhy></div>
@@ -1600,7 +1639,7 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
                 <span className="pt-1 text-[10px] font-bold tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>{question}</p>
+                <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{question}</p>
               </li>
             ))}
           </ol>
@@ -1623,7 +1662,7 @@ export function ActNext({ isLast }: { isLast?: boolean }) {
       <p className="fr-eyebrow mb-4">Before you go</p>
       <header className="mb-14 border-b pb-12" style={{ borderColor: "hsl(var(--fr-hair))" }}>
         <TwoWeightHeadline lead="Here's what happens" bold="next." />
-        <p className="mt-6 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(222 47% 25%)" }}>
+        <p className="mt-6 max-w-2xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
           We&rsquo;ve named the gaps. Here&rsquo;s the work that turns them into a grounded choice —
           what happens in each phase, and what we&rsquo;ll need from you.
         </p>

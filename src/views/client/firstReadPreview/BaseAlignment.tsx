@@ -55,10 +55,11 @@ const STATE_LABEL: Record<PairState, string> = {
   untested: "Untested",
 };
 
+// Tokenized (stage 2): the verdict tokens + the faint token the values duplicated.
 const STATE_COLOR: Record<PairState, string> = {
-  confirmed: "hsl(160 84% 33%)",
-  contradicted: "hsl(347 77% 50%)",
-  untested: "hsl(215 20% 65%)",
+  confirmed: "hsl(var(--fr-good))",
+  contradicted: "hsl(var(--fr-bad))",
+  untested: "hsl(var(--fr-faint))",
 };
 
 const STATE_DASH: Record<PairState, string | undefined> = {
@@ -205,7 +206,7 @@ export default function BaseAlignment({
                   fontSize={10}
                   fontWeight={700}
                   letterSpacing="0.2em"
-                  fill={anchor ? "hsl(239 84% 57%)" : "hsl(222 47% 11%)"}
+                  fill={anchor ? "hsl(var(--fr-accent))" : "hsl(var(--fr-ink))"}
                 >
                   {el.label.toUpperCase()}
                 </text>
@@ -218,7 +219,7 @@ export default function BaseAlignment({
                   fontSize={8}
                   fontWeight={500}
                   letterSpacing="0.04em"
-                  fill="hsl(215 16% 47%)"
+                  fill="hsl(var(--fr-muted))"
                 >
                   {el.sub}
                 </text>
@@ -232,7 +233,7 @@ export default function BaseAlignment({
                     fontSize={7}
                     fontWeight={700}
                     letterSpacing="0.08em"
-                    fill="hsl(239 84% 57%)"
+                    fill="hsl(var(--fr-accent))"
                   >
                     {marketNote}
                   </text>

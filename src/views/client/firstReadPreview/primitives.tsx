@@ -84,21 +84,22 @@ export function ScoreNow({
 
 export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
   const map: Record<FRGapVerdict, { label: string; style: React.CSSProperties }> = {
+    // Tokenized (stage 2): verdict tints ride --fr-good / --fr-bad / --fr-warn; neutral rides --fr-faint / --fr-steel.
     confirmed: {
       label: "Echoed",
-      style: { background: "hsl(160 84% 33% / 0.08)", color: "hsl(160 84% 28%)" },
+      style: { background: "hsl(var(--fr-good) / 0.08)", color: "hsl(var(--fr-good))" },
     },
     contradicted: {
       label: "Disputed",
-      style: { background: "hsl(347 77% 50% / 0.08)", color: "hsl(347 77% 44%)" },
+      style: { background: "hsl(var(--fr-bad) / 0.08)", color: "hsl(var(--fr-bad))" },
     },
     unechoed: {
       label: "Not echoed",
-      style: { background: "hsl(38 92% 50% / 0.10)", color: "hsl(30 80% 36%)" },
+      style: { background: "hsl(var(--fr-warn) / 0.10)", color: "hsl(var(--fr-warn))" },
     },
     unspoken: {
       label: "Unspoken",
-      style: { background: "hsl(215 20% 65% / 0.12)", color: "hsl(215 16% 40%)" },
+      style: { background: "hsl(var(--fr-faint) / 0.12)", color: "hsl(var(--fr-steel))" },
     },
   };
   const tone = map[verdict];
