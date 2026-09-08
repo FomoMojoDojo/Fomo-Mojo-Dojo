@@ -348,22 +348,11 @@ export function ColdOpen({ read, onContinue }: { read: FirstReadPreviewData; onC
   ) : (
     <Absent>{NO_SIGNALS_NOTE}</Absent>
   );
+  // SIGNED 1a (stage 3c): no eyebrow and no forward-link line — the headline stands alone with the
+  // aside. Keyboard / tick navigation carries the advance (onContinue is retained for callers).
+  void onContinue;
   return (
-    <Screen
-      tone="dark"
-      eyebrow="The first thing we saw."
-      note={note}
-      foot={
-        <button
-          type="button"
-          onClick={onContinue}
-          className="fr-link-ink group text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
-        >
-          Now here&rsquo;s what the world says{" "}
-          <span className="inline-block transition-transform group-hover:translate-x-1">&rarr;</span>
-        </button>
-      }
-    >
+    <Screen tone="dark" note={note}>
       <h1 className="fr-display fr-h-statement">
         Here&rsquo;s what we can <span>already see<span className="fr-stop">.</span></span>
       </h1>
@@ -1202,6 +1191,13 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
 // eyebrow — it is byte-identical to the beat's nav label, and the view no longer renders the label a
 // second time, so each renders exactly once. The statement wears the terminal lime dot when it ends
 // in "."; the Why-this line and the "Public read · date" tag form the foot line.
+/** R2 (stage 3c): statement-size text steps down one scale step past ~110 characters. */
+const STATEMENT_LONG = 110;
+function statementClass(text: string | null | undefined): string {
+  const long = (text ?? "").length > STATEMENT_LONG;
+  return `fr-display fr-h-statement fr-h-statement--wide${long ? " fr-h-statement--long" : ""}`;
+}
+
 function DarkFoot({ tag, why }: { tag?: { label: string } | null; why?: string }) {
   return (
     <div className="fr-dark-foot">
@@ -1222,7 +1218,7 @@ export function ActPromise({ read }: { read: FirstReadPreviewData }) {
     <Screen tone="dark" eyebrow={PROMISE_TITLE} foot={<DarkFoot tag={pr?.text ? pr.sourceTag : null} why={PROMISE_WHY} />}>
       <main className="fr-stagger">
         {pr?.text ? (
-          <h1 className="fr-display fr-h-statement fr-h-statement--wide">{withStop(pr.text)}</h1>
+          <h1 className={statementClass(pr.text)}>{withStop(pr.text)}</h1>
         ) : (
           <GatedLine>{PROMISE_NOT_ENOUGH}</GatedLine>
         )}
@@ -1244,7 +1240,7 @@ export function ActPositioning({ read }: { read: FirstReadPreviewData }) {
       <main className="fr-stagger">
         {p ? (
           <>
-            {p.category ? <h1 className="fr-display fr-h-statement fr-h-statement--wide">{withStop(sentenceCase(p.category))}</h1> : null}
+            {p.category ? <h1 className={statementClass(sentenceCase(p.category))}>{withStop(sentenceCase(p.category))}</h1> : null}
             {p.value ? <p className="fr-lede fr-lede--dark">{sentenceCase(p.value)}</p> : null}
             {/* B9: below a hairline, the label column carries the existing Why-this line (no "What holds
                 it up" string exists); the attributes sit as numbered columns (their numerals are text). */}
@@ -1281,7 +1277,7 @@ export function ActStrategy({ read }: { read: FirstReadPreviewData }) {
             {st.aspiration ? (
               <div className="mt-6">
                 <span className="fr-eyebrow">{RUNG_ASPIRATION}</span>
-                <h1 className="fr-display fr-h-statement fr-h-statement--wide mt-4">{withStop(st.aspiration)}</h1>
+                <h1 className={`${statementClass(st.aspiration)} mt-4`}>{withStop(st.aspiration)}</h1>
               </div>
             ) : null}
             {/* Hairline, then the rungs as columns: Where to play / How to win / Must-have capabilities
@@ -1419,7 +1415,11 @@ export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebr
 /** Score reveal — the Mojo Score scale. Stage 3: the sidebar carries eyebrow → the number (ScoreNow,
  *  display size, band as subline) → headline → standfirst → ANCHOR_LINE → RATIONALE_SCORE; the right
  *  column is the VerticalScale (five bands from scoreBands.ts, marker at the score). Same strings. */
+// SIGNED 2 (stage 3c): the beat-15 eyebrow string. The nav label ("Mojo Score") is unchanged.
+const SCORE_EYEBROW = "MojoScore™"; // signed
+
 export function ScoreReveal({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
+  void eyebrow; // the view passes the nav label; the signed eyebrow string renders instead
   const score = read.score?.value ?? null;
   const active = score !== null ? bandForScore(score) : null;
   // S1: the empty state is grounded in the outside-score PRODUCER record (first_read_outside_score) —
@@ -1429,7 +1429,7 @@ export function ScoreReveal({ read, eyebrow }: { read: FirstReadPreviewData; eye
   const emptyNote = read.outsideScoreState === "ineligible" ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
     <Spread
-      eyebrow={eyebrow}
+      eyebrow={SCORE_EYEBROW}
       // The Mojo Score number lives here, in its own beat (ruling 2026-08-20) — exactly once.
       lead={read.score ? <ScoreNow now={read.score.value} band={active?.name} display /> : undefined}
       title={withStop("One number, read from the record.")}
@@ -1701,8 +1701,8 @@ export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; ey
       rationale={RATIONALE_QUESTIONS}
     >
       <main className="fr-stagger">
-        {/* S4: status conflicts pinned ABOVE all questions. */}
-        <StatusConflictBanner conflicts={read.statusConflicts} />
+        {/* SIGNED 5 (stage 3c): the status-conflict banner no longer renders here — it renders on
+            beats 2 (cold-open ladder) and 6 (findings). The integrity gate below is unchanged. */}
         {read.questions.length === 0 ? (
           // Integrity-grounded empty state (never array emptiness alone): not-yet vs looked-and-none vs
           // couldn't-check, from first_read_open_questions integrity (open-questions-step finalize).

@@ -17,13 +17,13 @@ const CONFLICT: FRStatusConflict = {
 const base = (o: Partial<FirstReadPreviewData>): FirstReadPreviewData => ({ ...EMPTY_FIRST_READ, company: { name: "Co", website: null }, ...o });
 
 describe("S4 — status conflict pinned atop Questions + Findings", () => {
-  it("Questions: the conflict question renders ABOVE the plain questions", () => {
+  it("Questions: the conflict banner does NOT render here (signed 5, stage 3c — it renders on beats 2 and 6)", () => {
     const { container } = render(<ActQuestions read={base({ statusConflicts: [CONFLICT], questions: ["A plain question?"] })} />);
     const text = container.textContent ?? "";
-    expect(text).toContain("Which is true today?");
-    expect(text.indexOf("Which is true today?")).toBeLessThan(text.indexOf("A plain question?"));
-    expect(text).toContain("Reported closed");
-    expect(text).toContain("Still listed open");
+    expect(text).toContain("A plain question?");
+    expect(text).not.toContain("Which is true today?");
+    expect(text).not.toContain("Reported closed");
+    expect(text).not.toContain("Still listed open");
   });
 
   it("Findings: the conflict banner renders ABOVE the findings", () => {

@@ -5,10 +5,12 @@
 // proof-category verdict gate). The caption states the uncomputed condition
 // honestly — it never claims states were read from the record when none were.
 //
-// Stage 3b (visual port): the "today" view is rebuilt to the capture — four HTML nodes (outer ink
-// ring, inner lime ring), numbered 01–04 by CSS counter (display only, never DOM text), node name mono
-// uppercase, sub-descriptor beneath; dashed connectors between all six pairs on an SVG underlay with
-// the pair-state tag on each. The "See it aligned" toggle and the aligned view are kept.
+// Stage 3b/3c (visual port, SIGNED 4): the "today" view — four HTML nodes (outer ink ring, inner lime
+// ring), numbered 01–04 by CSS counter (display only, never DOM text), node name mono uppercase,
+// the existing sub-line beneath; dashed connectors on all six pairs on an SVG underlay with the
+// pair-state tag on each. An UNTESTED link is two overlaid dashed strokes whose dashes travel slowly
+// in opposite directions (grey one way, periwinkle the other), eased; prefers-reduced-motion stops
+// them. The "See it aligned" toggle and the aligned view are kept.
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
@@ -74,7 +76,7 @@ const STATE_COLOR: Record<PairState, string> = {
 const STATE_DASH: Record<PairState, string | undefined> = {
   confirmed: undefined,
   contradicted: "7 7",
-  untested: "4 6",
+  untested: "5 9",
 };
 
 function elementFor(key: BaseElementKey) {
@@ -124,18 +126,26 @@ export default function BaseAlignment({
             const start = edgePoint(a.today, b.today, TODAY_R + 4);
             const end = edgePoint(b.today, a.today, TODAY_R + 4);
             const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+            const d = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
             return (
               <g key={`${pair.a}-${pair.b}`}>
                 <title>{pair.readFrom}</title>
-                <path
-                  d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={pair.state === "contradicted" ? 1.5 : 1}
-                  strokeDasharray={STATE_DASH[pair.state]}
-                  opacity={pair.state === "untested" ? 0.8 : 1}
-                  vectorEffect="non-scaling-stroke"
-                />
+                {pair.state === "untested" ? (
+                  // Two dashed strokes, dashes travelling in opposite directions (grey / periwinkle).
+                  <>
+                    <path className="fr-base-link fr-base-link--fwd" d={d} fill="none" strokeDasharray={STATE_DASH.untested} vectorEffect="non-scaling-stroke" />
+                    <path className="fr-base-link fr-base-link--back" d={d} fill="none" strokeDasharray={STATE_DASH.untested} vectorEffect="non-scaling-stroke" />
+                  </>
+                ) : (
+                  <path
+                    d={d}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={pair.state === "contradicted" ? 1.5 : 1}
+                    strokeDasharray={STATE_DASH[pair.state]}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
                 <text
                   className="fr-align-tag"
                   x={mid.x}

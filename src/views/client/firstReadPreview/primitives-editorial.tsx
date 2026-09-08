@@ -233,11 +233,20 @@ export function Divider({ numeral, title, body, tone = "lime" }: { numeral?: str
   );
 }
 
-/** A2 — the terminal dot: a headline that ends in "." gets its full stop wrapped in a lime span.
- *  The text is untouched (same characters, same order); only the last "." is styled. */
+/** A2 + R1 — the terminal dot on every headline and statement. A text that ends in "." gets that
+ *  full stop wrapped in a lime span (same characters); a text that doesn't gets a DECORATION span
+ *  whose dot is CSS content (never DOM text). Either way the text itself is untouched. */
 export function withStop(text: string | null | undefined): ReactNode {
   const t = text ?? "";
-  if (!t.endsWith(".")) return t;
+  if (!t) return t;
+  if (!t.endsWith(".")) {
+    return (
+      <>
+        {t}
+        <span className="fr-stop fr-stop--deco" aria-hidden />
+      </>
+    );
+  }
   return (
     <>
       {t.slice(0, -1)}
