@@ -82,6 +82,14 @@ export const BEATS = [
   { key: "next", label: "Next move", act: undefined },
 ] as const;
 
+/** Beats that render their own eyebrow inside the body (the closer's "Before you go", the siestas'
+ *  none, and — stages 2–3 — the Screen/Spread beats, which take the nav label as a prop). The view's
+ *  generic auto-eyebrow renders only for the remaining beats (promise / positioning / strategy). */
+const EYEBROW_IN_BODY: ReadonlySet<string> = new Set([
+  "arc", "next", "siesta1", "siesta2",
+  "record", "yousay", "gap", "findings", "serve", "base", "offer", "score", "questions",
+]);
+
 /** react-query is present under the app router; a bare test mount has no client — invalidation is then a no-op. */
 function useOptionalQueryClient() {
   try {
@@ -207,20 +215,22 @@ export default function FirstReadPreviewView() {
       case "cold":
         // FIX 1: relative advancement (was hardcoded go(1), which self-looped once the arc took index 0).
         return <ColdOpen read={data} onContinue={() => go(index + 1)} />;
+      // Stage 3: the nine Spread beats render their nav label as the sidebar eyebrow (the generic
+      // auto-eyebrow below skips them, so the string renders exactly once, as before).
       case "record":
-        return <ActRecord read={data} />;
+        return <ActRecord read={data} eyebrow={BEATS[index].label} />;
       case "yousay":
-        return <ActWhatYouSay read={data} />;
+        return <ActWhatYouSay read={data} eyebrow={BEATS[index].label} />;
       case "gap":
-        return <ActGap read={data} />;
+        return <ActGap read={data} eyebrow={BEATS[index].label} />;
       case "serve":
-        return <ActWhoYouServe read={data} />;
+        return <ActWhoYouServe read={data} eyebrow={BEATS[index].label} />;
       case "offer":
-        return <ActWhatYouOffer read={data} />;
+        return <ActWhatYouOffer read={data} eyebrow={BEATS[index].label} />;
       case "findings":
-        return <ActFindings read={data} />;
+        return <ActFindings read={data} eyebrow={BEATS[index].label} />;
       case "score":
-        return <ScoreReveal read={data} />;
+        return <ScoreReveal read={data} eyebrow={BEATS[index].label} />;
       // case "where": return <ActWhereYouStand read={data} />;  // hidden — restore with BEATS entry + import
       case "siesta1":
         return <ActSiesta1 />;
@@ -231,11 +241,11 @@ export default function FirstReadPreviewView() {
       case "strategy":
         return <ActStrategy read={data} />;
       case "base":
-        return <BaseGate />;
+        return <BaseGate eyebrow={BEATS[index].label} />;
       case "siesta2":
         return <ActSiesta2 />;
       case "questions":
-        return <ActQuestions read={data} />;
+        return <ActQuestions read={data} eyebrow={BEATS[index].label} />;
       case "next":
         return <ActNext isLast={index === BEATS.length - 1} />;
       default:
@@ -298,7 +308,7 @@ export default function FirstReadPreviewView() {
           {/* The closer renders its own eyebrow ("Before you go") inside ActNext, and the opener
               renders its nav label inside its Screen (stage 2), so suppress the auto-eyebrow for both —
               BEATS["next"].label stays "Next move" for the nav tick + forward link. */}
-          {!isCold && beat.key !== "arc" && beat.key !== "next" && beat.key !== "siesta1" && beat.key !== "siesta2" ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
+          {!isCold && !EYEBROW_IN_BODY.has(beat.key) ? <p className="fr-eyebrow mb-4">{beat.label}</p> : null}
           {body}
         </div>
 

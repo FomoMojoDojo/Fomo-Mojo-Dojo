@@ -46,18 +46,35 @@ export function CountUp({ value, className }: { value: number; className?: strin
   return <span className={`fr-numeral ${className ?? ""}`}>{display}</span>;
 }
 
-/** The one number. Optional band name renders beside it ("31 · Running on instinct"). */
+/** The one number. Optional band name renders beside it ("31 · Running on instinct").
+ *  `display` (stage 3): the sidebar treatment — the numeral at display size in lime, "/ 100" beside
+ *  it, the band name as a subline. Same strings, same DOM order. */
 export function ScoreNow({
   now,
   band,
   compact = false,
+  display = false,
   explainer,
 }: {
   now: number;
   band?: string;
   compact?: boolean;
+  display?: boolean;
   explainer?: string;
 }) {
+  if (display) {
+    return (
+      <div className="fr-score-display">
+        <Eyebrow>Mojo now</Eyebrow>
+        <div className="mt-2 flex items-baseline gap-3">
+          <CountUp value={now} className="fr-display fr-score-num" />
+          <span className="fr-score-per fr-mono">/ 100</span>
+        </div>
+        {band ? <span className="fr-score-band">· {band}</span> : null}
+        {explainer ? <p className="fr-why-text mt-4">{explainer}</p> : null}
+      </div>
+    );
+  }
   const size = compact ? "text-3xl" : "text-4xl";
   return (
     <div className="flex flex-col">
@@ -81,6 +98,15 @@ export function ScoreNow({
     </div>
   );
 }
+
+/** The on-screen verdict words — the SAME map the chip renders; group headers reuse them (never a
+ *  second vocabulary). */
+export const VERDICT_LABEL: Record<FRGapVerdict, string> = {
+  confirmed: "Echoed",
+  contradicted: "Disputed",
+  unechoed: "Not echoed",
+  unspoken: "Unspoken",
+};
 
 export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
   const map: Record<FRGapVerdict, { label: string; style: React.CSSProperties }> = {
@@ -119,8 +145,17 @@ export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
  *  ("Before we start", key `cold`) — it introduced an unwanted vertical rule line on the opener.
  *  Cold is STRUCTURALLY exempt: BeatWhy no-ops for the cold key here (and the cold open passes no
  *  rationale at all). Both together make the rail impossible to render on the opener. */
-export function BeatWhy({ children, pageKey }: { children: ReactNode; pageKey?: string }) {
+export function BeatWhy({ children, pageKey, plain = false }: { children: ReactNode; pageKey?: string; plain?: boolean }) {
   if (pageKey === "cold") return null;
+  // `plain` (stage 3): the sidebar treatment under the Spread hairline — no rail, mono small, faint.
+  if (plain) {
+    return (
+      <div className="fr-why">
+        <Eyebrow>Why this</Eyebrow>
+        <p className="fr-why-text">{children}</p>
+      </div>
+    );
+  }
   return (
     <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
       <Eyebrow>Why this</Eyebrow>
@@ -191,6 +226,8 @@ export function LedgerRow({
   rightContent,
   quoted = true,
   muted = false,
+  variant = "ledger",
+  dataVerdict,
 }: {
   /** Eyebrow above the quote. Omit to render no eyebrow (e.g. findings carry no earned label). */
   leftLabel?: string;
@@ -204,7 +241,39 @@ export function LedgerRow({
   quoted?: boolean;
   /** De-weighted treatment for moderate/thin signals. */
   muted?: boolean;
+  /** `hanging` (stage 3): one column, a CSS-counter numeral in the gutter, meta + evidence under the
+   *  body. SAME children in the SAME order as the ledger — only the layout differs. */
+  variant?: "ledger" | "hanging";
+  /** Styling hook (`data-verdict`) for the hanging variant. */
+  dataVerdict?: string;
 }) {
+  if (variant === "hanging") {
+    return (
+      <div className={`fr-row fr-hanging-row${muted ? " fr-hanging-row--muted" : ""}`} data-verdict={dataVerdict}>
+        <span className="fr-hanging-num fr-mono" aria-hidden data-fr-counter="true" />
+        <div className="fr-hanging-row-body">
+          {leftLabel ? (
+            <div className="mb-3">
+              <Eyebrow>{leftLabel}</Eyebrow>
+            </div>
+          ) : null}
+          <div className="relative">
+            {quoted ? <span className="fr-quote-mark">&ldquo;</span> : null}
+            <h3 className="fr-hanging-row-title">{leftBody}</h3>
+          </div>
+          {leftExtra}
+          <div className="fr-hanging-row-meta">{meta}</div>
+          {rightContent ? (
+            <div className="fr-hanging-row-right">{rightContent}</div>
+          ) : rightBody ? (
+            <p className="fr-hanging-row-right text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
+              {rightBody}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className="fr-row group flex flex-col border-b py-14 md:grid md:grid-cols-12 md:gap-16"

@@ -816,85 +816,493 @@
   color: hsl(var(--fr-paper));
 }
 
-/* ---- Spread ---- */
+/* ---- Spread ----
+   The sidebar column FILLS the beat's height (slate to the bottom of the row) and bleeds to the
+   viewport's left edge; its text sticks under the header. --fr-bleed is the distance from the shell's
+   content edge to the viewport edge (the shell is centered, max 1080px, 24px side padding). */
+
+.first-read {
+  --fr-bleed: calc((100vw - min(100vw, 1080px)) / 2 + 24px);
+}
 
 .fr-spread {
   display: grid;
   grid-template-columns: minmax(0, 25rem) minmax(0, 1fr);
   column-gap: 4rem;
-  align-items: start;
+  align-items: stretch;
   margin-top: -48px;
+  min-height: calc(100vh - 57px);
 }
 
 @media (max-width: 900px) {
   .fr-spread {
     grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 }
 
 .fr-spread-side {
-  position: sticky;
-  top: 57px;
-  align-self: start;
-  min-height: calc(100vh - 57px);
-  padding: 3.5rem 2.5rem 3.5rem 0;
+  align-self: stretch;
+  padding: 3.25rem 2.5rem 3.5rem 0;
   box-sizing: border-box;
+}
+
+.fr-spread-side-inner {
+  position: sticky;
+  top: calc(57px + 3.25rem);
 }
 
 .fr-spread[data-fr-sidebar="slate"] .fr-spread-side {
   background: hsl(var(--fr-slate));
   color: hsl(var(--fr-paper));
-  margin-left: calc(50% - 50vw);
-  padding-left: calc(50vw - 50%);
+  margin-left: calc(-1 * var(--fr-bleed));
+  padding-left: var(--fr-bleed);
 }
 
 .fr-spread[data-fr-sidebar="lime"] .fr-spread-side {
   background: hsl(var(--fr-lime));
   color: hsl(var(--fr-ink));
-  margin-left: calc(50% - 50vw);
-  padding-left: calc(50vw - 50%);
+  margin-left: calc(-1 * var(--fr-bleed));
+  padding-left: var(--fr-bleed);
+}
+
+@media (max-width: 900px) {
+  .fr-spread-side {
+    padding-right: var(--fr-bleed);
+    margin-right: calc(-1 * var(--fr-bleed));
+  }
+  .fr-spread-side-inner {
+    position: static;
+  }
 }
 
 .fr-spread-eyebrow {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.75rem;
+}
+
+/* Two stacked eyebrows (a beat label over a second existing eyebrow) read as two lines. */
+.fr-spread-eyebrow .fr-eyebrow > span {
+  display: block;
+}
+.fr-spread-eyebrow .fr-eyebrow > span + span {
+  margin-top: 0.4rem;
+  color: hsl(var(--fr-paper) / 0.55);
+}
+
+.fr-spread-lead {
+  margin-bottom: 1.75rem;
 }
 
 .fr-spread-title {
-  font-size: clamp(2rem, 3.4vw, 2.75rem);
-  max-width: 14ch;
+  font-size: clamp(2rem, 3vw, 2.6rem);
+  max-width: 15ch;
+}
+
+.fr-spread-title .fr-stop {
+  color: hsl(var(--fr-lime));
 }
 
 .fr-spread-lede {
-  margin-top: 1.5rem;
-  font-size: 1.125rem;
+  margin-top: 1.25rem;
+  font-size: 1.0625rem;
   line-height: 1.5;
   font-weight: 500;
   color: currentColor;
   opacity: 0.8;
+  max-width: 24rem;
 }
 
 .fr-spread-statement {
   margin-top: 1rem;
-  font-size: 1.125rem;
-  line-height: 1.5;
-  opacity: 0.8;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  opacity: 0.7;
+  max-width: 24rem;
 }
 
+/* Below the hairline: the count element, the Why-this rationale, a moved banner. Mono, small, faint. */
 .fr-spread-aside {
-  margin-top: 3rem;
+  margin-top: 2.5rem;
   padding-top: 1.5rem;
-  border-top: 1px solid currentColor;
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  line-height: 1.9;
-  opacity: 0.6;
+  border-top: 1px solid hsl(var(--fr-paper) / 0.25);
   max-width: 22rem;
+}
+
+.fr-spread[data-fr-sidebar="lime"] .fr-spread-aside {
+  border-top-color: hsl(var(--fr-ink) / 0.3);
+}
+
+.fr-why + .fr-why,
+.fr-side-count + .fr-why,
+.fr-why + .fr-conflict-banner {
+  margin-top: 1.5rem;
+}
+
+.fr-why .fr-eyebrow {
+  display: block;
+  margin-bottom: 0.6rem;
+}
+
+.fr-why-text,
+.fr-why p {
+  font-family: var(--fr-font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  color: hsl(var(--fr-paper) / 0.6);
+}
+
+.fr-spread[data-fr-sidebar="lime"] .fr-why-text,
+.fr-spread[data-fr-sidebar="lime"] .fr-why p {
+  color: hsl(var(--fr-ink) / 0.75);
+}
+
+.fr-side-count {
+  margin-bottom: 1.5rem;
+}
+
+.fr-side-count .fr-eyebrow {
+  display: block;
+}
+
+.fr-side-count-num {
+  margin-top: 0.35rem;
+  font-size: 2.75rem;
+  color: hsl(var(--fr-lime));
+}
+
+/* The status-conflict banner, when it moves into the sidebar. */
+.fr-spread-side .fr-conflict-banner {
+  margin-bottom: 0;
+  background: hsl(var(--fr-bad) / 0.12);
+}
+.fr-spread-side .fr-conflict-question {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.fr-spread-side .fr-conflict-sources {
+  grid-template-columns: minmax(0, 1fr);
+  color: hsl(var(--fr-paper) / 0.7) !important; /* the column's inline muted color is for paper */
+  font-family: var(--fr-font-mono);
+  font-size: 10px;
 }
 
 .fr-spread-main {
   min-width: 0;
-  padding: 3.5rem 0 4rem;
+  padding: 3.25rem 0 4rem;
+}
+
+/* Score in the sidebar (ScoreNow display). */
+.fr-score-display .fr-eyebrow {
+  display: block;
+}
+
+.fr-score-num {
+  font-size: clamp(4rem, 7vw, 6rem);
+  line-height: 0.9;
+  color: hsl(var(--fr-lime));
+}
+
+.fr-score-per {
+  font-size: 0.875rem;
+  letter-spacing: 0.1em;
+  color: hsl(var(--fr-paper) / 0.6);
+}
+
+.fr-score-band {
+  display: block;
+  margin-top: 0.9rem;
+  font-family: var(--fr-font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: hsl(var(--fr-paper));
+}
+
+/* ---- rows in the main column (LedgerRow variant="hanging") ---- */
+
+.fr-rows {
+  counter-reset: fr-row;
+}
+
+.fr-hanging-row {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  column-gap: 1rem;
+  padding: 2.25rem 0;
+  border-bottom: 1px solid hsl(var(--fr-line));
+  border-radius: 0;
+}
+
+.fr-hanging-row:first-child {
+  padding-top: 0.5rem;
+}
+
+.fr-hanging-row .fr-hanging-num {
+  padding-top: 0.55em;
+}
+
+/* Numerals are CSS counters — display only, never DOM text. */
+.fr-hanging-num[data-fr-counter="true"]::before {
+  counter-increment: fr-row;
+  content: counter(fr-row, decimal-leading-zero);
+}
+
+.fr-hanging-row--muted .fr-hanging-num {
+  color: hsl(var(--fr-faint));
+}
+
+.fr-hanging-row-body {
+  min-width: 0;
+}
+
+.fr-hanging-row-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  max-width: 34rem;
+}
+
+.fr-hanging-row--muted .fr-hanging-row-title {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: hsl(var(--fr-steel));
+}
+
+.fr-hanging-row .fr-quote-mark {
+  left: -1.35rem;
+  top: -0.15rem;
+  font-size: 1.75rem;
+}
+
+.fr-hanging-row-meta {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.fr-hanging-row-meta:empty {
+  display: none;
+}
+
+.fr-hanging-row-right {
+  margin-top: 1.25rem;
+  max-width: 34rem;
+}
+
+/* The Record page: the first strong row at headline weight. */
+.fr-labeled[data-fr-tier="strong"] .fr-labeled-body > .fr-hanging-row:first-child .fr-hanging-row-title {
+  font-size: 2rem;
+  max-width: 20ch;
+}
+
+/* The Gap page: not-echoed ink/bold; echoed steel/regular (via --muted). Disputed stays ink/bold. */
+.fr-hanging-row[data-verdict="unechoed"] .fr-hanging-row-title {
+  color: hsl(var(--fr-ink));
+}
+
+.fr-reverse-row {
+  border-radius: 0;
+}
+
+/* ---- Labeled (label column + body) ---- */
+
+.fr-labeled {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  column-gap: 1.5rem;
+  align-items: start;
+}
+
+.fr-labeled + .fr-labeled {
+  margin-top: 3rem;
+}
+
+.fr-labeled-label {
+  padding-top: 0.6rem;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  color: hsl(var(--fr-steel));
+  position: sticky;
+  top: calc(57px + 1.5rem);
+}
+
+.fr-labeled-body > .fr-hanging-row:first-child {
+  padding-top: 0.5rem;
+}
+
+/* Group headers drawn from the attribute — display only, never DOM text. */
+.fr-labeled-label[data-fr-group]::before {
+  content: attr(data-fr-group);
+}
+
+.fr-labeled[data-fr-tier="strong"] .fr-labeled-label,
+.fr-labeled[data-fr-tier="unechoed"] .fr-labeled-label,
+.fr-labeled[data-fr-tier="contradicted"] .fr-labeled-label {
+  color: hsl(var(--fr-ink));
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .fr-labeled {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.75rem;
+  }
+  .fr-labeled-label {
+    position: static;
+    padding-top: 0;
+  }
+}
+
+/* ---- Questions: two columns on desktop ---- */
+
+.fr-questions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fr-questions > li {
+  break-inside: avoid;
+  margin-bottom: 2rem;
+}
+
+@media (min-width: 1024px) {
+  .fr-questions {
+    column-count: 2;
+    column-gap: 3rem;
+  }
+}
+
+/* ---- VerticalScale (Mojo Score) ---- */
+
+.fr-vscale {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  column-gap: 2.5rem;
+  margin-top: 1rem;
+}
+
+.fr-vscale-axis {
+  position: relative;
+  border-right: 1px solid hsl(var(--fr-ink));
+}
+
+.fr-vscale-tick {
+  position: absolute;
+  right: -1px;
+  width: 10px;
+  height: 1px;
+  background: hsl(var(--fr-ink));
+  transform: translateY(-50%);
+}
+
+/* Tick numerals are attr() content — display only, never DOM text. */
+.fr-vscale-tick::before {
+  content: attr(data-tick);
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--fr-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: hsl(var(--fr-steel));
+}
+
+.fr-vscale-marker {
+  position: absolute;
+  right: -7px;
+  transform: translateY(-50%);
+}
+
+.fr-vscale-marker-dot {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: hsl(var(--fr-lime));
+  border: 1.5px solid hsl(var(--fr-ink));
+}
+
+.fr-vscale-bands {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-auto-rows: 1fr;
+}
+
+.fr-vscale-band {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 1rem 0;
+  min-height: 7.5rem;
+}
+
+.fr-vscale-band .fr-eyebrow {
+  color: hsl(var(--fr-faint));
+}
+
+.fr-vscale-band-name {
+  margin-top: 0.3rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: hsl(var(--fr-faint));
+}
+
+.fr-vscale-band-desc {
+  margin-top: 0.35rem;
+  max-width: 34rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: hsl(var(--fr-faint));
+}
+
+.fr-vscale-band[data-active="true"] .fr-eyebrow {
+  color: hsl(var(--fr-ink));
+}
+
+.fr-vscale-band[data-active="true"] .fr-vscale-band-name {
+  font-size: 1.75rem;
+  color: hsl(var(--fr-ink));
+}
+
+.fr-vscale-band[data-active="true"] .fr-vscale-band-desc {
+  color: hsl(var(--fr-ink) / 0.85);
+}
+
+.fr-vscale-band-marker {
+  display: block;
+  margin-top: 0.75rem;
+  color: hsl(var(--fr-lime));
+}
+
+/* ---- HangingItem extras ---- */
+
+.fr-hanging-lead {
+  margin-bottom: 0.6rem;
+}
+
+.fr-hanging-text {
+  margin-top: 0.5rem;
+  max-width: 34rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: hsl(var(--fr-steel));
+}
+
+.fr-hanging-num[data-fr-counter="true"] {
+  min-width: 2ch;
 }
 
 /* ---- SideNote ---- */
@@ -924,6 +1332,7 @@
   display: flex;
   flex-direction: column;
   gap: 2.5rem;
+  counter-reset: fr-row; /* one counter scope per list — the items' CSS numerals count 01, 02, … */
 }
 
 .fr-hanging {

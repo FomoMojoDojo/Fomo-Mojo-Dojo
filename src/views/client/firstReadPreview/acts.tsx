@@ -25,8 +25,58 @@ import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROf
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
 import { ListingRow } from "./primitives";
 import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
-// Stage 2 (visual port): editorial layout primitives — applied to beats 1–2 only this stage.
-import { FlowLine, Screen, flowColumns } from "./primitives-editorial";
+import { VERDICT_LABEL } from "./primitives";
+// Stage 2 (visual port): editorial layout primitives — beats 1–2. Stage 3: Spread on the nine
+// sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16).
+import { FlowLine, HangingItem, Labeled, Screen, Spread, VerticalScale, flowColumns } from "./primitives-editorial";
+
+/** Stage 3 — the Spread sidebar for an ActHeader-shaped beat. Same strings in the same DOM order the
+ *  header used: eyebrow → headline → standfirst → subline → count → Why-this (now below the hairline).
+ *  `count` is an existing count element (never a sentence); `extra` is an existing block that moves
+ *  into the sidebar (a banner). */
+function SpreadBeat({
+  eyebrow,
+  headline,
+  standfirst,
+  subline,
+  count,
+  rationale,
+  extra,
+  children,
+}: {
+  eyebrow?: ReactNode;
+  headline: ReactNode;
+  standfirst?: ReactNode;
+  subline?: ReactNode;
+  count?: ReactNode;
+  rationale?: ReactNode;
+  extra?: ReactNode;
+  children: ReactNode;
+}) {
+  const aside = count || rationale || extra ? (
+    <>
+      {count ?? null}
+      {rationale ? <BeatWhy plain>{rationale}</BeatWhy> : null}
+      {extra ?? null}
+    </>
+  ) : undefined;
+  return (
+    <Spread eyebrow={eyebrow} title={headline} lede={standfirst} statement={subline} aside={aside}>
+      {children}
+    </Spread>
+  );
+}
+
+/** Consecutive runs of the same key — a display grouping that never reorders its input. */
+function runsBy<T, K>(items: T[], keyOf: (item: T) => K): Array<{ key: K; items: T[] }> {
+  const out: Array<{ key: K; items: T[] }> = [];
+  for (const it of items) {
+    const k = keyOf(it);
+    const last = out[out.length - 1];
+    if (last && last.key === k) last.items.push(it); else out.push({ key: k, items: [it] });
+  }
+  return out;
+}
 
 // S5 — a small chip marking a row whose backing references a location with a live status conflict.
 function StatusDisputedChip() {
@@ -85,13 +135,13 @@ function StatusConflictBanner({ conflicts }: { conflicts: FRStatusConflict[] }) 
   return (
     <div className="mb-12 flex flex-col gap-6">
       {conflicts.map((c) => (
-        <div key={c.location} className="rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(var(--fr-bad))", background: "hsl(var(--fr-bad) / 0.04)" }}>
+        <div key={c.location} className="fr-conflict-banner rounded-lg border-l-4 p-6" style={{ borderColor: "hsl(var(--fr-bad))", background: "hsl(var(--fr-bad) / 0.04)" }}>
           <div className="mb-3"><StatusDisputedChip /></div>
-          <p className="max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
+          <p className="fr-conflict-question max-w-2xl text-lg font-medium leading-snug">{c.question}</p>
           {/* S4 (2026-08-21): fold identical host+date rows on DISPLAY (×N); the underlying
               duplicate signal rows are untouched. "+n more" counts folded groups, not raw rows, and
               now expands in place (both columns) so every source is reachable. */}
-          <div className="mt-5 grid gap-6 text-xs md:grid-cols-2" style={{ color: "hsl(var(--fr-muted))" }}>
+          <div className="fr-conflict-sources mt-5 grid gap-6 text-xs md:grid-cols-2" style={{ color: "hsl(var(--fr-muted))" }}>
             <SourceColumn label="Reported closed" groups={foldByHostDate(c.closed)} />
             <SourceColumn label="Still listed open" groups={foldByHostDate(c.open)} />
           </div>
@@ -649,28 +699,29 @@ function WeSeeSection({ label, show, children }: { label: string; show: boolean;
  * unearned until per-finding corroboration is real (gate 5a). No verdict language (UNDERSERVED etc.
  * never appears — findings carry no such field).
  */
-export function ActFindings({ read }: { read: FirstReadPreviewData }) {
+export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const [showAll, setShowAll] = useState(false);
   const total = read.findings.length;
   const shown = showAll ? read.findings : read.findings.slice(0, FINDINGS_SHOWN);
   return (
-    <>
-      <ActHeader
-        headline="What stands out."
-        standfirst={FINDINGS_STANDFIRST}
-        rationale={RATIONALE_FINDINGS}
-        right={
-          total > 0 ? (
-            <div className="max-w-xs border-l pl-6 text-right" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-              <Eyebrow>Findings</Eyebrow>
-              <p className="mt-2 text-3xl font-light">{total}</p>
-            </div>
-          ) : undefined
-        }
-      />
-      <main className="fr-stagger">
-        {/* S4: status conflicts pinned ABOVE findings (above recurrence). */}
-        <StatusConflictBanner conflicts={read.statusConflicts} />
+    <SpreadBeat
+      eyebrow={eyebrow}
+      headline="What stands out."
+      standfirst={FINDINGS_STANDFIRST}
+      rationale={RATIONALE_FINDINGS}
+      // The existing count element (eyebrow + number), now in the sidebar — no sentence added.
+      count={
+        total > 0 ? (
+          <div className="fr-side-count">
+            <Eyebrow>Findings</Eyebrow>
+            <p className="fr-display fr-side-count-num">{total}</p>
+          </div>
+        ) : undefined
+      }
+      // S4: status conflicts pinned — in the sidebar below the hairline (stage 3), above nothing else.
+      extra={<StatusConflictBanner conflicts={read.statusConflicts} />}
+    >
+      <main className="fr-stagger fr-rows">
         {/* Integrity-grounded empty state (never array emptiness alone): not-yet vs looked-and-none vs
             couldn't-check, from first_read_findings integrity (evidencePhase1 capture). */}
         {total === 0 && read.statusConflicts.length === 0 ? (
@@ -687,6 +738,7 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
           // `f.recurrence` plumbing stays for 5a but nothing reads from it here.
           <LedgerRow
             key={f.id}
+            variant="hanging"
             // STEP 2a: the finding BODY is OUR reading (synthesis), not a quote — no hanging-quote glyph.
             // Its verbatim cluster-member receipts (rightContent below) keep their glyph, isProvablyVerbatim-gated.
             quoted={false}
@@ -746,7 +798,7 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
           </button>
         </div>
       ) : null}
-    </>
+    </SpreadBeat>
   );
 }
 
@@ -763,16 +815,17 @@ export function ActFindings({ read }: { read: FirstReadPreviewData }) {
  * The prior inference rows (OUR read of the channels) are DEMOTED to a labelled sub-row below.
  * The empty state is grounded in the own-words integrity record (ownWordsLooked), not emptiness.
  */
-export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
+export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const verbatim = read.ownWords.filter((w) => w.fidelity === "verbatim");
   const paraphrased = read.ownWords.filter((w) => w.fidelity === "paraphrased");
   const hasOwn = read.ownWords.length > 0;
   // R2: only the looked-and-none line remains; not-looked renders NO client copy.
   const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : null;
+  // Stage 3: no "Claims you make" string exists, so there is no label column here — each claim keeps
+  // its own existing eyebrow ("In your words" / "As stated on {host}") above the numbered row.
   return (
-    <>
-      <ActHeader headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} rationale={RATIONALE_WHAT_YOU_SAY} />
-      <main className="fr-stagger">
+    <SpreadBeat eyebrow={eyebrow} headline={YOUSAY_HEADLINE} standfirst={YOUSAY_SUB} rationale={RATIONALE_WHAT_YOU_SAY}>
+      <main className="fr-stagger fr-rows">
         {!hasOwn && emptyNote ? <Absent>{emptyNote}</Absent> : null}
         {/* R2: operator-only "Not meeting-ready" line when no own-words run exists (null for the client). */}
         <OwnWordsNotRunNote run={read.ownWordsRun} />
@@ -780,6 +833,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
         {verbatim.map((w) => (
           <LedgerRow
             key={w.id}
+            variant="hanging"
             leftLabel={IN_YOUR_WORDS_LABEL}
             leftBody={w.quote}
             meta={<>{w.sourceTag ? <SourceTag>{w.sourceTag.label}</SourceTag> : null}<OperatorKindTag kind={w.kind ?? null} reason={w.reason ?? null} /></>}
@@ -789,6 +843,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
         {paraphrased.map((w) => (
           <LedgerRow
             key={w.id}
+            variant="hanging"
             quoted={false}
             leftLabel={`As stated on ${w.pageHost}`}
             leftBody={w.quote}
@@ -805,6 +860,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
             {read.declared.map((claim) => (
               <LedgerRow
                 key={claim.id}
+                variant="hanging"
                 muted
                 leftLabel="Our read"
                 leftBody={claim.statement}
@@ -814,7 +870,7 @@ export function ActWhatYouSay({ read }: { read: FirstReadPreviewData }) {
           </div>
         ) : null}
       </main>
-    </>
+    </SpreadBeat>
   );
 }
 
@@ -837,29 +893,29 @@ export function relationshipKindLabel(kind: string | null): string | null {
 
 /** Beat 5 — "Who you serve": the ODI market rows (people + the job), each with its
  *  relationship-kind chip (SeqChip idiom — the surface's neutral chip primitive). */
-export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
+export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   return (
-    <>
-      <ActHeader headline={SERVE_HEADLINE} standfirst={SERVE_SUB} rationale={RATIONALE_SERVE} />
+    <SpreadBeat eyebrow={eyebrow} headline={SERVE_HEADLINE} standfirst={SERVE_SUB} rationale={RATIONALE_SERVE}>
       <main className="fr-stagger">
         {read.observedMarkets.length === 0 ? <Absent>{NO_SERVE_NOTE}</Absent> : null}
-        <div className="flex flex-col gap-10">
+        {/* Stage 3: numbered HangingItems (CSS-counter numerals) — chip · who · job · tag, as before. */}
+        <ol className="fr-hanging-list">
           {read.observedMarkets.map((m) => {
             const kindLabel = relationshipKindLabel(m.relationshipKind);
             return (
-              <div key={m.id} className="flex flex-col gap-2">
-                {kindLabel ? <div><SeqChip>{kindLabel}</SeqChip></div> : null}
-                <p className="max-w-xl text-2xl font-semibold leading-snug">{m.who}</p>
-                {m.job ? (
-                  <p className="max-w-xl text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>{m.job}</p>
-                ) : null}
-                {m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : null}
-              </div>
+              <HangingItem
+                key={m.id}
+                lead={kindLabel ? <SeqChip>{kindLabel}</SeqChip> : undefined}
+                title={m.who}
+                meta={m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : undefined}
+              >
+                {m.job ? <p className="fr-hanging-text">{m.job}</p> : null}
+              </HangingItem>
             );
           })}
-        </div>
+        </ol>
       </main>
-    </>
+    </SpreadBeat>
   );
 }
 
@@ -868,9 +924,9 @@ export function ActWhoYouServe({ read }: { read: FirstReadPreviewData }) {
  *  flex item so wrapped lines align under the text column. Each cell is label (bold) + statement +
  *  the quiet code-derived source line. Numbering is continuous across groups (startIndex). */
 function OfferGroup({ label, items, startIndex }: { label: string; items: FROfferItem[]; startIndex: number }) {
+  // Stage 3: label column (the existing group eyebrow, real DOM text) + the numbered list.
   return (
-    <div className="flex flex-col gap-6">
-      <Eyebrow>{label}</Eyebrow>
+    <Labeled label={<Eyebrow>{label}</Eyebrow>}>
       <ol className="flex flex-col gap-8">
         {items.map((it, i) => (
           <li key={`${it.label}-${i}`} className="flex gap-4">
@@ -880,12 +936,12 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
             <div className="flex max-w-xl flex-col gap-1">
               <p className="text-sm font-semibold leading-snug">{it.label}</p>
               <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{it.statement}</p>
-              <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>{offerSourceLine(it)}</p>
+              <p className="fr-hanging-meta fr-mono">{offerSourceLine(it)}</p>
             </div>
           </li>
         ))}
       </ol>
-    </div>
+    </Labeled>
   );
 }
 
@@ -894,7 +950,7 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
  *  language, no decorative rules — the only vertical rule is the header's Why-this divider. Earned-empty
  *  renders from the persisted integrity record's three honest states, never from an empty query. Open
  *  questions route to the Questions beat (via the shared open-question list), never onto this beat. */
-export function ActWhatYouOffer({ read }: { read: FirstReadPreviewData }) {
+export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const off = read.offering;
   const own = off ? off.items.filter((i) => i.seenOn === "own_site") : [];
   const outside = off ? off.items.filter((i) => i.seenOn === "outside") : [];
@@ -905,9 +961,13 @@ export function ActWhatYouOffer({ read }: { read: FirstReadPreviewData }) {
         ? offerLookedLine(read.offeringExamined ?? 0, read.offeringThroughDate)
         : OFFER_NOT_YET;
   return (
-    <>
-      <div className="mb-4"><Eyebrow>{OFFER_EYEBROW}</Eyebrow></div>
-      <ActHeader headline={OFFER_HEADLINE} standfirst={OFFER_SUB} rationale={OFFER_WHY} />
+    // Stage 3: both existing eyebrows (the beat label, then FROM THE RECORD) stack in the sidebar.
+    <SpreadBeat
+      eyebrow={<><span>{eyebrow}</span><span>{OFFER_EYEBROW}</span></>}
+      headline={OFFER_HEADLINE}
+      standfirst={OFFER_SUB}
+      rationale={OFFER_WHY}
+    >
       <main className="fr-stagger">
         {off ? (
           <div className="flex flex-col gap-12">
@@ -924,7 +984,7 @@ export function ActWhatYouOffer({ read }: { read: FirstReadPreviewData }) {
           {OFFER_CLOSING}
         </p>
       </main>
-    </>
+    </SpreadBeat>
   );
 }
 
@@ -1214,7 +1274,7 @@ export function ActSiesta2() {
   );
 }
 
-export function ActRecord({ read }: { read: FirstReadPreviewData }) {
+export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const shown = read.signals.slice(0, SHOWN_FULL_SIZE);
   const further = read.signals.slice(SHOWN_FULL_SIZE);
@@ -1223,34 +1283,46 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
     moderate: further.filter((s) => s.strength === "moderate").length,
     thin: further.filter((s) => s.strength === "thin").length,
   };
+  // Stage 3: the shown rows sit under strength group headers (strong → moderate → thin). The header
+  // word is the row chip's own "{strength} signal", drawn by CSS from the attribute — never a second
+  // string. Rows keep their relative order inside a tier.
+  const tiers = (["strong", "moderate", "thin"] as const)
+    .map((t) => ({ t, rows: shown.filter((s) => s.strength === t) }))
+    .filter((g) => g.rows.length > 0);
   return (
-    <>
-      <ActHeader
-        headline={WORLD_HEADLINE}
-        standfirst={WORLD_SUB}
-        right={
-          <div className="max-w-xs border-l pl-6" style={{ borderColor: "hsl(var(--fr-hair))" }}>
-            <Eyebrow>Why outside first</Eyebrow>
-            <p className="mt-3 text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              We read the outside first because it is neutral ground: not our opinion, not yours. It gives an observable starting point before the internal conversation begins.
-            </p>
-          </div>
-        }
-      />
-      <main className="fr-stagger">
+    <SpreadBeat
+      eyebrow={eyebrow}
+      headline={WORLD_HEADLINE}
+      standfirst={WORLD_SUB}
+      // The record page's own note (not a RATIONALE_* line) — the same two strings, now in the sidebar.
+      count={
+        <div className="fr-why">
+          <Eyebrow>Why outside first</Eyebrow>
+          <p className="fr-why-text">
+            We read the outside first because it is neutral ground: not our opinion, not yours. It gives an observable starting point before the internal conversation begins.
+          </p>
+        </div>
+      }
+    >
+      <main className="fr-stagger fr-rows">
         {read.signals.length === 0 ? <Absent>{NO_SIGNALS_NOTE}</Absent> : null}
-        {shown.map((signal) => (
-          <LedgerRow
-            key={signal.id}
-            leftLabel={signal.strength === "strong" ? "Outside" : "Outside"}
-            // Gate 1: an outside excerpt renders UN-QUOTED (no false verbatim claim); stray stored
-            // quote chars are trimmed so no orphan mark remains beside the attribution. Own-words
-            // verbatim (provablyVerbatim) keeps its quote.
-            leftBody={signal.provablyVerbatim ? signal.text : stripEdgeQuotes(signal.text)}
-            quoted={signal.provablyVerbatim}
-            muted={signal.strength !== "strong"}
-            meta={signalMeta(signal)}
-          />
+        {tiers.map((g) => (
+          <Labeled key={g.t} groupWord={`${g.t} signal`} tier={g.t}>
+            {g.rows.map((signal) => (
+              <LedgerRow
+                key={signal.id}
+                variant="hanging"
+                leftLabel={signal.strength === "strong" ? "Outside" : "Outside"}
+                // Gate 1: an outside excerpt renders UN-QUOTED (no false verbatim claim); stray stored
+                // quote chars are trimmed so no orphan mark remains beside the attribution. Own-words
+                // verbatim (provablyVerbatim) keeps its quote.
+                leftBody={signal.provablyVerbatim ? signal.text : stripEdgeQuotes(signal.text)}
+                quoted={signal.provablyVerbatim}
+                muted={signal.strength !== "strong"}
+                meta={signalMeta(signal)}
+              />
+            ))}
+          </Labeled>
         ))}
       </main>
       {further.length > 0 ? (
@@ -1307,73 +1379,45 @@ export function ActRecord({ read }: { read: FirstReadPreviewData }) {
           ) : null}
         </div>
       ) : null}
-    </>
+    </SpreadBeat>
   );
 }
 
-/** Score reveal — the Mojo Score band ladder, between Act 2 and Act 3. */
-export function ScoreReveal({ read }: { read: FirstReadPreviewData }) {
+/** Score reveal — the Mojo Score scale. Stage 3: the sidebar carries eyebrow → the number (ScoreNow,
+ *  display size, band as subline) → headline → standfirst → ANCHOR_LINE → RATIONALE_SCORE; the right
+ *  column is the VerticalScale (five bands from scoreBands.ts, marker at the score). Same strings. */
+export function ScoreReveal({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const score = read.score?.value ?? null;
   const active = score !== null ? bandForScore(score) : null;
-  const ladder = [...SCORE_BANDS].reverse();
   // S1: the empty state is grounded in the outside-score PRODUCER record (first_read_outside_score) —
   // 'ineligible' → the producer ran and <10 outside signals cleared the floor (NOT_ENOUGH); no record →
   // the producer never fired (NO_SCORE). Never baseline-ran-ness, never absent-by-omission: the Mojo
   // Score beat is always mounted (product law). A present score row renders the band, not a note.
   const emptyNote = read.outsideScoreState === "ineligible" ? NOT_ENOUGH_SIGNAL_NOTE : NO_SCORE_NOTE;
   return (
-    <>
-      <ActHeader
-        headline="One number, read from the record."
-        standfirst="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
-        rationale={RATIONALE_SCORE}
-        subline={ANCHOR_LINE}
-        // The Mojo Score number lives here, beside the title (moved from the gap header,
-        // ruling 2026-08-20) — so it appears exactly once, in its own beat.
-        right={read.score ? <ScoreNow now={read.score.value} band={active?.name} /> : undefined}
-      />
-      <div className="fr-stagger mx-auto max-w-xl">
+    <Spread
+      eyebrow={eyebrow}
+      // The Mojo Score number lives here, in its own beat (ruling 2026-08-20) — exactly once.
+      lead={read.score ? <ScoreNow now={read.score.value} band={active?.name} display /> : undefined}
+      title="One number, read from the record."
+      lede="The Mojo Score is the likelihood your strategy succeeds. In this phase it is read only from public signals — it moves when evidence lands, not when opinion changes."
+      statement={ANCHOR_LINE}
+      aside={<BeatWhy plain>{RATIONALE_SCORE}</BeatWhy>}
+    >
+      <div className="fr-stagger">
         {score === null ? (
           <div className="mb-10">
             <Absent>{emptyNote}</Absent>
           </div>
         ) : null}
-        {ladder.map((band) => {
-          const isActive = active !== null && band.name === active.name;
-          const fraction = score !== null ? (band.max - score) / (band.max - band.min) : 0.5;
-          return (
-            <div
-              key={band.name}
-              className={`fr-band relative flex items-center justify-between gap-10 border-b px-6 ${
-                isActive ? "fr-band-active" : ""
-              }`}
-              style={{ borderColor: "hsl(var(--fr-hair))" }}
-            >
-              <span className="fr-eyebrow shrink-0">{band.min}–{band.max}</span>
-              <span className="flex max-w-md flex-col text-right">
-                <span className={isActive ? "text-lg font-semibold" : "text-lg font-light"} style={isActive ? undefined : { color: "hsl(var(--fr-faint))" }}>
-                  {band.name}
-                </span>
-                <span className={`fr-band-desc mt-1 text-xs font-light leading-relaxed ${isActive ? "" : "fr-band-desc-dim"}`}>
-                  {band.description}
-                </span>
-              </span>
-              {isActive && score !== null ? (
-                <span
-                  className="fr-band-marker"
-                  style={{ top: `${Math.min(Math.max(fraction, 0.12), 0.88) * 100}%` }}
-                >
-                  <span className="fr-band-marker-dot" aria-hidden />
-                  <span className="fr-eyebrow" style={{ color: "hsl(var(--fr-accent))" }}>
-                    {read.company?.name ?? ""} · {score}
-                  </span>
-                </span>
-              ) : null}
-            </div>
-          );
-        })}
+        <VerticalScale
+          bands={SCORE_BANDS}
+          score={score}
+          activeName={active?.name ?? null}
+          markerLabel={score !== null ? <>{read.company?.name ?? ""} · {score}</> : undefined}
+        />
       </div>
-    </>
+    </Spread>
   );
 }
 
@@ -1466,7 +1510,7 @@ function StatementEvidence({ statement, struck = [] }: { statement: FRGapStateme
   );
 }
 
-export function ActGap({ read }: { read: FirstReadPreviewData }) {
+export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   // RESOLVED-STATES-ONLY (operator ruling 2026-08-27, SUPERSEDES A2's display treatment): the CLIENT
   // surface shows ONLY resolved states — verdict rows with visible evidence, and not-echoed rows.
   // 'reverifying' is process narration (misattributed under YOU SAY) and indefinite while its sources
@@ -1485,16 +1529,20 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
   // OPERATOR OVERRIDE (stage 3): struck pairs by statement, from the raw pairs (they are omitted from
   // `evidence` upstream). Consumed only by the context-gated operator block — inert on client surfaces.
   const struckByStatement = struckPairsByStatement(read.gapPairs);
+  // Stage 3: statements are already ordered contradicted → not-echoed → confirmed, so grouping by
+  // verdict is a run split (no reorder). The group header word is the statement chip's own verdict
+  // label (VERDICT_LABEL), drawn by CSS from the attribute; chips stay on every statement.
+  const groups = runsBy(visible, (s) => s.verdict);
   return (
-    <>
-      {/* No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
-          beat (beat 7). The gap renders only its integrity note or the pairs. */}
-      <ActHeader
-        headline={gapHeadline(visibleCounts)}
-        // Signed (string sheet, 2026-08-21). Standfirst NAMES the visible counts.
-        standfirst={gapStandfirst(visibleCounts)}
-        rationale={RATIONALE_GAP}
-      />
+    <SpreadBeat
+      eyebrow={eyebrow}
+      // No score in the gap (ruling 2026-08-20): the Mojo Score is introduced at its own
+      // beat (beat 7). The gap renders only its integrity note or the pairs.
+      headline={gapHeadline(visibleCounts)}
+      // Signed (string sheet, 2026-08-21). Standfirst NAMES the visible counts.
+      standfirst={gapStandfirst(visibleCounts)}
+      rationale={RATIONALE_GAP}
+    >
       {/* Coherence note (2026-08-22): a rung-1 status conflict with ZERO contradicted statements —
           the dispute is source-vs-source, not your-words-vs-record. Shown ONLY in that clean case.
           BOTH gates read the DATA state (read.gapCounts), NOT the rendered surface: a held contradiction
@@ -1507,7 +1555,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
           {STATUS_VS_GAP_COHERENCE_NOTE}
         </p>
       ) : null}
-      <main className="fr-stagger">
+      <main className="fr-stagger fr-rows">
         {read.gapStatements.length === 0 ? (
           <Absent>
             {read.gapIntegrity === "couldnt_check"
@@ -1520,32 +1568,39 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
         {/* One row per RESOLVED STATEMENT. Confirmed/contradicted statements list their pair evidence
             beneath; not-echoed statements carry the signed record-silent line once. Re-verifying
             statements are excluded above (operator workbench) — no rows, no group, no note. */}
-        {visible.map((statement) => {
-          // The contradiction "why" — THREE TIERS: (1) the freshly generated grounded "what differs"
-          // explanation; else (2) the stored grounded judged reason; else (3) the derived line. Null
-          // for confirmed/not-echoed. Rendered under the declared text (leftExtra).
-          const why = statement.verdict === "contradicted"
-            ? conflictExplanationFor(statement) ?? judgedContradictionReason(statement) ?? deriveContradictionWhy(statement)
-            : null;
-          return (
-            <LedgerRow
-              key={statement.statementId}
-              leftLabel="You say"
-              leftBody={statement.declared || UNSPOKEN_LEFT}
-              quoted={statement.declared !== ""}
-              muted={statement.verdict === "unechoed"}
-              leftExtra={why ? <ContradictionWhy text={why} /> : null}
-              // One STATUS DISPUTED chip per statement, set only when the statement has VISIBLE evidence.
-              meta={
-                <>
-                  <VerdictChip verdict={statement.verdict} />
-                  {statement.statusDisputed ? <StatusDisputedChip /> : null}
-                </>
-              }
-              rightContent={<StatementEvidence statement={statement} struck={struckByStatement.get(statement.statementId) ?? []} />}
-            />
-          );
-        })}
+        {groups.map((g) => (
+          <Labeled key={g.key} groupWord={VERDICT_LABEL[g.key]} tier={g.key}>
+            {g.items.map((statement) => {
+              // The contradiction "why" — THREE TIERS: (1) the freshly generated grounded "what differs"
+              // explanation; else (2) the stored grounded judged reason; else (3) the derived line. Null
+              // for confirmed/not-echoed. Rendered under the declared text (leftExtra).
+              const why = statement.verdict === "contradicted"
+                ? conflictExplanationFor(statement) ?? judgedContradictionReason(statement) ?? deriveContradictionWhy(statement)
+                : null;
+              return (
+                <LedgerRow
+                  key={statement.statementId}
+                  variant="hanging"
+                  dataVerdict={statement.verdict}
+                  leftLabel="You say"
+                  leftBody={statement.declared || UNSPOKEN_LEFT}
+                  quoted={statement.declared !== ""}
+                  // Stage 3 weight (signed): not-echoed reads ink/bold, echoed reads steel/regular.
+                  muted={statement.verdict === "confirmed"}
+                  leftExtra={why ? <ContradictionWhy text={why} /> : null}
+                  // One STATUS DISPUTED chip per statement, set only when the statement has VISIBLE evidence.
+                  meta={
+                    <>
+                      <VerdictChip verdict={statement.verdict} />
+                      {statement.statusDisputed ? <StatusDisputedChip /> : null}
+                    </>
+                  }
+                  rightContent={<StatementEvidence statement={statement} struck={struckByStatement.get(statement.statementId) ?? []} />}
+                />
+              );
+            })}
+          </Labeled>
+        ))}
       </main>
       {/* R4 — the reverse arrow, "Raised by the record" (2026-08-27): the say-vs-see MIRROR half. Renders
           the record statements that raise something the declared voice is silent on. RESOLVED-STATES LAW:
@@ -1564,7 +1619,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
           </p>
           <div className="fr-stagger flex flex-col">
             {read.reverseRows.map((row) => (
-              <div key={row.id} className="fr-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
+              <div key={row.id} className="fr-row fr-reverse-row border-b py-8" style={{ borderColor: "hsl(var(--fr-hair))" }}>
                 <p className="text-lg font-light leading-relaxed">{row.statement}</p>
                 {row.sourceTag ? <div className="mt-3"><SourceTag>{row.sourceTag.label}</SourceTag></div> : null}
               </div>
@@ -1572,7 +1627,7 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
           </div>
         </section>
       ) : null}
-    </>
+    </SpreadBeat>
   );
 }
 
@@ -1581,22 +1636,19 @@ export function ActGap({ read }: { read: FirstReadPreviewData }) {
 // DATA state is untouched (groupGapStatements + the held-echo carve-out still compute and protect it);
 // its on-screen home is deferred to item 23 (operator-only view), which will build fresh from the query.
 
-/** Base gate — interstitial beat between Act 3 (Gap) and Act 4. */
-export function BaseGate() {
+/** Base gate — interstitial beat between Act 3 (Gap) and Act 4. Stage 3: a Spread — sidebar carries
+ *  both existing eyebrows (the beat label, then "Before the map"), the headline, the two paragraphs
+ *  and the BeatWhy rationale; the right column is the existing BaseAlignment (toggle + SVG + caption). */
+export function BaseGate({ eyebrow }: { eyebrow?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center pt-8 text-center">
+    <Spread
+      eyebrow={<><span>{eyebrow}</span><span>Before the map</span></>}
+      title={<>A strong base <span>changes your odds.</span></>}
+      lede={<>Every choice downstream inherits its strength — or its cracks. Aligning it comes first.</>}
+      statement={<>Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.</>}
+      aside={<BeatWhy plain>{RATIONALE_BASE}</BeatWhy>}
+    >
       <div className="fr-stagger flex w-full flex-col items-center">
-        <Eyebrow>Before the map</Eyebrow>
-        <h1 className="mt-6 text-5xl font-extralight tracking-tight md:text-6xl">
-          A strong base <span className="font-semibold">changes your odds.</span>
-        </h1>
-        <p className="mt-6 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-          Every choice downstream inherits its strength — or its cracks. Aligning it comes first.
-        </p>
-        <p className="mt-8 max-w-xl text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>
-          Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.
-        </p>
-        <div className="mt-8"><BeatWhy>{RATIONALE_BASE}</BeatWhy></div>
         {/* R1: marketNote (MARKET_POINTER_NOTE) removed — "Who you serve" now precedes the Base. */}
         <BaseAlignment
           pairs={allUntestedPairs(PAIRS_UNCOMPUTED_TITLE)}
@@ -1604,19 +1656,19 @@ export function BaseGate() {
           goalCaption="When your base is aligned, you look like one company."
         />
       </div>
-    </div>
+    </Spread>
   );
 }
 
 /** Questions beat — the open questions this read raises (own beat per the beat order). */
-export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
+export function ActQuestions({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   return (
-    <>
-      <ActHeader
-        headline="Questions this read raises."
-        standfirst={QUESTIONS_STANDFIRST}
-        rationale={RATIONALE_QUESTIONS}
-      />
+    <SpreadBeat
+      eyebrow={eyebrow}
+      headline="Questions this read raises."
+      standfirst={QUESTIONS_STANDFIRST}
+      rationale={RATIONALE_QUESTIONS}
+    >
       <main className="fr-stagger">
         {/* S4: status conflicts pinned ABOVE all questions. */}
         <StatusConflictBanner conflicts={read.statusConflicts} />
@@ -1633,10 +1685,11 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
             </Absent>
           ) : null
         ) : (
-          <ol className="space-y-8">
+          // Stage 3: two columns on desktop (CSS columns), one below lg. Numerals are existing text.
+          <ol className="fr-questions">
             {read.questions.map((question, index) => (
               <li key={question} className="flex gap-6">
-                <span className="pt-1 text-[10px] font-bold tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+                <span className="pt-1 text-[10px] font-bold tracking-widest fr-mono" style={{ color: "hsl(var(--fr-faint))" }}>
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <p className="text-lg font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{question}</p>
@@ -1645,7 +1698,7 @@ export function ActQuestions({ read }: { read: FirstReadPreviewData }) {
           </ol>
         )}
       </main>
-    </>
+    </SpreadBeat>
   );
 }
 

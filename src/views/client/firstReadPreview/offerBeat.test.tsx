@@ -108,8 +108,10 @@ describe("(c) no chips, no § icons, exactly one vertical rule (the Why-this div
   it("zero § section icons", () => {
     expect(renderOffer(withOffering(ITEMS)).textContent ?? "").not.toContain("§");
   });
-  it("the only left-border (vertical rule) element is the BeatWhy divider", () => {
-    expect(renderOffer(withOffering(ITEMS)).querySelectorAll('[class*="border-l"]').length).toBe(1);
+  it("no vertical rule at all — the Why-this rationale sits under the sidebar hairline (stage 3)", () => {
+    // Pre-stage-3 the one allowed vertical rule was the header's BeatWhy divider. The Spread sidebar
+    // renders the rationale below a horizontal hairline instead, so the beat now carries zero.
+    expect(renderOffer(withOffering(ITEMS)).querySelectorAll('[class*="border-l"]').length).toBe(0);
   });
 });
 
