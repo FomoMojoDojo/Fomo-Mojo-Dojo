@@ -4,6 +4,11 @@
 // unknown — no element-pair verdict compute exists yet; Phase C, behind the
 // proof-category verdict gate). The caption states the uncomputed condition
 // honestly — it never claims states were read from the record when none were.
+//
+// Stage 3b (visual port): the "today" view is rebuilt to the capture — four HTML nodes (outer ink
+// ring, inner lime ring), numbered 01–04 by CSS counter (display only, never DOM text), node name mono
+// uppercase, sub-descriptor beneath; dashed connectors between all six pairs on an SVG underlay with
+// the pair-state tag on each. The "See it aligned" toggle and the aligned view are kept.
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
@@ -32,9 +37,13 @@ export function allUntestedPairs(readFrom: string): BasePairInput[] {
   return PAIR_KEYS.map(([a, b]) => ({ a, b, state: "untested", readFrom }));
 }
 
-const TODAY_R = 58;
+// Layout space (the SVG underlay's viewBox); node positions are converted to percentages.
+const W = 640;
+const H = 420;
+const TODAY_R = 66;
 const GOAL_CENTER = { x: 320, y: 218 };
 
+/** Reading order = numbering order (01 Strategy, 02 Positioning, 03 Who you serve, 04 Promise). */
 const ELEMENTS: {
   key: BaseElementKey;
   label: string;
@@ -43,10 +52,10 @@ const ELEMENTS: {
   goalR: number;
 }[] = [
   { key: "strategy", label: "Strategy", sub: "what you're doing", today: { x: 300, y: 95 }, goalR: 70 },
-  { key: "market", label: "Who you serve", sub: "who's critical to your success", today: { x: 90, y: 272 }, goalR: 48 },
-  // Positioning carries anchor weight — heavier indigo stroke, outermost ring.
-  { key: "positioning", label: "Positioning", sub: "why you win", today: { x: 385, y: 140 }, goalR: 92 },
-  { key: "promise", label: "Promise", sub: "what you promise", today: { x: 245, y: 352 }, goalR: 26 },
+  // Positioning carries anchor weight — heavier ring, outermost in the aligned view.
+  { key: "positioning", label: "Positioning", sub: "why you win", today: { x: 470, y: 150 }, goalR: 92 },
+  { key: "market", label: "Who you serve", sub: "who's critical to your success", today: { x: 140, y: 275 }, goalR: 48 },
+  { key: "promise", label: "Promise", sub: "what you promise", today: { x: 370, y: 330 }, goalR: 26 },
 ];
 
 const STATE_LABEL: Record<PairState, string> = {
@@ -65,20 +74,7 @@ const STATE_COLOR: Record<PairState, string> = {
 const STATE_DASH: Record<PairState, string | undefined> = {
   confirmed: undefined,
   contradicted: "7 7",
-  untested: "2 7",
-};
-
-/** Per-pair tag placement (aesthetic only — states come from data). */
-const PAIR_LAYOUT: Record<
-  string,
-  { tag: { x: number; y: number }; leader?: { from: number; to: number } }
-> = {
-  "market-strategy": { tag: { x: 195, y: 184 } },
-  "strategy-positioning": { tag: { x: 358, y: 44 }, leader: { from: 52, to: 82 } },
-  "promise-strategy": { tag: { x: 269, y: 238 } },
-  "market-positioning": { tag: { x: 208, y: 219 } },
-  "market-promise": { tag: { x: 154, y: 328 } },
-  "positioning-promise": { tag: { x: 306, y: 260 } },
+  untested: "4 6",
 };
 
 function elementFor(key: BaseElementKey) {
@@ -87,11 +83,7 @@ function elementFor(key: BaseElementKey) {
   return el;
 }
 
-function edgePoint(
-  from: { x: number; y: number },
-  toward: { x: number; y: number },
-  r: number,
-) {
+function edgePoint(from: { x: number; y: number }, toward: { x: number; y: number }, r: number) {
   const dx = toward.x - from.x;
   const dy = toward.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
@@ -115,61 +107,42 @@ export default function BaseAlignment({
   const [aligned, setAligned] = useState(false);
 
   return (
-    <div className="mt-16 flex w-full max-w-[640px] flex-col items-center">
-      <svg
-        viewBox="0 0 640 420"
-        className="w-full"
-        role="img"
-        aria-label={
-          aligned
-            ? "Goal state: the four base elements stacked concentrically as one aligned base"
-            : "Today: the four base elements with their pair states"
-        }
-      >
-        {/* Connectors + pair-state tags — today only. */}
-        <g
-          className="fr-align-overlay"
-          style={{ opacity: aligned ? 0 : 1 }}
+    <div className="fr-base mt-6 flex w-full max-w-[720px] flex-col items-center">
+      <div className="fr-base-stage" data-aligned={aligned ? "true" : "false"}>
+        {/* Connectors + pair-state tags — today only (SVG underlay). */}
+        <svg
+          className="fr-base-links"
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
           aria-hidden={aligned}
+          style={{ opacity: aligned ? 0 : 1 }}
         >
           {pairs.map((pair) => {
             const a = elementFor(pair.a);
             const b = elementFor(pair.b);
-            const layout = PAIR_LAYOUT[`${pair.a}-${pair.b}`];
-            if (!layout) return null;
             const color = STATE_COLOR[pair.state];
-            const start = edgePoint(a.today, b.today, TODAY_R);
-            const end = edgePoint(b.today, a.today, TODAY_R);
-            const overlapping = pair.state === "confirmed" && !!layout.leader;
+            const start = edgePoint(a.today, b.today, TODAY_R + 4);
+            const end = edgePoint(b.today, a.today, TODAY_R + 4);
+            const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
             return (
               <g key={`${pair.a}-${pair.b}`}>
                 <title>{pair.readFrom}</title>
-                {!overlapping ? (
-                  <path
-                    d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={pair.state === "contradicted" ? 1.5 : 1}
-                    strokeDasharray={STATE_DASH[pair.state]}
-                    opacity={pair.state === "untested" ? 0.7 : 1}
-                  />
-                ) : (
-                  <line
-                    x1={layout.tag.x}
-                    y1={layout.leader!.from}
-                    x2={layout.tag.x}
-                    y2={layout.leader!.to}
-                    stroke={color}
-                    strokeWidth={1}
-                  />
-                )}
+                <path
+                  d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={pair.state === "contradicted" ? 1.5 : 1}
+                  strokeDasharray={STATE_DASH[pair.state]}
+                  opacity={pair.state === "untested" ? 0.8 : 1}
+                  vectorEffect="non-scaling-stroke"
+                />
                 <text
                   className="fr-align-tag"
-                  x={layout.tag.x}
-                  y={layout.tag.y}
+                  x={mid.x}
+                  y={mid.y - 6}
                   textAnchor="middle"
                   fontSize={9}
-                  fontWeight={700}
+                  fontWeight={500}
                   letterSpacing="0.18em"
                   fill={color}
                 >
@@ -178,79 +151,43 @@ export default function BaseAlignment({
               </g>
             );
           })}
-        </g>
+        </svg>
 
-        {/* The four base elements. */}
-        {ELEMENTS.map((el) => {
-          const center = aligned ? GOAL_CENTER : el.today;
-          const r = aligned ? el.goalR : TODAY_R;
-          const labelOffset = aligned ? { x: 0, y: -(r + 10) } : { x: 0, y: -2 };
-          const anchor = el.key === "positioning";
-          return (
-            <g
-              key={el.key}
-              className="fr-align-el"
-              style={{ transform: `translate(${center.x}px, ${center.y}px)` }}
-            >
-              <circle
-                className="fr-align-circle"
-                data-anchor={anchor ? "true" : undefined}
-                style={{ "--fr-align-r": `${r}px` } as CSSProperties}
-              />
-              <g
-                className="fr-align-label"
-                style={{ transform: `translate(${labelOffset.x}px, ${labelOffset.y}px)` }}
-              >
-                <text
-                  textAnchor="middle"
-                  fontSize={10}
-                  fontWeight={700}
-                  letterSpacing="0.2em"
-                  fill={anchor ? "hsl(var(--fr-accent))" : "hsl(var(--fr-ink))"}
-                >
-                  {el.label.toUpperCase()}
-                </text>
-                {/* Plain-words line from the base definition; fades in goal state. */}
-                <text
-                  className="fr-align-sublabel"
-                  style={{ opacity: aligned ? 0 : 1 }}
-                  y={14}
-                  textAnchor="middle"
-                  fontSize={8}
-                  fontWeight={500}
-                  letterSpacing="0.04em"
-                  fill="hsl(var(--fr-muted))"
-                >
-                  {el.sub}
-                </text>
-                {/* Market pointer (today only) — links the circle back to the "Who you
-                    serve" beat. DRAFT, operator signs. */}
-                {el.key === "market" && marketNote && !aligned ? (
-                  <text
-                    className="fr-align-sublabel"
-                    y={26}
-                    textAnchor="middle"
-                    fontSize={7}
-                    fontWeight={700}
-                    letterSpacing="0.08em"
-                    fill="hsl(var(--fr-accent))"
-                  >
-                    {marketNote}
-                  </text>
-                ) : null}
-              </g>
-            </g>
-          );
-        })}
-      </svg>
+        {/* The four base elements — HTML nodes; numerals are CSS counters. */}
+        <ol className="fr-base-nodes">
+          {ELEMENTS.map((el) => {
+            const center = aligned ? GOAL_CENTER : el.today;
+            const r = aligned ? el.goalR : TODAY_R;
+            const anchor = el.key === "positioning";
+            const style = {
+              left: `${(center.x / W) * 100}%`,
+              top: `${(center.y / H) * 100}%`,
+              width: `${((r * 2) / W) * 100}%`,
+            } as CSSProperties;
+            return (
+              <li key={el.key} className="fr-base-node" data-anchor={anchor ? "true" : undefined} data-key={el.key} style={style}>
+                <div className="fr-base-node-inner">
+                  <span className="fr-base-node-num fr-mono" aria-hidden />
+                  <span className="fr-base-node-label fr-mono">{el.label.toUpperCase()}</span>
+                  {/* Plain-words line from the base definition; fades in goal state. */}
+                  <span className="fr-base-node-sub" style={{ opacity: aligned ? 0 : 1 }}>{el.sub}</span>
+                  {/* Market pointer (today only) — links the circle back to the "Who you
+                      serve" beat. DRAFT, operator signs. */}
+                  {el.key === "market" && marketNote && !aligned ? (
+                    <span className="fr-base-node-note fr-mono">{marketNote}</span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
 
       <div className="mt-8 flex flex-col items-center gap-2 text-center">
         {aligned ? (
           <>
             <Eyebrow>Goal state</Eyebrow>
-            <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-muted))" }}>
-              {goalCaption}
-            </p>
+            <p className="fr-base-caption">{goalCaption}</p>
           </>
         ) : (
           <Eyebrow>{caption}</Eyebrow>
@@ -260,7 +197,7 @@ export default function BaseAlignment({
       <button
         type="button"
         onClick={() => setAligned((current) => !current)}
-        className="fr-link-ink group mt-6 text-xs font-bold uppercase tracking-[0.2em] transition-colors"
+        className="fr-link-ink group mt-6 text-xs font-bold uppercase tracking-[0.2em] transition-colors fr-mono"
       >
         {aligned ? (
           <>

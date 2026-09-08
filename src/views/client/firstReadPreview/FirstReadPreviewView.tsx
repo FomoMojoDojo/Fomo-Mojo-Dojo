@@ -88,6 +88,9 @@ export const BEATS = [
 const EYEBROW_IN_BODY: ReadonlySet<string> = new Set([
   "arc", "next", "siesta1", "siesta2",
   "record", "yousay", "gap", "findings", "serve", "base", "offer", "score", "questions",
+  // Stage 3b: the dark Screens use their own PROMISE_TITLE / POSITIONING_TITLE / STRATEGY_TITLE (the
+  // same words as the nav label) as the eyebrow — so the label renders once, not twice.
+  "promise", "positioning", "strategy",
 ]);
 
 /** react-query is present under the app router; a bare test mount has no client — invalidation is then a no-op. */
@@ -291,7 +294,7 @@ export default function FirstReadPreviewView() {
     // D1: a siesta is visibly a break — full-page accent ground (--fr-accent), white type. The break
     // class scopes the inversion of the header + progress ticks so they stay legible (never global).
     <OperatorControlsContext.Provider value={operatorControls}>
-    <div className={`first-read${isSiesta ? " fr-siesta" : ""}${FIRST_READ_SHOW_NAV_CHROME ? " fr-has-nav" : ""}`}>
+    <div className={`first-read${isSiesta ? " fr-siesta" : ""}${beat.key === "siesta2" ? " fr-siesta--dark" : ""}${FIRST_READ_SHOW_NAV_CHROME ? " fr-has-nav" : ""}`}>
       {/* Stage 2 shell: the sticky header carries the same two strings the old in-body nav did
           ("First read" + identity) and the progress segments, on EVERY beat (the cold open included).
           The "NN / N" counter is new text, so it is gated with the nav chrome (off by default). */}

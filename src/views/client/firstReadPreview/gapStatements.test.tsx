@@ -104,13 +104,14 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     expect(text).toContain("You say you provide expert youth care; indeed.com reports a former employee left over safety concerns.");
     expect(text).not.toContain("public statement contradicts declared mission of care"); // tier 2 not used
     expect(text).not.toContain("tells a different story"); // tier 3 not used
-    // placement unchanged: why precedes the chip and the pairs
+    // placement (stage 3b): the verdict chip sits ABOVE the statement, so the chip precedes the why line;
+    // the why line still precedes the pairs.
     const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("indeed.com reports a former employee"))!;
     const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Disputed" && e.children.length === 0)!;
-    expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chipEl.compareDocumentPosition(whyP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("TIER 2: judged reason shown when no fresh explanation; placement declared → why label → why line → chip → pairs", () => {
+  it("TIER 2: judged reason shown when no fresh explanation; placement chip → declared → why label → why line → pairs", () => {
     const { container } = render(<ActGap read={contraRead({ judgeReason: "employee review contradicts the declared supportive model" })} />);
     const text = container.textContent ?? "";
     const iDeclared = text.indexOf("We are the best clinic.");
@@ -120,16 +121,16 @@ describe("beat 4 — group by statement (2026-08-21)", () => {
     const iPair = text.indexOf("A critical review says otherwise.");
     expect(iReason).toBeGreaterThanOrEqual(0); // JUDGED reason shown, not the derived line
     expect(text).not.toContain("tells a different story"); // derived line retired from render when judged passes
-    // DOM order: declared text → why label → why line → chip → pairs
+    // DOM order (stage 3b — chips ABOVE the statement): chip → declared text → why label → why line → pairs
+    expect(iChip).toBeLessThan(iDeclared);
     expect(iDeclared).toBeLessThan(iLabel);
     expect(iLabel).toBeLessThan(iReason);
-    expect(iReason).toBeLessThan(iChip);
-    expect(iChip).toBeLessThan(iPair);
-    // structural: the why block is a PRECEDING sibling of BOTH the chip and the pair list
+    expect(iReason).toBeLessThan(iPair);
+    // structural: the chip precedes the why block; the why block precedes the pair list
     const whyP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("employee review"))!;
     const chipEl = [...container.querySelectorAll("*")].find((e) => (e.textContent ?? "").trim() === "Disputed" && e.children.length === 0)!;
     const pairP = [...container.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("A critical review says otherwise."))!;
-    expect(whyP.compareDocumentPosition(chipEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chipEl.compareDocumentPosition(whyP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(whyP.compareDocumentPosition(pairP) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

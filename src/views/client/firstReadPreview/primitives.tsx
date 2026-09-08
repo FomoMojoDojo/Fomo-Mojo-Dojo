@@ -108,35 +108,24 @@ export const VERDICT_LABEL: Record<FRGapVerdict, string> = {
   unspoken: "Unspoken",
 };
 
-export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
-  const map: Record<FRGapVerdict, { label: string; style: React.CSSProperties }> = {
-    // Tokenized (stage 2): verdict tints ride --fr-good / --fr-bad / --fr-warn; neutral rides --fr-faint / --fr-steel.
-    confirmed: {
-      label: "Echoed",
-      style: { background: "hsl(var(--fr-good) / 0.08)", color: "hsl(var(--fr-good))" },
-    },
-    contradicted: {
-      label: "Disputed",
-      style: { background: "hsl(var(--fr-bad) / 0.08)", color: "hsl(var(--fr-bad))" },
-    },
-    unechoed: {
-      label: "Not echoed",
-      style: { background: "hsl(var(--fr-warn) / 0.10)", color: "hsl(var(--fr-warn))" },
-    },
-    unspoken: {
-      label: "Unspoken",
-      style: { background: "hsl(var(--fr-faint) / 0.12)", color: "hsl(var(--fr-steel))" },
-    },
-  };
-  const tone = map[verdict];
+/** Stage 3b — ONE chip primitive: square, mono 10px uppercase, filled colour with ink text. `tone`
+ *  picks the fill (see .fr-chip[data-tone] in firstRead.css). Chips render ABOVE a row's title. */
+export type ChipTone =
+  | "good" | "bad" | "warn" | "neutral"
+  | "strong" | "moderate" | "thin"
+  | "accent-0" | "accent-1" | "accent-2" | "accent-3" | "accent-4";
+export function Chip({ tone = "neutral", children }: { tone?: ChipTone; children: ReactNode }) {
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-      style={tone.style}
-    >
-      {tone.label}
+    <span className="fr-chip fr-mono" data-tone={tone}>
+      {children}
     </span>
   );
+}
+
+const VERDICT_TONE: Record<FRGapVerdict, ChipTone> = { confirmed: "good", contradicted: "bad", unechoed: "warn", unspoken: "neutral" };
+
+export function VerdictChip({ verdict }: { verdict: FRGapVerdict }) {
+  return <Chip tone={VERDICT_TONE[verdict]}>{VERDICT_LABEL[verdict]}</Chip>;
 }
 
 /** Signed "Why this" rationale note — same muted treatment as the record page's "Why outside first".
@@ -228,7 +217,10 @@ export function LedgerRow({
   muted = false,
   variant = "ledger",
   dataVerdict,
+  lead,
 }: {
+  /** Stage 3b: chips, rendered ABOVE the title (hanging variant). Tags stay in `meta` below. */
+  lead?: ReactNode;
   /** Eyebrow above the quote. Omit to render no eyebrow (e.g. findings carry no earned label). */
   leftLabel?: string;
   leftBody: ReactNode;
@@ -257,6 +249,7 @@ export function LedgerRow({
               <Eyebrow>{leftLabel}</Eyebrow>
             </div>
           ) : null}
+          {lead ? <div className="fr-hanging-row-lead">{lead}</div> : null}
           <div className="relative">
             {quoted ? <span className="fr-quote-mark">&ldquo;</span> : null}
             <h3 className="fr-hanging-row-title">{leftBody}</h3>
@@ -315,7 +308,7 @@ export function LedgerRow({
 
 export function SourceTag({ children }: { children: ReactNode }) {
   return (
-    <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+    <span className="fr-tag fr-mono">
       Source: {children}
     </span>
   );
@@ -326,7 +319,7 @@ export function SourceTag({ children }: { children: ReactNode }) {
  *  (STEP 2b — SIGNED A′: "Our read · <date>", the read date alone; no "read " prefix, no "undated".) */
 export function OurReadTag({ children }: { children: ReactNode }) {
   return (
-    <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--fr-faint))" }}>
+    <span className="fr-tag fr-mono">
       Our read · {children}
     </span>
   );
@@ -335,7 +328,7 @@ export function OurReadTag({ children }: { children: ReactNode }) {
 /** Recency attribution — rendered beside an outside signal's source line. */
 export function RecencyTag({ children }: { children: ReactNode }) {
   return (
-    <span className="fr-recency text-[10px] font-bold uppercase tracking-widest">
+    <span className="fr-recency fr-tag fr-mono">
       Most recent: {children}
     </span>
   );

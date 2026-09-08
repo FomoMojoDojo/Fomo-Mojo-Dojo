@@ -219,14 +219,30 @@ export function VerticalScale({
 
 export type DividerTone = "lime" | "dark";
 
-/** Interlude page: numeral, title, one line. Lime or dark ground. */
-export function Divider({ numeral, title, body, tone = "lime" }: { numeral?: ReactNode; title: ReactNode; body?: ReactNode; tone?: DividerTone }) {
+/** Interlude page: a big numeral (CSS `attr()` content — display only, never DOM text), a vertical
+ *  hairline, then the headline and one line. Lime or dark ground (the view sets the page ground). */
+export function Divider({ numeral, title, body, tone = "lime" }: { numeral?: string; title: ReactNode; body?: ReactNode; tone?: DividerTone }) {
   return (
     <div className="fr-divider" data-fr-tone={tone}>
-      {numeral ? <span className="fr-divider-num fr-mono">{numeral}</span> : null}
-      <h1 className="fr-display fr-divider-title">{title}</h1>
-      {body ? <p className="fr-divider-body">{body}</p> : null}
+      {numeral ? <span className="fr-divider-num fr-display" data-fr-numeral={numeral} aria-hidden /> : null}
+      <div className="fr-divider-text">
+        <h1 className="fr-display fr-divider-title">{title}</h1>
+        {body ? <p className="fr-divider-body">{body}</p> : null}
+      </div>
     </div>
+  );
+}
+
+/** A2 — the terminal dot: a headline that ends in "." gets its full stop wrapped in a lime span.
+ *  The text is untouched (same characters, same order); only the last "." is styled. */
+export function withStop(text: string | null | undefined): ReactNode {
+  const t = text ?? "";
+  if (!t.endsWith(".")) return t;
+  return (
+    <>
+      {t.slice(0, -1)}
+      <span className="fr-stop">.</span>
+    </>
   );
 }
 
