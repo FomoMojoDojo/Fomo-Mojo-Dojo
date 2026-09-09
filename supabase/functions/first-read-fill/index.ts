@@ -19,9 +19,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
   chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
+  publicReadsDepsTerminal,
   type PublicReadKind, type GenPerKind, type KindStatus,
-  type ChainKindStep, type ChainKindTerminal,
+  type ChainKindStep, type ChainKindTerminal, type DepRow,
 } from "../_shared/firstReadFill.ts";
+import { isGatewayCut, resumeAfterGatewayCut } from "../_shared/gatewayResume.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -37,8 +39,10 @@ Deno.serve(async (req) => {
   const supabase = createClient(url, key) as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   let company_id = ""; let parent_run_id: string | null = null; let owns_parent_close = false;
-  try { const b = await req.json(); company_id = String(b.company_id ?? ""); parent_run_id = b.parent_run_id != null ? String(b.parent_run_id) : null; owns_parent_close = b.owns_parent_close === true; } catch { /* */ }
+  let stage = "";
+  try { const b = await req.json(); company_id = String(b.company_id ?? ""); parent_run_id = b.parent_run_id != null ? String(b.parent_run_id) : null; owns_parent_close = b.owns_parent_close === true; stage = String(b.stage ?? ""); } catch { /* */ }
   if (!company_id) return json({ ok: false, error: "company_id required" }, 400);
+
 
   // ── open the first_read_fill stage ledger (child of the full_refresh parent) ────────────────────
   let stageId: string | null = null;
@@ -127,6 +131,14 @@ Deno.serve(async (req) => {
     return { perKind, detail };
   };
 
+  // GATE B — fire the gated public-reads stage. Fire-and-forget and self-gating: it no-ops with
+  // deps_pending until BOTH own-words and recurrence have terminated, so it is safe to call from
+  // every terminal. Mirrors the outside-score fire exactly.
+  const firePublicReadsStage = () => fetch(`${url}/functions/v1/first-read-fill`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ company_id, parent_run_id, stage: "public_reads" }),
+  }).catch(() => {});
+
   const fireMarketDiscovery = async () => {
     waitUntil(fetch(`${url}/functions/v1/market-discovery-step`, {
       method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
@@ -138,7 +150,61 @@ Deno.serve(async (req) => {
     ? async () => { await supabase.from("long_runner_runs").update({ status: "completed", done_count: 0, error_text: "first read filled", finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", parent_run_id); }
     : undefined;
 
-  const result = await runFirstReadFill({ missingKinds, marketNeedsFire, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent });
+  // ══ GATE B (2026-09-09) — the GATED PUBLIC-READS STAGE ═════════════════════════════════════════
+  // Public reads no longer ride baseline_complete. They are fired fire-and-forget (from this
+  // function's own tail, from the own-words terminal, and from the recurrence-step finalize) and
+  // SELF-GATE here on both upstreams having terminated — the same shape outside-score already uses.
+  // On a fresh onboarding the first two fires no-op with deps_pending; whichever upstream lands last
+  // re-fires and this run generates. Idempotent: only MISSING kinds are ever generated.
+  if (stage === "public_reads") {
+    const { data: owRow } = await supabase.from("long_runner_runs")
+      .select("status, error_text").eq("company_id", company_id).eq("run_kind", "fr_own_words")
+      .order("started_at", { ascending: false }).limit(1).maybeSingle();
+    const { data: rcRow } = await supabase.from("long_runner_runs")
+      .select("status, error_text").eq("company_id", company_id).eq("run_kind", "recurrence_step")
+      .order("started_at", { ascending: false }).limit(1).maybeSingle();
+    if (!publicReadsDepsTerminal(owRow as DepRow, rcRow as DepRow)) {
+      return json({
+        ok: true, skipped: "deps_pending",
+        own_words: (owRow as { status?: string } | null)?.status ?? null,
+        recurrence: (rcRow as { status?: string } | null)?.status ?? null,
+      });
+    }
+    const { data: cur } = await supabase.from("public_reads").select("kind").eq("company_id", company_id).eq("is_current", true);
+    const missing = missingPublicReadKinds(((cur ?? []) as Array<{ kind: string }>).map((r) => r.kind));
+    if (missing.length === 0) return json({ ok: true, skipped: "all_reads_current" });
+
+    // INPUT-FAMILY CENSUS — recorded on the run so an empty or thin read is attributable to the
+    // record it was generated from, not to an unexplained reject.
+    const countOf = async (table: string, apply: (q: any) => any): Promise<number> => { // deno-lint-ignore-line no-explicit-any
+      const { count } = await apply(supabase.from(table).select("id", { count: "exact", head: true }).eq("company_id", company_id));
+      return Number(count ?? 0);
+    };
+    const inputsPresent = {
+      own_words_candidates_kept: await countOf("own_words_candidates", (q: any) => q.eq("judge_keep", true)), // deno-lint-ignore-line no-explicit-any
+      finding_recurrence: await countOf("finding_recurrence", (q: any) => q), // deno-lint-ignore-line no-explicit-any
+      outside_signals: await countOf("signals", (q: any) => q.eq("signal_band", "outside")), // deno-lint-ignore-line no-explicit-any
+      own_words_terminal: (owRow as { status?: string } | null)?.status ?? null,
+      recurrence_terminal: (rcRow as { status?: string } | null)?.status ?? null,
+    };
+    const gen = await generatePublicRead(missing);
+    for (const k of missing) {
+      const st = gen.perKind[k] === "written" ? "completed" : "failed";
+      await recordKindLedger(k, st as KindStatus, gen.detail[k] ?? null);
+    }
+    await supabase.from("integrity_runs").insert({
+      company_id, component: "first_read_public_reads_gate", status: "completed",
+      examined: missing.length,
+      admitted: missing.filter((k) => gen.perKind[k] === "written").length,
+      excluded_by_rule: { inputs_present: inputsPresent, per_kind: gen.perKind, guards: gen.detail },
+    }).then(() => {}, () => {}); // observability only — never fails the stage
+    return json({ ok: true, stage: "public_reads", generated: missing.filter((k) => gen.perKind[k] === "written"), per_kind: gen.perKind, inputs_present: inputsPresent });
+  }
+
+  // GATE B: the baseline-triggered fill no longer generates public reads. It still fires market
+  // discovery and closes the parent; the reads run in the gated stage above once own-words and
+  // recurrence terminate. `firePublicReadsStage` below is the first (usually no-op) fire.
+  const result = await runFirstReadFill({ missingKinds, marketNeedsFire, generatePublicRead, recordKindLedger, fireMarketDiscovery, closeParent, generateReads: false });
 
   // close the stage ledger: completed_empty (no-op) when nothing was missing, else completed (work done).
   if (stageId) {
@@ -176,6 +242,10 @@ Deno.serve(async (req) => {
     if (chainKindIsTerminal(status)) ins.finished_at = new Date().toISOString();
     if (parent_run_id) ins.parent_run_id = parent_run_id;
     await supabase.from("long_runner_runs").insert(ins);
+    // GATE B — own-words just reached a terminal: re-fire the gated public-reads stage. It no-ops
+    // unless recurrence has ALSO terminated, so whichever upstream lands last is the one that opens
+    // the gate. (Recurrence fires the same stage from its own finalize.)
+    if (kind === "own_words") waitUntil(firePublicReadsStage());
   };
 
   // Most-recent first_read_gap_pairs integrity status (the worker owns this row). Used by the 504
@@ -188,6 +258,14 @@ Deno.serve(async (req) => {
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  // Most-recent first_read_own_words integrity status (the plan/write worker owns this row).
+  const readOwnWordsIntegrityStatus = async (): Promise<string | null> => {
+    const { data } = await supabase.from("integrity_runs").select("status")
+      .eq("company_id", company_id).eq("component", "first_read_own_words")
+      .order("ran_at", { ascending: false }).limit(1);
+    return ((data ?? []) as Array<{ status: string }>)[0]?.status ?? null;
+  };
+
   // OWN-WORDS (two-phase). First-fill = own_words CLAIMS exist (the artifact, per ruling), NOT the
   // integrity row (plan writes a 'planned' row even on a fresh run). plan → on frozen plan → write.
   const ownWordsStep: ChainKindStep = {
@@ -198,25 +276,47 @@ Deno.serve(async (req) => {
       return ((data ?? []) as unknown[]).length > 0;
     },
     run: async () => {
+      // PHASE 2 — write: materialize own_words claims + integrity 'completed'. Shared by the normal
+      // path and the gateway-resume path, so a resumed run writes through exactly the same code.
+      const doWrite = async (planned: number, prefix = ""): Promise<{ status: ChainKindTerminal; note?: string }> => {
+        const write = await postFn("extract-own-words", { company_id, mode: "write" });
+        if (!write.ok) {
+          // 409 = the frozen plan produced no candidates → looked, none kept (earned empty).
+          if (write.status === 409) return { status: "completed_empty" as const, note: `${prefix}plan ${planned} · no candidates` };
+          return { status: "failed" as const, note: `${prefix}write failed (${write.status})` };
+        }
+        const inserted = Number((write.data as { inserted?: unknown } | null)?.inserted ?? 0);
+        return inserted > 0
+          ? { status: "completed" as const, note: `${prefix}plan ${planned} · wrote ${inserted}` }
+          : { status: "completed_empty" as const, note: `${prefix}plan ${planned} · wrote 0` };
+      };
+
       // PHASE 1 — plan: fetch + snapshot + freeze candidates + integrity 'planned'. No claims written.
       const plan = await postFn("extract-own-words", { company_id, mode: "plan" });
       if (!plan.ok) {
         if (plan.status === 403) return { status: "failed" as const, note: "refused: company frozen" };
+        // GATEWAY CUT — UNKNOWN, never failed. The plan isolate owns its 'planned' integrity row and
+        // routinely finishes AFTER the gateway cuts us (Riverlane: cut 17:25:55, row 17:26:24). Poll
+        // for that row and, on finding it, issue the write the cut caller never got to send.
+        if (isGatewayCut(plan.status)) {
+          const r = await resumeAfterGatewayCut({
+            readStatus: readOwnWordsIntegrityStatus,
+            terminalStatuses: ["planned", "completed"],
+            followUp: () => doWrite(0, "resumed after gateway cut · "),
+          });
+          if (r.outcome === "exhausted") {
+            return {
+              status: "unconfirmed" as const,
+              note: `gateway ${plan.status}; planned row not observed within 600000ms after ${r.polls} polls`,
+            };
+          }
+          return r.result;
+        }
         return { status: "failed" as const, note: `plan failed (${plan.status})` };
       }
       const planned = Array.isArray((plan.data as { would_be_own_words?: unknown } | null)?.would_be_own_words)
         ? (plan.data as { would_be_own_words: unknown[] }).would_be_own_words.length : 0;
-      // PHASE 2 — write: materialize own_words claims + integrity 'completed'.
-      const write = await postFn("extract-own-words", { company_id, mode: "write" });
-      if (!write.ok) {
-        // 409 = the frozen plan produced no candidates → looked, none kept (earned empty).
-        if (write.status === 409) return { status: "completed_empty" as const, note: `plan ${planned} · no candidates` };
-        return { status: "failed" as const, note: `write failed (${write.status})` };
-      }
-      const inserted = Number((write.data as { inserted?: unknown } | null)?.inserted ?? 0);
-      return inserted > 0
-        ? { status: "completed" as const, note: `plan ${planned} · wrote ${inserted}` }
-        : { status: "completed_empty" as const, note: `plan ${planned} · wrote 0` };
+      return await doWrite(planned);
     },
   };
 
@@ -381,7 +481,9 @@ Deno.serve(async (req) => {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
     body: JSON.stringify({ company_id }),
   }).catch(() => {});
-  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, relevanceStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger }).then(fireOutsideScore));
+  waitUntil(runChainKinds([ownWordsStep, gapPairsStep, relevanceStep, openQuestionsStep, findingBeatsStep, recurrenceStep], { recordChainLedger })
+    .then(fireOutsideScore)
+    .then(firePublicReadsStage));
 
   return json({ ok: true, ...result });
 });

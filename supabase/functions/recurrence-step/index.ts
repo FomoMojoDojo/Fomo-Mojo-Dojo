@@ -119,6 +119,15 @@ Deno.serve(async (req) => {
       body: JSON.stringify({ company_id }),
     }).catch(() => {}));
   };
+  // GATE B (2026-09-09) — the same trigger for the GATED PUBLIC READS. Recurrence is one of their two
+  // upstreams (own-words is the other), so its terminal re-fires the stage; the stage self-gates and
+  // no-ops unless own-words has also terminated. Fired beside outside-score, on the same terminal.
+  const firePublicReads = () => {
+    waitUntil(fetch(`${url}/functions/v1/first-read-fill`, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      body: JSON.stringify({ company_id, parent_run_id, stage: "public_reads" }),
+    }).catch(() => {}));
+  };
 
   let finalizeClusters: number | null = null;
   const out = await runRecurrenceStep({
@@ -159,12 +168,14 @@ Deno.serve(async (req) => {
       await closeLedger("completed", empty ? "no fresh pairs — reconciled from banked verdicts" : null);
       await closeDispatch("completed");
       fireOutsideScore(); // recurrence terminal → outside score may now be scorable (TRIGGER i)
+      firePublicReads();  // GATE B: recurrence terminal → public reads may now be generatable
     },
     closeFailed: async (reason) => {
       await writeIntegrity("failed", chain.pairs.length, null, null, reason);
       await closeLedger("failed", reason);
       await closeDispatch("failed");
       fireOutsideScore(); // failed still counts terminal for scoring (record_strength reads what exists)
+      firePublicReads();  // GATE B: a failed terminal still opens the gate — reads run on what exists
     },
     selfFire,
   });

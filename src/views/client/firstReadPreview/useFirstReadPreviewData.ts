@@ -16,6 +16,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  ownWordsLookedFrom, ownWordsRunFrom, ownWordsWriteCompletedFrom,
+  type OwnWordsIntegrityRow,
+} from "@/lib/firstRead/ownWordsIntegrity";
+import {
   channelReadClaimIds,
   clientVoiceClaimIds,
   isOwnDomainUrl,
@@ -480,13 +484,16 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
           a.pageHost.localeCompare(b.pageHost) || a.quote.localeCompare(b.quote));
         // Integrity: did the own-words extraction LOOK? (grounds the empty state.)
         const { data: owIntRows } = await loose()
-          .from("integrity_runs").select("id, status")
+          .from("integrity_runs").select("id, status, admitted, excluded_by_rule")
           .eq("company_id", companyId).eq("component", "first_read_own_words");
-        const owIntList = (owIntRows ?? []) as Array<{ id: unknown; status: string | null }>;
-        const ownWordsLooked = owIntList.length > 0;
+        const owIntList = (owIntRows ?? []) as OwnWordsIntegrityRow[];
+        const ownWordsLooked = ownWordsLookedFrom(owIntList);
+        // GATE B (2026-09-09) — DISPLAY HONESTY: the client empty note requires a COMPLETED WRITE,
+        // never the extractor's 'planned' dry run. See src/lib/firstRead/ownWordsIntegrity.ts.
+        const ownWordsWriteCompleted = ownWordsWriteCompletedFrom(owIntList);
         // R2 (2026-09-04): an own-words RUN exists only when a COMPLETED record exists ('planned' is the
         // extractor's dry run — nothing written to claims). Gates the channels block below own words.
-        const ownWordsRun = owIntList.some((r) => r.status === "completed");
+        const ownWordsRun = ownWordsRunFrom(owIntList);
 
         // ── Markets (beat 1) — accepted options + chosen-market fact ───────
         const { data: moRows } = await supabase
@@ -1134,6 +1141,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             ownWordsRecordOnly,
             ownWordsHiddenIds,
             ownWordsLooked,
+            ownWordsWriteCompleted,
             ownWordsRun,
             channelJunkIds,
             channelOffHostIds,

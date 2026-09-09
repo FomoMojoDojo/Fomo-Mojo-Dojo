@@ -800,14 +800,16 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
  * (claim_type='own_words') — tri-state: verbatim → quoted; judge-paraphrased → "as stated on
  * {page}", unquoted; unprovable → hidden (id reported in read.ownWordsHiddenIds, never silent).
  * The prior inference rows (OUR read of the channels) are DEMOTED to a labelled sub-row below.
- * The empty state is grounded in the own-words integrity record (ownWordsLooked), not emptiness.
+ * The empty state is grounded in a COMPLETED WRITE own-words record (ownWordsWriteCompleted), not emptiness.
  */
 export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const verbatim = read.ownWords.filter((w) => w.fidelity === "verbatim");
   const paraphrased = read.ownWords.filter((w) => w.fidelity === "paraphrased");
   const hasOwn = read.ownWords.length > 0;
   // R2: only the looked-and-none line remains; not-looked renders NO client copy.
-  const emptyNote = read.ownWordsLooked ? OWN_WORDS_NONE_NOTE : null;
+  // GATE B: the note is earned by a COMPLETED WRITE that admitted nothing — never by the extractor's
+  // 'planned' dry run. Planned-not-written renders no client copy; the operator note below covers it.
+  const emptyNote = read.ownWordsWriteCompleted ? OWN_WORDS_NONE_NOTE : null;
   // Stage 3: no "Claims you make" string exists, so there is no label column here — each claim keeps
   // its own existing eyebrow ("In your words" / "As stated on {host}") above the numbered row.
   return (

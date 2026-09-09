@@ -86,6 +86,20 @@ export function depTerminalForScore(row: DepRow): boolean {
 export function outsideScoreDepsTerminal(gapPairs: DepRow, recurrence: DepRow): boolean {
   return depTerminalForScore(gapPairs) && depTerminalForScore(recurrence);
 }
+/**
+ * PUBLIC-READ DEPENDENCY GATE (Gate B, 2026-09-09). The four public reads are generated from a
+ * ledger of outside signals + own-words candidates + recurrence-backed findings. Before this gate
+ * they fired on baseline_complete, which on Riverlane ran them at 17:23:25 — before own-words
+ * (17:26:24) and recurrence (17:33:32) existed. They now wait for BOTH to reach a terminal.
+ *
+ * Terminal, not successful: `depTerminalForScore` counts completed, failed, and a held 'unconfirmed'
+ * row. So a failed or cut upstream still opens the gate and the reads run with whatever inputs exist
+ * — the integrity row records which families were present. What never happens is generating while an
+ * upstream is still live, which is the defect this closes.
+ */
+export function publicReadsDepsTerminal(ownWords: DepRow, recurrence: DepRow): boolean {
+  return depTerminalForScore(ownWords) && depTerminalForScore(recurrence);
+}
 // First-fill: an existing scored outside-* row is terminal for the surface (skip forever — insert-only,
 // the beat reads the newest). Otherwise skip only when an outside-score record already exists FOR THE
 // CURRENT baseline run — a NEWER baseline run id re-arms (its ineligible verdict was for older signal).
@@ -144,6 +158,12 @@ export type FirstReadFillConfig = {
   recordKindLedger: (kind: string, status: KindStatus, detail?: string | null) => Promise<void>;
   /** Fire the market-discovery stepper (its own child ledger; outlives the parent). */
   fireMarketDiscovery: () => Promise<void>;
+  /**
+   * Gate B: when false, this invocation does NOT generate or record any public read — they are
+   * deferred to the gated public-reads stage, which fires once own-words and recurrence terminate.
+   * Market discovery and the parent close are unaffected. Defaults to true (every prior caller).
+   */
+  generateReads?: boolean;
   /** Close the full_refresh parent completed (ownership: only when the delta stepper did NOT run). */
   closeParent?: () => Promise<void>;
 };
@@ -165,15 +185,19 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
   const skipped: PublicReadKind[] = [];
   const failed: PublicReadKind[] = [];
 
+  // Gate B: public reads deferred to the gated stage — record nothing here, so a deferred kind is
+  // never mislabelled "already current" and never gets a terminal it has not earned.
+  const generateReads = cfg.generateReads !== false;
+
   // Kinds that already have a current row — recorded completed_empty (first-fill-only: never generated).
-  const skippedKinds = PUBLIC_READ_KINDS.filter((k) => !cfg.missingKinds.includes(k));
+  const skippedKinds = generateReads ? PUBLIC_READ_KINDS.filter((k) => !cfg.missingKinds.includes(k)) : [];
   for (const k of skippedKinds) {
     await cfg.recordKindLedger(k, "completed_empty");
     skipped.push(k);
   }
 
   // Generate ONLY the missing kinds (one judged call), record each kind's terminal.
-  if (cfg.missingKinds.length > 0) {
+  if (generateReads && cfg.missingKinds.length > 0) {
     let perKind: GenPerKind = {};
     let detail: Record<string, string> = {};
     let threw = false;
@@ -212,7 +236,7 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
   // The parent full_refresh completes regardless of any kind failure.
   if (cfg.closeParent) await cfg.closeParent();
 
-  const stageEmpty = cfg.missingKinds.length === 0 && !cfg.marketNeedsFire;
+  const stageEmpty = (!generateReads || cfg.missingKinds.length === 0) && !cfg.marketNeedsFire;
   return { generated, skipped, failed, marketFired, stageEmpty };
 }
 

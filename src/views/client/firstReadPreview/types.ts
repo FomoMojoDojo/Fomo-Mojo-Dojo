@@ -332,6 +332,9 @@ export type FirstReadPreviewData = {
   /** OW-3: whether the own-words extraction LOOKED (a first_read_own_words integrity record
    *  exists) — grounds beat 3's empty state in a persisted record, not array emptiness. */
   ownWordsLooked: boolean;
+  /** Gate B: a COMPLETED WRITE run exists (not the extractor's 'planned' dry run). Gates the
+   *  client-visible empty note, so a planned-not-written company is never told we found nothing. */
+  ownWordsWriteCompleted: boolean;
   /** R2 (2026-09-04): an own-words RUN exists — a COMPLETED first_read_own_words integrity record
    *  ('planned' is a dry run and writes nothing). Gates the "Your channels, as we read them" block;
    *  the not-run state is surfaced operator-only (never as client copy). */
@@ -423,6 +426,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   ownWords: [],
   ownWordsHiddenIds: [],
   ownWordsLooked: false,
+  ownWordsWriteCompleted: false,
   ownWordsRun: false,
   markets: [],
   signals: [],

@@ -48,12 +48,19 @@ describe("beat 3 — own words (OW-3)", () => {
   });
 
   // R2 (2026-09-04): the former not-read-yet line is RETIRED — not-looked renders NO client copy at all.
-  it("empty state is integrity-grounded: looked → 'no verbatim' note; not-looked → no client copy (retired line absent)", () => {
-    const looked = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: true })} />).container.textContent ?? "";
-    const notYet = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: false })} />).container;
-    expect(looked).toContain("found no verbatim self-descriptions");
+  // GATE B (2026-09-09): the note is grounded in a COMPLETED WRITE, not in "looked". A 'planned'
+  // dry run satisfies looked while writing nothing to claims, and telling the client we found no
+  // verbatim self-descriptions on that basis is false. ownWordsWriteCompleted is now the gate; the
+  // planned-only case has its own proofs in ownWordsPlannedHonesty.test.tsx.
+  it("empty state is grounded in a completed WRITE: written+empty → 'no verbatim' note; not-looked → no client copy (retired line absent)", () => {
+    const written = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: true, ownWordsWriteCompleted: true })} />).container.textContent ?? "";
+    const notYet = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: false, ownWordsWriteCompleted: false })} />).container;
+    expect(written).toContain("found no verbatim self-descriptions");
     expect(notYet.textContent ?? "").not.toContain("read your own channels");
     expect(notYet.textContent ?? "").not.toContain("found no verbatim self-descriptions");
     expect(notYet.querySelector(".fr-absent, [data-fr-absent]")).toBeNull();
+    // and the planned-but-unwritten middle state earns nothing
+    const planned = render(<ActWhatYouSay read={base({ ownWords: [], ownWordsLooked: true, ownWordsWriteCompleted: false })} />).container;
+    expect(planned.textContent ?? "").not.toContain("found no verbatim self-descriptions");
   });
 });
