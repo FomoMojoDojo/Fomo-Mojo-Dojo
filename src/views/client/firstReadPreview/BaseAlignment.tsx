@@ -67,6 +67,10 @@ export const ELEMENTS: {
   { key: "promise", label: "Promise", sub: "what you promise", today: { x: 470, y: 545 }, goalR: 45 },
 ];
 
+// Segment labels (stage 3e): "Today — untested" is OPERATOR-SIGNED; "See it aligned" is the existing string.
+const SEGMENT_TODAY = "Today — untested"; // signed
+const SEGMENT_ALIGNED = "See it aligned";
+
 const STATE_LABEL: Record<PairState, string> = {
   confirmed: "Confirmed",
   contradicted: "Contradicted",
@@ -181,29 +185,14 @@ export default function BaseAlignment({
 
   return (
     <div className="fr-base w-full">
-      {/* L3: the toggle as a segmented control, top-left of the body column. The existing strings are the
-          button's own ("See it aligned" / "Back to today"); the filled segment is the state marker. */}
-      <div className="fr-base-toolbar">
-        <button
-          type="button"
-          onClick={() => setAligned((current) => !current)}
-          className="fr-seg fr-mono"
-          data-aligned={aligned ? "true" : "false"}
-        >
-          <span className="fr-seg-marker" aria-hidden />
-          <span className="fr-seg-label">
-            {aligned ? (
-              <>
-                <span className="inline-block">&larr;</span>{" "}
-                Back to today
-              </>
-            ) : (
-              <>
-                See it aligned{" "}
-                <span className="inline-block">&rarr;</span>
-              </>
-            )}
-          </span>
+      {/* L3 + SIGNED (stage 3e): a two-segment control, top-left of the body column — "Today — untested"
+          (signed) and "See it aligned" (existing). The active segment is ink-filled. */}
+      <div className="fr-base-toolbar" role="group">
+        <button type="button" className="fr-seg fr-mono" data-active={aligned ? "false" : "true"} aria-pressed={!aligned} onClick={() => setAligned(false)}>
+          {SEGMENT_TODAY}
+        </button>
+        <button type="button" className="fr-seg fr-mono" data-active={aligned ? "true" : "false"} aria-pressed={aligned} onClick={() => setAligned(true)}>
+          {SEGMENT_ALIGNED}
         </button>
       </div>
 

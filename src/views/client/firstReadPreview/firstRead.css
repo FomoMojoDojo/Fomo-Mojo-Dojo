@@ -152,10 +152,7 @@
   content: ".";
 }
 
-/* R2: a statement longer than ~110 characters steps down one scale step. */
-.fr-h-statement--long { font-size: 2rem; max-width: 20ch; }
-@media (min-width: 768px) { .fr-h-statement--long { font-size: 2.4rem; } }
-@media (min-width: 1024px) { .fr-h-statement--long { font-size: 3rem; } }
+/* (R2 length-based step-down: REVERTED by signature, stage 3e — statements never change size.) */
 
 /* Weight law (stage 3d): nothing under .first-read at ≥500 except the listed titles/eyebrows.
    Links and numerals are micro-labels at 400. */
@@ -527,12 +524,21 @@
 .fr-station-card { background: hsl(var(--fr-accent) / 0.18); border: 1px solid hsl(var(--fr-accent) / 0.4); border-radius: 10px; padding: 14px 16px; }
 .fr-station-title { font-size: 1.25rem; font-weight: 700; line-height: 1.2; }
 
-/* timing chip — provisional/draft treatment (dashed hair, faint caps). */
+/* Stage 3e: timing is one mono faint line per column — the timing string and its note joined by a
+   CSS " · " (content, never DOM text). No chip border, no italic. */
+.fr-flow-timing {
+  margin-top: 0.9rem;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--fr-faint));
+}
+.fr-timing-context::before { content: " · "; }
+
+/* Legacy chip treatment (ActWhereYouStand only). */
 .fr-timing-chip {
   display: inline-block;
-  border: 1px dashed hsl(var(--fr-hair));
-  border-radius: 0;
-  padding: 2px 10px;
   font-family: var(--fr-font-mono);
   font-size: 10px;
   font-weight: 400;
@@ -542,18 +548,11 @@
   white-space: nowrap;
 }
 
-.fr-timing-context {
-  font-style: italic;
-  color: hsl(var(--fr-muted));
-  font-size: 12px;
-}
-
-/* hairline-topped sub-step list. */
+/* sub-step list — no hairline between the timing line and the bullets (stage 3e). */
 .fr-substeps {
   list-style: none;
   margin: 1rem 0 0;
-  padding: 1rem 0 0;
-  border-top: 1px solid hsl(var(--fr-hair));
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -577,18 +576,13 @@
 }
 .fr-substep-marker::before { content: "—"; }
 
-/* Bullet lead phrase 600 ink; detail 400 steel. */
-.fr-substep-title {
-  font-size: 0.9375rem;
-  font-weight: 600;
-  line-height: 1.4;
-  color: hsl(var(--fr-ink));
-}
-
+/* Stage 3e: the whole bullet 1.0625rem 400 ink — no bold lead phrase, no colour split. */
+.fr-substep-title,
 .fr-substep-detail {
-  font-size: 0.9375rem;
+  font-size: 1.0625rem;
   font-weight: 400;
-  color: hsl(var(--fr-steel));
+  line-height: 1.45;
+  color: hsl(var(--fr-ink));
 }
 
 /* "what to expect · draft" — the pricing paragraph as the closer's foot line (stage 3b). */
@@ -1335,10 +1329,11 @@
 .fr-flow-col[data-state="done"] { opacity: 0.62; }
 .fr-flow-col[data-state="done"][data-highlight="true"] { opacity: 1; }
 
-/* The highlight card: the "You are here" / "Up next" station only — lime/12 fill, lime top rule. */
+/* The highlight card: the "You are here" / "Up next" station only — lime/12 fill, lime top rule,
+   1.5rem padding. */
 .fr-flow-col[data-state="here"] {
   background: hsl(var(--fr-lime) / 0.12);
-  padding-left: 1rem;
+  padding: 1.5rem;
   border-top: 2px solid hsl(var(--fr-lime));
 }
 
@@ -1405,25 +1400,28 @@
 
 /* ---- Base alignment (stage 3b/3d): HTML nodes over an SVG connector underlay ---- */
 
-/* L3: the toggle as a segmented control, top-left. The filled segment marks the current state. */
-.fr-base-toolbar { margin-bottom: 1.5rem; }
-.fr-seg {
+/* L3 + signed (stage 3e): a two-segment control, top-left. The active segment is ink-filled. */
+.fr-base-toolbar {
   display: inline-flex;
-  align-items: stretch;
+  margin-bottom: 1.5rem;
   border: 1px solid hsl(var(--fr-ink));
+}
+.fr-seg {
+  padding: 6px 12px;
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: hsl(var(--fr-ink));
   background: hsl(var(--fr-paper));
 }
-.fr-seg-marker {
-  display: block;
-  width: 14px;
+.fr-seg + .fr-seg { border-left: 1px solid hsl(var(--fr-ink)); }
+.fr-seg[data-active="true"] {
   background: hsl(var(--fr-ink));
+  color: hsl(var(--fr-paper));
 }
-.fr-seg-label { display: block; padding: 6px 12px; }
-.fr-seg[data-aligned="true"] .fr-seg-marker { background: hsl(var(--fr-lime)); }
+
+/* The foot-line join (" · ") is CSS content, never DOM text. */
+.fr-foot-sep::before { content: " · "; }
 
 .fr-base-stage {
   position: relative;

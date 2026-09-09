@@ -244,7 +244,7 @@ export default function FirstReadPreviewView() {
       case "strategy":
         return <ActStrategy read={data} />;
       case "base":
-        return <BaseGate eyebrow={BEATS[index].label} />;
+        return <BaseGate eyebrow={BEATS[index].label} read={data} />;
       case "siesta2":
         return <ActSiesta2 />;
       case "questions":

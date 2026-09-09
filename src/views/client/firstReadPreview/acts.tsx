@@ -1196,11 +1196,11 @@ export function ActOurRead({ read }: { read: FirstReadPreviewData }) {
 // eyebrow — it is byte-identical to the beat's nav label, and the view no longer renders the label a
 // second time, so each renders exactly once. The statement wears the terminal lime dot when it ends
 // in "."; the Why-this line and the "Public read · date" tag form the foot line.
-/** R2 (stage 3c): statement-size text steps down one scale step past ~110 characters. */
-const STATEMENT_LONG = 110;
+/** Statement class. R2 (length-based step-down) was REVERTED by operator signature (stage 3e):
+ *  statements never change size by length — every statement wraps at statement size. */
 function statementClass(text: string | null | undefined): string {
-  const long = (text ?? "").length > STATEMENT_LONG;
-  return `fr-display fr-h-statement fr-h-statement--wide${long ? " fr-h-statement--long" : ""}`;
+  void text;
+  return "fr-display fr-h-statement fr-h-statement--wide";
 }
 
 function DarkFoot({ tag, why }: { tag?: { label: string } | null; why?: string }) {
@@ -1675,16 +1675,29 @@ export function ActGap({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?
 /** Base gate — interstitial beat between Act 3 (Gap) and Act 4. Stage 3: a Spread — sidebar carries
  *  both existing eyebrows (the beat label, then "Before the map"), the headline, the two paragraphs
  *  and the BeatWhy rationale; the right column is the existing BaseAlignment (toggle + SVG + caption). */
-export function BaseGate({ eyebrow }: { eyebrow?: ReactNode }) {
+/** The base's public-read tag: the latest of the three commitment reads' existing "Public read · date"
+ *  tags (positioning / strategy / promise), or null when none has rendered. Existing strings only. */
+function basePublicReadTag(read: FirstReadPreviewData): { label: string } | null {
+  const tags = [read.positioning?.sourceTag, read.strategy?.sourceTag, read.promise?.sourceTag].filter(
+    (t): t is { label: string } => !!t && !!t.label,
+  );
+  if (tags.length === 0) return null;
+  const when = (t: { label: string }) => Date.parse(t.label.split("·").slice(1).join("·").trim()) || 0;
+  return tags.reduce((best, t) => (when(t) > when(best) ? t : best));
+}
+
+export function BaseGate({ eyebrow, read }: { eyebrow?: ReactNode; read?: FirstReadPreviewData }) {
+  const tag = read ? basePublicReadTag(read) : null;
   return (
-    // L2 (stage 3d): one sidebar eyebrow; "Before the map" is the body's foot line.
+    // L2 (stage 3d): one sidebar eyebrow; "Before the map" is the body's foot line. Stage 3e: the
+    // public-read tag joins it on the same line (the " · " is CSS content, never DOM text).
     <Spread
       eyebrow={eyebrow}
       title={<>A strong base <span>changes your odds<span className="fr-stop">.</span></span></>}
       lede={<>Every choice downstream inherits its strength — or its cracks. Aligning it comes first.</>}
       statement={<>Your base is the four commitments everything else stands on — what you&rsquo;re doing, who it&rsquo;s for, why you win, what you promise.</>}
       aside={<BeatWhy plain>{RATIONALE_BASE}</BeatWhy>}
-      foot="Before the map"
+      foot={<>Before the map{tag ? <><span className="fr-foot-sep" aria-hidden />{tag.label}</> : null}</>}
     >
       <div className="fr-stagger flex w-full flex-col items-center">
         {/* R1: marketNote (MARKET_POINTER_NOTE) removed — "Who you serve" now precedes the Base. */}
@@ -1783,11 +1796,13 @@ export function ActNext({ isLast }: { isLast?: boolean }) {
               <p className="fr-flow-title">{s.label}</p>
               {s.blurb ? <p className="fr-flow-blurb">{s.blurb}</p> : null}
               {s.subline ? <p className="fr-flow-blurb">{s.subline}</p> : null}
+              {/* Stage 3e: one mono faint line — the timing string and its note, joined by a CSS " · "
+                  (the separator is content, never DOM text). No chip border, no italic. */}
               {s.timing ? (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="fr-timing-chip">{s.timing}</span>
+                <p className="fr-flow-timing fr-mono">
+                  <span>{s.timing}</span>
                   {s.context ? <span className="fr-timing-context">{s.context}</span> : null}
-                </div>
+                </p>
               ) : null}
               {s.substeps ? (
                 <ul className="fr-substeps">
