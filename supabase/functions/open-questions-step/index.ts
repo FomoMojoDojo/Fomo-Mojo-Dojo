@@ -30,7 +30,10 @@ const RUN_KIND = "open_questions";
 const INTEGRITY_COMPONENT = "first_read_open_questions";
 const CHAIN_WINDOW_MS = 30 * 60_000;
 const CHUNK_SIZE = 3;   // the anchor packer cap (ANCHOR_CHUNK_CAP)
-const MAX_STEPS = 25;   // ≥ (max anchors / chunk) + plan + finalize, with headroom
+// E3 (2026-09-09): only the SEED for a run whose plan has not landed yet. The real bound is derived
+// at plan time from the anchor manifest (deriveMaxSteps) and banked on chain_state — a constant here
+// halted Brand AI at 75 of 133 anchors and called a correct run a failure.
+const MAX_STEPS = 25;
 // The edge chain_state also carries run_id (the pure stepper's manifest is anchors only).
 type EdgeChainState = OQChainState & { run_id: string };
 const DEFAULT_STATE: EdgeChainState = { planned: false, anchors: [], cursor: 0, chunkSize: CHUNK_SIZE, stepCount: 0, maxSteps: MAX_STEPS, run_id: "" };
@@ -159,8 +162,9 @@ Deno.serve(async (req) => {
       return { ok: r.ok };
     },
     finalize: async () => { await callOQ(url, key, { company_id, run_id: chain.run_id, write: true }); },
-    persistPlanned: async (anchors) => {
-      chain = { ...chain, planned: true, anchors, cursor: 0 };
+    persistPlanned: async (anchors, derivedMaxSteps) => {
+      // E3: bank the DERIVED bound and the count it came from, so the ledger explains its own limit.
+      chain = { ...chain, planned: true, anchors, cursor: 0, maxSteps: derivedMaxSteps, anchorCount: anchors.length };
       await patchLedger({ chain_state: chain, target_count: anchors.length });
     },
     persistProgress: async (cursor, stepCount) => {

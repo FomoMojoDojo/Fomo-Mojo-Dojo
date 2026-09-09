@@ -33,7 +33,10 @@ describe("plan phase", () => {
     const c = cfg(base({ planned: false, anchors: [], cursor: 0 }));
     const out = await runOpenQuestionsStep(c);
     expect(out.outcome).toBe("planned");
-    expect(c.persistPlanned).toHaveBeenCalledWith(ANCHORS);
+    // E3 (2026-09-09): persistPlanned now also carries the DERIVED step bound —
+    // ceil(7 anchors / chunk 3) + plan + finalize = 5. A constant bound is what halted Brand AI at
+    // 75 of 133 anchors and recorded a correct run as failed.
+    expect(c.persistPlanned).toHaveBeenCalledWith(ANCHORS, 5);
     expect(c.selfFire).toHaveBeenCalledTimes(1);
   });
   it("planned with ZERO anchors ⇒ completed_empty (looked, none), no self-fire", async () => {

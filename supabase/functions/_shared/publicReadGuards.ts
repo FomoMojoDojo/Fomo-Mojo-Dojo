@@ -99,8 +99,12 @@ export function citationsLivePublic(
 // the invariants a model cannot be trusted to self-enforce; the LLM judge (its criteria live in the
 // generator's judge prompt) is the semantic layer ABOVE this deterministic floor.
 
-/** The five allowed offering item kinds. Anything else is a structural violation. */
-export const OFFERING_KIND_HINTS = new Set(["product", "service", "program", "format", "channel"]);
+/** The allowed offering item kinds. Anything else is a structural violation.
+ *  E1 (operator ruling, 2026-09-09): "platform" joins the set. Brand AI's offering read was rejected
+ *  whole on `item_bad_kind_hint · kind_hint=platform` — a brand operating system is a platform, and
+ *  the generator was describing it accurately against a set that had no word for it. Widening the
+ *  vocabulary, not relaxing the guard: an unknown hint is still a structural violation. */
+export const OFFERING_KIND_HINTS = new Set(["product", "service", "program", "format", "channel", "platform"]);
 /** The three allowed open-question reasons (currency / entity doubts + a catch-all). */
 export const OFFERING_OQ_REASONS = new Set(["currency", "entity", "other"]);
 /** Currency / verdict / status vocabulary forbidden INSIDE an item statement — a doubt of this shape

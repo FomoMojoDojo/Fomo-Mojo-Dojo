@@ -19,8 +19,30 @@ export type OQChainState = {
   cursor: number;     // next anchor index to generate/judge
   chunkSize: number;  // anchors processed per fire (≤3, the packer cap)
   stepCount: number;  // fires so far (bounds the loop)
-  maxSteps: number;   // HARD terminal — self-fire is impossible beyond this
+  maxSteps: number;   // HARD terminal — self-fire is impossible beyond this (DERIVED at plan time)
+  /** E3: the manifest size the bound was derived from, written so the ledger explains itself. */
+  anchorCount?: number;
 };
+
+/** E3 (2026-09-09) — the absolute ceiling. Derivation cannot exceed this, so a runaway anchor count
+ *  still terminates. Reaching it is now the ONLY way to exhaust, and it means something is wrong. */
+export const OQ_MAX_STEPS_CEILING = 500;
+
+/**
+ * Derive the step bound from the work in front of it: one step per chunk, plus two for the plan and
+ * the finalize.
+ *
+ * WHY THIS EXISTS. maxSteps was the constant 25. Brand AI planned 133 anchors at chunk 3, needing 45
+ * steps; the run halted at cursor 75 with 58 anchors unprocessed and wrote a `failed` row, having
+ * done nothing wrong — the cursor advanced by exactly 3 on every one of its 25 steps. A constant
+ * bound cannot know how much work it was handed, so it fails the biggest companies first and calls
+ * their success a failure.
+ */
+export function deriveMaxSteps(anchorCount: number, chunkSize: number): number {
+  const chunk = Math.max(1, Math.floor(chunkSize) || 1);
+  const anchors = Math.max(0, Math.floor(anchorCount) || 0);
+  return Math.min(Math.ceil(anchors / chunk) + 2, OQ_MAX_STEPS_CEILING);
+}
 
 export type OQStepConfig = {
   state: OQChainState;
@@ -30,8 +52,8 @@ export type OQStepConfig = {
   runChunk: (chunk: string[]) => Promise<{ ok: boolean }>;
   /** The unscoped finalize (generate-open-questions with no anchor_identities) + integrity write. */
   finalize: () => Promise<void>;
-  /** Persist the plan manifest to the ledger chain row (DB is truth). */
-  persistPlanned: (anchors: string[]) => Promise<void>;
+  /** Persist the plan manifest + the DERIVED step bound to the ledger chain row (DB is truth). */
+  persistPlanned: (anchors: string[], maxSteps: number) => Promise<void>;
   /** Persist cursor + stepCount advance after a completed chunk. */
   persistProgress: (cursor: number, stepCount: number) => Promise<void>;
   /** Close the ledger completed (empty = no anchors to question). Writes integrity 'completed'. */
@@ -60,14 +82,20 @@ export async function runOpenQuestionsStep(cfg: OQStepConfig): Promise<{ outcome
 
   // TERMINAL 1 — hard step ceiling. Checked FIRST so a runaway can never do more work.
   if (s.stepCount >= s.maxSteps) {
-    await cfg.closeFailed(`max_steps (${s.maxSteps}) exceeded — open questions halted`);
+    // E3: with a derived bound this is reachable only at the ceiling, so the note carries everything
+    // needed to tell "the work was genuinely enormous" from "the stepper stopped advancing".
+    await cfg.closeFailed(
+      `max_steps (${s.maxSteps}) exceeded — open questions halted · anchors=${s.anchorCount ?? s.anchors.length}` +
+      ` chunkSize=${s.chunkSize} stepCount=${s.stepCount} cursor=${s.cursor}`,
+    );
     return { outcome: "terminate_max_steps" };
   }
 
   // PLAN — once. Persists the manifest to the DB, then self-fires into the chunks.
   if (!s.planned) {
     const { anchors } = await cfg.plan();
-    await cfg.persistPlanned(anchors);
+    // E3 — the bound is derived HERE, once, from the manifest this run actually planned.
+    await cfg.persistPlanned(anchors, deriveMaxSteps(anchors.length, s.chunkSize));
     if (anchors.length === 0) {
       await cfg.closeCompleted(true); // nothing to question — an honest looked-and-empty completion
       return { outcome: "planned_empty" };

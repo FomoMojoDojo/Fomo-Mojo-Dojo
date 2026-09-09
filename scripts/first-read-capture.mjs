@@ -29,8 +29,31 @@ await fs.mkdir(outDir, { recursive: true });
 
 const url = `${baseUrl}/preview/client-refine/first-read/${companyId}`;
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, storageState });
+// E5 (2026-09-09) — REDUCED MOTION, set before any screenshot.
+// The CSS no-animation style below only stops CSS animations and transitions. The score numeral is
+// counted up in JavaScript (CountUp, a 900ms requestAnimationFrame ease), so a capture taken mid-ease
+// records a number that was never the score: Brand AI's beat 15 was captured reading "5" while the
+// stored score was 20. CountUp honours prefers-reduced-motion and sets the final value immediately,
+// so emulating it makes every numeral in a capture the settled one.
+const context = await browser.newContext({
+  viewport: { width: 1440, height: 1000 },
+  deviceScaleFactor: 1,
+  storageState,
+  reducedMotion: "reduce",
+});
+await context.addInitScript(() => {
+  // Belt and braces: some components read the media query once at mount.
+  try {
+    const mm = window.matchMedia.bind(window);
+    window.matchMedia = (q) => (String(q).includes("prefers-reduced-motion") ? { matches: true, media: q, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false } : mm(q));
+  } catch { /* non-fatal */ }
+});
 const page = await context.newPage();
+await page.emulateMedia({ reducedMotion: "reduce" });
+
+// The CSS half of the freeze: no CSS animation, no transition, nothing staggered mid-fade.
+const CAPTURE_STYLE = `.fr-act-enter,.fr-stagger,.fr-stagger>*{animation:none!important;opacity:1!important;transform:none!important}
+.first-read *{transition:none!important;animation:none!important}`;
 
 async function open() {
   await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
@@ -41,6 +64,7 @@ async function open() {
     const text = (await page.locator("body").innerText()).slice(0, 200).replace(/\s+/g, " ");
     throw new Error(`First Read did not render (no progress ticks). Page says: "${text}". Is FR_STORAGE_STATE a signed-in admin state?`);
   }
+  await page.addStyleTag({ content: CAPTURE_STYLE });
   await page.waitForTimeout(600);
   return ticks;
 }

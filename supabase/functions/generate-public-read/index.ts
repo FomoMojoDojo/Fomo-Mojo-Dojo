@@ -433,7 +433,7 @@ STRICT RULES:
 - Do NOT output any "seen_on" / "source"/"where" field — those are derived downstream from your refs, not by you.
 - If the public record shows NO attributable offering, return items:[] (an honest empty is correct).
 Return ONLY JSON:
-{"items":[{"label":"<≤8 words>","statement":"<one sentence: what is put in front of whom, in the record's own terms>","refs":["<token>"],"kind_hint":"product|service|program|format|channel"}],
+{"items":[{"label":"<≤8 words>","statement":"<one sentence: what is put in front of whom, in the record's own terms>","refs":["<token>"],"kind_hint":"product|service|program|format|channel|platform"}],
  "open_questions":[{"text":"<the doubt, as a question>","refs":["<token>"],"reason":"currency|entity|other"}]}
 ${US_ENGLISH_RULE}`;
 
