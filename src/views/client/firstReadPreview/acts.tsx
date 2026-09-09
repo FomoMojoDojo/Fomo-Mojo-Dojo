@@ -44,6 +44,7 @@ function SpreadBeat({
   rationale,
   extra,
   foot,
+  countBelowRationale = false,
   children,
 }: {
   eyebrow?: ReactNode;
@@ -55,12 +56,15 @@ function SpreadBeat({
   extra?: ReactNode;
   /** L2: the body column's foot line (a secondary eyebrow moved out of the sidebar). */
   foot?: ReactNode;
+  /** Stage 3g (beat 6): the count element renders BELOW the Why-this rail. */
+  countBelowRationale?: boolean;
   children: ReactNode;
 }) {
+  const why = rationale ? <BeatWhy plain>{rationale}</BeatWhy> : null;
   const aside = count || rationale || extra ? (
     <>
-      {count ?? null}
-      {rationale ? <BeatWhy plain>{rationale}</BeatWhy> : null}
+      {countBelowRationale ? why : count ?? null}
+      {countBelowRationale ? count ?? null : why}
       {extra ?? null}
     </>
   ) : undefined;
@@ -691,7 +695,8 @@ export function ActFindings({ read, eyebrow }: { read: FirstReadPreviewData; eye
       headline="What stands out."
       standfirst={FINDINGS_STANDFIRST}
       rationale={RATIONALE_FINDINGS}
-      // The existing count element (eyebrow + number), now in the sidebar — no sentence added.
+      // The existing count element (eyebrow + number), in the sidebar BELOW the Why-this rail (stage 3g).
+      countBelowRationale
       count={
         total > 0 ? (
           <div className="fr-side-count">
@@ -1454,12 +1459,8 @@ export function ScoreReveal({ read, eyebrow }: { read: FirstReadPreviewData; eye
             <Absent>{emptyNote}</Absent>
           </div>
         ) : null}
-        <VerticalScale
-          bands={SCORE_BANDS}
-          score={score}
-          activeName={active?.name ?? null}
-          markerLabel={score !== null ? <>{read.company?.name ?? ""} · {score}</> : undefined}
-        />
+        {/* Stage 3g (signed): the "{company} · {score}" marker label is retired; the dot carries the score. */}
+        <VerticalScale bands={SCORE_BANDS} score={score} activeName={active?.name ?? null} />
       </div>
     </Spread>
   );

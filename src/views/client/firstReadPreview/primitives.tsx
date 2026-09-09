@@ -70,7 +70,8 @@ export function ScoreNow({
           <CountUp value={now} className="fr-display fr-score-num" />
           <span className="fr-score-per fr-mono">/ 100</span>
         </div>
-        {band ? <span className="fr-score-band">· {band}</span> : null}
+        {/* Stage 3g: the band name stands alone under the numeral — the "· " text separator is gone. */}
+        {band ? <span className="fr-score-band">{band}</span> : null}
         {explainer ? <p className="fr-why-text mt-4">{explainer}</p> : null}
       </div>
     );

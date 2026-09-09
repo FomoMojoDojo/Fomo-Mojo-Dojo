@@ -1175,20 +1175,31 @@
   color: hsl(var(--fr-steel));
 }
 
+/* Stage 3g: the marker is a ~44px lime dot centred on the score position, carrying the score numeral
+   (attr() content, mono 700 ink). It may overlap the axis line, never the band text. */
 .fr-vscale-marker {
   position: absolute;
-  right: -7px;
+  right: -22px;
   transform: translateY(-50%);
+  z-index: 1;
 }
 
 .fr-vscale-marker-dot {
-  display: block;
-  width: 13px;
-  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   background: hsl(var(--fr-lime));
-  border: 1.5px solid hsl(var(--fr-ink));
+  font-size: 14px;
+  font-weight: 700;
+  color: hsl(var(--fr-ink));
 }
+.fr-vscale-marker-dot::after { content: attr(data-score); }
+
+/* The count element below the Why-this rail (beat 6). */
+.fr-why + .fr-side-count { margin-top: 1.5rem; }
 
 .fr-vscale-bands {
   list-style: none;

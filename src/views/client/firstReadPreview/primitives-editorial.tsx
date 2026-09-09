@@ -173,18 +173,17 @@ export type ScaleBand = { min: number; max: number; name: string; description: s
 
 /** The score scale as a vertical axis: bands stacked top (highest) to bottom (lowest) beside one
  *  axis line with tick marks at the band boundaries (tick numerals are CSS `attr()` content, never
- *  DOM text). The active band reads ink/bold, the others faint. The marker dot sits on the axis at
- *  the score; `markerLabel` (the existing "{company} · {score}" text) renders inside the active band. */
+ *  DOM text). The active band reads ink/bold, the others faint. The marker dot (~44px, lime) sits on
+ *  the axis at the score and carries the score numeral as `attr()` content (stage 3g — the
+ *  "{company} · {score}" label is retired by signature). */
 export function VerticalScale({
   bands,
   score,
   activeName,
-  markerLabel,
 }: {
   bands: ReadonlyArray<ScaleBand>;
   score: number | null;
   activeName: string | null;
-  markerLabel?: ReactNode;
 }) {
   const ladder = [...bands].sort((a, b) => b.min - a.min);
   const top = Math.max(...bands.map((b) => b.max));
@@ -200,7 +199,7 @@ export function VerticalScale({
         <span className="fr-vscale-tick" data-tick={bottom} style={{ top: pct(bottom) }} />
         {score !== null ? (
           <span className="fr-vscale-marker" style={{ top: pct(Math.min(Math.max(score, bottom), top)) }}>
-            <span className="fr-vscale-marker-dot" />
+            <span className="fr-vscale-marker-dot fr-mono" data-score={String(score)} />
           </span>
         ) : null}
       </div>
@@ -212,9 +211,6 @@ export function VerticalScale({
               <span className="fr-eyebrow">{b.min}–{b.max}</span>
               <p className="fr-vscale-band-name">{b.name}</p>
               <p className="fr-vscale-band-desc">{b.description}</p>
-              {active && score !== null && markerLabel ? (
-                <span className="fr-vscale-band-marker fr-eyebrow">{markerLabel}</span>
-              ) : null}
             </li>
           );
         })}
