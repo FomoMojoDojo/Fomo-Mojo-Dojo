@@ -70,12 +70,14 @@
 
 /* STAGE 3d TYPE SPEC — Statement (dark pages 2, 8, 9, 10; dividers 7, 13): 2.4rem sm / 3rem md /
    4.25rem lg, 700, leading 0.92, tracking -0.035em. */
+/* STAGE 3h — statement measure: min(100%, 76rem). The 12ch / 16ch caps wrapped long statements
+   (Edgewood beats 8/10 at 18/14 lines); size, weight and leading are unchanged. */
 .fr-h-statement {
   font-size: 2.4rem;
-  max-width: 12ch;
+  max-width: min(100%, 76rem);
 }
 .fr-h-statement--wide {
-  max-width: 16ch;
+  max-width: min(100%, 76rem);
 }
 @media (min-width: 768px) { .fr-h-statement { font-size: 3rem; } }
 @media (min-width: 1024px) { .fr-h-statement { font-size: 4.25rem; } }
@@ -701,8 +703,9 @@
   margin-top: 1.5rem;
   max-width: 40rem;
 }
+/* Stage 3h: a lede under a statement follows the statement measure. */
 .fr-lede--dark,
-.fr-screen--dark .fr-lede { color: hsl(var(--fr-paper) / 0.7); }
+.fr-screen--dark .fr-lede { color: hsl(var(--fr-paper) / 0.7); max-width: min(100%, 76rem); }
 .fr-screen--dark .fr-h-statement { align-self: start; }
 .fr-screen--dark .fr-screen-main { align-self: start; }
 /* SIGNED 1a: the cold open is headline + aside only — both sit mid-screen, as in the capture. */
@@ -1299,7 +1302,7 @@
 .fr-divider-text {
   border-left: 1px solid hsl(var(--fr-ink) / 0.3);
   padding-left: 2.5rem;
-  max-width: 34rem;
+  max-width: min(100%, 76rem); /* stage 3h: statement measure */
 }
 .fr-divider[data-fr-tone="dark"] .fr-divider-text { border-left-color: hsl(var(--fr-paper) / 0.3); }
 
