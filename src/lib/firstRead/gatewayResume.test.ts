@@ -1,34 +1,19 @@
-// GATE B (2026-09-09) — the gateway RESUME, with its vacuous proof on both sides.
+// GATE B → GATE D — what happened to the in-isolate resume poll.
 //
-// THE DEFECT: the own-words plan runs behind Kong's 150s wall. On Riverlane the caller was cut at
-// 17:25:55.922 and recorded the stage FAILED; the worker finished and wrote its 'planned' integrity
-// row at 17:26:24.777, 28.9s later. Because the caller had given up, mode:"write" never fired and
-// zero own_words claims were created from seven frozen, judge-kept candidates.
+// Gate B (2026-09-09) made a gateway cut "unknown, never failed" by polling the worker's integrity
+// row inside the CALLER's isolate, bounded to 10 minutes. It worked, once, and then cost everything
+// behind it: on Brand AI the own-words resume spent ~150s of the fill isolate's wall clock, the
+// isolate was terminated 19s later, and gap-pairs, relevance, open-questions, finding-beats,
+// recurrence and the score never ran.
 //
-// THE RULE: a gateway cut is UNKNOWN, never FAILED. Poll the component's integrity row within a
-// bounded window; on a terminal status run the follow-up EXACTLY ONCE.
-//
-// VACUOUS PROOF (both sides — this is what makes the resume test non-vacuous):
-//   - the row NEVER appears  → the resume must FAIL (the bounded poll exhausts) and must NOT write.
-//   - the row appears at poll 3 → the resume must SUCCEED and must issue the write EXACTLY ONCE.
-// If the poll were unbounded, side one would hang instead of failing. If the follow-up were inside
-// the loop, side two would write more than once. Both are asserted.
+// Gate D replaced `resumeAfterGatewayCut` (one long-waiting call) with a SELF-CHAINING STEPPER (one
+// check per invocation). The resume's own vacuous proofs — never-appears vs appears-at-check-3 —
+// therefore live in gatewayResumeStepper.test.ts. What stays here is the classification the module
+// still owns: which failures are the connection, and which are the gateway.
 import { describe, expect, it } from "vitest";
 import {
-  GATEWAY_CUT_STATUSES,
-  isGatewayCut,
-  resumeAfterGatewayCut,
+  GATEWAY_CUT_STATUSES, isGatewayCut, isTransientFetchError,
 } from "../../../supabase/functions/_shared/gatewayResume.ts";
-
-/** A fake clock: no timers, no waiting. `sleep` advances it, so the budget is exercised for real. */
-function fakeClock() {
-  let t = 0;
-  return {
-    now: () => t,
-    sleep: (ms: number) => { t += ms; return Promise.resolve(); },
-    elapsed: () => t,
-  };
-}
 
 describe("gateway cut classification", () => {
   it("504 / 502 / 408 are cuts; a real failure is not", () => {
@@ -37,99 +22,30 @@ describe("gateway cut classification", () => {
   });
 });
 
-describe("VACUOUS PROOF side 1 — the planned row NEVER appears", () => {
-  it("the bounded poll exhausts, the resume FAILS, and the write is never issued", async () => {
-    const clock = fakeClock();
-    let reads = 0;
-    let writes = 0;
-    const r = await resumeAfterGatewayCut({
-      readStatus: () => { reads++; return Promise.resolve(null); }, // no row, ever
-      terminalStatuses: ["planned", "completed"],
-      followUp: () => { writes++; return Promise.resolve({ status: "completed" as const }); },
-      budgetMs: 10 * 60_000,
-      intervalMs: 15_000,
-      now: clock.now,
-      sleep: clock.sleep,
-    });
-
-    expect(r.outcome).toBe("exhausted");   // ← the resume FAILS, as required
-    expect(r.result).toBeNull();
-    expect(r.observedStatus).toBeNull();
-    expect(writes).toBe(0);                // ← and nothing was written
-    // It is BOUNDED: it stopped, and it stopped inside the 10-minute window.
-    // 41 = one IMMEDIATE read at t=0 (the worker has often already finished when the gateway cuts)
-    // plus 600000/15000 = 40 interval reads, the last at t=600000 where the window closes.
-    expect(reads).toBe(41);
-    expect(clock.elapsed()).toBe(10 * 60_000);
+describe("transient classification — the connection failing, not the server answering", () => {
+  it("dropped connections and gateway codes are transient", () => {
+    for (const e of [
+      { message: "TypeError: Failed to fetch", name: "TypeError" },
+      { message: "NetworkError when attempting to fetch resource." },
+      { message: "Load failed" },
+      { message: "fetch failed" },
+      { status: 499 }, { status: 502 }, { status: 503 }, { status: 504 },
+    ]) expect(isTransientFetchError(e)).toBe(true);
   });
 
-  it("a non-terminal status is not mistaken for a terminal one", async () => {
-    const clock = fakeClock();
-    let writes = 0;
-    const r = await resumeAfterGatewayCut({
-      readStatus: () => Promise.resolve("running"),
-      terminalStatuses: ["planned", "completed"],
-      followUp: () => { writes++; return Promise.resolve("wrote"); },
-      budgetMs: 60_000, intervalMs: 15_000, now: clock.now, sleep: clock.sleep,
-    });
-    expect(r.outcome).toBe("exhausted");
-    expect(writes).toBe(0);
-  });
-});
-
-describe("VACUOUS PROOF side 2 — the planned row appears at poll 3", () => {
-  it("the resume SUCCEEDS and issues the write EXACTLY ONCE", async () => {
-    const clock = fakeClock();
-    let reads = 0;
-    const writeCalls: string[] = [];
-    const r = await resumeAfterGatewayCut({
-      readStatus: () => { reads++; return Promise.resolve(reads < 3 ? null : "planned"); },
-      terminalStatuses: ["planned", "completed"],
-      followUp: (observed) => { writeCalls.push(observed); return Promise.resolve({ status: "completed" as const, note: "resumed after gateway cut · plan 0 · wrote 7" }); },
-      budgetMs: 10 * 60_000, intervalMs: 15_000, now: clock.now, sleep: clock.sleep,
-    });
-
-    expect(r.outcome).toBe("resumed");
-    expect(r.polls).toBe(3);                       // ← found on the third read
-    expect(r.observedStatus).toBe("planned");
-    expect(writeCalls).toHaveLength(1);            // ← EXACTLY ONCE
-    expect(writeCalls[0]).toBe("planned");
-    expect(r.result).toEqual({ status: "completed", note: "resumed after gateway cut · plan 0 · wrote 7" });
-    expect(reads).toBe(3);                         // it stopped reading the moment it resumed
+  it("a real error is NOT transient — it must fail fast, not be retried", () => {
+    expect(isTransientFetchError({ message: 'permission denied for table "companies"', code: "42501" })).toBe(false);
+    expect(isTransientFetchError({ message: "column does not exist", status: 400 })).toBe(false);
+    expect(isTransientFetchError(null)).toBe(false);
   });
 
-  it("a row already present when the gateway cuts costs zero waiting (poll 1, no sleep)", async () => {
-    const clock = fakeClock();
-    let writes = 0;
-    const r = await resumeAfterGatewayCut({
-      readStatus: () => Promise.resolve("planned"),
-      terminalStatuses: ["planned", "completed"],
-      followUp: () => { writes++; return Promise.resolve("wrote"); },
-      now: clock.now, sleep: clock.sleep,
-    });
-    expect(r.outcome).toBe("resumed");
-    expect(r.polls).toBe(1);
-    expect(writes).toBe(1);
-    expect(clock.elapsed()).toBe(0); // the worker had already finished — no wait at all
+  it("an abort is never transient — the caller's own cancellation wins", () => {
+    expect(isTransientFetchError({ message: "AbortError: The operation was aborted." })).toBe(false);
   });
 
-  it("the two sides differ ONLY in whether the row ever appears", async () => {
-    const mk = (appears: boolean) => {
-      const clock = fakeClock();
-      let reads = 0;
-      let writes = 0;
-      return resumeAfterGatewayCut({
-        readStatus: () => { reads++; return Promise.resolve(appears && reads >= 3 ? "planned" : null); },
-        terminalStatuses: ["planned", "completed"],
-        followUp: () => { writes++; return Promise.resolve("wrote"); },
-        budgetMs: 10 * 60_000, intervalMs: 15_000, now: clock.now, sleep: clock.sleep,
-      }).then((r) => ({ ...r, writes }));
-    };
-    const never = await mk(false);
-    const appears = await mk(true);
-    expect(never.outcome).toBe("exhausted");
-    expect(never.writes).toBe(0);
-    expect(appears.outcome).toBe("resumed");
-    expect(appears.writes).toBe(1);
+  it("source-level: the in-isolate poll is GONE, not merely unused", () => {
+    // The defect was the waiting itself. If `resumeAfterGatewayCut` came back, a caller could once
+    // again spend its wall clock waiting and take its own chain down with it.
+    expect(Object.keys({ isGatewayCut, isTransientFetchError })).not.toContain("resumeAfterGatewayCut");
   });
 });

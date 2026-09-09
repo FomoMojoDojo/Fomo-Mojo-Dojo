@@ -63,6 +63,11 @@ verify_jwt = true
 verify_jwt = true
 
 [edge_runtime.secrets]
+# GATE D (D4) — shared marker for the INTERNAL server-to-server path on public-baseline. The internal
+# path is an AND: this secret in the x-internal-call header AND a service-role bearer. UNSET disables
+# the path entirely (fail-closed) and every caller falls through to the unchanged user path. Set the
+# value in the gitignored supabase/.env or the operator's start shell; never commit it.
+INTERNAL_CALL_SECRET = "env(INTERNAL_CALL_SECRET)"
 OPENAI_API_KEY = "env(OPENAI_API_KEY)"
 OPENAI_MODEL = "env(OPENAI_MODEL)"
 COUNCIL_OPENAI_MODEL = "env(COUNCIL_OPENAI_MODEL)"

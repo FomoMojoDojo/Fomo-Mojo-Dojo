@@ -8,6 +8,7 @@ import {
 } from "../_shared/adjudication.ts";
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
 import { maybeStartBaselineAfterBirth } from "../_shared/birthBaseline.ts";
+import { handOffToResumeStepper, isGatewayCut, newResumeState } from "../_shared/gatewayResume.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -796,6 +797,44 @@ Deno.serve(async (req) => {
           timeoutMs: 420_000,
         });
 
+        // GATE D (D3) — THE SAME 150s WALL, ONE LAYER UP. research-company routinely outruns the
+        // gateway: on Brand AI this stage was cut at 150,032ms while research-company kept going and
+        // wrote its `finalizer` integrity row 39s later. The old code threw, the run row was never
+        // closed, and agent_flow_run 03942b7a has read 'running' ever since. A cut is now handed to
+        // the resume stepper, which watches for the finalizer row and closes this run when it lands.
+        if (!invokeResult.ok && isGatewayCut(invokeResult.status || 0)) {
+          await handOffToResumeStepper({
+            companyId: String(companyId),
+            state: newResumeState({
+              component: "finalizer",
+              terminalStatuses: ["completed"],
+              followUp: null,
+              closeRow: {
+                table: "agent_flow_runs",
+                id: runId,
+                patch: {
+                  status: "completed",
+                  error_text: null,
+                  completed_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                },
+              },
+              onDone: [],
+            }),
+            openRow: async (row) => {
+              const { data } = await supabase.from("long_runner_runs").insert(row).select("id").single();
+              return (data as { id?: unknown } | null)?.id ? String((data as { id: unknown }).id) : null;
+            },
+            dispatch: (id) => {
+              waitUntil(fetch(`${supabaseUrl}/functions/v1/gateway-resume-step`, {
+                method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRole}` },
+                body: JSON.stringify({ company_id: String(companyId), row_id: id }),
+              }).catch(() => {}));
+            },
+          });
+          return { status: "handed_off", reason: "gateway_cut_resume_pending" };
+        }
+
         if (!invokeResult.ok) {
           throw new FlowError(
             errorMessageFromPayload(invokeResult.payload, "Research output generation failed"),
@@ -921,9 +960,15 @@ Deno.serve(async (req) => {
         // is no user (public-baseline/index.ts:2109-2117). A service-role JWT carries no user and is
         // rejected — verified against the running stack, HTTP 401. This is the same pass-through the
         // function's other nested invokes already use (index.ts:252).
+        // GATE D (D4) — the INTERNAL path: service-role JWT plus the shared internal marker. No
+        // borrowed browser JWT, so a server-owned trigger no longer depends on a live session.
         const res = await fetch(`${supabaseUrl}/functions/v1/public-baseline`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", apikey: anonKey, Authorization: authHeader },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${serviceRole}`,
+            "x-internal-call": Deno.env.get("INTERNAL_CALL_SECRET") ?? "",
+          },
           body: JSON.stringify({ company_id: String(companyId), chain: true }),
         });
         if (!res.ok) throw new Error(`public-baseline responded ${res.status}`);

@@ -19,11 +19,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   runFirstReadFill, runChainKinds, classifyGapPairsAfterTimeout,
   chainKindLedgerStatus, chainKindIsTerminal, openQuestionsAlreadyPresent, missingPublicReadKinds, marketReadIsEmpty, marketDiscoveryNeedsFire,
-  publicReadsDepsTerminal,
+  publicReadsDepsTerminal, depTerminalForScore,
   type PublicReadKind, type GenPerKind, type KindStatus,
   type ChainKindStep, type ChainKindTerminal, type DepRow,
 } from "../_shared/firstReadFill.ts";
-import { isGatewayCut, resumeAfterGatewayCut } from "../_shared/gatewayResume.ts";
+import { handOffToResumeStepper, isGatewayCut, newResumeState, resumeHandoffNote } from "../_shared/gatewayResume.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -164,6 +164,19 @@ Deno.serve(async (req) => {
       .select("status, error_text").eq("company_id", company_id).eq("run_kind", "recurrence_step")
       .order("started_at", { ascending: false }).limit(1).maybeSingle();
     if (!publicReadsDepsTerminal(owRow as DepRow, rcRow as DepRow)) {
+      // GATE D (D2) — CLOSE THE ROW. This stage opens a `first_read_fill` ledger row at entry, and a
+      // deps_pending return used to leave it 'running' forever: one leaked row per poll, and the gate
+      // is polled on every upstream terminal. Chosen fix: keep opening the row (one honest record per
+      // poll, so the wait is visible in the ledger) and CLOSE it as completed with the deps_pending
+      // note. The alternative — not opening a row until the gate is open — would have hidden the
+      // polling entirely, and a gate that never opens is exactly what an operator needs to see.
+      if (stageId) {
+        await supabase.from("long_runner_runs").update({
+          status: "completed", done_count: 0,
+          error_text: `deps_pending — own-words ${(owRow as { status?: string } | null)?.status ?? "absent"}, recurrence ${(rcRow as { status?: string } | null)?.status ?? "absent"}`,
+          finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", stageId);
+      }
       return json({
         ok: true, skipped: "deps_pending",
         own_words: (owRow as { status?: string } | null)?.status ?? null,
@@ -172,7 +185,15 @@ Deno.serve(async (req) => {
     }
     const { data: cur } = await supabase.from("public_reads").select("kind").eq("company_id", company_id).eq("is_current", true);
     const missing = missingPublicReadKinds(((cur ?? []) as Array<{ kind: string }>).map((r) => r.kind));
-    if (missing.length === 0) return json({ ok: true, skipped: "all_reads_current" });
+    if (missing.length === 0) {
+      if (stageId) {
+        await supabase.from("long_runner_runs").update({
+          status: "completed", done_count: 0, error_text: "all reads current — gate no-op",
+          finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", stageId);
+      }
+      return json({ ok: true, skipped: "all_reads_current" });
+    }
 
     // INPUT-FAMILY CENSUS — recorded on the run so an empty or thin read is attributable to the
     // record it was generated from, not to an unexplained reject.
@@ -198,6 +219,14 @@ Deno.serve(async (req) => {
       admitted: missing.filter((k) => gen.perKind[k] === "written").length,
       excluded_by_rule: { inputs_present: inputsPresent, per_kind: gen.perKind, guards: gen.detail },
     }).then(() => {}, () => {}); // observability only — never fails the stage
+    if (stageId) {
+      const wrote = missing.filter((k) => gen.perKind[k] === "written");
+      await supabase.from("long_runner_runs").update({
+        status: "completed", done_count: wrote.length,
+        error_text: `gate open — generated: ${wrote.join(",") || "none"}${wrote.length < missing.length ? ` · rejected: ${missing.filter((k) => gen.perKind[k] !== "written").join(",")}` : ""}`,
+        finished_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", stageId);
+    }
     return json({ ok: true, stage: "public_reads", generated: missing.filter((k) => gen.perKind[k] === "written"), per_kind: gen.perKind, inputs_present: inputsPresent });
   }
 
@@ -299,18 +328,36 @@ Deno.serve(async (req) => {
         // routinely finishes AFTER the gateway cuts us (Riverlane: cut 17:25:55, row 17:26:24). Poll
         // for that row and, on finding it, issue the write the cut caller never got to send.
         if (isGatewayCut(plan.status)) {
-          const r = await resumeAfterGatewayCut({
-            readStatus: readOwnWordsIntegrityStatus,
-            terminalStatuses: ["planned", "completed"],
-            followUp: () => doWrite(0, "resumed after gateway cut · "),
+          // GATE D — HAND THE WAIT OFF. Gate B polled here, inside this isolate; on Brand AI that
+          // spent ~150s of the fill's wall clock and the isolate was killed 19s later, taking
+          // gap-pairs, relevance, open-questions, finding-beats, recurrence and the score with it.
+          // Now the stepper owns the wait: we open its row, dispatch once, and the chain CONTINUES.
+          const { rowId } = await handOffToResumeStepper({
+            companyId: company_id,
+            parentRunId: parent_run_id,
+            state: newResumeState({
+              component: "first_read_own_words",
+              terminalStatuses: ["planned", "completed"],
+              followUp: { fn: "extract-own-words", body: { company_id, mode: "write" } },
+              // When the write lands, re-enter the fill so the stages that self-gate on own-words
+              // (gap-pairs) run with the declared side present.
+              onDone: [{ fn: "first-read-fill", body: { company_id, parent_run_id } }],
+            }),
+            openRow: async (row) => {
+              const { data } = await supabase.from("long_runner_runs").insert(row).select("id").single();
+              return (data as { id?: unknown } | null)?.id ? String((data as { id: unknown }).id) : null;
+            },
+            dispatch: (id) => {
+              waitUntil(fetch(`${url}/functions/v1/gateway-resume-step`, {
+                method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+                body: JSON.stringify({ company_id, row_id: id }),
+              }).catch(() => {}));
+            },
           });
-          if (r.outcome === "exhausted") {
-            return {
-              status: "unconfirmed" as const,
-              note: `gateway ${plan.status}; planned row not observed within 600000ms after ${r.polls} polls`,
-            };
-          }
-          return r.result;
+          return {
+            status: "handed_off" as const,
+            note: rowId ? resumeHandoffNote("first_read_own_words", plan.status) : `gateway ${plan.status}; resume row could not be opened`,
+          };
         }
         return { status: "failed" as const, note: `plan failed (${plan.status})` };
       }
@@ -338,6 +385,15 @@ Deno.serve(async (req) => {
       return ((dl ?? []) as unknown[]).length > 0;
     },
     run: async () => {
+      // GATE D — SELF-GATE on the resumed component. own-words may be mid-resume (handed off to the
+      // stepper); comparing against a declared side that has not landed yet would bank a weaker
+      // pairing permanently. Same predicate the public-reads gate uses: terminal, not successful.
+      const { data: owRow } = await supabase.from("long_runner_runs")
+        .select("status, error_text").eq("company_id", company_id).eq("run_kind", "fr_own_words")
+        .order("started_at", { ascending: false }).limit(1).maybeSingle();
+      if (owRow && !depTerminalForScore(owRow as DepRow)) {
+        return { status: "handed_off" as const, note: "deferred — own-words not terminal (resume in flight); re-runs when it lands" };
+      }
       const res = await postFn("generate-claim-deltas", { company_id, pairing_kind: "public_vs_public", write: true });
       if (res.status === 403) return { status: "failed" as const, note: "refused: company frozen" };
       const data = res.data as { ok?: unknown; skipped?: unknown; empty?: unknown } | null;

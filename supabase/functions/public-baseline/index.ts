@@ -13,6 +13,7 @@ import { shouldChainDeltas, NO_DECLARED_SIDE_LEDGER_TEXT } from "../_shared/delt
 import { selectFinalText, parseJsonObjectDefensive, persistSynthesisParseFailure, runSynthesisWithParseRetry } from "../_shared/synthesisJsonExtract.ts";
 // AUTHORSHIP GATE (operator ruling 2026-09-03, A) — CHANNEL ≠ VOICE on aggregator company-profile URLs.
 import { demoteAggregatorSelfVoiceInResult, judgeAggregatorAuthorship, resolveLocalOllamaUrl } from "../_shared/aggregatorAuthorship.ts";
+import { INTERNAL_CALL_HEADER, isInternalServiceCall } from "../_shared/internalCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2109,12 +2110,37 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "No auth header" }, 401);
 
-    const anonClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
+    // ── GATE D (D4) — INTERNAL SERVER-TO-SERVER PATH ────────────────────────────────────────────
+    // This function authenticates via auth.getUser(), which needs a REAL USER. That made every
+    // server-owned trigger borrow a browser's JWT: the birth-terminal baseline start fired with the
+    // service role and got 401 every time (verified against the running stack), so a company whose
+    // browser stumbled was left with no outside read at all (Brand AI).
+    //
+    // The internal path accepts a SERVICE-ROLE caller only when it also presents the shared internal
+    // secret. Both must hold: the header alone proves nothing (it is only as secret as the env), and
+    // the service-role key alone is what the old code already refused. The secret is read from the
+    // env and NEVER logged or echoed in a response. The USER PATH BELOW IS UNCHANGED and remains the
+    // default — a browser call behaves exactly as it did.
+    const isInternalCall = isInternalServiceCall({
+      presentedSecret: req.headers.get(INTERNAL_CALL_HEADER),
+      internalSecret: Deno.env.get("INTERNAL_CALL_SECRET"),
+      bearer: authHeader.replace(/^Bearer\s+/i, "").trim(),
+      serviceRoleKey,
     });
 
-    const { data: userRes, error: authError } = await anonClient.auth.getUser();
-    if (authError || !userRes?.user) return json({ error: "Unauthorized" }, 401);
+    // The run lock is per-user. An internal call has no browser user, so it acts as the company's
+    // OWNER (companies.created_by) — the same identity the browser path would have carried.
+    let actingUserId: string | null = null;
+    if (isInternalCall) {
+      console.log("[baseline] internal service-role call accepted (x-internal-call verified)");
+    } else {
+      const anonClient = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const res = await anonClient.auth.getUser();
+      if (res.error || !res.data?.user) return json({ error: "Unauthorized" }, 401);
+      actingUserId = String(res.data.user.id);
+    }
 
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const company_id = String(body?.company_id || "").trim();
@@ -2224,11 +2250,18 @@ Deno.serve(async (req) => {
       return json({ error: "company_name and website are required (via request or company record)" }, 400);
     }
 
+    if (!actingUserId) {
+      // internal path — act as the company's owner
+      const { data: ownerRow } = await supabase.from("companies").select("created_by").eq("id", company_id).maybeSingle();
+      actingUserId = ((ownerRow as { created_by?: string } | null)?.created_by ?? null);
+      if (!actingUserId) return json({ error: "internal call: company has no owner to act as" }, 422);
+    }
+
     const lockTtlMinutes = 30;
     const lockResult = await acquireCompanyRunLock({
       supabase,
       companyId: company_id,
-      userId: userRes.user.id,
+      userId: actingUserId,
       operation: "baseline",
       ttlMinutes: lockTtlMinutes,
     });
