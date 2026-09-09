@@ -752,9 +752,10 @@
   color: hsl(var(--fr-paper) / 0.55);
 }
 
-/* Positioning attributes as columns (their numerals are existing text). */
+/* Positioning attributes as a three-column row (their numerals are existing text). The list also
+   carries the NumberedList's flex utilities, so the grid is asserted. */
 .fr-numbered-cols {
-  display: grid;
+  display: grid !important;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   column-gap: 2.5rem;
   row-gap: 2rem;
@@ -769,8 +770,15 @@
   color: hsl(var(--fr-lime));
   font-family: var(--fr-font-mono);
 }
+/* Beat 9 supporting points: 1.25rem 400 paper/90, sentence-cased at render (::first-letter — the
+   stored text is untouched). */
 .fr-numbered-cols p,
-.fr-screen--dark .fr-numbered-cols p { color: hsl(var(--fr-paper)); }
+.fr-screen--dark .fr-numbered-cols p {
+  font-size: 1.25rem;
+  line-height: 1.4;
+  color: hsl(var(--fr-paper) / 0.9);
+}
+.fr-numbered-cols p::first-letter { text-transform: uppercase; }
 
 /* Strategy rungs as columns. */
 .fr-rung-cols {
@@ -787,7 +795,8 @@
   line-height: 1.4;
   color: hsl(var(--fr-paper));
 }
-.fr-rung ol p { color: hsl(var(--fr-paper) / 0.85); }
+/* Beat 10 capabilities list: 1.0625rem 400 paper/80, numerals mono lime. */
+.fr-rung ol p { font-size: 1.0625rem; line-height: 1.5; font-weight: 400; color: hsl(var(--fr-paper) / 0.8); }
 .fr-rung ol > li > span { color: hsl(var(--fr-lime)); font-family: var(--fr-font-mono); }
 
 /* Cold-open quote in the aside. */
@@ -829,12 +838,15 @@
    Sidebar FIXED at 25rem on ≥lg, slate to the bottom of the row, bleeding to the viewport's left
    edge; its text sticks under the header. Below lg the sidebar stacks above the body. */
 
+/* Stage 3e: at ≥lg the Spread spans the VIEWPORT (it escapes the 1080 shell with 50% − 50vw
+   margins): a fixed 25rem sidebar whose text is padded 3rem, then the body column with 4rem side
+   padding and its content capped at 60rem. */
 .fr-spread {
   display: grid;
   grid-template-columns: 25rem minmax(0, 1fr);
-  column-gap: 4rem;
+  column-gap: 0;
   align-items: stretch;
-  margin-top: -48px;
+  margin: -48px calc(50% - 50vw) 0;
   min-height: calc(100vh - 57px);
 }
 
@@ -844,7 +856,7 @@
 
 .fr-spread-side {
   align-self: stretch;
-  padding: 3.25rem 2.5rem 3.5rem 0;
+  padding: 3.25rem 3rem 3.5rem 3rem;
   box-sizing: border-box;
 }
 
@@ -856,19 +868,15 @@
 .fr-spread[data-fr-sidebar="slate"] .fr-spread-side {
   background: hsl(var(--fr-slate));
   color: hsl(var(--fr-paper));
-  margin-left: calc(-1 * var(--fr-bleed));
-  padding-left: var(--fr-bleed);
 }
 
 .fr-spread[data-fr-sidebar="lime"] .fr-spread-side {
   background: hsl(var(--fr-lime));
   color: hsl(var(--fr-ink));
-  margin-left: calc(-1 * var(--fr-bleed));
-  padding-left: var(--fr-bleed);
 }
 
 @media (max-width: 1023px) {
-  .fr-spread-side { padding-right: var(--fr-bleed); margin-right: calc(-1 * var(--fr-bleed)); }
+  .fr-spread-side { padding: 2.5rem 1.5rem; }
   .fr-spread-side-inner { position: static; }
 }
 
@@ -957,7 +965,12 @@
 
 .fr-spread-main {
   min-width: 0;
-  padding: 3.25rem 0 4rem;
+  box-sizing: border-box;
+  padding: 3.25rem 4rem 4rem 4rem;
+  max-width: calc(60rem + 8rem); /* 60rem of content inside the 4rem side paddings */
+}
+@media (max-width: 1023px) {
+  .fr-spread-main { padding: 2.5rem 1.5rem; max-width: none; }
 }
 
 /* Score in the sidebar (ScoreNow display). */
@@ -1415,6 +1428,7 @@
 .fr-base-stage {
   position: relative;
   width: 100%;
+  max-width: 580px; /* keeps the 270-unit rings at ~240px now that the body column is wider */
   aspect-ratio: 640 / 690;
   counter-reset: fr-base;
 }

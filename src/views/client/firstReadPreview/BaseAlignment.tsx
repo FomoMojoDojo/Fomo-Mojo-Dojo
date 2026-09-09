@@ -41,18 +41,19 @@ export function allUntestedPairs(readFrom: string): BasePairInput[] {
   return PAIR_KEYS.map(([a, b]) => ({ a, b, state: "untested", readFrom }));
 }
 
-// Layout space (the SVG underlay's viewBox); node positions are converted to percentages. At the
-// 1440 layout the body column is ~568px wide, so a 270-unit ring renders at ~240px.
+// Layout space (the SVG underlay's viewBox); node positions are converted to percentages. The stage
+// is capped at 640px wide, so one viewBox unit is one CSS pixel at the 1440 layout: a 270-unit ring
+// renders at 270px... capped by .fr-base-stage's max-width (see firstRead.css) to keep ~240px rings.
 const W = 640;
 const H = 690;
-const TODAY_R = 135;
+export const TODAY_R = 135;
 const GOAL_CENTER = { x: 320, y: 355 };
 // Tag collision threshold / offset, in viewBox units (~40px / ~28px at the 1440 layout).
-const TAG_NEAR = 45;
+export const TAG_NEAR = 45;
 const TAG_OFFSET = 32;
 
 /** Reading order = numbering order (01 Strategy, 02 Positioning, 03 Who you serve, 04 Promise). */
-const ELEMENTS: {
+export const ELEMENTS: {
   key: BaseElementKey;
   label: string;
   sub: string;
@@ -106,10 +107,35 @@ const SHORT_LINK = 100;
 const SHORT_OFFSET = 42;
 const STAGE_CENTER = { x: W / 2, y: H / 2 };
 
-/** Connector geometry + a tag position that never sits within TAG_NEAR of an earlier tag and never
- *  on a ring (short links offset along the normal, outward). */
-function layoutPairs(pairs: BasePairInput[]) {
+/** The paper backing box behind a tag, in viewBox units (the test asserts on this box). */
+export function tagBox(label: string, tag: Pt) {
+  const width = label.length * 6.6 + 16;
+  const height = 16;
+  return { x: tag.x - width / 2, y: tag.y - height / 2, width, height };
+}
+
+const RING_STROKE_HALF = 3;
+
+/** True when the tag box is wholly outside every ring's stroke band (never straddling a stroke). */
+function boxClearsRings(box: { x: number; y: number; width: number; height: number }): boolean {
+  return ELEMENTS.every((el) => {
+    const c = el.today;
+    const nx = Math.max(box.x, Math.min(c.x, box.x + box.width));
+    const ny = Math.max(box.y, Math.min(c.y, box.y + box.height));
+    const near = Math.hypot(nx - c.x, ny - c.y);
+    const corners = [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]];
+    const far = Math.max(...corners.map(([x, y]) => Math.hypot(x - c.x, y - c.y)));
+    return !(near <= TODAY_R + RING_STROKE_HALF && far >= TODAY_R - RING_STROKE_HALF);
+  });
+}
+
+/** Connector geometry + a tag position that never sits within TAG_NEAR of an earlier tag and whose
+ *  backing box never touches a ring stroke: the midpoint is tried first (long links only), then
+ *  offsets along the connector normal — outward from the stage centre first — growing until a
+ *  candidate clears every ring and every placed tag. Exported for the geometry test. */
+export function layoutPairs(pairs: BasePairInput[]) {
   const placed: Pt[] = [];
+  const label = STATE_LABEL.untested.toUpperCase(); // the widest tag drives the clearance box
   return pairs.map((pair) => {
     const a = elementFor(pair.a);
     const b = elementFor(pair.b);
@@ -120,19 +146,17 @@ function layoutPairs(pairs: BasePairInput[]) {
     const normal = { x: -(end.y - start.y) / len, y: (end.x - start.x) / len };
     const near = (p: Pt) => placed.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < TAG_NEAR);
     const along = (d: number): Pt => ({ x: mid.x + normal.x * d, y: mid.y + normal.y * d });
-    let tag = mid;
-    if (len < SHORT_LINK) {
-      // Outward candidate first (farther from the stage centre), the other side if it collides.
-      const plus = along(SHORT_OFFSET);
-      const minus = along(-SHORT_OFFSET);
-      const dist = (p: Pt) => Math.hypot(p.x - STAGE_CENTER.x, p.y - STAGE_CENTER.y);
+    const dist = (p: Pt) => Math.hypot(p.x - STAGE_CENTER.x, p.y - STAGE_CENTER.y);
+    const ok = (p: Pt) => !near(p) && boxClearsRings(tagBox(label, p));
+    // Candidate order: midpoint (long links), then ± offsets, outward side first, growing.
+    const candidates: Pt[] = [];
+    if (len >= SHORT_LINK) candidates.push(mid);
+    for (const d of [SHORT_OFFSET, SHORT_OFFSET + 14, SHORT_OFFSET + 28, SHORT_OFFSET + 42, TAG_OFFSET]) {
+      const plus = along(d), minus = along(-d);
       const [first, second] = dist(plus) >= dist(minus) ? [plus, minus] : [minus, plus];
-      tag = !near(first) ? first : second;
-    } else if (near(tag)) {
-      const plus = along(TAG_OFFSET);
-      const minus = along(-TAG_OFFSET);
-      tag = !near(plus) ? plus : !near(minus) ? minus : plus;
+      candidates.push(first, second);
     }
+    const tag = candidates.find(ok) ?? candidates[0];
     placed.push(tag);
     return { pair, start, end, tag };
   });
@@ -196,7 +220,7 @@ export default function BaseAlignment({
             const color = STATE_COLOR[pair.state];
             const d = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
             const label = STATE_LABEL[pair.state].toUpperCase();
-            const bw = label.length * 6.6 + 16;
+            const box = tagBox(label, tag);
             return (
               <g key={`${pair.a}-${pair.b}`}>
                 <title>{pair.readFrom}</title>
@@ -217,7 +241,7 @@ export default function BaseAlignment({
                   />
                 )}
                 {/* Paper backing so the tag never collides with a stroke, a ring or another tag. */}
-                <rect className="fr-base-tag-back" x={tag.x - bw / 2} y={tag.y - 8} width={bw} height={16} rx={2} />
+                <rect className="fr-base-tag-back" x={box.x} y={box.y} width={box.width} height={box.height} rx={2} />
                 <text
                   className="fr-align-tag"
                   x={tag.x}
