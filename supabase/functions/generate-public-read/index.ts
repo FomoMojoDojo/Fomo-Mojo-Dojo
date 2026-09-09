@@ -31,6 +31,7 @@ import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage }
 import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
+import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -347,7 +348,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (inputs.length === 0) return json({ ok: false, status: "empty", reason: "no public inputs for this company" });
+    if (inputs.length === 0) {
+      // Whole-run empty is still a REJECT, and it is now visible per kind like every other guard.
+      const detail = "no public inputs for this company";
+      for (const kind of activeKinds) {
+        console.log(rejectLogLine(company_id, kind, "empty_inputs", detail));
+        try {
+          const base = {
+            company_id, component: `first_read_public_read_${kind}`, examined: 0, admitted: 0,
+            excluded_by_rule: { kind, guard: "empty_inputs", detail, mode: doStage ? "stage" : (doWrite ? "write" : "dry_run") },
+            error: `guard=empty_inputs detail=${detailOf(detail)}`, run_ref: null,
+          };
+          const { error } = await supabase.from("integrity_runs").insert({ ...base, status: "rejected" });
+          if (error) await supabase.from("integrity_runs").insert({ ...base, status: "failed" });
+        } catch { /* observability must never break the pipeline */ }
+      }
+      const perKind = Object.fromEntries(activeKinds.map((k) => [k, { status: "rejected", guard: "empty_inputs", detail }]));
+      return json({ ok: false, status: "empty", reason: detail, per_kind: perKind, rejected: activeKinds.map((kind) => ({ kind, guard: "empty_inputs", detail })) });
+    }
 
     const usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0 };
     const callLocal = async (model: string, system: string, user: string, temperature: number): Promise<Record<string, unknown>> => {
@@ -433,82 +451,29 @@ ${US_ENGLISH_RULE}`;
         `differentiators: ${Array.isArray(posCtx.unique_attributes) ? (posCtx.unique_attributes as Array<{ text?: string }>).map((a) => a?.text).filter(Boolean).join("; ") : ""}`
       : "";
 
-    const payloads: Record<Kind, Record<string, unknown>> = {} as Record<Kind, Record<string, unknown>>;
+    // ── PER-KIND ISOLATION (2026-09-09) ─────────────────────────────────────────────────────────
+    //  Each kind is generated, guarded, judged and written ON ITS OWN. A reject records that kind's
+    //  rejected integrity row + log line and the NEXT kind still runs. Every guard and the judge are
+    //  unchanged — same functions, same thresholds, same prompts; only the SCOPE narrows to one kind
+    //  (exactly what a kinds-scoped run already did) and rejects are now visible. See
+    //  ../_shared/publicReadPerKind.ts for the isolation contract and its one admission consequence.
     const genSys: Record<Kind, string> = { positioning: GEN_POSITIONING, strategy: GEN_STRATEGY, promise: GEN_PROMISE, offering: GEN_OFFERING };
-    const citationErrors: Array<{ kind: Kind; bad_ids: string[] }> = [];
-    for (const kind of activeKinds) {
-      const extra = kind === "strategy" ? positioningContext : "";
-      const p = await run(genChoice, genSys[kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
-      payloads[kind] = p;
-      const bad = citedRefs(p).filter((ref) => !uuidByRef.has(ref));
-      if (bad.length) citationErrors.push({ kind, bad_ids: bad });
-    }
-    // FAIL LOUD: any citation outside the ledger → reject the whole read, write nothing.
-    if (citationErrors.length) {
-      return json({ ok: false, rejected: "citation_outside_ledger", citation_errors: citationErrors, payloads, ledger_count: ledger.count }, 200);
-    }
 
-    // ── OFFERING STRUCTURE GATE (deterministic, pre-judge): every offering item must carry a label, a
-    //    statement, a NON-EMPTY refs array of valid ledger tokens, and a valid kind_hint; no currency/
-    //    verdict vocab in a statement; open_questions well-formed. This is the cite-or-omit floor for the
-    //    offering catalogue (an uncited item slips past the generic ref-token check, which only rejects
-    //    UNKNOWN tokens — never an EMPTY refs array). Reject → write nothing.
-    if (activeKinds.includes("offering")) {
-      const offViol = offeringStructureViolations(payloads.offering, new Set(uuidByRef.keys()));
-      if (offViol.length) {
-        return json({ ok: false, rejected: "offering_structure", offering_violations: offViol, payloads, ledger_count: ledger.count }, 200);
-      }
-    }
-
-    // ── FRAMING GATE (Gate 6a, deterministic, pre-judge): a posit is a HYPOTHESIS, never a verdict.
-    //    Reject verdict-family / UNDERSERVED vocabulary before the judge even runs. Write nothing.
-    const framing = framingViolations(payloads);
-    if (framing.length) {
-      return json({ ok: false, rejected: "framing_vocab", framing_violations: framing, payloads, ledger_count: ledger.count }, 200);
-    }
-
-    // ── CITATION RESOLUTION PROOF (Gate 6a): every ref a posit cites resolves to a ledger id that is
-    //    LIVE + PUBLIC at mint. Refs → uuids via the catalogue; each uuid must be in the ledger with a
-    //    public provenance and liveness 'live'. The ledger is live-public by construction (the queries
-    //    select live-only public rows), so this is an explicit assertion of that invariant.
-    const resolvedPayloads = Object.fromEntries(
-      activeKinds.map((k) => [k, translateCitations(payloads[k], uuidByRef)]),
-    ) as Record<Kind, Record<string, unknown>>;
-    const citedUuids = [...new Set(activeKinds.flatMap((k) => citedRefs(payloads[k]).map((ref) => uuidByRef.get(ref)).filter((x): x is string => !!x)))];
-    const citationResolution = citedUuids.map((id) => ({
-      id, in_ledger: ledgerIds.has(id), provenance: ledger.provenances[id] ?? null,
-      public: require_public(ledger.provenances[id]), liveness: ledger.liveness[id] ?? null,
-    }));
-    const livePublic = citationsLivePublic(citedUuids, ledger.provenances, ledger.liveness);
-    if (!livePublic.ok) {
-      // A cited id that isn't live-public in the ledger is an integrity failure — reject, write nothing.
-      return json({ ok: false, rejected: "citation_not_live_public", bad_ids: livePublic.bad, citation_resolution: citationResolution, payloads, ledger_count: ledger.count }, 200);
-    }
-
-    // ── JUDGE all three together: grounding + plain-sanity + consistency + (Stage B) cascade coherence
-    // (d) CASCADE COHERENCE is a per-rung READING check — it NEVER blocks acceptance (ruling R3: a
-    // grounded-but-incoherent rung is SURFACED as a tension question, not a reason to reject the read).
-    // It reports whether how_to_win serves the stated where_to_play + winning_aspiration, and whether
-    // each capability serves how_to_win. A false verdict → that rung is excluded from the rendered spine
-    // and a tension question is minted downstream (with the judge's reason).
-    const offeringActive = activeKinds.includes("offering");
-    // OFFERING criteria (appended only when the offering kind is in this run). The judge returns an
-    // `offering` verdict block whose four flags gate acceptance (offeringAcceptFromVerdict): (e)
-    // ENUMERABLE — each item is a concrete offering, not a strategy/positioning statement; (f) ENTITY
-    // ATTRIBUTION — no item describes a co-located / partner / third-party entity's offering (reject the
-    // whole read if any item does); (g) DOUBTS-PLACED — currency/entity doubts appear in open_questions,
-    // never as a verdict inside an item; (h) BANNED-VOCAB — no verdict/currency/status words in an item.
-    const OFFERING_JUDGE_CLAUSE = offeringActive
-      ? `\n(e)–(h) OFFERING (the "offering" read is a CATALOGUE of what the company puts in front of customers):
+    // The judge prompt, built for ONE kind — byte-identical to what a kinds-scoped single-kind run
+    // produced before (offeringActive is now "is this kind the offering kind").
+    const judgeSysFor = (kind: Kind): string => {
+      const offeringActive = kind === "offering";
+      const OFFERING_JUDGE_CLAUSE = offeringActive
+        ? `\n(e)–(h) OFFERING (the "offering" read is a CATALOGUE of what the company puts in front of customers):
 (e) ENUMERABLE — every item names a concrete offering (product/service/program/format/channel), NOT a strategy line, value claim, or intent;
 (f) ENTITY ATTRIBUTION — every item's cited inputs describe THIS company's own offering; if ANY item actually describes a CO-LOCATED / partner / third-party entity's offering, set entity_attribution_ok:false;
 (g) DOUBTS-PLACED — currency/entity doubts live in open_questions (with a reason), never phrased as a verdict inside an item statement;
 (h) BANNED-VOCAB — no verdict/currency/status words (confirmed, disputed, stale, closed, retired, underserved, …) appear inside any item statement.`
-      : "";
-    const OFFERING_VERDICT_FIELD = offeringActive
-      ? `,\n "offering":{"enumerable_ok":true|false,"entity_attribution_ok":true|false,"doubts_placed_ok":true|false,"banned_vocab_ok":true|false,"reason":"<one line>"}`
-      : "";
-    const JUDGE_SYS = `You judge a public-only "Our read" of a company (positioning, strategy, promise, and possibly an offering catalogue). Check:
+        : "";
+      const OFFERING_VERDICT_FIELD = offeringActive
+        ? `,\n "offering":{"enumerable_ok":true|false,"entity_attribution_ok":true|false,"doubts_placed_ok":true|false,"banned_vocab_ok":true|false,"reason":"<one line>"}`
+        : "";
+      return `You judge a public-only "Our read" of a company (positioning, strategy, promise, and possibly an offering catalogue). Check:
 (a) GROUNDING — every claim is supported by the cited inputs (the cited excerpts back it; nothing invented);
 (b) PLAIN-SANITY — market_category names what this business ACTUALLY IS per its own words and outside signals (a coffee roaster is NOT "SaaS"; a clinic is NOT "marketplace"). Reject an absurd or aspirational category. If positioning is not in this read, set sanity_ok:true;
 (c) CONSISTENCY — the read describes the SAME business throughout and does not contradict itself. If only one kind is in this read, judge its internal consistency and set consistency_ok:true when coherent;
@@ -519,102 +484,99 @@ Respond with ONLY JSON:
  "cascade_coherence":{"how_to_win":{"coherent":true|false,"reason":"<one line: does it serve where-to-play + aspiration?>"},
    "capabilities":[{"text":"<echo the capability text>","coherent":true|false,"reason":"<one line: does it serve how-to-win?>"}]}${OFFERING_VERDICT_FIELD},
  "accept":true|false,"reason":"<one line>"}`;
-    // KINDS-SCOPED: the judge sees only the kinds this run generated (an unlisted kind is not judged —
-    // there is no payload for it). The criteria and prompt are unchanged; only the READ list narrows.
-    const judgeRead = activeKinds.map((k) => `${k}: ${JSON.stringify(payloads[k])}`).join("\n");
-    const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nTHE READ:\n${judgeRead}\n\nJudge and decide accept (accept reflects a,b,c${offeringActive ? " and the offering e–h flags" : ""} ONLY — d is reported, never blocks).`;
-    const verdict = await run(judgeChoice, JUDGE_SYS, judgeUser, 0);
-    // Accept: base (grounding/sanity/consistency/accept) AND — when offering is in the run — all four
-    // offering flags (offeringAcceptFromVerdict, fail-closed on a missing flag).
-    const accept = verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
-      && verdict.accept === true && (offeringActive ? offeringAcceptFromVerdict(verdict) : true);
-    const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
-
-    // ── Stage B — CASCADE ROUTING (deterministic, post-judge): the rendered SPINE (incoherent rungs
-    //    excluded) + the cascade_gap items (ungrounded rungs → gap; grounded-but-incoherent → tension).
-    //    The SPINE (not the raw strategy) is what gets stored, so the render shows only the coherent
-    //    spine; the excluded rungs live as questions on the Questions beat. Positioning/promise unchanged.
-    // KINDS-SCOPED: cascade routing rides the strategy kind — when "strategy" is not in this run,
-    // there is no strategy payload to derive from and the live cascade_gap questions must NOT be
-    // superseded (they belong to the untouched current strategy row).
-    const strategyActive = activeKinds.includes("strategy");
-    const coherence = (verdict.cascade_coherence ?? null) as CascadeCoherence | null;
-    // Storage payloads: strategy → the spine (still ref-tokened); positioning/promise → raw.
-    const storagePayloads: Record<Kind, Record<string, unknown>> = { ...payloads };
-    let cascadeItems: CascadeGapItem[] = [];
-    if (strategyActive) {
-      const derived = deriveCascadeSpineAndGaps(payloads.strategy as StrategyPayload, coherence);
-      cascadeItems = derived.items;
-      storagePayloads.strategy = derived.spine as Record<string, unknown>;
-      resolvedPayloads.strategy = translateCitations(derived.spine, uuidByRef) as Record<string, unknown>;
-    }
-    const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
-
-    // ── OFFERING seen_on derivation (STRUCTURAL, post-judge): resolve each item's refs → source domains
-    //    against the company's own host(s). The model never emitted seen_on; it is derived here from the
-    //    ledger's per-id source metadata. refMeta maps ledger uuid → {domain, date, own_site}; ownHosts is
-    //    the company's own-site host(s). Built only when offering is in the run.
-    let derivedSeenOn: OfferingSeenOn[] | null = null;
-    if (offeringActive) {
-      const { data: coRow } = await supabase.from("companies").select("website").eq("id", company_id).maybeSingle();
-      const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
-      const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
-      const refMeta = new Map<string, { domain: string | null; date: string | null; own_site: boolean }>();
-      for (const r of inputs) {
-        refMeta.set(r.id, {
-          domain: hostOf(r.source_url) ?? (r.own_site && ownHost ? ownHost : null),
-          date: r.event_date ?? null,
-          own_site: r.own_site === true || (hostOf(r.source_url) !== null && ownHosts.has(hostOf(r.source_url)!)),
-        });
-      }
-      derivedSeenOn = deriveOfferingSeenOn(payloads.offering, uuidByRef, refMeta, ownHosts);
-      // Merge the DERIVED seen_on/source_count/date range into the STORAGE payload's items (Stage B
-      // write path). The model's item refs get translated token→uuid at insert; the seen_on fields carry
-      // no refs, so they pass through unchanged. (Dry-run returns derivedSeenOn separately and writes
-      // nothing.)
-      const offItems = Array.isArray((storagePayloads.offering as Record<string, unknown>).items)
-        ? ((storagePayloads.offering as Record<string, unknown>).items as Array<Record<string, unknown>>) : [];
-      storagePayloads.offering = {
-        ...(storagePayloads.offering as Record<string, unknown>),
-        items: offItems.map((it, i) => ({
-          ...it,
-          seen_on: derivedSeenOn![i]?.seen_on ?? null,
-          source_count: derivedSeenOn![i]?.source_count ?? 0,
-          source_domains: derivedSeenOn![i]?.domains ?? [],
-          earliest_source: derivedSeenOn![i]?.earliest ?? null,
-          latest_source: derivedSeenOn![i]?.latest ?? null,
-        })),
-      };
-    }
-    // Router resolution + a compact ledger summary — surfaced in the dry-run for operator review.
-    const routerResolution = {
-      generator: genChoice.provider, judge: judgeChoice.provider,
-      all_public: ledger.ids.every((id) => require_public(ledger.provenances[id])),
-      distinct_provenances: [...new Set(Object.values(ledger.provenances))].sort(),
     };
-    const ledgerSummary = { count: ledger.count, by_kind: Object.fromEntries(KINDS_INPUT.map((k) => [k, ledger.by_kind[k]?.length ?? 0])), corpus_md5: ledger.corpus_md5 };
 
-    if (!accept) {
-      // Reject → no write, verdict returned (nothing persisted).
-      return json({ ok: false, rejected: "judge", judge_verdict: verdict, judge_model: judgeChoice.model, payloads, derived_seen_on: derivedSeenOn, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
-    }
-    if (!doWrite && !doStage) {
-      return json({ ok: true, dry_run: true, payloads, resolved_payloads: resolvedPayloads, derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdict: verdict, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
-    }
-
-    // ── ACCEPT → write rows, superseding the prior current row (kept, never deleted). ───────
-    // Legacy market_read canvas/cascade id (if any) so the row records what it supersedes.
+    // Legacy market_read pointers — read ONCE, before any write, so a per-kind write sees the same
+    // legacy row the whole-run write saw.
     const { data: legacyCanvas } = await supabase.from("positioning_canvases").select("id").eq("company_id", company_id).eq("artifact_role", "market_read").maybeSingle();
     const { data: legacyCascade } = await supabase.from("strategy_cascades").select("id").eq("company_id", company_id).eq("artifact_role", "market_read").maybeSingle();
     const legacyFor = (k: Kind): string | null =>
       k === "strategy" ? ((legacyCascade as { id?: string } | null)?.id ?? null) : ((legacyCanvas as { id?: string } | null)?.id ?? null);
 
-    // ── STAGE (Gate 6a two-phase): write is_current=FALSE rows, DO NOT supersede the prior current row.
-    //    The signed payloads persist as staged; `promote` (accept) flips them current + supersedes. This
-    //    lets the operator sign the EXACT payloads with nothing marked current until accept.
-    if (doStage) {
-      const staged: Array<{ kind: Kind; id: string }> = [];
-      for (const kind of activeKinds) {
+    // Company own-host set — read once, used by the offering seen_on derivation.
+    const { data: coRow } = await supabase.from("companies").select("website").eq("id", company_id).maybeSingle();
+    const ownHost = hostOf((coRow as { website?: string | null } | null)?.website ?? null);
+    const ownHosts = new Set<string>(ownHost ? [ownHost] : []);
+    const refMeta = new Map<string, { domain: string | null; date: string | null; own_site: boolean }>();
+    for (const r of inputs) {
+      refMeta.set(r.id, {
+        domain: hostOf(r.source_url) ?? (r.own_site && ownHost ? ownHost : null),
+        date: r.event_date ?? null,
+        own_site: r.own_site === true || (hostOf(r.source_url) !== null && ownHosts.has(hostOf(r.source_url)!)),
+      });
+    }
+
+    const payloads: Partial<Record<Kind, Record<string, unknown>>> = {};
+    const storagePayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
+    const resolvedPayloads: Partial<Record<Kind, Record<string, unknown>>> = {};
+    const verdicts: Partial<Record<Kind, Record<string, unknown>>> = {};
+    const written: Array<{ kind: Kind; id: string; superseded: string | null }> = [];
+    const staged: Array<{ kind: Kind; id: string }> = [];
+    let derivedSeenOn: OfferingSeenOn[] | null = null;
+    let cascadeItems: CascadeGapItem[] = [];
+    let cascadeRouting: { superseded: number; inserted: number; run_id: string | null } = { superseded: 0, inserted: 0, run_id: null };
+
+    // Build the STORAGE payload for a kind (strategy → the coherent spine; others → raw) and, for the
+    // offering kind, derive seen_on/source_count/date range from the ledger's per-id source metadata.
+    const prepareStorage = (kind: Kind, payload: Record<string, unknown>, verdict: Record<string, unknown>): Record<string, unknown> => {
+      if (kind === "strategy") {
+        const coherence = (verdict.cascade_coherence ?? null) as CascadeCoherence | null;
+        const derived = deriveCascadeSpineAndGaps(payload as StrategyPayload, coherence);
+        cascadeItems = derived.items;
+        return derived.spine as Record<string, unknown>;
+      }
+      if (kind === "offering") {
+        derivedSeenOn = deriveOfferingSeenOn(payload, uuidByRef, refMeta, ownHosts);
+        const offItems = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
+        return {
+          ...payload,
+          items: offItems.map((it, i) => ({
+            ...it,
+            seen_on: derivedSeenOn![i]?.seen_on ?? null,
+            source_count: derivedSeenOn![i]?.source_count ?? 0,
+            source_domains: derivedSeenOn![i]?.domains ?? [],
+            earliest_source: derivedSeenOn![i]?.earliest ?? null,
+            latest_source: derivedSeenOn![i]?.latest ?? null,
+          })),
+        };
+      }
+      return payload;
+    };
+
+    // ── ONE integrity row per kind: component first_read_public_read_<kind>. Observability only —
+    //    it must NEVER turn a per-kind reject into a 500, so every failure here is swallowed. Status
+    //    'rejected' needs the widened CHECK (migration 20260909180000); until that is applied the
+    //    insert falls back to 'failed' with the guard preserved in `error`.
+    const recordKindIntegrity = async (kind: string, row: { status: "completed" | "rejected"; guard?: string; detail?: string }): Promise<void> => {
+      const base = {
+        company_id, component: `first_read_public_read_${kind}`,
+        examined: ledger.count, admitted: row.status === "completed" ? 1 : 0,
+        excluded_by_rule: { kind, guard: row.guard ?? null, detail: row.detail ?? null, mode: doStage ? "stage" : (doWrite ? "write" : "dry_run") },
+        error: row.guard ? `guard=${row.guard} detail=${detailOf(row.detail ?? "")}` : null,
+        run_ref: ledger.corpus_md5 ?? null,
+      };
+      try {
+        const { error } = await supabase.from("integrity_runs").insert({ ...base, status: row.status });
+        if (!error) return;
+        if (row.status === "rejected") {
+          await supabase.from("integrity_runs").insert({ ...base, status: "failed" });
+        }
+      } catch { /* observability must never break the pipeline */ }
+    };
+
+    // FINALIZE an accepted kind. Runs for EVERY accepted kind (write, stage AND dry-run) so the
+    // derived artifacts the response reports — the cascade spine + gaps, the offering seen_on — are
+    // computed on every path exactly as the whole-run code computed them. Persistence is what the
+    // mode decides: write inserts the STORAGE payload (strategy spine / offering with seen_on),
+    // stage inserts the RAW translated payload except the strategy spine (unchanged from before),
+    // and a dry-run persists nothing.
+    const finalize = async (rawKind: string, payload: Record<string, unknown>, verdict: Record<string, unknown>): Promise<void> => {
+      const kind = rawKind as Kind;
+      const storage = prepareStorage(kind, payload, verdict);
+      storagePayloads[kind] = storage;
+      resolvedPayloads[kind] = translateCitations(kind === "strategy" ? storage : payload, uuidByRef) as Record<string, unknown>;
+
+      if (doStage) {
         const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
           company_id, kind, payload: resolvedPayloads[kind], input_ledger: ledger,
           model_provider: genChoice.provider, model_name: genChoice.model,
@@ -623,12 +585,10 @@ Respond with ONLY JSON:
         }).select("id").single();
         if (insErr) throw new Error(`stage insert failed (${kind}): ${insErr.message}`);
         staged.push({ kind, id: (ins as { id: string }).id });
+        return;
       }
-      return json({ ok: true, staged, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
-    }
+      if (!doWrite) return; // dry-run — derived, reported, nothing persisted
 
-    const written: Array<{ kind: Kind; id: string; superseded: string | null }> = [];
-    for (const kind of activeKinds) {
       const { data: prior } = await supabase.from("public_reads").select("id").eq("company_id", company_id).eq("kind", kind).eq("is_current", true).maybeSingle();
       const priorId = (prior as { id?: string } | null)?.id ?? null;
       if (priorId) {
@@ -637,7 +597,7 @@ Respond with ONLY JSON:
         if (upErr) throw new Error(`supersede-prior failed (${kind}): ${upErr.message}`);
       }
       const { data: ins, error: insErr } = await supabase.from("public_reads").insert({
-        company_id, kind, payload: translateCitations(storagePayloads[kind], uuidByRef), input_ledger: ledger,
+        company_id, kind, payload: translateCitations(storage, uuidByRef), input_ledger: ledger,
         model_provider: genChoice.provider, model_name: genChoice.model,
         judge_verdict: verdict, judge_model: judgeChoice.model,
         is_current: true, supersedes_legacy_row: legacyFor(kind),
@@ -646,34 +606,82 @@ Respond with ONLY JSON:
       const newId = (ins as { id: string }).id;
       if (priorId) await supabase.from("public_reads").update({ superseded_by: newId }).eq("id", priorId);
       written.push({ kind, id: newId, superseded: priorId });
+
+      // Stage B — route THIS strategy read's gaps + tensions to the Questions beat (idempotent).
+      // Tighter than the run-level flag it replaces: only a strategy read that passed every guard
+      // and was actually written may supersede the live cascade_gap rows.
+      if (kind === "strategy") {
+        cascadeRouting = await writeCascadeGaps(supabase, company_id, cascadeItems, { provider: genChoice.provider, model: genChoice.model });
+      }
+      // OFFERING integrity (Stage B) — the persisted record an earned-empty offering renders from.
+      if (kind === "offering") {
+        const offItems = Array.isArray(storage.items) ? (storage.items as unknown[]) : [];
+        const offOqs = Array.isArray(payload.open_questions) ? (payload.open_questions as unknown[]) : [];
+        const ownCount = (derivedSeenOn ?? []).filter((s) => s.seen_on === "own_site").length;
+        await writeOfferingIntegrity(supabase, company_id, {
+          examined: ledger.count, admitted: offItems.length,
+          excludedByRule: { items: offItems.length, own_site: ownCount, outside: offItems.length - ownCount, open_questions: offOqs.length, ledger_ids: ledger.count, mode: "write" },
+        });
+      }
+    };
+
+    const outcomes = await runKindsIsolated(activeKinds, {
+      citedRefs,
+      validRefs: new Set(uuidByRef.keys()),
+      uuidByRef,
+      provenances: ledger.provenances,
+      liveness: ledger.liveness,
+      generate: async (kind) => {
+        const extra = kind === "strategy" ? positioningContext : "";
+        const p = await run(genChoice, genSys[kind as Kind], `LEDGER (cite only the bracketed tokens on these lines):\n${CAT}${extra}\n\nProduce the ${kind} JSON.`, 0);
+        payloads[kind as Kind] = p;
+        return p;
+      },
+      judge: async (kind, payload) => {
+        const offeringActive = kind === "offering";
+        const judgeUser = `LEDGER (id-tagged):\n${CAT}\n\nTHE READ:\n${kind}: ${JSON.stringify(payload)}\n\nJudge and decide accept (accept reflects a,b,c${offeringActive ? " and the offering e–h flags" : ""} ONLY — d is reported, never blocks).`;
+        const v = await run(judgeChoice, judgeSysFor(kind as Kind), judgeUser, 0);
+        verdicts[kind as Kind] = v;
+        return v;
+      },
+      // The EXISTING accept expression, unchanged — offeringActive is now per-kind.
+      accepts: (kind, verdict) =>
+        verdict.grounding_ok === true && verdict.sanity_ok === true && verdict.consistency_ok === true
+        && verdict.accept === true && (kind === "offering" ? offeringAcceptFromVerdict(verdict) : true),
+      commit: finalize,
+      recordIntegrity: recordKindIntegrity,
+      onReject: (kind, guard, detail) => console.log(rejectLogLine(company_id, kind, guard, detail)),
+    });
+
+    const acceptedKinds = outcomes.filter((o) => o.status === "written").map((o) => o.kind as Kind);
+    const perKind = Object.fromEntries(outcomes.map((o) => [o.kind, { status: o.status, guard: o.guard, detail: o.detail }]));
+    const rejected = outcomes.filter((o) => o.status === "rejected").map((o) => ({ kind: o.kind, guard: o.guard, detail: o.detail }));
+
+    // Citation resolution proof, over the kinds that passed every guard.
+    const citedUuids = [...new Set(acceptedKinds.flatMap((k) => citedRefs(payloads[k]).map((ref) => uuidByRef.get(ref)).filter((x): x is string => !!x)))];
+    const citationResolution = citedUuids.map((id) => ({
+      id, in_ledger: ledgerIds.has(id), provenance: ledger.provenances[id] ?? null,
+      public: require_public(ledger.provenances[id]), liveness: ledger.liveness[id] ?? null,
+    }));
+    const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
+    const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+    const routerResolution = {
+      generator: genChoice.provider, judge: judgeChoice.provider,
+      all_public: ledger.ids.every((id) => require_public(ledger.provenances[id])),
+      distinct_provenances: [...new Set(Object.values(ledger.provenances))].sort(),
+    };
+    const ledgerSummary = { count: ledger.count, by_kind: Object.fromEntries(KINDS_INPUT.map((k) => [k, ledger.by_kind[k]?.length ?? 0])), corpus_md5: ledger.corpus_md5 };
+    // A per-kind run has no single verdict; keep the field for callers by reporting the accepted ones.
+    const judgeVerdicts = Object.fromEntries(outcomes.map((o) => [o.kind, o.verdict]));
+
+    if (doStage) {
+      return json({ ok: true, staged, per_kind: perKind, rejected, resolved_payloads: resolvedPayloads, citation_resolution: citationResolution, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    }
+    if (!doWrite) {
+      return json({ ok: true, dry_run: true, per_kind: perKind, rejected, payloads, resolved_payloads: resolvedPayloads, derived_seen_on: derivedSeenOn, citation_resolution: citationResolution, cascade_gaps: cascadeGapsPreview, judge_verdicts: judgeVerdicts, router_resolution: routerResolution, ledger_summary: ledgerSummary, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
     }
 
-    // ── Stage B — route the cascade's gaps + tensions to the Questions beat (idempotent supersede). This
-    //    happens on the DIRECT-WRITE path only (the read is is_current here, so its questions are live in
-    //    lockstep). The two-phase stage/promote path does NOT emit cascade_gaps (the staged read is not
-    //    current); regenerate via write to (re)route.
-    // KINDS-SCOPED: only a run that regenerated the strategy may touch cascade_gap rows — otherwise a
-    // scoped run (e.g. kinds:["positioning"]) would supersede the live questions of an untouched read.
-    const cascadeRouting = strategyActive
-      ? await writeCascadeGaps(supabase, company_id, cascadeItems, { provider: genChoice.provider, model: genChoice.model })
-      : { superseded: 0, inserted: 0, run_id: null };
-
-    // ── OFFERING integrity (Stage B — REAL run only; never on dry_run). One first_read_offering row per
-    //    accepted write: examined = public rows in the ledger, admitted = offering items enumerated,
-    //    excluded_by_rule records the own-site/outside split + open-question count. This is the persisted
-    //    record an earned-empty offering read renders from (items:[] → admitted 0, honest not-empty-query).
-    if (offeringActive) {
-      const offStored = (storagePayloads.offering as Record<string, unknown>) ?? {};
-      const offItems = Array.isArray(offStored.items) ? (offStored.items as unknown[]) : [];
-      const offOqs = Array.isArray((payloads.offering as Record<string, unknown>).open_questions) ? ((payloads.offering as Record<string, unknown>).open_questions as unknown[]) : [];
-      const ownCount = (derivedSeenOn ?? []).filter((s) => s.seen_on === "own_site").length;
-      await writeOfferingIntegrity(supabase, company_id, {
-        examined: ledger.count, admitted: offItems.length,
-        excludedByRule: { items: offItems.length, own_site: ownCount, outside: offItems.length - ownCount, open_questions: offOqs.length, ledger_ids: ledger.count, mode: "write" },
-      });
-    }
-
-    return json({ ok: true, written, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdict: verdict, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
+    return json({ ok: true, written, per_kind: perKind, rejected, cascade_routing: cascadeRouting, cascade_gaps: cascadeGapsPreview, payloads, derived_seen_on: derivedSeenOn, judge_verdicts: judgeVerdicts, judge_model: judgeChoice.model, model: { generator: genChoice, judge: judgeChoice }, input_ledger: ledger, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
   }

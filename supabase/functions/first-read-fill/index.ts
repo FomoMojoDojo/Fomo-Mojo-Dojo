@@ -68,19 +68,24 @@ Deno.serve(async (req) => {
   );
 
   // per-kind child ledger row (run_kind fr_<kind>): completed / failed / completed_empty (skipped).
-  const recordKindLedger = async (kind: string, status: KindStatus) => {
+  const recordKindLedger = async (kind: string, status: KindStatus, detail?: string | null) => {
+    // 2026-09-09: a failed kind now names the GUARD that rejected it (generate-public-read returns
+    // per_kind:{kind:{status,guard,detail}}), instead of one generic string for all four kinds.
+    const failText = detail && detail.trim() !== ""
+      ? `generation failed or judge/citation reject — ${detail}`.slice(0, 300)
+      : "generation failed or judge/citation reject";
     const ins: Record<string, unknown> = {
       run_kind: `fr_${kind}`, company_id,
       status: status === "completed_empty" ? "completed" : status, // ledger CHECK allows only completed/failed/running
       done_count: status === "completed" ? 1 : 0,
-      error_text: status === "completed_empty" ? "already current — first-fill no-op" : (status === "failed" ? "generation failed or judge/citation reject" : null),
+      error_text: status === "completed_empty" ? "already current — first-fill no-op" : (status === "failed" ? failText : null),
       finished_at: new Date().toISOString(),
     };
     if (parent_run_id) ins.parent_run_id = parent_run_id;
     await supabase.from("long_runner_runs").insert(ins);
   };
 
-  const generatePublicRead = async (kinds: PublicReadKind[]): Promise<{ perKind: GenPerKind }> => {
+  const generatePublicRead = async (kinds: PublicReadKind[]): Promise<{ perKind: GenPerKind; detail: Record<string, string> }> => {
     const res = await fetch(`${url}/functions/v1/generate-public-read`, {
       method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
       body: JSON.stringify({ company_id, write: true, kinds }),
@@ -88,15 +93,38 @@ Deno.serve(async (req) => {
     let data: Record<string, unknown> | null = null;
     try { data = await res.json(); } catch { /* */ }
     const perKind: GenPerKind = {};
+    const detail: Record<string, string> = {};
     const written = Array.isArray((data as { written?: unknown })?.written) ? (data as { written: Array<{ kind?: string }> }).written : [];
     const ok = res.ok && !!data && (data as { ok?: unknown }).ok !== false;
+
+    // PER-KIND (2026-09-09): generate-public-read now isolates the kinds and reports each one's
+    // own status + the guard that rejected it. Prefer that map — one kind's reject no longer
+    // implies anything about the others. The `written`/whole-run fallbacks below stay for a
+    // response that predates the map (older deploy) so this caller never regresses.
+    const rawPerKind = (data as { per_kind?: unknown } | null)?.per_kind;
+    if (rawPerKind && typeof rawPerKind === "object") {
+      const map = rawPerKind as Record<string, { status?: string; guard?: string | null; detail?: string | null }>;
+      let sawAny = false;
+      for (const k of kinds) {
+        const entry = map[k];
+        if (!entry || typeof entry.status !== "string") continue;
+        sawAny = true;
+        perKind[k] = entry.status === "written" ? "written" : "rejected";
+        if (entry.guard) detail[k] = `guard=${entry.guard}${entry.detail ? ` detail=${entry.detail}` : ""}`;
+      }
+      if (sawAny) {
+        for (const k of kinds) if (!perKind[k]) perKind[k] = "rejected";
+        return { perKind, detail };
+      }
+    }
+
     if (ok && written.length > 0) {
       const w = new Set(written.map((x) => x.kind));
       for (const k of kinds) perKind[k] = w.has(k) ? "written" : "rejected"; // a judged reject leaves the kind out of `written`
     } else {
       for (const k of kinds) perKind[k] = "rejected"; // whole-run reject / error — honest terminal, never retried
     }
-    return { perKind };
+    return { perKind, detail };
   };
 
   const fireMarketDiscovery = async () => {

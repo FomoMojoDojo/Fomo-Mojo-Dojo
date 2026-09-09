@@ -138,9 +138,10 @@ export type FirstReadFillConfig = {
   missingKinds: PublicReadKind[]; // from missingPublicReadKinds(current)
   marketNeedsFire: boolean;       // from marketDiscoveryNeedsFire(manifest, marketReadIsEmpty(defs))
   /** Generate ONLY the missing kinds through the normal judged path; returns per-kind written/rejected. */
-  generatePublicRead: (kinds: PublicReadKind[]) => Promise<{ perKind: GenPerKind }>;
+  generatePublicRead: (kinds: PublicReadKind[]) => Promise<{ perKind: GenPerKind; detail?: Record<string, string> }>;
   /** Record one per-kind child ledger row (completed / failed / completed_empty when nothing missing). */
-  recordKindLedger: (kind: string, status: KindStatus) => Promise<void>;
+  /** `detail` (2026-09-09) names the guard that rejected a kind, when the generator reported one. */
+  recordKindLedger: (kind: string, status: KindStatus, detail?: string | null) => Promise<void>;
   /** Fire the market-discovery stepper (its own child ledger; outlives the parent). */
   fireMarketDiscovery: () => Promise<void>;
   /** Close the full_refresh parent completed (ownership: only when the delta stepper did NOT run). */
@@ -174,10 +175,12 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
   // Generate ONLY the missing kinds (one judged call), record each kind's terminal.
   if (cfg.missingKinds.length > 0) {
     let perKind: GenPerKind = {};
+    let detail: Record<string, string> = {};
     let threw = false;
     try {
       const r = await cfg.generatePublicRead(cfg.missingKinds);
       perKind = r.perKind ?? {};
+      detail = r.detail ?? {};
     } catch {
       threw = true; // the whole call failed — every missing kind is failed (isolated from the parent)
     }
@@ -188,7 +191,7 @@ export async function runFirstReadFill(cfg: FirstReadFillConfig): Promise<FirstR
         generated.push(k);
       } else {
         // rejected / error / absent (never retried — a reject is the kind's honest terminal)
-        await cfg.recordKindLedger(k, "failed");
+        await cfg.recordKindLedger(k, "failed", threw ? null : (detail[k] ?? null));
         failed.push(k);
       }
     }

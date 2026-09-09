@@ -115,6 +115,11 @@ describe("proof 6 — KINDS SELECTOR (source-level): a scoped run touches ONLY t
   // constant — `for (const kind of KINDS)` — at every generate/stage/write/promote site, and called
   // writeCascadeGaps unconditionally. Reverting the selector reintroduces those exact tokens, and
   // each assertion below fails on them. The selector replaced every iteration with `activeKinds`.
+  //
+  // 2026-09-09: per-kind isolation moved generate/judge/guards/write out of a whole-run loop and into
+  // runKindsIsolated(activeKinds, …). The INVARIANT these proofs pin is unchanged — an unlisted kind
+  // is never generated, judged, written, or allowed to supersede another kind's cascade_gap rows —
+  // only the shape that carries it moved, so (a) and (d) below assert the new shape.
   const src = readFileSync(
     resolve(process.cwd(), "supabase/functions/generate-public-read/index.ts"),
     "utf8",
@@ -123,10 +128,13 @@ describe("proof 6 — KINDS SELECTOR (source-level): a scoped run touches ONLY t
     expect(src.includes("for (const kind of KINDS)")).toBe(false);
     expect(src.includes("KINDS.map(")).toBe(false);
     expect(src.includes("KINDS.flatMap(")).toBe(false);
-    // generate/stage/write/promote all iterate the scoped list: ≥4 loop sites + judge/resolve uses.
-    expect(src.split("activeKinds").length - 1).toBeGreaterThanOrEqual(8);
-    // the judge READ list is built from activeKinds, so an unlisted kind is never judged either.
-    expect(src).toContain("activeKinds.map((k) => `${k}: ${JSON.stringify(payloads[k])}`)");
+    // promote iterates the scoped list directly; generate/judge/stage/write now run through the
+    // per-kind isolator, which is HANDED activeKinds and iterates exactly that list (2026-09-09).
+    expect(src.split("activeKinds").length - 1).toBeGreaterThanOrEqual(6);
+    expect(src).toContain("runKindsIsolated(activeKinds, {");
+    // the judge READ is built per kind from the kind the isolator is running, so an unlisted kind
+    // is never generated and therefore never judged either.
+    expect(src).toContain("THE READ:\\n${kind}: ${JSON.stringify(payload)}");
   });
   it("(b) an out-of-set kind is rejected loudly (400), never silently dropped", () => {
     expect(src).toContain("kinds must be a subset of");
@@ -143,8 +151,13 @@ describe("proof 6 — KINDS SELECTOR (source-level): a scoped run touches ONLY t
     expect(src).toContain("if (rawKinds.length > 0) activeKinds");
   });
   it("(d) cascade_gap routing rides the strategy kind — never superseded by a non-strategy run", () => {
-    expect(src).toContain('const strategyActive = activeKinds.includes("strategy")');
-    expect(src).toContain("strategyActive\n      ? await writeCascadeGaps");
+    // PER-KIND (2026-09-09): the gate moved from a run-level `strategyActive` flag to the strategy
+    // kind's OWN commit, which is strictly tighter — cascade gaps are now (re)routed only when the
+    // strategy read itself passed every guard and was actually written. A non-strategy run never
+    // reaches this line, so live cascade_gap rows of an untouched strategy read are never superseded.
+    expect(src).toContain('if (kind === "strategy") {\n        cascadeRouting = await writeCascadeGaps(');
+    // and there is exactly ONE writeCascadeGaps call site, inside that strategy-only branch.
+    expect(src.split("await writeCascadeGaps(").length - 1).toBe(1);
   });
 });
 
