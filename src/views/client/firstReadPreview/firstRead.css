@@ -774,6 +774,12 @@
 }
 .fr-numbered-cols p::first-letter { text-transform: uppercase; }
 
+/* Stage 3f: NumberedList text colour by ground — ink/85 on paper; on a dark Screen the beat-9
+   columns read paper/90 and the beat-10 rung lists paper/80. */
+.fr-numbered-text { color: hsl(var(--fr-ink) / 0.85); }
+.fr-screen--dark .fr-numbered-text { color: hsl(var(--fr-paper) / 0.8); }
+.fr-screen--dark .fr-numbered-cols .fr-numbered-text { color: hsl(var(--fr-paper) / 0.9); }
+
 /* Strategy rungs as columns. */
 .fr-rung-cols {
   display: grid;
@@ -1533,7 +1539,8 @@
   color: hsl(var(--fr-ink));
   line-height: 1.3;
 }
-.fr-base-node[data-anchor="true"] .fr-base-node-label { color: hsl(var(--fr-lime)); }
+/* Stage 3f: all four labels ink in the today view; the anchor turns lime only when aligned. */
+.fr-base-stage[data-aligned="true"] .fr-base-node[data-anchor="true"] .fr-base-node-label { color: hsl(var(--fr-lime)); }
 
 .fr-base-node-sub {
   margin-top: 0.4rem;

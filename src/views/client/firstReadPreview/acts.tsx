@@ -949,6 +949,9 @@ function OfferGroup({ label, items, startIndex }: { label: string; items: FROffe
  *  questions route to the Questions beat (via the shared open-question list), never onto this beat. */
 export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
   const off = read.offering;
+  // The offering payload carries no created_at of its own; the foot line reuses the latest existing
+  // "Public read · date" tag among the commitment reads (same source table, same read).
+  const offerTag = basePublicReadTag(read);
   const own = off ? off.items.filter((i) => i.seenOn === "own_site") : [];
   const outside = off ? off.items.filter((i) => i.seenOn === "outside") : [];
   const groundLine =
@@ -966,7 +969,8 @@ export function ActWhatYouOffer({ read, eyebrow }: { read: FirstReadPreviewData;
       standfirst={OFFER_SUB}
       rationale={OFFER_WHY}
       extra={<p className="fr-why-text fr-why-line">{OFFER_CLOSING}</p>}
-      foot={OFFER_EYEBROW}
+      // Stage 3f: FROM THE RECORD joins the public-read tag on one foot line (CSS separator), as on beat 12.
+      foot={<>{OFFER_EYEBROW}{offerTag ? <><span className="fr-foot-sep" aria-hidden />{offerTag.label}</> : null}</>}
     >
       <main className="fr-stagger">
         {off ? (
@@ -1092,7 +1096,9 @@ function NumberedList({ items, className }: { items: string[]; className?: strin
           <span className="shrink-0 pt-0.5 text-[10px] tracking-widest fr-numeral" style={{ color: "hsl(var(--fr-faint))" }}>
             {String(i + 1).padStart(2, "0")}
           </span>
-          <p className="text-sm font-light leading-relaxed" style={{ color: "hsl(var(--fr-ink) / 0.85)" }}>{text}</p>
+          {/* Stage 3f: colour comes from .fr-numbered-text (ink/85 on paper; paper alphas on a dark Screen) —
+              an inline colour here used to win the cascade and kept beats 9/10 dark-on-dark. */}
+          <p className="fr-numbered-text text-sm font-light leading-relaxed">{text}</p>
         </li>
       ))}
     </ol>
