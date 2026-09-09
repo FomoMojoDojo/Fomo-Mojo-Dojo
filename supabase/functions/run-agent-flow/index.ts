@@ -7,6 +7,7 @@ import {
   type FlowMode,
 } from "../_shared/adjudication.ts";
 import { companyHasSpine } from "../_shared/spinePredicate.ts";
+import { maybeStartBaselineAfterBirth } from "../_shared/birthBaseline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -400,6 +401,11 @@ async function runStage<T>(args: {
     });
     throw error;
   }
+}
+
+function waitUntil(p: Promise<unknown>) {
+  const edge = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (edge?.waitUntil) edge.waitUntil(p); else void p;
 }
 
 Deno.serve(async (req) => {
@@ -896,6 +902,29 @@ Deno.serve(async (req) => {
         completed_at: new Date().toISOString(),
       })
       .eq("id", runId);
+
+    // H4 (2026-09-09) — THE BIRTH TERMINAL OWNS THE BASELINE. Previously `public-baseline {chain:true}`
+    // was fired only from the create-client dialog in the browser, unawaited; when that browser call
+    // never went out the company was left with no outside read and no server-side trace (Brand AI).
+    // Fired here with the SERVICE ROLE (public-baseline keeps verify_jwt on) and made idempotent by
+    // the ledger, because this terminal is also reached by the "already born" re-invoke path.
+    waitUntil(maybeStartBaselineAfterBirth({
+      birthReachedTerminal: true,
+      hasBaselineRun: async () => {
+        const { data } = await supabase.from("long_runner_runs")
+          .select("id").eq("company_id", String(companyId)).eq("run_kind", "public_baseline").limit(1);
+        return ((data ?? []) as unknown[]).length > 0;
+      },
+      fire: async () => {
+        const res = await fetch(`${supabaseUrl}/functions/v1/public-baseline`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRole}` },
+          body: JSON.stringify({ company_id: String(companyId), chain: true }),
+        });
+        if (!res.ok) throw new Error(`public-baseline responded ${res.status}`);
+      },
+      log: (m) => console.log(m),
+    }));
 
     return json({
       message: localAlignmentError

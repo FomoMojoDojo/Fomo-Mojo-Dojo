@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { safeLocalStorageGet, safeLocalStorageSet } from '@/lib/safeLocalStorage';
+import { safeLocalStorageGet, safeLocalStorageRemove, safeLocalStorageSet } from '@/lib/safeLocalStorage';
 import { type EngagementPhase, normalizeEngagementPhase } from '@/lib/engagementPhase';
 
 type AreaScoresJson = Record<string, unknown> | null;
@@ -57,6 +57,8 @@ interface CompanyCtx {
   fetchError?: string | null;
   loading: boolean;
   refetch: () => Promise<void>;
+  /** H3: attempts/retries the last companies fetch took (1/0 = answered first time). */
+  fetchAttempts?: { attempts: number; retries: number };
 }
 
 const CompanyContext = createContext<CompanyCtx | undefined>(undefined);
@@ -98,6 +100,11 @@ function pickDefaultCompanyId(companies: Company[]): string | null {
   return preferred?.id ?? companies[0].id;
 }
 
+import {
+  COMPANIES_BACKOFF_MS, COMPANIES_FETCH_ATTEMPTS,
+  fetchWithTransientRetry, isTransientFetchError,
+} from "@/lib/companies/companiesFetchRetry";
+
 function isAbortLikeError(error: { message?: string; details?: string } | null | undefined) {
   const text = `${String(error?.message || "")} ${String(error?.details || "")}`.toLowerCase();
   return text.includes("abort") || text.includes("aborted");
@@ -107,11 +114,23 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const { user, isAdmin, loading: authLoading } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(() =>
-    safeLocalStorageGet('active_company_id')
-  );
+  // H3.3 (2026-09-09): the sentinel id could be PERSISTED by the old error branch, so it outlived
+  // the network blip that produced it and kept sending First Read to "Company not found". Any stored
+  // copy is cleared on load. The literal lives in exactly one place (PUBLIC_CAFE_BARRA_FALLBACK
+  // above) and `active_company_id` is read/written only inside this hook, so this is the only door.
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    const stored = safeLocalStorageGet('active_company_id');
+    if (stored === PUBLIC_CAFE_BARRA_FALLBACK.id) {
+      safeLocalStorageRemove('active_company_id');
+      return null;
+    }
+    return stored;
+  });
   const [loading, setLoading] = useState(true);
   const pageUnloadingRef = useRef(false);
+  // H3 — how many attempts the last companies fetch took. Exposed on the context so a test can
+  // assert the retry actually happened (and, with the plant removed, that it did NOT: retries 0).
+  const lastFetchAttemptsRef = useRef<{ attempts: number; retries: number }>({ attempts: 0, retries: 0 });
 
   useEffect(() => {
     const markPageUnloading = () => {
@@ -152,16 +171,26 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key";
     const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
 
-    let companiesQuery = supabase
-      .from("companies")
-      .select(extendedSelect)
-      .order("created_at", { ascending: true });
+    // The builder is REBUILT per attempt: a supabase query builder is a single-use thenable, so a
+    // retry that re-awaited the same object would not re-issue the request.
+    const runCompaniesQuery = async (select: string) => {
+      let q = supabase.from("companies").select(select).order("created_at", { ascending: true });
+      if (signal) q = q.abortSignal(signal);
+      const r = (await q) as { data: unknown; error: unknown };
+      return { data: (r.data ?? null) as any[] | null, error: r.error as any };
+    };
 
-    if (signal) {
-      companiesQuery = companiesQuery.abortSignal(signal);
-    }
-
-    let { data, error } = await companiesQuery;
+    // H3.1 — a dropped connection is TRANSIENT, not an answer. Retry with backoff before calling it
+    // a failure; a real error (permission, bad column, 400) still fails on the first attempt.
+    const attempt = await fetchWithTransientRetry<any[]>({
+      run: () => runCompaniesQuery(extendedSelect),
+      maxAttempts: COMPANIES_FETCH_ATTEMPTS,
+      backoffMs: COMPANIES_BACKOFF_MS,
+      shouldAbort: () => !!signal?.aborted || pageUnloadingRef.current,
+    });
+    lastFetchAttemptsRef.current = { attempts: attempt.attempts, retries: attempt.retries };
+    if (attempt.aborted) return;
+    let { data, error } = attempt as { data: any[] | null; error: any };
 
     if (signal?.aborted || pageUnloadingRef.current || isAbortLikeError(error)) {
       return;
@@ -174,14 +203,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       );
 
     if (missingColumn) {
-      let fallbackQuery = supabase
-        .from("companies")
-        .select(baseSelect)
-        .order("created_at", { ascending: true });
-      if (signal) {
-        fallbackQuery = fallbackQuery.abortSignal(signal);
-      }
-      const fallback = await fallbackQuery;
+      const fallback = await fetchWithTransientRetry<any[]>({
+        run: () => runCompaniesQuery(baseSelect),
+        maxAttempts: COMPANIES_FETCH_ATTEMPTS,
+        backoffMs: COMPANIES_BACKOFF_MS,
+        shouldAbort: () => !!signal?.aborted || pageUnloadingRef.current,
+      });
+      if (fallback.aborted) return;
+      lastFetchAttemptsRef.current = {
+        attempts: lastFetchAttemptsRef.current.attempts + fallback.attempts,
+        retries: lastFetchAttemptsRef.current.retries + fallback.retries,
+      };
       data = (fallback.data ?? []) as any[];
       error = fallback.error;
       if (signal?.aborted || pageUnloadingRef.current || isAbortLikeError(error)) {
@@ -200,13 +232,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
 
     if (error) {
-      console.error("[companies] fetch error:", error);
-      // Integrity sweep: the failure is now VISIBLE state, not just a console line —
-      // fallback behavior unchanged (UI stays usable), but consumers can stop
-      // rendering "No companies available" over a dead query.
+      console.error(
+        `[companies] fetch error after ${lastFetchAttemptsRef.current.attempts} attempt(s)` +
+        `${isTransientFetchError(error) ? " (transient, retries exhausted)" : " (non-transient)"}:`,
+        error,
+      );
+      // Integrity sweep: the failure is VISIBLE state, not just a console line.
       setFetchError(error.message || "companies fetch failed");
-      // Keep UI usable even when DB access fails.
-      setFallbackPublicCompany();
+      // H3.2 (2026-09-09): a FAILED QUERY NO LONGER INSTALLS THE SENTINEL. Substituting a fake
+      // company for a real list is not a graceful degrade — it sent the operator to
+      // /first-read/00000000-…-0001 ("Company not found") and persisted that id. The banner is the
+      // honest state; the list stays as it was. The sentinel now has exactly one caller: the
+      // not-admin guard above, which is the public-preview case it was written for.
       setLoading(false);
       return;
     }
@@ -251,7 +288,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     null;
 
   return (
-    <CompanyContext.Provider value={{ companies, activeCompany, setActiveCompanyId, loading, fetchError, refetch: fetchCompanies }}>
+    <CompanyContext.Provider value={{ companies, activeCompany, setActiveCompanyId, loading, fetchError, refetch: fetchCompanies, fetchAttempts: lastFetchAttemptsRef.current }}>
       {children}
     </CompanyContext.Provider>
   );

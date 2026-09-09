@@ -1753,11 +1753,17 @@ export default function ClientRefinePreviewWorkshopView() {
             if (error) console.warn("[Workshop] create onramp birth invoke returned (likely 150s cut, still building):", error);
           },
           fireRefresh: async () => {
-            // Fire-and-forget the full refresh with chain:true — the baseline→first_read_fill→market
-            // discovery chain runs server-side (DB is truth); the dialog does not block on it.
-            void supabase.functions.invoke("public-baseline", {
-              body: { company_id: data.id, company_name: data.name, website: sanitizedWebsite, chain: true },
-            });
+            // H4 (2026-09-09) — NO-OP. The baseline is now started SERVER-SIDE at run-agent-flow's
+            // birth terminal (supabase/functions/_shared/birthBaseline.ts), with the service role and
+            // guarded by the ledger. This browser fire was the single point of failure: unawaited and
+            // client-only, so when the tab stumbled the company was left with no outside read and no
+            // server-side trace at all (Brand AI, 2026-09-09 — zero long_runner_runs).
+            //
+            // The UI affordance is NOT lost: this call site is the create-client dialog only, which
+            // fires once at creation. Every MANUAL re-trigger lives elsewhere and is untouched —
+            // ClientRefinePreviewWorkshopView:1663, ClientRefinePreviewView:473, JobSteps:2386 and
+            // AdminCompanies:800.
+            console.info("[Workshop] baseline owned server-side — birth terminal starts it (chain:true)");
           },
           onBirthError: (e) => console.warn("[Workshop] create onramp birth failed (isolated — refresh still fires):", e),
         });
