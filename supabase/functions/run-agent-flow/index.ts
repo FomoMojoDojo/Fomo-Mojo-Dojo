@@ -916,9 +916,14 @@ Deno.serve(async (req) => {
         return ((data ?? []) as unknown[]).length > 0;
       },
       fire: async () => {
+        // CALLER'S JWT, not the service role. public-baseline is user-scoped by construction: it
+        // builds an anon client from this header and calls auth.getUser(), returning 401 when there
+        // is no user (public-baseline/index.ts:2109-2117). A service-role JWT carries no user and is
+        // rejected — verified against the running stack, HTTP 401. This is the same pass-through the
+        // function's other nested invokes already use (index.ts:252).
         const res = await fetch(`${supabaseUrl}/functions/v1/public-baseline`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceRole}` },
+          headers: { "Content-Type": "application/json", apikey: anonKey, Authorization: authHeader },
           body: JSON.stringify({ company_id: String(companyId), chain: true }),
         });
         if (!res.ok) throw new Error(`public-baseline responded ${res.status}`);

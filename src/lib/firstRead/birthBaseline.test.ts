@@ -82,6 +82,21 @@ describe("H4 — the birth terminal fires the baseline exactly once", () => {
     expect(seeded.fires).toHaveLength(0);
   });
 
+  it("a 401 from public-baseline is reported, not swallowed (the service-role trap)", async () => {
+    // public-baseline is user-scoped: it builds an anon client from the caller's Authorization header
+    // and calls auth.getUser(), 401ing when there is no user. A service-role JWT carries no user, so
+    // firing with it always 401s — verified against the running stack. run-agent-flow therefore
+    // passes the CALLER's JWT through, the same way its other nested invokes do.
+    const out = await maybeStartBaselineAfterBirth({
+      birthReachedTerminal: true,
+      hasBaselineRun: () => Promise.resolve(false),
+      fire: () => Promise.reject(new Error("public-baseline responded 401")),
+    });
+    expect(out.fired).toBe(false);
+    expect(out.reason).toBe("fire_failed");
+    expect(out.detail).toContain("401");
+  });
+
   it("a fire failure is isolated — reported, never thrown at the birth response", async () => {
     const out = await maybeStartBaselineAfterBirth({
       birthReachedTerminal: true,
