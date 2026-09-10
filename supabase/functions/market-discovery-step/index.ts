@@ -9,7 +9,7 @@
 // infinite self-fire loop structurally impossible. The generator itself is REUSED verbatim (no change).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { runMarketDiscoveryStep, type MDChainState } from "../_shared/marketDiscoveryStepper.ts";
+import { runMarketDiscoveryStep, shouldReopenAdoptedRun, HOLD_NOTE_PREFIX, type MDChainState } from "../_shared/marketDiscoveryStepper.ts";
 // Confirm-poll attribution — the rule itself lives in _shared/marketCandidateAccounted.ts (Gate 1b),
 // lifted out of this handler so it is a pure injectable function with proofs that can run. It keys on
 // the EXACT content-identity schemes the generator writes under (no new marker column); this file
@@ -32,8 +32,16 @@ const MAX_STEPS = 12;
 const CONFIRM_POLL_TRIES = 6;
 const CONFIRM_POLL_MS = 3_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-type ChainState = { planned: boolean; candidates: unknown[]; cursor: number; chunk_size: number; step_count: number; max_steps: number };
-const DEFAULT_STATE: ChainState = { planned: false, candidates: [], cursor: 0, chunk_size: CHUNK_SIZE, step_count: 0, max_steps: MAX_STEPS };
+// holds_at_cursor / hold_cursor (Gate 1c) ride the SAME jsonb chain_state — no migration. Absent on a
+// legacy row ⇒ 0 / null ⇒ the first hold starts a fresh count.
+type ChainState = {
+  planned: boolean; candidates: unknown[]; cursor: number; chunk_size: number;
+  step_count: number; max_steps: number; holds_at_cursor: number; hold_cursor: number | null;
+};
+const DEFAULT_STATE: ChainState = {
+  planned: false, candidates: [], cursor: 0, chunk_size: CHUNK_SIZE,
+  step_count: 0, max_steps: MAX_STEPS, holds_at_cursor: 0, hold_cursor: null,
+};
 
 // One server-to-server call into the UNMODIFIED generate-market-discovery worker.
 async function callDiscovery(url: string, key: string, body: Record<string, unknown>): Promise<{ ok: boolean; data: Record<string, unknown> | null }> {
@@ -80,7 +88,7 @@ Deno.serve(async (req) => {
     // lie), or a resumable failed/unconfirmed manifest (planned, cursor < total). A 'completed' row is
     // terminal — never adopted, never resurrected (skipping it avoids spawning a spurious empty re-plan).
     const { data: existing } = await supabase.from("long_runner_runs")
-      .select("id, status, chain_state, started_at").eq("company_id", company_id).eq("run_kind", RUN_KIND)
+      .select("id, status, chain_state, started_at, error_text").eq("company_id", company_id).eq("run_kind", RUN_KIND)
       .neq("status", "completed")
       .order("started_at", { ascending: false }).limit(1).maybeSingle();
     const cs = (existing as { chain_state?: Partial<ChainState> | null } | null)?.chain_state ?? null;
@@ -94,7 +102,14 @@ Deno.serve(async (req) => {
       ledgerId = String((existing as { id: string }).id);
       chain = { ...DEFAULT_STATE, ...cs, candidates: cands };
       // Re-open a failed/unconfirmed row to 'running' so this fire owns it and the sweep leaves it be.
-      if (status !== "running") {
+      //
+      // Gate 1c — CONSUME THE MARKER. A HELD row is already 'running', so the old `status !== "running"`
+      // test skipped it and the 'unconfirmed:' note survived the whole resumed fire. That note is what
+      // the sweep's RE-ARM (2) keys on, so leaving it in place would re-arm the same row again five
+      // minutes later, on top of a fire that is still working — two isolates judging one chunk, and the
+      // def write is not race-safe (duplicate `-2` journey key). Clearing it here makes the marker
+      // exactly-once per hold: hold sets it, the resumed fire consumes it, a further hold re-sets it.
+      if (shouldReopenAdoptedRun(status, (existing as { error_text?: string | null } | null)?.error_text ?? null)) {
         await supabase.from("long_runner_runs")
           .update({ status: "running", finished_at: null, error_text: null, updated_at: new Date().toISOString() })
           .eq("id", ledgerId);
@@ -138,12 +153,12 @@ Deno.serve(async (req) => {
     }
     return { accounted: best };
   };
-  const markUnconfirmed = async (cursor: number) => {
-    chain = { ...chain, cursor };
+  const markUnconfirmed = async (cursor: number, holdsAtCursor: number) => {
+    chain = { ...chain, cursor, holds_at_cursor: holdsAtCursor, hold_cursor: cursor };
     // status STAYS 'running' (never closed) → sweep-excluded (market_discovery) → resumable next fire.
     await patchLedger({
       chain_state: chain,
-      error_text: `unconfirmed: chunk at cursor ${cursor} not yet accounted — worker may be alive; awaiting resume`,
+      error_text: `${HOLD_NOTE_PREFIX} chunk at cursor ${cursor} not yet accounted — worker may be alive; awaiting resume`,
     });
   };
   const closeLedger = async (status: "completed" | "failed", err: string | null) => {
@@ -159,6 +174,7 @@ Deno.serve(async (req) => {
   const state: MDChainState = {
     planned: chain.planned, candidates: chain.candidates, cursor: chain.cursor,
     chunkSize: chain.chunk_size ?? CHUNK_SIZE, stepCount: chain.step_count ?? 0, maxSteps: chain.max_steps ?? MAX_STEPS,
+    holdsAtCursor: chain.holds_at_cursor ?? 0, holdCursor: chain.hold_cursor ?? null,
   };
 
   const out = await runMarketDiscoveryStep({
@@ -177,7 +193,11 @@ Deno.serve(async (req) => {
     confirmChunk,
     finalize: async () => { await callDiscovery(url, key, { company_id }); },
     persistPlanned: async (candidates) => { chain = { ...chain, planned: true, candidates, cursor: 0 }; await patchLedger({ chain_state: chain, target_count: candidates.length }); },
-    persistProgress: async (cursor, stepCount) => { chain = { ...chain, cursor, step_count: stepCount }; await patchLedger({ chain_state: chain, done_count: cursor }); },
+    persistProgress: async (cursor, stepCount, holdsAtCursor) => {
+      // Progress of any kind clears the no-progress count AND the note the sweep re-arms on.
+      chain = { ...chain, cursor, step_count: stepCount, holds_at_cursor: holdsAtCursor, hold_cursor: null };
+      await patchLedger({ chain_state: chain, done_count: cursor, error_text: null });
+    },
     closeCompleted: async (empty) => { await closeLedger("completed", empty ? "no public markets discovered" : null); },
     closeFailed: async (reason) => { await closeLedger("failed", reason); },
     markUnconfirmed,

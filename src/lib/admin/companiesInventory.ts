@@ -33,6 +33,11 @@ export const FILL_STATUS_STRINGS = {
   deltasStale: "deltas stale",
   /** `${n} of 4 reads`, with ` · ${kind} rejected` appended per rejected kind. */
   readsOf: (n: number) => `${n} of 4 reads`,
+  /** Gate 1c. A market_discovery run parked in an unconfirmed HOLD. The cursor is carried because it
+   *  is what tells the operator whether a nudge is cheap or the run barely started — the same reason
+   *  `readsOf` carries its count. The sweep re-arms a held run every 5 min, so this is normally a
+   *  transient; a form that persists across refreshes is a run the no-progress guard is counting down. */
+  discoveryHeld: (cursor: number, total: number) => `discovery held at ${cursor} of ${total}`,
   rejectedSuffix: (kinds: string[]) => kinds.map((k) => ` · ${k} rejected`).join(""),
 } as const;
 
@@ -48,6 +53,13 @@ export type FillStages = {
   readsCurrent: number;
   recurrenceRows: number;
   scoreRows: number;
+  /** Gate 1c — the newest market_discovery ledger row is 'running' with the stepper's 'unconfirmed:'
+   *  marker. Before this the cell ignored market discovery entirely and rendered "complete" over a
+   *  permanently held run: the one state that now actually needs an operator was the one state the
+   *  column could not say. */
+  marketDiscoveryHeld: boolean;
+  marketDiscoveryCursor: number;
+  marketDiscoveryTotal: number;
   /** SECONDARY ONLY — shown in the expander, never used to compute the cell. */
   ledger: { ownWordsTerminal: string | null; recurrenceTerminal: string | null };
 };
@@ -93,6 +105,22 @@ function countBy<T extends Row>(rows: T[], key: string): Map<string, number> {
   return out;
 }
 
+/** HELD = the newest market_discovery ledger row is 'running' AND carries the stepper's 'unconfirmed:'
+ *  marker. Status alone is not enough: a healthy discovery run is 'running' for tens of minutes (one
+ *  observed silent for 40 of them), and calling that "held" would cry wolf on every live run. The
+ *  marker is written only by markUnconfirmed and cleared by the adopt path, so it means exactly this. */
+function marketDiscoveryHold(row: Row | null): {
+  marketDiscoveryHeld: boolean; marketDiscoveryCursor: number; marketDiscoveryTotal: number;
+} {
+  const held = !!row && str(row.status) === "running" && str(row.error_text).startsWith("unconfirmed:");
+  const cs = (row?.chain_state ?? null) as { cursor?: unknown; candidates?: unknown } | null;
+  return {
+    marketDiscoveryHeld: held,
+    marketDiscoveryCursor: held ? num(cs?.cursor) : 0,
+    marketDiscoveryTotal: held && Array.isArray(cs?.candidates) ? cs.candidates.length : 0,
+  };
+}
+
 /**
  * The fill-status CELL. Artifacts first, in dependency order, so the first thing actually missing is
  * what the operator is told. Recurrence and the score row are reported in the expander but do not
@@ -105,6 +133,12 @@ export function fillStatusLabel(s: FillStages): string {
   if (s.readsCurrent < INVENTORY_READ_KINDS.length) {
     const rejected = s.reads.filter((r) => !r.current && r.rejected).map((r) => r.kind);
     return FILL_STATUS_STRINGS.readsOf(s.readsCurrent) + FILL_STATUS_STRINGS.rejectedSuffix(rejected);
+  }
+  // AFTER the reads, BEFORE complete: the four reads are the larger part of the artifact set, so a
+  // company still missing one is told that first. A held discovery never masks an existing form — it
+  // only replaces the "complete" that would otherwise be a lie.
+  if (s.marketDiscoveryHeld) {
+    return FILL_STATUS_STRINGS.discoveryHeld(s.marketDiscoveryCursor, s.marketDiscoveryTotal);
   }
   return FILL_STATUS_STRINGS.complete;
 }
@@ -119,7 +153,10 @@ export function buildInventory(input: {
   reads: Array<{ company_id: string; kind: string; is_current: boolean }>;
   recurrence: Array<{ company_id: string }>;
   baselines: Array<{ company_id: string }>;
-  ledger: Array<{ company_id: string; run_kind: string; status: string; started_at: string }>;
+  ledger: Array<{
+    company_id: string; run_kind: string; status: string; started_at: string;
+    error_text?: string | null; chain_state?: { cursor?: unknown; candidates?: unknown } | null;
+  }>;
   modelCalls?: Array<{ company_id: string; run_id: string | null; usd: number | string | null; created_at: string }>;
 }): CompanyInventoryRow[] {
   // COST — summed from model_calls. `lastRunCost` is the newest run_id's total; a call with a null
@@ -195,6 +232,7 @@ export function buildInventory(input: {
         ownWordsTerminal: str(byKind?.get("fr_own_words")?.status) || null,
         recurrenceTerminal: str(byKind?.get("recurrence_step")?.status) || null,
       },
+      ...marketDiscoveryHold(byKind?.get("market_discovery") ?? null),
     };
 
     const sc = newestScore.get(c.id);
@@ -236,7 +274,8 @@ export async function fetchCompaniesInventoryResult(): Promise<InventoryFetchRes
     sb.from("public_reads").select("company_id, kind, is_current").eq("is_current", true),
     sb.from("finding_recurrence").select("company_id"),
     sb.from("public_baseline_runs").select("company_id"),
-    sb.from("long_runner_runs").select("company_id, run_kind, status, started_at").in("run_kind", ["fr_own_words", "recurrence_step"]),
+    sb.from("long_runner_runs").select("company_id, run_kind, status, started_at, error_text, chain_state")
+      .in("run_kind", ["fr_own_words", "recurrence_step", "market_discovery"]),
     sb.from("model_calls").select("company_id, run_id, usd, created_at"),
   ]);
   // Only the companies query is fatal: it is the spine every other row hangs off. A failure in a

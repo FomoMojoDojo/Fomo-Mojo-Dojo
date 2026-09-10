@@ -5,6 +5,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   runMarketDiscoveryStep,
+  HOLD_LIMIT,
+  HOLD_NOTE_PREFIX,
+  shouldReopenAdoptedRun,
   type MDChainState,
   type MDStepConfig,
 } from "../../../supabase/functions/_shared/marketDiscoveryStepper.ts";
@@ -24,16 +27,17 @@ const cfg = (state: MDChainState, over: Partial<MDStepConfig> = {}): MDStepConfi
   confirmChunk: vi.fn(async () => ({ accounted: 0 })),
   finalize: vi.fn(async () => {}),
   persistPlanned: vi.fn(async () => {}),
-  persistProgress: vi.fn(async () => {}),
+  persistProgress: vi.fn(async (_c: number, _s: number, _h: number) => {}),
   closeCompleted: vi.fn(async () => {}),
   closeFailed: vi.fn(async () => {}),
-  markUnconfirmed: vi.fn(async () => {}),
+  markUnconfirmed: vi.fn(async (_c: number, _h: number) => {}),
   selfFire: vi.fn(async () => {}),
   ...over,
 });
 
 const base = (over: Partial<MDChainState> = {}): MDChainState => ({
-  planned: true, candidates: CANDS, cursor: 0, chunkSize: 2, stepCount: 0, maxSteps: 10, ...over,
+  planned: true, candidates: CANDS, cursor: 0, chunkSize: 2, stepCount: 0, maxSteps: 10,
+  holdsAtCursor: 0, holdCursor: null, ...over,
 });
 
 describe("plan phase", () => {
@@ -70,7 +74,7 @@ describe("RESUME-AFTER-DEATH — resume from the DB cursor, not from 0", () => {
     expect(out.outcome).toBe("chunk_done");
     expect(judge).toHaveBeenCalledTimes(1);
     expect(judge.mock.calls[0][0]).toEqual(["c2", "c3"]); // resumed from index 2 — NOT ["c0","c1"]
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2);  // cursor advanced 2→4, step 1→2
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0); // cursor advanced 2→4, step 1→2, holds reset
     expect(c.selfFire).toHaveBeenCalledTimes(1);
   });
   it("the final chunk exhausts the manifest, then finalize + complete (no self-fire)", async () => {
@@ -92,7 +96,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_recovered");
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2); // cursor 2→4 (recovered the whole chunk)
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0); // cursor 2→4 (recovered the whole chunk); holds reset
     expect(c.selfFire).toHaveBeenCalledTimes(1);          // the chain CONTINUES
     expect(c.closeFailed).not.toHaveBeenCalled();         // FALSIFICATION: reverting to closeFailed breaks this
     expect(c.markUnconfirmed).not.toHaveBeenCalled();
@@ -103,7 +107,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm });
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_recovered_partial");
-    expect(c.persistProgress).toHaveBeenCalledWith(3, 2); // cursor 2→3 (last accounted), NOT 4
+    expect(c.persistProgress).toHaveBeenCalledWith(3, 2, 0); // cursor 2→3 (last accounted), NOT 4; holds reset
     expect(c.selfFire).toHaveBeenCalledTimes(1);          // resumes at 3 next fire
     expect(c.closeFailed).not.toHaveBeenCalled();
     expect(c.markUnconfirmed).not.toHaveBeenCalled();
@@ -115,7 +119,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const c = cfg(base({ cursor: 2, stepCount: 1 }), { judgeChunk: judge, confirmChunk: confirm, markUnconfirmed });
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("unconfirmed_hold");
-    expect(markUnconfirmed).toHaveBeenCalledWith(2);      // held at the CURRENT cursor (resumable)
+    expect(markUnconfirmed).toHaveBeenCalledWith(2, 1);   // held at the CURRENT cursor (resumable), first hold
     expect(c.closeFailed).not.toHaveBeenCalled();         // the worker may be alive — NEVER failed
     expect(c.selfFire).not.toHaveBeenCalled();            // no hot loop
     expect(c.persistProgress).not.toHaveBeenCalled();     // cursor did not advance
@@ -150,13 +154,14 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false }));
     const markUnconfirmed = vi.fn(async (_cursor: number) => {});
     const c = cfg(
-      { planned: true, candidates: MID_FLIGHT, cursor: 0, chunkSize: 2, stepCount: 1, maxSteps: 10 },
+      { planned: true, candidates: MID_FLIGHT, cursor: 0, chunkSize: 2, stepCount: 1, maxSteps: 10,
+        holdsAtCursor: 0, holdCursor: null },
       { judgeChunk: judge, confirmChunk: confirm, markUnconfirmed },
     );
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("unconfirmed_hold");         // NOT chunk_recovered / _partial
     expect(await confirm.mock.results[0].value).toEqual({ accounted: 0 }); // touched ≠ finished
-    expect(markUnconfirmed).toHaveBeenCalledWith(0);      // held at the CURRENT cursor, resumable
+    expect(markUnconfirmed).toHaveBeenCalledWith(0, 1);   // held at the CURRENT cursor, resumable, first hold
     expect(c.persistProgress).not.toHaveBeenCalled();     // the cursor did NOT move past the buyer group
     expect(c.closeCompleted).not.toHaveBeenCalled();      // and the run does NOT claim completion
     expect(c.closeFailed).not.toHaveBeenCalled();         // the worker may be alive
@@ -167,7 +172,7 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     const out = await runMarketDiscoveryStep(c);
     expect(out.outcome).toBe("chunk_done");
     expect(confirm).not.toHaveBeenCalled();               // confirm-poll is the not-ok path ONLY
-    expect(c.persistProgress).toHaveBeenCalledWith(4, 2);
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0);
     expect(c.selfFire).toHaveBeenCalledTimes(1);
   });
 });
@@ -185,5 +190,90 @@ describe("TERMINAL DISCIPLINE — no infinite loop", () => {
     expect(plan).not.toHaveBeenCalled();
     expect(judge).not.toHaveBeenCalled();
     expect(c.selfFire).not.toHaveBeenCalled();
+  });
+});
+
+// ── Gate 1c — TERMINAL 2: the NO-PROGRESS guard ───────────────────────────────────────────────────
+// The sweep's RE-ARM (2) now resumes a held run every 5 minutes. The hold path does NOT increment
+// stepCount, so the max_steps ceiling can never bind on a repeating hold — without this guard an
+// automatically re-armed, deterministically-dying chunk loops forever at 12 posts/hour. This is the
+// bound, and it is what makes the automatic resume safe to switch on. Parity with the sibling
+// steppers: same wording, same terminal (recurrenceStepper.ts:97, openQuestionsStepper.ts:122).
+describe("TERMINAL 2 — no-progress guard (Gate 1c)", () => {
+  const holdCfg = (state: MDChainState, closeFailed = vi.fn(async (_r: string) => {})) =>
+    cfg(state, {
+      judgeChunk: vi.fn(async () => ({ ok: false })),
+      confirmChunk: vi.fn(async () => ({ accounted: 0 })),
+      closeFailed,
+    });
+
+  it(`(1c) the ${HOLD_LIMIT}rd consecutive hold at the SAME cursor closes failed with the signed text`, async () => {
+    const closeFailed = vi.fn(async (_r: string) => {});
+    const c = holdCfg(base({ cursor: 2, stepCount: 1, holdCursor: 2, holdsAtCursor: HOLD_LIMIT - 1 }), closeFailed);
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("no_progress_failed");
+    expect(closeFailed).toHaveBeenCalledWith("no_progress at cursor 2 — market discovery halted");
+    expect(c.markUnconfirmed).not.toHaveBeenCalled();     // it is a TERMINAL, not another hold
+    expect(c.selfFire).not.toHaveBeenCalled();
+  });
+
+  it("(1c) holds 1 and 2 at the same cursor still HOLD — a slow worker is not a stuck one", async () => {
+    for (const prior of [0, 1]) {
+      const c = holdCfg(base({ cursor: 2, stepCount: 1, holdCursor: prior === 0 ? null : 2, holdsAtCursor: prior }));
+      const out = await runMarketDiscoveryStep(c);
+      expect(out.outcome).toBe("unconfirmed_hold");
+      expect(c.markUnconfirmed).toHaveBeenCalledWith(2, prior + 1);
+      expect(c.closeFailed).not.toHaveBeenCalled();
+    }
+  });
+
+  it("(1c) a hold at a DIFFERENT cursor is progress — the count restarts at 1, never accumulates", async () => {
+    const c = holdCfg(base({ cursor: 4, stepCount: 2, holdCursor: 2, holdsAtCursor: HOLD_LIMIT - 1 }));
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("unconfirmed_hold");        // NOT no_progress_failed
+    expect(c.markUnconfirmed).toHaveBeenCalledWith(4, 1);
+    expect(c.closeFailed).not.toHaveBeenCalled();
+  });
+
+  it("(1c) progress RESETS the count: a completed chunk persists holdsAtCursor 0", async () => {
+    const c = cfg(base({ cursor: 2, stepCount: 1, holdCursor: 2, holdsAtCursor: HOLD_LIMIT - 1 }));
+    const out = await runMarketDiscoveryStep(c);        // judgeChunk defaults ok:true
+    expect(out.outcome).toBe("chunk_done");
+    expect(c.persistProgress).toHaveBeenCalledWith(4, 2, 0);
+  });
+
+  it("(1c) two holds then progress then a hold at the same cursor does NOT terminate", async () => {
+    // The realistic rescue: hold, hold, the sweep re-arms, the chunk lands, a later chunk holds once.
+    const after = cfg(base({ cursor: 4, stepCount: 2, holdCursor: null, holdsAtCursor: 0 }), {
+      judgeChunk: vi.fn(async () => ({ ok: false })),
+      confirmChunk: vi.fn(async () => ({ accounted: 0 })),
+    });
+    const out = await runMarketDiscoveryStep(after);
+    expect(out.outcome).toBe("unconfirmed_hold");
+    expect(after.markUnconfirmed).toHaveBeenCalledWith(4, 1);
+  });
+});
+
+// ── Gate 1c — the adopt path CONSUMES the hold marker ─────────────────────────────────────────────
+describe("adopt: consuming the hold marker (Gate 1c)", () => {
+  const HELD = `${HOLD_NOTE_PREFIX} chunk at cursor 3 not yet accounted — worker may be alive; awaiting resume`;
+
+  // RED ON REVERT. The old predicate was `status !== "running"` alone, so a held row — which IS
+  // 'running' — kept its marker for the whole resumed fire and the sweep re-armed it again 5 minutes
+  // later, on top of live work.
+  it("(1c) a RUNNING row carrying the hold marker is re-opened, clearing the marker", () => {
+    expect(shouldReopenAdoptedRun("running", HELD)).toBe(true);
+  });
+
+  it("(1c) a RUNNING row with no marker is left untouched — never interrupt a live self-chain", () => {
+    expect(shouldReopenAdoptedRun("running", null)).toBe(false);
+    expect(shouldReopenAdoptedRun("running", "")).toBe(false);
+    // A genuinely different note is not the marker and must not be consumed.
+    expect(shouldReopenAdoptedRun("running", "stalled partway and was closed out automatically")).toBe(false);
+  });
+
+  it("(1c) REGRESSION GUARD (passes under both bodies): a failed/unconfirmed row is still re-opened", () => {
+    expect(shouldReopenAdoptedRun("failed", "max_steps (12) exceeded — market discovery halted")).toBe(true);
+    expect(shouldReopenAdoptedRun(null, null)).toBe(true);
   });
 });

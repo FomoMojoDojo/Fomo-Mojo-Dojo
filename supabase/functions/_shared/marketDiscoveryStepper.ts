@@ -4,8 +4,17 @@
 // local llama3:70b, ~minutes) outlives the full_refresh parent and CANNOT fit one 400s isolate. It
 // self-chains: ONE model phase per fire, then self-fires the next. The candidate MANIFEST + cursor are
 // DB-persisted (market_discovery_chain), so a mid-chunk isolate death is RESUMABLE by the next fire —
-// the ledger is never a stuck 'running' lie. Terminal discipline (the claim_deltas lesson): a hard
-// max-step count AND a no-progress guard make an infinite self-fire loop structurally impossible.
+// the ledger is never a stuck 'running' lie.
+//
+// TERMINAL DISCIPLINE (the claim_deltas lesson) — TWO independent bounds, both real:
+//   (1) a hard max-step ceiling, checked before any work;
+//   (2) a NO-PROGRESS guard: HOLD_LIMIT consecutive unconfirmed holds at the SAME cursor close the
+//       run failed. Gate 1c restored this. It was deleted in 0cb86fb when the unconfirmed HOLD
+//       replaced the old no_progress terminal, and the hold path — unlike every progress path — does
+//       not increment stepCount, so bound (1) could never bind on a repeating hold. That was harmless
+//       only while NOTHING re-fired a held run; the sweep's RE-ARM (2) branch now does, at */5, so a
+//       deterministically-dying chunk would otherwise loop forever. The guard is what makes the
+//       automatic resume safe to switch on.
 //
 // This module is the PURE orchestration seam — every side effect (plan / judge-chunk / finalize /
 // persist / close / self-fire) is injected, so the resume-after-death and no-refire-on-no-progress
@@ -19,7 +28,36 @@ export type MDChainState = {
   chunkSize: number;     // candidates judged per fire (≤2 recommended)
   stepCount: number;     // fires so far (bounds the loop)
   maxSteps: number;      // HARD terminal — self-fire is impossible beyond this
+  // NO-PROGRESS guard (Gate 1c). holdCursor is the cursor the consecutive holds are counted AT, so a
+  // hold that moves to a new cursor is real progress and restarts the count at 1. Any progress path
+  // clears both. Absent on a legacy chain row ⇒ 0 / null ⇒ the first hold starts a fresh count.
+  holdsAtCursor: number;
+  holdCursor: number | null;
 };
+
+/** Consecutive holds at ONE cursor before the run is closed failed. Three: a hold is a maybe-alive
+ *  worker, so one or two are ordinary (a slow local 70b, a gateway cut); three at the SAME cursor with
+ *  nothing accounted in between is a chunk that cannot land, not a chunk that is slow. */
+export const HOLD_LIMIT = 3;
+
+/** The stepper's HOLD marker, written by markUnconfirmed and read by three places that must agree:
+ *  the adopt path (consumes it), the sweep's RE-ARM (2) predicate (`error_text LIKE 'unconfirmed:%'`),
+ *  and the admin fill-status cell. One constant so the prefix can never drift between them. */
+export const HOLD_NOTE_PREFIX = "unconfirmed:";
+
+/**
+ * Does adopting this ledger row require re-opening it (status → 'running', error_text → null)?
+ *
+ * A failed/unconfirmed row obviously does. The load-bearing case is the second clause: a HELD row is
+ * ALREADY 'running', so the original `status !== "running"` test skipped it and the hold marker
+ * survived the entire resumed fire. Since the sweep re-arms on exactly that marker, leaving it in
+ * place would post again five minutes later on top of a fire still doing work — two isolates judging
+ * one chunk, and the def write is not race-safe. Clearing it here makes the marker exactly-once per
+ * hold: markUnconfirmed sets it, the resumed fire consumes it, a further hold sets it again.
+ */
+export function shouldReopenAdoptedRun(status: string | null, errorText: string | null): boolean {
+  return status !== "running" || String(errorText ?? "").startsWith(HOLD_NOTE_PREFIX);
+}
 
 export type MDStepConfig = {
   state: MDChainState;
@@ -39,16 +77,20 @@ export type MDStepConfig = {
   finalize: () => Promise<void>;
   /** Persist the plan manifest to the ledger chain row (DB is truth). */
   persistPlanned: (candidates: unknown[]) => Promise<void>;
-  /** Persist cursor + stepCount advance after a completed chunk. */
-  persistProgress: (cursor: number, stepCount: number) => Promise<void>;
+  /** Persist cursor + stepCount advance after a completed chunk. `holdsAtCursor` is ALWAYS 0 here —
+   *  progress of any kind clears the no-progress count, and passing it explicitly keeps that rule in
+   *  the pure seam where a proof can see it, rather than hiding it in the writer. */
+  persistProgress: (cursor: number, stepCount: number, holdsAtCursor: number) => Promise<void>;
   /** Close the ledger completed (empty = nothing was discovered / already discovered). */
   closeCompleted: (empty: boolean) => Promise<void>;
   /** Close the ledger failed with a machine-readable reason (terminal, no self-fire). */
   closeFailed: (reason: string) => Promise<void>;
-  /** HOLD the chain non-terminal at the given cursor: status stays 'running' + a note (sweep-excluded),
-   *  NO self-fire. The worker may be alive; a later re-fire (fill predicate / manual control) resumes
-   *  from this cursor. NEVER 'failed' when the worker may still be writing. */
-  markUnconfirmed: (cursor: number) => Promise<void>;
+  /** HOLD the chain non-terminal at the given cursor: status stays 'running' + the 'unconfirmed:' note
+   *  (sweep-excluded from the CLOSE, and the marker the sweep's RE-ARM (2) keys on), NO self-fire. The
+   *  worker may be alive; a re-fire (the sweep, the fill predicate, or manual control) resumes from
+   *  this cursor. NEVER 'failed' when the worker may still be writing. `holdsAtCursor` is the running
+   *  count of consecutive holds AT this cursor — persisted so the next fire can bound it. */
+  markUnconfirmed: (cursor: number, holdsAtCursor: number) => Promise<void>;
   /** Self-fire the next step (a fresh isolate). Never called on a terminal or an unconfirmed hold. */
   selfFire: () => Promise<void>;
 };
@@ -64,7 +106,9 @@ export type MDStepOutcome =
   | "chunk_recovered"          // the whole chunk was accounted
   | "chunk_recovered_partial"  // only the leading N were accounted; the tail re-judges next fire
   // not-ok fetch, nothing accounted within the window → non-terminal hold (running + note), no self-fire.
-  | "unconfirmed_hold";
+  | "unconfirmed_hold"
+  // HOLD_LIMIT consecutive holds at the SAME cursor with nothing accounted between them → terminal.
+  | "no_progress_failed";
 
 /**
  * Run ONE market-discovery step. Exactly one of: terminate (max-steps/no-progress → failed), plan,
@@ -110,7 +154,7 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
 
   // HAPPY PATH — the fetch returned success and the chunk is non-empty → advance + self-fire.
   if (res.ok && nextCursor > s.cursor) {
-    await cfg.persistProgress(nextCursor, s.stepCount + 1);
+    await cfg.persistProgress(nextCursor, s.stepCount + 1, 0);
     await cfg.selfFire();
     return { outcome: "chunk_done" };
   }
@@ -124,14 +168,25 @@ export async function runMarketDiscoveryStep(cfg: MDStepConfig): Promise<{ outco
     // (full or partial) and continue. The unaccounted tail re-judges next fire — banked-verdict cheap,
     // dedup-safe by content identity. A real advance means no infinite loop.
     const advanced = s.cursor + Math.min(accounted, chunk.length);
-    await cfg.persistProgress(advanced, s.stepCount + 1);
+    await cfg.persistProgress(advanced, s.stepCount + 1, 0);
     await cfg.selfFire();
     return { outcome: advanced >= nextCursor ? "chunk_recovered" : "chunk_recovered_partial" };
   }
 
   // Nothing landed within the window → the worker may still be alive mid-first-candidate. HOLD
-  // non-terminal (running + note, sweep-excluded); NO self-fire (no hot loop). A later re-fire resumes
-  // from this cursor. NEVER 'failed' on a maybe-alive worker.
-  await cfg.markUnconfirmed(s.cursor);
+  // non-terminal (running + note, sweep-excluded); NO self-fire (no hot loop). A later re-fire — the
+  // sweep's RE-ARM (2), the fill predicate, or manual control — resumes from this cursor.
+  //
+  // TERMINAL 2 — NO-PROGRESS. "Maybe alive" is a claim with an expiry date. HOLD_LIMIT consecutive
+  // holds at the SAME cursor means HOLD_LIMIT fires accounted NOTHING there: not a slow worker, a
+  // stuck one. Close it failed with the sibling steppers' wording, so the operator sees a terminal
+  // instead of a row that is re-armed every five minutes forever. A hold at a DIFFERENT cursor is
+  // progress and restarts the count.
+  const holds = s.holdCursor === s.cursor ? s.holdsAtCursor + 1 : 1;
+  if (holds >= HOLD_LIMIT) {
+    await cfg.closeFailed(`no_progress at cursor ${s.cursor} — market discovery halted`);
+    return { outcome: "no_progress_failed" };
+  }
+  await cfg.markUnconfirmed(s.cursor, holds);
   return { outcome: "unconfirmed_hold" };
 }

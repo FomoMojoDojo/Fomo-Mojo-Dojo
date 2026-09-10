@@ -7,7 +7,7 @@
 //    while their ledger terminals read false, because they predate the chain. A ledger-first status
 //    would report a healthy fleet as broken.
 import { describe, expect, it } from "vitest";
-import { buildInventory, fillStatusLabel, type FillStages } from "./companiesInventory";
+import { buildInventory, fillStatusLabel, INVENTORY_READ_KINDS, type FillStages } from "./companiesInventory";
 
 const T = (iso: string) => new Date(iso).toISOString();
 const CO = (id: string, over: Record<string, unknown> = {}) => ({ id, name: id, website: `https://${id}.example`, frozen: false, ...over });
@@ -272,6 +272,7 @@ describe("fillStatusLabel wording set", () => {
     baselineRuns: 1, ownWordsClaims: 1, deltas: 1, deltasStale: false, deltasReason: "deltas_current",
     reads: [], readsCurrent: 4, recurrenceRows: 0, scoreRows: 0,
     ledger: { ownWordsTerminal: null, recurrenceTerminal: null },
+    marketDiscoveryHeld: false, marketDiscoveryCursor: 0, marketDiscoveryTotal: 0,
   };
   it("renders exactly the signed strings", () => {
     expect(fillStatusLabel(base)).toBe("complete");
@@ -279,5 +280,42 @@ describe("fillStatusLabel wording set", () => {
     expect(fillStatusLabel({ ...base, ownWordsClaims: 0 })).toBe("own-words pending");
     expect(fillStatusLabel({ ...base, deltasStale: true })).toBe("deltas stale");
     expect(fillStatusLabel({ ...base, readsCurrent: 2 })).toBe("2 of 4 reads");
+  });
+
+  // ── Gate 1c: the sixth form ─────────────────────────────────────────────────────────────────────
+  // RED ON REVERT. Before this, fillStatusLabel never consulted market discovery and the ledger query
+  // did not even fetch market_discovery rows, so a permanently held run rendered "complete" — the one
+  // state that needs an operator was the one the column could not say.
+  it("(1c) a HELD market discovery renders the signed sixth form", () => {
+    expect(fillStatusLabel({
+      ...base, marketDiscoveryHeld: true, marketDiscoveryCursor: 3, marketDiscoveryTotal: 6,
+    })).toBe("discovery held at 3 of 6");
+  });
+
+  it("(1c) REGRESSION GUARD (passes under both bodies): not held ⇒ complete", () => {
+    expect(fillStatusLabel({ ...base, marketDiscoveryHeld: false })).toBe("complete");
+  });
+
+  it("(1c) a held discovery never masks a missing read — reads are reported first", () => {
+    expect(fillStatusLabel({
+      ...base, readsCurrent: 2, marketDiscoveryHeld: true, marketDiscoveryCursor: 3, marketDiscoveryTotal: 6,
+    })).toBe("2 of 4 reads");
+  });
+
+  it("(1c) end-to-end: a running market_discovery row WITH the marker holds, WITHOUT it does not", () => {
+    const held = {
+      company_id: "a", run_kind: "market_discovery", status: "running", started_at: "2026-09-10T00:00:00Z",
+      error_text: "unconfirmed: chunk at cursor 3 not yet accounted — worker may be alive; awaiting resume",
+      chain_state: { cursor: 3, candidates: [1, 2, 3, 4, 5, 6] },
+    };
+    const live = { ...held, error_text: null };
+    const full = {
+      ...EMPTY, companies: [CO("a")],
+      baselines: [{ company_id: "a" }], ownWords: [{ company_id: "a", created_at: "2026-09-10T00:00:00Z" }],
+      deltas: [{ company_id: "a", computed_at: "2026-09-10T01:00:00Z" }],
+      reads: INVENTORY_READ_KINDS.map((kind) => ({ company_id: "a", kind, is_current: true })),
+    };
+    expect(buildInventory({ ...full, ledger: [held] })[0].fillStatus).toBe("discovery held at 3 of 6");
+    expect(buildInventory({ ...full, ledger: [live] })[0].fillStatus).toBe("complete");
   });
 });
