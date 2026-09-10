@@ -19,6 +19,7 @@ import {
   marketIdentity,
   CANDIDATE_ERROR_COMPONENT,
 } from "../../../supabase/functions/_shared/marketPortfolioDiscovery.ts";
+import { CRITERION_VERSION } from "../../../supabase/functions/_shared/solutionAgnosticJudge.ts";
 // The perspective verdicts are planted under their REAL content hashes. This matters: it is what
 // makes the red-on-revert run non-vacuous — the reverted body looks these rows up by
 // sha256(normalizeForHash(jtbd)) and must genuinely find them, then wrongly return true.
@@ -36,7 +37,7 @@ const REFRAMED_JTBD =
 
 const CANDIDATE = { job_executor: EXECUTOR, jtbd: ORIGINAL_JTBD };
 
-type Row = Record<string, string>;
+type Row = Record<string, string | number>;
 type Fixture = Record<string, Row[]>;
 
 /** A fixture-backed equality probe: a row matches when every column in `match` is equal. */
@@ -82,6 +83,7 @@ describe("marketCandidateAccounted", () => {
         market_a_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
         verdict_kind: "solution_agnostic",
         verdict,
+        criterion_version: CRITERION_VERSION,
       }];
       expect(await accounted(f)).toBe(true);
     });
@@ -165,6 +167,7 @@ describe("marketCandidateAccounted", () => {
       company_id: COMPANY,
       original_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
       outcome: "rejected_buyer",
+      criterion_version: CRITERION_VERSION,
     }];
     expect(await accounted(f)).toBe(true);
   });
@@ -176,6 +179,34 @@ describe("marketCandidateAccounted", () => {
     // no integrity terminal planted: the error OUTCOME alone must not account it
     expect(await accounted(f)).toBe(false);
     f.integrity_runs = [{ company_id: COMPANY, component: CANDIDATE_ERROR_COMPONENT, run_ref: identity, status: "failed" }];
+    expect(await accounted(f)).toBe(true);
+  });
+
+  // ── Gate 5b — decided/accounted are VERSION-AWARE ───────────────────────────────────────────────
+  // RED ON REVERT. Before this a v1 verdict decided a candidate forever, so a better criterion could
+  // never run on the 16 already-judged candidates. Now a ruling counts only under the current
+  // criterion: a v1-only rejection is un-decided under v2 and is re-judged exactly once. This applies
+  // to `accounted` too — if the confirm-poll called a v1 ruling a terminal during a v2 run, the cursor
+  // would advance past the candidate before its v2 ruling landed (the Gate 1b defect, reborn).
+  it("(g5b) a v1-ONLY solution_agnostic rejection is NOT accounted under the current criterion", async () => {
+    const f = await midFlight();
+    f.market_discovery_verdicts = [{
+      company_id: COMPANY, market_a_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+      verdict_kind: "solution_agnostic", verdict: "rejected", criterion_version: 1,
+    }];
+    expect(await accounted(f)).toBe(false);
+  });
+  it("(g5b) a v1-only outcome row is NOT accounted; the same row at the current version IS", async () => {
+    const f = await midFlight();
+    const identity = await marketIdentity(EXECUTOR, ORIGINAL_JTBD);
+    f.market_candidate_outcomes = [{ company_id: COMPANY, original_identity: identity, outcome: "rejected_solution", criterion_version: 1 }];
+    expect(await accounted(f)).toBe(false);
+    f.market_candidate_outcomes.push({ company_id: COMPANY, original_identity: identity, outcome: "rejected_solution", criterion_version: CRITERION_VERSION });
+    expect(await accounted(f)).toBe(true);
+  });
+  it("(g5b) a written def (clause 1) is UNVERSIONED — a v1 def still decides under v2", async () => {
+    const f = await midFlight();
+    f.odi_market_definitions = [{ company_id: COMPANY, job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred" }];
     expect(await accounted(f)).toBe(true);
   });
 

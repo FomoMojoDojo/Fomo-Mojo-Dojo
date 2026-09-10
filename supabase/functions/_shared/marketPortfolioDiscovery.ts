@@ -46,6 +46,10 @@ import { KNOWN_RELATIONSHIP_KINDS } from "./relationshipKinds.ts";
 // Gate 3b — the DECIDED predicate (written def, or a banked gate-(b)/(c) verdict). The worker asks it
 // before spending model calls on a candidate a judge has already ruled on.
 import { marketCandidateDecided, type ExistsProbe } from "./marketCandidateAccounted.ts";
+import {
+  CRITERION_VERSION, SOLUTION_AGNOSTIC_SYSTEM, solutionAgnosticKey,
+  buildSolutionLine, buildSolutionAgnosticUser, loadOfferingItems, judgeSolutionAgnosticMajority,
+} from "./solutionAgnosticJudge.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -94,10 +98,6 @@ export const CANDIDATE_ERROR_COMPONENT = "market_discovery_candidate";
 
 export async function marketIdentity(executor: string, jtbd: string): Promise<string> {
   return await sha256Hex(normalizeForHash(`${executor}|${jtbd}`));
-}
-
-export async function solutionAgnosticKey(executor: string, jtbd: string): Promise<string> {
-  return await sha256Hex(`mktsolagn|${normalizeForHash(`${executor}|${jtbd}`)}`);
 }
 
 export async function sameMarketKey(identityA: string, identityB: string): Promise<string> {
@@ -176,15 +176,12 @@ function buildGenUser(companyName: string, outsideLines: string[]): string {
 // Exported for MO-1 (_shared/marketOptionSynthesis.ts), which EXTENDS this
 // judge as its third criterion rather than duplicating the criterion text.
 // Export only — the prompt and its user builder are unchanged.
-export const SOLUTION_AGNOSTIC_SYSTEM =
-  "You judge whether a market definition is SOLUTION-AGNOSTIC. " +
-  "The job must be stated entirely in the executor's own world — a job that names, presupposes, or is only meaningful in terms of the company's product, service, or solution FAILS. " +
-  "The job existed before this company and would exist without it. " +
-  'JSON only: {"solution_free":true|false,"reason":"<one short clause>"}.';
-
-export function buildSolutionAgnosticUser(companyName: string, executor: string, jtbd: string): string {
-  return `COMPANY: ${companyName}\nCANDIDATE MARKET — executor: ${executor}\njob: ${jtbd}\nIs this job free of ${companyName}'s product/solution?`;
-}
+// Gate 5b — the solution-agnostic criterion, its version, its key and its prompt all live in
+// _shared/solutionAgnosticJudge.ts (CRITERION_VERSION is the single authority). The v1 prompt that
+// stood here is history: it was told nothing about the company and inferred the solution from the
+// job's own words, which is how 11 of 20 rejections landed on domain words. Re-exported for the
+// callers that reach these names through this module.
+export { SOLUTION_AGNOSTIC_SYSTEM, solutionAgnosticKey, CRITERION_VERSION } from "./solutionAgnosticJudge.ts";
 
 // The single authority for the same-market criterion (MPD-1d — mirrors the
 // SAME_FACT_CRITERION precedent). The negative examples target the observed
@@ -379,6 +376,14 @@ export async function computeMarketDiscovery(
 
   const universe = await loadDedupUniverse(args.supabase, args.companyId);
   const companyName = await loadCompanyName(args.supabase, args.companyId);
+  // Gate 5b — what the company sells, from the offering read, local only. companyName is used ONLY
+  // to scrub itself out of the statements; it never reaches the judge.
+  const offeringItems = await loadOfferingItems(async (cid) => {
+    const { data } = await args.supabase.from("public_reads").select("payload")
+      .eq("company_id", cid).eq("kind", "offering").eq("is_current", true).limit(1).maybeSingle();
+    return (data as { payload?: { items?: unknown } } | null)?.payload ?? null;
+  }, args.companyId);
+  const solutionLine = buildSolutionLine(offeringItems, companyName);
 
   // ── PLAN: one gen call → candidate manifest (zero writes, zero judges) ──
   if (args.plan) {
@@ -493,17 +498,20 @@ export async function computeMarketDiscovery(
   // Banked verdicts for this company.
   const { data: vRows, error: vErr } = await args.supabase
     .from("market_discovery_verdicts")
-    .select("id, pair_identity, verdict_kind, market_a_identity, market_b_identity, verdict, judge_reason")
+    .select("id, pair_identity, verdict_kind, market_a_identity, market_b_identity, verdict, judge_reason, criterion_version")
     .eq("company_id", args.companyId);
   if (vErr) return { ok: false, error: `verdicts load failed: ${vErr.message}` };
-  type Verdict = { id: string; pair_identity: string; verdict_kind: string; market_a_identity: string; market_b_identity: string | null; verdict: string; judge_reason: string };
+  type Verdict = { id: string; pair_identity: string; verdict_kind: string; market_a_identity: string; market_b_identity: string | null; verdict: string; judge_reason: string; criterion_version?: number };
   const verdicts = (vRows ?? []) as Verdict[];
   const verdictByKey = new Map(verdicts.map((v) => [v.pair_identity, v]));
 
   const bankVerdict = async (row: Omit<Verdict, "id">) => {
     if (verdictByKey.has(row.pair_identity)) return;
     if (args.write) {
-      const { error } = await args.supabase.from("market_discovery_verdicts").insert({ company_id: args.companyId, judge_model: judgeModel, ...row });
+      // Gate 5b: same_market rows are unversioned (gate (c) compares markets, not criteria) and are
+      // written at 1; solution_agnostic rows carry the criterion that produced them.
+      const criterion_version = row.criterion_version ?? 1;
+      const { error } = await args.supabase.from("market_discovery_verdicts").insert({ company_id: args.companyId, judge_model: judgeModel, ...row, criterion_version });
       if (error && !String(error.message ?? "").includes("duplicate")) {
         throw new Error(`verdict insert failed: ${error.message}`);
       }
@@ -556,18 +564,26 @@ export async function computeMarketDiscovery(
         solutionFree = saBanked.verdict === "accepted";
         reasons[`solution_agnostic${tag}`] = `${saBanked.verdict} (frozen): ${saBanked.judge_reason}`;
       } else {
-        const raw = await callOllamaJson(args.ollamaUrl, judgeModel, SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUser(companyName, cand.job_executor, cand.jtbd), JUDGE_TIMEOUT_MS);
-        const v = parseBool(raw, "solution_free", "solution-agnostic judge");
+        // Gate 5b — three calls, majority rules, every vote kept. The user prompt carries NO company
+        // name; the solution line tells the judge what the company sells instead of letting it guess.
+        const userPrompt = buildSolutionAgnosticUser(solutionLine, cand.job_executor, cand.jtbd);
+        const majority = await judgeSolutionAgnosticMajority(async () => {
+          const raw = await callOllamaJson(args.ollamaUrl, judgeModel, SOLUTION_AGNOSTIC_SYSTEM, userPrompt, JUDGE_TIMEOUT_MS);
+          const v = parseBool(raw, "solution_free", "solution-agnostic judge");
+          return { solutionFree: v.value, reason: v.reason };
+        });
         totals.judged_solution++;
-        solutionFree = v.value;
-        reasons[`solution_agnostic${tag}`] = `${v.value ? "accepted" : "rejected"}: ${v.reason}`;
+        solutionFree = majority.solutionFree;
+        reasons[`solution_agnostic${tag}`] = `${majority.tally}: ${majority.reason}`;
+        reasons[`solution_agnostic_votes${tag}`] = majority.votes.map((v, i) => `${i + 1}:${v.solutionFree ? "acc" : "rej"} ${v.reason}`).join(" | ");
         await bankVerdict({
           pair_identity: saKey,
           verdict_kind: "solution_agnostic",
           market_a_identity: identity,
           market_b_identity: null,
-          verdict: v.value ? "accepted" : "rejected",
-          judge_reason: v.reason,
+          verdict: solutionFree ? "accepted" : "rejected",
+          judge_reason: `${majority.tally}: ${majority.reason}`,
+          criterion_version: CRITERION_VERSION,
         });
       }
       if (!solutionFree) return "rejected_solution";
@@ -866,6 +882,7 @@ export async function computeMarketDiscovery(
           // ON CONFLICT SET list, which is how Geniant's rows stayed reconstructed=true after being
           // rewritten first-hand.
           reconstructed: false,
+          criterion_version: CRITERION_VERSION,
         });
       }
       // A CANDIDATE THAT WAS RULED ON STAYS RULED ON (Gate 4d, operator ruling).

@@ -19,6 +19,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { ActWhoYouServe } from "./acts";
+import { OperatorControlsContext } from "./operatorControls";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRUnstatedGroup, type FRMarketDef } from "./types";
 
 const FALLBACK_LINE = "Only makes sense with your product in it — take it out and ask what they'd still be trying to do.";
@@ -34,6 +35,8 @@ const group = (over: Partial<FRUnstatedGroup>): FRUnstatedGroup => ({
   outcome: "rejected_solution",
   judgeReason: "names 'machine-readable system' which is a key feature of Brand AI's product",
   reconstructed: false,
+  criterionVersion: 2,
+  stale: false,
   ...over,
 });
 
@@ -286,5 +289,45 @@ describe("nothing renders when nothing was set aside (Gate E1)", () => {
     const { container } = render(<ActWhoYouServe read={readWith([group({})])} />);
     expect(container.textContent).toContain(EYEBROW);
     expect(container.querySelectorAll(".fr-unstated-item").length).toBe(1);
+  });
+});
+
+describe("criterion version on the operator toggle (Gate 5b)", () => {
+  // RED ON REVERT. Before 5b every ruling was one criterion; a v1 rejection with no v2 ruling now
+  // renders STALE-BUT-HONEST: the client still sees the group and the signed line (an absence must
+  // be explained), and the operator toggle says WHICH criterion said so and that it has not yet been
+  // re-judged. Without the version on the toggle, a v1 domain-word rejection (Riverlane's OEMs,
+  // rejected for "quantum") would read as a current ruling.
+  const withOperator = (read: FirstReadPreviewData) => render(
+    <OperatorControlsContext.Provider value={{ decide: async () => {} }}>
+      <ActWhoYouServe read={read} />
+    </OperatorControlsContext.Provider>,
+  );
+
+  it("(g5b) a v1 row with no v2 ruling renders for the client AND carries CRITERION v1 (stale) for the operator", () => {
+    const { container } = withOperator(readWith([
+      group({ who: "Quantum hardware OEMs", outcome: "rejected_solution", criterionVersion: 1, stale: true,
+              judgeReason: "names 'quantum error correction' which is the company's domain" }),
+    ]));
+    const text = container.textContent ?? "";
+    expect(text).toContain("Quantum hardware OEMs");
+    expect(text).toContain(FALLBACK_LINE);
+    expect(text).toContain("CRITERION v1 (stale — not yet re-judged)");
+    expect(text).toContain("JUDGE: names 'quantum error correction'");
+  });
+
+  it("(g5b) a current-version row says CRITERION v2 with no stale marker", () => {
+    const { container } = withOperator(readWith([group({ criterionVersion: 2, stale: false })]));
+    const text = container.textContent ?? "";
+    expect(text).toContain("CRITERION v2 · JUDGE:");
+    expect(text).not.toContain("stale");
+  });
+
+  it("(g5b) the version is operator-only — the client render never says CRITERION", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith([group({ criterionVersion: 1, stale: true })])} />,
+    );
+    expect(container.textContent).not.toContain("CRITERION");
+    expect(container.textContent).not.toContain("stale");
   });
 });

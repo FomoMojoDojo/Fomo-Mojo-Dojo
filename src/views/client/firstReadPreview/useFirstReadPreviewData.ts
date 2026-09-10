@@ -13,6 +13,7 @@
 // The First Read outside-only provenance gate applies: uploaded_file-derived
 // claims are structurally excluded via the shared predicate.
 
+import { selectUnstatedRows } from "./unstatedSelect";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -846,17 +847,24 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             .order("started_at", { ascending: false }).limit(1);
           const mdRunId = ((mdRunRows ?? []) as Array<{ id: string }>)[0]?.id ?? null;
           if (mdRunId) {
+            // Gate 5b — VERSION-AWARE. Read every outcome row for the manifest, then per candidate
+            // index keep the CURRENT criterion's ruling if one exists, else the newest older ruling
+            // marked stale (stale-but-honest: a v1 rejection with no v2 ruling yet still explains an
+            // absence, and the operator toggle says which criterion said so). A candidate whose
+            // current ruling is NOT a rejection (accepted, deduped, already_decided) drops out even if
+            // an older version rejected it — the current criterion has spoken.
             const { data: outRows } = await loose()
               .from("market_candidate_outcomes")
-              .select("id, job_executor, original_jtbd, relationship_kind, outcome, judge_reasons, reconstructed")
+              .select("id, candidate_index, job_executor, original_jtbd, relationship_kind, outcome, judge_reasons, reconstructed, criterion_version")
               .eq("run_id", mdRunId)
-              .in("outcome", ["rejected_solution", "rejected_buyer"])
               .order("candidate_index", { ascending: true });
-            unstatedGroups = ((outRows ?? []) as Array<{
-              id: string; job_executor: string | null; original_jtbd: string | null;
+            type OutRow = {
+              id: string; candidate_index: number; job_executor: string | null; original_jtbd: string | null;
               relationship_kind: string | null; outcome: string;
-              judge_reasons: Record<string, string> | null; reconstructed: boolean | null;
-            }>).map((r) => ({
+              judge_reasons: Record<string, string> | null; reconstructed: boolean | null; criterion_version: number | null;
+            };
+            const chosen = selectUnstatedRows((outRows ?? []) as OutRow[]);
+            unstatedGroups = chosen.map((r) => ({
               id: r.id,
               who: (r.job_executor ?? "").trim(),
               job: (r.original_jtbd ?? "").trim() || null,
@@ -865,6 +873,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               // The verbatim clause, whichever gate produced it. Operator view only.
               judgeReason: firstJudgeReason(r.judge_reasons),
               reconstructed: !!r.reconstructed,
+              criterionVersion: Number(r.criterion_version ?? 1),
+              stale: r.stale,
             }));
           }
           // Gate 4d — the product labels the section names. Same current offering read the "What you

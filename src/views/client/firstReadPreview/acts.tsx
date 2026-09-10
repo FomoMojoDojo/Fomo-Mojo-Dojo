@@ -1071,7 +1071,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
               <p className="fr-unstated-who">{g.who}</p>
               {g.job ? <JobWithProduct job={g.job} head={product?.head ?? null} /> : null}
               <p className="fr-unstated-sub">{subline}</p>
-              <OperatorUnstatedReason reason={g.judgeReason} reconstructed={g.reconstructed} />
+              <OperatorUnstatedReason reason={g.judgeReason} reconstructed={g.reconstructed} criterionVersion={g.criterionVersion} stale={g.stale} />
             </li>
             );
           })}

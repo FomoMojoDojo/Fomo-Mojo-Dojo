@@ -41,7 +41,10 @@
 // localhost Ollama. Zero OpenAI.
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
-import { SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUser } from "./marketPortfolioDiscovery.ts";
+// Gate 5b: discovery moved to criterion v2 (solutionAgnosticJudge.ts). This pipeline stays on the
+// FROZEN v1 pair — same prompt, same inputs, same behaviour as before 5b. Migrating market options to
+// v2 is a separate decision; the import is renamed so the choice is visible, not inherited.
+import { SOLUTION_AGNOSTIC_SYSTEM_V1 as SOLUTION_AGNOSTIC_SYSTEM, buildSolutionAgnosticUserV1 as buildSolutionAgnosticUser } from "./solutionAgnosticJudge.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";

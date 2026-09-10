@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useState } from "react";
 import { resolveChosenSet, currentActor, clearStalePin, PIN_CLEARED_STALE_NOTE } from "@/lib/chosenJobStepSet";
 
 // On-strategy pin: a DISTINCT strategic assertion (which job-step set drives strategy),
@@ -50,11 +51,17 @@ export function OnStrategyPin({
     },
   });
 
+  // Gate 5b (ruling g): the cleared-stale note PERSISTS until the operator's next choice. It used to
+  // ride the query result, which refetches at 30s and returns clearedStale:false once the pin is
+  // gone — so the note lasted ~30 seconds and the operator's screenshot missed it. Component state
+  // latches it; pinFocused() is the only thing that clears it.
+  const [clearedStale, setClearedStale] = useState(false);
+  useEffect(() => { if (data?.clearedStale) setClearedStale(true); }, [data?.clearedStale]);
+
   // Single-set companies: nothing to choose — same hide rule as the journey toggle.
   if (!companyId || setOptions.length <= 1) return null;
 
   const pinnedKey = data?.pinnedKey ?? null;
-  const clearedStale = data?.clearedStale ?? false;
   // The chosen set drives the chip via the shared rule (choice wins only if its
   // set still exists); otherwise no set is on strategy yet.
   const chosenKey = resolveChosenSet(pinnedKey, setOptions.map((j) => j.key)).chosenKey;
@@ -80,6 +87,7 @@ export function OnStrategyPin({
     await db.from("operator_primary_selection_audit").insert({
       company_id: companyId, domain: "job_step_set", item_key: viewedSetKey, action: "set", actor, reason: null,
     });
+    setClearedStale(false);
     await queryClient.invalidateQueries({ queryKey });
   }
 

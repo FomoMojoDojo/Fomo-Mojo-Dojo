@@ -41,6 +41,10 @@
 // the one identity authority, and CANDIDATE_ERROR_COMPONENT is declared next to the code that writes
 // the error terminal. One direction only — no import cycle.
 import { marketIdentity, CANDIDATE_ERROR_COMPONENT } from "./marketPortfolioDiscovery.ts";
+// Gate 5b — decided is VERSION-AWARE: a ruling counts only under the current criterion. A v1-only
+// rejection is un-decided under v2 and is re-judged exactly once; a written def (clause 1) is a
+// snapshot artefact and is never versioned.
+import { CRITERION_VERSION } from "./solutionAgnosticJudge.ts";
 
 /** Outcomes that constitute a RULING. Mirrors the market_candidate_outcomes CHECK minus 'error',
  *  which is a terminal without a ruling: accounted, never decided. */
@@ -59,7 +63,7 @@ export type MarketCandidateRef = { job_executor?: unknown; jtbd?: unknown };
 /** The injected reader: does at least one row exist in `table` matching every column in `match`?
  *  Table names and match columns live HERE (they are the substance of the rule and are covered by
  *  the proofs); the caller supplies only a dumb equality probe. */
-export type ExistsProbe = (table: string, match: Record<string, string>) => Promise<boolean>;
+export type ExistsProbe = (table: string, match: Record<string, string | number>) => Promise<boolean>;
 
 /**
  * DECIDED — clauses (1) and (2) only: this candidate reached a JUDGED outcome that is on the record.
@@ -96,10 +100,11 @@ export async function marketCandidateDecided(args: {
 
   const identity = await marketIdentity(executor, jtbd);
 
-  // (2) a persisted gate-(b)/(c) decision on the original identity.
+  // (2) a persisted gate-(b)/(c) decision on the original identity, UNDER THE CURRENT CRITERION.
   if (await args.exists("market_discovery_verdicts", {
     company_id: args.companyId,
     market_a_identity: identity,
+    criterion_version: CRITERION_VERSION,
   })) return true;
 
   // (3) a persisted per-candidate OUTCOME on the original identity (Gate 4b).
@@ -119,6 +124,7 @@ export async function marketCandidateDecided(args: {
       company_id: args.companyId,
       original_identity: identity,
       outcome,
+      criterion_version: CRITERION_VERSION,
     })) return true;
   }
   return false;

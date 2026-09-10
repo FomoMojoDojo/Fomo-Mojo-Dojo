@@ -22,6 +22,7 @@ import {
   marketIdentity,
   CANDIDATE_ERROR_COMPONENT,
 } from "../../../supabase/functions/_shared/marketPortfolioDiscovery.ts";
+import { CRITERION_VERSION } from "../../../supabase/functions/_shared/solutionAgnosticJudge.ts";
 
 const COMPANY = "49435388-954b-42ff-8366-62e207a3f625";
 const EXECUTOR = "Quantum software developers building applications on quantum computers";
@@ -46,6 +47,7 @@ function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolea
       Object.entries(match).every(([c, v]) => r[c] === v));
     const api: Record<string, unknown> = {
       select: () => api,
+      // Gate 5b: the worker loads the offering read once per run; the fake answers with whatever is planted (or nothing).
       insert: (row: Row) => { inserts.push({ table, row }); return Promise.resolve({ error: null }); },
       upsert: (rows: Row[], o?: { onConflict?: string }) => {
         upserts.push({ table, rows, onConflict: o?.onConflict });
@@ -126,7 +128,8 @@ describe("worker skips DECIDED candidates (Gate 3b)", () => {
     const fake = fakeSupabase({
       companies: [{ id: COMPANY, name: "Riverlane" }],
       odi_market_definitions: [],
-      market_discovery_verdicts: [{ id: "v1", company_id: COMPANY, market_a_identity: identity }],
+      // Gate 5b: only a ruling under the CURRENT criterion decides. A version-less fixture is a v1 row.
+      market_discovery_verdicts: [{ id: "v1", company_id: COMPANY, market_a_identity: identity, criterion_version: CRITERION_VERSION }],
       market_lens: [],
     });
     const res = await computeMarketDiscovery({ ...baseArgs(fake.client), candidates: [CANDIDATE] });
@@ -300,7 +303,7 @@ describe("already_decided never overwrites a terminal outcome (Gate 4d)", () => 
       jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
     market_discovery_verdicts: [], market_lens: [],
     market_candidate_outcomes: existingOutcome
-      ? [{ run_id: RUN, candidate_index: 1, company_id: COMPANY, outcome: existingOutcome, reconstructed: true }]
+      ? [{ run_id: RUN, candidate_index: 1, company_id: COMPANY, outcome: existingOutcome, reconstructed: true, criterion_version: CRITERION_VERSION }]
       : [],
   });
   const run = (tables: Record<string, Row[]>) => {

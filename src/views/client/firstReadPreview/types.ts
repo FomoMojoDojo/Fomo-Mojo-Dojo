@@ -485,4 +485,9 @@ export type FRUnstatedGroup = {
   outcome: "rejected_solution" | "rejected_buyer";
   judgeReason: string | null;
   reconstructed: boolean;
+  /** Gate 5b — the criterion that produced this ruling. Rendered rows are current-version rulings, or
+   *  a prior-version ruling shown stale-but-honest until the current criterion has ruled. */
+  criterionVersion: number;
+  /** True when this row is an OLDER criterion's ruling with no current-version ruling yet. */
+  stale: boolean;
 };

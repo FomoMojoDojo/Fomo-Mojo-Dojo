@@ -265,11 +265,14 @@ export function OperatorKindTag({ kind, reason }: { kind: string | null; reason:
  *  carries the signed plain-words string instead, because these clauses are written for a machine
  *  gate and read as accusations on a client surface ("names 'machine-readable system' which is a key
  *  feature of Brand AI's product"). Structural gate, like every control here: no provider, no render. */
-export function OperatorUnstatedReason({ reason, reconstructed }: { reason: string | null; reconstructed: boolean }) {
+export function OperatorUnstatedReason({ reason, reconstructed, criterionVersion, stale }: {
+  reason: string | null; reconstructed: boolean; criterionVersion?: number; stale?: boolean;
+}) {
   const ctx = useOperatorControls();
   if (!ctx || !reason) return null;
   return (
     <p className={TAG_CLASS} style={{ ...TAG_STYLE, textTransform: "none", letterSpacing: "0.04em", marginTop: "0.4rem" }}>
+      {criterionVersion ? `CRITERION v${criterionVersion}${stale ? " (stale — not yet re-judged)" : ""} · ` : ""}
       {`JUDGE: ${reason}`}
       {reconstructed ? " · RECONSTRUCTED" : ""}
     </p>
