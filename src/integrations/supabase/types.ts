@@ -182,6 +182,45 @@ export type Database = {
           },
         ]
       }
+      baseline_synthesis_parse_failures: {
+        Row: {
+          attempt_n: number
+          block_census: Json | null
+          company_id: string
+          created_at: string
+          id: string
+          ledger_run_id: string | null
+          model: string | null
+          raw_final_text: string | null
+          stop_reason: string | null
+          usage: Json | null
+        }
+        Insert: {
+          attempt_n: number
+          block_census?: Json | null
+          company_id: string
+          created_at?: string
+          id?: string
+          ledger_run_id?: string | null
+          model?: string | null
+          raw_final_text?: string | null
+          stop_reason?: string | null
+          usage?: Json | null
+        }
+        Update: {
+          attempt_n?: number
+          block_census?: Json | null
+          company_id?: string
+          created_at?: string
+          id?: string
+          ledger_run_id?: string | null
+          model?: string | null
+          raw_final_text?: string | null
+          stop_reason?: string | null
+          usage?: Json | null
+        }
+        Relationships: []
+      }
       claim_contest_removals: {
         Row: {
           claim_id: string | null
@@ -234,6 +273,7 @@ export type Database = {
           resolution_reason: string | null
           resolved_at: string | null
           resolved_by: string | null
+          round: number
           session_id: string
           source: string
         }
@@ -249,6 +289,7 @@ export type Database = {
           resolution_reason?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
+          round?: number
           session_id: string
           source?: string
         }
@@ -264,6 +305,7 @@ export type Database = {
           resolution_reason?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
+          round?: number
           session_id?: string
           source?: string
         }
@@ -381,22 +423,160 @@ export type Database = {
           },
         ]
       }
+      claim_delta_relevance_override_removals: {
+        Row: {
+          company_id: string
+          content_identity: string
+          id: string
+          override_id: string
+          pairing_kind: string
+          reason: string
+          removal_reason: string
+          removed_at: string
+          verdict: string
+        }
+        Insert: {
+          company_id: string
+          content_identity: string
+          id?: string
+          override_id: string
+          pairing_kind: string
+          reason: string
+          removal_reason: string
+          removed_at?: string
+          verdict: string
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string
+          id?: string
+          override_id?: string
+          pairing_kind?: string
+          reason?: string
+          removal_reason?: string
+          removed_at?: string
+          verdict?: string
+        }
+        Relationships: []
+      }
+      claim_delta_relevance_overrides: {
+        Row: {
+          company_id: string
+          content_identity: string
+          decided_at: string
+          decided_by: string | null
+          id: string
+          pairing_kind: string
+          reason: string
+          superseded_by: string | null
+          verdict: string
+        }
+        Insert: {
+          company_id: string
+          content_identity: string
+          decided_at?: string
+          decided_by?: string | null
+          id?: string
+          pairing_kind: string
+          reason: string
+          superseded_by?: string | null
+          verdict: string
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string
+          decided_at?: string
+          decided_by?: string | null
+          id?: string
+          pairing_kind?: string
+          reason?: string
+          superseded_by?: string | null
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_delta_relevance_overrides_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_relevance_overrides_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "claim_delta_relevance_overrides"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_delta_relevance_overrides_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "relevance_overrides_without_live_pair"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claim_delta_removals: {
+        Row: {
+          company_id: string
+          content_identity: string | null
+          delta_id: string
+          delta_type: string | null
+          id: string
+          pairing_kind: string | null
+          reason: string
+          removed_at: string
+          removed_by: string
+          row_snapshot: Json
+        }
+        Insert: {
+          company_id: string
+          content_identity?: string | null
+          delta_id: string
+          delta_type?: string | null
+          id?: string
+          pairing_kind?: string | null
+          reason: string
+          removed_at?: string
+          removed_by: string
+          row_snapshot: Json
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string | null
+          delta_id?: string
+          delta_type?: string | null
+          id?: string
+          pairing_kind?: string | null
+          reason?: string
+          removed_at?: string
+          removed_by?: string
+          row_snapshot?: Json
+        }
+        Relationships: []
+      }
       claim_deltas: {
         Row: {
           company_id: string
           computed_at: string
+          conflict_explanation: string | null
+          conflict_explanation_grounded: boolean | null
+          conflict_explanation_model: string | null
           content_identity: string
           declared_claim_id: string | null
           delta_type: string
           id: string
           judge_reason: string | null
+          model_name: string | null
+          model_provider: string | null
+          observed_own_host: boolean
           operator_disposition: string | null
           operator_seen_at: string | null
           pairing_basis: string
           pairing_kind: string
           public_claim_id: string | null
           relevance_judged_at: string | null
-          observed_own_host: boolean
           relevance_model: string | null
           relevance_provider: string | null
           relevance_reason: string | null
@@ -406,18 +586,23 @@ export type Database = {
         Insert: {
           company_id: string
           computed_at?: string
+          conflict_explanation?: string | null
+          conflict_explanation_grounded?: boolean | null
+          conflict_explanation_model?: string | null
           content_identity: string
           declared_claim_id?: string | null
           delta_type: string
           id?: string
           judge_reason?: string | null
+          model_name?: string | null
+          model_provider?: string | null
+          observed_own_host?: boolean
           operator_disposition?: string | null
           operator_seen_at?: string | null
           pairing_basis?: string
           pairing_kind?: string
           public_claim_id?: string | null
           relevance_judged_at?: string | null
-          observed_own_host?: boolean
           relevance_model?: string | null
           relevance_provider?: string | null
           relevance_reason?: string | null
@@ -427,18 +612,23 @@ export type Database = {
         Update: {
           company_id?: string
           computed_at?: string
+          conflict_explanation?: string | null
+          conflict_explanation_grounded?: boolean | null
+          conflict_explanation_model?: string | null
           content_identity?: string
           declared_claim_id?: string | null
           delta_type?: string
           id?: string
           judge_reason?: string | null
+          model_name?: string | null
+          model_provider?: string | null
+          observed_own_host?: boolean
           operator_disposition?: string | null
           operator_seen_at?: string | null
           pairing_basis?: string
           pairing_kind?: string
           public_claim_id?: string | null
           relevance_judged_at?: string | null
-          observed_own_host?: boolean
           relevance_model?: string | null
           relevance_provider?: string | null
           relevance_reason?: string | null
@@ -563,6 +753,48 @@ export type Database = {
           },
         ]
       }
+      claim_provenance_drift: {
+        Row: {
+          birth_provenance: string
+          claim_id: string
+          company_id: string
+          derived_provenance: string
+          id: string
+          observed_at: string
+        }
+        Insert: {
+          birth_provenance: string
+          claim_id: string
+          company_id: string
+          derived_provenance: string
+          id?: string
+          observed_at?: string
+        }
+        Update: {
+          birth_provenance?: string
+          claim_id?: string
+          company_id?: string
+          derived_provenance?: string
+          id?: string
+          observed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_provenance_drift_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_provenance_drift_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       claim_removals: {
         Row: {
           actor: string | null
@@ -653,15 +885,18 @@ export type Database = {
           confidence: string
           created_at: string
           customer_support_count: number
+          declared_eligible: boolean
           id: string
           need_statement: string | null
           organization_support_count: number
           outside_support_count: number
+          proof_category: string | null
           provenance: string
           raw_payload: Json
           revalidation_flag: boolean
           state: string
           statement: string
+          statement_kind: string | null
           status: string
           struck_at: string | null
           struck_by: string | null
@@ -677,15 +912,18 @@ export type Database = {
           confidence?: string
           created_at?: string
           customer_support_count?: number
+          declared_eligible?: boolean
           id?: string
           need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
+          proof_category?: string | null
           provenance?: string
           raw_payload?: Json
           revalidation_flag?: boolean
           state?: string
           statement: string
+          statement_kind?: string | null
           status?: string
           struck_at?: string | null
           struck_by?: string | null
@@ -701,15 +939,18 @@ export type Database = {
           confidence?: string
           created_at?: string
           customer_support_count?: number
+          declared_eligible?: boolean
           id?: string
           need_statement?: string | null
           organization_support_count?: number
           outside_support_count?: number
+          proof_category?: string | null
           provenance?: string
           raw_payload?: Json
           revalidation_flag?: boolean
           state?: string
           statement?: string
+          statement_kind?: string | null
           status?: string
           struck_at?: string | null
           struck_by?: string | null
@@ -732,13 +973,14 @@ export type Database = {
         Row: {
           archetype: string
           area_scores_json: Json | null
-          entity_anchors_json: Json
           created_at: string
           created_by: string
           engagement_started_at: string | null
+          entity_anchors_json: Json
           evidence_note: string | null
           evidence_status: string | null
           excluded_signals_json: Json
+          frozen: boolean
           human_decision: string | null
           id: string
           industry_key: string | null
@@ -765,13 +1007,14 @@ export type Database = {
         Insert: {
           archetype?: string
           area_scores_json?: Json | null
-          entity_anchors_json?: Json
           created_at?: string
           created_by: string
           engagement_started_at?: string | null
+          entity_anchors_json?: Json
           evidence_note?: string | null
           evidence_status?: string | null
           excluded_signals_json?: Json
+          frozen?: boolean
           human_decision?: string | null
           id?: string
           industry_key?: string | null
@@ -798,13 +1041,14 @@ export type Database = {
         Update: {
           archetype?: string
           area_scores_json?: Json | null
-          entity_anchors_json?: Json
           created_at?: string
           created_by?: string
           engagement_started_at?: string | null
+          entity_anchors_json?: Json
           evidence_note?: string | null
           evidence_status?: string | null
           excluded_signals_json?: Json
+          frozen?: boolean
           human_decision?: string | null
           id?: string
           industry_key?: string | null
@@ -1101,6 +1345,67 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      curated_tensions: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          difficulty_claim_id: string
+          id: string
+          operator_note: string | null
+          promise_claim_id: string
+          removed_at: string | null
+          removed_by: string | null
+          removed_reason: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          difficulty_claim_id: string
+          id?: string
+          operator_note?: string | null
+          promise_claim_id: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          difficulty_claim_id?: string
+          id?: string
+          operator_note?: string | null
+          promise_claim_id?: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curated_tensions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curated_tensions_difficulty_claim_id_fkey"
+            columns: ["difficulty_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curated_tensions_promise_claim_id_fkey"
+            columns: ["promise_claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
             referencedColumns: ["id"]
           },
         ]
@@ -1463,6 +1768,8 @@ export type Database = {
           id: string
           judge_model: string
           judge_reason: string
+          model_name: string | null
+          model_provider: string | null
           pair_identity: string
           signal_id: string
           signal_statement_identity: string
@@ -1477,6 +1784,8 @@ export type Database = {
           id?: string
           judge_model: string
           judge_reason: string
+          model_name?: string | null
+          model_provider?: string | null
           pair_identity: string
           signal_id: string
           signal_statement_identity: string
@@ -1491,6 +1800,8 @@ export type Database = {
           id?: string
           judge_model?: string
           judge_reason?: string
+          model_name?: string | null
+          model_provider?: string | null
           pair_identity?: string
           signal_id?: string
           signal_statement_identity?: string
@@ -1618,13 +1929,117 @@ export type Database = {
           },
         ]
       }
+      first_read_featured_items: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          item_identity: string
+          judge_reason: string | null
+          operator_note: string | null
+          origin: string
+          removed_at: string | null
+          removed_by: string | null
+          removed_reason: string | null
+          theme_key: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          item_identity: string
+          judge_reason?: string | null
+          operator_note?: string | null
+          origin?: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+          theme_key: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          item_identity?: string
+          judge_reason?: string | null
+          operator_note?: string | null
+          origin?: string
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_reason?: string | null
+          theme_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_featured_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      first_read_fill_runs: {
+        Row: {
+          company_id: string
+          company_name: string
+          finished_at: string | null
+          id: string
+          outcome: string
+          rows_after: number | null
+          rows_before: number | null
+          run_batch: string
+          started_at: string
+          step: string
+        }
+        Insert: {
+          company_id: string
+          company_name: string
+          finished_at?: string | null
+          id?: string
+          outcome: string
+          rows_after?: number | null
+          rows_before?: number | null
+          run_batch: string
+          started_at?: string
+          step: string
+        }
+        Update: {
+          company_id?: string
+          company_name?: string
+          finished_at?: string | null
+          id?: string
+          outcome?: string
+          rows_after?: number | null
+          rows_before?: number | null
+          run_batch?: string
+          started_at?: string
+          step?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_fill_runs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       first_read_open_questions: {
         Row: {
           anchor_identity: string | null
           company_id: string
+          conflict_location: string | null
+          conflict_sources: Json | null
           created_at: string
           finding_identity: string | null
           id: string
+          model_name: string | null
+          model_provider: string | null
           question_identity: string
           question_text: string
           run_id: string
@@ -1634,9 +2049,13 @@ export type Database = {
         Insert: {
           anchor_identity?: string | null
           company_id: string
+          conflict_location?: string | null
+          conflict_sources?: Json | null
           created_at?: string
           finding_identity?: string | null
           id?: string
+          model_name?: string | null
+          model_provider?: string | null
           question_identity: string
           question_text: string
           run_id: string
@@ -1646,9 +2065,13 @@ export type Database = {
         Update: {
           anchor_identity?: string | null
           company_id?: string
+          conflict_location?: string | null
+          conflict_sources?: Json | null
           created_at?: string
           finding_identity?: string | null
           id?: string
+          model_name?: string | null
+          model_provider?: string | null
           question_identity?: string
           question_text?: string
           run_id?: string
@@ -1661,6 +2084,63 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      first_read_proposals: {
+        Row: {
+          confirmed_count: number | null
+          corrected_count: number | null
+          created_at: string
+          id: string
+          issued_at: string
+          not_important_count: number | null
+          proposal_json: Json
+          rejected_count: number | null
+          session_id: string
+          status: string
+          superseded_by_id: string | null
+        }
+        Insert: {
+          confirmed_count?: number | null
+          corrected_count?: number | null
+          created_at?: string
+          id?: string
+          issued_at: string
+          not_important_count?: number | null
+          proposal_json: Json
+          rejected_count?: number | null
+          session_id: string
+          status?: string
+          superseded_by_id?: string | null
+        }
+        Update: {
+          confirmed_count?: number | null
+          corrected_count?: number | null
+          created_at?: string
+          id?: string
+          issued_at?: string
+          not_important_count?: number | null
+          proposal_json?: Json
+          rejected_count?: number | null
+          session_id?: string
+          status?: string
+          superseded_by_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "first_read_proposals_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "first_read_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "first_read_proposals_superseded_by_id_fkey"
+            columns: ["superseded_by_id"]
+            isOneToOne: false
+            referencedRelation: "first_read_proposals"
             referencedColumns: ["id"]
           },
         ]
@@ -1751,6 +2231,48 @@ export type Database = {
         }
         Relationships: []
       }
+      first_read_session_reopens: {
+        Row: {
+          company_id: string
+          confirmed_count: number
+          corrected_count: number
+          generation_after: number
+          id: string
+          reason: string
+          rejected_count: number
+          reopened_at: string
+          reopened_by: string
+          session_id: string
+          status_at_reopen: string
+        }
+        Insert: {
+          company_id: string
+          confirmed_count?: number
+          corrected_count?: number
+          generation_after: number
+          id?: string
+          reason: string
+          rejected_count?: number
+          reopened_at?: string
+          reopened_by: string
+          session_id: string
+          status_at_reopen: string
+        }
+        Update: {
+          company_id?: string
+          confirmed_count?: number
+          corrected_count?: number
+          generation_after?: number
+          id?: string
+          reason?: string
+          rejected_count?: number
+          reopened_at?: string
+          reopened_by?: string
+          session_id?: string
+          status_at_reopen?: string
+        }
+        Relationships: []
+      }
       first_read_sessions: {
         Row: {
           company_id: string
@@ -1765,6 +2287,7 @@ export type Database = {
           proposal_issued_at: string | null
           proposal_json: Json | null
           rejected_count: number | null
+          reopen_generation: number
           resolved_at: string | null
           room_roles: Json | null
           started_at: string
@@ -1784,6 +2307,7 @@ export type Database = {
           proposal_issued_at?: string | null
           proposal_json?: Json | null
           rejected_count?: number | null
+          reopen_generation?: number
           resolved_at?: string | null
           room_roles?: Json | null
           started_at?: string
@@ -1803,6 +2327,7 @@ export type Database = {
           proposal_issued_at?: string | null
           proposal_json?: Json | null
           rejected_count?: number | null
+          reopen_generation?: number
           resolved_at?: string | null
           room_roles?: Json | null
           started_at?: string
@@ -1866,7 +2391,7 @@ export type Database = {
           {
             foreignKeyName: "first_read_stated_problem_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -2076,6 +2601,89 @@ export type Database = {
           },
         ]
       }
+      intake_responses: {
+        Row: {
+          company_id: string
+          completion_view: Json | null
+          created_at: string
+          customer_confidence: string | null
+          decision_slowdowns: string[]
+          desired_outcome: string | null
+          desired_outcome_other: string | null
+          explicit_strategic_problem: string | null
+          id: string
+          last_customer_input: string | null
+          mojo_snapshot: Json | null
+          momentum_drag: string | null
+          momentum_drag_other: string | null
+          notes: string | null
+          run_initial_public_signal_pass: boolean | null
+          source: string
+          submission_key: string | null
+          submitted_at: string | null
+          success_definition: string | null
+          user_id: string
+          where_stuck: string | null
+          where_stuck_other: string | null
+        }
+        Insert: {
+          company_id: string
+          completion_view?: Json | null
+          created_at?: string
+          customer_confidence?: string | null
+          decision_slowdowns?: string[]
+          desired_outcome?: string | null
+          desired_outcome_other?: string | null
+          explicit_strategic_problem?: string | null
+          id?: string
+          last_customer_input?: string | null
+          mojo_snapshot?: Json | null
+          momentum_drag?: string | null
+          momentum_drag_other?: string | null
+          notes?: string | null
+          run_initial_public_signal_pass?: boolean | null
+          source?: string
+          submission_key?: string | null
+          submitted_at?: string | null
+          success_definition?: string | null
+          user_id: string
+          where_stuck?: string | null
+          where_stuck_other?: string | null
+        }
+        Update: {
+          company_id?: string
+          completion_view?: Json | null
+          created_at?: string
+          customer_confidence?: string | null
+          decision_slowdowns?: string[]
+          desired_outcome?: string | null
+          desired_outcome_other?: string | null
+          explicit_strategic_problem?: string | null
+          id?: string
+          last_customer_input?: string | null
+          mojo_snapshot?: Json | null
+          momentum_drag?: string | null
+          momentum_drag_other?: string | null
+          notes?: string | null
+          run_initial_public_signal_pass?: boolean | null
+          source?: string
+          submission_key?: string | null
+          submitted_at?: string | null
+          success_definition?: string | null
+          user_id?: string
+          where_stuck?: string | null
+          where_stuck_other?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intake_responses_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integrity_runs: {
         Row: {
           admitted: number | null
@@ -2236,12 +2844,13 @@ export type Database = {
       }
       long_runner_runs: {
         Row: {
+          chain_state: Json | null
           company_id: string
           done_count: number
           error_text: string | null
-          parent_run_id: string | null
           finished_at: string | null
           id: string
+          parent_run_id: string | null
           request_id: string | null
           run_kind: string
           started_at: string
@@ -2250,12 +2859,13 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          chain_state?: Json | null
           company_id: string
           done_count?: number
           error_text?: string | null
-          parent_run_id?: string | null
           finished_at?: string | null
           id?: string
+          parent_run_id?: string | null
           request_id?: string | null
           run_kind: string
           started_at?: string
@@ -2264,12 +2874,13 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          chain_state?: Json | null
           company_id?: string
           done_count?: number
           error_text?: string | null
-          parent_run_id?: string | null
           finished_at?: string | null
           id?: string
+          parent_run_id?: string | null
           request_id?: string | null
           run_kind?: string
           started_at?: string
@@ -2277,7 +2888,15 @@ export type Database = {
           target_count?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "long_runner_runs_parent_run_id_fkey"
+            columns: ["parent_run_id"]
+            isOneToOne: false
+            referencedRelation: "long_runner_runs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       managed_outcomes: {
         Row: {
@@ -2567,150 +3186,6 @@ export type Database = {
           },
         ]
       }
-      curated_tensions: {
-        Row: {
-          company_id: string
-          created_at: string
-          created_by: string | null
-          difficulty_claim_id: string
-          id: string
-          operator_note: string | null
-          promise_claim_id: string
-          removed_at: string | null
-          removed_by: string | null
-          removed_reason: string | null
-        }
-        Insert: {
-          company_id: string
-          created_at?: string
-          created_by?: string | null
-          difficulty_claim_id: string
-          id?: string
-          operator_note?: string | null
-          promise_claim_id: string
-          removed_at?: string | null
-          removed_by?: string | null
-          removed_reason?: string | null
-        }
-        Update: {
-          company_id?: string
-          created_at?: string
-          created_by?: string | null
-          difficulty_claim_id?: string
-          id?: string
-          operator_note?: string | null
-          promise_claim_id?: string
-          removed_at?: string | null
-          removed_by?: string | null
-          removed_reason?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "curated_tensions_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "curated_tensions_promise_claim_id_fkey"
-            columns: ["promise_claim_id"]
-            isOneToOne: false
-            referencedRelation: "claims"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "curated_tensions_difficulty_claim_id_fkey"
-            columns: ["difficulty_claim_id"]
-            isOneToOne: false
-            referencedRelation: "claims"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      intake_responses: {
-        Row: {
-          company_id: string
-          completion_view: Json | null
-          created_at: string
-          customer_confidence: string | null
-          decision_slowdowns: string[]
-          desired_outcome: string | null
-          desired_outcome_other: string | null
-          explicit_strategic_problem: string | null
-          id: string
-          last_customer_input: string | null
-          mojo_snapshot: Json | null
-          momentum_drag: string | null
-          momentum_drag_other: string | null
-          notes: string | null
-          run_initial_public_signal_pass: boolean | null
-          source: string
-          submission_key: string | null
-          submitted_at: string | null
-          success_definition: string | null
-          user_id: string
-          where_stuck: string | null
-          where_stuck_other: string | null
-        }
-        Insert: {
-          company_id: string
-          completion_view?: Json | null
-          created_at?: string
-          customer_confidence?: string | null
-          decision_slowdowns?: string[]
-          desired_outcome?: string | null
-          desired_outcome_other?: string | null
-          explicit_strategic_problem?: string | null
-          id?: string
-          last_customer_input?: string | null
-          mojo_snapshot?: Json | null
-          momentum_drag?: string | null
-          momentum_drag_other?: string | null
-          notes?: string | null
-          run_initial_public_signal_pass?: boolean | null
-          source?: string
-          submission_key?: string | null
-          submitted_at?: string | null
-          success_definition?: string | null
-          user_id: string
-          where_stuck?: string | null
-          where_stuck_other?: string | null
-        }
-        Update: {
-          company_id?: string
-          completion_view?: Json | null
-          created_at?: string
-          customer_confidence?: string | null
-          decision_slowdowns?: string[]
-          desired_outcome?: string | null
-          desired_outcome_other?: string | null
-          explicit_strategic_problem?: string | null
-          id?: string
-          last_customer_input?: string | null
-          mojo_snapshot?: Json | null
-          momentum_drag?: string | null
-          momentum_drag_other?: string | null
-          notes?: string | null
-          run_initial_public_signal_pass?: boolean | null
-          source?: string
-          submission_key?: string | null
-          submitted_at?: string | null
-          success_definition?: string | null
-          user_id?: string
-          where_stuck?: string | null
-          where_stuck_other?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "intake_responses_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       market_options: {
         Row: {
           attempt: number
@@ -2955,6 +3430,7 @@ export type Database = {
           computed_at: string
           explanation: Json
           id: string
+          input_ledger: Json | null
           methodology_version: string
           total_score: number
         }
@@ -2964,6 +3440,7 @@ export type Database = {
           computed_at?: string
           explanation?: Json
           id?: string
+          input_ledger?: Json | null
           methodology_version?: string
           total_score: number
         }
@@ -2973,6 +3450,7 @@ export type Database = {
           computed_at?: string
           explanation?: Json
           id?: string
+          input_ledger?: Json | null
           methodology_version?: string
           total_score?: number
         }
@@ -3654,6 +4132,302 @@ export type Database = {
           },
         ]
       }
+      outside_page_snapshots: {
+        Row: {
+          clean_text: string | null
+          company_id: string
+          crawled_at: string
+          fetch_status: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status: number | null
+          id: string
+          run_id: string | null
+          signal_id: string | null
+          source_url: string
+          structured: Json | null
+          text_sha256: string
+        }
+        Insert: {
+          clean_text?: string | null
+          company_id: string
+          crawled_at?: string
+          fetch_status: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status?: number | null
+          id?: string
+          run_id?: string | null
+          signal_id?: string | null
+          source_url: string
+          structured?: Json | null
+          text_sha256: string
+        }
+        Update: {
+          clean_text?: string | null
+          company_id?: string
+          crawled_at?: string
+          fetch_status?: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status?: number | null
+          id?: string
+          run_id?: string | null
+          signal_id?: string | null
+          source_url?: string
+          structured?: Json | null
+          text_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outside_page_snapshots_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "outside_page_snapshots_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      outside_recrawl_review: {
+        Row: {
+          anchor_present: boolean | null
+          baseline_sha256: string | null
+          baseline_status: string | null
+          company_id: string
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          dependent_delta_ids: string[]
+          dependent_signal_ids: string[]
+          disposition: string
+          fetch_path: string
+          fetch_status: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status: number | null
+          id: string
+          new_sha256: string | null
+          operator_decision: string | null
+          run_id: string
+          source_url: string
+        }
+        Insert: {
+          anchor_present?: boolean | null
+          baseline_sha256?: string | null
+          baseline_status?: string | null
+          company_id: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          dependent_delta_ids?: string[]
+          dependent_signal_ids?: string[]
+          disposition: string
+          fetch_path: string
+          fetch_status: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status?: number | null
+          id?: string
+          new_sha256?: string | null
+          operator_decision?: string | null
+          run_id: string
+          source_url: string
+        }
+        Update: {
+          anchor_present?: boolean | null
+          baseline_sha256?: string | null
+          baseline_status?: string | null
+          company_id?: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          dependent_delta_ids?: string[]
+          dependent_signal_ids?: string[]
+          disposition?: string
+          fetch_path?: string
+          fetch_status?: Database["public"]["Enums"]["outside_fetch_status"]
+          http_status?: number | null
+          id?: string
+          new_sha256?: string | null
+          operator_decision?: string | null
+          run_id?: string
+          source_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outside_recrawl_review_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      own_words_candidates: {
+        Row: {
+          company_id: string
+          content_identity: string
+          created_at: string
+          id: string
+          judge_fidelity: string
+          judge_keep: boolean
+          judge_kind: string | null
+          judge_kind_reason: string | null
+          judge_reason: string | null
+          judge_self_assertion: boolean
+          quote: string
+          quote_length: number
+          quote_offset: number
+          run_id: string
+          signal_id: string | null
+          snapshot_text_sha256: string
+          source_url: string
+        }
+        Insert: {
+          company_id: string
+          content_identity: string
+          created_at?: string
+          id?: string
+          judge_fidelity?: string
+          judge_keep?: boolean
+          judge_kind?: string | null
+          judge_kind_reason?: string | null
+          judge_reason?: string | null
+          judge_self_assertion?: boolean
+          quote: string
+          quote_length?: number
+          quote_offset?: number
+          run_id: string
+          signal_id?: string | null
+          snapshot_text_sha256: string
+          source_url: string
+        }
+        Update: {
+          company_id?: string
+          content_identity?: string
+          created_at?: string
+          id?: string
+          judge_fidelity?: string
+          judge_keep?: boolean
+          judge_kind?: string | null
+          judge_kind_reason?: string | null
+          judge_reason?: string | null
+          judge_self_assertion?: boolean
+          quote?: string
+          quote_length?: number
+          quote_offset?: number
+          run_id?: string
+          signal_id?: string | null
+          snapshot_text_sha256?: string
+          source_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "own_words_candidates_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "own_words_candidates_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      own_words_page_snapshots: {
+        Row: {
+          clean_text: string
+          company_id: string
+          fetched_at: string
+          id: string
+          run_id: string | null
+          signal_id: string | null
+          source_url: string
+          text_sha256: string
+        }
+        Insert: {
+          clean_text: string
+          company_id: string
+          fetched_at?: string
+          id?: string
+          run_id?: string | null
+          signal_id?: string | null
+          source_url: string
+          text_sha256: string
+        }
+        Update: {
+          clean_text?: string
+          company_id?: string
+          fetched_at?: string
+          id?: string
+          run_id?: string | null
+          signal_id?: string | null
+          source_url?: string
+          text_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "own_words_page_snapshots_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "own_words_page_snapshots_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      own_words_retypes: {
+        Row: {
+          applied_at: string
+          applied_by: string
+          claim_id: string
+          company_id: string
+          decided_by: string
+          from_eligible: boolean
+          from_kind: string | null
+          id: string
+          reason: string
+          run_id: string
+          to_eligible: boolean
+          to_kind: string | null
+        }
+        Insert: {
+          applied_at?: string
+          applied_by?: string
+          claim_id: string
+          company_id: string
+          decided_by?: string
+          from_eligible: boolean
+          from_kind?: string | null
+          id?: string
+          reason: string
+          run_id: string
+          to_eligible: boolean
+          to_kind?: string | null
+        }
+        Update: {
+          applied_at?: string
+          applied_by?: string
+          claim_id?: string
+          company_id?: string
+          decided_by?: string
+          from_eligible?: boolean
+          from_kind?: string | null
+          id?: string
+          reason?: string
+          run_id?: string
+          to_eligible?: boolean
+          to_kind?: string | null
+        }
+        Relationships: []
+      }
       positioning_canvases: {
         Row: {
           artifact_role: string
@@ -3807,6 +4581,69 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      public_reads: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          input_ledger: Json
+          is_current: boolean
+          judge_model: string | null
+          judge_verdict: Json | null
+          kind: string
+          model_name: string | null
+          model_provider: string | null
+          payload: Json
+          superseded_by: string | null
+          supersedes_legacy_row: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          input_ledger: Json
+          is_current?: boolean
+          judge_model?: string | null
+          judge_verdict?: Json | null
+          kind: string
+          model_name?: string | null
+          model_provider?: string | null
+          payload: Json
+          superseded_by?: string | null
+          supersedes_legacy_row?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          input_ledger?: Json
+          is_current?: boolean
+          judge_model?: string | null
+          judge_verdict?: Json | null
+          kind?: string
+          model_name?: string | null
+          model_provider?: string | null
+          payload?: Json
+          superseded_by?: string | null
+          supersedes_legacy_row?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_reads_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "public_reads_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "public_reads"
             referencedColumns: ["id"]
           },
         ]
@@ -4191,6 +5028,8 @@ export type Database = {
           id: string
           judge_model: string
           judge_reason: string
+          model_name: string | null
+          model_provider: string | null
           pair_identity: string
           signal_a_id: string
           signal_b_id: string
@@ -4205,6 +5044,8 @@ export type Database = {
           id?: string
           judge_model: string
           judge_reason: string
+          model_name?: string | null
+          model_provider?: string | null
           pair_identity: string
           signal_a_id: string
           signal_b_id: string
@@ -4219,6 +5060,8 @@ export type Database = {
           id?: string
           judge_model?: string
           judge_reason?: string
+          model_name?: string | null
+          model_provider?: string | null
           pair_identity?: string
           signal_a_id?: string
           signal_b_id?: string
@@ -4236,6 +5079,79 @@ export type Database = {
           },
         ]
       }
+      signal_voice_restamps: {
+        Row: {
+          applied_at: string
+          company_id: string
+          id: string
+          judge_entity: string | null
+          judge_model: string
+          judge_reason: string
+          judge_verdict: string
+          ledger_run_id: string | null
+          new_voice_class: string
+          old_voice_class: string | null
+          reverted_at: string | null
+          run_ref: string
+          signal_id: string
+          source_url: string | null
+        }
+        Insert: {
+          applied_at?: string
+          company_id: string
+          id?: string
+          judge_entity?: string | null
+          judge_model: string
+          judge_reason: string
+          judge_verdict: string
+          ledger_run_id?: string | null
+          new_voice_class: string
+          old_voice_class?: string | null
+          reverted_at?: string | null
+          run_ref: string
+          signal_id: string
+          source_url?: string | null
+        }
+        Update: {
+          applied_at?: string
+          company_id?: string
+          id?: string
+          judge_entity?: string | null
+          judge_model?: string
+          judge_reason?: string
+          judge_verdict?: string
+          ledger_run_id?: string | null
+          new_voice_class?: string
+          old_voice_class?: string | null
+          reverted_at?: string | null
+          run_ref?: string
+          signal_id?: string
+          source_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_voice_restamps_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_voice_restamps_ledger_run_id_fkey"
+            columns: ["ledger_run_id"]
+            isOneToOne: false
+            referencedRelation: "long_runner_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_voice_restamps_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           claim_text: string
@@ -4245,11 +5161,18 @@ export type Database = {
           directness: string
           event_date: string | null
           event_date_precision: string
+          evidence_class: string
           evidence_excerpt: string
           evidence_type: string
           framework: string | null
           framing_fit: string
+          held_at: string | null
+          held_reason: string | null
           id: string
+          listing: Json | null
+          operating_status: string
+          operating_status_as_of: string | null
+          operating_status_source: string | null
           quote: string | null
           quote_source_text: string | null
           raw_payload: Json
@@ -4261,6 +5184,9 @@ export type Database = {
           source_type: string
           source_url: string | null
           structure_level: string
+          superseded_at: string | null
+          superseded_by: string | null
+          superseded_reason: string | null
           syndicated_from_client: boolean | null
           syndication_score: number | null
           topic: string | null
@@ -4276,11 +5202,18 @@ export type Database = {
           directness?: string
           event_date?: string | null
           event_date_precision?: string
+          evidence_class?: string
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null
           framing_fit?: string
+          held_at?: string | null
+          held_reason?: string | null
           id?: string
+          listing?: Json | null
+          operating_status?: string
+          operating_status_as_of?: string | null
+          operating_status_source?: string | null
           quote?: string | null
           quote_source_text?: string | null
           raw_payload?: Json
@@ -4292,6 +5225,9 @@ export type Database = {
           source_type: string
           source_url?: string | null
           structure_level?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          superseded_reason?: string | null
           syndicated_from_client?: boolean | null
           syndication_score?: number | null
           topic?: string | null
@@ -4307,11 +5243,18 @@ export type Database = {
           directness?: string
           event_date?: string | null
           event_date_precision?: string
+          evidence_class?: string
           evidence_excerpt?: string
           evidence_type?: string
           framework?: string | null
           framing_fit?: string
+          held_at?: string | null
+          held_reason?: string | null
           id?: string
+          listing?: Json | null
+          operating_status?: string
+          operating_status_as_of?: string | null
+          operating_status_source?: string | null
           quote?: string | null
           quote_source_text?: string | null
           raw_payload?: Json
@@ -4323,6 +5266,9 @@ export type Database = {
           source_type?: string
           source_url?: string | null
           structure_level?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          superseded_reason?: string | null
           syndicated_from_client?: boolean | null
           syndication_score?: number | null
           topic?: string | null
@@ -4336,6 +5282,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signals_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "signals"
             referencedColumns: ["id"]
           },
         ]
@@ -4673,6 +5626,7 @@ export type Database = {
           hypothesis_state: string
           id: string
           is_active: boolean
+          journey_key: string | null
           originating_context: string | null
           raw_payload: Json
           reframed_from_hypothesis_id: string | null
@@ -4694,6 +5648,7 @@ export type Database = {
           hypothesis_state?: string
           id?: string
           is_active?: boolean
+          journey_key?: string | null
           originating_context?: string | null
           raw_payload?: Json
           reframed_from_hypothesis_id?: string | null
@@ -4715,6 +5670,7 @@ export type Database = {
           hypothesis_state?: string
           id?: string
           is_active?: boolean
+          journey_key?: string | null
           originating_context?: string | null
           raw_payload?: Json
           reframed_from_hypothesis_id?: string | null
@@ -5346,8 +6302,53 @@ export type Database = {
         }
         Relationships: []
       }
+      relevance_overrides_without_live_pair: {
+        Row: {
+          company_id: string | null
+          content_identity: string | null
+          decided_at: string | null
+          decided_by: string | null
+          id: string | null
+          pairing_kind: string | null
+          reason: string | null
+          verdict: string | null
+        }
+        Insert: {
+          company_id?: string | null
+          content_identity?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string | null
+          pairing_kind?: string | null
+          reason?: string | null
+          verdict?: string | null
+        }
+        Update: {
+          company_id?: string | null
+          content_identity?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string | null
+          pairing_kind?: string | null
+          reason?: string | null
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_delta_relevance_overrides_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
+      delete_claim_deltas_audited: {
+        Args: { p_company_id: string; p_ids: string[]; p_reason: string }
+        Returns: number
+      }
       find_primary_finding: {
         Args: { p_company_id: string }
         Returns: {
@@ -5382,6 +6383,18 @@ export type Database = {
         }
         Returns: boolean
       }
+      outside_score_inputs: { Args: { p_company: string }; Returns: Json }
+      rebuild_claims_apply: {
+        Args: {
+          p_claim_rows: Json
+          p_company_id: string
+          p_probe_fail?: string
+          p_prune_ids: string[]
+          p_ref_rows: Json
+          p_state_updates: Json
+        }
+        Returns: Json
+      }
       remove_claim: {
         Args: {
           p_actor?: string
@@ -5414,6 +6427,14 @@ export type Database = {
         Args: { p_actor?: string; p_leg_ids: string[] }
         Returns: number
       }
+      reopen_first_read_session: {
+        Args: { p_reason: string; p_session_id: string }
+        Returns: undefined
+      }
+      resolve_contest: {
+        Args: { p_contest_id: string; p_reason: string; p_resolution: string }
+        Returns: undefined
+      }
       resolve_primary_job_step_set: {
         Args: { p_company_id: string }
         Returns: string
@@ -5427,7 +6448,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_relevance_override: {
+        Args: {
+          p_company_id: string
+          p_content_identity: string
+          p_pairing_kind: string
+          p_reason: string
+          p_verdict: string
+        }
+        Returns: Json
+      }
       shares_company_with: { Args: { _other: string }; Returns: boolean }
+      sweep_stale_chains: { Args: never; Returns: undefined }
       trigger_scheduled_drift_scan: { Args: never; Returns: undefined }
       trigger_scheduled_mojo_analysis: { Args: never; Returns: undefined }
     }
@@ -5436,6 +6468,7 @@ export type Database = {
       input_group_key: "foundation" | "execution" | "market_evidence"
       input_impact_tier: "high" | "med" | "low" | "done"
       input_status: "complete" | "partial" | "gap" | "not_started"
+      outside_fetch_status: "ok" | "blocked" | "gone"
       provenance_type_enum:
         | "public_research"
         | "framework_adjudicated"
@@ -5574,6 +6607,7 @@ export const Constants = {
       input_group_key: ["foundation", "execution", "market_evidence"],
       input_impact_tier: ["high", "med", "low", "done"],
       input_status: ["complete", "partial", "gap", "not_started"],
+      outside_fetch_status: ["ok", "blocked", "gone"],
       provenance_type_enum: [
         "public_research",
         "framework_adjudicated",

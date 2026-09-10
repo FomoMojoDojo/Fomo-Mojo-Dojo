@@ -13,6 +13,9 @@ export interface ExcludedSignal {
 }
 
 export interface Company {
+  /** DB authority for the freeze (companies.frozen + enforce_company_freeze trigger). The client
+   *  id list in @/lib/frozenCompanies is a cosmetic pre-check only. */
+  frozen?: boolean | null;
   id: string;
   name: string;
   website: string | null;
@@ -168,7 +171,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       return;
     }
     const baseSelect =
-      "id,name,website,created_by,created_at,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key";
+      "id,name,website,created_by,created_at,frozen,mojo_score,potential_score,projected_score,evidence_status,evidence_note,last_scored_at,area_scores_json,industry_key";
     const extendedSelect = `${baseSelect},public_source_filters_json,program_phase,excluded_signals_json,selected_route_id,selected_route_summary_json,selected_route_updated_at,engagement_started_at`;
 
     // The builder is REBUILT per attempt: a supabase query builder is a single-use thenable, so a

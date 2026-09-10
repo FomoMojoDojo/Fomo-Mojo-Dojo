@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/sheet";
 import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { sanitizeWebsite, findCompanyCollision } from "@/lib/companyCollision";
+import { InventoryTable } from "@/components/admin/InventoryTable";
+import { fetchCompaniesInventory, type CompanyInventoryRow } from "@/lib/admin/companiesInventory";
 import {
   Building2,
   Plus,
@@ -385,6 +387,10 @@ export default function AdminCompanies() {
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
   const [creating, setCreating] = useState(false);
+  // Gate 1 — the truthful inventory (score from mojo_scores, last update from integrity_runs,
+  // artifact-first fill status, frozen from the DB column). READ-ONLY: SELECTs and nothing else.
+  const [inventory, setInventory] = useState<Map<string, CompanyInventoryRow>>(new Map());
+  const [inventoryLoading, setInventoryLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name_asc" | "name_desc" | "score_desc" | "score_asc">("newest");
 
@@ -406,6 +412,21 @@ export default function AdminCompanies() {
   const [selectedArtifactRunId, setSelectedArtifactRunId] = useState<string | null>(null);
   const [runLocksByCompany, setRunLocksByCompany] = useState<Record<string, CompanyRunLock>>({});
   const [userNamesById, setUserNamesById] = useState<Record<string, string>>({});
+
+  // Gate 1 — load the inventory once per company-list change. No polling: this is an inventory, not
+  // a live console, and the run-lock poll already covers what moves second to second.
+  useEffect(() => {
+    let cancelled = false;
+    setInventoryLoading(true);
+    void fetchCompaniesInventory()
+      .then((rows) => {
+        if (cancelled) return;
+        setInventory(new Map(rows.map((r) => [r.id, r])));
+      })
+      .catch((err) => console.error("[admin-inventory] fetch failed:", err))
+      .finally(() => { if (!cancelled) setInventoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [companies.length]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1289,237 +1310,21 @@ export default function AdminCompanies() {
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
-              {filteredCompanies.map((company) => {
-                const isActive = activeCompany?.id === company.id;
-                const isResearching = researchingId === company.id;
-                const isBaselining = baselineId === company.id;
-                const isCombo = comboId === company.id;
-                const hasWebsite = Boolean(company.website?.trim());
-                const activeLock = runLocksByCompany[company.id];
-                const isLocked = Boolean(activeLock);
-
-                const disabled = isResearching || isBaselining || isCombo || isLocked;
-
-                return (
-                  <div
-                    key={company.id}
-                    className="p-3 rounded-xl border transition-colors"
-                    style={{
-                      borderColor: isActive ? c.teal : c.line,
-                      background: c.paper,
-                    }}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setActiveCompanyId(company.id)}
-                            className="font-sans text-[14px] font-semibold hover:underline"
-                            style={{ color: c.charcoal }}
-                          >
-                            {company.name}
-                          </button>
-
-                          {company.website && (
-                            <a
-                              href={normalizeUrl(company.website)}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="font-mono text-[10px] uppercase tracking-wide"
-                              style={{ color: c.secondary }}
-                              title={normalizeUrl(company.website)}
-                            >
-                              {company.website}
-                            </a>
-                          )}
-                        </div>
-
-                        <div className="mt-2">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <Link
-                              to={`/admin/companies/${company.id}`}
-                              className="font-mono text-[10px] uppercase tracking-wide inline-flex items-center gap-1"
-                              style={{ color: c.secondary }}
-                            >
-                              Open Company
-                              <ArrowRight className="w-3 h-3" />
-                            </Link>
-                            <Link
-                              to={`/admin/companies/${company.id}/files`}
-                              className="font-mono text-[10px] uppercase tracking-wide inline-flex items-center gap-1"
-                              style={{ color: c.secondary }}
-                            >
-                              Files
-                              <ArrowRight className="w-3 h-3" />
-                            </Link>
-                          </div>
-                        </div>
-
-                        <div className="font-mono text-[10px] mt-1 uppercase tracking-wide" style={{ color: c.muted }}>
-                          ID:{" "}
-                          <span style={{ color: c.secondary }}>{company.id}</span>
-                        </div>
-
-                        {activeLock ? (
-                          <div className="mt-2 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div
-                                className="inline-flex rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wide"
-                                style={{ color: c.coral, borderColor: "rgba(255,140,75,0.35)", background: "rgba(255,140,75,0.12)" }}
-                              >
-                                {activeLock.operation} running
-                              </div>
-                              {user?.id && activeLock.started_by === user.id ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleCancelRunLock(company.id)}
-                                  className="font-mono text-[10px] uppercase tracking-wide px-3 py-1 rounded-full border transition-colors inline-flex items-center gap-1"
-                                  style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
-                                  title="Clear a stuck lock that you started. This does not forcibly terminate a running background function."
-                                >
-                                  Cancel Run
-                                </button>
-                              ) : null}
-                            </div>
-                            <p className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
-                              Started by {labelForUser(activeLock.started_by)}
-                            </p>
-                          </div>
-                        ) : null}
-
-                        <div className="mt-3">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveCompanyId(company.id);
-                              setReviewSheetOpen(true);
-                              setReviewRefreshKey((current) => current + 1);
-                            }}
-                            className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors inline-flex items-center gap-1"
-                            style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
-                          >
-                            <PanelRight className="w-3 h-3" />
-                            View Review
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-wrap justify-end">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveCompanyId(company.id);
-                            navigate(`/admin/companies/${company.id}`);
-                          }}
-                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
-                          style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
-                        >
-                          Open Company <ArrowRight className="w-3 h-3" />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveCompanyId(company.id);
-                            navigate(`/admin/companies/${company.id}/files`);
-                          }}
-                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
-                          style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
-                        >
-                          Files <ArrowRight className="w-3 h-3" />
-                        </button>
-
-                        {/* NEW: combo button */}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            runBaselineAndResearch(
-                              company.id,
-                              company.name,
-                              company.website || ""
-                            )
-                          }
-                          disabled={disabled || !hasWebsite}
-                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
-                          style={{ color: c.charcoal, borderColor: c.line, background: c.panel }}
-                          title={
-                            isLocked
-                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
-                              : hasWebsite
-                              ? "Run public baseline, then AI research"
-                              : "Add a website before running baseline + research"
-                          }
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          <Globe className="w-3 h-3" />
-                          {isCombo ? "Running…" : "Baseline + Research"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            runResearch(
-                              company.id,
-                              company.name,
-                              company.website || ""
-                            )
-                          }
-                          disabled={disabled}
-                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
-                          style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
-                          title={
-                            isLocked
-                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
-                              : hasWebsite
-                              ? "Run AI Research. If baseline evidence is missing, this will start with web baseline automatically."
-                              : "Run AI Research from existing uploaded or saved company evidence"
-                          }
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          {isResearching ? "Researching…" : "AI Research"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            runPublicBaseline(
-                              company.id,
-                              company.name,
-                              company.website || ""
-                            )
-                          }
-                          disabled={disabled || !hasWebsite}
-                          className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1 disabled:opacity-50"
-                          style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
-                          title={
-                            isLocked
-                              ? `${activeLock?.operation || "Another run"} is already in progress for this company`
-                              : hasWebsite
-                              ? "Run public baseline from the company website"
-                              : "Add a website before running the public baseline"
-                          }
-                        >
-                          <Globe className="w-3 h-3" />
-                          {isBaselining ? "Baselining…" : "Web Baseline"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(company.id, company.name)}
-                          className="font-mono text-[10px] uppercase tracking-wide hover:opacity-80 px-2 py-1"
-                          style={{ color: c.coral }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <InventoryTable
+              companies={filteredCompanies}
+              inventory={inventory}
+              inventoryLoading={inventoryLoading}
+              activeCompanyId={activeCompany?.id ?? null}
+              runLocksByCompany={runLocksByCompany}
+              userId={user?.id ?? null}
+              labelForUser={labelForUser}
+              busyIds={{ researchingId, baselineId, comboId }}
+              onSelect={setActiveCompanyId}
+              onCancelLock={handleCancelRunLock}
+              onDelete={handleDelete}
+              onOpenReview={(id) => { setActiveCompanyId(id); setReviewSheetOpen(true); setReviewRefreshKey((k) => k + 1); }}
+              navigate={navigate}
+            />
           )}
         </div>
 
