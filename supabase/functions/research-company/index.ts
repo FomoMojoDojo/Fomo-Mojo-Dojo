@@ -3844,8 +3844,12 @@ function deriveInitiativeFocusContext(args: {
     .sort((a, b) => b.score - a.score);
 
   // Operator pin is authority when it names a generated set; else the heuristic top-rank.
+  // Gate E1 — PROVENANCE. The key alone cannot say where it came from, so the context now records it:
+  // 'operator' only when a valid pin supplied it (resolveChosenSet's rule — a pin whose set does not
+  // exist is not a choice), 'default' for everything else. The number is unchanged; this adds a field.
   const pinned = normalizeJourneyKey(args.pinnedJourneyKey);
-  const selected = pinned && byJourney.has(pinned)
+  const fromOperator = Boolean(pinned && byJourney.has(pinned));
+  const selected = fromOperator
     ? { key: pinned, value: byJourney.get(pinned)!, score: 0 }
     : ranked[0];
   const title = selected.value.title || titleFromJourneyKey(selected.key);
@@ -3855,6 +3859,7 @@ function deriveInitiativeFocusContext(args: {
   return {
     primary_journey_key: selected.key,
     primary_journey_title: title,
+    primary_journey_source: fromOperator ? "operator" : "default",
     initiative_keywords: keywords.length > 0 ? keywords : tokenizeStrategicText(title).slice(0, 12),
   };
 }
@@ -5499,7 +5504,7 @@ Deno.serve(async (req) => {
     // public provenance; non-public existing maps neither frame prompts nor drive
     // selection — suggested maps (derived from the current public run) and explicit
     // body selections take over, and the operator pin's preserve mechanic is separate
-    // (resolve_primary_job_step_set) and untouched.
+    // (operator_primary_selection, validated by resolveChosenSet's rule) and untouched.
     const existingStepsGate = await gateJobStepsForExternal({
       supabase: supabase as unknown as { from: (t: string) => any },
       companyId: String(company_id),

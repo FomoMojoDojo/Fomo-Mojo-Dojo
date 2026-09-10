@@ -257,32 +257,34 @@ describe("only the two rejection outcomes are eligible", () => {
     // and the empty state when given nothing — a fold arriving here would be a hook bug, and this
     // asserts the contract the hook is written against.
     const { container } = render(<ActWhoYouServe read={readWith([], "looked_none")} />);
-    const text = container.textContent ?? "";
     expect(container.querySelectorAll(".fr-unstated-item").length).toBe(0);
-    expect(text).toContain("Every group we saw could be stated in your customers' terms.");
+    // Gate E1: with nothing set aside the section renders nothing at all on the client.
+    expect(container.querySelector(".fr-unstated")).toBeNull();
   });
 });
 
-describe("the empty state is never omitted — three signed lines", () => {
-  const CASES: Array<[FirstReadPreviewData["unstatedIntegrity"], string]> = [
-    ["not_yet", "Not read yet — this snapshot's market pass hasn't run."],
-    ["looked_none", "Every group we saw could be stated in your customers' terms."],
-    ["couldnt_check", "Couldn't finish this read — nothing is hidden, there's just nothing to show yet."],
-  ];
-  for (const [state, line] of CASES) {
-    it(`(g4b) ${state} renders its signed line, and the eyebrow still renders`, () => {
+describe("nothing renders when nothing was set aside (Gate E1)", () => {
+  // RED ON REVERT. The section used to render its eyebrow, intro and a tri-state line even with no
+  // rows. On a client surface that teaches the reader a machine graded their words, for no gain — the
+  // page shows no gap, so there is nothing to account for. The state is still kept; it moves under
+  // the operator toggle, where the person who needs it can read it.
+  const STATES: Array<FirstReadPreviewData["unstatedIntegrity"]> = ["not_yet", "looked_none", "couldnt_check"];
+  for (const state of STATES) {
+    it(`(gE1) ${state} renders NOTHING on the client — no eyebrow, no intro, no state line`, () => {
       const { container } = render(<ActWhoYouServe read={readWith([], state)} />);
-      expect(container.textContent).toContain(line);
-      expect(container.textContent).toContain(EYEBROW);   // the section is never omitted
+      const text = container.textContent ?? "";
+      expect(text).not.toContain(EYEBROW);
+      expect(text).not.toContain(INTRO);
+      expect(text).not.toContain("Not read yet");
+      expect(text).not.toContain("Every group we saw");
+      expect(text).not.toContain("Couldn't finish this read");
+      expect(container.querySelector(".fr-unstated")).toBeNull();
     });
   }
-  it("(g4b) the three lines are distinct — no state borrows another's words", () => {
-    const rendered = CASES.map(([state]) => {
-      const { container } = render(<ActWhoYouServe read={readWith([], state)} />);
-      return container.textContent ?? "";
-    });
-    for (const [, line] of CASES) {
-      expect(rendered.filter((t) => t.includes(line)).length).toBe(1);
-    }
+
+  it("(gE1) REGRESSION GUARD: rows still render when there ARE rows", () => {
+    const { container } = render(<ActWhoYouServe read={readWith([group({})])} />);
+    expect(container.textContent).toContain(EYEBROW);
+    expect(container.querySelectorAll(".fr-unstated-item").length).toBe(1);
   });
 });

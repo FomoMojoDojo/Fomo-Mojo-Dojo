@@ -275,3 +275,21 @@ export function OperatorUnstatedReason({ reason, reconstructed }: { reason: stri
     </p>
   );
 }
+
+/** Gate E1 — the market pass's integrity state, OPERATOR ONLY. The client sees nothing when no group
+ *  was set aside; the operator still needs to know whether that means "we looked and everything could
+ *  be stated in their terms", "we could not finish", or "this snapshot's pass never ran". */
+export function OperatorUnstatedState({ state }: { state: "not_yet" | "looked_none" | "couldnt_check" }) {
+  const ctx = useOperatorControls();
+  if (!ctx) return null;
+  const LINES: Record<typeof state, string> = {
+    not_yet: "Not read yet — this snapshot's market pass hasn't run.",
+    looked_none: "Every group we saw could be stated in your customers' terms.",
+    couldnt_check: "Couldn't finish this read — nothing is hidden, there's just nothing to show yet.",
+  };
+  return (
+    <p className={TAG_CLASS} style={{ ...TAG_STYLE, textTransform: "none", letterSpacing: "0.04em", marginTop: "1.5rem" }}>
+      {`OTHER GROUPS: ${LINES[state]}`}
+    </p>
+  );
+}

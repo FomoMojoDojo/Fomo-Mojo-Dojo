@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { isFrozenCompany } from "@/lib/frozenCompanies";
 import { runCreateOnramp } from "@/lib/createOnramp";
 import { engagementDayFrom } from "@/lib/engagementDay";
-import { resolveChosenSet, heuristicDefaultViewSeed } from "@/lib/chosenJobStepSet";
+import { resolveChosenSet, heuristicDefaultViewSeed, DEFAULT_SEED_NOTE } from "@/lib/chosenJobStepSet";
 import { useAuth } from "@/hooks/useAuth";
 import { useCapability } from "@/hooks/useCapability";
 import { useCompany } from "@/hooks/useCompany";
@@ -2663,6 +2663,14 @@ export default function ClientRefinePreviewWorkshopView() {
                   setOptions={setOptions}
                   viewedSetKey={showAllJourneys ? null : viewedSetKey}
                 />
+                {/* Gate E1 (ruling 4): a view seeded by the heuristic is LABELLED as one. The seed is
+                    only ever a default view, never a claim — but a set on screen with no label reads
+                    as chosen. Renders only when no operator choice exists. */}
+                {!showAllJourneys && viewedSetKey && !resolveChosenSet(chosenSetKey ?? null, setOptions.map((j) => j.key)).chosenKey && (
+                  <span data-testid="default-seed-note" style={{ fontFamily: "ui-monospace, monospace", fontSize: 9, color: "#8a7560", whiteSpace: "nowrap" }}>
+                    {DEFAULT_SEED_NOTE}
+                  </span>
+                )}
                 {viewedSetKey && !showAllJourneys && !isFrozenCompany(companyId) && (
                   <button
                     type="button"

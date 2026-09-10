@@ -152,6 +152,8 @@ export type GateScoreResult = {
   initiativeContext: {
     primary_journey_key: string;
     primary_journey_title: string;
+    /** Gate E1 — where primary_journey_key came from. 'operator' only when a valid pin supplied it. */
+    primary_journey_source: "operator" | "default";
     initiative_keywords: string[];
     opportunity_focus: {
       initiative: number;
@@ -481,10 +483,10 @@ function tokenizeStrategicText(value: unknown) {
 function deriveInitiativeContext(
   jobSteps: ScoreableJobStep[],
   strategicProblems: StrategicProblemInput[],
-  // The on-strategy journey_key resolved at the data layer by
-  // resolve_primary_job_step_set (operator pin → else SQL heuristic). The local rank
-  // heuristic has been REMOVED — it now lives ONLY in that SQL resolver. When no key is
-  // supplied (unwired callers), default to "customer" rather than re-deriving here.
+  // The on-strategy job-step set key, supplied by the caller from the operator's choice.
+  // resolveChosenSet (lib/chosenJobStepSet) is the single authority: a pin whose set does not
+  // exist is NOT a choice. When no key is supplied, default to "customer" and record that as
+  // primary_journey_source 'default' — never re-derive a set here.
   resolvedPrimaryJourneyKey?: string,
 ) {
   const byJourney = new Map<string, {
@@ -507,6 +509,12 @@ function deriveInitiativeContext(
     byJourney.set(key, current);
   }
 
+  // Gate E1 — PROVENANCE, not a behaviour change. 'operator' only when the supplied key names a set
+  // this company actually has (resolveChosenSet's rule, inlined: importing it here would drag the
+  // browser supabase client and React into a module the edge also reads). Everything else is
+  // 'default', including the literal customer fallback below. The number is untouched.
+  const suppliedKey = normalizeJourneyKey(String(resolvedPrimaryJourneyKey ?? ""));
+  const fromOperator = Boolean(suppliedKey && byJourney.has(suppliedKey));
   const primaryKey = resolvedPrimaryJourneyKey && resolvedPrimaryJourneyKey.trim()
     ? normalizeJourneyKey(resolvedPrimaryJourneyKey)
     : "customer";
@@ -518,6 +526,7 @@ function deriveInitiativeContext(
   return {
     primary_journey_key: primaryKey,
     primary_journey_title: title,
+    primary_journey_source: (fromOperator ? "operator" : "default") as "operator" | "default",
     initiative_keywords: keywords.length > 0 ? keywords : tokenizeStrategicText(title).slice(0, 12),
   };
 }
@@ -1171,8 +1180,8 @@ export function scoreCompanyMojo(args: {
   gamma?: number;
   excludedLedgerFingerprints?: ReadonlySet<string>;
   needsSourcePaths?: string[];
-  // On-strategy journey_key resolved by resolve_primary_job_step_set (operator pin → else
-  // SQL heuristic). Single authority for which set drives the score; omitted ⇒ "customer".
+  // The on-strategy job-step set key from the operator's choice (resolveChosenSet is the single
+  // authority). Omitted ⇒ "customer", recorded as primary_journey_source 'default'.
   primaryJourneyKey?: string;
 }): FullMojoScoreResult {
   const gateResult = computeGateScores(

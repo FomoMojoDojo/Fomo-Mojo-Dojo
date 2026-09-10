@@ -32,7 +32,7 @@ import {
   NEW_KIND_NOTE,
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow } from "./primitives";
-import { OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorUnstatedState, OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 import { Chip } from "./primitives";
 // Stage 2 (visual port): editorial layout primitives — beats 1–2. Stage 3: Spread on the nine
 // sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16). Stage 3b: full match to the captures, beats 1–17.
@@ -1037,16 +1037,19 @@ function JobWithProduct({ job, head }: { job: string; head: string | null }) {
  *  as are already_decided (that IS a numbered group) and error (no ruling exists to report). */
 function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Map<string, ChipTone> }) {
   const rows = read.unstatedGroups;
+  // Gate E1 (operator ruling): NOTHING renders when there is nothing to show — no eyebrow, no intro,
+  // no state line. An earned-empty line is right where a client is owed an account of a gap they can
+  // see; here there is no gap on the page, so a line saying "we looked and found none" only teaches
+  // the client that a machine was grading their words. The tri-state integrity record still exists and
+  // is still honest — it moves under the operator toggle, where the person who needs it can read it.
+  if (rows.length === 0) return <OperatorUnstatedState state={read.unstatedIntegrity} />;
   return (
     <section className="fr-unstated">
       <div className="fr-unstated-head">
         <Eyebrow>{UNSTATED_EYEBROW}</Eyebrow>
         <p className="fr-unstated-intro">{UNSTATED_INTRO}</p>
       </div>
-      {rows.length === 0 ? (
-        <div className="fr-unstated-empty"><Absent>{UNSTATED_EMPTY[read.unstatedIntegrity]}</Absent></div>
-      ) : (
-        <ol className="fr-unstated-list">
+      <ol className="fr-unstated-list">
           {rows.map((g) => {
             const kindLabel = relationshipKindLabel(g.relationshipKind);
             const tone = (g.relationshipKind && tones.get(g.relationshipKind)) || "neutral";
@@ -1072,8 +1075,7 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
             </li>
             );
           })}
-        </ol>
-      )}
+      </ol>
     </section>
   );
 }
