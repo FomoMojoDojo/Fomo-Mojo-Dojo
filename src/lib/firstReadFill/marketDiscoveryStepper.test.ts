@@ -8,6 +8,12 @@ import {
   type MDChainState,
   type MDStepConfig,
 } from "../../../supabase/functions/_shared/marketDiscoveryStepper.ts";
+// Gate 1b (f): the END-TO-END proof wires the REAL confirm-poll rule into the stepper, so the two
+// halves of the fix are shown to compose — a mid-flight candidate must produce a HOLD, not an advance.
+import {
+  marketCandidateAccounted,
+  type ExistsProbe,
+} from "../../../supabase/functions/_shared/marketCandidateAccounted.ts";
 
 const CANDS = ["c0", "c1", "c2", "c3", "c4", "c5"]; // a 6-candidate manifest
 
@@ -113,6 +119,47 @@ describe("CONFIRM-POLL — a not-ok fetch is NEVER failure on its own (gap_pairs
     expect(c.closeFailed).not.toHaveBeenCalled();         // the worker may be alive — NEVER failed
     expect(c.selfFire).not.toHaveBeenCalled();            // no hot loop
     expect(c.persistProgress).not.toHaveBeenCalled();     // cursor did not advance
+  });
+  // ── (f) Gate 1b END-TO-END — the real rule, the real stepper ──────────────────────────────────
+  // Riverlane manifest b60e2867 replayed at the moment of the loss: candidate #4 (the dropped `buyer`
+  // group) is MID-FLIGHT — gate (a) rejected the original wording, the reframe round restated the job
+  // and gate (a) passed it, then the chunk died inside the solution-agnostic call. Under the OLD rule
+  // the lone perspective verdict counted as accounted, confirmChunk returned 1, and the cursor
+  // advanced past a candidate that was never decided. The run then closed completed/6-of-6 with the
+  // buyer group gone. Under the new rule the poll accounts NOTHING and the chain HOLDS.
+  it("(f) a MID-FLIGHT candidate + not-ok fetch ⇒ unconfirmed_hold, cursor UNMOVED (real rule)", async () => {
+    const COMPANY = "49435388-954b-42ff-8366-62e207a3f625";
+    const MID_FLIGHT = [
+      { job_executor: "Quantum software developers building applications on quantum computers",
+        jtbd: "To create robust quantum applications by integrating Riverlane's Deltaflow QEC stack, "
+          + "ensuring that their software runs reliably on quantum hardware." },
+      { job_executor: "Venture capitalists investing in quantum technology startups",
+        jtbd: "To identify promising quantum technology investments by evaluating Riverlane's "
+          + "leadership in QEC and its partnerships with major quantum hardware companies." },
+    ];
+    // The ONLY rows that exist: gate-(a) perspective verdicts. No def, no verdict, no error terminal.
+    const exists: ExistsProbe = async (table) => table === "step_perspective_verdicts";
+    const confirm = vi.fn(async (chunk: unknown[]) => {
+      let leading = 0;
+      for (const candidate of chunk as Array<Record<string, unknown>>) {
+        if (await marketCandidateAccounted({ exists, companyId: COMPANY, candidate })) leading++;
+        else break;
+      }
+      return { accounted: leading };
+    });
+    const judge = vi.fn(async (_chunk: unknown[]) => ({ ok: false }));
+    const markUnconfirmed = vi.fn(async (_cursor: number) => {});
+    const c = cfg(
+      { planned: true, candidates: MID_FLIGHT, cursor: 0, chunkSize: 2, stepCount: 1, maxSteps: 10 },
+      { judgeChunk: judge, confirmChunk: confirm, markUnconfirmed },
+    );
+    const out = await runMarketDiscoveryStep(c);
+    expect(out.outcome).toBe("unconfirmed_hold");         // NOT chunk_recovered / _partial
+    expect(await confirm.mock.results[0].value).toEqual({ accounted: 0 }); // touched ≠ finished
+    expect(markUnconfirmed).toHaveBeenCalledWith(0);      // held at the CURRENT cursor, resumable
+    expect(c.persistProgress).not.toHaveBeenCalled();     // the cursor did NOT move past the buyer group
+    expect(c.closeCompleted).not.toHaveBeenCalled();      // and the run does NOT claim completion
+    expect(c.closeFailed).not.toHaveBeenCalled();         // the worker may be alive
   });
   it("HAPPY PATH unchanged: ok:true advances + self-fires WITHOUT consulting confirmChunk", async () => {
     const confirm = vi.fn(async (_chunk: unknown[]) => ({ accounted: 0 }));

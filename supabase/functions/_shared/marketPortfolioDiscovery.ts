@@ -80,6 +80,11 @@ const PUBLIC_KEY_PREFIX = "pmk-";
 
 // ── identities ────────────────────────────────────────────────────────────────
 
+/** The integrity_runs component the per-candidate ERROR TERMINAL is written under (Gate 1b). The
+ *  row is keyed run_ref = marketIdentity(executor, jtbd); _shared/marketCandidateAccounted.ts reads
+ *  it as clause (4). Declared here, beside the writer, and imported by the reader — one direction. */
+export const CANDIDATE_ERROR_COMPONENT = "market_discovery_candidate";
+
 export async function marketIdentity(executor: string, jtbd: string): Promise<string> {
   return await sha256Hex(normalizeForHash(`${executor}|${jtbd}`));
 }
@@ -290,13 +295,15 @@ export type DiscoveryRunResult =
       reframe_attempts: number;
       reframe_rescued: number;
       reframe_rail_dropped: number;
+      // Gate 1b — candidates whose judge chain THREW and got an honest per-candidate terminal.
+      errored: number;
     };
     results: Array<{
       job_executor: string;
       jtbd: string;
       relationship_kind: string;
       relationship_basis: string;
-      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped";
+      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error";
       journey_key?: string;
       judge_reasons: Record<string, string>;
       reframed?: boolean;
@@ -454,10 +461,11 @@ export async function computeMarketDiscovery(
     reframe_attempts: 0,
     reframe_rescued: 0,
     reframe_rail_dropped: 0,
+    errored: 0,
   };
   const results: Array<{
     job_executor: string; jtbd: string; relationship_kind: string; relationship_basis: string;
-    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped";
+    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error";
     journey_key?: string; judge_reasons: Record<string, string>;
     reframed?: boolean; original_jtbd?: string;
   }> = [];
@@ -613,120 +621,153 @@ export async function computeMarketDiscovery(
       totals.requested++;
       const reasons: Record<string, string> = {};
 
-      let cand = original;
-      let reframed = false;
-      let outcome = await runGates(cand, reasons, "");
+      try {
+        let cand = original;
+        let reframed = false;
+        let outcome = await runGates(cand, reasons, "");
 
-      // MPD-1e reframe round: rescue GENERATED candidates rejected for WORDING
-      // — (a) seller-framed or (b) solution-bound ONLY; dedup drops are never
-      // reframed. Exactly ONE attempt; executor FIXED; job restated in the
-      // executor's own terms; relationship kind/basis carry over untouched
-      // (model-discovered at generation, never seeded here).
-      if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
-        const problem = outcome === "rejected_buyer" ? "seller-framed" : "solution-bound";
-        totals.reframe_attempts++;
-        const raw = await callOllamaJson(args.ollamaUrl, genModel, REFRAME_SYSTEM, buildReframeUser(original.job_executor, original.jtbd, problem), GEN_TIMEOUT_MS);
-        let newJtbd = "";
-        try {
-          newJtbd = String((JSON.parse(raw) as { jtbd?: unknown })?.jtbd ?? "").trim();
-        } catch { /* unparseable reframe = failed attempt, rail below */ }
-        if (newJtbd && normalizeForHash(newJtbd) !== normalizeForHash(original.jtbd)) {
-          reframed = true;
-          reasons.reframe = `(${problem}) job restated in the executor's own terms`;
-          cand = { ...original, jtbd: newJtbd };
-          outcome = await runGates(cand, reasons, "_reframed");
-          // ANTI-FABRICATION RAIL (hard): still failing perspective or
-          // solution-agnostic ⇒ the executor is genuinely solution-defined —
-          // DROP. No second reframe, no relaxation.
-          if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+        // MPD-1e reframe round: rescue GENERATED candidates rejected for WORDING
+        // — (a) seller-framed or (b) solution-bound ONLY; dedup drops are never
+        // reframed. Exactly ONE attempt; executor FIXED; job restated in the
+        // executor's own terms; relationship kind/basis carry over untouched
+        // (model-discovered at generation, never seeded here).
+        if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+          const problem = outcome === "rejected_buyer" ? "seller-framed" : "solution-bound";
+          totals.reframe_attempts++;
+          const raw = await callOllamaJson(args.ollamaUrl, genModel, REFRAME_SYSTEM, buildReframeUser(original.job_executor, original.jtbd, problem), GEN_TIMEOUT_MS);
+          let newJtbd = "";
+          try {
+            newJtbd = String((JSON.parse(raw) as { jtbd?: unknown })?.jtbd ?? "").trim();
+          } catch { /* unparseable reframe = failed attempt, rail below */ }
+          if (newJtbd && normalizeForHash(newJtbd) !== normalizeForHash(original.jtbd)) {
+            reframed = true;
+            reasons.reframe = `(${problem}) job restated in the executor's own terms`;
+            cand = { ...original, jtbd: newJtbd };
+            outcome = await runGates(cand, reasons, "_reframed");
+            // ANTI-FABRICATION RAIL (hard): still failing perspective or
+            // solution-agnostic ⇒ the executor is genuinely solution-defined —
+            // DROP. No second reframe, no relaxation.
+            if (outcome === "rejected_buyer" || outcome === "rejected_solution") {
+              totals.reframe_rail_dropped++;
+            } else if (outcome === "accepted") {
+              totals.reframe_rescued++;
+            }
+          } else {
+            reasons.reframe = `(${problem}) reframe produced no usable restatement — dropped (rail)`;
             totals.reframe_rail_dropped++;
-          } else if (outcome === "accepted") {
-            totals.reframe_rescued++;
           }
-        } else {
-          reasons.reframe = `(${problem}) reframe produced no usable restatement — dropped (rail)`;
-          totals.reframe_rail_dropped++;
         }
-      }
 
-      if (outcome === "rejected_buyer") {
-        totals.rejected_buyer++;
-        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
-        continue;
-      }
-      if (outcome === "rejected_solution") {
-        totals.rejected_solution++;
-        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
-        continue;
-      }
-      if (outcome === "deduped") {
-        totals.deduped_same_market++;
-        results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
-        continue;
-      }
+        if (outcome === "rejected_buyer") {
+          totals.rejected_buyer++;
+          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          continue;
+        }
+        if (outcome === "rejected_solution") {
+          totals.rejected_solution++;
+          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          continue;
+        }
+        if (outcome === "deduped") {
+          totals.deduped_same_market++;
+          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          continue;
+        }
 
-      // All gates passed → inline write (def + lens). NONE chosen. MPD-1g:
-      // capacity decides ACTIVE vs DEFERRED membership only — the market is
-      // recorded either way (executor, job, kind, basis, verdicts all kept);
-      // a deferred market waits for the choose gate, it is never lost.
-      const overCapacity = activeDiscovered >= MAX_ACTIVE;
-      const lensState = overCapacity ? "deferred" : "active";
-      let journeyKey = slugify(cand.job_executor);
-      if (liveUniverse.some((d) => d.journey_key === journeyKey)) journeyKey = `${journeyKey}-2`;
-      // Ownership inherits from the spine (customer) def — discovered rows
-      // belong to the same operator, never a synthetic zero UUID.
-      const ownerUserId = liveUniverse.find((d) => d.journey_key === "customer")?.user_id
-        ?? liveUniverse.find((d) => d.user_id)?.user_id;
-      if (!ownerUserId) return { ok: false, error: "no owning user_id resolvable (no customer def?) — refusing to write" };
-      if (args.write) {
-        const { error: defErr } = await args.supabase.from("odi_market_definitions").insert({
-          company_id: args.companyId,
-          user_id: ownerUserId,
-          journey_key: journeyKey,
-          job_executor: cand.job_executor,
-          jtbd: cand.jtbd,
-          chooser: cand.chooser,
-          relationship_kind: cand.relationship_kind || null,
-          relationship_basis: cand.relationship_basis || null,
-          provenance_type: "internal_hypothesis",
-          // OOD-2: register stamped at birth — public BY CONSTRUCTION (the
-          // corpus predicate + tripwire guarantee it); OOD-1 trigger makes it
-          // immutable.
-          market_register: "public_inferred",
-          source_path: "market_portfolio_discovery:outside_only",
-          frameworks_used: ["JTBD", "ODI", "local_ollama", "market_portfolio_discovery", "outside_only"],
-          updated_at: args.nowIso,
+        // All gates passed → inline write (def + lens). NONE chosen. MPD-1g:
+        // capacity decides ACTIVE vs DEFERRED membership only — the market is
+        // recorded either way (executor, job, kind, basis, verdicts all kept);
+        // a deferred market waits for the choose gate, it is never lost.
+        const overCapacity = activeDiscovered >= MAX_ACTIVE;
+        const lensState = overCapacity ? "deferred" : "active";
+        let journeyKey = slugify(cand.job_executor);
+        if (liveUniverse.some((d) => d.journey_key === journeyKey)) journeyKey = `${journeyKey}-2`;
+        // Ownership inherits from the spine (customer) def — discovered rows
+        // belong to the same operator, never a synthetic zero UUID.
+        const ownerUserId = liveUniverse.find((d) => d.journey_key === "customer")?.user_id
+          ?? liveUniverse.find((d) => d.user_id)?.user_id;
+        if (!ownerUserId) return { ok: false, error: "no owning user_id resolvable (no customer def?) — refusing to write" };
+        if (args.write) {
+          const { error: defErr } = await args.supabase.from("odi_market_definitions").insert({
+            company_id: args.companyId,
+            user_id: ownerUserId,
+            journey_key: journeyKey,
+            job_executor: cand.job_executor,
+            jtbd: cand.jtbd,
+            chooser: cand.chooser,
+            relationship_kind: cand.relationship_kind || null,
+            relationship_basis: cand.relationship_basis || null,
+            provenance_type: "internal_hypothesis",
+            // OOD-2: register stamped at birth — public BY CONSTRUCTION (the
+            // corpus predicate + tripwire guarantee it); OOD-1 trigger makes it
+            // immutable.
+            market_register: "public_inferred",
+            source_path: "market_portfolio_discovery:outside_only",
+            frameworks_used: ["JTBD", "ODI", "local_ollama", "market_portfolio_discovery", "outside_only"],
+            updated_at: args.nowIso,
+          });
+          if (defErr) return { ok: false, error: `market def insert failed: ${defErr.message}` };
+          const { error: lensErr } = await args.supabase.from("market_lens").insert({
+            company_id: args.companyId,
+            journey_key: journeyKey,
+            title: cand.job_executor,
+            portfolio_state: lensState,
+            portfolio_role: "support", // choosing is promotion — never chosen here
+          });
+          if (lensErr) return { ok: false, error: `market lens insert failed: ${lensErr.message}` };
+          totals.defs_written++;
+        }
+        liveUniverse.push({
+          id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd,
+          user_id: ownerUserId, market_register: "public_inferred",
+          identity: await marketIdentity(cand.job_executor, cand.jtbd),
         });
-        if (defErr) return { ok: false, error: `market def insert failed: ${defErr.message}` };
-        const { error: lensErr } = await args.supabase.from("market_lens").insert({
-          company_id: args.companyId,
+        if (overCapacity) {
+          totals.accepted_deferred++;
+          reasons.capacity = `active set full (${MAX_ACTIVE}) — recorded deferred; the choose gate promotes`;
+        } else {
+          activeDiscovered++;
+          totals.accepted++;
+        }
+        results.push({
+          ...cand,
+          outcome: overCapacity ? "accepted_deferred" : "accepted",
           journey_key: journeyKey,
-          title: cand.job_executor,
-          portfolio_state: lensState,
-          portfolio_role: "support", // choosing is promotion — never chosen here
+          judge_reasons: reasons,
+          ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
         });
-        if (lensErr) return { ok: false, error: `market lens insert failed: ${lensErr.message}` };
-        totals.defs_written++;
+      } catch (err) {
+        // ANTI-SILENT-LOSS (Gate 1b). Before this, ONE candidate's throw — a 180s judge timeout, an
+        // isolate cut mid-call — killed the whole chunk request and every candidate behind it. The
+        // confirm-poll then found the candidate's gate-(a) verdict, called it accounted, and advanced
+        // the cursor past work that had never finished: 16 of 42 fleet candidates lost that way, in
+        // runs that closed status='completed' done_count=target. A status written before the work it
+        // describes is not a status, and failure must be able to set it — so the terminal is RECORDED,
+        // BEFORE the continue, keyed by the same content identity the rest of the chain uses, where
+        // marketCandidateAccounted clause (4) can see it. No new table, no new column: integrity_runs
+        // is already the fleet's honest-terminal store.
+        //
+        // The record is BEST-EFFORT by design. If the ledger write itself fails, the candidate stays
+        // unaccounted and the chunk re-judges it next fire — the safe direction. The only unsafe
+        // direction is claiming a terminal that did not happen.
+        const message = err instanceof Error ? err.message : String(err);
+        const errorText = message.slice(0, 500);
+        totals.errored++;
+        reasons.error = errorText;
+        if (args.write) {
+          try {
+            await args.supabase.from("integrity_runs").insert({
+              company_id: args.companyId,
+              component: CANDIDATE_ERROR_COMPONENT,
+              status: "failed",
+              run_ref: await marketIdentity(original.job_executor, original.jtbd),
+              error: errorText,
+            });
+          } catch { /* best-effort: an unrecorded failure simply stays unaccounted */ }
+        }
+        results.push({ ...original, outcome: "error", judge_reasons: reasons });
+        continue;
       }
-      liveUniverse.push({
-        id: "", journey_key: journeyKey, job_executor: cand.job_executor, jtbd: cand.jtbd,
-        user_id: ownerUserId, market_register: "public_inferred",
-        identity: await marketIdentity(cand.job_executor, cand.jtbd),
-      });
-      if (overCapacity) {
-        totals.accepted_deferred++;
-        reasons.capacity = `active set full (${MAX_ACTIVE}) — recorded deferred; the choose gate promotes`;
-      } else {
-        activeDiscovered++;
-        totals.accepted++;
-      }
-      results.push({
-        ...cand,
-        outcome: overCapacity ? "accepted_deferred" : "accepted",
-        journey_key: journeyKey,
-        judge_reasons: reasons,
-        ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
-      });
     }
     return { ok: true, scoped: true, totals, results };
   }

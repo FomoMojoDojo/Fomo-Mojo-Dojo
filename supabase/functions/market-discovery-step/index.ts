@@ -10,12 +10,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runMarketDiscoveryStep, type MDChainState } from "../_shared/marketDiscoveryStepper.ts";
-// Confirm-poll attribution — reuse the EXACT content-identity schemes the generator writes under, so a
-// poll keys on the same rows (no new marker column). marketIdentity → market_discovery_verdicts
-// (solution_agnostic) + odi_market_definitions; sha256(normalize(jtbd)) → step_perspective_verdicts
-// (the buyer gate, judged FIRST for every candidate → the universal per-candidate marker).
-import { marketIdentity } from "../_shared/marketPortfolioDiscovery.ts";
-import { normalizeForHash, sha256Hex } from "../_shared/contentIdentity.ts";
+// Confirm-poll attribution — the rule itself lives in _shared/marketCandidateAccounted.ts (Gate 1b),
+// lifted out of this handler so it is a pure injectable function with proofs that can run. It keys on
+// the EXACT content-identity schemes the generator writes under (no new marker column); this file
+// supplies only the equality probe.
+import { marketCandidateAccounted } from "../_shared/marketCandidateAccounted.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -113,27 +112,17 @@ Deno.serve(async (req) => {
     await supabase.from("long_runner_runs").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", ledgerId);
   };
 
-  // Is this candidate ACCOUNTED — did the worker demonstrably process it? Three read-only, index-keyed
-  // checks against the exact rows the generator writes (no new marker): (1) buyer verdict by
-  // sha256(normalize(jtbd)) — the buyer gate runs FIRST for every candidate, so this is the universal
-  // per-candidate marker (covers rejected_buyer with its persisted reason); (2) solution_agnostic verdict
-  // by marketIdentity (rejected_solution / accepted); (3) a written def by marketIdentity (accepted /
-  // deduped). ANY ⇒ accounted. A judged rejection with a persisted reason counts, never "not yet".
-  const candidateAccounted = async (cand: { job_executor?: unknown; jtbd?: unknown }): Promise<boolean> => {
-    const executor = String(cand?.job_executor ?? "");
-    const jtbd = String(cand?.jtbd ?? "");
-    const buyerHash = await sha256Hex(normalizeForHash(jtbd));
-    const { data: bv } = await supabase.from("step_perspective_verdicts")
-      .select("content_hash").eq("company_id", company_id).eq("content_hash", buyerHash).limit(1).maybeSingle();
-    if (bv) return true;
-    const identity = await marketIdentity(executor, jtbd);
-    const { data: sv } = await supabase.from("market_discovery_verdicts")
-      .select("id").eq("company_id", company_id).eq("market_a_identity", identity).limit(1).maybeSingle();
-    if (sv) return true;
-    const { data: def } = await supabase.from("odi_market_definitions")
-      .select("id").eq("company_id", company_id).eq("job_executor", executor).eq("jtbd", jtbd).limit(1).maybeSingle();
-    return !!def;
+  // Is this candidate TERMINAL — did the worker demonstrably FINISH it, not merely get TOUCHED?
+  // The rule and its reasoning live in _shared/marketCandidateAccounted.ts (Gate 1b); this is the
+  // dumb equality probe it reads through. Read-only, index-keyed, one row max per check.
+  const exists = async (table: string, match: Record<string, string>): Promise<boolean> => {
+    let q = supabase.from(table).select("id");
+    for (const [col, val] of Object.entries(match)) q = q.eq(col, val);
+    const { data } = await q.limit(1).maybeSingle();
+    return !!data;
   };
+  const candidateAccounted = (cand: { job_executor?: unknown; jtbd?: unknown }): Promise<boolean> =>
+    marketCandidateAccounted({ exists, companyId: company_id, candidate: cand });
   // Confirm-poll a not-ok chunk: return how many LEADING candidates are accounted (contiguous from the
   // start — the worker processes in order). Bounded ≪ wall; returns early once the chunk is fully
   // accounted. Non-contiguous cannot happen (candidate N+1 implies N was processed first).
