@@ -30,6 +30,7 @@ import { Chip } from "./primitives";
 // Stage 2 (visual port): editorial layout primitives — beats 1–2. Stage 3: Spread on the nine
 // sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16). Stage 3b: full match to the captures, beats 1–17.
 import { Divider, FlowLine, HangingItem, Labeled, Screen, Spread, VerticalScale, flowColumns, withStop } from "./primitives-editorial";
+import { plural } from "./plural";
 
 /** Stage 3 — the Spread sidebar for an ActHeader-shaped beat. Same strings in the same DOM order the
  *  header used: eyebrow → headline → standfirst → subline → count → Why-this (now below the hairline).
@@ -267,7 +268,7 @@ const OFFER_COULDNT = "We couldn't produce a grounded read from the record this 
 // looked-and-none: signed template — <n> examined public sources + the read-through date. Both come
 // from the persisted integrity record (examined) + the run ledger (through date); never recomputed.
 const offerLookedLine = (n: number, date: string | null) =>
-  `Across ${n} public sources through ${date ?? "the latest read"}, nothing spoke to it.`; // signed
+  `Across ${n} public ${plural(n, "source", "sources")} through ${date ?? "the latest read"}, nothing spoke to it.`; // signed
 // Quiet, CODE-DERIVED source line: "<n> source(s) · <earliest>–<latest>" (single year if same; the
 // date clause is omitted when the payload carries no source years). Never recomputed — reads the
 // payload's carried fields as-is.
@@ -1393,7 +1394,7 @@ export function ActRecord({ read, eyebrow }: { read: FirstReadPreviewData; eyebr
             >
               &rsaquo;
             </span>
-            + {further.length} further signals · {counts.strong} strong · {counts.moderate} moderate · {counts.thin} thin
+            + {further.length} further {plural(further.length, "signal", "signals")} · {counts.strong} strong · {counts.moderate} moderate · {counts.thin} thin
           </button>
           {open ? (
             <ul id="fr-further-signals" className="mt-6 border-t" style={{ borderColor: "hsl(var(--fr-hair))" }}>

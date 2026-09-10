@@ -24,6 +24,7 @@ import {
   type ChainKindStep, type ChainKindTerminal, type DepRow,
 } from "../_shared/firstReadFill.ts";
 import { handOffToResumeStepper, isGatewayCut, newResumeState, resumeHandoffNote } from "../_shared/gatewayResume.ts";
+import { gapPairsAlreadyPresent, gapPairsStaleness } from "../_shared/gapPairsFreshness.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -379,10 +380,28 @@ Deno.serve(async (req) => {
       const { data: intg } = await supabase.from("integrity_runs").select("id")
         .eq("company_id", company_id).eq("component", "first_read_gap_pairs")
         .in("status", ["completed", "skipped_empty_input"]).limit(1);
-      if (((intg ?? []) as unknown[]).length > 0) return true;
       const { data: dl } = await supabase.from("claim_deltas").select("id")
         .eq("company_id", company_id).eq("pairing_kind", "public_vs_public").limit(1);
-      return ((dl ?? []) as unknown[]).length > 0;
+      const present = ((intg ?? []) as unknown[]).length > 0 || ((dl ?? []) as unknown[]).length > 0;
+
+      // FRESHNESS (2026-09-09): presence alone let a STALE set block its own refresh. Riverlane's
+      // deltas were computed against zero own-words claims; the 7 claims arrived 3.5h later and the
+      // guard skipped the recompute forever, so the cold open reported one INFERRED claim while
+      // seven verbatim self-descriptions sat unpaired. Deltas older than the declared side re-run.
+      const { data: owNewest } = await supabase.from("claims").select("created_at")
+        .eq("company_id", company_id).eq("claim_type", "own_words").eq("status", "active")
+        .order("created_at", { ascending: false }).limit(1);
+      const { data: dNewest } = await supabase.from("claim_deltas").select("computed_at")
+        .eq("company_id", company_id).eq("pairing_kind", "public_vs_public")
+        .order("computed_at", { ascending: false }).limit(1);
+      const freshness = gapPairsStaleness({
+        newestOwnWordsAt: ((owNewest ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
+        newestDeltaAt: ((dNewest ?? []) as Array<{ computed_at: string }>)[0]?.computed_at ?? null,
+      });
+      if (freshness.stale) {
+        console.log(`[first-read-fill] gap pairs STALE (${freshness.reason}) — recomputing against the newer declared side`);
+      }
+      return gapPairsAlreadyPresent(present, freshness);
     },
     run: async () => {
       // GATE D — SELF-GATE on the resumed component. own-words may be mid-resume (handed off to the

@@ -3,6 +3,7 @@
 
 import type { FRColdOpen, FRGapPair, FRGapStatement, FRGapVerdict, FRSignal, FRStatusConflict, FRStatusSource, SignalStrength } from "./types";
 import { formatFullDate } from "./deriveSourceTag";
+import { plural } from "./plural";
 import { isPairAdmissible } from "@/lib/firstRead/relevanceActive";
 import { isTerminalSupersession } from "@/lib/claimState/prunePolicy";
 
@@ -117,10 +118,14 @@ export function coldOpenLadder(input: ColdOpenLadderInput): FRColdOpen | null {
     const n = input.gap.statements;
     const m = input.gap.confirmed;
     const k = input.gap.contradicted;
-    const echoes = m === 0 ? "none of them" : String(m);
     const contradictClause = k > 0 ? ` and contradicts ${k}` : "";
+    // SIGNED (2026-09-09): "1 thing", and a single statement has no plural antecedent — at n=1 with
+    // nothing echoed the record "does not echo it" rather than echoing "none of them".
+    const echoClause = m === 0
+      ? (n === 1 ? "The public record does not echo it" : "The public record echoes none of them")
+      : `The public record echoes ${m}`;
     return {
-      text: `You say ${n} things about yourself. The public record echoes ${echoes}${contradictClause}.`,
+      text: `You say ${n} ${plural(n, "thing", "things")} about yourself. ${echoClause}${contradictClause}.`,
       sourceTag: { label: `Public read · ${input.deltasRunDate ?? ""}`.replace(/·\s*$/, "").trim() },
       eventDate: null,
       statusDisputed: false,
