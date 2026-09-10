@@ -58,7 +58,7 @@ export type InventoryTableProps = {
   busyIds: { researchingId: string | null; baselineId: string | null; comboId: string | null };
   onSelect: (id: string) => void;
   onCancelLock: (id: string) => void;
-  onDelete: (id: string, name: string) => void;
+  onDelete?: (id: string, name: string) => void;
   onOpenReview?: (id: string) => void;
   navigate?: (to: string) => void;
   /** readonly variant: the whole row is the affordance. */

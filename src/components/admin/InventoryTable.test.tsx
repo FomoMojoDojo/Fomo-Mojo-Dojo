@@ -172,7 +172,7 @@ describe("readonly variant — row click only", () => {
   const rows = [co("live1", "Riverlane", false), co(CB1, "Cafe Barra", true)];
   const invs = [inv("live1"), inv(CB1, { frozen: true })];
 
-  function renderReadOnly(onRowClick = () => {}) {
+  function renderReadOnly(onRowClick: (id: string) => void = () => {}) {
     return render(
       <MemoryRouter>
         <InventoryTable
@@ -203,14 +203,14 @@ describe("readonly variant — row click only", () => {
 
   it("a row click reports the company id", () => {
     const seen: string[] = [];
-    const { getByText } = renderReadOnly((id) => seen.push(id));
+    const { getByText } = renderReadOnly((id) => { seen.push(id); });
     (getByText("Riverlane") as HTMLElement).click();
     expect(seen).toEqual(["live1"]);
   });
 
   it("a FROZEN row is still clickable — viewing is allowed — and still visibly frozen", () => {
     const seen: string[] = [];
-    const { getByText, getByTestId } = renderReadOnly((id) => seen.push(id));
+    const { getByText, getByTestId } = renderReadOnly((id) => { seen.push(id); });
     expect(getByTestId(`company-row-${CB1}`).getAttribute("data-frozen")).toBe("true");
     expect(getByTestId(`state-${CB1}`).textContent).toContain("frozen");
     (getByText("Cafe Barra") as HTMLElement).click();
