@@ -51,12 +51,50 @@ describe("score comes from mojo_scores, never the companies cache", () => {
   });
 });
 
-describe("Gate 2 / Gate 3 placeholders are honest empties", () => {
-  it("delta and both costs are null, never 0", () => {
+describe("Gate 3 placeholders are honest empties", () => {
+  it("both costs are null, never 0", () => {
     const [row] = buildInventory({ ...EMPTY, companies: [CO("x")] });
-    expect(row.delta).toBeNull();
     expect(row.lastRunCost).toBeNull();
     expect(row.totalCost).toBeNull();
+  });
+});
+
+describe("Gate 2 — Δ is computed from the rows the score cell already uses", () => {
+  it("two rows of the same methodology give a signed delta", () => {
+    const [row] = buildInventory({
+      ...EMPTY, companies: [CO("cb2")],
+      mojoScores: [
+        { company_id: "cb2", total_score: 21, methodology_version: "outside-v1.1.0", computed_at: T("2026-09-05T01:41:00Z") },
+        { company_id: "cb2", total_score: 19, methodology_version: "outside-v1.1.0", computed_at: T("2026-08-21T23:53:00Z") },
+      ],
+    });
+    expect(row.delta?.delta).toBe(2);
+    expect(row.delta?.methodology).toBe("outside-v1.1.0");
+  });
+
+  it("a single row in the current methodology gives no Δ, even with older rows of another", () => {
+    const [row] = buildInventory({
+      ...EMPTY, companies: [CO("mix")],
+      mojoScores: [
+        { company_id: "mix", total_score: 21, methodology_version: "outside-v1.1.0", computed_at: T("2026-09-05T01:41:00Z") },
+        { company_id: "mix", total_score: 35, methodology_version: "v1.1.0", computed_at: T("2026-07-10T05:56:00Z") },
+      ],
+    });
+    expect(row.score?.value).toBe(21);   // the score still renders…
+    expect(row.delta).toBeNull();        // …and the Δ is honestly empty
+  });
+
+  it("Δ is scoped per company — one company's rows never leak into another's", () => {
+    const rows = buildInventory({
+      ...EMPTY, companies: [CO("a"), CO("b")],
+      mojoScores: [
+        { company_id: "a", total_score: 20, methodology_version: "outside-v1.1.0", computed_at: T("2026-09-09T00:00:00Z") },
+        { company_id: "a", total_score: 15, methodology_version: "outside-v1.1.0", computed_at: T("2026-09-01T00:00:00Z") },
+        { company_id: "b", total_score: 99, methodology_version: "outside-v1.1.0", computed_at: T("2026-09-10T00:00:00Z") },
+      ],
+    });
+    expect(rows.find((r) => r.id === "a")!.delta?.delta).toBe(5);
+    expect(rows.find((r) => r.id === "b")!.delta).toBeNull();
   });
 });
 

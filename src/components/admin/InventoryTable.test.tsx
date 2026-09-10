@@ -37,11 +37,16 @@ function renderTable(companies: Company[], rows: CompanyInventoryRow[]) {
   );
 }
 
-const inv = (id: string, over: Partial<{ frozen: boolean; score: number; cache: number }> = {}) =>
+const inv = (id: string, over: Partial<{ frozen: boolean; score: number; previous: number }> = {}) =>
   buildInventory({
     companies: [{ id, name: id, website: null, frozen: over.frozen ?? false }],
     mojoScores: over.score !== undefined
-      ? [{ company_id: id, total_score: over.score, methodology_version: "outside-v1.1.0", computed_at: "2026-09-09T22:41:57.000Z" }]
+      ? [
+          { company_id: id, total_score: over.score, methodology_version: "outside-v1.1.0", computed_at: "2026-09-09T22:41:57.000Z" },
+          ...(over.previous !== undefined
+            ? [{ company_id: id, total_score: over.previous, methodology_version: "outside-v1.1.0", computed_at: "2026-09-01T00:00:00.000Z" }]
+            : []),
+        ]
       : [],
     integrity: [], ownWords: [], deltas: [], reads: [], recurrence: [], baselines: [], ledger: [],
   })[0];
@@ -97,8 +102,33 @@ describe("the score cell reads mojo_scores, not companies.mojo_score", () => {
   });
 });
 
-describe("Gate 2 / Gate 3 cells are honest empties", () => {
-  it("delta is an em dash and both costs read 'not captured yet', never 0", () => {
+describe("the Δ cell", () => {
+  it("renders signed to one decimal with the right tone", () => {
+    const { getByTestId } = renderTable([co("up", "Up", false)], [inv("up", { score: 21, previous: 19 })]);
+    expect(getByTestId("delta-up").textContent).toBe("+2.0");
+    expect(getByTestId("delta-up").getAttribute("data-tone")).toBe("positive");
+    expect(getByTestId("delta-up").getAttribute("title")).toContain("vs 19 on 2026-09-01");
+  });
+
+  it("a fall renders negative, a flat run renders 0.0", () => {
+    const down = renderTable([co("dn", "Dn", false)], [inv("dn", { score: 13, previous: 14.5 })]);
+    expect(down.getByTestId("delta-dn").textContent).toBe("−1.5");
+    expect(down.getByTestId("delta-dn").getAttribute("data-tone")).toBe("negative");
+    const flat = renderTable([co("fl", "Fl", false)], [inv("fl", { score: 20, previous: 20 })]);
+    expect(flat.getByTestId("delta-fl").textContent).toBe("0.0");
+    expect(flat.getByTestId("delta-fl").getAttribute("data-tone")).toBe("flat");
+  });
+
+  it("a single-reading company renders an em dash with no tone", () => {
+    const { getByTestId } = renderTable([co("one", "One", false)], [inv("one", { score: 20 })]);
+    expect(getByTestId("delta-one").textContent).toBe("—");
+    expect(getByTestId("delta-one").getAttribute("data-tone")).toBe("none");
+    expect(getByTestId("delta-one").getAttribute("title")).toBeNull();
+  });
+});
+
+describe("Gate 3 cells are honest empties", () => {
+  it("both costs read 'not captured yet', never 0", () => {
     const { getByTestId } = renderTable([co("c", "C", false)], [inv("c")]);
     expect(getByTestId("delta-c").textContent).toBe("—");
     expect(getByTestId("lastcost-c").textContent).toBe("not captured yet");

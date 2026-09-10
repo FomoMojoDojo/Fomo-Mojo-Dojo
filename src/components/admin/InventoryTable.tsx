@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Company } from "@/hooks/useCompany";
 import type { CompanyInventoryRow } from "@/lib/admin/companiesInventory";
+import { formatScoreDelta, scoreDeltaTone } from "@/lib/mojoScore/delta";
 
 // The page palette (AdminCompanies.tsx:122) — this shell is DARK. A light-theme palette here renders
 // the company name and the fill status as near-black on near-black, i.e. invisible.
@@ -17,6 +18,8 @@ const c = {
   charcoal: "#eef4ff", secondary: "#c1cceb", muted: "#95a6d3",
   line: "rgba(136, 163, 218, 0.24)", teal: "#34d2be", red: "#ff8c4b", amber: "#ffca7b",
   frozenBg: "rgba(255,255,255,0.03)", frozenText: "#7c8bb5",
+  // Δ tones — the signed palette: lime up, electric down, ink flat.
+  lime: "#9cbe6e", electric: "#e8358b",
 };
 
 function relative(iso: string | null): string {
@@ -157,9 +160,20 @@ function FragmentRow(p: {
           ) : <span style={{ color: c.muted }}>—</span>}
         </td>
 
-        {/* Δ — Gate 2. An em dash, never a fabricated 0. */}
-        <td className="py-3 pr-3 align-top font-mono text-[12px]" style={{ color: c.muted }} data-testid={`delta-${company.id}`}>
-          {inv?.delta ?? "—"}
+        {/* Δ — the newest score minus the previous row OF THE SAME METHODOLOGY. A single-row
+            methodology has nothing to compare against, so it renders an em dash, never a 0. */}
+        <td
+          className="py-3 pr-3 align-top font-mono text-[12px]"
+          data-testid={`delta-${company.id}`}
+          data-tone={scoreDeltaTone(inv?.delta ?? null)}
+          title={inv?.delta ? `vs ${inv.delta.previous} on ${new Date(inv.delta.previousAt).toISOString().slice(0, 10)}` : undefined}
+          style={{
+            color: inv?.delta
+              ? (inv.delta.delta > 0 ? c.lime : inv.delta.delta < 0 ? c.electric : text)
+              : c.muted,
+          }}
+        >
+          {p.loading ? "…" : formatScoreDelta(inv?.delta ?? null)}
         </td>
 
         <td className="py-3 pr-3 align-top font-mono text-[11px]" style={{ color: text }} data-testid={`lastupdate-${company.id}`}>
@@ -231,6 +245,11 @@ function FragmentRow(p: {
               <span>reads current: {inv.stages.readsCurrent} of 4</span>
               <span>recurrence rows: {inv.stages.recurrenceRows}</span>
               <span>score rows: {inv.stages.scoreRows}</span>
+              <span>
+                {inv.delta
+                  ? `Δ vs ${inv.delta.previous} on ${new Date(inv.delta.previousAt).toISOString().slice(0, 10)} (${inv.delta.methodology})`
+                  : "Δ — single reading in this methodology, nothing to compare"}
+              </span>
             </div>
             <div className="mt-1">
               reads —{" "}

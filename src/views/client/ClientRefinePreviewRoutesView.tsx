@@ -64,7 +64,6 @@ import { useDriftScan } from "@/hooks/useDriftScan";
 import type { EngagementPhase } from "@/lib/engagementPhase";
 import { useDesiredOutcomes } from "@/lib/desiredOutcomes";
 import type { DesiredOutcomeRow } from "@/lib/desiredOutcomes";
-import { useMojoScore } from "@/hooks/useMojoScore";
 import { computeMojoScore } from "@/lib/mojoScore/computeMojoScore";
 import { computeReachableScore, computeUnlockableScore } from "@/lib/mojoScore/projections";
 import { useSignalLandscape } from "@/hooks/useSignalLandscape";
@@ -416,7 +415,10 @@ export function RoutesOrgPanel({
   const [flowCommitClaim, setFlowCommitClaim] = useState<{ id: string; statement: string } | null>(null);
   const { claims: claimsMap } = useCompanyClaims(activeCompany?.id, claimsRefreshKey);
   const { primary: desiredOutcome } = useDesiredOutcomes(activeCompany?.id);
-  const { history: mojoScoreHistory } = useMojoScore(activeCompany?.id);
+  // GATE 2 (2026-09-10): the useMojoScore call here destructured `history` only, and its sole
+  // consumer was a `displayMojoHistory` assignment that nothing read. Removing both drops a wasted
+  // 20-row mojo_scores fetch from every load of this route. The score shown on this page is
+  // `liveMojoScore` (computed below), which never came from this hook.
   const { landscape: routesSignalLandscape } = useSignalLandscape(activeCompany?.id);
   const [reEvalLoading, setReEvalLoading] = useState<string | null>(null);
   const [routeProposalRefreshKey, setRouteProposalRefreshKey] = useState(0);
@@ -1117,7 +1119,6 @@ export function RoutesOrgPanel({
   }, [hasHierarchy, activeCompany?.id, claimsMap, routes, needs]);
 
   const displayMojoScore = liveMojoScore;
-  const displayMojoHistory = mojoScoreHistory.length > 0 ? mojoScoreHistory : [];
 
   const isReroute = useMemo(() => {
     if (!selectedRoute) return false;

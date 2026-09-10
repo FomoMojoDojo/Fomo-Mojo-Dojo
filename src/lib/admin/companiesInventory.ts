@@ -18,6 +18,7 @@
 //    expander, where they explain history — but they never decide the cell.
 import { supabase } from "@/integrations/supabase/client";
 import { gapPairsStaleness } from "../../../supabase/functions/_shared/gapPairsFreshness";
+import { scoreDelta, type ScoreDelta } from "@/lib/mojoScore/delta";
 
 /** The four kinds the First Read renders. Mirrors PUBLIC_READ_KINDS in _shared/firstReadFill.ts. */
 export const INVENTORY_READ_KINDS = ["positioning", "strategy", "promise", "offering"] as const;
@@ -56,8 +57,8 @@ export type CompanyInventoryRow = {
   website: string | null;
   frozen: boolean;
   score: { value: number; methodology: string; computedAt: string } | null;
-  /** Gate 2. Null until a previous same-methodology row is compared; renders "—". */
-  delta: number | null;
+  /** Gate 2. Null when the current methodology has a single row — renders "—", never 0. */
+  delta: ScoreDelta | null;
   /** Newest integrity_runs.ran_at (operator ruling). Null → "never". */
   lastUpdate: string | null;
   /** Gate 3. Null until model_calls exists; renders "not captured yet", NEVER 0. */
@@ -181,7 +182,8 @@ export function buildInventory(input: {
       website: c.website ?? null,
       frozen: c.frozen === true,
       score: sc ? { value: num(sc.total_score), methodology: str(sc.methodology_version), computedAt: str(sc.computed_at) } : null,
-      delta: null,        // Gate 2
+      // Gate 2 — computed from the SAME rows the score cell already uses. No second query.
+      delta: scoreDelta(input.mojoScores.filter((m) => m.company_id === c.id)),
       lastUpdate: str(newestIntegrity.get(c.id)?.ran_at) || null,
       lastRunCost: null,  // Gate 3
       totalCost: null,    // Gate 3

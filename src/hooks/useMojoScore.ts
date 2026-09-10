@@ -136,6 +136,16 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
 
       const latest = data[0] as Row;
 
+      // GATE 2 (2026-09-10) — SCOPE THE HISTORY TO ONE METHODOLOGY.
+      // `mojo_scores` mixes families (`v1.1.0` internal, `outside-v1.0.0`, `outside-v1.1.0`), and
+      // this query does not filter. The sparkline was therefore plotting different scales on one
+      // line: Cafe Barra 2 rendered an internal 35 next to an outside 21 as if the company had
+      // fallen 14 points. The newest row's methodology is the current one; history is the rows that
+      // share it. `score` is unaffected — it was always `data[0]`, and `data[0]` is by definition in
+      // its own family.
+      const currentMethodology = latest.methodology_version;
+      const sameFamily = (data as Row[]).filter((r) => r.methodology_version === currentMethodology);
+
       const parsed: MojoScoreResult = {
         company_id: latest.company_id,
         total_score: latest.total_score,
@@ -146,11 +156,8 @@ export function useMojoScore(companyId?: string): UseMojoScoreResult {
         computed_at: latest.computed_at,
       };
 
-      const hist: MojoScoreHistoryPoint[] = data
-        .map((row) => {
-          const r = row as Row;
-          return { id: r.id, computed_at: r.computed_at, total_score: r.total_score };
-        })
+      const hist: MojoScoreHistoryPoint[] = sameFamily
+        .map((r) => ({ id: r.id, computed_at: r.computed_at, total_score: r.total_score }))
         .reverse(); // chronological order for sparkline
 
       setScore(parsed);
