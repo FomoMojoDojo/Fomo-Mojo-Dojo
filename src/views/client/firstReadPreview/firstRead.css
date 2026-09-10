@@ -1280,6 +1280,22 @@
   color: hsl(var(--fr-faint));
 }
 
+/* Gate 2 — the emergent-kind note beside a chip whose kind is OUTSIDE the known vocabulary.
+   Mirrors .cvs-mv-kindrow / .cvs-mv-kindnew on the MarketAct chip (same idiom, this surface's
+   tokens): baseline-aligned beside the chip, quiet, sentence case so it reads as a note about the
+   chip rather than a second chip. */
+.fr-kindrow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.fr-kindnew {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: hsl(var(--fr-faint));
+}
+
 /* ---- Divider (siestas) ---- */
 
 .fr-divider {
@@ -1605,7 +1621,7 @@
 /* Micro-label link in the shell header (the counter's slot on the front door, the operator's way out
    on a First Read). Uppercase is allowed here: micro-labels are in the signed uppercase set.
    STEEL is the First Read counter-slot colour and stays steel there by ruling; the FRONT DOOR raises
-   its link text to ink/70 for contrast, below. */
+   its link text to ink/80 for contrast, below. */
 .first-read .fr-shell-link {
   font-size: 11px;
   letter-spacing: 0.18em;
@@ -1622,10 +1638,10 @@
   border-color: hsl(var(--fr-ink));
 }
 
-/* Front-door link text (2026-09-09 ruling): ink/70, scoped to the front door so the First Read
-   counter slot keeps steel. This is the only link text the front door renders. */
+/* Front-door link text (2026-09-09 ruling, raised to ink/80 on 2026-09-10): scoped to the front door
+   so the First Read counter slot keeps steel. This is the only link text the front door renders. */
 .first-read.fr-front-door-page .fr-shell-link {
-  color: hsl(var(--fr-ink) / 0.7);
+  color: hsl(var(--fr-ink) / 0.8);
 }
 
 /* The load-failure banner. The word is carried in INK (the page's most legible colour); the alarm is

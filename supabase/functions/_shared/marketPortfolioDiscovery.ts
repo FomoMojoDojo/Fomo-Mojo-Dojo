@@ -39,6 +39,11 @@
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
 import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
+// Gate 2 — the vocabulary the generator is SHOWN. Examples only: relationship_kind is free text by
+// law (20260715120000) and this prompt must never read as a closed list. Sharing the array with the
+// renderer is what stops the model reaching for a word the surface then has to mislabel — Riverlane's
+// VCs became `funder` because `investor` existed nowhere the model could see it.
+import { KNOWN_RELATIONSHIP_KINDS } from "./relationshipKinds.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -150,7 +155,10 @@ const GEN_SYSTEM =
   "(2) NEVER name a company, brand, or vendor — not even the company under analysis. " +
   "(3) job_executor = a SINGLE clause naming WHO the executor is AND the job they are getting done. Form exemplar (match the SHAPE, not the facts): 'Independent cafe operators sourcing a specialty coffee offering for their venue.' jtbd = ONE sentence with the deeper detail of the progress they are trying to make. chooser = who makes the choice. " +
   "(4) Each market must have a DISTINCT executor — do not restate the same market in different words. " +
-  "(5) relationship_kind = the executor's relationship to the company as the evidence shows it (e.g. recipient, buyer, funder, referrer, partner) — in the evidence's own terms, one or two lowercase words. relationship_basis = one short clause citing the evidence for that relationship. " +
+  "(5) relationship_kind = the executor's relationship to the company as the evidence shows it — in the evidence's own terms, one or two lowercase words. " +
+  `Kinds we already know, as EXAMPLES and not a closed list: ${KNOWN_RELATIONSHIP_KINDS.join(", ")}. A kind outside them is fine when the evidence calls for it. ` +
+  "Do not confuse the two money words: investor = an equity or venture backer who bought a stake; funder = a grant, philanthropic or public-money funder who did not. " +
+  "relationship_basis = one short clause citing the evidence for that relationship. " +
   "(6) Ground every market in the evidence given. No invented audiences. Fewer, well-grounded markets beat many speculative ones. " +
   'JSON only: {"markets":[{"job_executor":"...","jtbd":"...","chooser":"...","relationship_kind":"...","relationship_basis":"..."}]}.';
 

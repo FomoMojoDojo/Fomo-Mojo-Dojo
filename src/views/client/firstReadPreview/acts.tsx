@@ -24,6 +24,13 @@ import { conflictExplanationFor, deriveContradictionWhy, foldByHostDate, formatM
 import type { FirstReadPreviewData, FRGapCounts, FRGapPair, FRGapStatement, FROfferItem, FRSignal, FRStatusConflict } from "./types";
 import type { ChipTone } from "./primitives";
 import { stripEdgeQuotes } from "@/lib/firstRead/provableVerbatim";
+// Gate 2 — THE relationship-kind vocabulary (labels + known set + the emergent-kind note). Shared
+// verbatim with the MarketAct chip so the two surfaces can never disagree about what a kind is called.
+import {
+  isKnownRelationshipKind,
+  relationshipKindLabel,
+  NEW_KIND_NOTE,
+} from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow } from "./primitives";
 import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 import { Chip } from "./primitives";
@@ -864,22 +871,13 @@ export function ActWhatYouSay({ read, eyebrow }: { read: FirstReadPreviewData; e
   );
 }
 
-/** Relationship-kind chip display map (OPERATOR-SIGNED, 2026-08-31). Stored kind → on-screen label.
- *  Any kind outside the map renders the raw value, capitalized (the generator's vocabulary is
- *  open-ended — "in the evidence's own terms"). null/empty → NO chip, silently (pre-MO-1 behavior). */
-const RELATIONSHIP_KIND_LABELS: Record<string, string> = {
-  funder: "Donor",
-  referrer: "Referrer",
-  recipient: "Recipient",
-  partner: "Partner",
-  buyer: "Buyer",
-  communicator: "Advocate",
-};
-export function relationshipKindLabel(kind: string | null): string | null {
-  const k = (kind ?? "").trim().toLowerCase();
-  if (!k) return null;
-  return RELATIONSHIP_KIND_LABELS[k] ?? k.charAt(0).toUpperCase() + k.slice(1);
-}
+/** Relationship-kind chip display map — Gate 2 (2026-09-10): the local map that lived here is gone;
+ *  labels, membership and the emergent-kind note all come from the ONE vocabulary authority. The
+ *  2026-08-31 signing stands except for `funder`, which now reads "Funder" rather than "Donor" — the
+ *  old mapping printed DONOR over Riverlane's venture capitalists. Any kind outside the known set
+ *  still renders raw and capitalized ("in the evidence's own terms") but NO LONGER SILENTLY: it
+ *  carries the same signed note the MarketAct chip has always shown. null/empty → NO chip. */
+export { relationshipKindLabel };
 
 /** Role-tag colours (stage 3b): assigned PER COMPANY from the accent sequence, in order of first
  *  appearance among that company's relationship kinds — no global kind→colour map. */
@@ -906,10 +904,19 @@ export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; 
           {read.observedMarkets.map((m) => {
             const kindLabel = relationshipKindLabel(m.relationshipKind);
             const tone = (m.relationshipKind && tones.get(m.relationshipKind)) || "neutral";
+            // Off-vocabulary kinds (competitor, employee — both live on the fleet today) are shown
+            // with the signed note, exactly as the MarketAct chip does. Rendering an unfamiliar word
+            // with no mark of where it came from reads as house vocabulary; it is not.
+            const isNewKind = !!m.relationshipKind && !isKnownRelationshipKind(m.relationshipKind);
             return (
               <HangingItem
                 key={m.id}
-                lead={kindLabel ? <SeqChip tone={tone}>{kindLabel}</SeqChip> : undefined}
+                lead={kindLabel ? (
+                  <span className="fr-kindrow">
+                    <SeqChip tone={tone}>{kindLabel}</SeqChip>
+                    {isNewKind ? <span className="fr-kindnew">{NEW_KIND_NOTE}</span> : null}
+                  </span>
+                ) : undefined}
                 title={m.who}
                 meta={m.sourceTag ? <SourceTag>{m.sourceTag.label}</SourceTag> : undefined}
               >

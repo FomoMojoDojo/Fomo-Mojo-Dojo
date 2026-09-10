@@ -8,6 +8,9 @@ import { ActData } from "@/components/client-view/story/ActData";
 import ActDefinition from "@/components/client-view/story/ActDefinition";
 import type { ResolvedMarket, ResolvedPortfolio } from "@/lib/marketPortfolio/resolveMarketPortfolio";
 import { collapseMarketsByWho, normalizeForContainment } from "@/lib/firstRead/outsideCollapse";
+// Gate 2 — THE relationship-kind vocabulary. One list, three consumers (this chip, the First Read
+// chip in firstReadPreview/acts.tsx, and the market_options CHECK it mirrors).
+import { isKnownRelationshipKind, NEW_KIND_NOTE } from "../../../../../supabase/functions/_shared/relationshipKinds.ts";
 
 /*
  * MPD-3 — Act A: the market portfolio (public register ONLY, via the
@@ -46,7 +49,6 @@ const EYEBROW = "Act A · The markets we can see";
 const BREADTH_LINE = (n: number) =>
   `From your public presence, we can see you serving ${n} different market${n === 1 ? "" : "s"}.`;
 const KIND_WHY_PREFIX = "why"; // renders as "why <kind>: <basis>"
-const NEW_KIND_NOTE = "a relationship kind we found in your signal";
 const DEFERRED_PREFIX = "Also found in your public signal, held aside:";
 const CLOSING_INVITE =
   "This is what the outside world reveals — not yet your words. Tell us which of these you truly serve, and who we've missed.";
@@ -74,13 +76,14 @@ const OPTIONS_INVITE = "These are early readings, not conclusions and are meant 
 //     2026-07-20, and carries the invitation to push back.
 
 // The emergent-kind meta-note rule (signed as optional; built as the simple
-// set rule): kinds outside this small known set get a subtle note. The chip
-// itself renders ANY emergent value.
-const KNOWN_KINDS = new Set(["recipient", "buyer", "user", "referrer", "funder", "partner"]);
+// set rule): kinds outside the known set get a subtle note. The chip itself
+// renders ANY emergent value. Gate 2: the set and the note now come from the
+// single vocabulary authority (_shared/relationshipKinds.ts) — the local copy
+// that used to live here drifted from the label map in acts.tsx.
 
 function KindChip({ market }: { market: ResolvedMarket }) {
   if (!market.relationship_kind) return null; // null kind = no chip, silently
-  const isNew = !KNOWN_KINDS.has(market.relationship_kind);
+  const isNew = !isKnownRelationshipKind(market.relationship_kind);
   return (
     <span className="cvs-mv-kindrow">
       <span className="cvs-mv-kindchip">{market.relationship_kind}</span>
@@ -93,7 +96,7 @@ function KindChip({ market }: { market: ResolvedMarket }) {
 // note as the pre-MO-1 KindChip — the only difference is that its kind arrives on
 // the option (deterministically traced) rather than on the blended definition.
 function OptionKindChip({ kind }: { kind: string }) {
-  const isNew = !KNOWN_KINDS.has(kind);
+  const isNew = !isKnownRelationshipKind(kind);
   return (
     <span className="cvs-mv-kindrow">
       <span className="cvs-mv-kindchip">{kind}</span>

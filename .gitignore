@@ -61,3 +61,6 @@ supabase/snippets/Untitled query *.sql
 
 # One-off regen scripts
 scripts/oneoff/*.sql
+
+# Playwright acceptance captures — regenerated on demand, never source of truth.
+screenshots/
