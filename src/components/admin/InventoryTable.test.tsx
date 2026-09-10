@@ -163,3 +163,71 @@ describe("Gate 3 cells are honest empties", () => {
     expect(getByTestId("lastupdate-c").textContent).toBe("never");
   });
 });
+
+// ── the read-only variant (the /preview/client-refine landing mount) ─────────────────────────────
+// One component, two mounts. The read-only inventory law says this surface reports and does not act,
+// so the variant renders NO action column at all rather than disabled buttons: an action that cannot
+// be taken should not be drawn.
+describe("readonly variant — row click only", () => {
+  const rows = [co("live1", "Riverlane", false), co(CB1, "Cafe Barra", true)];
+  const invs = [inv("live1"), inv(CB1, { frozen: true })];
+
+  function renderReadOnly(onRowClick = () => {}) {
+    return render(
+      <MemoryRouter>
+        <InventoryTable
+          variant="readonly"
+          companies={rows}
+          inventory={new Map(invs.map((r) => [r.id, r]))}
+          inventoryLoading={false}
+          activeCompanyId={null}
+          runLocksByCompany={{}}
+          userId="u1"
+          labelForUser={(id) => id}
+          busyIds={{ researchingId: null, baselineId: null, comboId: null }}
+          onSelect={() => {}}
+          onCancelLock={() => {}}
+          onRowClick={onRowClick}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders NO action column and NO mutating control", () => {
+    const { container, queryByTestId } = renderReadOnly();
+    expect(container.textContent).not.toContain("Actions");
+    expect(queryByTestId("delete-live1")).toBeNull();
+    expect(queryByTestId(`delete-${CB1}`)).toBeNull();
+    expect(container.querySelectorAll("button[disabled]")).toHaveLength(0);
+  });
+
+  it("a row click reports the company id", () => {
+    const seen: string[] = [];
+    const { getByText } = renderReadOnly((id) => seen.push(id));
+    (getByText("Riverlane") as HTMLElement).click();
+    expect(seen).toEqual(["live1"]);
+  });
+
+  it("a FROZEN row is still clickable — viewing is allowed — and still visibly frozen", () => {
+    const seen: string[] = [];
+    const { getByText, getByTestId } = renderReadOnly((id) => seen.push(id));
+    expect(getByTestId(`company-row-${CB1}`).getAttribute("data-frozen")).toBe("true");
+    expect(getByTestId(`state-${CB1}`).textContent).toContain("frozen");
+    (getByText("Cafe Barra") as HTMLElement).click();
+    expect(seen).toEqual([CB1]);   // navigating to view it is fine…
+  });
+
+  it("…and the frozen row still exposes no mutating action to enable", () => {
+    const { container } = renderReadOnly();
+    expect(container.textContent).not.toContain("Delete");
+    for (const banned of ["baseline + research", "ai research", "web baseline", "re-enter"]) {
+      expect((container.textContent ?? "").toLowerCase()).not.toContain(banned);
+    }
+  });
+
+  it("the admin variant still renders its actions — one component, two behaviours", () => {
+    const { getByTestId, container } = renderTable(rows, invs);
+    expect(container.textContent).toContain("Actions");
+    expect(getByTestId("delete-live1")).toBeTruthy();
+  });
+});

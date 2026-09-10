@@ -35,7 +35,19 @@ function relative(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+/**
+ * Two mounts, one component (2026-09-10).
+ *
+ * "admin"    — /admin/companies. Keeps the extra row actions (Open, Files, Review, Delete).
+ * "readonly" — the /preview/client-refine landing. ROW CLICK ONLY. The read-only inventory law says
+ *              this surface reports and does not act, so the variant renders no action column at
+ *              all rather than rendering disabled buttons: an action that cannot be taken should not
+ *              be drawn.
+ */
+export type InventoryVariant = "admin" | "readonly";
+
 export type InventoryTableProps = {
+  variant?: InventoryVariant;
   companies: Company[];
   inventory: Map<string, CompanyInventoryRow>;
   inventoryLoading: boolean;
@@ -47,13 +59,16 @@ export type InventoryTableProps = {
   onSelect: (id: string) => void;
   onCancelLock: (id: string) => void;
   onDelete: (id: string, name: string) => void;
-  onOpenReview: (id: string) => void;
-  navigate: (to: string) => void;
+  onOpenReview?: (id: string) => void;
+  navigate?: (to: string) => void;
+  /** readonly variant: the whole row is the affordance. */
+  onRowClick?: (id: string) => void;
 };
 
 export function InventoryTable(props: InventoryTableProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const cov = costCoverage();
+  const readOnly = props.variant === "readonly";
 
   return (
     <div className="overflow-x-auto">
@@ -74,7 +89,7 @@ export function InventoryTable(props: InventoryTableProps) {
             </th>
             <th className="text-left py-2 pr-3">Fill status</th>
             <th className="text-left py-2 pr-3">State</th>
-            <th className="text-right py-2">Actions</th>
+            {readOnly ? null : <th className="text-right py-2">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -93,6 +108,8 @@ export function InventoryTable(props: InventoryTableProps) {
             return (
               <FragmentRow
                 key={company.id}
+                readOnly={readOnly}
+                onRowClick={props.onRowClick}
                 company={company}
                 inv={inv}
                 frozen={frozen}
@@ -118,12 +135,13 @@ export function InventoryTable(props: InventoryTableProps) {
 }
 
 function FragmentRow(p: {
+  readOnly?: boolean; onRowClick?: (id: string) => void;
   company: Company; inv: CompanyInventoryRow | null; frozen: boolean; busy: boolean;
   isActive: boolean; open: boolean; loading: boolean;
   lock?: { operation: string; started_by: string };
   userId: string | null; labelForUser: (id: string) => string;
   onToggle: () => void; onSelect: (id: string) => void; onCancelLock: (id: string) => void;
-  onDelete: (id: string, name: string) => void; onOpenReview: (id: string) => void;
+  onDelete?: (id: string, name: string) => void; onOpenReview?: (id: string) => void;
 }) {
   const { company, inv, frozen } = p;
   const text = frozen ? c.frozenText : c.charcoal;
@@ -142,7 +160,7 @@ function FragmentRow(p: {
         <td className="py-3 pr-3 align-top">
           <button
             type="button"
-            onClick={() => p.onSelect(company.id)}
+            onClick={() => (p.readOnly && p.onRowClick ? p.onRowClick(company.id) : p.onSelect(company.id))}
             className="font-sans text-[13px] font-semibold text-left"
             style={{ color: p.isActive ? c.teal : text }}
           >
@@ -221,6 +239,7 @@ function FragmentRow(p: {
           {frozen ? <span style={{ color: c.frozenText }}>frozen</span> : <span style={{ color: c.teal }}>live</span>}
         </td>
 
+        {p.readOnly ? null : (
         <td className="py-3 align-top text-right whitespace-nowrap">
           <Link to={`/admin/companies/${company.id}`} className="font-mono text-[10px] uppercase tracking-wide mr-3" style={{ color: c.secondary }}>
             Open
@@ -230,7 +249,7 @@ function FragmentRow(p: {
           </Link>
           <button
             type="button"
-            onClick={() => p.onOpenReview(company.id)}
+            onClick={() => p.onOpenReview?.(company.id)}
             className="font-mono text-[10px] uppercase tracking-wide mr-3"
             style={{ color: c.secondary }}
           >
@@ -242,18 +261,19 @@ function FragmentRow(p: {
             data-testid={`delete-${company.id}`}
             disabled={frozen || p.busy}
             title={frozen ? "Frozen reference company — never written" : undefined}
-            onClick={() => p.onDelete(company.id, company.name)}
+            onClick={() => p.onDelete?.(company.id, company.name)}
             className="font-mono text-[10px] uppercase tracking-wide disabled:cursor-not-allowed"
             style={{ color: frozen || p.busy ? c.muted : c.red, opacity: frozen || p.busy ? 0.5 : 1 }}
           >
             Delete
           </button>
         </td>
+        )}
       </tr>
 
       {p.open && inv ? (
         <tr style={{ background: c.frozenBg }} data-testid={`expander-${company.id}`}>
-          <td colSpan={9} className="py-3 px-3 font-mono text-[10px]" style={{ color: c.secondary }}>
+          <td colSpan={p.readOnly ? 8 : 9} className="py-3 px-3 font-mono text-[10px]" style={{ color: c.secondary }}>
             <div className="flex flex-wrap gap-x-6 gap-y-1">
               <span>baseline runs: {inv.stages.baselineRuns}</span>
               <span>own-words claims: {inv.stages.ownWordsClaims}</span>
