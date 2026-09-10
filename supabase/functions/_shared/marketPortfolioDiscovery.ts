@@ -33,8 +33,7 @@
 //                 each): buyer-perspective → solution-agnostic → same-market
 //                 dedup; every verdict banked inline; a candidate passing ALL
 //                 gates writes its def + lens INLINE (CH-2a precedent).
-//   neither     → FINALIZE: prune orphaned verdicts (own invariant, see the
-//                 migration) + return the portfolio census.
+//   neither     → FINALIZE: return the portfolio census. NO PRUNE (Gate 3b — see below).
 
 import { normalizeForHash, sha256Hex } from "./contentIdentity.ts";
 import { FROZEN_COMPANY_IDS } from "./stepConditionsSynthesis.ts";
@@ -44,6 +43,9 @@ import { judgeConditionPerspectives } from "./stepPerspectiveJudge.ts";
 // renderer is what stops the model reaching for a word the surface then has to mislabel — Riverlane's
 // VCs became `funder` because `investor` existed nowhere the model could see it.
 import { KNOWN_RELATIONSHIP_KINDS } from "./relationshipKinds.ts";
+// Gate 3b — the DECIDED predicate (written def, or a banked gate-(b)/(c) verdict). The worker asks it
+// before spending model calls on a candidate a judge has already ruled on.
+import { marketCandidateDecided, type ExistsProbe } from "./marketCandidateAccounted.ts";
 
 const DEFAULT_GEN_MODEL = "qwen2.5:14b-instruct";
 const DEFAULT_JUDGE_MODEL = "llama3:70b";
@@ -305,13 +307,15 @@ export type DiscoveryRunResult =
       reframe_rail_dropped: number;
       // Gate 1b — candidates whose judge chain THREW and got an honest per-candidate terminal.
       errored: number;
+      // Gate 3b — candidates skipped because a judge had already ruled on them.
+      decided: number;
     };
     results: Array<{
       job_executor: string;
       jtbd: string;
       relationship_kind: string;
       relationship_basis: string;
-      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error";
+      outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error" | "already_decided";
       journey_key?: string;
       judge_reasons: Record<string, string>;
       reframed?: boolean;
@@ -470,10 +474,11 @@ export async function computeMarketDiscovery(
     reframe_rescued: 0,
     reframe_rail_dropped: 0,
     errored: 0,
+    decided: 0,
   };
   const results: Array<{
     job_executor: string; jtbd: string; relationship_kind: string; relationship_basis: string;
-    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error";
+    outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error" | "already_decided";
     journey_key?: string; judge_reasons: Record<string, string>;
     reframed?: boolean; original_jtbd?: string;
   }> = [];
@@ -625,9 +630,38 @@ export async function computeMarketDiscovery(
     let activeDiscovered = ((lensRows ?? []) as Array<{ portfolio_state: string }>)
       .filter((l) => l.portfolio_state === "active").length;
 
+    // The DECIDED probe, in the same equality shape the confirm-poll uses (one authority, one rule).
+    const decidedProbe: ExistsProbe = async (table, match) => {
+      let q = args.supabase.from(table).select("id");
+      for (const [col, val] of Object.entries(match)) q = q.eq(col, val);
+      const { data } = await q.limit(1).maybeSingle();
+      return !!data;
+    };
+
     for (const original of args.candidates!) {
       totals.requested++;
       const reasons: Record<string, string> = {};
+
+      // ── ALREADY DECIDED (Gate 3b) — do not re-judge what a judge has already ruled on. ─────────
+      // A replay re-fires a manifest from cursor 0, so candidates that already produced a def or a
+      // banked gate-(b)/(c) verdict come back round. Re-judging them is neither free nor safe: gate
+      // (a) replays its banked verdict, but the MPD-1e reframe then makes a FRESH 14b call at
+      // temperature 0.2, and only an EXACT content-identity match folds the restatement back into
+      // the existing def. Any other wording that the same-market judge calls "different" is WRITTEN,
+      // landing a duplicate audience under the `-2` journey key (line ~692). Skipping here is the
+      // guard; the `-2` suffix is only a collision handler and was never one.
+      //
+      // An ERROR terminal is deliberately NOT a decision — that candidate has no ruling and must be
+      // retried. marketCandidateAccounted (the confirm-poll's question) counts it; this does not.
+      if (await marketCandidateDecided({ exists: decidedProbe, companyId: args.companyId, candidate: original })) {
+        totals.decided++;
+        results.push({
+          ...original,
+          outcome: "already_decided",
+          judge_reasons: { decided: "written def or banked gate-(b)/(c) verdict — not re-judged" },
+        });
+        continue;
+      }
 
       try {
         let cand = original;
@@ -780,21 +814,33 @@ export async function computeMarketDiscovery(
     return { ok: true, scoped: true, totals, results };
   }
 
-  // ── FINALIZE: prune orphaned verdicts (own invariant) ──
-  const defIdentities = new Set(universe.map((d) => d.identity));
-  for (const v of verdicts) {
-    const aLive = defIdentities.has(v.market_a_identity);
-    const bLive = v.market_b_identity === null || defIdentities.has(v.market_b_identity);
-    // same_market: orphaned unless BOTH sides are current defs.
-    // solution_agnostic: orphaned unless the candidate became a def.
-    const live = v.verdict_kind === "same_market" ? (aLive && bLive) : aLive;
-    if (!live) {
-      if (args.write) {
-        const { error } = await args.supabase.from("market_discovery_verdicts").delete().eq("id", v.id);
-        if (error) return { ok: false, error: `verdict prune failed: ${error.message}` };
-      }
-      totals.verdicts_pruned++;
-    }
-  }
+  // ── FINALIZE: the portfolio census. NO VERDICT PRUNE (Gate 3b, 2026-09-10). ──────────────────────
+  //
+  // THE LAW: content identity is the unit of evidence; a verdict persists by it and is never
+  // re-rolled. A judged rejection is EVIDENCE — the record of why an audience the model proposed is
+  // not on the surface — and it is worth exactly as much as a judged acceptance.
+  //
+  // The prune that stood here deleted every verdict whose market_a_identity was not a CURRENT DEF
+  // (and, for same_market, unless BOTH sides were). That is precisely the set of rulings about
+  // candidates that did NOT become defs: every rejected_solution, every dedup fold. So the store kept
+  // the verdicts nobody needs to look up — the accepted ones, whose answer is visible as a def — and
+  // destroyed the ones that explain an absence. The migration header (20260715120000) described the
+  // rule as sparing "a candidate of the current run"; the code only ever checked defIdentities, so it
+  // never did. Riverlane is the case: its buyer group was proposed, dropped, and left no explanation
+  // anywhere, and a prune at finalize would have erased the explanation even if one had been banked.
+  //
+  // Deleting them also broke the never-re-roll law by the back door: a pruned rejection re-judges on
+  // the next run, at model cost, and may answer differently. Keeping it makes the bank authoritative.
+  //
+  // ORPHANS. A verdict whose identity has no def is not garbage — it is the reason there is no def.
+  // The only true orphan moment is a def DELETE, and there is exactly one in the codebase:
+  // research-company/index.ts:7072 (`.delete().eq("company_id", company_id)`), the wholesale re-seed.
+  // market_discovery_verdicts has ONE foreign key, company_id → companies ON DELETE CASCADE; there is
+  // no key to odi_market_definitions (identities are sha256 hashes, not references), so that DELETE
+  // does NOT cascade or clean the verdicts of the defs it removes. Cleanup belongs THERE, scoped to
+  // that path, where the intent to discard is explicit — not here, where the intent is to finish a
+  // run. Not built in this gate; recorded so it is a decision and not an oversight.
+  //
+  // `verdicts_pruned` stays in the totals shape, always 0, so no caller's contract changes.
   return { ok: true, scoped: false, totals, results };
 }

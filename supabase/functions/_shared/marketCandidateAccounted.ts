@@ -50,7 +50,25 @@ export type MarketCandidateRef = { job_executor?: unknown; jtbd?: unknown };
  *  the proofs); the caller supplies only a dumb equality probe. */
 export type ExistsProbe = (table: string, match: Record<string, string>) => Promise<boolean>;
 
-export async function marketCandidateAccounted(args: {
+/**
+ * DECIDED — clauses (1) and (2) only: this candidate reached a JUDGED outcome that is on the record.
+ *
+ * Gate 3b splits this out of `marketCandidateAccounted` because the two questions are different:
+ *   • DECIDED asks "has a judge already ruled on this?" — the question the WORKER must ask before
+ *     spending model calls, because re-judging a decided candidate is not free and not idempotent.
+ *   • ACCOUNTED asks "did this candidate reach any terminal, including an honest failure?" — the
+ *     question the CONFIRM-POLL must ask before advancing the cursor past it.
+ * An error terminal (clause 4) answers the second and NOT the first: a candidate whose judge chain
+ * threw has no ruling, so the worker must retry it, while the poll must still be able to move on.
+ *
+ * Why the worker needs this at all: the loop had no already-written check, so a replay re-judged
+ * candidates that already have defs. Gate (a) returns its banked verdict, the MPD-1e reframe then
+ * makes a FRESH qwen2.5:14b call at temperature 0.2, and only an exact content-identity match folds
+ * the result back into the existing def. A differently-worded restatement that the same-market judge
+ * calls "different" gets WRITTEN, landing a duplicate audience under the `-2` journey-key suffix.
+ * Idempotence resting on a model reproducing its own prior text is not idempotence.
+ */
+export async function marketCandidateDecided(args: {
   exists: ExistsProbe;
   companyId: string;
   candidate: MarketCandidateRef;
@@ -65,19 +83,30 @@ export async function marketCandidateAccounted(args: {
     market_register: "public_inferred",
   })) return true;
 
-  const identity = await marketIdentity(executor, jtbd);
-
   // (2) a persisted gate-(b)/(c) decision on the original identity.
-  if (await args.exists("market_discovery_verdicts", {
+  return await args.exists("market_discovery_verdicts", {
     company_id: args.companyId,
-    market_a_identity: identity,
-  })) return true;
+    market_a_identity: await marketIdentity(executor, jtbd),
+  });
+}
 
-  // (4) an honest per-candidate error terminal.
+export async function marketCandidateAccounted(args: {
+  exists: ExistsProbe;
+  companyId: string;
+  candidate: MarketCandidateRef;
+}): Promise<boolean> {
+  // (1) + (2) — a judged outcome is a terminal.
+  if (await marketCandidateDecided(args)) return true;
+
+  // (4) an honest per-candidate error terminal. NOT a decision: the worker retries it, but the poll
+  // may advance past it, because a recorded failure IS an outcome the run can report.
   if (await args.exists("integrity_runs", {
     company_id: args.companyId,
     component: CANDIDATE_ERROR_COMPONENT,
-    run_ref: identity,
+    run_ref: await marketIdentity(
+      String(args.candidate?.job_executor ?? ""),
+      String(args.candidate?.jtbd ?? ""),
+    ),
   })) return true;
 
   // Touched but not finished (a lone perspective verdict, whichever way it went) ⇒ re-judge.
