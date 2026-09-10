@@ -19,6 +19,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { gapPairsStaleness } from "../../../supabase/functions/_shared/gapPairsFreshness";
 import { scoreDelta, type ScoreDelta } from "@/lib/mojoScore/delta";
+import { costCoverage, type CostCoverage } from "../../../supabase/functions/_shared/modelCallSites";
 
 /** The four kinds the First Read renders. Mirrors PUBLIC_READ_KINDS in _shared/firstReadFill.ts. */
 export const INVENTORY_READ_KINDS = ["positioning", "strategy", "promise", "offering"] as const;
@@ -61,8 +62,9 @@ export type CompanyInventoryRow = {
   delta: ScoreDelta | null;
   /** Newest integrity_runs.ran_at (operator ruling). Null → "never". */
   lastUpdate: string | null;
-  /** Gate 3. Null until model_calls exists; renders "not captured yet", NEVER 0. */
+  /** Sum of usd for the newest run_id. Null when nothing was captured — NEVER 0. */
   lastRunCost: number | null;
+  /** Sum of usd across every captured call. Null when nothing was captured. */
   totalCost: number | null;
   fillStatus: string;
   stages: FillStages;
@@ -118,7 +120,27 @@ export function buildInventory(input: {
   recurrence: Array<{ company_id: string }>;
   baselines: Array<{ company_id: string }>;
   ledger: Array<{ company_id: string; run_kind: string; status: string; started_at: string }>;
+  modelCalls?: Array<{ company_id: string; run_id: string | null; usd: number | string | null; created_at: string }>;
 }): CompanyInventoryRow[] {
+  // COST — summed from model_calls. `lastRunCost` is the newest run_id's total; a call with a null
+  // run_id (a site that has no long_runner row) still counts toward the company total but cannot be
+  // attributed to a run, so it is excluded from "last run". Null means NOT CAPTURED, never zero
+  // spend: no cost existed before this gate and the coverage label says how partial the ledger is.
+  const calls = input.modelCalls ?? [];
+  const costByCompany = new Map<string, { total: number; lastRun: number | null; any: boolean }>();
+  for (const co of input.companies) {
+    const mine = calls.filter((m) => m.company_id === co.id);
+    if (mine.length === 0) { costByCompany.set(co.id, { total: 0, lastRun: null, any: false }); continue; }
+    const total = mine.reduce((a, m) => a + (Number(m.usd) || 0), 0);
+    const runScoped = mine.filter((m) => m.run_id);
+    let lastRun: number | null = null;
+    if (runScoped.length > 0) {
+      const newest = runScoped.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+      lastRun = runScoped.filter((m) => m.run_id === newest.run_id).reduce((a, m) => a + (Number(m.usd) || 0), 0);
+    }
+    costByCompany.set(co.id, { total, lastRun, any: true });
+  }
+
   const newestScore = newestBy(input.mojoScores as unknown as Row[], "company_id", "computed_at");
   const newestIntegrity = newestBy(input.integrity as unknown as Row[], "company_id", "ran_at");
   const newestOwnWords = newestBy(input.ownWords as unknown as Row[], "company_id", "created_at");
@@ -185,8 +207,8 @@ export function buildInventory(input: {
       // Gate 2 — computed from the SAME rows the score cell already uses. No second query.
       delta: scoreDelta(input.mojoScores.filter((m) => m.company_id === c.id)),
       lastUpdate: str(newestIntegrity.get(c.id)?.ran_at) || null,
-      lastRunCost: null,  // Gate 3
-      totalCost: null,    // Gate 3
+      lastRunCost: costByCompany.get(c.id)?.lastRun ?? null,
+      totalCost: costByCompany.get(c.id)?.any ? (costByCompany.get(c.id)!.total) : null,
       fillStatus: fillStatusLabel(stages),
       stages,
     };
@@ -197,7 +219,7 @@ export function buildInventory(input: {
 export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> {
   // deno-lint-ignore no-explicit-any
   const sb = supabase as any;
-  const [companies, mojoScores, integrity, ownWords, deltas, reads, recurrence, baselines, ledger] = await Promise.all([
+  const [companies, mojoScores, integrity, ownWords, deltas, reads, recurrence, baselines, ledger, modelCalls] = await Promise.all([
     sb.from("companies").select("id, name, website, frozen").order("name"),
     sb.from("mojo_scores").select("company_id, total_score, methodology_version, computed_at"),
     sb.from("integrity_runs").select("company_id, component, status, ran_at, error"),
@@ -207,6 +229,7 @@ export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> 
     sb.from("finding_recurrence").select("company_id"),
     sb.from("public_baseline_runs").select("company_id"),
     sb.from("long_runner_runs").select("company_id, run_kind, status, started_at").in("run_kind", ["fr_own_words", "recurrence_step"]),
+    sb.from("model_calls").select("company_id, run_id, usd, created_at"),
   ]);
   return buildInventory({
     companies: companies.data ?? [],
@@ -218,5 +241,11 @@ export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> 
     recurrence: recurrence.data ?? [],
     baselines: baselines.data ?? [],
     ledger: ledger.data ?? [],
+    modelCalls: modelCalls.data ?? [],
   });
+}
+
+/** Coverage is COMPUTED from the site registry — "partial" is a fact, not a maintained label. */
+export function inventoryCostCoverage(): CostCoverage {
+  return costCoverage();
 }

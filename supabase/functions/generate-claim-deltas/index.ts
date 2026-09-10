@@ -31,6 +31,7 @@ import {
   JUDGE_DETERMINISM,
 } from "../_shared/claimDeltaSynthesis.ts";
 import { makeRoutedModel, usdCost } from "../_shared/modelRouter.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -103,6 +104,7 @@ serve(async (req) => {
     // public claims → external gpt-4.1-mini (proposer + judge); any internal_declared/client_attested
     // declared side → local (internal_vs_public NEVER leaves the machine). Local path byte-identical.
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to
     const routedCall = makeRoutedModel({
       callLocalGenerator: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, GEN_TIMEOUT_MS),
       callLocalJudge: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM),
@@ -136,6 +138,14 @@ serve(async (req) => {
         proof_guard_excluded_ids: result.proof_guard_excluded_ids,
         deltas: result.deltas,
         cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
+    // GATE 3 — PERSIST THE COST. Computed here since the delta judge landed, returned in a body no caller parsed.
+    // recordModelCall never throws: accounting must not take down the work it measures.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "generate-claim-deltas",
+      usage: openaiRecord(billedModel, usage),
+    });
       });
     }
     if ("skipped" in result) {

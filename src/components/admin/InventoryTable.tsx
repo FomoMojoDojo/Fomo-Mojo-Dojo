@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import type { Company } from "@/hooks/useCompany";
 import type { CompanyInventoryRow } from "@/lib/admin/companiesInventory";
 import { formatScoreDelta, scoreDeltaTone } from "@/lib/mojoScore/delta";
+import { costCoverage, coverageLabel } from "../../../supabase/functions/_shared/modelCallSites";
 
 // The page palette (AdminCompanies.tsx:122) — this shell is DARK. A light-theme palette here renders
 // the company name and the fill status as near-black on near-black, i.e. invisible.
@@ -52,6 +53,7 @@ export type InventoryTableProps = {
 
 export function InventoryTable(props: InventoryTableProps) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const cov = costCoverage();
 
   return (
     <div className="overflow-x-auto">
@@ -62,8 +64,14 @@ export function InventoryTable(props: InventoryTableProps) {
             <th className="text-left py-2 pr-3">Mojo Score</th>
             <th className="text-left py-2 pr-3">Δ since last run</th>
             <th className="text-left py-2 pr-3">Last update</th>
-            <th className="text-left py-2 pr-3">Last run cost</th>
-            <th className="text-left py-2 pr-3">Total cost</th>
+            {/* The coverage suffix is COMPUTED from the site registry, so it cannot claim a
+                completeness the ledger does not have. */}
+            <th className="text-left py-2 pr-3">
+              Last run cost{cov.complete ? "" : <span style={{ color: c.amber }}> · {coverageLabel(cov)}</span>}
+            </th>
+            <th className="text-left py-2 pr-3">
+              Total cost{cov.complete ? "" : <span style={{ color: c.amber }}> · {coverageLabel(cov)}</span>}
+            </th>
             <th className="text-left py-2 pr-3">Fill status</th>
             <th className="text-left py-2 pr-3">State</th>
             <th className="text-right py-2">Actions</th>
@@ -119,6 +127,7 @@ function FragmentRow(p: {
 }) {
   const { company, inv, frozen } = p;
   const text = frozen ? c.frozenText : c.charcoal;
+  const cov = costCoverage(); // pure over a static registry — same answer as the header's
   return (
     <>
       <tr
@@ -174,6 +183,13 @@ function FragmentRow(p: {
           }}
         >
           {p.loading ? "…" : formatScoreDelta(inv?.delta ?? null)}
+          {/* The column mixes two scales across the fleet — some companies' newest row is the
+              internal methodology, most are outside — so the cell says which one it is measuring. */}
+          {inv?.delta ? (
+            <span className="ml-1 text-[10px]" style={{ color: c.muted }} data-testid={`delta-tag-${company.id}`}>
+              {inv.delta.methodology.startsWith("outside-") ? "outside" : "internal"}
+            </span>
+          ) : null}
         </td>
 
         <td className="py-3 pr-3 align-top font-mono text-[11px]" style={{ color: text }} data-testid={`lastupdate-${company.id}`}>
@@ -182,10 +198,10 @@ function FragmentRow(p: {
 
         {/* COST — Gate 3. "not captured yet" is the true empty; 0 would be a lie. */}
         <td className="py-3 pr-3 align-top font-mono text-[10px]" style={{ color: c.muted }} data-testid={`lastcost-${company.id}`}>
-          {inv?.lastRunCost === null || inv?.lastRunCost === undefined ? "not captured yet" : `$${inv.lastRunCost}`}
+          {inv?.lastRunCost === null || inv?.lastRunCost === undefined ? "not captured yet" : `$${inv.lastRunCost.toFixed(4)}`}
         </td>
         <td className="py-3 pr-3 align-top font-mono text-[10px]" style={{ color: c.muted }} data-testid={`totalcost-${company.id}`}>
-          {inv?.totalCost === null || inv?.totalCost === undefined ? "not captured yet" : `$${inv.totalCost}`}
+          {inv?.totalCost === null || inv?.totalCost === undefined ? "not captured yet" : `$${inv.totalCost.toFixed(4)}`}
         </td>
 
         {/* FILL STATUS — computed from ARTIFACTS. Ledger terminals live in the expander only. */}
@@ -259,6 +275,11 @@ function FragmentRow(p: {
                 </span>
               ))}
             </div>
+            {cov.complete ? null : (
+              <div className="mt-1" style={{ color: c.amber }}>
+                cost {coverageLabel(cov)} — uncaptured: {cov.uncaptured.join(", ")}
+              </div>
+            )}
             {/* SECONDARY. Ledger terminals explain history; they never decide the cell above — 12 of
                 20 companies predate the chain and would read "broken" on a ledger-first status. */}
             <div className="mt-1" style={{ color: c.muted }}>

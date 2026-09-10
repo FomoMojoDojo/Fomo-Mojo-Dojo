@@ -21,6 +21,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeRecurrenceForCompany, callOllamaJson, JUDGE_TIMEOUT_MS } from "../_shared/signalRecurrence.ts";
 import { makeRoutedJudge, usdCost } from "../_shared/modelRouter.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -81,6 +82,7 @@ serve(async (req) => {
     // ROUTER: pairs of all-public signals judge on the fast external model; any analysis/NULL/internal
     // input keeps the pair on the local llama3:70b judge (byte-identical local path via callLocal).
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to
     const routedJudge = makeRoutedJudge({
       callLocal: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS),
       onUsage: (uu) => { usage.prompt_tokens += uu.prompt_tokens; usage.completion_tokens += uu.completion_tokens; },
@@ -178,6 +180,14 @@ serve(async (req) => {
       }
     }
 
+    // GATE 3 — PERSIST THE COST. The recurrence judge computed a USD figure and returned it in a
+    // body no caller parsed. runId is this function's own long_runner_runs row when it opened one.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "generate-signal-recurrence",
+      usage: openaiRecord(billedModel, usage),
+    });
     if (result.ok) {
       return json({ ok: true, dry_run: !doWrite, scoped: result.scoped, totals: result.totals, verdicts: result.verdicts, cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) } });
     }

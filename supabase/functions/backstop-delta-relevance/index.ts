@@ -17,6 +17,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeRelevanceForCompany } from "../_shared/relevanceBackstop.ts";
 import { makeRoutedModel, usdCost } from "../_shared/modelRouter.ts";
 import { callOllamaJson, GEN_TIMEOUT_MS, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM } from "../_shared/claimDeltaSynthesis.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,6 +51,7 @@ serve(async (req) => {
     // ROUTER: public_vs_public pairs are all-public ⇒ external gpt-4.1-mini. The local callers are
     // wired for completeness/defense-in-depth but are never reached on this all-public surface.
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to
     const routedCall = makeRoutedModel({
       callLocalGenerator: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, GEN_TIMEOUT_MS),
       callLocalJudge: (m: string, s: string, u: string) => callOllamaJson(ollamaUrl, m, s, u, JUDGE_TIMEOUT_MS, JUDGE_DETERMINISM),
@@ -77,6 +79,14 @@ serve(async (req) => {
         totals: result.totals,
         proposals: result.proposals,
         cost: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) },
+    // GATE 3 — PERSIST THE COST. Computed here since the backstop landed, returned in a body no caller parsed.
+    // recordModelCall never throws: accounting must not take down the work it measures.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "backstop-delta-relevance",
+      usage: openaiRecord(billedModel, usage),
+    });
       });
     }
     if ("skipped" in result) {

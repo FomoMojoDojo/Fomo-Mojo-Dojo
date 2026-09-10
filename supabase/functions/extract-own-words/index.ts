@@ -20,9 +20,10 @@ import {
   assembleOwnWords, assertPublicClientVoice,
   type Candidate, type JudgeVerdict, type SignalGate,
 } from "../_shared/ownWordsExtract.ts";
-import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts } from "../_shared/ownWordsJudge.ts";
+import { JUDGE_SYSTEM, callModel, parseJudgeVerdicts, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
 import type { Survivor } from "../_shared/ownWordsExtract.ts";
 import { parseOwnWordsKind } from "../_shared/ownWordsKinds.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const nowIso = () => new Date().toISOString();
 
@@ -248,6 +249,11 @@ Deno.serve(async (req) => {
       let candidates: Candidate[] = [];
       try {
         const gen = await callModel(GEN_SYSTEM, `PAGE TEXT:\n${cleanText}`);
+        // GATE 3 — this transport used to drop data.usage entirely; drain and persist it.
+        {
+          const _u = takeLastJudgeUsage();
+          if (_u) await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "own-words-judge", usage: openaiRecord(_u.model, _u) });
+        }
         candidates = (Array.isArray(gen.statements) ? gen.statements : [])
           .map((s: unknown) => {
             const o = s as { quote?: unknown; offset?: unknown; length?: unknown };
@@ -266,6 +272,11 @@ Deno.serve(async (req) => {
       if (candidates.length > 0) {
         try {
           const j = await callModel(JUDGE_SYSTEM, `PAGE TEXT:\n${cleanText}\n\nCANDIDATES:\n${candidates.map((c) => `- ${c.quote}`).join("\n")}`);
+          // GATE 3 — this transport used to drop data.usage entirely; drain and persist it.
+          {
+            const _u = takeLastJudgeUsage();
+            if (_u) await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "own-words-judge", usage: openaiRecord(_u.model, _u) });
+          }
           verdictByQuote = parseJudgeVerdicts(j); // keep / selfAssertion / fidelity / reason + the typed kind
         } catch (e) {
           pages.push({ url, fetched: true, snapshot_chars: cleanText.length, candidates: candidates.length, error: `judge: ${(e as Error).message}` });

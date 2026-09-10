@@ -4,7 +4,8 @@
 // long_runner_runs row (own_words_retype). Frozen companies refused. Never deletes, never rewrites.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runOwnWordsRetype, type RetypeJudgeVerdict, type RetypePreset } from "../_shared/ownWordsRetype.ts";
-import { RETYPE_SYSTEM, callModel } from "../_shared/ownWordsJudge.ts";
+import { RETYPE_SYSTEM, callModel, takeLastJudgeUsage } from "../_shared/ownWordsJudge.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +26,11 @@ Deno.serve(async (req) => {
     const judge = async (pageText: string | null, statements: string[]): Promise<RetypeJudgeVerdict[]> => {
       const user = `${pageText ? `PAGE TEXT:\n${pageText.slice(0, 12_000)}\n\n` : "PAGE TEXT: (not available)\n\n"}STATEMENTS:\n${statements.map((s) => `- ${s}`).join("\n")}`;
       const j = await callModel(RETYPE_SYSTEM, user);
+      // GATE 3 — this transport used to drop data.usage entirely; drain and persist it.
+      {
+        const _u = takeLastJudgeUsage();
+        if (_u) await recordModelCall(supabase, { companyId: company_id, runId: null, callSite: "own-words-judge", usage: openaiRecord(_u.model, _u) });
+      }
       return (Array.isArray(j.verdicts) ? j.verdicts : []) as RetypeJudgeVerdict[];
     };
 

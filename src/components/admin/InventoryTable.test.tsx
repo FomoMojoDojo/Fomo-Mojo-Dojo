@@ -105,17 +105,19 @@ describe("the score cell reads mojo_scores, not companies.mojo_score", () => {
 describe("the Δ cell", () => {
   it("renders signed to one decimal with the right tone", () => {
     const { getByTestId } = renderTable([co("up", "Up", false)], [inv("up", { score: 21, previous: 19 })]);
-    expect(getByTestId("delta-up").textContent).toBe("+2.0");
+    // the cell now carries the methodology tag too, so assert the number, not the whole cell
+    expect(getByTestId("delta-up").textContent).toBe("+2.0outside");
+    expect(getByTestId("delta-up").textContent?.startsWith("+2.0")).toBe(true);
     expect(getByTestId("delta-up").getAttribute("data-tone")).toBe("positive");
     expect(getByTestId("delta-up").getAttribute("title")).toContain("vs 19 on 2026-09-01");
   });
 
   it("a fall renders negative, a flat run renders 0.0", () => {
     const down = renderTable([co("dn", "Dn", false)], [inv("dn", { score: 13, previous: 14.5 })]);
-    expect(down.getByTestId("delta-dn").textContent).toBe("−1.5");
+    expect(down.getByTestId("delta-dn").textContent?.startsWith("−1.5")).toBe(true);
     expect(down.getByTestId("delta-dn").getAttribute("data-tone")).toBe("negative");
     const flat = renderTable([co("fl", "Fl", false)], [inv("fl", { score: 20, previous: 20 })]);
-    expect(flat.getByTestId("delta-fl").textContent).toBe("0.0");
+    expect(flat.getByTestId("delta-fl").textContent?.startsWith("0.0")).toBe(true);
     expect(flat.getByTestId("delta-fl").getAttribute("data-tone")).toBe("flat");
   });
 
@@ -124,6 +126,31 @@ describe("the Δ cell", () => {
     expect(getByTestId("delta-one").textContent).toBe("—");
     expect(getByTestId("delta-one").getAttribute("data-tone")).toBe("none");
     expect(getByTestId("delta-one").getAttribute("title")).toBeNull();
+  });
+});
+
+describe("the Δ methodology tag", () => {
+  it("an internal-newest company is tagged 'internal', an outside one 'outside'", () => {
+    const mk = (id: string, methodology: string) =>
+      buildInventory({
+        companies: [{ id, name: id, website: null, frozen: false }],
+        mojoScores: [
+          { company_id: id, total_score: 35, methodology_version: methodology, computed_at: "2026-07-10T05:56:00.000Z" },
+          { company_id: id, total_score: 35, methodology_version: methodology, computed_at: "2026-07-09T00:00:00.000Z" },
+        ],
+        integrity: [], ownWords: [], deltas: [], reads: [], recurrence: [], baselines: [], ledger: [],
+      })[0];
+    // FomoMojoDojo's real shape: its newest row is the INTERNAL methodology while most of the fleet
+    // is on the outside one, so the column mixes two scales and the cell must say which.
+    const internal = renderTable([co("fmd", "FomoMojoDojo", false)].map((x) => ({ ...x, id: "fmd" })), [mk("fmd", "v1.1.0")]);
+    expect(internal.getByTestId("delta-tag-fmd").textContent).toBe("internal");
+    const outside = renderTable([{ ...co("out", "Out", false), id: "out" }], [mk("out", "outside-v1.1.0")]);
+    expect(outside.getByTestId("delta-tag-out").textContent).toBe("outside");
+  });
+
+  it("a single-reading company has no tag at all", () => {
+    const { queryByTestId } = renderTable([co("one", "One", false)], [inv("one", { score: 20 })]);
+    expect(queryByTestId("delta-tag-one")).toBeNull();
   });
 });
 

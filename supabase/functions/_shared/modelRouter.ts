@@ -168,8 +168,5 @@ export async function mapWithConcurrency<A, B>(items: readonly A[], limit: numbe
   return out;
 }
 
-/** GPT-4.1-mini pricing (USD per 1M tokens) — for per-run cost logging into the fill ledger. */
-export const OPENAI_PRICE_PER_MTOK = { input: 0.40, output: 1.60 } as const;
-export function usdCost(usage: OpenAIUsage): number {
-  return (usage.prompt_tokens / 1e6) * OPENAI_PRICE_PER_MTOK.input + (usage.completion_tokens / 1e6) * OPENAI_PRICE_PER_MTOK.output;
-}
+/** GPT-4.1-mini pricing — one table, shared with the cost recorder (see _shared/modelPricing.ts). */
+export { OPENAI_PRICE_PER_MTOK, usdCost } from "./modelPricing.ts";

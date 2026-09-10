@@ -20,6 +20,7 @@ import { documentDerivedClaimIds } from "../_shared/firstReadProvenance.ts";
 import { deriveAnchoredRows, type QuestionAnchor } from "../../../src/lib/firstRead/openQuestionLinks.ts";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -180,6 +181,7 @@ Deno.serve(async (req) => {
     //    anchor here is public (findings=public_inferred, silent_deltas=public_vs_public), so this
     //    normally routes external; the guard still checks each anchor's provenance. ────────────────
     const usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0 };
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — overwritten with the model actually called
     const routed = async (
       role: "generator" | "judge",
       provenances: Array<string | null>,
@@ -189,6 +191,7 @@ Deno.serve(async (req) => {
       if (choice.provider === "external_openai") {
         const r = await withRetry429(() => callOpenAIJson({ model: choice.model, system, user, temperature }));
         usage.prompt_tokens += r.usage.prompt_tokens; usage.completion_tokens += r.usage.completion_tokens;
+        billedModel = choice.model; // Gate 3: the model the cost is actually attributable to
         const mm = r.content.match(/\{[\s\S]*\}/);
         if (!mm) throw new Error(`openai ${choice.model} returned no JSON: ${r.content.slice(0, 200)}`);
         return { json: JSON.parse(mm[0]) as Record<string, unknown>, provider: choice.provider, model: choice.model };
@@ -271,6 +274,15 @@ ${US_ENGLISH_RULE}`;
     }
     // Router usage/cost for this chunk (external tokens; local calls cost 0) — the fill ledger logs it.
     const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+    // GATE 3 — PERSIST THE COST. This number was computed and then returned in a response body no
+    // caller parsed, so every run's spend vanished. recordModelCall never throws: an accounting
+    // failure must not take down the work it measures.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "generate-open-questions",
+      usage: openaiRecord(billedModel, usage),
+    });
     return json({ ok: true, scoped: true, run_id: runId, totals, perAnchor, trace: { ...trace, router: "by_provenance" }, cost });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);

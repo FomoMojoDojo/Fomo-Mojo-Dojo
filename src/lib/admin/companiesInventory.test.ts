@@ -51,11 +51,43 @@ describe("score comes from mojo_scores, never the companies cache", () => {
   });
 });
 
-describe("Gate 3 placeholders are honest empties", () => {
-  it("both costs are null, never 0", () => {
+describe("Gate 3 — cost sums from model_calls", () => {
+  it("no captured calls → BOTH null, never 0 (a gap in the ledger is not zero spend)", () => {
     const [row] = buildInventory({ ...EMPTY, companies: [CO("x")] });
     expect(row.lastRunCost).toBeNull();
     expect(row.totalCost).toBeNull();
+  });
+
+  it("totalCost sums every call; lastRunCost sums only the NEWEST run", () => {
+    const [row] = buildInventory({
+      ...EMPTY, companies: [CO("c")],
+      modelCalls: [
+        { company_id: "c", run_id: "runA", usd: 0.01, created_at: T("2026-09-01T00:00:00Z") },
+        { company_id: "c", run_id: "runA", usd: 0.02, created_at: T("2026-09-01T00:01:00Z") },
+        { company_id: "c", run_id: "runB", usd: 0.04, created_at: T("2026-09-09T00:00:00Z") },
+        { company_id: "c", run_id: "runB", usd: 0.005, created_at: T("2026-09-09T00:02:00Z") },
+      ],
+    });
+    expect(row.totalCost).toBeCloseTo(0.075, 6);
+    expect(row.lastRunCost).toBeCloseTo(0.045, 6); // runB only
+  });
+
+  it("a call with no run_id counts toward the total but cannot be attributed to a run", () => {
+    const [row] = buildInventory({
+      ...EMPTY, companies: [CO("c")],
+      modelCalls: [{ company_id: "c", run_id: null, usd: 0.03, created_at: T("2026-09-09T00:00:00Z") }],
+    });
+    expect(row.totalCost).toBeCloseTo(0.03, 6);
+    expect(row.lastRunCost).toBeNull(); // honest: no run to attribute it to
+  });
+
+  it("cost is scoped per company — one company's spend never leaks into another's", () => {
+    const rows = buildInventory({
+      ...EMPTY, companies: [CO("a"), CO("b")],
+      modelCalls: [{ company_id: "a", run_id: "r1", usd: 0.09, created_at: T("2026-09-09T00:00:00Z") }],
+    });
+    expect(rows.find((r) => r.id === "a")!.totalCost).toBeCloseTo(0.09, 6);
+    expect(rows.find((r) => r.id === "b")!.totalCost).toBeNull();
   });
 });
 

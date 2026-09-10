@@ -32,6 +32,7 @@ import { sha256Hex } from "../_shared/contentIdentity.ts";
 import { citationsLivePublic, framingViolations, isPublicProvenance, offeringStructureViolations, offeringAcceptFromVerdict } from "../_shared/publicReadGuards.ts";
 import { deriveCascadeSpineAndGaps, type CascadeCoherence, type CascadeGapItem, type StrategyPayload } from "../_shared/cascadeRouting.ts";
 import { detailOf, rejectLogLine, runKindsIsolated } from "../_shared/publicReadPerKind.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -665,6 +666,15 @@ Respond with ONLY JSON:
     }));
     const cascadeGapsPreview = cascadeItems.map((it) => ({ kind: it.kind, rung: it.rung, question: it.question_text }));
     const cost = { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, usd: usdCost(usage) };
+    // GATE 3 — PERSIST THE COST. This number was computed and then returned in a response body no
+    // caller parsed, so every run's spend vanished. recordModelCall never throws: an accounting
+    // failure must not take down the work it measures.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "generate-public-read",
+      usage: openaiRecord(genChoice?.model ?? "gpt-4.1-mini", usage),
+    });
     const routerResolution = {
       generator: genChoice.provider, judge: judgeChoice.provider,
       all_public: ledger.ids.every((id) => require_public(ledger.provenances[id])),

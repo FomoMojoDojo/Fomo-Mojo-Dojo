@@ -28,6 +28,24 @@ export const RETYPE_SYSTEM =
   `verified verbatim; do NOT rewrite, merge, or drop any. For EVERY statement give ${JUDGE_KIND_QUESTION} ` +
   `Respond with ONLY JSON: {"verdicts":[{"quote":"...","kind":"positioning","kindReason":"..."}]}. No other text.`;
 
+/**
+ * GATE 3 (2026-09-10) — the LAST usage read this transport was missing.
+ *
+ * This is a real billable OpenAI call (gpt-4.1-mini, falling back to gpt-4o-mini) whose token counts
+ * were never read at all: `data.usage` was dropped at the transport, so unlike the six sites that
+ * computed a cost and discarded it, here there was no cost to discard. `lastUsage` carries what the
+ * provider reported so the caller can persist it. Null when the local model answered (Ollama returns
+ * no OpenAI-shaped usage) or when the provider omitted it.
+ */
+export type JudgeUsage = { model: string; prompt_tokens: number; completion_tokens: number } | null;
+let lastUsage: JudgeUsage = null;
+/** The usage from the most recent callModel, or null. Read it immediately after the call. */
+export function takeLastJudgeUsage(): JudgeUsage {
+  const u = lastUsage;
+  lastUsage = null;
+  return u;
+}
+
 export async function callModel(system: string, user: string): Promise<Record<string, unknown>> {
   const endpoint = USE_LOCAL ? `${OLLAMA_BASE_URL}/chat/completions` : "https://api.openai.com/v1/chat/completions";
   const apiKey = USE_LOCAL ? "ollama" : Deno.env.get("OPENAI_API_KEY");
@@ -50,6 +68,11 @@ export async function callModel(system: string, user: string): Promise<Record<st
       const content = String(data?.choices?.[0]?.message?.content ?? "");
       const m = content.match(/\{[\s\S]*\}/);
       if (!m) { lastErr = new Error(`${model} returned no JSON`); continue; }
+      // Gate 3: read the usage this transport used to throw away. Local answers carry none.
+      const u = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } } | null)?.usage;
+      lastUsage = !USE_LOCAL && u
+        ? { model, prompt_tokens: Number(u.prompt_tokens ?? 0), completion_tokens: Number(u.completion_tokens ?? 0) }
+        : null;
       return JSON.parse(m[0]) as Record<string, unknown>;
     } catch (e) { lastErr = e; }
   }

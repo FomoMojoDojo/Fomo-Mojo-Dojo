@@ -12,6 +12,7 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { US_ENGLISH_RULE } from "../_shared/languageRule.ts";
 import { resolveModel, callOpenAIJson, withRetry429, usdCost, type OpenAIUsage } from "../_shared/modelRouter.ts";
+import { openaiRecord, recordModelCall } from "../_shared/recordModelCall.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -136,6 +137,7 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0 };
+    let billedModel = "gpt-4.1-mini"; // Gate 3 — the model the cost is attributable to
     const callLocal = async (model: string, system: string, user: string, temperature: number): Promise<Record<string, unknown>> => {
       const res = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
         method: "POST", headers: { Authorization: "Bearer ollama", "Content-Type": "application/json" },
@@ -225,6 +227,14 @@ Deno.serve(async (req) => {
     }
     const accepted = results.filter((r) => r.grounded).length;
     const nonSpecificCount = results.filter((r) => r.non_specific).length;
+    // GATE 3 — PERSIST THE COST before returning it. Until now this number lived only in the
+    // response body, which no caller parsed. recordModelCall never throws.
+    await recordModelCall(supabase, {
+      companyId: company_id,
+      runId: null,
+      callSite: "generate-conflict-explanation",
+      usage: openaiRecord(billedModel, usage),
+    });
     return json({ ok: true, dry_run: !doWrite, total: pairs.length, accepted, specific: accepted - nonSpecificCount, honest_non_specific: nonSpecificCount, rejected: pairs.length - accepted, results, cost: { ...usage, usd: usdCost(usage) } });
   } catch (e) {
     return json({ error: `unexpected: ${(e as Error).message}` }, 500);
