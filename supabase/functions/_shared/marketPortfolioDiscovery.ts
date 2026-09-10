@@ -861,12 +861,40 @@ export async function computeMarketDiscovery(
           judge_reasons: r.judge_reasons,
           dedup_target_identity: r.dedup_target_identity ?? null,
           journey_key: r.journey_key ?? null,
+          // Written by the run that made the ruling. Stated explicitly so an upsert over a
+          // reconstructed row CLEARS the flag — a column left out of the payload is left out of the
+          // ON CONFLICT SET list, which is how Geniant's rows stayed reconstructed=true after being
+          // rewritten first-hand.
+          reconstructed: false,
         });
       }
-      if (rows.length > 0) {
+      // A CANDIDATE THAT WAS RULED ON STAYS RULED ON (Gate 4d, operator ruling).
+      //
+      // `already_decided` is not a ruling — it is a statement that a ruling exists somewhere. The
+      // first live replay proved what happens when it is allowed to upsert over one: Geniant #2's
+      // `rejected_solution` and #4's `deduped` were both replaced by `already_decided`, the census
+      // dropped from 7 rows to 6, and the record of WHY those groups are absent — the whole reason
+      // this table exists — was destroyed by the very skip that was meant to protect them.
+      //
+      // So a skipped candidate never overwrites a terminal row. It still writes when the existing row
+      // is 'error' (no ruling) or itself 'already_decided' (nothing to lose), and when no row exists
+      // at all, so a first pass still records that the candidate was seen and skipped.
+      const keep = new Set<number>();
+      for (const row of rows) {
+        if (row.outcome !== "already_decided") continue;
+        const { data: existing } = await args.supabase
+          .from("market_candidate_outcomes")
+          .select("outcome")
+          .eq("run_id", row.run_id).eq("candidate_index", row.candidate_index)
+          .limit(1).maybeSingle();
+        const prior = String((existing as { outcome?: string } | null)?.outcome ?? "");
+        if (prior && prior !== "error" && prior !== "already_decided") keep.add(row.candidate_index);
+      }
+      const toWrite = rows.filter((r) => !keep.has(r.candidate_index));
+      if (toWrite.length > 0) {
         const { error: outErr } = await args.supabase
           .from("market_candidate_outcomes")
-          .upsert(rows, { onConflict: "run_id,candidate_index" });
+          .upsert(toWrite, { onConflict: "run_id,candidate_index" });
         if (outErr) return { ok: false, error: `candidate outcome write failed: ${outErr.message}` };
       }
     }

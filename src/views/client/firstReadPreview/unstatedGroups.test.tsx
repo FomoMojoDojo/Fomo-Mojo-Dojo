@@ -21,9 +21,10 @@ import { render } from "@testing-library/react";
 import { ActWhoYouServe } from "./acts";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRUnstatedGroup, type FRMarketDef } from "./types";
 
-const SOLUTION_LINE = "Says it in terms of what you sell — likely the same people, described from your side of the table.";
-const BUYER_LINE = "Reads as a goal of yours, not a job of theirs — likely the same people, described from your side of the table.";
-const EYEBROW = "GROUPS WE SAW BUT COULDN'T STATE IN YOUR CUSTOMERS' TERMS";
+const FALLBACK_LINE = "Only makes sense with your product in it — take it out and ask what they'd still be trying to do.";
+const BUYER_LINE = "Written as what you want them to do, not what they're trying to get done — say it from their side.";
+const EYEBROW = "OTHER GROUPS WE SAW";
+const INTRO = "These groups are described around your product — so they tell us what you sell, not what they need.";
 
 const group = (over: Partial<FRUnstatedGroup>): FRUnstatedGroup => ({
   id: Math.random().toString(36).slice(2),
@@ -46,10 +47,11 @@ const readWith = (
   unstatedGroups: FRUnstatedGroup[],
   unstatedIntegrity: FirstReadPreviewData["unstatedIntegrity"] = "looked_none",
   observedMarkets: FRMarketDef[] = [],
+  offeringProductLabels: string[] = [],
 ): FirstReadPreviewData => ({
   ...EMPTY_FIRST_READ,
   company: { name: "Co", website: "https://co.com" },
-  observedMarkets, unstatedGroups, unstatedIntegrity,
+  observedMarkets, unstatedGroups, unstatedIntegrity, offeringProductLabels,
 });
 
 describe("the section renders the signed strings", () => {
@@ -68,7 +70,7 @@ describe("the section renders the signed strings", () => {
     expect(text).toContain(EYEBROW);
     expect(text).toContain("Law firm partners and leaders looking to scale scarce expertise");
     expect(text).toContain("Legal technology conference organizers and event sponsors");
-    expect(text).toContain(SOLUTION_LINE);
+    expect(text).toContain(FALLBACK_LINE);   // no offering labels planted ⇒ the fallback
     expect(text).toContain(BUYER_LINE);
     expect(container.querySelectorAll(".fr-unstated-item").length).toBe(2);
     // the ROLE chips, via the Gate 2 vocabulary — not a section-specific label
@@ -127,6 +129,125 @@ describe("the section renders the signed strings", () => {
     expect(text).toContain("Numbered one");
     expect(text).toContain("Funder");        // the Gate 2 label still renders
     expect(text).toContain("Unstated one");
+  });
+});
+
+describe("the product inside the job is named and marked (Gate 4d)", () => {
+  // RED ON REVERT: before this the row said "Says it in terms of what you sell" and never named the
+  // thing, so the client had to guess which words were the problem.
+  // RED ON REVERT. The exact-label matcher scored 0 of 6 on the real fleet: the read says
+  // "Deltaflow QEC system", the model's job says "Deltaflow QEC layer". The head-token match is what
+  // makes the signed line fire at all.
+  it("(g4d) a job saying 'Deltaflow QEC layer' matches the label 'Deltaflow QEC system'", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({
+          who: "Quantum hardware OEMs integrating QEC into their quantum computing systems",
+          job: "To ensure their quantum computers are reliable by integrating Riverlane's Deltaflow QEC layer.",
+          outcome: "rejected_solution",
+        })],
+        "looked_none", [], ["Deltaflow QEC system"],
+      )} />,
+    );
+    const text = container.textContent ?? "";
+    // the LINE names the full label — what the client calls it in their own read
+    expect(text).toContain("Names Deltaflow QEC system — take it out and ask what they'd still be trying to do.");
+    // the TINT marks the words the job actually says
+    expect(container.querySelector(".fr-unstated-product")?.textContent).toBe("Deltaflow QEC");
+    expect(text).not.toContain(FALLBACK_LINE);
+  });
+
+  it("(g4d) a bare 'Deltaflow 2' matches 'Deltaflow 2 QEC system'", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "By deploying Riverlane's Deltaflow 2 at national lab environments.", outcome: "rejected_solution" })],
+        "looked_none", [], ["Deltaflow QEC system", "Deltaflow 2 QEC system"],
+      )} />,
+    );
+    expect(container.textContent).toContain("Names Deltaflow 2 QEC system —");
+    expect(container.querySelector(".fr-unstated-product")?.textContent).toBe("Deltaflow 2");
+  });
+
+  it("(g4d) the LONGEST head wins — 'Deltaflow 2' is never reported as 'Deltaflow'", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "Deploying Deltaflow 2 at national lab environments.", outcome: "rejected_solution" })],
+        "looked_none", [], ["Deltaflow system", "Deltaflow 2 QEC system"],
+      )} />,
+    );
+    expect(container.textContent).toContain("Names Deltaflow 2 QEC system —");
+  });
+
+  it("(g4d) a CATEGORY word never names a product — 'embedding AI' falls back", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "Trying to make progress by embedding AI into their advisory services.", outcome: "rejected_solution" })],
+        "looked_none", [], ["Rainmaker Companion AI product"],
+      )} />,
+    );
+    expect(container.textContent).toContain(FALLBACK_LINE);
+    expect(container.querySelector(".fr-unstated-product")).toBeNull();
+  });
+
+  it("(g4d) a label that IS a category word never matches its bare use", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "Leverage AI to deliver more distinctive brand work.", outcome: "rejected_solution" })],
+        "looked_none", [], ["AI platform"],
+      )} />,
+    );
+    expect(container.textContent).toContain(FALLBACK_LINE);
+    expect(container.querySelector(".fr-unstated-product")).toBeNull();
+  });
+
+  it("(g4d) no label match ⇒ the signed fallback, and nothing is tinted", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "A job that names nothing we sell.", outcome: "rejected_solution" })],
+        "looked_none", [], ["Deltaflow QEC system"],
+      )} />,
+    );
+    expect(container.textContent).toContain(FALLBACK_LINE);
+    expect(container.querySelector(".fr-unstated-product")).toBeNull();
+  });
+
+  it("(g4d) a rejected_buyer row never names a product, even when a label matches", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ job: "Promote Deltaflow QEC system to the market.", outcome: "rejected_buyer" })],
+        "looked_none", [], ["Deltaflow QEC system"],
+      )} />,
+    );
+    expect(container.textContent).toContain(BUYER_LINE);
+    expect(container.textContent).not.toContain("Names Deltaflow");
+    expect(container.querySelector(".fr-unstated-product")).toBeNull();
+  });
+
+  it("(g4d) the intro renders under the eyebrow, in the CLIENT's frame", () => {
+    const { container } = render(<ActWhoYouServe read={readWith([group({})])} />);
+    expect(container.textContent).toContain(INTRO);
+    // The ODI definition is our vocabulary, not theirs — it never appears on this surface.
+    expect(container.textContent).not.toContain("A market is a group of people");
+  });
+});
+
+describe("six distinct kinds get six distinct tones (Gate 4d)", () => {
+  // RED ON REVERT: with five tones the sequence wrapped and Riverlane's BUYER reused OBSERVER's lime.
+  it("(g4d) six kinds across the numbered groups and the section are all different colours", () => {
+    const { container } = render(
+      <ActWhoYouServe read={readWith(
+        [group({ who: "u1", relationshipKind: "partner" }),
+         group({ who: "u2", relationshipKind: "recipient" }),
+         group({ who: "u3", relationshipKind: "buyer" })],
+        "looked_none",
+        [market({ who: "n1", relationshipKind: "observer" }),
+         market({ who: "n2", relationshipKind: "referrer" }),
+         market({ who: "n3", relationshipKind: "funder" })],
+      )} />,
+    );
+    const tones = [...container.querySelectorAll(".fr-chip")].map((c) => c.getAttribute("data-tone"));
+    expect(tones).toHaveLength(6);
+    expect(new Set(tones).size).toBe(6);
   });
 });
 

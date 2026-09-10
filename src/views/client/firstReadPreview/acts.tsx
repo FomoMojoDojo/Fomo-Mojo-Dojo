@@ -264,11 +264,18 @@ const NO_SERVE_NOTE = "No public read of who you serve yet."; // signed
 // the judge writes for a machine gate ("names 'machine-readable system' which is a key feature of
 // Brand AI's product") and that reads as an accusation about a client's own language. The verbatim
 // clause stays operator-only (OperatorUnstatedReason).
-const UNSTATED_EYEBROW = "GROUPS WE SAW BUT COULDN'T STATE IN YOUR CUSTOMERS' TERMS"; // signed
-const UNSTATED_SUBLINE: Record<"rejected_solution" | "rejected_buyer", string> = {
-  rejected_solution: "Says it in terms of what you sell — likely the same people, described from your side of the table.", // signed
-  rejected_buyer: "Reads as a goal of yours, not a job of theirs — likely the same people, described from your side of the table.", // signed
-};
+const UNSTATED_EYEBROW = "OTHER GROUPS WE SAW"; // signed
+// The intro says what is WRONG with these rows, in the client's own frame — not what a market is.
+// The ODI definition is ours, not theirs, and it never appears on this surface: a client reading
+// "a market is a group of people and the job they're trying to get done" is being taught our
+// vocabulary at the moment they most need to recognise their own words.
+const UNSTATED_INTRO = "These groups are described around your product — so they tell us what you sell, not what they need."; // signed
+/** rejected_solution, when a current offering-read product label is found inside the job text. */
+const unstatedNamesLine = (product: string) =>
+  `Names ${product} — take it out and ask what they'd still be trying to do.`; // signed
+/** rejected_solution, when no label matches: the judge saw a solution we cannot name from the read. */
+const UNSTATED_SOLUTION_FALLBACK = "Only makes sense with your product in it — take it out and ask what they'd still be trying to do."; // signed
+const UNSTATED_BUYER_LINE = "Written as what you want them to do, not what they're trying to get done — say it from their side."; // signed
 const UNSTATED_EMPTY: Record<"not_yet" | "looked_none" | "couldnt_check", string> = {
   not_yet: "Not read yet — this snapshot's market pass hasn't run.", // signed
   looked_none: "Every group we saw could be stated in your customers' terms.", // signed
@@ -902,7 +909,7 @@ export { relationshipKindLabel };
 
 /** Role-tag colours (stage 3b): assigned PER COMPANY from the accent sequence, in order of first
  *  appearance among that company's relationship kinds — no global kind→colour map. */
-const ROLE_TONES: ChipTone[] = ["accent-0", "accent-1", "accent-2", "accent-3", "accent-4"];
+const ROLE_TONES: ChipTone[] = ["accent-0", "accent-1", "accent-2", "accent-3", "accent-4", "accent-5"];
 export function roleTonesByFirstAppearance(kinds: Array<string | null>): Map<string, ChipTone> {
   const out = new Map<string, ChipTone>();
   for (const k of kinds) {
@@ -958,6 +965,71 @@ export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; 
   );
 }
 
+/** Generic tails an offering label carries that the model's prose usually drops or swaps: the read
+ *  says "Deltaflow QEC system", the job says "Deltaflow QEC layer" or bare "Deltaflow 2". Stripping
+ *  the tail leaves the HEAD TOKEN — the part that actually names the product. */
+const LABEL_TAILS = ["system", "platform", "tool", "product", "interface", "service", "stack", "layer", "suite", "app"];
+
+/** Words that are a FIELD, not a product. "AI" is Lumio's field and every legal-AI buyer's own word
+ *  for what they do; naming it as the client's product would be wrong even when a label contains it.
+ *  These never match on their own — the fallback line is the honest output there. */
+const CATEGORY_WORDS = new Set(["ai", "software", "data", "cloud", "platform"]);
+
+/** The searchable HEADS of an offering label, longest first: the label with its generic tail removed,
+ *  then each shorter prefix. Progressive prefixes are needed because stripping the listed tails alone
+ *  is not enough — "Deltaflow 2 QEC system" strips to "Deltaflow 2 QEC", but the model's job says a
+ *  bare "Deltaflow 2". A prefix is the right shape for a product name: brands qualify rightwards
+ *  ("Deltaflow" → "Deltaflow 2" → "Deltaflow 2 QEC"), so any prefix still names the same thing, while
+ *  a suffix ("QEC system") names the category. Each head must be ≥4 chars and not a bare field word. */
+export function offeringLabelHeads(label: string): string[] {
+  let parts = String(label ?? "").trim().split(/\s+/).filter(Boolean);
+  while (parts.length > 1 && LABEL_TAILS.includes(parts[parts.length - 1].toLowerCase())) parts.pop();
+  const heads: string[] = [];
+  for (let n = parts.length; n >= 1; n--) {
+    const head = parts.slice(0, n).join(" ");
+    if (head.length < 4) continue;                        // too short to be a name
+    if (CATEGORY_WORDS.has(head.toLowerCase())) continue; // a field, not a product
+    heads.push(head);
+  }
+  return heads;
+}
+
+/** Gate 4d — the offering-read product whose HEAD appears in this job text, or null. The RETURNED
+ *  label is the full one (what the client calls it in their own read, so the line names it properly);
+ *  the returned head is what the job actually says, so the tint marks the real words. Longest head
+ *  wins across labels, so "Deltaflow 2" is never reported as "Deltaflow". */
+export function matchOfferingProduct(
+  job: string | null,
+  labels: readonly string[],
+): { label: string; head: string } | null {
+  const hay = String(job ?? "").toLowerCase();
+  if (!hay) return null;
+  let best: { label: string; head: string } | null = null;
+  for (const label of labels) {
+    for (const head of offeringLabelHeads(label)) {
+      if (!hay.includes(head.toLowerCase())) continue;
+      if (!best || head.length > best.head.length) best = { label: label.trim(), head };
+      break; // heads are longest-first, so the first hit is this label's best
+    }
+  }
+  return best;
+}
+
+/** The job text with the matched product phrase tinted — the point of the row is that the product is
+ *  IN the job, so the reader should be able to see it sitting there rather than take our word. */
+function JobWithProduct({ job, head }: { job: string; head: string | null }) {
+  if (!head) return <p className="fr-hanging-text">{job}</p>;
+  const at = job.toLowerCase().indexOf(head.toLowerCase());
+  if (at < 0) return <p className="fr-hanging-text">{job}</p>;
+  return (
+    <p className="fr-hanging-text">
+      {job.slice(0, at)}
+      <span className="fr-unstated-product">{job.slice(at, at + head.length)}</span>
+      {job.slice(at + head.length)}
+    </p>
+  );
+}
+
 /** Gate 4b — the section below the numbered groups. ALWAYS rendered: when there is nothing to list it
  *  renders its earned-empty line from the persisted integrity record, because an omitted section
  *  cannot tell "nothing to say" from "we never looked", and explaining an absence is this beat's
@@ -967,7 +1039,10 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
   const rows = read.unstatedGroups;
   return (
     <section className="fr-unstated">
-      <div className="fr-unstated-head"><Eyebrow>{UNSTATED_EYEBROW}</Eyebrow></div>
+      <div className="fr-unstated-head">
+        <Eyebrow>{UNSTATED_EYEBROW}</Eyebrow>
+        <p className="fr-unstated-intro">{UNSTATED_INTRO}</p>
+      </div>
       {rows.length === 0 ? (
         <div className="fr-unstated-empty"><Absent>{UNSTATED_EMPTY[read.unstatedIntegrity]}</Absent></div>
       ) : (
@@ -976,6 +1051,12 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
             const kindLabel = relationshipKindLabel(g.relationshipKind);
             const tone = (g.relationshipKind && tones.get(g.relationshipKind)) || "neutral";
             const isNewKind = !!g.relationshipKind && !isKnownRelationshipKind(g.relationshipKind);
+            const product = g.outcome === "rejected_solution"
+              ? matchOfferingProduct(g.job, read.offeringProductLabels)
+              : null;
+            const subline = g.outcome === "rejected_buyer"
+              ? UNSTATED_BUYER_LINE
+              : product ? unstatedNamesLine(product.label) : UNSTATED_SOLUTION_FALLBACK;
             return (
             <li key={g.id} className="fr-unstated-item">
               {kindLabel ? (
@@ -985,8 +1066,8 @@ function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Ma
                 </span>
               ) : null}
               <p className="fr-unstated-who">{g.who}</p>
-              {g.job ? <p className="fr-hanging-text">{g.job}</p> : null}
-              <p className="fr-unstated-sub">{UNSTATED_SUBLINE[g.outcome]}</p>
+              {g.job ? <JobWithProduct job={g.job} head={product?.head ?? null} /> : null}
+              <p className="fr-unstated-sub">{subline}</p>
               <OperatorUnstatedReason reason={g.judgeReason} reconstructed={g.reconstructed} />
             </li>
             );

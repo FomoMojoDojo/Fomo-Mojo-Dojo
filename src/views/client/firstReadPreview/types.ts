@@ -375,6 +375,9 @@ export type FirstReadPreviewData = {
    *  (their people are already visible inside the group they folded into), never already_decided
    *  (that IS one of the numbered groups), never error (no ruling exists to report). */
   unstatedGroups: FRUnstatedGroup[];
+  /** Gate 4d — the company's CURRENT offering-read product labels (kind_hint 'product'), used to name
+   *  the product sitting inside a rejected job and to tint the matched phrase. Empty ⇒ fallback line. */
+  offeringProductLabels: string[];
   /** GATE (mirrors gapIntegrity/offeringIntegrity): the market-pass integrity state. An absent
    *  section is indistinguishable from "we found nothing to say", and the whole point of this beat is
    *  that an absence must be explained — so the section always renders, from this record. */
@@ -449,6 +452,7 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   statusConflicts: [],
   gapIntegrity: "not_yet",
   unstatedGroups: [],
+  offeringProductLabels: [],
   unstatedIntegrity: "not_yet",
   channelJunkIds: [],
   channelOffHostIds: [],

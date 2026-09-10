@@ -217,6 +217,12 @@
 .fr-chip[data-tone="bad"],
 .fr-chip[data-tone="accent-3"] { background: hsl(var(--fr-electric)); color: hsl(var(--fr-paper)); }
 .fr-chip[data-tone="accent-4"] { background: hsl(var(--fr-steel)); color: hsl(var(--fr-paper)); }
+/* Gate 4d — the SIXTH role tone. The Who-you-serve beat now carries the numbered groups AND the
+   unstated section in one colour sequence, so six distinct kinds on one beat became reachable and the
+   five-tone sequence wrapped: Riverlane's BUYER took OBSERVER's lime. --fr-slate is the only unused
+   colour on the signed palette; paper-on-slate is 9.8:1, the highest-contrast chip of the six, and it
+   is plainly distinct from steel (accent-4) at this size. */
+.fr-chip[data-tone="accent-5"] { background: hsl(var(--fr-slate)); color: hsl(var(--fr-paper)); }
 .fr-chip[data-tone="thin"],
 .fr-chip[data-tone="neutral"] { background: hsl(var(--fr-line)); }
 
@@ -1305,7 +1311,22 @@
 .fr-unstated-head,
 .fr-unstated-list,
 .fr-unstated-empty { padding-left: 3.5rem; }
-.fr-unstated-head { margin-bottom: 1.25rem; }
+.fr-unstated-head { margin-bottom: 1.75rem; }
+/* The intro carries the argument, so it is set at reading weight rather than as a caption. */
+.fr-unstated-intro {
+  margin-top: 0.75rem;
+  max-width: 40rem;
+  font-size: 14px;
+  line-height: 1.6;
+  color: hsl(var(--fr-slate));
+}
+/* The matched product phrase, sitting inside the job. Electric on paper is 3.6:1 — enough for the
+   large-text threshold but not for body copy, so the mark is NOT carried by colour alone: the weight
+   bump does the work for anyone who cannot separate the hue. */
+.fr-unstated-product {
+  color: hsl(var(--fr-electric));
+  font-weight: 500;
+}
 .fr-unstated-list { list-style: none; margin: 0; }
 .fr-unstated-item + .fr-unstated-item {
   margin-top: 1.5rem;

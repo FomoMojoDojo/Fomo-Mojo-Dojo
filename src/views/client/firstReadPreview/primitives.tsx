@@ -114,7 +114,8 @@ export const VERDICT_LABEL: Record<FRGapVerdict, string> = {
 export type ChipTone =
   | "good" | "bad" | "warn" | "neutral"
   | "strong" | "moderate" | "thin"
-  | "accent-0" | "accent-1" | "accent-2" | "accent-3" | "accent-4";
+  | "accent-0" | "accent-1" | "accent-2" | "accent-3" | "accent-4"
+  | "accent-5";
 export function Chip({ tone = "neutral", children }: { tone?: ChipTone; children: ReactNode }) {
   return (
     <span className="fr-chip fr-mono" data-tone={tone}>

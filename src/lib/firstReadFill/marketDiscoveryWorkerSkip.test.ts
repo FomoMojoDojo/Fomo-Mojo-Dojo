@@ -287,3 +287,64 @@ describe("per-candidate outcomes are persisted before the cursor advances (Gate 
     expect(fake.upserts.length).toBe(0);
   });
 });
+
+// ── Gate 4d — a candidate that was ruled on stays ruled on ───────────────────────────────────────
+// The first live replay overwrote Geniant #2's rejected_solution and #4's deduped with
+// already_decided, and the census dropped from 7 rows to 6. `already_decided` is not a ruling — it
+// says a ruling exists elsewhere — so it must never replace one.
+describe("already_decided never overwrites a terminal outcome (Gate 4d)", () => {
+  const RUN = "b60e2867-53b1-4b8d-86d9-1230240e5cab";
+  const decidedTables = (existingOutcome: string | null): Record<string, Row[]> => ({
+    companies: [{ id: COMPANY, name: "Riverlane" }],
+    odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+      jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+    market_discovery_verdicts: [], market_lens: [],
+    market_candidate_outcomes: existingOutcome
+      ? [{ run_id: RUN, candidate_index: 1, company_id: COMPANY, outcome: existingOutcome, reconstructed: true }]
+      : [],
+  });
+  const run = (tables: Record<string, Row[]>) => {
+    const fake = fakeSupabase(tables);
+    return computeMarketDiscovery({
+      ...baseArgs(fake.client), write: true, runId: RUN, candidateOffset: 0, candidates: [CANDIDATE],
+    }).then((res) => ({ res, fake }));
+  };
+
+  // RED ON REVERT
+  it("(g4d) an existing rejected_solution row is LEFT ALONE by an already_decided pass", async () => {
+    const tables = decidedTables("rejected_solution");
+    const { fake } = await run(tables);
+    expect(fake.upserts.find((u) => u.table === "market_candidate_outcomes")).toBeUndefined();
+    expect(tables.market_candidate_outcomes[0].outcome).toBe("rejected_solution");
+  });
+
+  for (const terminal of ["deduped", "rejected_buyer", "accepted_active", "accepted_deferred"]) {
+    it(`(g4d) an existing ${terminal} row is left alone too`, async () => {
+      const tables = decidedTables(terminal);
+      await run(tables);
+      expect(tables.market_candidate_outcomes[0].outcome).toBe(terminal);
+    });
+  }
+
+  it("(g4d) an existing ERROR row IS replaced — a failure is not a ruling", async () => {
+    const tables = decidedTables("error");
+    const { fake } = await run(tables);
+    expect(fake.upserts.find((u) => u.table === "market_candidate_outcomes")).toBeTruthy();
+    expect(tables.market_candidate_outcomes[0].outcome).toBe("already_decided");
+  });
+
+  it("(g4d) no existing row ⇒ the skip is still recorded", async () => {
+    const tables = decidedTables(null);
+    await run(tables);
+    expect(tables.market_candidate_outcomes).toHaveLength(1);
+    expect(tables.market_candidate_outcomes[0].outcome).toBe("already_decided");
+  });
+
+  // RED ON REVERT: the payload omitted `reconstructed`, so ON CONFLICT DO UPDATE never reset it and
+  // Geniant's rows stayed reconstructed=true after being rewritten first-hand.
+  it("(g4d) a live write asserts reconstructed=false", async () => {
+    const { fake } = await run(decidedTables(null));
+    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
+    expect(up.rows[0].reconstructed).toBe(false);
+  });
+});

@@ -837,6 +837,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         // section cannot tell "nothing to say" from "we never looked".
         let unstatedGroups: FRUnstatedGroup[] = [];
         let unstatedIntegrity: FirstReadPreviewData["unstatedIntegrity"] = "not_yet";
+        let offeringProductLabels: string[] = [];
         {
           const { data: mdRunRows } = await loose()
             .from("long_runner_runs")
@@ -866,6 +867,21 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
               reconstructed: !!r.reconstructed,
             }));
           }
+          // Gate 4d — the product labels the section names. Same current offering read the "What you
+          // offer" beat renders; product-kind items only, because "Names <a service>" would be a
+          // different claim.
+          const { data: offRow } = await loose()
+            .from("public_reads").select("payload")
+            .eq("company_id", companyId).eq("kind", "offering").eq("is_current", true)
+            .limit(1).maybeSingle();
+          const offItems = ((offRow as { payload?: { items?: unknown } } | null)?.payload?.items ?? []) as Array<{
+            label?: unknown; kind_hint?: unknown;
+          }>;
+          offeringProductLabels = offItems
+            .filter((i) => String(i?.kind_hint ?? "") === "product")
+            .map((i) => String(i?.label ?? "").trim())
+            .filter(Boolean);
+
           const { data: uiRows } = await loose()
             .from("integrity_runs").select("status")
             .eq("company_id", companyId).eq("component", "first_read_market_outcomes")
@@ -1214,6 +1230,7 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             observedMarkets,
             unstatedGroups,
             unstatedIntegrity,
+            offeringProductLabels,
             positioning,
             promise,
             strategy,
