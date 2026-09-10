@@ -11,7 +11,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { EMPTY_FIRST_READ, type FirstReadPreviewData, type FRGapPair } from "./types";
 import { groupGapStatements, orderGapPairs } from "./mapping";
-import { OPERATOR_STRINGS } from "./operatorStrings";
+import { OPERATOR_MARK, OPERATOR_STRINGS } from "./operatorStrings";
 
 const pair = (over: Partial<FRGapPair>): FRGapPair => ({
   id: "p", statementId: "s1", verdict: "confirmed",
@@ -53,6 +53,10 @@ const toGap = () => { for (let i = 0; i < gapIndex; i++) fireEvent.keyDown(windo
 const SEL = "[data-fr-operator]";
 const SEL_PROV = "[data-fr-operator-provenance]";
 const SEL_SWITCH = "[data-fr-operator-switch]";
+const SEL_ALL = `[${OPERATOR_MARK.attr}="${OPERATOR_MARK.allCompanies}"]`;
+// The gap beat's operator surface with the toggle on: total / controls / struck-blocks. Measured,
+// not assumed: 2 relevance controls + 1 struck block + the 1 new link = 4. Before the link it was 3.
+const COUNTS = "4/2/1";
 
 describe("(a) default render is the client render", () => {
   it("gap beat with an operator-decided pair and a struck pair: zero operator nodes, zero provenance tags", () => {
@@ -138,36 +142,70 @@ describe("(e) the switch is a glyph, not a label", () => {
   });
 });
 
-// FRONT DOOR (2026-09-09) — First Read was a dead end: no Link, no useNavigate, only useParams. It
-// now carries one way out. The link is a plain navigation, so the default render must still be the
-// client render: ZERO [data-fr-operator] nodes, on every beat.
-describe("(f) the way out is a link, not an operator affordance", () => {
-  it("'All companies' is in the header, points at the front door, and adds no operator node", () => {
-    const { container, getByTestId } = render(<FirstReadPreviewView />);
-    const back = getByTestId("first-read-back");
-    expect(back.textContent).toBe("All companies");
-    expect(back.getAttribute("href")).toBe("/preview/client-refine");
-    // in the sticky header, ahead of the identity line, and NOT an operator node
-    expect(back.closest(".fr-shell-header")).toBeTruthy();
-    expect(back.getAttribute("data-fr-operator")).toBeNull();
-    expect(back.closest(SEL)).toBeNull();
-    expect(container.querySelectorAll(SEL)).toHaveLength(0);
-    expect(container.querySelectorAll(SEL_PROV)).toHaveLength(0);
-  });
-
-  it("stays on every beat, and the operator-node count stays 0 across the whole flow", () => {
-    const { container, getByTestId } = render(<FirstReadPreviewView />);
+// FRONT DOOR (2026-09-09, re-ruled) — "All companies" is an OPERATOR affordance, not a client
+// element. The client never navigates, so the way out lives behind the glyph toggle with every other
+// control. Default render: no operator node and no "All companies" text anywhere on the page.
+describe("(f) the way out is an operator affordance, behind the toggle", () => {
+  it("default render: no 'All companies' node and no 'All companies' text, on every beat", () => {
+    const { container, queryByTestId } = render(<FirstReadPreviewView />);
     for (let i = 0; i < BEATS.length; i++) {
-      expect(getByTestId("first-read-back")).toBeTruthy();
+      expect(queryByTestId("first-read-back")).toBeNull();
+      expect(container.querySelectorAll(SEL_ALL)).toHaveLength(0);
       expect(container.querySelectorAll(SEL)).toHaveLength(0);
+      expect(container.textContent).not.toContain(OPERATOR_STRINGS.allCompanies);
       fireEvent.keyDown(window, { key: "ArrowRight" });
     }
   });
 
-  it("clicking it does not toggle the operator switch", () => {
+  it("toggle ON: the link appears in the header, marked as an operator node, pointing at the front door", () => {
     const { container, getByTestId } = render(<FirstReadPreviewView />);
-    fireEvent.click(getByTestId("first-read-back"));
-    expect(container.querySelector(SEL_SWITCH)!.getAttribute("data-fr-operator-switch")).toBe("off");
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    const back = getByTestId("first-read-back");
+    expect(back.textContent).toBe(OPERATOR_STRINGS.allCompanies);
+    expect(back.getAttribute("href")).toBe("/preview/client-refine");
+    expect(back.getAttribute(OPERATOR_MARK.attr)).toBe(OPERATOR_MARK.allCompanies);
+    expect(back.closest(".fr-shell-header")).toBeTruthy();
+    expect(container.querySelectorAll(SEL_ALL)).toHaveLength(1);
+  });
+
+  it("toggle OFF again: the link is gone and the text with it", () => {
+    const { container, queryByTestId } = render(<FirstReadPreviewView />);
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    expect(queryByTestId("first-read-back")).toBeTruthy();
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    expect(queryByTestId("first-read-back")).toBeNull();
     expect(container.querySelectorAll(SEL)).toHaveLength(0);
+    expect(container.textContent).not.toContain(OPERATOR_STRINGS.allCompanies);
+  });
+
+  it("it is exactly one node, and the only operator node the cold open gains", () => {
+    // The cold open carries no relevance controls, so with the toggle on the link is the whole
+    // operator surface there: 0 by default, 1 with the toggle on.
+    const { container } = render(<FirstReadPreviewView />);
+    expect(container.querySelectorAll(SEL)).toHaveLength(0);
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    expect(container.querySelectorAll(SEL)).toHaveLength(1);
+    expect(container.querySelectorAll(SEL_ALL)).toHaveLength(1);
+  });
+
+  it("on the gap beat the link adds exactly one node to the operator surface", () => {
+    const { container } = render(<FirstReadPreviewView />);
+    toGap();
+    expect(container.querySelectorAll(SEL)).toHaveLength(0);
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    const total = container.querySelectorAll(SEL).length;
+    const link = container.querySelectorAll(SEL_ALL).length;
+    const controls = container.querySelectorAll(`[${OPERATOR_MARK.attr}="${OPERATOR_MARK.controls}"]`).length;
+    const struck = container.querySelectorAll(`[${OPERATOR_MARK.attr}="${OPERATOR_MARK.struck}"]`).length;
+    expect(link).toBe(1);
+    expect(`${total}/${controls}/${struck}`).toBe(COUNTS);
+    expect(total).toBe(controls + struck + link);
+  });
+
+  it("clicking it does not toggle the operator switch back off", () => {
+    const { container, getByTestId } = render(<FirstReadPreviewView />);
+    fireEvent.click(container.querySelector(SEL_SWITCH)!);
+    fireEvent.click(getByTestId("first-read-back"));
+    expect(container.querySelector(SEL_SWITCH)!.getAttribute("data-fr-operator-switch")).toBe("on");
   });
 });

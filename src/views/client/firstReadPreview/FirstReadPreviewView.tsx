@@ -11,7 +11,7 @@ import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { OperatorControlsContext, type OperatorControls, type OperatorDecision } from "./operatorControls";
-import { OPERATOR_STRINGS } from "./operatorStrings";
+import { OPERATOR_MARK, OPERATOR_STRINGS } from "./operatorStrings";
 import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideAction";
 // Stage 2 (visual port): shell chrome — sticky Header (title / identity / segments / counter) + bottom Nav.
 import { Header, Nav } from "./shell";
@@ -301,11 +301,20 @@ export default function FirstReadPreviewView() {
           The "NN / N" counter is new text, so it is gated with the nav chrome (off by default). */}
       <Header
         backLink={
-          // The way out. First Read was a dead end: no Link, no useNavigate, only useParams. One
-          // link back to the front door, in the header, is the whole fix.
-          <Link to={CLIENT_REFINE_PREVIEW_ROUTE} className="fr-shell-link" data-testid="first-read-back">
-            All companies
-          </Link>
+          // The way out (2026-09-09, re-ruled): an OPERATOR affordance, not a client element. It is
+          // gated on the same `operatorControls` value every other operator node is gated on — null
+          // unless the glyph toggle is on — so the default render is still the client render, with
+          // no operator node and no "All companies" text anywhere on the page.
+          operatorControls ? (
+            <Link
+              to={CLIENT_REFINE_PREVIEW_ROUTE}
+              className="fr-shell-link"
+              data-testid="first-read-back"
+              {...{ [OPERATOR_MARK.attr]: OPERATOR_MARK.allCompanies }}
+            >
+              {OPERATOR_STRINGS.allCompanies}
+            </Link>
+          ) : null
         }
         title="First read"
         identity={identity}

@@ -30,6 +30,9 @@ export const OPERATOR_STRINGS = {
   /** OPERATOR KIND LABEL (2026-09-04, SIGNED): "Kind · offer" / "Kind · instruction · usage copy" / "Kind · untyped". */
   kindUntyped: "untyped",
   kindReasonSeparator: " · ",
+  /** The way out of the First Read (2026-09-09, SIGNED). Operator affordance, not a client element:
+   *  the client never navigates, so it lives behind the glyph toggle with every other control. */
+  allCompanies: "All companies",
 } as const;
 
 /** The per-row operator kind label — ONE formatter, byte-exact. null kind → "Kind · untyped"; a reason is appended
@@ -53,4 +56,5 @@ export const OPERATOR_MARK = {
   struck: "struck-pairs",
   notMeetingReady: "not-meeting-ready",
   kindLabel: "kind-label",
+  allCompanies: "all-companies",
 } as const;

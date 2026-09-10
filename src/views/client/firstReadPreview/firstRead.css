@@ -1602,8 +1602,10 @@
 .first-read .fr-front-door .font-sans { font-family: var(--fr-font-display); }
 .first-read .fr-front-door .font-mono { font-family: var(--fr-font-mono); }
 
-/* Micro-label link in the shell header (the counter's slot on the front door, the way back on a
-   First Read). Uppercase is allowed here: micro-labels are in the signed uppercase set. */
+/* Micro-label link in the shell header (the counter's slot on the front door, the operator's way out
+   on a First Read). Uppercase is allowed here: micro-labels are in the signed uppercase set.
+   STEEL is the First Read counter-slot colour and stays steel there by ruling; the FRONT DOOR raises
+   its link text to ink/70 for contrast, below. */
 .first-read .fr-shell-link {
   font-size: 11px;
   letter-spacing: 0.18em;
@@ -1618,6 +1620,12 @@
 .first-read .fr-shell-link:hover {
   color: hsl(var(--fr-ink));
   border-color: hsl(var(--fr-ink));
+}
+
+/* Front-door link text (2026-09-09 ruling): ink/70, scoped to the front door so the First Read
+   counter slot keeps steel. This is the only link text the front door renders. */
+.first-read.fr-front-door-page .fr-shell-link {
+  color: hsl(var(--fr-ink) / 0.7);
 }
 
 /* The load-failure banner. The word is carried in INK (the page's most legible colour); the alarm is
