@@ -19,6 +19,7 @@ import AiBoundaryNote from "@/components/AiBoundaryNote";
 import { sanitizeWebsite, findCompanyCollision } from "@/lib/companyCollision";
 import { InventoryTable } from "@/components/admin/InventoryTable";
 import { fetchCompaniesInventory, type CompanyInventoryRow } from "@/lib/admin/companiesInventory";
+import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import {
   Building2,
   Plus,
@@ -1067,14 +1068,17 @@ export default function AdminCompanies() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* The return leg of the legacy door. Explicit target, not "/" — the bare path used to
+                bounce here through ModeAwareMapRoute, and it now lands on the front door instead. */}
             <button
               type="button"
-              onClick={() => navigate("/")}
+              data-testid="admin-all-companies-top"
+              onClick={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
               className="font-mono text-[10px] uppercase tracking-wide px-3 py-1.5 rounded-full border transition-colors flex items-center gap-1"
               style={{ color: c.secondary, borderColor: c.line, background: c.panel }}
             >
               <ArrowLeft className="w-3 h-3" />
-              Back to Map
+              All companies
             </button>
 
             <button
@@ -1331,11 +1335,12 @@ export default function AdminCompanies() {
         {/* Footer */}
         <div className="flex items-center justify-between">
           <Link
-            to="/"
+            to={CLIENT_REFINE_PREVIEW_ROUTE}
+            data-testid="admin-all-companies-foot"
             className="font-mono text-[10px] uppercase tracking-wide"
             style={{ color: c.secondary }}
           >
-            Back to Map
+            All companies
           </Link>
           <div className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
             {companies.length} compan{companies.length === 1 ? "y" : "ies"}

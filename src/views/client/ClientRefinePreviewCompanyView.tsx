@@ -13,7 +13,8 @@ import CompanyRenameControl from "@/views/client/workshop/CompanyRenameControl";
 import { getPhaseDefinition, type EngagementPhase } from "@/lib/engagementPhase";
 import { relativeTime } from "@/views/client/workshop/helpers";
 import {
-  CLIENT_REFINE_PREVIEW_ROUTE,
+  CLIENT_REFINE_PREVIEW_HOME_ROUTE,
+  CLIENT_REFINE_PREVIEW_INBOX_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
   CLIENT_REFINE_PREVIEW_COMPANY_ROUTE,
   CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE,
@@ -1304,10 +1305,11 @@ export default function ClientRefinePreviewCompanyView() {
         <WorkshopSidebar
           activeTab="__company__"
           onTabClick={goTab}
-          onHome={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
+          onHome={() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE)}
           onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
           onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
           onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
+          onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}
         />
 
         <div className="crpv-ws-content-col" style={{ overflowY: "auto" }}>

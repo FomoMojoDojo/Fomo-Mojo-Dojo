@@ -2,7 +2,11 @@ const PREVIEW_FLAG = String(import.meta.env.VITE_ENABLE_CLIENT_REFINE_PREVIEW ??
   .trim()
   .toLowerCase();
 
+// FRONT DOOR (2026-09-09). The bare path is the companies inventory in the First Read design; the
+// former landing (MojoMap home) moved one level down to /home. Every "Home" nav link points at /home;
+// the front door is reached by "All companies".
 export const CLIENT_REFINE_PREVIEW_ROUTE = "/preview/client-refine";
+export const CLIENT_REFINE_PREVIEW_HOME_ROUTE = "/preview/client-refine/home";
 export const CLIENT_REFINE_PREVIEW_ROUTES_ROUTE = "/preview/client-refine/routes";
 export const CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE = "/preview/client-refine/workshop";
 export const CLIENT_REFINE_PREVIEW_PATH_ROUTE = "/preview/client-refine/path";
@@ -22,6 +26,7 @@ export function clientRefineFirstReadPath(companyId: string) {
 export function isClientRefinePreviewPath(pathname: string) {
   return (
     pathname === CLIENT_REFINE_PREVIEW_ROUTE ||
+    pathname === CLIENT_REFINE_PREVIEW_HOME_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_ROUTES_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE ||
     pathname === CLIENT_REFINE_PREVIEW_PATH_ROUTE ||

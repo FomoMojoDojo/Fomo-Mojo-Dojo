@@ -1,8 +1,8 @@
 // First Read — SHELL CHROME (visual port, stage 2): sticky Header (title / identity / progress
 // segments / counter) and bottom Nav (Back / forward-link / Reference / Keys hint).
 //
-// Strings: the Header renders exactly the two strings the old in-body nav rendered ("First read" and
-// the company · host identity line); the "NN / N" counter and the whole Nav are gated by the caller
+// Strings: the Header renders the two strings the old in-body nav rendered ("First read" and the
+// company · host identity line) plus the caller's optional way out ("All companies", signed 2026-09-09); the "NN / N" counter and the whole Nav are gated by the caller
 // (FIRST_READ_SHOW_NAV_CHROME) — with the flag off, the default render carries no new text.
 // The Nav's strings are the old footer's strings, moved verbatim. No data, no operator nodes.
 
@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 export type ShellBeat = { readonly key: string; readonly label: string; readonly act?: number };
 
 export function Header({
+  backLink,
   title,
   identity,
   beats,
@@ -18,6 +19,9 @@ export function Header({
   onGo,
   showCounter = false,
 }: {
+  /** The way out (2026-09-09): "All companies", left of the title and the identity line. A plain
+   *  navigation, never an operator affordance — it carries no data-fr-operator marker. */
+  backLink?: ReactNode;
   /** The surface name — the caller passes the existing signed string. */
   title: ReactNode;
   /** "{company} · {host}" from the caller (companies.name / website). */
@@ -32,6 +36,7 @@ export function Header({
     <header className="fr-shell-header">
       <div className="fr-shell-header-inner">
         <div className="fr-shell-id fr-mono">
+          {backLink ?? null}
           <span className="fr-shell-title">{title}</span>
           {identity ? <span className="fr-shell-identity">{identity}</span> : null}
         </div>

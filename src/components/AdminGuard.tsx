@@ -1,8 +1,10 @@
 import { Link, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { usePresentationMode } from '@/hooks/usePresentationMode';
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, loading } = useAuth();
+  const { mode } = usePresentationMode();
   const location = useLocation();
 
   if (loading) {
@@ -33,8 +35,13 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
   }
   if (!isAdmin) {
     const attemptedPath = location.pathname;
+    // "/" is only a safe destination in CLIENT mode, where it renders the client decision screen.
+    // In internal mode "/" redirects to /preview/client-refine, which is behind this same guard —
+    // so bouncing a non-admin there loops forever. Found when login was repointed at the front door
+    // (2026-09-09): the census expected the bounce to fix the "Access Denied" dead end, and instead
+    // it would have walked every non-admin into that loop. The refusal page is the terminating answer.
     const shouldBounceToClient =
-      !attemptedPath.startsWith("/admin");
+      !attemptedPath.startsWith("/admin") && mode === "client";
 
     if (shouldBounceToClient) {
       return <Navigate to="/" replace />;

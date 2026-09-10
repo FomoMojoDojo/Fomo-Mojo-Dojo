@@ -15,13 +15,32 @@ import { costCoverage, coverageLabel } from "../../../supabase/functions/_shared
 
 // The page palette (AdminCompanies.tsx:122) — this shell is DARK. A light-theme palette here renders
 // the company name and the fill status as near-black on near-black, i.e. invisible.
-const c = {
+type Palette = {
+  charcoal: string; secondary: string; muted: string; line: string; teal: string; red: string;
+  amber: string; frozenBg: string; frozenText: string; lime: string; electric: string;
+};
+
+export const ADMIN_PALETTE: Palette = {
   charcoal: "#eef4ff", secondary: "#c1cceb", muted: "#95a6d3",
   line: "rgba(136, 163, 218, 0.24)", teal: "#34d2be", red: "#ff8c4b", amber: "#ffca7b",
   frozenBg: "rgba(255,255,255,0.03)", frozenText: "#7c8bb5",
   // Δ tones — the signed palette: lime up, electric down, ink flat.
   lime: "#9cbe6e", electric: "#e8358b",
 };
+
+// FRONT DOOR (2026-09-09). The same table on the First Read ground: PAPER, not the admin dark shell.
+// Every entry is a --fr-* token, so the front door cannot drift from the First Read palette.
+export const FRONT_DOOR_PALETTE: Palette = {
+  charcoal: "hsl(var(--fr-ink))", secondary: "hsl(var(--fr-slate))", muted: "hsl(var(--fr-steel))",
+  line: "hsl(var(--fr-line))", teal: "hsl(var(--fr-slate))", red: "hsl(var(--fr-electric))",
+  amber: "hsl(var(--fr-warn))",
+  frozenBg: "hsl(var(--fr-line) / 0.45)", frozenText: "hsl(var(--fr-faint))",
+  lime: "hsl(var(--fr-lime))", electric: "hsl(var(--fr-electric))",
+};
+
+function paletteFor(variant: InventoryVariant | undefined): Palette {
+  return variant === "frontDoor" ? FRONT_DOOR_PALETTE : ADMIN_PALETTE;
+}
 
 function relative(iso: string | null): string {
   if (!iso) return "never";
@@ -36,19 +55,24 @@ function relative(iso: string | null): string {
 }
 
 /**
- * Two mounts, one component (2026-09-10).
+ * Three mounts, one component (2026-09-10, front door 2026-09-09).
  *
- * "admin"    — /admin/companies. Keeps the extra row actions (Open, Files, Review, Delete).
- * "readonly" — the /preview/client-refine landing. ROW CLICK ONLY. The read-only inventory law says
- *              this surface reports and does not act, so the variant renders no action column at
- *              all rather than rendering disabled buttons: an action that cannot be taken should not
- *              be drawn.
+ * "admin"     — /admin/companies. Keeps the extra row actions (Open, Files, Review, Delete).
+ * "readonly"  — ROW CLICK ONLY. The read-only inventory law says this surface reports and does not
+ *               act, so the variant renders no action column at all rather than rendering disabled
+ *               buttons: an action that cannot be taken should not be drawn.
+ * "frontDoor" — /preview/client-refine, the post-login front door. Same read-only behaviour as
+ *               "readonly"; the difference is the ground it is drawn on (First Read tokens, paper).
  */
-export type InventoryVariant = "admin" | "readonly";
+export type InventoryVariant = "admin" | "readonly" | "frontDoor";
+
+/** The table reads four fields. Narrower than `Company` so the front door can pass inventory rows
+ *  straight through instead of synthesising the ~20 columns it has no data for. */
+export type InventoryCompany = Pick<Company, "id" | "name" | "website" | "frozen">;
 
 export type InventoryTableProps = {
   variant?: InventoryVariant;
-  companies: Company[];
+  companies: InventoryCompany[];
   inventory: Map<string, CompanyInventoryRow>;
   inventoryLoading: boolean;
   activeCompanyId: string | null;
@@ -61,17 +85,18 @@ export type InventoryTableProps = {
   onDelete?: (id: string, name: string) => void;
   onOpenReview?: (id: string) => void;
   navigate?: (to: string) => void;
-  /** readonly variant: the whole row is the affordance. */
+  /** readonly + frontDoor variants: the whole row is the affordance. */
   onRowClick?: (id: string) => void;
 };
 
 export function InventoryTable(props: InventoryTableProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const cov = costCoverage();
-  const readOnly = props.variant === "readonly";
+  const readOnly = props.variant === "readonly" || props.variant === "frontDoor";
+  const c = paletteFor(props.variant);
 
   return (
-    <div className="overflow-x-auto">
+    <div className={`overflow-x-auto${props.variant === "frontDoor" ? " fr-front-door" : ""}`}>
       <table className="w-full border-collapse" data-testid="inventory-table">
         <thead>
           <tr className="font-mono text-[10px] uppercase tracking-wide" style={{ color: c.muted }}>
@@ -108,6 +133,7 @@ export function InventoryTable(props: InventoryTableProps) {
             return (
               <FragmentRow
                 key={company.id}
+                c={c}
                 readOnly={readOnly}
                 onRowClick={props.onRowClick}
                 company={company}
@@ -135,15 +161,16 @@ export function InventoryTable(props: InventoryTableProps) {
 }
 
 function FragmentRow(p: {
+  c: Palette;
   readOnly?: boolean; onRowClick?: (id: string) => void;
-  company: Company; inv: CompanyInventoryRow | null; frozen: boolean; busy: boolean;
+  company: InventoryCompany; inv: CompanyInventoryRow | null; frozen: boolean; busy: boolean;
   isActive: boolean; open: boolean; loading: boolean;
   lock?: { operation: string; started_by: string };
   userId: string | null; labelForUser: (id: string) => string;
   onToggle: () => void; onSelect: (id: string) => void; onCancelLock: (id: string) => void;
   onDelete?: (id: string, name: string) => void; onOpenReview?: (id: string) => void;
 }) {
-  const { company, inv, frozen } = p;
+  const { company, inv, frozen, c } = p;
   const text = frozen ? c.frozenText : c.charcoal;
   const cov = costCoverage(); // pure over a static registry — same answer as the header's
   return (

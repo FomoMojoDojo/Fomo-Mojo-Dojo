@@ -31,7 +31,14 @@ const READ = {
   gapCounts: { contradicted: 0, unechoed: 0, confirmed: 1, reverifying: 0 },
 } as unknown as FirstReadPreviewData;
 
-vi.mock("react-router-dom", () => ({ useParams: () => ({ companyId: "co-1" }) }));
+// The header's way out ("All companies", 2026-09-09) is a react-router <Link>, so the stub has to
+// provide one. A plain anchor keeps the DOM assertions below unchanged.
+vi.mock("react-router-dom", () => ({
+  useParams: () => ({ companyId: "co-1" }),
+  Link: ({ to, children, ...rest }: { to: string; children?: unknown }) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ({ type: "a", props: { href: to, ...rest, children }, key: null, ref: null, $$typeof: Symbol.for("react.element") }) as any,
+}));
 vi.mock("./useFirstReadPreviewData", () => ({ useFirstReadPreviewData: () => ({ data: READ, loading: false, error: null }) }));
 vi.mock("@/hooks/useFirstReadOpenQuestions", () => ({ useFirstReadOpenQuestions: () => ({ questions: [] }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn(), functions: { invoke: vi.fn() } } }));
@@ -128,5 +135,39 @@ describe("(e) the switch is a glyph, not a label", () => {
     fireEvent.click(sw);
     expect(sw.getAttribute("aria-pressed")).toBe("true");
     expect(sw.textContent?.trim()).toBe("");
+  });
+});
+
+// FRONT DOOR (2026-09-09) — First Read was a dead end: no Link, no useNavigate, only useParams. It
+// now carries one way out. The link is a plain navigation, so the default render must still be the
+// client render: ZERO [data-fr-operator] nodes, on every beat.
+describe("(f) the way out is a link, not an operator affordance", () => {
+  it("'All companies' is in the header, points at the front door, and adds no operator node", () => {
+    const { container, getByTestId } = render(<FirstReadPreviewView />);
+    const back = getByTestId("first-read-back");
+    expect(back.textContent).toBe("All companies");
+    expect(back.getAttribute("href")).toBe("/preview/client-refine");
+    // in the sticky header, ahead of the identity line, and NOT an operator node
+    expect(back.closest(".fr-shell-header")).toBeTruthy();
+    expect(back.getAttribute("data-fr-operator")).toBeNull();
+    expect(back.closest(SEL)).toBeNull();
+    expect(container.querySelectorAll(SEL)).toHaveLength(0);
+    expect(container.querySelectorAll(SEL_PROV)).toHaveLength(0);
+  });
+
+  it("stays on every beat, and the operator-node count stays 0 across the whole flow", () => {
+    const { container, getByTestId } = render(<FirstReadPreviewView />);
+    for (let i = 0; i < BEATS.length; i++) {
+      expect(getByTestId("first-read-back")).toBeTruthy();
+      expect(container.querySelectorAll(SEL)).toHaveLength(0);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+    }
+  });
+
+  it("clicking it does not toggle the operator switch", () => {
+    const { container, getByTestId } = render(<FirstReadPreviewView />);
+    fireEvent.click(getByTestId("first-read-back"));
+    expect(container.querySelector(SEL_SWITCH)!.getAttribute("data-fr-operator-switch")).toBe("off");
+    expect(container.querySelectorAll(SEL)).toHaveLength(0);
   });
 });

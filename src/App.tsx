@@ -41,6 +41,7 @@ import ClientViewVisibilityAuditPage from "./pages/ClientViewVisibilityAudit";
 import ClientDecisionSystemView from "./views/client/ClientDecisionSystemView";
 import ClientStoryView from "./views/client/ClientStoryView";
 import ClientRefinePreviewView from "./views/client/ClientRefinePreviewView";
+import FrontDoorView from "./views/client/frontDoor/FrontDoorView";
 import ClientRefinePreviewRoutesView from "./views/client/ClientRefinePreviewRoutesView";
 import ClientRefinePreviewWorkshopView from "./views/client/ClientRefinePreviewWorkshopView";
 import ClientRefinePreviewPathView from "./views/client/ClientRefinePreviewPathView";
@@ -54,6 +55,7 @@ import { dispatchClientPhaseChange, writeStoredClientPhase } from "./hooks/useCl
 import { isClientPhasePath } from "./lib/clientPhaseRoutes";
 import {
   CLIENT_REFINE_PREVIEW_ROUTE,
+  CLIENT_REFINE_PREVIEW_HOME_ROUTE,
   CLIENT_REFINE_PREVIEW_ROUTES_ROUTE,
   CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE,
   CLIENT_REFINE_PREVIEW_PATH_ROUTE,
@@ -157,6 +159,18 @@ function AdminModeRoute({ children }: { children: JSX.Element }) {
   return <AdminGuard>{children}</AdminGuard>;
 }
 
+// The front door — the bare path. Same double gate as every other client-refine surface.
+function FrontDoorRoute() {
+  return (
+    <AdminModeRoute>
+      <InternalViewOnlyRoute>
+        <FrontDoorView />
+      </InternalViewOnlyRoute>
+    </AdminModeRoute>
+  );
+}
+
+// The former landing, one level down at /home. Guards unchanged.
 function ClientRefinePreviewRoute() {
   return (
     <AdminModeRoute>
@@ -267,7 +281,8 @@ const App = () => (
                 <Route path="/execution" element={<ClientPhaseAliasRoute phase="execution" fallbackPath="/opportunities" />} />
                 <Route path="/learning" element={<ClientPhaseAliasRoute phase="execution" fallbackPath="/analytics" />} />
                 {/* Surface A — MojoMap (product) */}
-                <Route path={CLIENT_REFINE_PREVIEW_ROUTE} element={<ClientRefinePreviewRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_ROUTE} element={<FrontDoorRoute />} />
+                <Route path={CLIENT_REFINE_PREVIEW_HOME_ROUTE} element={<ClientRefinePreviewRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_ROUTES_ROUTE} element={<ClientRefinePreviewRoutesRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE} element={<ClientRefinePreviewWorkshopRoute />} />
                 <Route path={CLIENT_REFINE_PREVIEW_PATH_ROUTE} element={<ClientRefinePreviewPathRoute />} />

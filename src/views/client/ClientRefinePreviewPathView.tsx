@@ -3,7 +3,7 @@ import { useClientViewData } from "@/hooks/useClientViewData";
 import { useCompany } from "@/hooks/useCompany";
 import { useRoutes } from "@/hooks/useRoutes";
 import { getActivePath, clearActivePath } from "@/lib/activePath";
-import { CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE } from "@/lib/clientRefinePreview";
 import { routeRelativeTime } from "@/lib/routeDecision";
 import "@/styles/client-refine-preview.css";
 
@@ -84,6 +84,16 @@ export default function ClientRefinePreviewPathView() {
           style={{ fontSize: 12, color: "#888", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
         >
           ← Workshop
+        </button>
+        {/* Path keeps its one-off top bar (it is not a sidebar page) but gains the front door, so it
+            is no longer a one-exit surface. */}
+        <button
+          type="button"
+          data-all-companies
+          onClick={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
+          style={{ fontSize: 12, color: "#888", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+        >
+          All companies
         </button>
         <span style={{ fontSize: 9, fontFamily: "monospace", letterSpacing: "0.1em", color: "#bbb", textTransform: "uppercase" }}>
           Active path

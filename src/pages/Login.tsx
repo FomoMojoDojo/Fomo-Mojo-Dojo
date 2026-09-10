@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { HAS_SUPABASE_CREDENTIALS } from '@/integrations/supabase/client';
+import { CLIENT_REFINE_PREVIEW_ROUTE } from '@/lib/clientRefinePreview';
 
 const c = {
   bg: "#faf7f6",
@@ -66,7 +67,9 @@ export default function Login() {
       if (error) {
         setError(error.message);
       } else {
-        navigate('/admin/companies');
+        // The front door. /admin/companies is the legacy site now, and it was also the one path
+        // AdminGuard refuses to bounce — a non-admin landed on "Access Denied" instead of a surface.
+        navigate(CLIENT_REFINE_PREVIEW_ROUTE);
       }
     }
   };

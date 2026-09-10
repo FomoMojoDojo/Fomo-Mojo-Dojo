@@ -30,7 +30,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { pollPublicBaselineTerminal } from "@/lib/pollPublicBaseline";
 import { captureBaseline } from "@/lib/baselineCapture";
 import { saveManualEdit } from "@/lib/manualInlineEdit";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_HOME_ROUTE, CLIENT_REFINE_PREVIEW_ROUTES_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useDriftScan } from "@/hooks/useDriftScan";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
@@ -1091,7 +1091,7 @@ export default function ClientRefinePreviewWorkshopView() {
   }, [workshopHasHierarchy, workshopTopLevelRoutes, workshopClaimsMap]);
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
-  const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
+  const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE), [navigate]);
   const handleRouteSelect = useCallback(
     (routeId: string) => { setPendingInspectRouteId(routeId); setActiveTab("routes"); },
     [],

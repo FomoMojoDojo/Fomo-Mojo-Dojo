@@ -47,3 +47,64 @@ describe("WorkshopSidebar — First read under Inputs", () => {
     expect(queryByText("First read")).toBeNull();
   });
 });
+
+// FRONT DOOR (2026-09-09) — "All companies" is the one link every sidebar page shares. "← Home" is
+// the MojoMap home for the ACTIVE company; those are now two different places, so the sidebar
+// carries both and the front door sits above everything.
+describe("WorkshopSidebar — All companies", () => {
+  it("renders above '← Home' and navigates to the front door", () => {
+    activeCompany = { id: "co-123", name: "Cafe Barra" };
+    const { getByText } = render(
+      <MemoryRouter>
+        <WorkshopSidebar activeTab="inputs" onTabClick={noop} onHome={noop} />
+      </MemoryRouter>,
+    );
+    const all = getByText("All companies");
+    const home = getByText("← Home");
+    expect(all.compareDocumentPosition(home) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(all);
+    expect(navigateSpy).toHaveBeenCalledWith("/preview/client-refine");
+  });
+
+  it("is present on the home page too, where '← Home' is not", () => {
+    activeCompany = { id: "co-123", name: "Cafe Barra" };
+    const { getByText, queryByText } = render(
+      <MemoryRouter>
+        <WorkshopSidebar activeTab={null} onTabClick={noop} onHome={noop} isHome />
+      </MemoryRouter>,
+    );
+    expect(getByText("All companies")).toBeTruthy();
+    expect(queryByText("← Home")).toBeNull();
+  });
+
+  it("survives having no active company — the front door needs no selection", () => {
+    activeCompany = null;
+    const { getByText, queryByText } = render(
+      <MemoryRouter>
+        <WorkshopSidebar activeTab={null} onTabClick={noop} onHome={noop} />
+      </MemoryRouter>,
+    );
+    expect(getByText("All companies")).toBeTruthy();
+    expect(queryByText("First read")).toBeNull();
+  });
+
+  it("with the full prop set, every sidebar destination is drawn", () => {
+    activeCompany = { id: "co-123", name: "Cafe Barra" };
+    const { getByText } = render(
+      <MemoryRouter>
+        <WorkshopSidebar
+          activeTab={null}
+          onTabClick={noop}
+          onHome={noop}
+          onCompany={noop}
+          onMembers={noop}
+          onExtracts={noop}
+          onInbox={noop}
+        />
+      </MemoryRouter>,
+    );
+    for (const label of ["All companies", "← Home", "First read", "Inbox", "Company", "Member roles", "Extracts"]) {
+      expect(getByText(label)).toBeTruthy();
+    }
+  });
+});

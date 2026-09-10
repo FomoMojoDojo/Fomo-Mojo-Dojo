@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { InventoryTable } from "./InventoryTable";
+import { InventoryTable, ADMIN_PALETTE, FRONT_DOOR_PALETTE } from "./InventoryTable";
 import { buildInventory, type CompanyInventoryRow } from "@/lib/admin/companiesInventory";
 import type { Company } from "@/hooks/useCompany";
 
@@ -229,5 +229,77 @@ describe("readonly variant — row click only", () => {
     const { getByTestId, container } = renderTable(rows, invs);
     expect(container.textContent).toContain("Actions");
     expect(getByTestId("delete-live1")).toBeTruthy();
+  });
+});
+
+// FRONT DOOR variant (2026-09-09) — the post-login landing. Same read-only behaviour as "readonly";
+// the difference is the ground it is drawn on. Both halves are asserted: the law (no action column)
+// and the design (the front-door hook class that carries the First Read faces).
+describe("frontDoor variant — the read-only law holds on the new ground", () => {
+  const rows = [co("live1", "Riverlane", false), co(CB1, "Cafe Barra", true)];
+  const invs = [inv("live1"), inv(CB1, { frozen: true })];
+
+  function renderFrontDoor(onRowClick: (id: string) => void = () => {}) {
+    return render(
+      <MemoryRouter>
+        <InventoryTable
+          variant="frontDoor"
+          companies={rows}
+          inventory={new Map(invs.map((r) => [r.id, r]))}
+          inventoryLoading={false}
+          activeCompanyId={null}
+          runLocksByCompany={{}}
+          userId="u1"
+          labelForUser={(id) => id}
+          busyIds={{ researchingId: null, baselineId: null, comboId: null }}
+          onSelect={() => {}}
+          onCancelLock={() => {}}
+          onRowClick={onRowClick}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  // VACUOUS PROOF TARGET. Drop "frontDoor" from the readOnly derivation in InventoryTable and this
+  // assertion goes red: the variant would render the Actions column, Delete included.
+  it("renders NO action column and NO mutating control", () => {
+    const { container, queryByTestId } = renderFrontDoor();
+    expect(container.textContent).not.toContain("Actions");
+    expect(container.textContent).not.toContain("Delete");
+    expect(queryByTestId("delete-live1")).toBeNull();
+    expect(queryByTestId(`delete-${CB1}`)).toBeNull();
+    expect(container.querySelectorAll("button[disabled]")).toHaveLength(0);
+  });
+
+  it("carries the front-door class, so the First Read faces and tokens reach the table", () => {
+    const { container } = renderFrontDoor();
+    expect(container.querySelector(".fr-front-door")).toBeTruthy();
+  });
+
+  it("draws every colour from a --fr-* token, and no admin-shell hex reaches the DOM", () => {
+    // The palette itself: every entry is a token, so the front door cannot drift from First Read.
+    for (const [key, value] of Object.entries(FRONT_DOOR_PALETTE)) {
+      expect(`${key}=${value}`).toMatch(/=hsl\(var\(--fr-/);
+    }
+    // And the rendered DOM: jsdom drops hsl(var(--fr-*)) declarations it cannot parse, so the
+    // positive half of this belongs to the browser check, not here. What it CAN prove is that the
+    // dark admin palette is not what got rendered.
+    const { container } = renderFrontDoor();
+    const styled = [...container.querySelectorAll<HTMLElement>("[style]")]
+      .map((n) => n.getAttribute("style") ?? "")
+      .join(" ")
+      .toLowerCase();
+    for (const adminValue of Object.values(ADMIN_PALETTE)) {
+      if (!adminValue.startsWith("#")) continue;
+      expect(styled).not.toContain(adminValue.toLowerCase());
+    }
+  });
+
+  it("a row click reports the company id, frozen rows included", () => {
+    const seen: string[] = [];
+    const { getByText } = renderFrontDoor((id) => { seen.push(id); });
+    (getByText("Riverlane") as HTMLElement).click();
+    (getByText("Cafe Barra") as HTMLElement).click();
+    expect(seen).toEqual(["live1", CB1]);
   });
 });

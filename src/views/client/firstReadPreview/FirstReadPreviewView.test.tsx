@@ -6,7 +6,14 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { EMPTY_FIRST_READ } from "./types";
 
-vi.mock("react-router-dom", () => ({ useParams: () => ({ companyId: "co-1" }) }));
+// The header's way out ("All companies", 2026-09-09) is a react-router <Link>, so the stub has to
+// provide one. A plain anchor keeps the DOM assertions below unchanged.
+vi.mock("react-router-dom", () => ({
+  useParams: () => ({ companyId: "co-1" }),
+  Link: ({ to, children, ...rest }: { to: string; children?: unknown }) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ({ type: "a", props: { href: to, ...rest, children }, key: null, ref: null, $$typeof: Symbol.for("react.element") }) as any,
+}));
 vi.mock("./useFirstReadPreviewData", () => ({
   useFirstReadPreviewData: () => ({
     data: { ...EMPTY_FIRST_READ, company: { name: "Geniant", website: "https://geniant.com" } },

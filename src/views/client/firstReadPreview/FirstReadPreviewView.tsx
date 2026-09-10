@@ -5,7 +5,7 @@
 // only; no fixture data is reachable from this route.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import "./firstRead.css";
 import { useFirstReadPreviewData } from "./useFirstReadPreviewData";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,7 @@ import { decideRelevance, overrideFailureMessage } from "./relevanceOverrideActi
 import { Header, Nav } from "./shell";
 import { useFirstReadOpenQuestions } from "@/hooks/useFirstReadOpenQuestions";
 import { bareHost } from "./mapping";
+import { CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import {
   ActArc,
   ActFindings,
@@ -299,6 +300,13 @@ export default function FirstReadPreviewView() {
           ("First read" + identity) and the progress segments, on EVERY beat (the cold open included).
           The "NN / N" counter is new text, so it is gated with the nav chrome (off by default). */}
       <Header
+        backLink={
+          // The way out. First Read was a dead end: no Link, no useNavigate, only useParams. One
+          // link back to the front door, in the header, is the whole fix.
+          <Link to={CLIENT_REFINE_PREVIEW_ROUTE} className="fr-shell-link" data-testid="first-read-back">
+            All companies
+          </Link>
+        }
         title="First read"
         identity={identity}
         beats={BEATS}

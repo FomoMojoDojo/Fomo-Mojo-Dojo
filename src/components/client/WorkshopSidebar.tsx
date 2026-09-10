@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSurfaceTeachingMode } from "@/hooks/useSurfaceTeachingMode";
 import { useCompany } from "@/hooks/useCompany";
-import { clientRefineFirstReadPath } from "@/lib/clientRefinePreview";
+import { clientRefineFirstReadPath, CLIENT_REFINE_PREVIEW_ROUTE } from "@/lib/clientRefinePreview";
 import { CLIENT_VIEW_ROUTE } from "@/lib/clientStoryView";
 
 const SIDEBAR_TABS = [
@@ -71,6 +71,19 @@ export function WorkshopSidebar({
 
       {!collapsed && (
         <>
+          {/* "All companies" (2026-09-09) — the front door, above everything. It is the one link
+              every sidebar page shares: "← Home" is the MojoMap home for the ACTIVE company, and
+              those are now two different places. */}
+          <button
+            type="button"
+            data-all-companies
+            className="crpv-ws-tab crpv-ws-tab-home"
+            onClick={() => navigate(CLIENT_REFINE_PREVIEW_ROUTE)}
+          >
+            All companies
+          </button>
+          <div className="crpv-ws-tab-divider" />
+
           {!isHome && (
             <>
               <button

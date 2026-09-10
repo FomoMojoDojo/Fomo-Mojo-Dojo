@@ -14,7 +14,7 @@ import { saveManualEdit } from "@/lib/manualInlineEdit";
 import InlineTextEdit from "@/components/inline-edit/InlineTextEdit";
 import InlineTextareaEdit from "@/components/inline-edit/InlineTextareaEdit";
 import { useRoutes, type RouteAssumption } from "@/hooks/useRoutes";
-import { CLIENT_REFINE_PREVIEW_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
+import { CLIENT_REFINE_PREVIEW_HOME_ROUTE, CLIENT_REFINE_PREVIEW_COMPANY_ROUTE, CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE, CLIENT_REFINE_PREVIEW_PATH_ROUTE, CLIENT_REFINE_PREVIEW_INBOX_ROUTE, CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE, CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE } from "@/lib/clientRefinePreview";
 import { useDriftInboxCount } from "@/hooks/useDriftInbox";
 import { setActivePath } from "@/lib/activePath";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -174,7 +174,7 @@ export default function ClientRefinePreviewRoutesView() {
   const { totalUnresolved: inboxCount, newCount: inboxNewCount } = useDriftInboxCount(activeCompany?.id);
 
   const goToMainSite   = useCallback(() => navigate("/"), [navigate]);
-  const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_ROUTE), [navigate]);
+  const goToRefineHome = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE), [navigate]);
   const goToWorkshop   = useCallback(() => navigate(CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE), [navigate]);
 
   const handleStageChange = useCallback((stage: SignalStage) => {
@@ -339,6 +339,7 @@ export default function ClientRefinePreviewRoutesView() {
           activeTab="routes"
           onTabClick={(tab) => navigate(`${CLIENT_REFINE_PREVIEW_WORKSHOP_ROUTE}?tab=${tab}`)}
           onHome={goToRefineHome}
+          onCompany={() => navigate(CLIENT_REFINE_PREVIEW_COMPANY_ROUTE)}
           onMembers={() => navigate(CLIENT_REFINE_PREVIEW_MEMBERS_ROUTE)}
           onExtracts={() => navigate(CLIENT_REFINE_PREVIEW_EXTRACTS_ROUTE)}
           onInbox={() => navigate(CLIENT_REFINE_PREVIEW_INBOX_ROUTE)}

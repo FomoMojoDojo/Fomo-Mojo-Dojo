@@ -12,7 +12,7 @@ import { useLlmTraceDebug } from "@/hooks/useLlmTraceDebug";
 import { usePresentationMode } from "@/hooks/usePresentationMode";
 import { isClientPhasePath } from "@/lib/clientPhaseRoutes";
 import {
-  CLIENT_REFINE_PREVIEW_ROUTE,
+  CLIENT_REFINE_PREVIEW_HOME_ROUTE,
   isClientRefinePreviewEnabled,
   isClientRefinePreviewPath,
 } from "@/lib/clientRefinePreview";
@@ -303,7 +303,7 @@ export default function TopNav() {
 
     safeLocalStorageSet("mojo.presentation.mode", "internal");
     setMode("internal");
-    navigate(CLIENT_REFINE_PREVIEW_ROUTE);
+    navigate(CLIENT_REFINE_PREVIEW_HOME_ROUTE);
 
     if (typeof window !== "undefined" && !isDesktop()) {
       setSidebarOpen(false);

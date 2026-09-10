@@ -216,7 +216,15 @@ export function buildInventory(input: {
 }
 
 /** Fetch everything the inventory needs. Eight SELECTs, all small (~3.8k narrow rows fleet-wide). */
+/** The front door needs to tell "no companies" apart from "the query failed", so the fetch reports
+ *  the companies error instead of swallowing it. `fetchCompaniesInventory` keeps its old shape. */
+export type InventoryFetchResult = { rows: CompanyInventoryRow[]; error: string | null };
+
 export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> {
+  return (await fetchCompaniesInventoryResult()).rows;
+}
+
+export async function fetchCompaniesInventoryResult(): Promise<InventoryFetchResult> {
   // deno-lint-ignore no-explicit-any
   const sb = supabase as any;
   const [companies, mojoScores, integrity, ownWords, deltas, reads, recurrence, baselines, ledger, modelCalls] = await Promise.all([
@@ -231,7 +239,10 @@ export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> 
     sb.from("long_runner_runs").select("company_id, run_kind, status, started_at").in("run_kind", ["fr_own_words", "recurrence_step"]),
     sb.from("model_calls").select("company_id, run_id, usd, created_at"),
   ]);
-  return buildInventory({
+  // Only the companies query is fatal: it is the spine every other row hangs off. A failure in a
+  // satellite query leaves its cells empty ("—" / "not captured yet"), which is already honest.
+  const companiesError: string | null = companies.error?.message ?? null;
+  const rows = buildInventory({
     companies: companies.data ?? [],
     mojoScores: mojoScores.data ?? [],
     integrity: integrity.data ?? [],
@@ -243,6 +254,7 @@ export async function fetchCompaniesInventory(): Promise<CompanyInventoryRow[]> 
     ledger: ledger.data ?? [],
     modelCalls: modelCalls.data ?? [],
   });
+  return { rows, error: companiesError };
 }
 
 /** Coverage is COMPUTED from the site registry — "partial" is a fact, not a maintained label. */
