@@ -23,25 +23,50 @@ export type FreshnessInput = {
 
 export type FreshnessVerdict = {
   stale: boolean;
-  reason: "no_claims" | "no_deltas" | "claims_newer" | "deltas_current";
+  reason: "no_claims" | "no_deltas_with_claims" | "claims_newer" | "deltas_current";
+  /** Both timestamps, so the ledger note can show its working. */
+  newestOwnWordsAt?: string | null;
+  newestDeltaAt?: string | null;
 };
 
 /**
  * Are the deltas stale relative to the declared side?
  *
- * no claims  → never stale (nothing to be out of date with; leave the existing guard's answer alone)
- * no deltas  → not "stale"; there is nothing to supersede, and plain presence already says run
- * claims newer than deltas → STALE, recompute
+ * no claims                → never stale; there is nothing to be out of date with.
+ * claims but NO deltas     → STALE (2026-09-10). Presence can come from a completed or
+ *                            skipped_empty_input `first_read_gap_pairs` integrity row rather than
+ *                            from deltas, and that row alone was enough to skip forever: a company
+ *                            whose gap pairs ran early and found nothing to pair, then later gained
+ *                            own-words claims, would never pair them. An integrity row is a record
+ *                            that we looked, not evidence that the looking is still current.
+ * claims newer than deltas → STALE, recompute.
  */
 export function gapPairsStaleness(input: FreshnessInput): FreshnessVerdict {
-  if (!input.newestOwnWordsAt) return { stale: false, reason: "no_claims" };
-  if (!input.newestDeltaAt) return { stale: false, reason: "no_deltas" };
+  const stamps = { newestOwnWordsAt: input.newestOwnWordsAt, newestDeltaAt: input.newestDeltaAt };
+  if (!input.newestOwnWordsAt) return { stale: false, reason: "no_claims", ...stamps };
+  if (!input.newestDeltaAt) return { stale: true, reason: "no_deltas_with_claims", ...stamps };
   const claims = Date.parse(input.newestOwnWordsAt);
   const deltas = Date.parse(input.newestDeltaAt);
-  if (!Number.isFinite(claims) || !Number.isFinite(deltas)) return { stale: false, reason: "deltas_current" };
+  if (!Number.isFinite(claims) || !Number.isFinite(deltas)) return { stale: false, reason: "deltas_current", ...stamps };
   return claims > deltas
-    ? { stale: true, reason: "claims_newer" }
-    : { stale: false, reason: "deltas_current" };
+    ? { stale: true, reason: "claims_newer", ...stamps }
+    : { stale: false, reason: "deltas_current", ...stamps };
+}
+
+/** The ledger note for a gap-pairs decision — it shows its working, both timestamps included. */
+export function gapPairsFreshnessNote(f: FreshnessVerdict): string {
+  const claim = f.newestOwnWordsAt ?? "none";
+  const delta = f.newestDeltaAt ?? "none";
+  switch (f.reason) {
+    case "deltas_current":
+      return `fresh — newest claim ${claim} ≤ newest delta ${delta}`;
+    case "claims_newer":
+      return `stale — recomputed · newest claim ${claim} > newest delta ${delta}`;
+    case "no_deltas_with_claims":
+      return `stale — recomputed · newest claim ${claim}, no deltas yet (an integrity row is not evidence)`;
+    case "no_claims":
+      return `fresh — no own-words claims to pair (newest delta ${delta})`;
+  }
 }
 
 /**

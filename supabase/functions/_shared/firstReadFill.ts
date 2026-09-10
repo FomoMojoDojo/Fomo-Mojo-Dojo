@@ -316,6 +316,9 @@ export type ChainKindStep = {
   alreadyPresent: () => Promise<boolean>;
   /** The producer call(s). Returns the kind's terminal + an optional human ledger note. */
   run: () => Promise<{ status: ChainKindTerminal; note?: string }>;
+  /** Optional note for the SKIP path, so a step can explain WHY it was already present
+   *  (2026-09-10: gap pairs shows its freshness working instead of a bare no-op line). */
+  presenceNote?: () => string | null;
 };
 
 export type ChainKindOutcome = { kind: string; status: ChainKindTerminal | "skipped"; note?: string };
@@ -346,7 +349,8 @@ export async function runChainKinds(steps: ChainKindStep[], deps: RunChainKindsD
       continue;
     }
     if (present) {
-      await deps.recordChainLedger(step.kind, "completed_empty", "already present — first-fill no-op");
+      const extra = step.presenceNote?.() ?? null;
+      await deps.recordChainLedger(step.kind, "completed_empty", extra ?? "already present — first-fill no-op");
       outcomes.push({ kind: step.kind, status: "skipped" });
       continue;
     }

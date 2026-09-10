@@ -24,7 +24,7 @@ import {
   type ChainKindStep, type ChainKindTerminal, type DepRow,
 } from "../_shared/firstReadFill.ts";
 import { handOffToResumeStepper, isGatewayCut, newResumeState, resumeHandoffNote } from "../_shared/gatewayResume.ts";
-import { gapPairsAlreadyPresent, gapPairsStaleness } from "../_shared/gapPairsFreshness.ts";
+import { gapPairsAlreadyPresent, gapPairsFreshnessNote, gapPairsStaleness, type FreshnessVerdict } from "../_shared/gapPairsFreshness.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -276,6 +276,22 @@ Deno.serve(async (req) => {
     // unless recurrence has ALSO terminated, so whichever upstream lands last is the one that opens
     // the gate. (Recurrence fires the same stage from its own finalize.)
     if (kind === "own_words") waitUntil(firePublicReadsStage());
+
+    // 2026-09-10 — RE-ENTER ON AN OWN-WORDS **WRITE**. The declared side just changed, so gap pairs
+    // must re-evaluate its freshness predicate. This covers the out-of-band paths the in-chain
+    // ordering does not: a gateway-resume write that lands long after the chain moved on, and a
+    // manual write. On the normal path the re-entry is redundant (gap pairs runs next in this very
+    // chain) and idempotent — it finds the deltas fresh and skips.
+    //
+    // LOOP GUARD: fire ONLY on a note carrying "wrote " — i.e. an actual write terminal. A re-entry's
+    // own-words is always the already-present skip path, whose note is "already present …", so the
+    // chain is exactly one hop deep and cannot recur.
+    if (kind === "own_words" && (note ?? "").includes("wrote ")) {
+      waitUntil(fetch(`${url}/functions/v1/first-read-fill`, {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+        body: JSON.stringify({ company_id, parent_run_id }),
+      }).catch(() => {}));
+    }
   };
 
   // Most-recent first_read_gap_pairs integrity status (the worker owns this row). Used by the 504
@@ -374,6 +390,9 @@ Deno.serve(async (req) => {
   // failed / completed_empty). The relevance chain kind below dispatches the stepper when armed OR when
   // unstamped judgeable rows already exist from an earlier run; the stepper itself self-gates.
   let relevanceArmed = false;
+  // The freshness verdict from the presence check, banked so both the skip note and the run note can
+  // show their working (which timestamps decided it).
+  let gapFreshness: FreshnessVerdict | null = null;
   const gapPairsStep: ChainKindStep = {
     kind: "public_gap_pairs",
     alreadyPresent: async () => {
@@ -398,11 +417,13 @@ Deno.serve(async (req) => {
         newestOwnWordsAt: ((owNewest ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
         newestDeltaAt: ((dNewest ?? []) as Array<{ computed_at: string }>)[0]?.computed_at ?? null,
       });
+      gapFreshness = freshness;
       if (freshness.stale) {
-        console.log(`[first-read-fill] gap pairs STALE (${freshness.reason}) — recomputing against the newer declared side`);
+        console.log(`[first-read-fill] gap pairs STALE (${freshness.reason}) — ${gapPairsFreshnessNote(freshness)}`);
       }
       return gapPairsAlreadyPresent(present, freshness);
     },
+    presenceNote: () => (gapFreshness ? gapPairsFreshnessNote(gapFreshness) : null),
     run: async () => {
       // GATE D — SELF-GATE on the resumed component. own-words may be mid-resume (handed off to the
       // stepper); comparing against a declared side that has not landed yet would bank a weaker
@@ -420,7 +441,8 @@ Deno.serve(async (req) => {
         // The worker returns success-shaped with a marker for the earned no-declared-side empty state.
         if (data.skipped === "no_declared_claims" || data.empty === true) return { status: "completed_empty" as const, note: "no declared side — nothing to compare yet" };
         relevanceArmed = true; // completed terminal → the relevance kind fires next
-        return { status: "completed" as const, note: "public deltas computed" };
+        const why = gapFreshness ? ` · ${gapPairsFreshnessNote(gapFreshness)}` : "";
+        return { status: "completed" as const, note: `public deltas computed${why}` };
       }
       // GATEWAY CUT (504/502/408): the worker isolate may have outrun the response and finished
       // server-side (it owns first_read_gap_pairs). Confirm-poll that row, bounded by GAP_POLL_BUDGET_MS
