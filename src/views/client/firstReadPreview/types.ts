@@ -370,6 +370,15 @@ export type FirstReadPreviewData = {
    * Governs the empty-beat line — never derived from array emptiness alone.
    */
   gapIntegrity: "not_yet" | "looked_none" | "couldnt_check";
+  /** Gate 4b — groups the market pass SAW but could not state in the customers' terms: the
+   *  rejected_solution / rejected_buyer outcomes of THIS company's current manifest. Never the folds
+   *  (their people are already visible inside the group they folded into), never already_decided
+   *  (that IS one of the numbered groups), never error (no ruling exists to report). */
+  unstatedGroups: FRUnstatedGroup[];
+  /** GATE (mirrors gapIntegrity/offeringIntegrity): the market-pass integrity state. An absent
+   *  section is indistinguishable from "we found nothing to say", and the whole point of this beat is
+   *  that an absence must be explained — so the section always renders, from this record. */
+  unstatedIntegrity: "not_yet" | "looked_none" | "couldnt_check";
   // ── "What we see" public register (public-beats gate, 2026-08-20) ──
   /** R3: ids of channel rows hidden by the junk filter (reported, never silent). */
   channelJunkIds: string[];
@@ -439,6 +448,8 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   reverseRows: [],
   statusConflicts: [],
   gapIntegrity: "not_yet",
+  unstatedGroups: [],
+  unstatedIntegrity: "not_yet",
   channelJunkIds: [],
   channelOffHostIds: [],
   channelIneligibleIds: [],
@@ -457,4 +468,17 @@ export const EMPTY_FIRST_READ: FirstReadPreviewData = {
   offeringExamined: null,
   offeringThroughDate: null,
   offeringOpenQuestions: [],
+};
+
+/** Gate 4b — one group the read saw but could not state in the customers' terms. `judgeReason` is the
+ *  judge's VERBATIM clause; it is operator-only and never rendered in the client sub-line, which uses
+ *  the signed plain-words string for the outcome class instead. */
+export type FRUnstatedGroup = {
+  id: string;
+  who: string;
+  job: string | null;
+  relationshipKind: string | null;
+  outcome: "rejected_solution" | "rejected_buyer";
+  judgeReason: string | null;
+  reconstructed: boolean;
 };

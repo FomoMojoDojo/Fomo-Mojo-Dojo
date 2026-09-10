@@ -42,6 +42,17 @@
 // the error terminal. One direction only — no import cycle.
 import { marketIdentity, CANDIDATE_ERROR_COMPONENT } from "./marketPortfolioDiscovery.ts";
 
+/** Outcomes that constitute a RULING. Mirrors the market_candidate_outcomes CHECK minus 'error',
+ *  which is a terminal without a ruling: accounted, never decided. */
+export const DECIDED_OUTCOMES = [
+  "accepted_active",
+  "accepted_deferred",
+  "deduped",
+  "rejected_solution",
+  "rejected_buyer",
+  "already_decided",
+] as const;
+
 /** The manifest shape the confirm-poll holds — chain_state.candidates entries are untyped JSON. */
 export type MarketCandidateRef = { job_executor?: unknown; jtbd?: unknown };
 
@@ -83,11 +94,34 @@ export async function marketCandidateDecided(args: {
     market_register: "public_inferred",
   })) return true;
 
+  const identity = await marketIdentity(executor, jtbd);
+
   // (2) a persisted gate-(b)/(c) decision on the original identity.
-  return await args.exists("market_discovery_verdicts", {
+  if (await args.exists("market_discovery_verdicts", {
     company_id: args.companyId,
-    market_a_identity: await marketIdentity(executor, jtbd),
-  });
+    market_a_identity: identity,
+  })) return true;
+
+  // (3) a persisted per-candidate OUTCOME on the original identity (Gate 4b).
+  //
+  // Clauses (1) and (2) miss one whole class: a rail-dropped candidate (rejected_buyer) banks nothing
+  // but a step_perspective_verdicts row, which is deliberately NOT consulted — a lone perspective row
+  // cannot tell a mid-flight candidate from a finished one (Gate 1b). The outcome row can: it is
+  // written only at a chunk's terminal, and it says which terminal. Lumio #5 is the live case; before
+  // this it was re-judged on every replay, at model cost, forever.
+  //
+  // 'error' is excluded because it is a terminal WITHOUT a ruling — accounted (the poll may advance)
+  // but not decided (the worker must retry). Rather than widen ExistsProbe with a negation, the clause
+  // asks for each renderable/decided outcome by name: the probe stays equality-only, and the list is
+  // explicit at the call site where a reader can check it against the CHECK constraint.
+  for (const outcome of DECIDED_OUTCOMES) {
+    if (await args.exists("market_candidate_outcomes", {
+      company_id: args.companyId,
+      original_identity: identity,
+      outcome,
+    })) return true;
+  }
+  return false;
 }
 
 export async function marketCandidateAccounted(args: {

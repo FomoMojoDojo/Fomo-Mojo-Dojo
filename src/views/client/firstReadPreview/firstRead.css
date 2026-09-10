@@ -1289,6 +1289,43 @@
   align-items: baseline;
   gap: 0.6rem;
 }
+/* Gate 4b — "groups we saw but couldn't state in your customers' terms". Sits BELOW the numbered
+   groups, separated by the surface's hairline, at a quieter weight: these are not findings, they are
+   an invitation to restate. The eyebrow is the surface's existing micro-label; the chip borrows the
+   thin tone so it never competes with a relationship-kind chip above it. */
+.fr-unstated {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid hsl(var(--fr-line));
+}
+/* Flush with the numbered groups' TEXT column: .fr-hanging is a 2.5rem numeral column + a 1rem gap,
+   so the text starts at 3.5rem. The section is unnumbered, so without this its rows sat under the
+   numerals rather than under the words they belong beside. The hairline above stays full-width — it
+   divides the whole beat, not just the text column. */
+.fr-unstated-head,
+.fr-unstated-list,
+.fr-unstated-empty { padding-left: 3.5rem; }
+.fr-unstated-head { margin-bottom: 1.25rem; }
+.fr-unstated-list { list-style: none; margin: 0; }
+.fr-unstated-item + .fr-unstated-item {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid hsl(var(--fr-line));
+}
+.fr-unstated-who {
+  margin-top: 0.6rem;
+  font-size: clamp(17px, 1.4vw, 21px);
+  line-height: 1.25;
+  color: hsl(var(--fr-ink));
+}
+.fr-unstated-sub {
+  margin-top: 0.6rem;
+  max-width: 34rem;
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--fr-faint));
+}
+
 .fr-kindnew {
   font-size: 10px;
   letter-spacing: 0.06em;

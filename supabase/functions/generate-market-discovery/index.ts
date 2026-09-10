@@ -45,7 +45,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { company_id, write, candidates, plan, force } = await req.json();
+    const { company_id, write, candidates, plan, force, run_id, candidate_offset } = await req.json();
     if (!company_id || typeof company_id !== "string") return json({ ok: false, error: "company_id required" }, 400);
     const doWrite = write !== false;
     const doPlan = plan === true;
@@ -88,6 +88,10 @@ serve(async (req) => {
       write: doWrite,
       force: force === true,
       candidates: scopedCandidates,
+      // Gate 4b — where to file the per-candidate outcomes. Absent (a manual/dry call) ⇒ the worker
+      // judges exactly as before and simply files nothing.
+      runId: run_id != null ? String(run_id) : undefined,
+      candidateOffset: Number.isFinite(Number(candidate_offset)) ? Number(candidate_offset) : 0,
     };
     const result = doPlan
       ? await computeMarketDiscovery({ ...baseArgs, plan: true })

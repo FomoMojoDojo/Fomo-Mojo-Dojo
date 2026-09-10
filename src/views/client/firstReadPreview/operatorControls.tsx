@@ -260,3 +260,18 @@ export function OperatorKindTag({ kind, reason }: { kind: string | null; reason:
     </span>
   );
 }
+
+/** Gate 4b — the judge's VERBATIM clause under an unstated group. OPERATOR ONLY: the client sub-line
+ *  carries the signed plain-words string instead, because these clauses are written for a machine
+ *  gate and read as accusations on a client surface ("names 'machine-readable system' which is a key
+ *  feature of Brand AI's product"). Structural gate, like every control here: no provider, no render. */
+export function OperatorUnstatedReason({ reason, reconstructed }: { reason: string | null; reconstructed: boolean }) {
+  const ctx = useOperatorControls();
+  if (!ctx || !reason) return null;
+  return (
+    <p className={TAG_CLASS} style={{ ...TAG_STYLE, textTransform: "none", letterSpacing: "0.04em", marginTop: "0.4rem" }}>
+      {`JUDGE: ${reason}`}
+      {reconstructed ? " · RECONSTRUCTED" : ""}
+    </p>
+  );
+}

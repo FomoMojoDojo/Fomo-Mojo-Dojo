@@ -163,6 +163,23 @@ Deno.serve(async (req) => {
   };
   const closeLedger = async (status: "completed" | "failed", err: string | null) => {
     await patchLedger({ status, error_text: err, finished_at: new Date().toISOString() });
+    // Gate 4b — the market pass's INTEGRITY record, written from the terminal of the run that
+    // produces the outcomes. The First Read's "groups we couldn't state" section reads it to choose
+    // its earned-empty line: an empty section must be able to say whether we looked and found nothing
+    // ('completed' → "Every group we saw could be stated in your customers' terms") or could not
+    // finish ('failed' → "Couldn't finish this read"). No row at all is the third, honest state
+    // ("Not read yet"). It is written HERE and nowhere else, because this is the only place that
+    // knows the pass reached a terminal — the same discipline as the gap-pairs and offering records.
+    // Best-effort: a failed integrity write must never turn a completed run into a failed one.
+    try {
+      await supabase.from("integrity_runs").insert({
+        company_id,
+        component: "first_read_market_outcomes",
+        status,
+        error: err,
+        run_ref: ledgerId,
+      });
+    } catch { /* the ledger terminal stands regardless */ }
   };
   const selfFire = async () => {
     waitUntil(fetch(`${url}/functions/v1/market-discovery-step`, {
@@ -189,7 +206,15 @@ Deno.serve(async (req) => {
       const cands = Array.isArray((r.data as { candidates?: unknown })?.candidates) ? (r.data as { candidates: unknown[] }).candidates : [];
       return { candidates: cands };
     },
-    judgeChunk: async (chunk) => { const r = await callDiscovery(url, key, { company_id, candidates: chunk }); return { ok: r.ok }; },
+    // Gate 4b: run_id + candidate_offset ride along so the worker can persist a per-candidate outcome
+    // keyed to THIS manifest position. The worker only ever sees a chunk, so it cannot know the global
+    // index on its own; the cursor is the offset.
+    judgeChunk: async (chunk) => {
+      const r = await callDiscovery(url, key, {
+        company_id, candidates: chunk, run_id: ledgerId, candidate_offset: chain.cursor,
+      });
+      return { ok: r.ok };
+    },
     confirmChunk,
     finalize: async () => { await callDiscovery(url, key, { company_id }); },
     persistPlanned: async (candidates) => { chain = { ...chain, planned: true, candidates, cursor: 0 }; await patchLedger({ chain_state: chain, target_count: candidates.length }); },

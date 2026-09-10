@@ -43,12 +43,31 @@ import type {
   FRFindingQuote,
   FRGapPair,
   FRMarketDef,
+  FRUnstatedGroup,
   FROwnWord,
   FRReverseRow,
   FRSignal,
   FRStatusSource,
 } from "./types";
 import { EMPTY_FIRST_READ } from "./types";
+
+/** The judge's VERBATIM clause for an unstated group — operator view only, never the client sub-line.
+ *  judge_reasons is a bag keyed by gate and pass ("solution_agnostic", "solution_agnostic_reframed",
+ *  "buyer", "buyer_reframed", "reconstructed_reason"); the LAST-written clause is the one that
+ *  settled the candidate, so prefer a reframed key, then the first pass, then anything present. */
+function firstJudgeReason(bag: Record<string, string> | null | undefined): string | null {
+  if (!bag) return null;
+  const prefer = [
+    "solution_agnostic_reframed", "buyer_reframed",
+    "solution_agnostic", "buyer", "reconstructed_reason", "reframe",
+  ];
+  for (const k of prefer) {
+    const v = String(bag[k] ?? "").trim();
+    if (v) return v;
+  }
+  const any = Object.values(bag).map((v) => String(v ?? "").trim()).filter(Boolean);
+  return any[0] ?? null;
+}
 
 // A synthesized "what we see" object (canvas/cascade/market) tags as our public read
 // plus the artifact's date — never a page URL (it is our synthesis, not a scraped page).
@@ -810,6 +829,51 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
         const intRow = ((intRows ?? []) as Array<{ status: string }>)[0] ?? null;
         if (intRow) gapIntegrity = intRow.status === "failed" ? "couldnt_check" : "looked_none";
 
+        // ── Gate 4b — the groups we saw but couldn't state in the customers' terms ──────────────
+        // Scoped to the CURRENT manifest, not the company: a superseded run's rulings must never
+        // surface beside this snapshot's groups. Only the two rejection outcomes render; a fold is
+        // already visible inside the group it folded into, and showing it again would double-count
+        // the audience. The integrity record is what makes an empty section honest — an omitted
+        // section cannot tell "nothing to say" from "we never looked".
+        let unstatedGroups: FRUnstatedGroup[] = [];
+        let unstatedIntegrity: FirstReadPreviewData["unstatedIntegrity"] = "not_yet";
+        {
+          const { data: mdRunRows } = await loose()
+            .from("long_runner_runs")
+            .select("id")
+            .eq("company_id", companyId).eq("run_kind", "market_discovery")
+            .order("started_at", { ascending: false }).limit(1);
+          const mdRunId = ((mdRunRows ?? []) as Array<{ id: string }>)[0]?.id ?? null;
+          if (mdRunId) {
+            const { data: outRows } = await loose()
+              .from("market_candidate_outcomes")
+              .select("id, job_executor, original_jtbd, relationship_kind, outcome, judge_reasons, reconstructed")
+              .eq("run_id", mdRunId)
+              .in("outcome", ["rejected_solution", "rejected_buyer"])
+              .order("candidate_index", { ascending: true });
+            unstatedGroups = ((outRows ?? []) as Array<{
+              id: string; job_executor: string | null; original_jtbd: string | null;
+              relationship_kind: string | null; outcome: string;
+              judge_reasons: Record<string, string> | null; reconstructed: boolean | null;
+            }>).map((r) => ({
+              id: r.id,
+              who: (r.job_executor ?? "").trim(),
+              job: (r.original_jtbd ?? "").trim() || null,
+              relationshipKind: (r.relationship_kind ?? "").trim().toLowerCase() || null,
+              outcome: r.outcome === "rejected_buyer" ? "rejected_buyer" : "rejected_solution",
+              // The verbatim clause, whichever gate produced it. Operator view only.
+              judgeReason: firstJudgeReason(r.judge_reasons),
+              reconstructed: !!r.reconstructed,
+            }));
+          }
+          const { data: uiRows } = await loose()
+            .from("integrity_runs").select("status")
+            .eq("company_id", companyId).eq("component", "first_read_market_outcomes")
+            .order("ran_at", { ascending: false }).limit(1);
+          const uiRow = ((uiRows ?? []) as Array<{ status: string }>)[0] ?? null;
+          if (uiRow) unstatedIntegrity = uiRow.status === "failed" ? "couldnt_check" : "looked_none";
+        }
+
         // ── "What we see" — public register only (public-beats gate, 2026-08-20) ──
         // Every object here is provenance public (public_inferred / public_research /
         // market_read), rendered labelled OUR READ. No internal/declared content.
@@ -1148,6 +1212,8 @@ export function useFirstReadPreviewData(companyId: string | undefined, refreshKe
             channelIneligibleIds,
             markets,
             observedMarkets,
+            unstatedGroups,
+            unstatedIntegrity,
             positioning,
             promise,
             strategy,

@@ -59,6 +59,7 @@ const midFlight = async (originalVerdict: "seller" | "buyer" = "seller"): Promis
   market_discovery_verdicts: [],
   odi_market_definitions: [],
   integrity_runs: [],
+  market_candidate_outcomes: [],
 });
 
 describe("marketCandidateAccounted", () => {
@@ -153,6 +154,29 @@ describe("marketCandidateAccounted", () => {
       job_executor: EXECUTOR, jtbd: REFRAMED_JTBD, market_register: "public_inferred",
     }];
     expect(await accounted(f)).toBe(false);
+  });
+
+  // ── Gate 4b — clause (3): a persisted OUTCOME is a decision ────────────────────────────────────
+  // RED ON REVERT. A rail-dropped candidate (rejected_buyer) banks nothing but a perspective row, so
+  // clauses (1) and (2) miss it entirely — Lumio #5 was re-judged on every replay because of this.
+  it("(g4b) a persisted rejected_buyer outcome makes the candidate accounted", async () => {
+    const f = await midFlight();
+    f.market_candidate_outcomes = [{
+      company_id: COMPANY,
+      original_identity: await marketIdentity(EXECUTOR, ORIGINAL_JTBD),
+      outcome: "rejected_buyer",
+    }];
+    expect(await accounted(f)).toBe(true);
+  });
+
+  it("(g4b) an 'error' outcome is NOT a decision — but it is still accounted via clause (4)", async () => {
+    const identity = await marketIdentity(EXECUTOR, ORIGINAL_JTBD);
+    const f = await midFlight();
+    f.market_candidate_outcomes = [{ company_id: COMPANY, original_identity: identity, outcome: "error" }];
+    // no integrity terminal planted: the error OUTCOME alone must not account it
+    expect(await accounted(f)).toBe(false);
+    f.integrity_runs = [{ company_id: COMPANY, component: CANDIDATE_ERROR_COMPONENT, run_ref: identity, status: "failed" }];
+    expect(await accounted(f)).toBe(true);
   });
 
   // ── (e) STATED BEHAVIOUR, NOT A PROOF ───────────────────────────────────────────────────────────

@@ -33,10 +33,11 @@ type Row = Record<string, unknown>;
 /** A fake supabase whose only job is to answer equality reads from planted tables and to RECORD every
  *  table it was asked for — `touched` is how a test asserts the gate chain never ran, since gate (a)
  *  reads step_perspective_verdicts before it does anything else. */
-function fakeSupabase(tables: Record<string, Row[]>) {
+function fakeSupabase(tables: Record<string, Row[]>, opts: { failUpsert?: boolean } = {}) {
   const touched: string[] = [];
   const deletes: Array<{ table: string; match: Row }> = [];
   const inserts: Array<{ table: string; row: Row }> = [];
+  const upserts: Array<{ table: string; rows: Row[]; onConflict: string | undefined }> = [];
   const builder = (table: string) => {
     touched.push(table);
     const match: Row = {};
@@ -46,6 +47,17 @@ function fakeSupabase(tables: Record<string, Row[]>) {
     const api: Record<string, unknown> = {
       select: () => api,
       insert: (row: Row) => { inserts.push({ table, row }); return Promise.resolve({ error: null }); },
+      upsert: (rows: Row[], o?: { onConflict?: string }) => {
+        upserts.push({ table, rows, onConflict: o?.onConflict });
+        if (opts.failUpsert) return Promise.resolve({ error: { message: "planted upsert failure" } });
+        // model the real UNIQUE (run_id, candidate_index): replace, never duplicate
+        const store = (tables[table] ??= []);
+        for (const r of rows) {
+          const at = store.findIndex((x) => x.run_id === r.run_id && x.candidate_index === r.candidate_index);
+          if (at >= 0) store[at] = r; else store.push(r);
+        }
+        return Promise.resolve({ error: null });
+      },
       delete: () => { mode = "delete"; return api; },
       eq: (col: string, val: unknown) => { match[col] = val; return api; },
       in: () => api,
@@ -61,7 +73,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
     };
     return api;
   };
-  return { client: { from: builder }, touched, deletes, inserts };
+  return { client: { from: builder }, touched, deletes, inserts, upserts, tables };
 }
 
 const probeOver = (tables: Record<string, Row[]>): ExistsProbe => async (table, match) =>
@@ -194,5 +206,84 @@ describe("finalize keeps verdicts (Gate 3b)", () => {
     if (!res.ok || res.scoped !== false) throw new Error("expected the finalize path");
     expect(fake.deletes).toEqual([]);                       // nothing deleted, from any table
     expect(res.totals.verdicts_pruned).toBe(0);             // the counter stays, always zero
+  });
+});
+
+// ── Gate 4b — the outcome writer ─────────────────────────────────────────────────────────────────
+describe("per-candidate outcomes are persisted before the cursor advances (Gate 4b)", () => {
+  const RUN = "b60e2867-53b1-4b8d-86d9-1230240e5cab";
+  const writeArgs = (client: { from: (t: string) => unknown }, over: Record<string, unknown> = {}) => ({
+    ...baseArgs(client), write: true, runId: RUN, candidateOffset: 0, ...over,
+  });
+
+  it("(g4b) a decided candidate files an already_decided outcome keyed to its manifest position", async () => {
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    });
+    const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
+    expect(res.ok).toBe(true);
+    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes");
+    expect(up).toBeTruthy();
+    expect(up!.onConflict).toBe("run_id,candidate_index");
+    expect(up!.rows[0]).toMatchObject({
+      run_id: RUN, candidate_index: 1, job_executor: EXECUTOR, outcome: "already_decided",
+    });
+    // the ORIGINAL identity is what clause (3) looks up
+    expect(String(up!.rows[0].original_identity)).toHaveLength(64);
+  });
+
+  it("(g4b) candidate_index is the GLOBAL manifest position, not the chunk position", async () => {
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    });
+    await computeMarketDiscovery({ ...writeArgs(fake.client, { candidateOffset: 4 }), candidates: [CANDIDATE] });
+    const up = fake.upserts.find((u) => u.table === "market_candidate_outcomes")!;
+    expect(up.rows[0].candidate_index).toBe(5);   // offset 4 + position 1
+  });
+
+  // RED ON REVERT: without the upsert the chunk returns ok and the caller advances the cursor past a
+  // candidate whose ruling was never recorded — the Gate 1b defect, on a different record.
+  it("(g4b) a FAILED outcome write fails the chunk, so the cursor cannot advance", async () => {
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    }, { failUpsert: true });
+    const res = await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
+    expect(res.ok).toBe(false);
+    if (res.ok || !("error" in res)) throw new Error("expected an error result");
+    expect(res.error).toMatch(/candidate outcome write failed/);
+  });
+
+  it("(g4b) re-judging the same chunk REPLACES the row, never duplicates it", async () => {
+    const tables: Record<string, Row[]> = {
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    };
+    const fake = fakeSupabase(tables);
+    await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
+    await computeMarketDiscovery({ ...writeArgs(fake.client), candidates: [CANDIDATE] });
+    expect(tables.market_candidate_outcomes.length).toBe(1);
+  });
+
+  it("(g4b) no runId (a manual/dry call) ⇒ judging is identical and nothing is filed", async () => {
+    const fake = fakeSupabase({
+      companies: [{ id: COMPANY, name: "Riverlane" }],
+      odi_market_definitions: [{ id: "d1", company_id: COMPANY, journey_key: "pmk-x", job_executor: EXECUTOR,
+        jtbd: "Reframed.", user_id: "u1", market_register: "public_inferred" }],
+      market_discovery_verdicts: [], market_lens: [], market_candidate_outcomes: [],
+    });
+    const res = await computeMarketDiscovery({ ...baseArgs(fake.client), write: true, candidates: [CANDIDATE] });
+    expect(res.ok).toBe(true);
+    expect(fake.upserts.length).toBe(0);
   });
 });

@@ -267,6 +267,10 @@ export type DiscoveryComputeArgs = {
   write: boolean;
   force?: boolean;
   candidates?: MarketCandidate[];
+  /** Gate 4b — the manifest row these candidates belong to, and the chunk's global offset. Absent on a
+   *  manual/dry call: the judging is identical, only the outcome filing is skipped. */
+  runId?: string;
+  candidateOffset?: number;
 };
 
 export type DiscoveryPlanResult =
@@ -320,6 +324,7 @@ export type DiscoveryRunResult =
       judge_reasons: Record<string, string>;
       reframed?: boolean;
       original_jtbd?: string;
+      dedup_target_identity?: string;
     }>;
   }
   | { ok: false; skipped: "frozen_company" }
@@ -481,6 +486,8 @@ export async function computeMarketDiscovery(
     outcome: "accepted" | "accepted_deferred" | "rejected_buyer" | "rejected_solution" | "deduped" | "error" | "already_decided";
     journey_key?: string; judge_reasons: Record<string, string>;
     reframed?: boolean; original_jtbd?: string;
+    /** Gate 4b — for a fold, the identity of the def it folded into. */
+    dedup_target_identity?: string;
   }> = [];
 
   // Banked verdicts for this company.
@@ -514,6 +521,9 @@ export async function computeMarketDiscovery(
     // one attempt. Extracted (MPD-1e) so a reframed candidate re-enters it
     // verbatim — judges are never relaxed for a reframe.
     type GateOutcome = "accepted" | "rejected_buyer" | "rejected_solution" | "deduped";
+    // Gate 4b — set by gate (c) when a candidate FOLDS, so the outcome row can name the def it folded
+    // into. Reset per candidate by the loop below; read only when the outcome is "deduped".
+    let foldTarget: string | null = null;
     const runGates = async (
       cand: MarketCandidate,
       reasons: Record<string, string>,
@@ -575,6 +585,7 @@ export async function computeMarketDiscovery(
         if (d.identity !== identity) continue;
         if (isPublicRegister(d.market_register)) {
           duplicate = true;
+          foldTarget = d.identity;
           reasons[`same_market_exact${tag}`] = "identical content identity — folded into the existing public def";
           break;
         }
@@ -611,6 +622,7 @@ export async function computeMarketDiscovery(
           : reason;
         if (same && !crossRegister) {
           duplicate = true;
+          foldTarget = existing.identity;
           break;
         }
       }
@@ -641,6 +653,7 @@ export async function computeMarketDiscovery(
     for (const original of args.candidates!) {
       totals.requested++;
       const reasons: Record<string, string> = {};
+      foldTarget = null;
 
       // ── ALREADY DECIDED (Gate 3b) — do not re-judge what a judge has already ruled on. ─────────
       // A replay re-fires a manifest from cursor 0, so candidates that already produced a def or a
@@ -712,7 +725,11 @@ export async function computeMarketDiscovery(
         }
         if (outcome === "deduped") {
           totals.deduped_same_market++;
-          results.push({ ...cand, outcome, judge_reasons: reasons, ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}) });
+          results.push({
+            ...cand, outcome, judge_reasons: reasons,
+            ...(foldTarget ? { dedup_target_identity: foldTarget } : {}),
+            ...(reframed ? { reframed, original_jtbd: original.jtbd } : {}),
+          });
           continue;
         }
 
@@ -811,6 +828,49 @@ export async function computeMarketDiscovery(
         continue;
       }
     }
+    // ── PERSIST THE PER-CANDIDATE OUTCOMES (Gate 4b) ────────────────────────────────────────────
+    // Before the caller advances its cursor. The worker has always known what happened to every
+    // candidate — outcome, judge_reasons, the reframed jtbd, the dedup target — and returned it in
+    // the HTTP response, where it was thrown away. That is why the surface cannot say why a group is
+    // absent, why the census could tie only 9 of 20 rulings to an executor, and why a rail-dropped
+    // candidate is re-judged forever. Filing it here makes the ruling durable and makes clause (3)
+    // of marketCandidateDecided possible.
+    //
+    // The write is NOT best-effort, unlike the Gate 1b error terminal. It returns ok:false on
+    // failure, which the stepper reads as a not-ok chunk, so the CURSOR DOES NOT ADVANCE and the
+    // chunk re-judges next fire. A cursor that moves past an unrecorded ruling is the exact defect
+    // Gate 1b closed; this is the same law applied to a different record.
+    if (args.write && args.runId) {
+      const offset = args.candidateOffset ?? 0;
+      const rows = [];
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const originalJtbd = r.original_jtbd ?? r.jtbd;   // reframed rows carry the original alongside
+        const reframed = r.reframed === true;
+        rows.push({
+          company_id: args.companyId,
+          run_id: args.runId,
+          candidate_index: offset + i + 1,
+          job_executor: r.job_executor,
+          relationship_kind: r.relationship_kind || null,
+          original_jtbd: originalJtbd,
+          original_identity: await marketIdentity(r.job_executor, originalJtbd),
+          reframed_jtbd: reframed ? r.jtbd : null,
+          reframed_identity: reframed ? await marketIdentity(r.job_executor, r.jtbd) : null,
+          outcome: r.outcome === "accepted" ? "accepted_active" : r.outcome,
+          judge_reasons: r.judge_reasons,
+          dedup_target_identity: r.dedup_target_identity ?? null,
+          journey_key: r.journey_key ?? null,
+        });
+      }
+      if (rows.length > 0) {
+        const { error: outErr } = await args.supabase
+          .from("market_candidate_outcomes")
+          .upsert(rows, { onConflict: "run_id,candidate_index" });
+        if (outErr) return { ok: false, error: `candidate outcome write failed: ${outErr.message}` };
+      }
+    }
+
     return { ok: true, scoped: true, totals, results };
   }
 

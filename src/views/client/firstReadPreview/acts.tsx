@@ -32,7 +32,7 @@ import {
   NEW_KIND_NOTE,
 } from "../../../../supabase/functions/_shared/relationshipKinds.ts";
 import { ListingRow } from "./primitives";
-import { OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
+import { OperatorUnstatedReason, OperatorKindTag, OperatorPairMeta, OwnWordsNotRunNote, OwnWordsRecordBlock, StruckPairsBlock, struckPairsByStatement } from "./operatorControls";
 import { Chip } from "./primitives";
 // Stage 2 (visual port): editorial layout primitives — beats 1–2. Stage 3: Spread on the nine
 // sidebar beats (3, 4, 5, 6, 11, 12, 14, 15, 16). Stage 3b: full match to the captures, beats 1–17.
@@ -253,6 +253,27 @@ const OWN_WORDS_NONE_NOTE = "We read your channels but found no verbatim self-de
 const IN_YOUR_WORDS_LABEL = "In your words"; // signed
 const CHANNELS_AS_READ_LABEL = "Your channels, as we read them"; // signed
 const NO_SERVE_NOTE = "No public read of who you serve yet."; // signed
+
+// ── Gate 4b — "groups we saw but couldn't state in your customers' terms" (all OPERATOR-SIGNED) ────
+// The law (Living Memory, 2026-09-10): Who-you-serve is a conversation. A solution-bound group
+// surfaces LABELLED, never dropped — and it is labelled with its ROLE, exactly like the groups above
+// it (operator ruling, 2026-09-10, striking the "IN YOUR WORDS" chip). These people are a `buyer` or
+// a `referrer` whether or not the read could state their job in their own words; a chip that said
+// something else would make the section a different KIND of thing from the list above, when it is the
+// same thing said less confidently. The sub-lines are plain words, not the judge's verbatim clause —
+// the judge writes for a machine gate ("names 'machine-readable system' which is a key feature of
+// Brand AI's product") and that reads as an accusation about a client's own language. The verbatim
+// clause stays operator-only (OperatorUnstatedReason).
+const UNSTATED_EYEBROW = "GROUPS WE SAW BUT COULDN'T STATE IN YOUR CUSTOMERS' TERMS"; // signed
+const UNSTATED_SUBLINE: Record<"rejected_solution" | "rejected_buyer", string> = {
+  rejected_solution: "Says it in terms of what you sell — likely the same people, described from your side of the table.", // signed
+  rejected_buyer: "Reads as a goal of yours, not a job of theirs — likely the same people, described from your side of the table.", // signed
+};
+const UNSTATED_EMPTY: Record<"not_yet" | "looked_none" | "couldnt_check", string> = {
+  not_yet: "Not read yet — this snapshot's market pass hasn't run.", // signed
+  looked_none: "Every group we saw could be stated in your customers' terms.", // signed
+  couldnt_check: "Couldn't finish this read — nothing is hidden, there's just nothing to show yet.", // signed
+};
 const NO_OURREAD_NOTE = "No public positioning, strategy or promise read yet."; // signed
 // ── Gate-C Stage B (2026-09-01): "What you offer" (public offering read) — SIGNED, byte-exact ──
 // The offering is enumerated ONLY from the accepted, judged public_reads kind='offering' payload;
@@ -894,7 +915,13 @@ export function roleTonesByFirstAppearance(kinds: Array<string | null>): Map<str
 /** Beat 5 — "Who you serve": the ODI market rows (people + the job), each with its
  *  relationship-kind chip (SeqChip idiom — the surface's chip primitive). */
 export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; eyebrow?: ReactNode }) {
-  const tones = roleTonesByFirstAppearance(read.observedMarkets.map((m) => m.relationshipKind));
+  // ONE colour assignment across the whole beat: the numbered groups claim their tones first, then
+  // the unstated section's kinds continue the same sequence. A kind seen above keeps its colour when
+  // it reappears below — the chip means the same thing in both places, so it must look the same.
+  const tones = roleTonesByFirstAppearance([
+    ...read.observedMarkets.map((m) => m.relationshipKind),
+    ...read.unstatedGroups.map((g) => g.relationshipKind),
+  ]);
   return (
     <SpreadBeat eyebrow={eyebrow} headline={SERVE_HEADLINE} standfirst={SERVE_SUB} rationale={RATIONALE_SERVE}>
       <main className="fr-stagger">
@@ -925,8 +952,48 @@ export function ActWhoYouServe({ read, eyebrow }: { read: FirstReadPreviewData; 
             );
           })}
         </ol>
+        <UnstatedGroups read={read} tones={tones} />
       </main>
     </SpreadBeat>
+  );
+}
+
+/** Gate 4b — the section below the numbered groups. ALWAYS rendered: when there is nothing to list it
+ *  renders its earned-empty line from the persisted integrity record, because an omitted section
+ *  cannot tell "nothing to say" from "we never looked", and explaining an absence is this beat's
+ *  whole job. Folds are deliberately absent (their people are already inside a numbered group above),
+ *  as are already_decided (that IS a numbered group) and error (no ruling exists to report). */
+function UnstatedGroups({ read, tones }: { read: FirstReadPreviewData; tones: Map<string, ChipTone> }) {
+  const rows = read.unstatedGroups;
+  return (
+    <section className="fr-unstated">
+      <div className="fr-unstated-head"><Eyebrow>{UNSTATED_EYEBROW}</Eyebrow></div>
+      {rows.length === 0 ? (
+        <div className="fr-unstated-empty"><Absent>{UNSTATED_EMPTY[read.unstatedIntegrity]}</Absent></div>
+      ) : (
+        <ol className="fr-unstated-list">
+          {rows.map((g) => {
+            const kindLabel = relationshipKindLabel(g.relationshipKind);
+            const tone = (g.relationshipKind && tones.get(g.relationshipKind)) || "neutral";
+            const isNewKind = !!g.relationshipKind && !isKnownRelationshipKind(g.relationshipKind);
+            return (
+            <li key={g.id} className="fr-unstated-item">
+              {kindLabel ? (
+                <span className="fr-kindrow">
+                  <SeqChip tone={tone}>{kindLabel}</SeqChip>
+                  {isNewKind ? <span className="fr-kindnew">{NEW_KIND_NOTE}</span> : null}
+                </span>
+              ) : null}
+              <p className="fr-unstated-who">{g.who}</p>
+              {g.job ? <p className="fr-hanging-text">{g.job}</p> : null}
+              <p className="fr-unstated-sub">{UNSTATED_SUBLINE[g.outcome]}</p>
+              <OperatorUnstatedReason reason={g.judgeReason} reconstructed={g.reconstructed} />
+            </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
   );
 }
 
